@@ -1,0 +1,207 @@
+# ==========================================================================
+# LIBERTASIAN — Monitoring Stack
+# Per PDD Section 15: Monitoring & Observability
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml -f infrastructure/monitoring/docker-compose.monitoring.yml up -d
+# ==========================================================================
+
+services:
+  # ====================
+  # Prometheus
+  # ====================
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: libertasian-prometheus
+    restart: always
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+
+  # ====================
+  # Grafana
+  # ====================
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: libertasian-grafana
+    restart: always
+    ports:
+      - "127.0.0.1:3333:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: "https://monitoring.libertasian.com"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+
+  # ====================
+  # Alertmanager
+  # ====================
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: libertasian-alertmanager
+    restart: always
+    ports:
+      - "127.0.0.1:9093:9093"
+    volumes:
+      - alertmanager_data:/alertmanager
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+
+  # ====================
+  # Loki (Log Aggregation)
+  # ====================
+  loki:
+    image: grafana/loki:3.1.0
+    container_name: libertasian-loki
+    restart: always
+    ports:
+      - "127.0.0.1:3100:3100"
+    volumes:
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+
+  # ====================
+  # Promtail (Log Shipper)
+  # ====================
+  promtail:
+    image: grafana/promtail:3.1.0
+    container_name: libertasian-promtail
+    restart: always
+    volumes:
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+
+  # ====================
+  # Node Exporter (System Metrics)
+  # ====================
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: libertasian-node-exporter
+    restart: always
+    ports:
+      - "127.0.0.1:9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.rootfs=/rootfs"
+      - "--path.sysfs=/host/sys"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+
+  # ====================
+  # cAdvisor (Container Metrics)
+  # ====================
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: libertasian-cadvisor
+    restart: always
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+    privileged: true
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+
+  # ====================
+  # PostgreSQL Exporter
+  # ====================
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: libertasian-postgres-exporter
+    restart: always
+    ports:
+      - "127.0.0.1:9187:9187"
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-libertasian}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-libertasian}?sslmode=disable"
+    depends_on:
+      - postgres
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+
+  # ====================
+  # Redis Exporter
+  # ====================
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.63.0
+    container_name: libertasian-redis-exporter
+    restart: always
+    ports:
+      - "127.0.0.1:9121:9121"
+    environment:
+      REDIS_ADDR: "redis://redis:6379"
+      REDIS_PASSWORD: "${REDIS_PASSWORD}"
+    depends_on:
+      - redis
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  alertmanager_data:
+  loki_data:

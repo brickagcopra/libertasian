@@ -1,0 +1,14 @@
+{
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "rootDir": "..",
+  "testEnvironment": "node",
+  "testRegex": ".e2e-spec.ts$",
+  "transform": {
+    "^.+\\.ts$": ["ts-jest", { "tsconfig": { "esModuleInterop": true } }]
+  },
+  "moduleNameMapper": {
+    "^uuid$": "<rootDir>/test/mocks/uuid.ts",
+    "^@libertasian/types$": "<rootDir>/../../packages/types/src/index.ts"
+  },
+  "testTimeout": 30000
+}

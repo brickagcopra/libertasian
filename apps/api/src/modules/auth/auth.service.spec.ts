@@ -1,0 +1,551 @@
+import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
+import { Test, TestingModule } from '@nestjs/testing';
+import * as bcrypt from 'bcrypt';
+import * as crypto from 'crypto';
+
+import { PrismaService } from '../../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { UsersService } from '../users/users.service';
+import { AuthService } from './auth.service';
+import type { RegisterDto, LoginDto } from './dto';
+
+// Mock uuid (ESM-only package, cannot be transformed by ts-jest)
+jest.mock('uuid', () => ({
+  v4: jest.fn(() => 'mock-uuid-v4'),
+}));
+
+// Mock global fetch (used by HaveIBeenPwned breach check)
+global.fetch = jest.fn().mockResolvedValue({
+  ok: true,
+  text: jest.fn().mockResolvedValue(''), // Empty response = no breached passwords
+}) as jest.Mock;
+
+// Mock bcrypt
+jest.mock('bcrypt', () => ({
+  hash: jest.fn(),
+  compare: jest.fn(),
+}));
+
+// Mock crypto for deterministic tests
+const mockRandomBytes = jest.fn();
+const mockCreateHash = jest.fn();
+const originalCrypto = jest.requireActual('crypto');
+
+jest.mock('crypto', () => ({
+  ...jest.requireActual('crypto'),
+  randomBytes: (size: number) => mockRandomBytes(size),
+  createHash: (algorithm: string) => mockCreateHash(algorithm),
+}));
+
+describe('AuthService', () => {
+  let service: AuthService;
+  let prismaService: jest.Mocked<PrismaService>;
+  let usersService: jest.Mocked<UsersService>;
+  let jwtService: jest.Mocked<JwtService>;
+  let configService: jest.Mocked<ConfigService>;
+  let notificationsService: jest.Mocked<NotificationsService>;
+
+  const mockUser = {
+    id: 'user-123',
+    email: 'test@example.com',
+    passwordHash: '$2b$12$hashedpassword',
+    fullName: 'Test User',
+    status: 'active',
+    emailVerified: false,
+    mfaEnabled: false,
+    mfaSecret: null,
+    googleId: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    emailVerifyToken: null,
+  } as const;
+
+  const mockOrganization = {
+    id: 'org-123',
+    name: "Test User's Workspace",
+    slug: 'test-user-abc123',
+    type: 'individual',
+    billingOwnerUserId: 'user-123',
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+
+  const mockMembership = {
+    id: 'member-123',
+    organizationId: 'org-123',
+    userId: 'user-123',
+    role: 'owner',
+    status: 'active',
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+
+  beforeEach(async () => {
+    // Reset mocks
+    mockRandomBytes.mockImplementation((size: number) => {
+      return originalCrypto.randomBytes(size);
+    });
+
+    mockCreateHash.mockImplementation((algorithm: string) => {
+      return originalCrypto.createHash(algorithm);
+    });
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        AuthService,
+        {
+          provide: PrismaService,
+          useValue: {
+            user: {
+              create: jest.fn(),
+              update: jest.fn(),
+              findUnique: jest.fn(),
+              findFirst: jest.fn(),
+            },
+            organization: {
+              create: jest.fn(),
+            },
+            organizationMember: {
+              create: jest.fn(),
+              findFirst: jest.fn(),
+            },
+            subscription: {
+              create: jest.fn(),
+            },
+            refreshToken: {
+              create: jest.fn(),
+              findUnique: jest.fn(),
+              findFirst: jest.fn(),
+              update: jest.fn(),
+              updateMany: jest.fn(),
+            },
+            $transaction: jest.fn(),
+          },
+        },
+        {
+          provide: UsersService,
+          useValue: {
+            findByEmail: jest.fn(),
+            findById: jest.fn(),
+            findByGoogleId: jest.fn(),
+            create: jest.fn(),
+            createFromGoogle: jest.fn(),
+            linkGoogleAccount: jest.fn(),
+            sanitize: jest.fn(),
+          },
+        },
+        {
+          provide: JwtService,
+          useValue: {
+            sign: jest.fn(),
+            signAsync: jest.fn(),
+            verify: jest.fn(),
+          },
+        },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: jest.fn((key: string, defaultValue?: string | number) => {
+              const config: Record<string, string | number> = {
+                JWT_ACCESS_TTL: 900,
+                JWT_REFRESH_TTL: 604800,
+                JWT_SECRET: 'test-secret',
+                JWT_PRIVATE_KEY_PATH: '',
+                JWT_PRIVATE_KEY: '',
+                ENCRYPTION_KEY: '',
+              };
+              return config[key] ?? defaultValue;
+            }),
+          },
+        },
+        {
+          provide: NotificationsService,
+          useValue: {
+            sendVerificationEmail: jest.fn(),
+            sendPasswordResetEmail: jest.fn(),
+          },
+        },
+      ],
+    }).compile();
+
+    service = module.get<AuthService>(AuthService);
+    prismaService = module.get(PrismaService) as jest.Mocked<PrismaService>;
+    usersService = module.get(UsersService) as jest.Mocked<UsersService>;
+    jwtService = module.get(JwtService) as jest.Mocked<JwtService>;
+    configService = module.get(ConfigService) as jest.Mocked<ConfigService>;
+    notificationsService = module.get(NotificationsService) as jest.Mocked<NotificationsService>;
+
+    // Default mock implementations
+    (bcrypt.hash as jest.Mock).mockResolvedValue('$2b$12$hashedpassword');
+    (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  describe('register', () => {
+    const registerDto: RegisterDto = {
+      email: 'newuser@example.com',
+      password: 'SecurePassword123!',
+      fullName: 'New User',
+    };
+
+    it('should throw ConflictException if email already exists', async () => {
+      usersService.findByEmail.mockResolvedValue(mockUser as unknown as ReturnType<UsersService['findByEmail']>);
+
+      await expect(service.register(registerDto)).rejects.toThrow(ConflictException);
+      await expect(service.register(registerDto)).rejects.toThrow('Email already registered');
+
+      expect(usersService.findByEmail).toHaveBeenCalledWith(registerDto.email);
+      expect(usersService.create).not.toHaveBeenCalled();
+    });
+
+    it('should create user with hashed password and default organization', async () => {
+      usersService.findByEmail.mockResolvedValue(null);
+      usersService.create.mockResolvedValue(mockUser as unknown as ReturnType<UsersService['create']>);
+      usersService.sanitize.mockReturnValue({
+        id: mockUser.id,
+        email: mockUser.email,
+        fullName: mockUser.fullName,
+        status: mockUser.status,
+        emailVerified: mockUser.emailVerified,
+        mfaEnabled: mockUser.mfaEnabled,
+        createdAt: mockUser.createdAt,
+        updatedAt: mockUser.updatedAt,
+      });
+
+      prismaService.organization.create.mockResolvedValue(mockOrganization as unknown as ReturnType<typeof prismaService.organization.create>);
+      prismaService.organizationMember.create.mockResolvedValue(mockMembership as unknown as ReturnType<typeof prismaService.organizationMember.create>);
+      prismaService.subscription.create.mockResolvedValue({} as unknown as ReturnType<typeof prismaService.subscription.create>);
+      prismaService.user.update.mockResolvedValue(mockUser as unknown as ReturnType<typeof prismaService.user.update>);
+
+      const result = await service.register(registerDto);
+
+      // Verify password hashing
+      expect(bcrypt.hash).toHaveBeenCalledWith(registerDto.password, 12);
+
+      // Verify user creation
+      expect(usersService.create).toHaveBeenCalledWith({
+        email: registerDto.email,
+        passwordHash: '$2b$12$hashedpassword',
+        fullName: registerDto.fullName,
+      });
+
+      // Verify organization creation
+      expect(prismaService.organization.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            name: "New User's Workspace",
+            type: 'individual',
+            billingOwnerUserId: mockUser.id,
+          }),
+        }),
+      );
+
+      // Verify membership creation
+      expect(prismaService.organizationMember.create).toHaveBeenCalledWith({
+        data: {
+          organizationId: mockOrganization.id,
+          userId: mockUser.id,
+          role: 'owner',
+          status: 'active',
+        },
+      });
+
+      // Verify subscription creation
+      expect(prismaService.subscription.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          organizationId: mockOrganization.id,
+          planCode: 'free',
+          status: 'active',
+          seats: 1,
+        }),
+      });
+
+      // Verify email verification token generation
+      expect(prismaService.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: mockUser.id },
+          data: expect.objectContaining({
+            emailVerifyToken: expect.any(String),
+          }),
+        }),
+      );
+
+      // Verify verification email sent
+      expect(notificationsService.sendVerificationEmail).toHaveBeenCalledWith(
+        registerDto.email,
+        registerDto.fullName,
+        expect.any(String),
+      );
+
+      // Verify result
+      expect(result.user).toEqual(usersService.sanitize(mockUser));
+    });
+  });
+
+  describe('login', () => {
+    const loginDto: LoginDto = {
+      email: 'test@example.com',
+      password: 'correctpassword',
+    };
+
+    const deviceFingerprint = 'device-fingerprint-123';
+
+    it('should throw UnauthorizedException for invalid email', async () => {
+      usersService.findByEmail.mockResolvedValue(null);
+
+      await expect(service.login(loginDto, deviceFingerprint)).rejects.toThrow(UnauthorizedException);
+      await expect(service.login(loginDto, deviceFingerprint)).rejects.toThrow('Invalid email or password');
+
+      expect(bcrypt.compare).not.toHaveBeenCalled();
+    });
+
+    it('should throw UnauthorizedException for invalid password', async () => {
+      usersService.findByEmail.mockResolvedValue(mockUser as unknown as ReturnType<UsersService['findByEmail']>);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+
+      await expect(service.login(loginDto, deviceFingerprint)).rejects.toThrow(UnauthorizedException);
+      await expect(service.login(loginDto, deviceFingerprint)).rejects.toThrow('Invalid email or password');
+
+      expect(bcrypt.compare).toHaveBeenCalledWith(loginDto.password, mockUser.passwordHash);
+    });
+
+    it('should throw UnauthorizedException for inactive account', async () => {
+      const inactiveUser = { ...mockUser, status: 'suspended' };
+      usersService.findByEmail.mockResolvedValue(inactiveUser as unknown as ReturnType<UsersService['findByEmail']>);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+
+      await expect(service.login(loginDto, deviceFingerprint)).rejects.toThrow(UnauthorizedException);
+      await expect(service.login(loginDto, deviceFingerprint)).rejects.toThrow('Account is suspended or deactivated');
+    });
+
+    it('should return mfaRequired: true when MFA is enabled but no code provided', async () => {
+      const mfaUser = { ...mockUser, mfaEnabled: true, mfaSecret: 'encrypted-secret' };
+      usersService.findByEmail.mockResolvedValue(mfaUser as unknown as ReturnType<UsersService['findByEmail']>);
+      usersService.sanitize.mockReturnValue({
+        id: mfaUser.id,
+        email: mfaUser.email,
+        fullName: mfaUser.fullName,
+        status: mfaUser.status,
+        emailVerified: mfaUser.emailVerified,
+        mfaEnabled: mfaUser.mfaEnabled,
+        createdAt: mfaUser.createdAt,
+        updatedAt: mfaUser.updatedAt,
+      });
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+
+      const result = await service.login(loginDto, deviceFingerprint);
+
+      expect(result.mfaRequired).toBe(true);
+      expect(result.tokens.accessToken).toBe('');
+      expect(result.tokens.refreshToken).toBe('');
+      expect(result.user).toEqual(usersService.sanitize(mfaUser));
+    });
+
+    it('should successfully login with valid credentials', async () => {
+      usersService.findByEmail.mockResolvedValue(mockUser as unknown as ReturnType<UsersService['findByEmail']>);
+      usersService.sanitize.mockReturnValue({
+        id: mockUser.id,
+        email: mockUser.email,
+        fullName: mockUser.fullName,
+        status: mockUser.status,
+        emailVerified: mockUser.emailVerified,
+        mfaEnabled: mockUser.mfaEnabled,
+        createdAt: mockUser.createdAt,
+        updatedAt: mockUser.updatedAt,
+      });
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+
+      prismaService.organizationMember.findFirst.mockResolvedValue(mockMembership as unknown as ReturnType<typeof prismaService.organizationMember.findFirst>);
+
+      jwtService.sign.mockReturnValue('access-token-jwt');
+      prismaService.refreshToken.create.mockResolvedValue({} as unknown as ReturnType<typeof prismaService.refreshToken.create>);
+
+      const result = await service.login(loginDto, deviceFingerprint);
+
+      expect(result.mfaRequired).toBe(false);
+      expect(result.tokens.accessToken).toBe('access-token-jwt');
+      expect(result.tokens.refreshToken).toEqual(expect.any(String));
+      expect(result.user).toEqual(usersService.sanitize(mockUser));
+
+      // Verify JWT payload
+      expect(jwtService.sign).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sub: mockUser.id,
+          email: mockUser.email,
+          role: mockMembership.role,
+          organizationId: mockMembership.organizationId,
+          mfaVerified: true,
+        }),
+        expect.any(Object),
+      );
+
+      // Verify refresh token creation
+      expect(prismaService.refreshToken.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            userId: mockUser.id,
+            deviceFingerprint,
+            tokenHash: expect.any(String),
+            familyId: expect.any(String),
+            expiresAt: expect.any(Date),
+          }),
+        }),
+      );
+    });
+  });
+
+  describe('loginWithGoogle', () => {
+    const googleProfile = {
+      googleId: 'google-123',
+      email: 'google@example.com',
+      fullName: 'Google User',
+    };
+
+    const deviceFingerprint = 'device-fingerprint-456';
+
+    it('should create new user when Google ID not found', async () => {
+      const newUser = { ...mockUser, id: 'new-user-123', email: googleProfile.email, fullName: googleProfile.fullName, googleId: googleProfile.googleId, emailVerified: true };
+
+      usersService.findByGoogleId.mockResolvedValue(null);
+      usersService.findByEmail.mockResolvedValue(null);
+      usersService.createFromGoogle.mockResolvedValue(newUser as unknown as ReturnType<UsersService['createFromGoogle']>);
+      usersService.sanitize.mockReturnValue({
+        id: newUser.id,
+        email: newUser.email,
+        fullName: newUser.fullName,
+        status: newUser.status,
+        emailVerified: newUser.emailVerified,
+        mfaEnabled: newUser.mfaEnabled,
+        createdAt: newUser.createdAt,
+        updatedAt: newUser.updatedAt,
+      });
+
+      prismaService.organization.create.mockResolvedValue(mockOrganization as unknown as ReturnType<typeof prismaService.organization.create>);
+      prismaService.organizationMember.create.mockResolvedValue(mockMembership as unknown as ReturnType<typeof prismaService.organizationMember.create>);
+      prismaService.organizationMember.findFirst.mockResolvedValue(mockMembership as unknown as ReturnType<typeof prismaService.organizationMember.findFirst>);
+      prismaService.subscription.create.mockResolvedValue({} as unknown as ReturnType<typeof prismaService.subscription.create>);
+
+      jwtService.sign.mockReturnValue('access-token-jwt');
+      prismaService.refreshToken.create.mockResolvedValue({} as unknown as ReturnType<typeof prismaService.refreshToken.create>);
+
+      const result = await service.loginWithGoogle(googleProfile, deviceFingerprint);
+
+      expect(result.isNewUser).toBe(true);
+      expect(result.user.email).toBe(googleProfile.email);
+      expect(result.tokens.accessToken).toBe('access-token-jwt');
+
+      // Verify user creation
+      expect(usersService.createFromGoogle).toHaveBeenCalledWith(googleProfile);
+
+      // Verify organization creation
+      expect(prismaService.organization.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            name: "Google User's Workspace",
+            type: 'individual',
+          }),
+        }),
+      );
+
+      // Verify membership and subscription
+      expect(prismaService.organizationMember.create).toHaveBeenCalled();
+      expect(prismaService.subscription.create).toHaveBeenCalled();
+    });
+
+    it('should link Google account to existing user when found by email', async () => {
+      const existingUser = { ...mockUser, googleId: null };
+      const updatedUser = { ...existingUser, googleId: googleProfile.googleId, emailVerified: true };
+
+      usersService.findByGoogleId.mockResolvedValue(null);
+      usersService.findByEmail.mockResolvedValue(existingUser as unknown as ReturnType<UsersService['findByEmail']>);
+      usersService.linkGoogleAccount.mockResolvedValue(undefined);
+      usersService.sanitize.mockReturnValue({
+        id: updatedUser.id,
+        email: updatedUser.email,
+        fullName: updatedUser.fullName,
+        status: updatedUser.status,
+        emailVerified: updatedUser.emailVerified,
+        mfaEnabled: updatedUser.mfaEnabled,
+        createdAt: updatedUser.createdAt,
+        updatedAt: updatedUser.updatedAt,
+      });
+
+      prismaService.user.update.mockResolvedValue(updatedUser as unknown as ReturnType<typeof prismaService.user.update>);
+      prismaService.organizationMember.findFirst.mockResolvedValue(mockMembership as unknown as ReturnType<typeof prismaService.organizationMember.findFirst>);
+
+      jwtService.sign.mockReturnValue('access-token-jwt');
+      prismaService.refreshToken.create.mockResolvedValue({} as unknown as ReturnType<typeof prismaService.refreshToken.create>);
+
+      const result = await service.loginWithGoogle(googleProfile, deviceFingerprint);
+
+      expect(result.isNewUser).toBe(false);
+      expect(result.user.email).toBe(existingUser.email);
+      expect(result.tokens.accessToken).toBe('access-token-jwt');
+
+      // Verify Google account linking
+      expect(usersService.linkGoogleAccount).toHaveBeenCalledWith(existingUser.id, googleProfile.googleId);
+
+      // Verify email verified update
+      expect(prismaService.user.update).toHaveBeenCalledWith({
+        where: { id: existingUser.id },
+        data: { emailVerified: true, emailVerifyToken: null },
+      });
+
+      // Verify no new organization created
+      expect(prismaService.organization.create).not.toHaveBeenCalled();
+    });
+
+    it('should login existing Google user directly', async () => {
+      const googleUser = { ...mockUser, googleId: googleProfile.googleId, emailVerified: true };
+
+      usersService.findByGoogleId.mockResolvedValue(googleUser as unknown as ReturnType<UsersService['findByGoogleId']>);
+      usersService.sanitize.mockReturnValue({
+        id: googleUser.id,
+        email: googleUser.email,
+        fullName: googleUser.fullName,
+        status: googleUser.status,
+        emailVerified: googleUser.emailVerified,
+        mfaEnabled: googleUser.mfaEnabled,
+        createdAt: googleUser.createdAt,
+        updatedAt: googleUser.updatedAt,
+      });
+
+      prismaService.organizationMember.findFirst.mockResolvedValue(mockMembership as unknown as ReturnType<typeof prismaService.organizationMember.findFirst>);
+
+      jwtService.sign.mockReturnValue('access-token-jwt');
+      prismaService.refreshToken.create.mockResolvedValue({} as unknown as ReturnType<typeof prismaService.refreshToken.create>);
+
+      const result = await service.loginWithGoogle(googleProfile, deviceFingerprint);
+
+      expect(result.isNewUser).toBe(false);
+      expect(result.user.email).toBe(googleUser.email);
+      expect(result.tokens.accessToken).toBe('access-token-jwt');
+
+      // Verify no new user created
+      expect(usersService.createFromGoogle).not.toHaveBeenCalled();
+      expect(usersService.linkGoogleAccount).not.toHaveBeenCalled();
+
+      // Verify JWT includes mfaVerified: true (Google OAuth skips MFA challenge)
+      expect(jwtService.sign).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mfaVerified: true,
+        }),
+        expect.any(Object),
+      );
+    });
+
+    it('should throw UnauthorizedException for inactive Google account', async () => {
+      const inactiveGoogleUser = { ...mockUser, googleId: googleProfile.googleId, status: 'deactivated' };
+
+      usersService.findByGoogleId.mockResolvedValue(inactiveGoogleUser as unknown as ReturnType<UsersService['findByGoogleId']>);
+
+      await expect(service.loginWithGoogle(googleProfile, deviceFingerprint)).rejects.toThrow(UnauthorizedException);
+      await expect(service.loginWithGoogle(googleProfile, deviceFingerprint)).rejects.toThrow('Account is suspended or deactivated');
+    });
+  });
+});

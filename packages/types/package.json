@@ -1,0 +1,16 @@
+{
+  "name": "@libertasian/types",
+  "version": "0.0.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./src/index.ts",
+  "files": ["src/", "dist/"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint src/"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}

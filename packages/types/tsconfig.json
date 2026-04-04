@@ -1,0 +1,12 @@
+{
+  "extends": "@libertasian/tsconfig/base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "target": "ES2022",
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "noEmit": true
+  },
+  "include": ["src/"]
+}

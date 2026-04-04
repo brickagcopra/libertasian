@@ -1,0 +1,287 @@
+# ==========================================================================
+# LIBERTASIAN — Prometheus Alert Rules
+# Per PDD Section 15.3: Alerts
+# ==========================================================================
+
+groups:
+  # ====================
+  # API Health Alerts
+  # ====================
+  - name: api_health
+    interval: 30s
+    rules:
+      - alert: HighApiErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{job="nestjs-api",status=~"5.."}[5m]))
+            /
+            sum(rate(http_requests_total{job="nestjs-api"}[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          service: api
+        annotations:
+          summary: "API error rate above 5%"
+          description: "API error rate is {{ $value | humanizePercentage }} over the last 5 minutes."
+
+      - alert: HighApiLatency
+        expr: |
+          histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job="nestjs-api"}[5m])) by (le))
+          > 0.2
+        for: 5m
+        labels:
+          severity: warning
+          service: api
+        annotations:
+          summary: "API P95 latency above 200ms"
+          description: "API P95 latency is {{ $value }}s."
+
+      - alert: ApiDown
+        expr: up{job="nestjs-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: api
+        annotations:
+          summary: "NestJS API is down"
+          description: "NestJS API has been unreachable for more than 1 minute."
+
+  # ====================
+  # AI Service Alerts
+  # ====================
+  - name: ai_services
+    interval: 30s
+    rules:
+      - alert: HighAiResponseTime
+        expr: |
+          histogram_quantile(0.95, sum(rate(rag_generation_duration_seconds_bucket{job="rag-service"}[5m])) by (le))
+          > 15
+        for: 5m
+        labels:
+          severity: warning
+          service: rag
+        annotations:
+          summary: "AI service P95 response time above 15s"
+          description: "RAG service P95 latency is {{ $value }}s."
+
+      - alert: HighAbstentionRate
+        expr: |
+          (
+            sum(rate(rag_abstention_total{job="rag-service"}[1h]))
+            /
+            sum(rate(rag_queries_total{job="rag-service"}[1h]))
+          ) > 0.3
+        for: 15m
+        labels:
+          severity: warning
+          service: rag
+        annotations:
+          summary: "RAG abstention rate above 30%"
+          description: "{{ $value | humanizePercentage }} of queries resulted in abstention."
+
+      - alert: OcrServiceDown
+        expr: up{job="ocr-service"} == 0
+        for: 2m
+        labels:
+          severity: warning
+          service: ocr
+        annotations:
+          summary: "OCR service is down"
+
+      - alert: EmbeddingServiceDown
+        expr: up{job="embedding-service"} == 0
+        for: 2m
+        labels:
+          severity: warning
+          service: embedding
+        annotations:
+          summary: "Embedding service is down"
+
+  # ====================
+  # Database Alerts
+  # ====================
+  - name: database
+    interval: 30s
+    rules:
+      - alert: PostgresConnectionPoolExhaustion
+        expr: |
+          pg_stat_activity_count{job="postgres"}
+          /
+          pg_settings_max_connections{job="postgres"}
+          > 0.8
+        for: 5m
+        labels:
+          severity: critical
+          service: postgres
+        annotations:
+          summary: "PostgreSQL connection pool near exhaustion"
+          description: "{{ $value | humanizePercentage }} of max connections in use."
+
+      - alert: PostgresDown
+        expr: up{job="postgres"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: postgres
+        annotations:
+          summary: "PostgreSQL is down"
+
+      - alert: PostgresSlowQueries
+        expr: |
+          rate(pg_stat_activity_max_tx_duration{job="postgres"}[5m]) > 30
+        for: 5m
+        labels:
+          severity: warning
+          service: postgres
+        annotations:
+          summary: "PostgreSQL has long-running queries (>30s)"
+
+      - alert: PostgresReplicationLag
+        expr: pg_replication_lag{job="postgres"} > 30
+        for: 5m
+        labels:
+          severity: warning
+          service: postgres
+        annotations:
+          summary: "PostgreSQL replication lag above 30s"
+
+  # ====================
+  # Redis Alerts
+  # ====================
+  - name: redis
+    interval: 30s
+    rules:
+      - alert: RedisHighMemory
+        expr: |
+          redis_memory_used_bytes{job="redis"}
+          /
+          redis_memory_max_bytes{job="redis"}
+          > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          service: redis
+        annotations:
+          summary: "Redis memory usage above 80%"
+          description: "Redis is using {{ $value | humanizePercentage }} of max memory."
+
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: redis
+        annotations:
+          summary: "Redis is down"
+
+  # ====================
+  # OpenSearch Alerts
+  # ====================
+  - name: opensearch
+    interval: 60s
+    rules:
+      - alert: OpenSearchClusterRed
+        expr: opensearch_cluster_health_status{color="red"} == 1
+        for: 1m
+        labels:
+          severity: critical
+          service: opensearch
+        annotations:
+          summary: "OpenSearch cluster health is RED"
+
+      - alert: OpenSearchDown
+        expr: up{job="opensearch"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: opensearch
+        annotations:
+          summary: "OpenSearch is down"
+
+  # ====================
+  # Ingestion Pipeline Alerts
+  # ====================
+  - name: ingestion
+    interval: 60s
+    rules:
+      - alert: HighIngestionFailureRate
+        expr: |
+          (
+            sum(rate(ingestion_job_failures_total[1h]))
+            /
+            sum(rate(ingestion_job_total[1h]))
+          ) > 0.1
+        for: 15m
+        labels:
+          severity: warning
+          service: worker
+        annotations:
+          summary: "Ingestion pipeline failure rate above 10%"
+
+      - alert: ReviewQueueBacklog
+        expr: review_queue_pending_count > 100
+        for: 1h
+        labels:
+          severity: info
+          service: api
+        annotations:
+          summary: "Review queue has over 100 pending items"
+
+  # ====================
+  # Infrastructure Alerts
+  # ====================
+  - name: infrastructure
+    interval: 30s
+    rules:
+      - alert: HighDiskUsage
+        expr: |
+          (
+            node_filesystem_size_bytes{mountpoint="/",job="node"}
+            -
+            node_filesystem_avail_bytes{mountpoint="/",job="node"}
+          )
+          /
+          node_filesystem_size_bytes{mountpoint="/",job="node"}
+          > 0.85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk usage above 85%"
+          description: "{{ $value | humanizePercentage }} disk space used."
+
+      - alert: HighCpuUsage
+        expr: |
+          100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle",job="node"}[5m])) * 100)
+          > 90
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CPU usage above 90%"
+
+      - alert: HighMemoryUsage
+        expr: |
+          (
+            node_memory_MemTotal_bytes{job="node"}
+            -
+            node_memory_MemAvailable_bytes{job="node"}
+          )
+          /
+          node_memory_MemTotal_bytes{job="node"}
+          > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Memory usage above 90%"
+
+      - alert: CertificateExpirySoon
+        expr: |
+          (probe_ssl_earliest_cert_expiry - time()) / 86400 < 14
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "SSL certificate expires in less than 14 days"

@@ -1,0 +1,53 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+.next/
+.expo/
+out/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test coverage
+coverage/
+
+# Turbo
+.turbo/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.mypy_cache/
+.ruff_cache/
+
+# Docker
+docker-compose.override.yml
+
+# Secrets
+*.pem
+*.key
+credentials.json
+secrets/
+
+# Logs
+*.log
+logs/

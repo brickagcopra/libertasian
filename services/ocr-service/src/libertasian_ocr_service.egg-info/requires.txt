@@ -1,0 +1,16 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+pydantic>=2.10.0
+pydantic-settings>=2.7.0
+pillow>=11.0.0
+opencv-python-headless>=4.10.0
+pytesseract>=0.3.13
+numpy>=2.1.0
+httpx>=0.28.0
+PyMuPDF>=1.24.0
+
+[dev]
+mypy>=1.14.0
+ruff>=0.8.0
+pytest>=8.3.0
+pytest-asyncio>=0.24.0

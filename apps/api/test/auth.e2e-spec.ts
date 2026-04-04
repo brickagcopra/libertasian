@@ -1,0 +1,252 @@
+import { INestApplication } from '@nestjs/common';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const request = require('supertest') as typeof import('supertest');
+import { createTestApp, registerTestUser, loginTestUser, createAuthenticatedUser } from './helpers';
+
+describe('Auth (E2E)', () => {
+  let app: INestApplication;
+
+  beforeAll(async () => {
+    app = await createTestApp();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  // ---- Registration ----
+
+  describe('POST /api/v1/auth/register', () => {
+    it('should register a new user', async () => {
+      const email = `reg-${Date.now()}@test.com`;
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/register')
+        .send({ email, password: 'StrongPass123!test', fullName: 'Reg Test' })
+        .expect(201);
+
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.user.email).toBe(email);
+      expect(res.body.data.user.fullName).toBe('Reg Test');
+      expect(res.body.data.user.emailVerified).toBe(false);
+      // Sensitive fields should not be present
+      expect(res.body.data.user.passwordHash).toBeUndefined();
+      expect(res.body.data.user.mfaSecret).toBeUndefined();
+    });
+
+    it('should reject duplicate email', async () => {
+      const email = `dup-${Date.now()}@test.com`;
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/register')
+        .send({ email, password: 'StrongPass123!test', fullName: 'User' })
+        .expect(201);
+
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/register')
+        .send({ email, password: 'StrongPass123!test', fullName: 'User' })
+        .expect(409);
+    });
+
+    it('should reject short password (< 10 chars)', async () => {
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/register')
+        .send({ email: `short-${Date.now()}@test.com`, password: 'short1', fullName: 'User' })
+        .expect(400);
+    });
+
+    it('should reject missing fields', async () => {
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/register')
+        .send({ email: 'missing@test.com' })
+        .expect(400);
+    });
+
+    it('should reject unknown fields (whitelist)', async () => {
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/register')
+        .send({
+          email: `extra-${Date.now()}@test.com`,
+          password: 'StrongPass123!test',
+          fullName: 'User',
+          isAdmin: true, // unknown field — should be rejected
+        })
+        .expect(400);
+    });
+  });
+
+  // ---- Login ----
+
+  describe('POST /api/v1/auth/login', () => {
+    it('should login with valid credentials', async () => {
+      const { email, password } = await registerTestUser(app);
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email, password })
+        .expect(201);
+
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.tokens.accessToken).toBeDefined();
+      expect(res.body.data.tokens.refreshToken).toBeDefined();
+      expect(res.body.data.mfaRequired).toBe(false);
+    });
+
+    it('should reject invalid password', async () => {
+      const { email } = await registerTestUser(app);
+
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email, password: 'WrongPassword123!' })
+        .expect(401);
+    });
+
+    it('should reject non-existent email', async () => {
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email: 'nonexistent@test.com', password: 'SomePassword123!' })
+        .expect(401);
+    });
+  });
+
+  // ---- Token Refresh ----
+
+  describe('POST /api/v1/auth/refresh', () => {
+    it('should refresh tokens with a valid refresh token', async () => {
+      const { refreshToken } = await createAuthenticatedUser(app);
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/refresh')
+        .send({ refreshToken })
+        .expect(201);
+
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.accessToken).toBeDefined();
+      expect(res.body.data.refreshToken).toBeDefined();
+      // New refresh token should differ from old one (rotation)
+      expect(res.body.data.refreshToken).not.toBe(refreshToken);
+    });
+
+    it('should reject reused (already-rotated) refresh token', async () => {
+      const { refreshToken } = await createAuthenticatedUser(app);
+
+      // First refresh — succeeds
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/refresh')
+        .send({ refreshToken })
+        .expect(201);
+
+      // Second refresh with same token — reuse detection, should fail
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/refresh')
+        .send({ refreshToken })
+        .expect(401);
+    });
+
+    it('should reject invalid refresh token', async () => {
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/refresh')
+        .send({ refreshToken: 'invalid-token' })
+        .expect(401);
+    });
+  });
+
+  // ---- Logout ----
+
+  describe('POST /api/v1/auth/logout', () => {
+    it('should revoke refresh token family on logout', async () => {
+      const { accessToken, refreshToken } = await createAuthenticatedUser(app);
+
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/logout')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ refreshToken })
+        .expect(201);
+
+      // Refresh with the old token should now fail
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/refresh')
+        .send({ refreshToken })
+        .expect(401);
+    });
+  });
+
+  // ---- Protected Endpoints ----
+
+  describe('GET /api/v1/users/me', () => {
+    it('should return current user with valid token', async () => {
+      const { accessToken, email } = await createAuthenticatedUser(app);
+
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/users/me')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      expect(res.body.data.email).toBe(email);
+    });
+
+    it('should reject request without auth token', async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/users/me')
+        .expect(401);
+    });
+
+    it('should reject request with invalid token', async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/users/me')
+        .set('Authorization', 'Bearer invalid-token')
+        .expect(401);
+    });
+  });
+
+  // ---- Forgot / Reset Password ----
+
+  describe('Password reset flow', () => {
+    it('should return success for forgot password (anti-enumeration)', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/forgot-password')
+        .send({ email: 'nonexistent@test.com' })
+        .expect(201);
+
+      expect(res.body.success).toBe(true);
+      // Should always return success to prevent email enumeration
+    });
+
+    it('should reject reset with invalid token', async () => {
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/reset-password')
+        .send({ token: 'invalid-token', newPassword: 'NewStrongPass123!' })
+        .expect(400);
+    });
+  });
+
+  // ---- Session Management ----
+
+  describe('Session management', () => {
+    it('should list active sessions', async () => {
+      const { accessToken } = await createAuthenticatedUser(app);
+
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/auth/sessions')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      expect(res.body.success).toBe(true);
+      expect(Array.isArray(res.body.data)).toBe(true);
+      expect(res.body.data.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('should revoke all sessions', async () => {
+      const { accessToken, refreshToken } = await createAuthenticatedUser(app);
+
+      await request(app.getHttpServer())
+        .delete('/api/v1/auth/sessions')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      // Refresh token should be revoked
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/refresh')
+        .send({ refreshToken })
+        .expect(401);
+    });
+  });
+});

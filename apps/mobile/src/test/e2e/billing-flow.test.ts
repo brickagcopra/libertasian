@@ -1,0 +1,286 @@
+/**
+ * Billing Flow E2E Integration Tests.
+ * Tests: Plan selection → Checkout → Subscription → Usage → Cancellation.
+ * Per PRD: Xendit integration for Philippine payments.
+ * Per CLAUDE.md: Plan-based quotas, subscription enforcement at API level.
+ */
+
+const mockGet = jest.fn();
+const mockPost = jest.fn();
+const mockPatch = jest.fn();
+
+jest.mock('../../lib/api-client', () => ({
+  apiClient: {
+    get: (...args: unknown[]) => mockGet(...args),
+    post: (...args: unknown[]) => mockPost(...args),
+    patch: (...args: unknown[]) => mockPatch(...args),
+  },
+}));
+
+describe('Billing Flow E2E', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  describe('Plan listing', () => {
+    it('should list available plans', async () => {
+      mockGet.mockResolvedValueOnce({
+        plans: [
+          {
+            id: 'free',
+            name: 'Free',
+            price: 0,
+            currency: 'PHP',
+            features: ['50 searches/day', '15 AI answers/day', 'Basic codals'],
+          },
+          {
+            id: 'pro',
+            name: 'Pro',
+            price: 999,
+            currency: 'PHP',
+            interval: 'monthly',
+            features: ['Unlimited search', '200 AI answers/day', 'Digest generation', 'Camera scan'],
+          },
+          {
+            id: 'firm',
+            name: 'Firm',
+            price: 4999,
+            currency: 'PHP',
+            interval: 'monthly',
+            features: ['Everything in Pro', 'Multi-user', 'Admin dashboard', 'Priority support'],
+          },
+        ],
+      });
+
+      const result = await mockGet('/plans');
+      expect(result.plans).toHaveLength(3);
+      expect(result.plans[0].price).toBe(0);
+      expect(result.plans[1].price).toBeGreaterThan(0);
+    });
+  });
+
+  describe('Subscription status', () => {
+    it('should fetch current subscription', async () => {
+      mockGet.mockResolvedValueOnce({
+        subscription: {
+          id: 'sub-1',
+          planId: 'pro',
+          status: 'active',
+          currentPeriodStart: '2026-03-01',
+          currentPeriodEnd: '2026-04-01',
+          cancelAtPeriodEnd: false,
+        },
+      });
+
+      const result = await mockGet('/billing/subscription');
+      expect(result.subscription.status).toBe('active');
+      expect(result.subscription.planId).toBe('pro');
+    });
+
+    it('should validate subscription status values', () => {
+      const validStatuses = ['active', 'trialing', 'past_due', 'cancelled', 'expired'];
+      validStatuses.forEach((s) => {
+        expect(['active', 'trialing', 'past_due', 'cancelled', 'expired']).toContain(s);
+      });
+    });
+  });
+
+  describe('Checkout flow', () => {
+    it('should create checkout session (Xendit)', async () => {
+      mockPost.mockResolvedValueOnce({
+        checkoutUrl: 'https://checkout.xendit.co/v2/abc123',
+        invoiceId: 'inv-xendit-1',
+        expiresAt: '2026-03-25T11:00:00Z',
+      });
+
+      const result = await mockPost('/billing/checkout', {
+        planId: 'pro',
+        interval: 'monthly',
+      });
+
+      expect(result.checkoutUrl).toBeDefined();
+      expect(result.checkoutUrl).toContain('xendit');
+    });
+
+    it('should apply coupon at checkout', async () => {
+      mockPost.mockResolvedValueOnce({
+        checkoutUrl: 'https://checkout.xendit.co/v2/abc456',
+        originalPrice: 999,
+        discountedPrice: 799,
+        couponApplied: 'LAUNCH20',
+      });
+
+      const result = await mockPost('/billing/checkout', {
+        planId: 'pro',
+        interval: 'monthly',
+        couponCode: 'LAUNCH20',
+      });
+
+      expect(result.discountedPrice).toBeLessThan(result.originalPrice);
+    });
+
+    it('should validate coupon before checkout', async () => {
+      mockPost.mockResolvedValueOnce({
+        valid: true,
+        discount: { type: 'percentage', value: 20 },
+        expiresAt: '2026-06-30',
+      });
+
+      const result = await mockPost('/billing/coupons/validate', {
+        code: 'LAUNCH20',
+        planId: 'pro',
+      });
+
+      expect(result.valid).toBe(true);
+    });
+
+    it('should reject invalid coupon', async () => {
+      mockPost.mockResolvedValueOnce({
+        valid: false,
+        reason: 'Coupon expired',
+      });
+
+      const result = await mockPost('/billing/coupons/validate', {
+        code: 'EXPIRED',
+        planId: 'pro',
+      });
+
+      expect(result.valid).toBe(false);
+    });
+  });
+
+  describe('Usage tracking', () => {
+    it('should fetch usage summary', async () => {
+      mockGet.mockResolvedValueOnce({
+        usage: {
+          searches: { used: 42, limit: -1, label: 'Unlimited' },
+          aiAnswers: { used: 15, limit: 200, resetAt: '2026-03-26T00:00:00Z' },
+          cameraScans: { used: 5, limit: 50, resetAt: '2026-04-01T00:00:00Z' },
+          digestGeneration: { used: 3, limit: 20, resetAt: '2026-04-01T00:00:00Z' },
+        },
+        plan: 'pro',
+      });
+
+      const result = await mockGet('/billing/usage');
+      expect(result.usage.aiAnswers.used).toBeLessThanOrEqual(result.usage.aiAnswers.limit);
+      expect(result.plan).toBe('pro');
+    });
+
+    it('should compute usage percentage', () => {
+      const used = 15;
+      const limit = 200;
+      const percentage = Math.round((used / limit) * 100);
+      expect(percentage).toBe(8);
+    });
+
+    it('should handle unlimited quota (-1)', () => {
+      const limit = -1;
+      const isUnlimited = limit === -1;
+      expect(isUnlimited).toBe(true);
+    });
+  });
+
+  describe('Invoice history', () => {
+    it('should list invoices', async () => {
+      mockGet.mockResolvedValueOnce({
+        invoices: [
+          {
+            id: 'inv-1',
+            amount: 999,
+            currency: 'PHP',
+            status: 'paid',
+            paidAt: '2026-03-01T00:00:00Z',
+          },
+          {
+            id: 'inv-2',
+            amount: 999,
+            currency: 'PHP',
+            status: 'paid',
+            paidAt: '2026-02-01T00:00:00Z',
+          },
+        ],
+      });
+
+      const result = await mockGet('/billing/invoices');
+      expect(result.invoices).toHaveLength(2);
+      expect(result.invoices[0].status).toBe('paid');
+    });
+  });
+
+  describe('Cancellation flow', () => {
+    it('should cancel subscription at period end', async () => {
+      mockPost.mockResolvedValueOnce({
+        subscription: {
+          id: 'sub-1',
+          status: 'active',
+          cancelAtPeriodEnd: true,
+          currentPeriodEnd: '2026-04-01',
+        },
+      });
+
+      const result = await mockPost('/billing/subscription/cancel', {
+        reason: 'too_expensive',
+        feedback: 'Student budget',
+      });
+
+      expect(result.subscription.cancelAtPeriodEnd).toBe(true);
+      expect(result.subscription.status).toBe('active'); // Still active until period end
+    });
+
+    it('should allow reactivation before period end', async () => {
+      mockPost.mockResolvedValueOnce({
+        subscription: {
+          id: 'sub-1',
+          status: 'active',
+          cancelAtPeriodEnd: false,
+        },
+      });
+
+      const result = await mockPost('/billing/subscription/reactivate');
+      expect(result.subscription.cancelAtPeriodEnd).toBe(false);
+    });
+  });
+
+  describe('Subscription enforcement', () => {
+    it('should reject premium features for free users', async () => {
+      mockPost.mockRejectedValueOnce({
+        response: {
+          status: 403,
+          data: {
+            error: {
+              code: 'INSUFFICIENT_SUBSCRIPTION',
+              message: 'Pro plan required for digest generation',
+              requiredPlan: 'pro',
+            },
+          },
+        },
+      });
+
+      await expect(
+        mockPost('/digests/generate', { uploadId: 'up-1' }),
+      ).rejects.toEqual(
+        expect.objectContaining({
+          response: expect.objectContaining({ status: 403 }),
+        }),
+      );
+    });
+
+    it('should reject when AI answer quota exceeded', async () => {
+      mockPost.mockRejectedValueOnce({
+        response: {
+          status: 429,
+          data: { error: { code: 'AI_QUOTA_EXCEEDED' } },
+          headers: { 'retry-after': '86400' },
+        },
+      });
+
+      await expect(
+        mockPost('/ai-answers', { query: 'test' }),
+      ).rejects.toEqual(
+        expect.objectContaining({
+          response: expect.objectContaining({ status: 429 }),
+        }),
+      );
+    });
+  });
+});

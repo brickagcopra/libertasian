@@ -1,0 +1,62 @@
+# ==========================================================================
+# LIBERTASIAN — k6 Performance & Load Testing Stack
+# Per Testing Strategy Phase 5: Performance & Load Testing
+#
+# Usage:
+#   # Start InfluxDB for metrics storage:
+#   docker compose -f infrastructure/k6/docker-compose.k6.yml up -d influxdb
+#
+#   # Run smoke tests:
+#   docker compose -f infrastructure/k6/docker-compose.k6.yml run --rm k6 run /scripts/profiles/smoke.js
+#
+#   # Run load tests:
+#   docker compose -f infrastructure/k6/docker-compose.k6.yml run --rm k6 run /scripts/profiles/load.js
+#
+#   # Run with custom env vars:
+#   K6_BASE_URL=http://api:3001/api/v1 docker compose -f infrastructure/k6/docker-compose.k6.yml run --rm k6 run /scripts/profiles/load.js
+# ==========================================================================
+
+services:
+  # ====================
+  # InfluxDB 1.8 (k6 native output)
+  # ====================
+  influxdb:
+    image: influxdb:1.8
+    container_name: libertasian-k6-influxdb
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8086:8086"
+    environment:
+      INFLUXDB_DB: k6
+      INFLUXDB_HTTP_MAX_BODY_SIZE: 0
+    volumes:
+      - k6_influxdb_data:/var/lib/influxdb
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+
+  # ====================
+  # k6 Runner
+  # ====================
+  k6:
+    image: grafana/k6:latest
+    container_name: libertasian-k6-runner
+    environment:
+      K6_OUT: influxdb=http://influxdb:8086/k6
+      K6_BASE_URL: ${K6_BASE_URL:-http://host.docker.internal:3001/api/v1}
+      K6_TEST_USER_EMAIL: ${K6_TEST_USER_EMAIL:-k6-perf@libertasian.test}
+      K6_TEST_USER_PASSWORD: ${K6_TEST_USER_PASSWORD:-K6PerfTest2026!}
+    volumes:
+      - ./lib:/scripts/lib:ro
+      - ./scenarios:/scripts/scenarios:ro
+      - ./profiles:/scripts/profiles:ro
+      - ./seed:/scripts/seed:ro
+    depends_on:
+      - influxdb
+    profiles:
+      - runner
+
+volumes:
+  k6_influxdb_data:

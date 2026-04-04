@@ -1,0 +1,8 @@
+{
+  "name": "@libertasian/worker-service",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "echo 'worker-service dev placeholder'"
+  }
+}

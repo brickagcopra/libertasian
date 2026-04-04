@@ -1,0 +1,146 @@
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
+import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import * as crypto from 'crypto';
+import { v4 as uuidv4 } from 'uuid';
+
+@Injectable()
+export class S3Service {
+  private readonly logger = new Logger(S3Service.name);
+  private readonly client: S3Client;
+  private readonly bucket: string;
+
+  constructor(private readonly config: ConfigService) {
+    this.bucket = this.config.get<string>(
+      'S3_BUCKET_UPLOADS',
+      'libertasian-uploads',
+    );
+
+    this.client = new S3Client({
+      endpoint: this.config.get<string>('S3_ENDPOINT', 'http://localhost:9000'),
+      region: 'us-east-1',
+      credentials: {
+        accessKeyId: this.config.get<string>('S3_ACCESS_KEY', 'libertasian'),
+        secretAccessKey: this.config.get<string>(
+          'S3_SECRET_KEY',
+          'libertasian_dev_secret',
+        ),
+      },
+      forcePathStyle: true, // Required for MinIO
+    });
+  }
+
+  /**
+   * Generate a UUID-based object key for secure storage.
+   * Path: uploads/{orgId}/{userId}/{uuid}/{sanitizedFilename}
+   */
+  generateObjectKey(
+    organizationId: string,
+    userId: string,
+    originalFilename: string,
+  ): string {
+    const fileId = uuidv4();
+    const sanitized = this.sanitizeFilename(originalFilename);
+    return `uploads/${organizationId}/${userId}/${fileId}/${sanitized}`;
+  }
+
+  /**
+   * Sanitize filename: strip path components, null bytes, special characters.
+   * Preserves the file extension.
+   */
+  sanitizeFilename(filename: string): string {
+    // Strip path components
+    let name = filename.replace(/^.*[\\/]/, '');
+    // Remove null bytes
+    name = name.replace(/\0/g, '');
+    // Replace special characters with underscores (keep alphanumeric, dots, hyphens)
+    name = name.replace(/[^a-zA-Z0-9.\-_]/g, '_');
+    // Prevent hidden files
+    name = name.replace(/^\.+/, '');
+    // Limit length
+    if (name.length > 200) {
+      const ext = name.lastIndexOf('.');
+      if (ext > 0) {
+        name = name.substring(0, 196) + name.substring(ext);
+      } else {
+        name = name.substring(0, 200);
+      }
+    }
+    return name || 'unnamed';
+  }
+
+  async upload(
+    objectKey: string,
+    buffer: Buffer,
+    mimeType: string,
+    originalFilename: string,
+  ): Promise<void> {
+    await this.client.send(
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: objectKey,
+        Body: buffer,
+        ContentType: mimeType,
+        ContentDisposition: `attachment; filename="${this.sanitizeFilename(originalFilename)}"`,
+      }),
+    );
+
+    this.logger.log(`Uploaded ${objectKey} (${buffer.length} bytes)`);
+  }
+
+  async get(objectKey: string): Promise<Buffer> {
+    const response = await this.client.send(
+      new GetObjectCommand({
+        Bucket: this.bucket,
+        Key: objectKey,
+      }),
+    );
+
+    const stream = response.Body;
+    if (!stream) {
+      throw new Error(`Empty response for ${objectKey}`);
+    }
+
+    // Collect stream to buffer
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of stream as AsyncIterable<Uint8Array>) {
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks);
+  }
+
+  async delete(objectKey: string): Promise<void> {
+    await this.client.send(
+      new DeleteObjectCommand({
+        Bucket: this.bucket,
+        Key: objectKey,
+      }),
+    );
+    this.logger.log(`Deleted ${objectKey}`);
+  }
+
+  async exists(objectKey: string): Promise<boolean> {
+    try {
+      await this.client.send(
+        new HeadObjectCommand({
+          Bucket: this.bucket,
+          Key: objectKey,
+        }),
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Compute SHA-256 checksum of a buffer */
+  computeChecksum(buffer: Buffer): string {
+    return crypto.createHash('sha256').update(buffer).digest('hex');
+  }
+}

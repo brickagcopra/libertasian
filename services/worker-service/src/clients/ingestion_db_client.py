@@ -1,0 +1,887 @@
+"""LIBERTASIAN Worker Service — PostgreSQL client for ingestion pipeline.
+
+Database operations for the ingestion pipeline tables:
+ingestion_jobs, ingestion_candidates, legal_documents,
+legal_document_versions, legal_document_sections, sources, source_endpoints.
+
+Per CLAUDE.md: Python services read/write their own tables but Prisma owns
+schema migrations. All table/column names use snake_case via Prisma @@map/@map.
+"""
+
+import json
+import logging
+from typing import Any
+
+import psycopg2.extras
+
+from .db_client import get_connection
+
+logger = logging.getLogger(__name__)
+
+
+# ─── Read Operations ─────────────────────────────────────────────────────
+
+
+def get_pending_ingestion_jobs(limit: int = 10) -> list[dict[str, Any]]:
+    """Fetch pending ingestion jobs ordered by creation (oldest first)."""
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """SELECT id, source_id, source_endpoint_id, job_type, status
+               FROM ingestion_jobs
+               WHERE status = 'pending'
+               ORDER BY id ASC
+               LIMIT %s""",
+            (limit,),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+def get_source_with_endpoints(source_id: str) -> dict[str, Any] | None:
+    """Fetch a source and its active endpoints."""
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """SELECT id, name, type, domain, trust_level, enabled, fetch_strategy
+               FROM sources
+               WHERE id = %s""",
+            (source_id,),
+        )
+        source = cur.fetchone()
+        if not source:
+            return None
+
+        result = dict(source)
+
+        cur.execute(
+            """SELECT id, endpoint_url, content_type_hint, parser_type,
+                      last_fetched_at, last_success_at, status
+               FROM source_endpoints
+               WHERE source_id = %s AND status = 'active'
+               ORDER BY id ASC""",
+            (source_id,),
+        )
+        result["endpoints"] = [dict(row) for row in cur.fetchall()]
+        return result
+
+
+def find_candidate_by_similarity_key(
+    source_id: str,
+    similarity_key: str,
+) -> dict[str, Any] | None:
+    """Find an existing ingestion candidate by similarity key for dedup."""
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """SELECT id, status, detected_url
+               FROM ingestion_candidates
+               WHERE source_id = %s AND similarity_key = %s
+               LIMIT 1""",
+            (source_id, similarity_key),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def find_document_by_checksum(checksum: str) -> dict[str, Any] | None:
+    """Find an existing legal document by content checksum."""
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """SELECT id, title, gr_no, source_id
+               FROM legal_documents
+               WHERE checksum = %s
+               LIMIT 1""",
+            (checksum,),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def find_document_by_gr_no(
+    gr_no: str,
+    source_id: str,
+) -> dict[str, Any] | None:
+    """Find an existing legal document by GR number and source for update detection."""
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """SELECT id, title, checksum, version_no
+                   FROM legal_documents
+                   WHERE gr_no = %s AND source_id = %s
+                   LIMIT 1""",
+                (gr_no, source_id),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+
+# ─── Write Operations ────────────────────────────────────────────────────
+
+
+def claim_ingestion_job(job_id: str) -> bool:
+    """Atomically claim a pending job by setting status to 'running'.
+
+    Returns True if the job was claimed (was still pending), False otherwise.
+    Uses optimistic locking via WHERE status='pending'.
+    """
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """UPDATE ingestion_jobs
+                   SET status = 'running', started_at = NOW()
+                   WHERE id = %s AND status = 'pending'""",
+            (job_id,),
+        )
+        claimed = bool(cur.rowcount > 0)
+    if claimed:
+        logger.info("Claimed ingestion job %s", job_id)
+    else:
+        logger.warning("Failed to claim ingestion job %s (already claimed?)", job_id)
+    return claimed
+
+
+def complete_ingestion_job(
+    job_id: str,
+    records_found: int,
+    records_created: int,
+    records_updated: int,
+) -> None:
+    """Mark an ingestion job as completed with result counters."""
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """UPDATE ingestion_jobs
+                   SET status = 'completed',
+                       finished_at = NOW(),
+                       records_found = %s,
+                       records_created = %s,
+                       records_updated = %s
+                   WHERE id = %s""",
+            (records_found, records_created, records_updated, job_id),
+        )
+    logger.info(
+        "Completed ingestion job %s: found=%d created=%d updated=%d",
+        job_id,
+        records_found,
+        records_created,
+        records_updated,
+    )
+
+
+def fail_ingestion_job(
+    job_id: str,
+    errors: list[dict[str, Any]],
+) -> None:
+    """Mark an ingestion job as failed with error details."""
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """UPDATE ingestion_jobs
+                   SET status = 'failed',
+                       finished_at = NOW(),
+                       errors_json = %s::jsonb
+                   WHERE id = %s""",
+            (json.dumps(errors), job_id),
+        )
+    logger.error("Failed ingestion job %s: %d errors", job_id, len(errors))
+
+
+def create_ingestion_candidate(
+    source_id: str,
+    detected_url: str | None,
+    detected_title: str | None,
+    detected_document_type: str | None,
+    similarity_key: str | None,
+) -> str:
+    """Create an ingestion candidate record. Returns the new ID."""
+    import uuid
+
+    candidate_id = str(uuid.uuid4())
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO ingestion_candidates
+                   (id, source_id, detected_url, detected_title,
+                    detected_document_type, similarity_key, status, created_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, 'new', NOW())""",
+            (
+                candidate_id,
+                source_id,
+                detected_url,
+                detected_title,
+                detected_document_type,
+                similarity_key,
+            ),
+        )
+    logger.info("Created ingestion candidate %s for source %s", candidate_id, source_id)
+    return candidate_id
+
+
+def update_candidate_status(candidate_id: str, status: str) -> None:
+    """Update the status of an ingestion candidate."""
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE ingestion_candidates SET status = %s WHERE id = %s",
+            (status, candidate_id),
+        )
+    logger.info("Updated candidate %s status=%s", candidate_id, status)
+
+
+def create_legal_document(
+    source_id: str,
+    title: str,
+    document_type: str,
+    canonical_url: str | None = None,
+    external_id: str | None = None,
+    gr_no: str | None = None,
+    docket_no: str | None = None,
+    citation_text: str | None = None,
+    decision_date: str | None = None,
+    promulgation_date: str | None = None,
+    ponente: str | None = None,
+    court: str | None = None,
+    checksum: str | None = None,
+    is_official: bool = False,
+) -> str:
+    """Create a legal document record (status='draft', truthfulness='needs_review').
+
+    Per plan: new documents start unpublished and need admin review.
+    Returns the new document ID.
+    """
+    import uuid
+
+    doc_id = str(uuid.uuid4())
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO legal_documents
+                   (id, source_id, title, document_type, canonical_url, external_id,
+                    gr_no, docket_no, citation_text, decision_date, promulgation_date,
+                    ponente, court, checksum, jurisdiction, status, language,
+                    version_no, is_official, is_published, truthfulness_status,
+                    created_at, updated_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                           'PH', 'draft', 'en', 1, %s, false, 'needs_review',
+                           NOW(), NOW())""",
+            (
+                doc_id,
+                source_id,
+                title,
+                document_type,
+                canonical_url,
+                external_id,
+                gr_no,
+                docket_no,
+                citation_text,
+                decision_date,
+                promulgation_date,
+                ponente,
+                court,
+                checksum,
+                is_official,
+            ),
+        )
+    logger.info("Created legal document %s: %s", doc_id, title[:80])
+    return doc_id
+
+
+def create_legal_document_version(
+    legal_document_id: str,
+    snapshot_hash: str,
+    raw_file_object_key: str | None = None,
+    normalized_text_object_key: str | None = None,
+    html_object_key: str | None = None,
+    extracted_json: dict[str, Any] | None = None,
+    parser_version: str | None = None,
+) -> str:
+    """Create a new version row for a legal document. Never overwrites existing versions.
+
+    Per CLAUDE.md: updated documents create new version rows.
+    Returns the new version ID.
+    """
+    import uuid
+
+    version_id = str(uuid.uuid4())
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO legal_document_versions
+                   (id, legal_document_id, raw_file_object_key,
+                    normalized_text_object_key, html_object_key,
+                    extracted_json, snapshot_hash, parser_version, created_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())""",
+            (
+                version_id,
+                legal_document_id,
+                raw_file_object_key,
+                normalized_text_object_key,
+                html_object_key,
+                json.dumps(extracted_json) if extracted_json else None,
+                snapshot_hash,
+                parser_version,
+            ),
+        )
+    logger.info("Created version %s for document %s", version_id, legal_document_id)
+    return version_id
+
+
+def create_legal_document_sections(
+    legal_document_id: str,
+    sections: list[dict[str, Any]],
+) -> list[str]:
+    """Batch insert legal document sections. Returns list of new section IDs."""
+    import uuid
+
+    section_ids: list[str] = []
+    if not sections:
+        return section_ids
+
+    with get_connection() as conn, conn.cursor() as cur:
+        for idx, section in enumerate(sections):
+            section_id = str(uuid.uuid4())
+            section_ids.append(section_id)
+            cur.execute(
+                """INSERT INTO legal_document_sections
+                       (id, legal_document_id, section_type, section_label,
+                        ordering, plain_text, html_text, page_start, page_end,
+                        token_count, created_at)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())""",
+                (
+                    section_id,
+                    legal_document_id,
+                    section.get("section_type", "body"),
+                    section.get("section_label"),
+                    section.get("ordering", idx),
+                    section.get("plain_text"),
+                    section.get("html_text"),
+                    section.get("page_start"),
+                    section.get("page_end"),
+                    section.get("token_count"),
+                ),
+            )
+    logger.info(
+        "Created %d sections for document %s",
+        len(section_ids),
+        legal_document_id,
+    )
+    return section_ids
+
+
+# ─── Validation / Auto-Publish Read Operations ─────────────────────────
+
+
+def get_document_for_validation(doc_id: str) -> dict[str, Any] | None:
+    """Fetch document fields needed for truthfulness validation."""
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """SELECT id, title, document_type, court, decision_date,
+                      gr_no, status, truthfulness_status, is_published,
+                      is_official, source_id, checksum
+               FROM legal_documents
+               WHERE id = %s""",
+            (doc_id,),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def get_source_for_validation(source_id: str) -> dict[str, Any] | None:
+    """Fetch source trust_level for validation decisions."""
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """SELECT id, name, type, trust_level
+               FROM sources
+               WHERE id = %s""",
+            (source_id,),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def get_document_sections_for_validation(doc_id: str) -> list[dict[str, Any]]:
+    """Lightweight section list for validation (id + type only)."""
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """SELECT id, section_type
+               FROM legal_document_sections
+               WHERE legal_document_id = %s""",
+            (doc_id,),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+def get_editorial_flags_for_document(doc_id: str) -> list[dict[str, Any]]:
+    """Fetch open editorial flags for a document."""
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """SELECT id, flag_type, severity, status
+               FROM editorial_flags
+               WHERE legal_document_id = %s AND status = 'open'""",
+            (doc_id,),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+def get_citation_counts(doc_id: str) -> dict[str, int]:
+    """Get resolved vs total citation counts for a document."""
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """SELECT
+                   COUNT(*) AS total,
+                   COUNT(to_document_id) AS resolved
+               FROM citations
+               WHERE from_document_id = %s""",
+            (doc_id,),
+        )
+        row = cur.fetchone()
+        if row:
+            return {"total": int(row["total"]), "resolved": int(row["resolved"])}
+        return {"total": 0, "resolved": 0}
+
+
+# ─── Validation / Auto-Publish Write Operations ────────────────────────
+
+
+def publish_document(doc_id: str) -> None:
+    """Atomically set a document to published + verified state."""
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """UPDATE legal_documents
+                   SET status = 'published',
+                       truthfulness_status = 'verified',
+                       is_published = true,
+                       updated_at = NOW()
+                   WHERE id = %s""",
+            (doc_id,),
+        )
+    logger.info("Published document %s", doc_id)
+
+
+def quarantine_document(doc_id: str) -> None:
+    """Set a document's truthfulness status to quarantined."""
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """UPDATE legal_documents
+                   SET truthfulness_status = 'quarantined',
+                       is_published = false,
+                       updated_at = NOW()
+                   WHERE id = %s""",
+            (doc_id,),
+        )
+    logger.info("Quarantined document %s", doc_id)
+
+
+def create_audit_log(
+    action: str,
+    entity_type: str,
+    entity_id: str | None = None,
+    actor_type: str = "system",
+    actor_user_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    """Write an audit log entry from the worker service."""
+    import uuid
+
+    log_id = str(uuid.uuid4())
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO audit_logs
+                   (id, actor_user_id, actor_type, action,
+                    entity_type, entity_id, metadata_json, created_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, NOW())""",
+            (
+                log_id,
+                actor_user_id,
+                actor_type,
+                action,
+                entity_type,
+                entity_id,
+                json.dumps(metadata) if metadata else "{}",
+            ),
+        )
+    logger.info("Audit log: action=%s entity=%s/%s", action, entity_type, entity_id)
+
+
+def create_editorial_flag_for_failed_task(
+    document_id: str | None,
+    candidate_id: str | None,
+    task_name: str,
+    error_message: str,
+) -> str | None:
+    """Create an editorial flag for a permanently failed ingestion task.
+
+    Links to the document if available, otherwise records the candidate_id
+    in metadata for manual investigation.
+    """
+    import uuid
+
+    if not document_id and not candidate_id:
+        return None
+
+    flag_id = str(uuid.uuid4())
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO editorial_flags
+                   (id, legal_document_id, flag_type, severity, status,
+                    description, created_at)
+                   VALUES (%s, %s, %s, %s, 'open', %s, NOW())""",
+            (
+                flag_id,
+                document_id,
+                "ingestion_failure",
+                "high",
+                f"Task {task_name} permanently failed after max retries. "
+                f"Candidate: {candidate_id or 'N/A'}. "
+                f"Error: {error_message[:500]}",
+            ),
+        )
+    logger.info(
+        "Created editorial flag %s for failed task %s (doc=%s, candidate=%s)",
+        flag_id,
+        task_name,
+        document_id,
+        candidate_id,
+    )
+    return flag_id
+
+
+def update_source_endpoint_fetch_time(
+    endpoint_id: str,
+    success: bool = True,
+) -> None:
+    """Update the last fetch timestamps on a source endpoint."""
+    with get_connection() as conn, conn.cursor() as cur:
+        if success:
+            cur.execute(
+                """UPDATE source_endpoints
+                       SET last_fetched_at = NOW(), last_success_at = NOW()
+                       WHERE id = %s""",
+                (endpoint_id,),
+            )
+        else:
+            cur.execute(
+                """UPDATE source_endpoints
+                       SET last_fetched_at = NOW()
+                       WHERE id = %s""",
+                (endpoint_id,),
+            )
+    logger.info("Updated endpoint %s fetch time (success=%s)", endpoint_id, success)
+
+
+# ─── Dedup Classification Operations ──────────────────────────────────
+
+
+def find_documents_by_gr_no_cross_source(
+    gr_no: str,
+    exclude_source_id: str,
+) -> list[dict[str, Any]]:
+    """Find documents with the same GR No. from other sources (mirror detection)."""
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """SELECT id, title, gr_no, citation_text, source_id, checksum, court
+               FROM legal_documents
+               WHERE gr_no = %s AND source_id != %s
+               LIMIT 10""",
+            (gr_no, exclude_source_id),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+def find_documents_by_title_similarity(
+    source_id: str,
+    document_type: str,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    """Fetch recent documents from the same source and type for title comparison.
+
+    Scoped to same source + same document_type to avoid O(n^2) scaling.
+    Returns at most `limit` recent documents.
+    """
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """SELECT id, title, court, citation_text, checksum
+               FROM legal_documents
+               WHERE source_id = %s AND document_type = %s
+               ORDER BY created_at DESC
+               LIMIT %s""",
+            (source_id, document_type, limit),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+def create_document_similarity(
+    document_a_id: str,
+    document_b_id: str,
+    similarity_score: float,
+    similarity_type: str,
+    status: str = "pending",
+    classification_tier: str | None = None,
+    classification_confidence: float | None = None,
+    classification_metadata: dict[str, Any] | None = None,
+    canonical_document_id: str | None = None,
+) -> str:
+    """Create a DocumentSimilarity record. Returns the new ID."""
+    import uuid
+
+    sim_id = str(uuid.uuid4())
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO document_similarities
+                   (id, document_a_id, document_b_id, similarity_score,
+                    similarity_type, status, classification_tier,
+                    classification_confidence, classification_metadata_json,
+                    canonical_document_id, created_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, NOW())""",
+            (
+                sim_id,
+                document_a_id,
+                document_b_id,
+                similarity_score,
+                similarity_type,
+                status,
+                classification_tier,
+                classification_confidence,
+                json.dumps(classification_metadata)
+                if classification_metadata
+                else None,
+                canonical_document_id,
+            ),
+        )
+    logger.info(
+        "Created document similarity %s: %s <-> %s (tier=%s, score=%.2f)",
+        sim_id,
+        document_a_id,
+        document_b_id,
+        classification_tier,
+        similarity_score,
+    )
+    return sim_id
+
+
+def update_candidate_dedup_classification(
+    candidate_id: str,
+    dedup_classification: str,
+    dedup_confidence: float,
+    matched_document_id: str | None = None,
+) -> None:
+    """Update dedup classification fields on an ingestion candidate."""
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """UPDATE ingestion_candidates
+                   SET dedup_classification = %s,
+                       dedup_confidence = %s,
+                       matched_document_id = %s,
+                       processed_at = NOW()
+                   WHERE id = %s""",
+            (dedup_classification, dedup_confidence, matched_document_id, candidate_id),
+        )
+    logger.info(
+        "Updated candidate %s dedup: class=%s conf=%.2f matched=%s",
+        candidate_id,
+        dedup_classification,
+        dedup_confidence,
+        matched_document_id,
+    )
+
+
+def complete_ingestion_job_with_dedup(
+    job_id: str,
+    records_found: int,
+    records_created: int,
+    records_updated: int,
+    records_skipped: int,
+    records_duplicate: int,
+    duration_ms: int | None = None,
+) -> None:
+    """Mark an ingestion job as completed with full dedup counters."""
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """UPDATE ingestion_jobs
+                   SET status = 'completed',
+                       finished_at = NOW(),
+                       records_found = %s,
+                       records_created = %s,
+                       records_updated = %s,
+                       records_skipped = %s,
+                       records_duplicate = %s,
+                       duration_ms = %s
+                   WHERE id = %s""",
+            (
+                records_found,
+                records_created,
+                records_updated,
+                records_skipped,
+                records_duplicate,
+                duration_ms,
+                job_id,
+            ),
+        )
+    logger.info(
+        "Completed ingestion job %s: found=%d created=%d updated=%d skipped=%d dup=%d",
+        job_id,
+        records_found,
+        records_created,
+        records_updated,
+        records_skipped,
+        records_duplicate,
+    )
+
+
+# ─── Digest Generation Operations ──────────────────────────────────────
+
+
+def get_document_sections_for_digest(doc_id: str) -> list[dict[str, Any]]:
+    """Fetch full document sections for digest generation."""
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """SELECT id, section_type, section_label, plain_text,
+                      page_start, page_end, ordering
+               FROM legal_document_sections
+               WHERE legal_document_id = %s
+               ORDER BY ordering ASC""",
+            (doc_id,),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+def get_document_metadata_for_digest(doc_id: str) -> dict[str, Any] | None:
+    """Fetch document metadata needed for digest generation."""
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """SELECT id, title, short_title, document_type, gr_no,
+                      citation_text, court, ponente, decision_date, source_id
+               FROM legal_documents
+               WHERE id = %s""",
+            (doc_id,),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def create_digest(
+    document_id: str,
+    title: str,
+    source_origin: str,
+    digest_type: str,
+    summary: str | None,
+    facts: str | None,
+    petitioner_arguments: str | None,
+    respondent_arguments: str | None,
+    issues: str | None,
+    ruling: str | None,
+    doctrine: str | None,
+    dispositive: str | None,
+    cited_authorities_json: str,
+    confidence_score: float | None,
+    review_status: str,
+    visibility: str,
+) -> str:
+    """Create a digest row directly in PostgreSQL. Returns the new digest ID."""
+    import uuid
+
+    digest_id = str(uuid.uuid4())
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO digests
+                   (id, legal_document_id, source_origin, title, digest_type,
+                    facts, issues, ruling, doctrine, dispositive,
+                    summary, petitioner_arguments, respondent_arguments,
+                    cited_authorities_json, confidence_score,
+                    review_status, visibility, created_at, updated_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                           %s, %s, %s, %s::jsonb, %s, %s, %s, NOW(), NOW())""",
+            (
+                digest_id,
+                document_id,
+                source_origin,
+                title,
+                digest_type,
+                facts,
+                issues,
+                ruling,
+                doctrine,
+                dispositive,
+                summary,
+                petitioner_arguments,
+                respondent_arguments,
+                cited_authorities_json,
+                confidence_score,
+                review_status,
+                visibility,
+            ),
+        )
+    logger.info("Created digest %s for document %s", digest_id, document_id)
+    return digest_id
+
+
+def create_provenance_records(records: list[dict[str, Any]]) -> int:
+    """Batch insert provenance records. Returns count of records created."""
+    import uuid
+
+    if not records:
+        return 0
+
+    with get_connection() as conn, conn.cursor() as cur:
+        for record in records:
+            record_id = str(uuid.uuid4())
+            cur.execute(
+                """INSERT INTO provenance_records
+                       (id, entity_type, entity_id, source_document_id,
+                        source_section_id, provenance_type, created_at)
+                       VALUES (%s, %s, %s, %s, %s, %s, NOW())""",
+                (
+                    record_id,
+                    record.get("entity_type", "digest"),
+                    record["entity_id"],
+                    record["source_document_id"],
+                    record.get("source_section_id"),
+                    record.get("provenance_type", "generated"),
+                ),
+            )
+    logger.info("Created %d provenance records", len(records))
+    return len(records)
+
+
+def create_model_run(
+    run_type: str,
+    model_name: str,
+    model_version: str | None = None,
+    prompt_template_version: str | None = None,
+    input_ref: str | None = None,
+    output_ref: str | None = None,
+    confidence: float | None = None,
+    tokens_in: int | None = None,
+    tokens_out: int | None = None,
+    latency_ms: int | None = None,
+) -> str:
+    """Create a model run audit record. Returns the new model run ID."""
+    import uuid
+
+    run_id = str(uuid.uuid4())
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO model_runs
+                   (id, run_type, model_name, model_version,
+                    prompt_template_version, input_ref, output_ref,
+                    confidence, tokens_in, tokens_out, latency_ms, created_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())""",
+            (
+                run_id,
+                run_type,
+                model_name,
+                model_version,
+                prompt_template_version,
+                input_ref,
+                output_ref,
+                confidence,
+                tokens_in,
+                tokens_out,
+                latency_ms,
+            ),
+        )
+    logger.info("Created model run %s: type=%s model=%s", run_id, run_type, model_name)
+    return run_id

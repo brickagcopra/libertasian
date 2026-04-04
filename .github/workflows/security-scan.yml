@@ -1,0 +1,154 @@
+name: Security Scan
+
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1" # Weekly on Monday at 6am UTC
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  # ====================
+  # Node.js Dependency Audit
+  # ====================
+  node-audit:
+    name: Node.js Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Audit Node.js dependencies
+        run: pnpm audit --audit-level moderate
+        continue-on-error: true
+
+  # ====================
+  # Python Dependency Audit
+  # ====================
+  python-audit:
+    name: Python Dependency Audit
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [rag-service, worker-service, ocr-service, embedding-service]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        working-directory: services/${{ matrix.service }}
+        run: uv sync
+
+      - name: Audit Python dependencies
+        working-directory: services/${{ matrix.service }}
+        run: uv pip audit
+        continue-on-error: true
+
+  # ====================
+  # Trivy Container Image Scan
+  # ====================
+  trivy-scan:
+    name: Container Image Scan
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - service: api
+            dockerfile: infrastructure/docker/Dockerfile.api
+          - service: web
+            dockerfile: infrastructure/docker/Dockerfile.web
+          - service: rag-service
+            dockerfile: infrastructure/docker/Dockerfile.rag
+          - service: ocr-service
+            dockerfile: infrastructure/docker/Dockerfile.ocr
+          - service: worker-service
+            dockerfile: infrastructure/docker/Dockerfile.worker
+          - service: embedding-service
+            dockerfile: infrastructure/docker/Dockerfile.embedding
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image for scanning
+        run: |
+          docker build \
+            -f ${{ matrix.dockerfile }} \
+            -t libertasian-${{ matrix.service }}:scan \
+            .
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: libertasian-${{ matrix.service }}:scan
+          format: sarif
+          output: trivy-${{ matrix.service }}.sarif
+          severity: CRITICAL,HIGH
+          exit-code: 0
+
+      - name: Upload Trivy scan results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-${{ matrix.service }}.sarif
+          category: trivy-${{ matrix.service }}
+
+  # ====================
+  # CodeQL SAST Analysis
+  # ====================
+  codeql:
+    name: CodeQL Analysis
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        language: [javascript-typescript, python]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: codeql-${{ matrix.language }}
+
+  # ====================
+  # Secret Scanning
+  # ====================
+  secret-scan:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: TruffleHog secret scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          extra_args: --only-verified

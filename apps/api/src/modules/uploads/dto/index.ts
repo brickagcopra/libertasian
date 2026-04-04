@@ -1,0 +1,9 @@
+export { UploadFileDto } from './upload-file.dto';
+export { UploadCameraScanDto } from './upload-camera-scan.dto';
+export { ListUploadsQueryDto } from './list-uploads-query.dto';
+export { UpdatePrivacyDto } from './update-privacy.dto';
+export { GenerateDigestFromUploadDto } from './generate-digest-from-upload.dto';
+export { AttachToMatterDto } from './attach-to-matter.dto';
+export { GenerateFlashcardsFromUploadDto } from './generate-flashcards-from-upload.dto';
+export { GenerateOutlineFromUploadDto } from './generate-outline-from-upload.dto';
+export { SearchUploadsDto } from './search-uploads.dto';

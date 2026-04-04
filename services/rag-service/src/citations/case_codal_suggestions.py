@@ -1,0 +1,278 @@
+"""Case-codal auto-suggestion service.
+
+Analyzes a case document and suggests which codal provisions it references,
+using a combination of OpenSearch retrieval and LLM analysis.
+"""
+
+import json
+import logging
+from typing import Any
+
+import asyncpg
+
+from ..config import settings
+from ..core.generation import generate_completion, get_model_info
+from ..shared.opensearch import opensearch_search
+from .prompts_codal import PROMPT_VERSION, SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
+from .schemas import (
+    CaseCodalSuggestionRequest,
+    CaseCodalSuggestionResponse,
+    SuggestedCaseCodalLink,
+)
+
+logger = logging.getLogger(__name__)
+
+# Max characters of case text to send to the LLM
+_CASE_TEXT_MAX_CHARS = 30_000
+
+# Max codal candidates to retrieve from OpenSearch
+_MAX_CODAL_CANDIDATES = 20
+
+
+async def suggest_case_codal_links(
+    request: CaseCodalSuggestionRequest,
+) -> CaseCodalSuggestionResponse:
+    """Suggest codal provisions referenced by a case.
+
+    Steps:
+    1. Fetch case document text from PostgreSQL
+    2. Search OpenSearch for candidate codal provisions
+    3. Send case text + candidates to LLM for analysis
+    4. Parse and validate LLM output
+    """
+    model_info = get_model_info()
+
+    # Step 1: Fetch case text
+    conn = await asyncpg.connect(settings.database_url)
+    try:
+        case_doc = await conn.fetchrow(
+            """SELECT id, title, "shortTitle", "citationText", "fullText"
+               FROM "LegalDocument"
+               WHERE id = $1 AND status = 'published'
+               LIMIT 1""",
+            request.document_id,
+        )
+
+        if not case_doc:
+            return CaseCodalSuggestionResponse(
+                document_id=request.document_id,
+                document_title="Not Found",
+                suggestions=[],
+                model_name=model_info["model_name"],
+                prompt_template_version=PROMPT_VERSION,
+            )
+
+        case_text = case_doc["fullText"] or ""
+        case_title = case_doc["title"] or "Untitled"
+
+        # If no full text, try fetching from source sections
+        if not case_text.strip():
+            sections = await conn.fetch(
+                """SELECT "textContent" FROM "SourceSection"
+                   WHERE "legalDocumentId" = $1
+                   ORDER BY "pageStart" ASC NULLS LAST, "orderIndex" ASC NULLS LAST
+                   LIMIT 50""",
+                request.document_id,
+            )
+            case_text = "\n\n".join(
+                row["textContent"] for row in sections if row["textContent"]
+            )
+
+        if len(case_text.strip()) < 100:
+            return CaseCodalSuggestionResponse(
+                document_id=request.document_id,
+                document_title=case_title,
+                suggestions=[],
+                model_name=model_info["model_name"],
+                prompt_template_version=PROMPT_VERSION,
+            )
+
+        # Step 2: Search for candidate codal provisions via OpenSearch
+        codal_candidates = await _search_codal_candidates(case_text[:5000])
+
+        # Also fetch codal info from DB for candidates found
+        codal_map: dict[str, dict[str, Any]] = {}
+        if codal_candidates:
+            codal_ids = [c["id"] for c in codal_candidates]
+            codals = await conn.fetch(
+                """SELECT id, title, "citationText"
+                   FROM "LegalDocument"
+                   WHERE id = ANY($1::uuid[])""",
+                codal_ids,
+            )
+            for row in codals:
+                codal_map[str(row["id"])] = {
+                    "title": row["title"],
+                    "citation": row["citationText"],
+                }
+
+    finally:
+        await conn.close()
+
+    if not codal_candidates:
+        return CaseCodalSuggestionResponse(
+            document_id=request.document_id,
+            document_title=case_title,
+            suggestions=[],
+            model_name=model_info["model_name"],
+            prompt_template_version=PROMPT_VERSION,
+        )
+
+    # Step 3: Build prompt and call LLM
+    codal_text = _format_codal_candidates(codal_candidates, codal_map)
+    truncated_case = case_text[:_CASE_TEXT_MAX_CHARS]
+
+    user_prompt = USER_PROMPT_TEMPLATE.format(
+        case_text=truncated_case,
+        codal_candidates=codal_text,
+    )
+
+    raw_response = await generate_completion(
+        system_prompt=SYSTEM_PROMPT,
+        user_prompt=user_prompt,
+        max_tokens=settings.memo_max_tokens,
+        temperature=0.1,
+        response_format="json_object",
+    )
+
+    # Step 4: Parse LLM output
+    suggestions = _parse_suggestions(raw_response, codal_map, request.max_suggestions)
+
+    logger.info(
+        "Case-codal suggestions for document %s: %d suggestions",
+        request.document_id,
+        len(suggestions),
+    )
+
+    return CaseCodalSuggestionResponse(
+        document_id=request.document_id,
+        document_title=case_title,
+        suggestions=suggestions,
+        model_name=model_info["model_name"],
+        prompt_template_version=PROMPT_VERSION,
+    )
+
+
+async def _search_codal_candidates(case_excerpt: str) -> list[dict[str, Any]]:
+    """Search OpenSearch for codal provisions that may be referenced in the case."""
+    query = {
+        "size": _MAX_CODAL_CANDIDATES,
+        "query": {
+            "bool": {
+                "must": [
+                    {
+                        "multi_match": {
+                            "query": case_excerpt,
+                            "fields": ["title^2", "citation_text^2", "content"],
+                            "type": "best_fields",
+                        }
+                    }
+                ],
+                "filter": [
+                    {
+                        "terms": {
+                            "document_type": [
+                                "statute",
+                                "republic_act",
+                                "presidential_decree",
+                                "executive_order",
+                                "administrative_order",
+                                "rules_of_court",
+                                "codal",
+                            ]
+                        }
+                    }
+                ],
+            }
+        },
+        "_source": ["document_id", "title", "citation_text", "content"],
+    }
+
+    try:
+        result = await opensearch_search("legal_documents", query)
+        hits = result.get("hits", {}).get("hits", [])
+        return [
+            {
+                "id": hit["_source"].get("document_id", hit["_id"]),
+                "title": hit["_source"].get("title", ""),
+                "citation": hit["_source"].get("citation_text", ""),
+                "snippet": (hit["_source"].get("content", "") or "")[:500],
+                "score": hit.get("_score", 0),
+            }
+            for hit in hits
+        ]
+    except Exception:
+        logger.warning("OpenSearch codal candidate search failed", exc_info=True)
+        return []
+
+
+def _format_codal_candidates(
+    candidates: list[dict[str, Any]],
+    codal_map: dict[str, dict[str, Any]],
+) -> str:
+    """Format codal candidates into a text block for the LLM prompt."""
+    parts: list[str] = []
+    for c in candidates:
+        doc_id = c["id"]
+        info = codal_map.get(doc_id, {})
+        title = info.get("title") or c.get("title", "Unknown")
+        citation = info.get("citation") or c.get("citation", "")
+        snippet = c.get("snippet", "")
+
+        entry = f"[CODAL {doc_id}] {title}"
+        if citation:
+            entry += f" | {citation}"
+        if snippet:
+            entry += f"\n{snippet}"
+        parts.append(entry)
+
+    return "\n---\n".join(parts)
+
+
+def _parse_suggestions(
+    raw: str,
+    codal_map: dict[str, dict[str, Any]],
+    max_suggestions: int,
+) -> list[SuggestedCaseCodalLink]:
+    """Parse LLM JSON output into suggestion objects."""
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning("Failed to parse case-codal suggestion response as JSON")
+        return []
+
+    suggestions_raw = data.get("suggestions", [])
+    if not isinstance(suggestions_raw, list):
+        return []
+
+    valid_link_types = {"interprets", "applies", "invalidates", "modifies", "upholds", "cites"}
+    suggestions: list[SuggestedCaseCodalLink] = []
+
+    for s in suggestions_raw[:max_suggestions]:
+        if not isinstance(s, dict):
+            continue
+
+        codal_id = s.get("codal_document_id", "")
+        link_type = s.get("link_type", "cites")
+        if link_type not in valid_link_types:
+            link_type = "cites"
+
+        info = codal_map.get(codal_id, {})
+        confidence = s.get("confidence", 0.5)
+        if not isinstance(confidence, (int, float)):
+            confidence = 0.5
+        confidence = max(0.0, min(1.0, float(confidence)))
+
+        suggestions.append(
+            SuggestedCaseCodalLink(
+                codal_document_id=codal_id,
+                codal_title=info.get("title", "Unknown"),
+                codal_citation=info.get("citation"),
+                link_type=link_type,
+                relevant_excerpt=s.get("relevant_excerpt", ""),
+                confidence=confidence,
+                reasoning=s.get("reasoning", ""),
+            )
+        )
+
+    return suggestions

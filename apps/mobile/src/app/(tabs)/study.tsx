@@ -1,0 +1,345 @@
+import { useCallback } from 'react';
+import {
+  View,
+  Text,
+  ScrollView,
+  TouchableOpacity,
+  StyleSheet,
+  ActivityIndicator,
+  RefreshControl,
+} from 'react-native';
+import { router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { useBarSubjects } from '../../features/study/hooks/use-bar-subjects';
+import { useFlashcardSets } from '../../features/study/hooks/use-flashcard-sets';
+import { useReviewerPacks } from '../../features/study/hooks/use-reviewer-packs';
+import { SubjectGrid } from '../../features/study/components/subject-grid';
+
+export default function StudyTab() {
+  const {
+    data: subjects,
+    isLoading: subjectsLoading,
+    isFetching,
+    refetch: refetchSubjects,
+  } = useBarSubjects();
+  const { data: setsData, refetch: refetchSets } = useFlashcardSets({
+    limit: 5,
+  });
+  const { data: packsData, refetch: refetchPacks } = useReviewerPacks({
+    limit: 5,
+  });
+
+  const handleRefresh = useCallback(() => {
+    refetchSubjects();
+    refetchSets();
+    refetchPacks();
+  }, [refetchSubjects, refetchSets, refetchPacks]);
+
+  if (subjectsLoading) {
+    return (
+      <View style={styles.loadingState}>
+        <ActivityIndicator size="large" color="#1a56db" />
+      </View>
+    );
+  }
+
+  const barSubjects = subjects ?? [];
+  const flashcardSets = setsData?.data ?? [];
+  const reviewerPacks = packsData?.data ?? [];
+
+  return (
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.content}
+      refreshControl={
+        <RefreshControl
+          refreshing={isFetching && !subjectsLoading}
+          onRefresh={handleRefresh}
+          colors={['#1a56db']}
+        />
+      }
+    >
+      {/* Community Marketplace Banner */}
+      <TouchableOpacity
+        style={styles.communityBanner}
+        onPress={() => router.push('/community')}
+        activeOpacity={0.7}
+      >
+        <View style={styles.communityIconBox}>
+          <Ionicons name="people-outline" size={20} color="#1a56db" />
+        </View>
+        <View style={styles.communityContent}>
+          <Text style={styles.communityTitle}>Community Marketplace</Text>
+          <Text style={styles.communityDesc}>
+            Discover shared flashcards, reviewers & digests
+          </Text>
+        </View>
+        <Ionicons name="chevron-forward" size={16} color="#9ca3af" />
+      </TouchableOpacity>
+
+      {/* Quick Stats */}
+      <View style={styles.statsRow}>
+        <View style={styles.statCard}>
+          <Text style={styles.statNumber}>{barSubjects.length}</Text>
+          <Text style={styles.statLabel}>Subjects</Text>
+        </View>
+        <View style={styles.statCard}>
+          <Text style={styles.statNumber}>{flashcardSets.length}</Text>
+          <Text style={styles.statLabel}>Flashcard Sets</Text>
+        </View>
+        <View style={styles.statCard}>
+          <Text style={styles.statNumber}>{reviewerPacks.length}</Text>
+          <Text style={styles.statLabel}>Reviewer Packs</Text>
+        </View>
+      </View>
+
+      {/* Bar Subjects */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Bar Subjects</Text>
+          <TouchableOpacity onPress={() => router.push('/study/codals/')}>
+            <Text style={styles.seeAll}>See All</Text>
+          </TouchableOpacity>
+        </View>
+        {barSubjects.length > 0 ? (
+          <SubjectGrid subjects={barSubjects} />
+        ) : (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyText}>No bar subjects available</Text>
+          </View>
+        )}
+      </View>
+
+      {/* Flashcard Sets */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Flashcard Sets</Text>
+          <TouchableOpacity onPress={() => router.push('/study/flashcards/')}>
+            <Text style={styles.seeAll}>See All</Text>
+          </TouchableOpacity>
+        </View>
+        {flashcardSets.length > 0 ? (
+          flashcardSets.map((set) => (
+            <TouchableOpacity
+              key={set.id}
+              style={styles.listCard}
+              onPress={() => router.push(`/study/flashcards/${set.id}`)}
+              activeOpacity={0.7}
+            >
+              <View style={styles.listCardRow}>
+                <Ionicons name="layers-outline" size={20} color="#1a56db" />
+                <View style={styles.listCardContent}>
+                  <Text style={styles.listCardTitle} numberOfLines={1}>
+                    {set.title}
+                  </Text>
+                  <Text style={styles.listCardMeta}>
+                    {set.cardCount} card{set.cardCount !== 1 ? 's' : ''}
+                    {set.barSubject
+                      ? ` · ${set.barSubject.replace(/_/g, ' ')}`
+                      : ''}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color="#9ca3af" />
+              </View>
+            </TouchableOpacity>
+          ))
+        ) : (
+          <View style={styles.emptyCard}>
+            <Ionicons name="layers-outline" size={32} color="#d1d5db" />
+            <Text style={styles.emptyText}>No flashcard sets yet</Text>
+            <TouchableOpacity
+              style={styles.createButton}
+              onPress={() => router.push('/study/flashcards/')}
+            >
+              <Text style={styles.createButtonText}>Create One</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+
+      {/* Reviewer Packs */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Reviewer Packs</Text>
+          <TouchableOpacity
+            onPress={() => router.push('/study/reviewer-packs/')}
+          >
+            <Text style={styles.seeAll}>See All</Text>
+          </TouchableOpacity>
+        </View>
+        {reviewerPacks.length > 0 ? (
+          reviewerPacks.map((pack) => (
+            <TouchableOpacity
+              key={pack.id}
+              style={styles.listCard}
+              onPress={() => router.push(`/study/reviewer-packs/${pack.id}`)}
+              activeOpacity={0.7}
+            >
+              <View style={styles.listCardRow}>
+                <Ionicons name="folder-outline" size={20} color="#1a56db" />
+                <View style={styles.listCardContent}>
+                  <Text style={styles.listCardTitle} numberOfLines={1}>
+                    {pack.title}
+                  </Text>
+                  <Text style={styles.listCardMeta}>
+                    {pack.itemCount} item{pack.itemCount !== 1 ? 's' : ''}
+                    {pack.barSubject
+                      ? ` · ${pack.barSubject.replace(/_/g, ' ')}`
+                      : ''}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color="#9ca3af" />
+              </View>
+            </TouchableOpacity>
+          ))
+        ) : (
+          <View style={styles.emptyCard}>
+            <Ionicons name="folder-outline" size={32} color="#d1d5db" />
+            <Text style={styles.emptyText}>No reviewer packs yet</Text>
+            <TouchableOpacity
+              style={styles.createButton}
+              onPress={() => router.push('/study/reviewer-packs/')}
+            >
+              <Text style={styles.createButtonText}>Create One</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#f3f4f6' },
+  content: { padding: 12, paddingBottom: 32 },
+  loadingState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  communityBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#eff6ff',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 12,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  communityIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: '#dbeafe',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  communityContent: { flex: 1 },
+  communityTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1a56db',
+  },
+  communityDesc: {
+    fontSize: 11,
+    color: '#3b82f6',
+    marginTop: 1,
+  },
+  statsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 16,
+  },
+  statCard: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    padding: 12,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  statNumber: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#1a56db',
+  },
+  statLabel: {
+    fontSize: 11,
+    color: '#6b7280',
+    marginTop: 2,
+  },
+  section: { marginBottom: 20 },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  seeAll: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1a56db',
+  },
+  listCard: {
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  listCardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  listCardContent: { flex: 1 },
+  listCardTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  listCardMeta: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginTop: 2,
+    textTransform: 'capitalize',
+  },
+  emptyCard: {
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    padding: 24,
+    alignItems: 'center',
+    gap: 8,
+  },
+  emptyText: {
+    fontSize: 13,
+    color: '#9ca3af',
+  },
+  createButton: {
+    backgroundColor: '#1a56db',
+    borderRadius: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    marginTop: 4,
+  },
+  createButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#fff',
+  },
+});

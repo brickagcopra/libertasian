@@ -1,0 +1,65 @@
+# ==========================================================================
+# LIBERTASIAN Worker Service — Multi-stage production Dockerfile
+# Python 3.12 + Tesseract 5 + Celery + S3/DB clients
+# ==========================================================================
+
+# Stage 1: Dependencies
+FROM python:3.12-slim AS deps
+
+# Install system dependencies (Tesseract for worker-side OCR fallback, OpenCV)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    libleptonica-dev \
+    libgl1 \
+    libglib2.0-0 \
+    libpq-dev \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv for fast dependency management
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+WORKDIR /app
+
+# Copy dependency files first for caching
+COPY services/worker-service/pyproject.toml ./
+
+# Install production dependencies
+RUN uv pip install --system --no-cache-dir -r pyproject.toml
+
+# Stage 2: Production
+FROM python:3.12-slim AS runner
+
+# Install runtime-only system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    libleptonica-dev \
+    libgl1 \
+    libglib2.0-0 \
+    libpq5 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy installed Python packages from deps stage
+COPY --from=deps /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=deps /usr/local/bin /usr/local/bin
+
+# Copy application source
+COPY services/worker-service/src ./src
+
+# Non-root user
+RUN groupadd -g 1001 appgroup && useradd -u 1001 -g appgroup -s /bin/sh appuser
+USER appuser
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD celery -A src.celery_app inspect ping --timeout 10 || exit 1
+
+# Run Celery worker with concurrency=2 (per PDD: parallel OCR pages)
+CMD ["celery", "-A", "src.celery_app", "worker", "--loglevel=info", "--concurrency=2"]

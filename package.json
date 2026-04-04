@@ -1,0 +1,36 @@
+{
+  "name": "libertasian",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Philippine Legal AI Platform — Monorepo",
+  "packageManager": "pnpm@10.30.3",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "type-check": "turbo run type-check",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,css}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,css}\"",
+    "analyze": "turbo run analyze",
+    "clean": "turbo run clean"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "prisma",
+      "@prisma/client",
+      "@prisma/engines",
+      "@nestjs/core",
+      "bcrypt",
+      "sharp"
+    ]
+  },
+  "devDependencies": {
+    "prettier": "^3.4.2",
+    "turbo": "^2.3.3"
+  }
+}

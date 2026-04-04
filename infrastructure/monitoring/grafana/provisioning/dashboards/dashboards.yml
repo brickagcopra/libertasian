@@ -1,0 +1,17 @@
+# ==========================================================================
+# LIBERTASIAN — Grafana Dashboard Provisioning
+# ==========================================================================
+
+apiVersion: 1
+
+providers:
+  - name: LIBERTASIAN
+    orgId: 1
+    folder: LIBERTASIAN
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

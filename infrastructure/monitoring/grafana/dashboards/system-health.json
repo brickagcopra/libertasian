@@ -1,0 +1,144 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "Service Status",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "up{app=\"libertasian\"}",
+          "legendFormat": "{{ service }}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        }
+      }
+    },
+    {
+      "title": "CPU Usage by Container",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [
+        {
+          "expr": "rate(container_cpu_usage_seconds_total{name=~\"libertasian-.*\"}[5m]) * 100",
+          "legendFormat": "{{ name }}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent" } }
+    },
+    {
+      "title": "Memory Usage by Container",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        {
+          "expr": "container_memory_usage_bytes{name=~\"libertasian-.*\"} / 1024 / 1024",
+          "legendFormat": "{{ name }}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "decmbytes" } }
+    },
+    {
+      "title": "Disk Usage",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 12 },
+      "targets": [
+        {
+          "expr": "(node_filesystem_size_bytes{mountpoint=\"/\"} - node_filesystem_avail_bytes{mountpoint=\"/\"}) / node_filesystem_size_bytes{mountpoint=\"/\"} * 100",
+          "legendFormat": "Disk Usage"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 70 }, { "color": "red", "value": 85 }] }
+        }
+      }
+    },
+    {
+      "title": "Redis Memory Usage",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 12 },
+      "targets": [
+        {
+          "expr": "redis_memory_used_bytes / redis_memory_max_bytes * 100",
+          "legendFormat": "Redis Memory"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 60 }, { "color": "red", "value": 80 }] }
+        }
+      }
+    },
+    {
+      "title": "PostgreSQL Connections",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 12 },
+      "targets": [
+        {
+          "expr": "pg_stat_activity_count / pg_settings_max_connections * 100",
+          "legendFormat": "Connection Pool"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 60 }, { "color": "red", "value": 80 }] }
+        }
+      }
+    },
+    {
+      "title": "Network I/O by Container",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
+      "targets": [
+        {
+          "expr": "rate(container_network_receive_bytes_total{name=~\"libertasian-.*\"}[5m])",
+          "legendFormat": "{{ name }} (rx)"
+        },
+        {
+          "expr": "rate(container_network_transmit_bytes_total{name=~\"libertasian-.*\"}[5m])",
+          "legendFormat": "{{ name }} (tx)"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "Bps" } }
+    },
+    {
+      "title": "OpenSearch Cluster Health",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 12, "x": 12, "y": 18 },
+      "targets": [
+        {
+          "expr": "opensearch_cluster_health_active_shards",
+          "legendFormat": "Active Shards"
+        },
+        {
+          "expr": "opensearch_cluster_health_number_of_nodes",
+          "legendFormat": "Nodes"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["libertasian", "system"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "title": "LIBERTASIAN — System Health",
+  "uid": "libertasian-system-health"
+}

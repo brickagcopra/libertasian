@@ -1,0 +1,280 @@
+import Constants from 'expo-constants';
+import { authStorage } from '../storage/auth-storage';
+
+const API_BASE_URL =
+  (Constants.expoConfig?.extra?.['apiUrl'] as string | undefined) ??
+  'http://localhost:3001/api/v1';
+
+interface RequestOptions extends RequestInit {
+  params?: Record<string, string>;
+  skipAuth?: boolean;
+}
+
+interface ApiError {
+  statusCode: number;
+  message: string;
+  error?: string;
+}
+
+export class ApiClientError extends Error {
+  statusCode: number;
+  serverMessage: string;
+
+  constructor(statusCode: number, message: string) {
+    super(message);
+    this.name = 'ApiClientError';
+    this.statusCode = statusCode;
+    this.serverMessage = message;
+  }
+}
+
+type UnauthorizedHandler = () => void;
+
+class ApiClient {
+  private baseUrl: string;
+  private isRefreshing = false;
+  private refreshPromise: Promise<boolean> | null = null;
+  private onUnauthorized: UnauthorizedHandler | null = null;
+
+  constructor(baseUrl: string) {
+    this.baseUrl = baseUrl;
+  }
+
+  setOnUnauthorized(handler: UnauthorizedHandler): void {
+    this.onUnauthorized = handler;
+  }
+
+  private async getAuthHeaders(): Promise<Record<string, string>> {
+    const token = await authStorage.getAccessToken();
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }
+
+  private buildUrl(endpoint: string, params?: Record<string, string>): string {
+    let url = `${this.baseUrl}${endpoint}`;
+    if (params) {
+      const entries = Object.entries(params).filter(
+        ([, v]) => v !== undefined && v !== null && v !== '',
+      );
+      if (entries.length > 0) {
+        const searchParams = new URLSearchParams(entries);
+        url += `?${searchParams.toString()}`;
+      }
+    }
+    return url;
+  }
+
+  private async attemptRefresh(): Promise<boolean> {
+    if (this.isRefreshing && this.refreshPromise) {
+      return this.refreshPromise;
+    }
+
+    this.isRefreshing = true;
+    this.refreshPromise = this.doRefresh();
+
+    try {
+      return await this.refreshPromise;
+    } finally {
+      this.isRefreshing = false;
+      this.refreshPromise = null;
+    }
+  }
+
+  private async doRefresh(): Promise<boolean> {
+    const refreshToken = await authStorage.getRefreshToken();
+    if (!refreshToken) return false;
+
+    try {
+      const response = await fetch(`${this.baseUrl}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken }),
+      });
+
+      if (!response.ok) return false;
+
+      const data = (await response.json()) as {
+        accessToken: string;
+        refreshToken: string;
+      };
+      await authStorage.setAccessToken(data.accessToken);
+      await authStorage.setRefreshToken(data.refreshToken);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async request<T>(
+    endpoint: string,
+    options: RequestOptions = {},
+  ): Promise<T> {
+    const { params, skipAuth, ...init } = options;
+    const url = this.buildUrl(endpoint, params);
+    const authHeaders = skipAuth ? {} : await this.getAuthHeaders();
+
+    const response = await fetch(url, {
+      ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeaders,
+        ...(init.headers as Record<string, string>),
+      },
+    });
+
+    if (response.status === 401 && !skipAuth) {
+      const refreshed = await this.attemptRefresh();
+      if (refreshed) {
+        const retryHeaders = await this.getAuthHeaders();
+        const retryResponse = await fetch(url, {
+          ...init,
+          headers: {
+            'Content-Type': 'application/json',
+            ...retryHeaders,
+            ...(init.headers as Record<string, string>),
+          },
+        });
+
+        if (retryResponse.ok) {
+          return retryResponse.json() as Promise<T>;
+        }
+
+        if (retryResponse.status === 401) {
+          this.onUnauthorized?.();
+          const error = await retryResponse
+            .json()
+            .catch(() => ({ message: 'Session expired' }));
+          throw new ApiClientError(
+            401,
+            (error as ApiError).message || 'Session expired',
+          );
+        }
+
+        return this.handleErrorResponse<T>(retryResponse);
+      }
+
+      this.onUnauthorized?.();
+      throw new ApiClientError(401, 'Session expired. Please sign in again.');
+    }
+
+    if (!response.ok) {
+      return this.handleErrorResponse<T>(response);
+    }
+
+    if (response.status === 204) {
+      return undefined as T;
+    }
+
+    return response.json() as Promise<T>;
+  }
+
+  private async handleErrorResponse<T>(response: Response): Promise<T> {
+    const error = await response
+      .json()
+      .catch(() => ({ message: `Request failed with status ${response.status}` }));
+    throw new ApiClientError(
+      response.status,
+      (error as ApiError).message || `HTTP ${response.status}`,
+    );
+  }
+
+  get<T>(endpoint: string, options?: RequestOptions) {
+    return this.request<T>(endpoint, { ...options, method: 'GET' });
+  }
+
+  post<T>(endpoint: string, body?: unknown, options?: RequestOptions) {
+    return this.request<T>(endpoint, {
+      ...options,
+      method: 'POST',
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  }
+
+  patch<T>(endpoint: string, body?: unknown, options?: RequestOptions) {
+    return this.request<T>(endpoint, {
+      ...options,
+      method: 'PATCH',
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  }
+
+  put<T>(endpoint: string, body?: unknown, options?: RequestOptions) {
+    return this.request<T>(endpoint, {
+      ...options,
+      method: 'PUT',
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  }
+
+  delete<T>(endpoint: string, options?: RequestOptions) {
+    return this.request<T>(endpoint, { ...options, method: 'DELETE' });
+  }
+
+  /** Build a fully-authenticated GET URL for file downloads (used with FileSystem.downloadAsync) */
+  async getDownloadUrl(endpoint: string, params?: Record<string, string>): Promise<{ url: string; headers: Record<string, string> }> {
+    const url = this.buildUrl(endpoint, params);
+    const authHeaders = await this.getAuthHeaders();
+    return { url, headers: authHeaders };
+  }
+
+  async uploadMultipart<T>(
+    endpoint: string,
+    formData: FormData,
+    options?: { onProgress?: (progress: number) => void },
+  ): Promise<T> {
+    const url = this.buildUrl(endpoint);
+    const authHeaders = await this.getAuthHeaders();
+
+    return new Promise<T>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', url);
+
+      for (const [key, value] of Object.entries(authHeaders)) {
+        xhr.setRequestHeader(key, value);
+      }
+
+      if (options?.onProgress) {
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            options.onProgress!(event.loaded / event.total);
+          }
+        };
+      }
+
+      xhr.onload = () => {
+        if (xhr.status === 401) {
+          this.attemptRefresh().then((refreshed) => {
+            if (refreshed) {
+              this.uploadMultipart<T>(endpoint, formData, options)
+                .then(resolve)
+                .catch(reject);
+            } else {
+              this.onUnauthorized?.();
+              reject(new ApiClientError(401, 'Session expired. Please sign in again.'));
+            }
+          }).catch(reject);
+          return;
+        }
+
+        try {
+          const data = JSON.parse(xhr.responseText) as T;
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve(data);
+          } else {
+            const err = data as unknown as ApiError;
+            reject(new ApiClientError(xhr.status, err.message || `HTTP ${xhr.status}`));
+          }
+        } catch {
+          reject(new ApiClientError(xhr.status, `Request failed with status ${xhr.status}`));
+        }
+      };
+
+      xhr.onerror = () => {
+        reject(new ApiClientError(0, 'Network error'));
+      };
+
+      xhr.send(formData);
+    });
+  }
+}
+
+export const apiClient = new ApiClient(API_BASE_URL);
