@@ -840,7 +840,7 @@ describe('StudyService', () => {
       expect(result.completedTopics).toBe(2);
       expect(result.overallPct).toBe(50);
       expect(result.subjects).toHaveLength(2);
-      expect(result.subjects[0].pct).toBe(50);
+      expect(result.subjects[0]!.pct).toBe(50);
     });
   });
 

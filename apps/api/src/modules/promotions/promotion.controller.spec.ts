@@ -5,7 +5,7 @@ import { PromotionController } from './promotion.controller';
 
 describe('PromotionController', () => {
   let controller: PromotionController;
-  let ruleEngine: Record<string, jest.Mock>;
+  let ruleEngine: { findEligiblePromotions: jest.Mock; getActivePromotionsForPricing: jest.Mock };
 
   const USER_ID = '00000000-0000-0000-0000-000000000002';
   const ORG_ID = '00000000-0000-0000-0000-000000000001';
@@ -51,7 +51,7 @@ describe('PromotionController', () => {
       const result = await controller.findEligiblePromotions(dto as never, mockUser as never);
 
       expect(result.data).toHaveLength(1);
-      expect(result.data[0].eligible).toBe(true);
+      expect(result.data[0]!.eligible).toBe(true);
     });
   });
 

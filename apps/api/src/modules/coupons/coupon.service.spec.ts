@@ -13,7 +13,15 @@ import { CouponService } from './coupon.service';
 
 describe('CouponService', () => {
   let service: CouponService;
-  let prisma: Record<string, Record<string, jest.Mock>>;
+  let prisma: {
+    coupon: { findUnique: jest.Mock; update: jest.Mock; create: jest.Mock; findMany: jest.Mock };
+    couponRedemption: { findFirst: jest.Mock; findUnique: jest.Mock; findMany: jest.Mock; count: jest.Mock; create: jest.Mock; update: jest.Mock };
+    couponPlanRule: { findMany: jest.Mock; deleteMany: jest.Mock; create: jest.Mock };
+    couponUserAssignment: { findMany: jest.Mock; updateMany: jest.Mock; upsert: jest.Mock };
+    couponOrgAssignment: { findMany: jest.Mock; updateMany: jest.Mock; upsert: jest.Mock };
+    $transaction: jest.Mock;
+    $queryRawUnsafe: jest.Mock;
+  };
   let audit: jest.Mocked<Pick<AuditService, 'log'>>;
   let entitlementService: jest.Mocked<Pick<EntitlementService, 'grantBonus'>>;
   let pricingEngine: jest.Mocked<Pick<PricingEngineService, 'resolvePlanPrice'>>;
@@ -84,6 +92,8 @@ describe('CouponService', () => {
       coupon: {
         findUnique: jest.fn(),
         update: jest.fn(),
+        create: jest.fn(),
+        findMany: jest.fn(),
       },
       couponRedemption: {
         findFirst: jest.fn().mockResolvedValue(null),
@@ -95,14 +105,18 @@ describe('CouponService', () => {
       },
       couponPlanRule: {
         findMany: jest.fn().mockResolvedValue([]),
+        deleteMany: jest.fn(),
+        create: jest.fn(),
       },
       couponUserAssignment: {
         findMany: jest.fn().mockResolvedValue([]),
         updateMany: jest.fn(),
+        upsert: jest.fn(),
       },
       couponOrgAssignment: {
         findMany: jest.fn().mockResolvedValue([]),
         updateMany: jest.fn(),
+        upsert: jest.fn(),
       },
       $transaction: jest.fn((fn: (tx: unknown) => unknown) => fn(prisma)),
       $queryRawUnsafe: jest.fn(),
@@ -1253,7 +1267,7 @@ describe('CouponService', () => {
 
       const result = await service.setPlanRules(COUPON_ID, [{ planCode: 'pro', ruleType: 'include' }]);
       expect(result).toHaveLength(1);
-      expect(result[0].planCode).toBe('pro');
+      expect(result[0]!.planCode).toBe('pro');
     });
 
     it('should throw NotFoundException for missing coupon', async () => {
@@ -1764,7 +1778,7 @@ describe('CouponService', () => {
       prisma['couponRedemption']['update'].mockResolvedValue({ ...makeRedemption(), status: 'redeemed' });
 
       await service.finalizeCoupon(REDEMPTION_ID, SUB_ID, null, 0);
-      const grantCall = entitlementService.grantBonus.mock.calls[0][0];
+      const grantCall = entitlementService.grantBonus.mock.calls[0]![0];
       const expiresAt = grantCall.expiresAt as Date;
       const now = Date.now();
       // Should expire approximately 30 days from now (+/- 5 seconds tolerance)

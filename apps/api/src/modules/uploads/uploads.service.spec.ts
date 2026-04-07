@@ -155,7 +155,7 @@ describe('UploadsService', () => {
       size: 1024,
       fieldname: 'file',
       encoding: '7bit',
-      stream: null as unknown as NodeJS.ReadableStream,
+      stream: null as unknown as import('stream').Readable,
       destination: '',
       filename: '',
       path: '',

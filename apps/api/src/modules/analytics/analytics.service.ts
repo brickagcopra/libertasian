@@ -3,6 +3,8 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { createHash } from 'crypto';
 
+import type { Prisma } from '@prisma/client';
+
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../common/services/redis.service';
 import {
@@ -178,7 +180,7 @@ export class AnalyticsService {
         deviceType: data.deviceType,
         entryPath: data.entryPath,
         referrer: data.referrer,
-        properties: data.properties ?? {},
+        properties: (data.properties ?? {}) as Prisma.InputJsonValue,
       },
     });
 

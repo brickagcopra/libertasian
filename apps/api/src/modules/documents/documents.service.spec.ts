@@ -279,8 +279,8 @@ describe('DocumentsService', () => {
       const result = await service.list(query);
 
       expect(result.items).toHaveLength(2);
-      expect(result.items[0].id).toBe('doc-1');
-      expect(result.items[1].id).toBe('doc-2');
+      expect(result.items[0]!.id).toBe('doc-1');
+      expect(result.items[1]!.id).toBe('doc-2');
       expect(result.meta.hasNext).toBe(true);
       expect(result.meta.nextCursor).toBe('doc-2');
       expect(result.meta.limit).toBe(2);

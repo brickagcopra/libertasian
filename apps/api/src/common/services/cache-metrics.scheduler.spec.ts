@@ -5,7 +5,7 @@ import { RedisService } from './redis.service';
 
 describe('CacheMetricsScheduler', () => {
   let scheduler: CacheMetricsScheduler;
-  let redis: Record<string, jest.Mock>;
+  let redis: { logAndResetMetrics: jest.Mock };
 
   beforeEach(async () => {
     redis = {

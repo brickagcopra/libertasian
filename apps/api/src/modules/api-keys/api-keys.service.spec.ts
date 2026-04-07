@@ -11,7 +11,9 @@ import { ApiKeysService } from './api-keys.service';
 
 describe('ApiKeysService', () => {
   let service: ApiKeysService;
-  let prisma: Record<string, Record<string, jest.Mock>>;
+  let prisma: {
+    apiKey: { create: jest.Mock; findFirst: jest.Mock; findMany: jest.Mock; update: jest.Mock; delete: jest.Mock; count: jest.Mock };
+  };
   let subscriptions: { getEntitlements: jest.Mock };
 
   const organizationId = 'org-1';
@@ -159,7 +161,7 @@ describe('ApiKeysService', () => {
 
       expect(result.data).toHaveLength(1);
       expect(result.hasNext).toBe(false);
-      expect(result.data[0].permissions).toEqual(['search', 'documents:read']);
+      expect(result.data[0]!.permissions).toEqual(['search', 'documents:read']);
     });
 
     it('should detect hasNext and pop extra item', async () => {
@@ -186,8 +188,8 @@ describe('ApiKeysService', () => {
 
       const result = await service.findAll(organizationId, {} as never);
 
-      expect(result.data[0].lastUsedAt).toBe('2026-01-15T10:00:00.000Z');
-      expect(result.data[0].expiresAt).toBe('2027-01-01T00:00:00.000Z');
+      expect(result.data[0]!.lastUsedAt).toBe('2026-01-15T10:00:00.000Z');
+      expect(result.data[0]!.expiresAt).toBe('2027-01-01T00:00:00.000Z');
     });
   });
 

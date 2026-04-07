@@ -7,34 +7,54 @@ import { CouponService } from '../coupons/coupon.service';
 import { PromotionRuleEngineService } from '../promotions/promotion-rule-engine.service';
 import { PrismaService } from '../../prisma/prisma.service';
 
+type MockPricingEngine = {
+  calculatePriceBreakdown: jest.Mock;
+  resolvePlanPrice: jest.Mock;
+};
+
+type MockProrationService = {
+  calculateProration: jest.Mock;
+};
+
+type MockCouponService = {
+  validateCoupon: jest.Mock;
+  findByCode: jest.Mock;
+  calculateDiscount: jest.Mock;
+};
+
+type MockPromotionRuleEngine = {
+  evaluatePromotion: jest.Mock;
+  calculateDiscountPreview: jest.Mock;
+};
+
 describe('SimulatorService', () => {
   let service: SimulatorService;
-  let pricingEngine: jest.Mocked<PricingEngineService>;
-  let prorationService: jest.Mocked<ProrationService>;
-  let couponService: jest.Mocked<CouponService>;
-  let promotionRuleEngine: jest.Mocked<PromotionRuleEngineService>;
+  let pricingEngine: MockPricingEngine;
+  let prorationService: MockProrationService;
+  let couponService: MockCouponService;
+  let promotionRuleEngine: MockPromotionRuleEngine;
   let prisma: { coupon: { findUnique: jest.Mock }; promotion: { findUnique: jest.Mock } };
 
   beforeEach(async () => {
     pricingEngine = {
       calculatePriceBreakdown: jest.fn(),
       resolvePlanPrice: jest.fn(),
-    } as unknown as jest.Mocked<PricingEngineService>;
+    };
 
     prorationService = {
       calculateProration: jest.fn(),
-    } as unknown as jest.Mocked<ProrationService>;
+    };
 
     couponService = {
       validateCoupon: jest.fn(),
       findByCode: jest.fn(),
       calculateDiscount: jest.fn(),
-    } as unknown as jest.Mocked<CouponService>;
+    };
 
     promotionRuleEngine = {
       evaluatePromotion: jest.fn(),
       calculateDiscountPreview: jest.fn(),
-    } as unknown as jest.Mocked<PromotionRuleEngineService>;
+    };
 
     prisma = {
       coupon: { findUnique: jest.fn() },
@@ -188,9 +208,9 @@ describe('SimulatorService', () => {
 
       expect(result.startingState).toBe('provisioning');
       expect(result.steps).toHaveLength(3);
-      expect(result.steps[0].toState).toBe('trialing');
-      expect(result.steps[1].toState).toBe('active');
-      expect(result.steps[2].toState).toBe('cancelling');
+      expect(result.steps[0]!.toState).toBe('trialing');
+      expect(result.steps[1]!.toState).toBe('active');
+      expect(result.steps[2]!.toState).toBe('cancelling');
       expect(result.finalState).toBe('cancelling');
       expect(result.finalHasAccess).toBe(true);
       expect(result.totalSteps).toBe(3);
@@ -205,9 +225,9 @@ describe('SimulatorService', () => {
       });
 
       expect(result.steps).toHaveLength(2); // stops after RENEW fails
-      expect(result.steps[0].valid).toBe(true);
-      expect(result.steps[1].valid).toBe(false);
-      expect(result.steps[1].error).not.toBeNull();
+      expect(result.steps[0]!.valid).toBe(true);
+      expect(result.steps[1]!.valid).toBe(false);
+      expect(result.steps[1]!.error).not.toBeNull();
       expect(result.finalState).toBe('trialing');
       expect(result.successfulSteps).toBe(1);
       expect(result.failedAtStep).toBe(2);
@@ -233,7 +253,7 @@ describe('SimulatorService', () => {
       });
 
       expect(result.steps).toHaveLength(1);
-      expect(result.steps[0].valid).toBe(false);
+      expect(result.steps[0]!.valid).toBe(false);
       expect(result.finalState).toBe('active');
       expect(result.successfulSteps).toBe(0);
       expect(result.failedAtStep).toBe(1);
@@ -245,8 +265,8 @@ describe('SimulatorService', () => {
         actions: ['ACTIVATE', 'RENEW'],
       });
 
-      expect(result.steps[0].step).toBe(1);
-      expect(result.steps[1].step).toBe(2);
+      expect(result.steps[0]!.step).toBe(1);
+      expect(result.steps[1]!.step).toBe(2);
     });
 
     it('should handle self-transition (ACTIVE -> RENEW -> ACTIVE)', () => {
@@ -256,10 +276,10 @@ describe('SimulatorService', () => {
       });
 
       expect(result.steps).toHaveLength(2);
-      expect(result.steps[0].fromState).toBe('active');
-      expect(result.steps[0].toState).toBe('active');
-      expect(result.steps[1].fromState).toBe('active');
-      expect(result.steps[1].toState).toBe('active');
+      expect(result.steps[0]!.fromState).toBe('active');
+      expect(result.steps[0]!.toState).toBe('active');
+      expect(result.steps[1]!.fromState).toBe('active');
+      expect(result.steps[1]!.toState).toBe('active');
       expect(result.finalState).toBe('active');
       expect(result.successfulSteps).toBe(2);
     });
@@ -824,7 +844,7 @@ describe('SimulatorService', () => {
         plans: [{ planCode: 'pro', billingPeriod: 'monthly' }],
       });
 
-      expect(result.plans[0].discountPercentage).toBe(50);
+      expect(result.plans[0]!.discountPercentage).toBe(50);
       expect(result.averageDiscountPercentage).toBe(50);
     });
 
@@ -856,7 +876,7 @@ describe('SimulatorService', () => {
         plans: [{ planCode: 'free', billingPeriod: 'monthly' }],
       });
 
-      expect(result.plans[0].discountPercentage).toBe(0);
+      expect(result.plans[0]!.discountPercentage).toBe(0);
       expect(result.averageDiscountPercentage).toBe(0);
     });
 
@@ -943,8 +963,8 @@ describe('SimulatorService', () => {
         plans: [{ planCode: 'pro', billingPeriod: 'monthly' }],
       });
 
-      expect(result.plans[0].discountAmount).toBe(0);
-      expect(result.plans[0].finalAmount).toBe(99900);
+      expect(result.plans[0]!.discountAmount).toBe(0);
+      expect(result.plans[0]!.finalAmount).toBe(99900);
       expect(result.totalDiscountAmount).toBe(0);
     });
 
@@ -977,7 +997,7 @@ describe('SimulatorService', () => {
         plans: [{ planCode: 'pro', billingPeriod: 'monthly' }],
       });
 
-      expect(result.plans[0].finalAmount).toBe(0);
+      expect(result.plans[0]!.finalAmount).toBe(0);
     });
   });
 });

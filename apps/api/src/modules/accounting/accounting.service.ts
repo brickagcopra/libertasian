@@ -5,7 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
+import type { Prisma, JournalEntrySourceType } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -103,7 +103,7 @@ export class AccountingService {
           periodId: period.id,
           entryDate: new Date(dto.entryDate),
           description: dto.description,
-          sourceType: dto.sourceType ?? 'MANUAL',
+          sourceType: (dto.sourceType ?? 'MANUAL') as JournalEntrySourceType,
           sourceRefId: dto.sourceRefId,
           status: 'DRAFT',
           notes: dto.notes,

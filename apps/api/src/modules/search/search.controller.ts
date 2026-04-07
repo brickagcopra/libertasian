@@ -48,8 +48,8 @@ export class SearchController {
   @ApiBearerAuth()
   @TrackEvent('search_executed', (req, res) => {
     const response = res.data as Record<string, unknown> | undefined;
-    const meta = response?.meta as Record<string, unknown> | undefined;
-    const total = (meta?.total as number) ?? 0;
+    const meta = response?.['meta'] as Record<string, unknown> | undefined;
+    const total = (meta?.['total'] as number) ?? 0;
     return {
       query_length: (req.body?.query as string)?.length ?? 0,
       search_type: (req.body?.mode as string) ?? 'search',

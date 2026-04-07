@@ -81,11 +81,11 @@ const mockQueue = {
 
 // Mock file-type module
 jest.mock('file-type', () => ({
-  fileTypeFromBuffer: jest.fn(),
+  fromBuffer: jest.fn(),
 }));
 
-import { fileTypeFromBuffer } from 'file-type';
-const mockFileType = fileTypeFromBuffer as jest.Mock;
+import { fromBuffer } from 'file-type';
+const mockFileType = fromBuffer as jest.Mock;
 
 describe('FeedMediaService', () => {
   let service: FeedMediaService;

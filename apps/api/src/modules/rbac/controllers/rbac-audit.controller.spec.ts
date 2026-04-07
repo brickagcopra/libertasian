@@ -175,7 +175,7 @@ describe('RbacAuditController', () => {
 
       const result = await controller.listAuditLogs(mockUser as never, {} as never);
 
-      expect(result.data[0].actorName).toBeNull();
+      expect(result.data[0]!.actorName).toBeNull();
     });
   });
 });

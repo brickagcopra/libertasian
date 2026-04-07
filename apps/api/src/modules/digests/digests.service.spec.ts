@@ -12,8 +12,27 @@ const USER_SCAN_ORIGINS = ['user_scan', 'user_upload', 'camera_capture'];
 
 describe('DigestsService', () => {
   let service: DigestsService;
-  let prismaService: jest.Mocked<PrismaService>;
-  let digestQueue: jest.Mocked<Queue>;
+  let prismaService: {
+    digest: {
+      findUnique: jest.Mock;
+      findMany: jest.Mock;
+      findFirst: jest.Mock;
+      create: jest.Mock;
+      update: jest.Mock;
+      updateMany: jest.Mock;
+      delete: jest.Mock;
+      count: jest.Mock;
+      groupBy: jest.Mock;
+      aggregate: jest.Mock;
+    };
+    legalDocument: { count: jest.Mock; findUnique: jest.Mock };
+    provenanceRecord: { createMany: jest.Mock; findMany: jest.Mock; count: jest.Mock };
+    digestReview: { create: jest.Mock; createMany: jest.Mock };
+    organizationMember: { findFirst: jest.Mock };
+    $transaction: jest.Mock;
+    $queryRaw: jest.Mock;
+  };
+  let digestQueue: { add: jest.Mock };
 
   const mockDigest = {
     id: 'digest-1',

@@ -10,7 +10,14 @@ import { PromotionRuleEngineService } from './promotion-rule-engine.service';
 
 describe('PromotionRuleEngineService', () => {
   let service: PromotionRuleEngineService;
-  let prisma: Record<string, Record<string, jest.Mock>>;
+  let prisma: {
+    promotion: { findUnique: jest.Mock; findMany: jest.Mock };
+    promotionPlanRule: { findMany: jest.Mock };
+    promotionRedemption: { count: jest.Mock };
+    organization: { findUnique: jest.Mock };
+    subscription: { findFirst: jest.Mock; count: jest.Mock };
+    couponRedemption: { count: jest.Mock };
+  };
   let redis: jest.Mocked<Pick<RedisService, 'get' | 'set' | 'del'>>;
   let pricingEngine: { resolvePlanPrice: jest.Mock };
 
@@ -232,7 +239,7 @@ describe('PromotionRuleEngineService', () => {
 
       expect(result.eligible).toBe(true);
       expect(result.ruleResults).toHaveLength(1);
-      expect(result.ruleResults[0].ruleType).toBe('date_range');
+      expect(result.ruleResults[0]!.ruleType).toBe('date_range');
     });
 
     it('should evaluate date_range rule and fail when expired', async () => {
@@ -594,8 +601,8 @@ describe('PromotionRuleEngineService', () => {
       );
 
       // date_range should be first in results (ordering 1 < 2)
-      expect(result.ruleResults[0].ruleType).toBe('date_range');
-      expect(result.ruleResults[1].ruleType).toBe('billing_period');
+      expect(result.ruleResults[0]!.ruleType).toBe('date_range');
+      expect(result.ruleResults[1]!.ruleType).toBe('billing_period');
     });
   });
 
@@ -689,8 +696,8 @@ describe('PromotionRuleEngineService', () => {
       const result = await service.getActivePromotionsForPricing();
 
       expect(result).toHaveLength(1);
-      expect(result[0].name).toBe('Summer Sale');
-      expect(result[0].slug).toBe('summer-sale');
+      expect(result[0]!.name).toBe('Summer Sale');
+      expect(result[0]!.slug).toBe('summer-sale');
       expect(redis.set).toHaveBeenCalled();
     });
 
@@ -710,7 +717,7 @@ describe('PromotionRuleEngineService', () => {
 
       const result = await service.getActivePromotionsForPricing();
 
-      expect(result[0].endsAt).toBe('2025-08-31T23:59:59.000Z');
+      expect(result[0]!.endsAt).toBe('2025-08-31T23:59:59.000Z');
     });
 
     it('should set endsAt to null when not specified', async () => {
@@ -720,7 +727,7 @@ describe('PromotionRuleEngineService', () => {
 
       const result = await service.getActivePromotionsForPricing();
 
-      expect(result[0].endsAt).toBeNull();
+      expect(result[0]!.endsAt).toBeNull();
     });
   });
 

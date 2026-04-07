@@ -264,8 +264,8 @@ describe('OpenSearchService', () => {
       expect(result.total).toBe(1);
       expect(result.maxScore).toBe(5.5);
       expect(result.items).toHaveLength(1);
-      expect(result.items[0].id).toBe('doc-1');
-      expect(result.items[0].highlights).toHaveProperty('title');
+      expect(result.items[0]!.id).toBe('doc-1');
+      expect(result.items[0]!.highlights).toHaveProperty('title');
       expect(result.timedOut).toBe(false);
     });
 
@@ -357,7 +357,7 @@ describe('OpenSearchService', () => {
       const result = await service.searchExactCitation('123456');
 
       expect(result.total).toBe(1);
-      expect(result.items[0].id).toBe('doc-1');
+      expect(result.items[0]!.id).toBe('doc-1');
     });
   });
 
@@ -382,7 +382,7 @@ describe('OpenSearchService', () => {
       const result = await service.searchSuggestions('People');
 
       expect(result).toHaveLength(1);
-      expect(result[0].id).toBe('doc-1');
+      expect(result[0]!.id).toBe('doc-1');
     });
 
     it('should return empty array on error', async () => {
@@ -472,7 +472,7 @@ describe('OpenSearchService', () => {
       });
 
       expect(result.items).toHaveLength(1);
-      expect(result.items[0].score).toBe(0.95);
+      expect(result.items[0]!.score).toBe(0.95);
       expect(result.timedOut).toBe(false);
     });
 

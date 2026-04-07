@@ -207,9 +207,9 @@ describe('CommunityService', () => {
         }),
       );
       expect(result.items).toHaveLength(1);
-      expect(result.items[0].contentType).toBe('flashcard_set');
-      expect(result.items[0].title).toBe('Constitutional Law Flashcards');
-      expect(result.items[0].itemCount).toBe(50);
+      expect(result.items[0]!.contentType).toBe('flashcard_set');
+      expect(result.items[0]!.title).toBe('Constitutional Law Flashcards');
+      expect(result.items[0]!.itemCount).toBe(50);
       expect(result.hasNext).toBe(false);
     });
 
@@ -299,7 +299,7 @@ describe('CommunityService', () => {
 
       const result = await service.browseFlashcardSets({});
 
-      expect(result.items[0].creator).toEqual({
+      expect(result.items[0]!.creator).toEqual({
         id: 'user-1',
         fullName: 'Atty. Juan Dela Cruz',
         expertVerification: { expertiseType: 'lawyer', status: 'approved' },
@@ -311,8 +311,8 @@ describe('CommunityService', () => {
 
       const result = await service.browseFlashcardSets({});
 
-      expect(result.items[0].createdAt).toBe('2026-03-22T10:00:00.000Z');
-      expect(result.items[0].updatedAt).toBe('2026-03-22T10:00:00.000Z');
+      expect(result.items[0]!.createdAt).toBe('2026-03-22T10:00:00.000Z');
+      expect(result.items[0]!.updatedAt).toBe('2026-03-22T10:00:00.000Z');
     });
 
     it('should return null nextCursor when no items', async () => {
@@ -352,8 +352,8 @@ describe('CommunityService', () => {
         }),
       );
       expect(result.items).toHaveLength(1);
-      expect(result.items[0].contentType).toBe('reviewer_pack');
-      expect(result.items[0].itemCount).toBe(30);
+      expect(result.items[0]!.contentType).toBe('reviewer_pack');
+      expect(result.items[0]!.itemCount).toBe(30);
     });
 
     it('should apply search and barSubject filters', async () => {
@@ -421,8 +421,8 @@ describe('CommunityService', () => {
         }),
       );
       expect(result.items).toHaveLength(1);
-      expect(result.items[0].contentType).toBe('digest');
-      expect(result.items[0].voteScore).toBe(12);
+      expect(result.items[0]!.contentType).toBe('digest');
+      expect(result.items[0]!.voteScore).toBe(12);
     });
 
     it('should sort by newest', async () => {
@@ -467,7 +467,7 @@ describe('CommunityService', () => {
 
       const result = await service.browseDigests({});
 
-      expect(result.items[0].creator).toEqual({
+      expect(result.items[0]!.creator).toEqual({
         id: '',
         fullName: 'System',
         expertVerification: null,
@@ -479,7 +479,7 @@ describe('CommunityService', () => {
 
       const result = await service.browseDigests({});
 
-      expect(result.items[0].description).toBe('A case about criminal liability.');
+      expect(result.items[0]!.description).toBe('A case about criminal liability.');
     });
 
     it('should apply search filter', async () => {
@@ -502,8 +502,8 @@ describe('CommunityService', () => {
 
       const result = await service.browseDigests({});
 
-      expect(result.items[0].barSubject).toBeNull();
-      expect(result.items[0].topic).toBe('case_digest');
+      expect(result.items[0]!.barSubject).toBeNull();
+      expect(result.items[0]!.topic).toBe('case_digest');
     });
   });
 
@@ -579,7 +579,7 @@ describe('CommunityService', () => {
 
       const result = await service.getFeatured();
 
-      expect(result.digests[0].creator.fullName).toBe('System');
+      expect(result.digests[0]!.creator.fullName).toBe('System');
     });
   });
 
@@ -835,7 +835,7 @@ describe('CommunityService', () => {
       const result = await service.listRatings('flashcard_set', 'fcs-1', {});
 
       expect(result.items).toHaveLength(1);
-      expect(result.items[0].score).toBe(5);
+      expect(result.items[0]!.score).toBe(5);
       expect(result.aggregate.ratingCount).toBe(15);
       expect(result.aggregate.avgRating).toBeCloseTo((5 * 8 + 4 * 5 + 3 * 2) / 15);
       expect(result.aggregate.distribution).toEqual({
@@ -891,7 +891,7 @@ describe('CommunityService', () => {
 
       const result = await service.listRatings('flashcard_set', 'fcs-1', {});
 
-      expect(result.items[0].user).toEqual({
+      expect(result.items[0]!.user).toEqual({
         id: 'user-1',
         fullName: 'Atty. Juan Dela Cruz',
       });
@@ -1210,7 +1210,7 @@ describe('CommunityService', () => {
         }),
       );
       expect(result.items).toHaveLength(1);
-      expect(result.items[0].reason).toBe('inaccurate');
+      expect(result.items[0]!.reason).toBe('inaccurate');
     });
 
     it('should filter by provided status', async () => {
@@ -1243,7 +1243,7 @@ describe('CommunityService', () => {
 
       const result = await service.listFlags({});
 
-      expect(result.items[0].reporter).toEqual({
+      expect(result.items[0]!.reporter).toEqual({
         id: 'user-1',
         fullName: 'Atty. Juan Dela Cruz',
       });
@@ -1254,7 +1254,7 @@ describe('CommunityService', () => {
 
       const result = await service.listFlags({});
 
-      expect(result.items[0].resolvedAt).toBeNull();
+      expect(result.items[0]!.resolvedAt).toBeNull();
     });
   });
 
@@ -1474,7 +1474,7 @@ describe('CommunityService', () => {
         }),
       );
       expect(result.items).toHaveLength(1);
-      expect(result.items[0].expertiseType).toBe('lawyer');
+      expect(result.items[0]!.expertiseType).toBe('lawyer');
     });
 
     it('should filter by provided status', async () => {
@@ -1494,7 +1494,7 @@ describe('CommunityService', () => {
 
       const result = await service.listExpertVerifications({});
 
-      expect(result.items[0].user).toEqual({
+      expect(result.items[0]!.user).toEqual({
         id: 'user-1',
         fullName: 'Atty. Juan Dela Cruz',
         email: 'juan@example.com',
@@ -1519,7 +1519,7 @@ describe('CommunityService', () => {
 
       const result = await service.listExpertVerifications({});
 
-      expect(result.items[0].reviewedAt).toBeNull();
+      expect(result.items[0]!.reviewedAt).toBeNull();
     });
 
     it('should detect hasNext correctly', async () => {

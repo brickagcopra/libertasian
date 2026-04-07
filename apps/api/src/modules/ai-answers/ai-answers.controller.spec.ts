@@ -48,7 +48,7 @@ describe('AiAnswersController', () => {
     used: 5,
     limit: 200,
     remaining: 195,
-    resetsAt: new Date('2026-04-01'),
+    resetsAt: '2026-04-01T00:00:00.000Z',
   };
 
   const mockQuotaExceeded = {
@@ -56,7 +56,7 @@ describe('AiAnswersController', () => {
     used: 200,
     limit: 200,
     remaining: 0,
-    resetsAt: new Date('2026-04-01'),
+    resetsAt: '2026-04-01T00:00:00.000Z',
   };
 
   beforeEach(async () => {

@@ -7,10 +7,10 @@ import {
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-// file-type uses named export fileTypeFromBuffer
+// file-type@16 uses fromBuffer (not fileTypeFromBuffer)
 async function fileTypeFromBuffer(buffer: Uint8Array | ArrayBuffer) {
   const fileType = await import('file-type');
-  return fileType.fileTypeFromBuffer(buffer);
+  return fileType.fromBuffer(buffer as Buffer);
 }
 
 import { PrismaService } from '../../prisma/prisma.service';

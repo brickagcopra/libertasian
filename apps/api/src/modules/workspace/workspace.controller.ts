@@ -66,7 +66,7 @@ export class WorkspaceController {
   @Post('matters')
   @ApiOperation({ summary: 'Create a matter' })
   @TrackEvent('matter_created', (req) => ({
-    matter_type: (req.body?.matterType as string) ?? 'general',
+    matter_type: (req.body?.['matterType'] as string) ?? 'general',
   }))
   async createMatter(
     @Body() dto: CreateMatterDto,
@@ -175,8 +175,8 @@ export class WorkspaceController {
   @Post('matters/:id/documents')
   @ApiOperation({ summary: 'Attach a document to a matter' })
   @TrackEvent('matter_document_attached', (req) => ({
-    document_source: req.body?.legalDocumentId ? 'corpus' : 'upload',
-    role: (req.body?.role as string) ?? 'reference',
+    document_source: req.body?.['legalDocumentId'] ? 'corpus' : 'upload',
+    role: (req.body?.['role'] as string) ?? 'reference',
   }))
   async addMatterDocument(
     @Param('id', ParseUUIDPipe) matterId: string,
@@ -250,7 +250,7 @@ export class WorkspaceController {
   @Post('notes')
   @ApiOperation({ summary: 'Create a note (optionally linked to a matter)' })
   @TrackEvent('note_created', (req) => ({
-    word_count: (req.body?.content as string)?.split(/\s+/).length ?? 0,
+    word_count: (req.body?.['content'] as string)?.split(/\s+/).length ?? 0,
   }))
   async createNote(
     @Body() dto: CreateNoteDto,
@@ -366,8 +366,8 @@ export class WorkspaceController {
   @Post('annotations')
   @ApiOperation({ summary: 'Create an annotation/highlight on a legal document' })
   @TrackEvent('annotation_created', (req) => ({
-    color: (req.body?.color as string) ?? 'yellow',
-    text_length: (req.body?.selectedText as string)?.length ?? 0,
+    color: (req.body?.['color'] as string) ?? 'yellow',
+    text_length: (req.body?.['selectedText'] as string)?.length ?? 0,
   }))
   async createAnnotation(
     @Body() dto: CreateAnnotationDto,
@@ -702,7 +702,7 @@ export class WorkspaceController {
   @ApiOperation({ summary: 'Create a share link for a workspace entity (matter)' })
   @TrackEvent('collaboration_action', (req) => ({
     action: 'share_created',
-    target_type: (req.body?.entityType as string) ?? 'matter',
+    target_type: (req.body?.['entityType'] as string) ?? 'matter',
   }))
   async createShare(
     @Body() dto: CreateShareDto,

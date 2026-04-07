@@ -12,7 +12,10 @@ import { ResearchWorkspacesService } from './research-workspaces.service';
 
 describe('ResearchWorkspacesService', () => {
   let service: ResearchWorkspacesService;
-  let prisma: Record<string, Record<string, jest.Mock>>;
+  let prisma: {
+    researchWorkspace: { create: jest.Mock; findUnique: jest.Mock; findMany: jest.Mock; update: jest.Mock; delete: jest.Mock; count: jest.Mock };
+    researchQuery: { create: jest.Mock; findUnique: jest.Mock; findMany: jest.Mock };
+  };
   let subscriptions: { getEntitlements: jest.Mock };
   let queue: { add: jest.Mock };
 
@@ -236,7 +239,7 @@ describe('ResearchWorkspacesService', () => {
       const result = await service.list(userId, organizationId, {} as never);
 
       expect(result.items).toHaveLength(1);
-      expect(result.items[0].queryCount).toBe(3);
+      expect(result.items[0]!.queryCount).toBe(3);
       expect(result.meta.hasNext).toBe(false);
     });
 

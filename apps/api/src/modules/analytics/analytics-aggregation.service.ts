@@ -80,7 +80,7 @@ export class AnalyticsAggregationService {
     dimension?: string,
     organizationId?: string,
   ): Promise<void> {
-    const dateOnly = new Date(date.toISOString().split('T')[0]);
+    const dateOnly = new Date(date.toISOString().split('T')[0]!);
 
     // Use raw SQL for the upsert with the composite unique constraint
     await this.prisma.$executeRaw`
@@ -497,7 +497,7 @@ export class AnalyticsAggregationService {
           funnelName,
           stepName: step.name,
           stepOrder: step.order,
-          date: new Date(date.toISOString().split('T')[0]),
+          date: new Date(date.toISOString().split('T')[0]!),
           enteredCount: count,
           completedCount: count,
           droppedCount: 0,
@@ -536,7 +536,7 @@ export class AnalyticsAggregationService {
           funnelName,
           stepName: step.name,
           stepOrder: step.order,
-          date: new Date(date.toISOString().split('T')[0]),
+          date: new Date(date.toISOString().split('T')[0]!),
           enteredCount: count,
           completedCount: count,
           droppedCount: 0,

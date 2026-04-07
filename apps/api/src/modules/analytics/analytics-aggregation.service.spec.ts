@@ -5,11 +5,19 @@ import { AnalyticsAggregationService } from './analytics-aggregation.service';
 
 describe('AnalyticsAggregationService', () => {
   let service: AnalyticsAggregationService;
-  let prisma: jest.Mocked<PrismaService>;
+  let prisma: {
+    analyticsEvent: { count: jest.Mock; groupBy: jest.Mock; findMany: jest.Mock };
+    analyticsSession: { count: jest.Mock; aggregate: jest.Mock; groupBy: jest.Mock };
+    analyticsFunnelStep: { create: jest.Mock };
+    digest: { count: jest.Mock };
+    $executeRaw: jest.Mock;
+  };
 
   // Helpers to access private methods via service instance
-  const callPrivate = (method: string, ...args: unknown[]) =>
-    (service as unknown as Record<string, (...a: unknown[]) => Promise<void>>)[method](...args);
+  const callPrivate = (method: string, ...args: unknown[]) => {
+    const fn = (service as unknown as Record<string, (...a: unknown[]) => Promise<void>>)[method]!;
+    return fn(...args);
+  };
 
   const yesterday = new Date('2026-04-02T00:00:00.000Z');
 
@@ -43,7 +51,7 @@ describe('AnalyticsAggregationService', () => {
     }).compile();
 
     service = module.get<AnalyticsAggregationService>(AnalyticsAggregationService);
-    prisma = module.get(PrismaService);
+    prisma = module.get(PrismaService) as unknown as typeof prisma;
   });
 
   // =========================================================================
@@ -442,10 +450,10 @@ describe('AnalyticsAggregationService', () => {
 
       // Verify scan funnel step names and order
       const scanCalls = (prisma.analyticsFunnelStep.create as jest.Mock).mock.calls
-        .filter((call: Array<{ data: { funnelName: string } }>) => call[0].data.funnelName === 'scan_to_digest')
+        .filter((call: Array<{ data: { funnelName: string } }>) => call[0]!.data.funnelName === 'scan_to_digest')
         .map((call: Array<{ data: { stepName: string; stepOrder: number } }>) => ({
-          name: call[0].data.stepName,
-          order: call[0].data.stepOrder,
+          name: call[0]!.data.stepName,
+          order: call[0]!.data.stepOrder,
         }));
 
       expect(scanCalls).toEqual([
@@ -464,7 +472,8 @@ describe('AnalyticsAggregationService', () => {
 
       // The last step of search funnel should filter by rating = 'helpful'
       const searchHelpfulCall = (prisma.analyticsEvent.count as jest.Mock).mock.calls.find(
-        (call: Array<{ where: { eventName: string; properties?: Record<string, unknown> } }>) =>
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (call: any[]) =>
           call[0]?.where?.properties?.path?.[0] === 'rating',
       );
       expect(searchHelpfulCall).toBeDefined();

@@ -33,7 +33,7 @@ export class TrackEventDto {
   @IsOptional()
   deviceType?: string;
 
-  @ApiProperty({ description: 'Event-specific properties (validated against taxonomy)', type: 'object' })
+  @ApiProperty({ description: 'Event-specific properties (validated against taxonomy)', type: 'object', additionalProperties: true })
   @IsObject()
   properties!: Record<string, unknown>;
 

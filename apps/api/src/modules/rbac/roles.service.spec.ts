@@ -367,8 +367,8 @@ describe('RolesService', () => {
         legacyRole: 'admin',
         status: 'active',
       });
-      expect(result[0].roles).toHaveLength(1);
-      expect(result[0].roles[0].roleName).toBe('Admin');
+      expect(result[0]!.roles).toHaveLength(1);
+      expect(result[0]!.roles[0]!.roleName).toBe('Admin');
     });
 
     it('should return empty array for org with no members', async () => {
@@ -472,7 +472,7 @@ describe('RolesService', () => {
         memberCount: 5,
       });
       expect(result.permissions).toHaveLength(1);
-      expect(result.permissions[0].code).toBe('documents:read');
+      expect(result.permissions[0]!.code).toBe('documents:read');
     });
 
     it('should throw NotFoundException if role not found', async () => {
@@ -858,11 +858,11 @@ describe('RolesService', () => {
 
       // Only root (owner) should be at top level
       expect(result).toHaveLength(1);
-      expect(result[0].roleName).toBe('Owner');
-      expect(result[0].children).toHaveLength(1);
-      expect(result[0].children[0].roleName).toBe('Admin');
-      expect(result[0].children[0].children).toHaveLength(1);
-      expect(result[0].children[0].children[0].roleName).toBe('Editor');
+      expect(result[0]!.roleName).toBe('Owner');
+      expect(result[0]!.children).toHaveLength(1);
+      expect(result[0]!.children[0]!.roleName).toBe('Admin');
+      expect(result[0]!.children[0]!.children).toHaveLength(1);
+      expect(result[0]!.children[0]!.children[0]!.roleName).toBe('Editor');
     });
 
     it('should handle multiple root nodes', async () => {
@@ -900,8 +900,8 @@ describe('RolesService', () => {
       const result = await service.getHierarchyTree();
 
       expect(result).toHaveLength(1);
-      expect(result[0].children).toHaveLength(1); // admin
-      expect(result[0].children[0].children).toHaveLength(2); // reviewer + member
+      expect(result[0]!.children).toHaveLength(1); // admin
+      expect(result[0]!.children[0]!.children).toHaveLength(2); // reviewer + member
     });
   });
 

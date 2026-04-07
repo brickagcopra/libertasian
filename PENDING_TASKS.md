@@ -1,6 +1,23 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-04-03 (Session 183 — VPS Deployment Guide)
+> Last updated: 2026-04-07 (Session 184 — TypeScript Error Fixes in Spec Files)
+
+---
+
+## Session 184 — TS Error Fixes (Ongoing)
+
+### Completed This Session
+- **search.service.spec.ts** — 25 errors fixed
+- **simulator.service.spec.ts** — 21 errors fixed
+- **analytics-aggregation.service.spec.ts** — 6 errors fixed
+
+### Remaining Spec File TS Errors (from previous sessions)
+- **coupon.service.spec.ts** — ~539 errors (in progress)
+- **promotion.service.spec.ts** — ~384 errors
+- **promotion-rule-engine.service.spec.ts** — ~209 errors
+- **research-workspaces.service.spec.ts** — ~152 errors
+- **pleadings.service.spec.ts** — ~129 errors
+- **~35 other spec files** — ~987 errors total
 
 ---
 

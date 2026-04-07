@@ -13,7 +13,11 @@ import { TimelinesService } from './timelines.service';
 
 describe('TimelinesService', () => {
   let service: TimelinesService;
-  let prisma: Record<string, Record<string, jest.Mock>>;
+  let prisma: {
+    caseTimeline: { create: jest.Mock; findUnique: jest.Mock; findMany: jest.Mock; update: jest.Mock; delete: jest.Mock };
+    legalDocument: { findMany: jest.Mock };
+    matter: { findFirst: jest.Mock };
+  };
   let usageQuota: { checkAndIncrement: jest.Mock };
   let queue: { add: jest.Mock };
 

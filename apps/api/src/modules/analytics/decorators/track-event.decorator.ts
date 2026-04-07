@@ -6,9 +6,10 @@ export const TRACK_EVENT_KEY = 'analytics:track_event';
  * Property extractor function type.
  * Receives the request and response objects, returns event properties.
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type PropertyExtractor = (
-  req: { body?: Record<string, unknown>; query?: Record<string, unknown>; params?: Record<string, unknown>; user?: Record<string, unknown> },
-  res: { data?: unknown },
+  req: { body?: any; query?: any; params?: any; user?: any },
+  res: { data?: any },
 ) => Record<string, unknown>;
 
 export interface TrackEventOptions {

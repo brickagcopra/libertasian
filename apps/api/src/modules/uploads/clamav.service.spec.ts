@@ -31,13 +31,13 @@ jest.mock('net', () => ({
     socket.connect = jest.fn();
     socket.setTimeout = jest.fn();
     // Store reference so tests can emit events
-    (mockSocket as unknown as Record<string, unknown>)._latest = socket;
+    (mockSocket as unknown as Record<string, unknown>)['_latest'] = socket;
     return socket;
   }),
 }));
 
 function getLatestSocket(): typeof mockSocket {
-  return (mockSocket as unknown as Record<string, unknown>)._latest as typeof mockSocket;
+  return (mockSocket as unknown as Record<string, unknown>)['_latest'] as typeof mockSocket;
 }
 
 describe('ClamavService', () => {

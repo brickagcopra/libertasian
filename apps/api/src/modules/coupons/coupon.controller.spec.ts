@@ -9,7 +9,7 @@ const mockGuard = { canActivate: jest.fn().mockReturnValue(true) };
 
 describe('CouponController', () => {
   let controller: CouponController;
-  let couponService: Record<string, jest.Mock>;
+  let couponService: { validateCoupon: jest.Mock };
 
   const USER = {
     sub: 'user-1',

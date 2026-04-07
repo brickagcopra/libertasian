@@ -8,12 +8,41 @@ import { OpenSearchService, type SearchResultItem } from './opensearch.service';
 import { EmbeddingClientService } from './embedding-client.service';
 import { SearchQueryDto } from './dto';
 
+type MockPrismaService = {
+  legalDocument: {
+    findUnique: jest.Mock;
+    findMany: jest.Mock;
+  };
+};
+
+type MockRedisService = {
+  get: jest.Mock;
+  set: jest.Mock;
+};
+
+type MockOpenSearchService = {
+  searchKeyword: jest.Mock;
+  searchVector: jest.Mock;
+  searchExactCitation: jest.Mock;
+  searchSuggestions: jest.Mock;
+  indexDocument: jest.Mock;
+  ensureIndexes: jest.Mock;
+  bulkIndexVectorDocuments: jest.Mock;
+  removeDocumentFromAllIndexes: jest.Mock;
+  bulkIndexDocuments: jest.Mock;
+};
+
+type MockEmbeddingClientService = {
+  embed: jest.Mock;
+  embedBatch: jest.Mock;
+};
+
 describe('SearchService', () => {
   let service: SearchService;
-  let prismaService: jest.Mocked<PrismaService>;
-  let redisService: jest.Mocked<RedisService>;
-  let openSearchService: jest.Mocked<OpenSearchService>;
-  let embeddingClientService: jest.Mocked<EmbeddingClientService>;
+  let prismaService: MockPrismaService;
+  let redisService: MockRedisService;
+  let openSearchService: MockOpenSearchService;
+  let embeddingClientService: MockEmbeddingClientService;
 
   const mockSearchResultItem: SearchResultItem = {
     id: 'doc-1',
@@ -98,10 +127,10 @@ describe('SearchService', () => {
     }).compile();
 
     service = module.get<SearchService>(SearchService);
-    prismaService = module.get(PrismaService) as jest.Mocked<PrismaService>;
-    redisService = module.get(RedisService) as jest.Mocked<RedisService>;
-    openSearchService = module.get(OpenSearchService) as jest.Mocked<OpenSearchService>;
-    embeddingClientService = module.get(EmbeddingClientService) as jest.Mocked<EmbeddingClientService>;
+    prismaService = module.get(PrismaService) as unknown as MockPrismaService;
+    redisService = module.get(RedisService) as unknown as MockRedisService;
+    openSearchService = module.get(OpenSearchService) as unknown as MockOpenSearchService;
+    embeddingClientService = module.get(EmbeddingClientService) as unknown as MockEmbeddingClientService;
 
     // Suppress logger output during tests
     jest.spyOn(Logger.prototype, 'log').mockImplementation();
@@ -150,7 +179,7 @@ describe('SearchService', () => {
       openSearchService.searchKeyword.mockResolvedValue(mockBm25Result);
       embeddingClientService.embed.mockResolvedValue([0.1, 0.2, 0.3]);
       openSearchService.searchVector.mockResolvedValue(mockKnnResult);
-      redisService.set.mockResolvedValue('OK');
+      redisService.set.mockResolvedValue(undefined);
 
       const result = await service.search(searchDto);
 
@@ -194,7 +223,7 @@ describe('SearchService', () => {
       redisService.get.mockResolvedValue(null);
       openSearchService.searchKeyword.mockResolvedValue(mockBm25Result);
       embeddingClientService.embed.mockResolvedValue(null);
-      redisService.set.mockResolvedValue('OK');
+      redisService.set.mockResolvedValue(undefined);
 
       const result = await service.search(searchDto);
 
@@ -211,7 +240,7 @@ describe('SearchService', () => {
       openSearchService.searchKeyword.mockResolvedValue(mockBm25Result);
       embeddingClientService.embed.mockResolvedValue([0.1, 0.2, 0.3]);
       openSearchService.searchVector.mockRejectedValue(new Error('kNN failed'));
-      redisService.set.mockResolvedValue('OK');
+      redisService.set.mockResolvedValue(undefined);
 
       const result = await service.search(searchDto);
 
@@ -242,12 +271,12 @@ describe('SearchService', () => {
         timedOut: false,
       });
       embeddingClientService.embed.mockResolvedValue(null);
-      redisService.set.mockResolvedValue('OK');
+      redisService.set.mockResolvedValue(undefined);
 
       const result = await service.search(paginatedDto);
 
       expect(result.items).toHaveLength(10);
-      expect(result.items[0]?.id).toBe('doc-20');
+      expect((result.items[0] as SearchResultItem)?.id).toBe('doc-20');
       expect(result.meta.page).toBe(2);
       expect(result.meta.limit).toBe(10);
     });

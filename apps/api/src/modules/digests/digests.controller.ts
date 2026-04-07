@@ -76,11 +76,11 @@ export class DigestsController {
   @ApiOperation({ summary: 'Trigger digest generation from a legal document' })
   @TrackEvent('digest_generated', (req, res) => {
     const response = res.data as Record<string, unknown> | undefined;
-    const digest = response?.data as Record<string, unknown> | undefined;
+    const digest = response?.['data'] as Record<string, unknown> | undefined;
     return {
       source_origin: (req.body?.sourceOrigin as string) ?? 'unknown',
       document_type: (req.body?.digestType as string) ?? 'general',
-      confidence_score: (digest?.confidenceScore as number) ?? 0,
+      confidence_score: (digest?.['confidenceScore'] as number) ?? 0,
       generation_time_ms: 0,
     };
   })

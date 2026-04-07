@@ -3,7 +3,7 @@ import { Type } from 'class-transformer';
 
 export class GeneralLedgerQueryDto {
   @IsUUID()
-  account: string;
+  account!: string;
 
   @IsOptional()
   @IsDateString()

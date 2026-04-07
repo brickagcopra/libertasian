@@ -14,7 +14,14 @@ import { PromotionService } from './promotion.service';
 
 describe('PromotionService', () => {
   let service: PromotionService;
-  let prisma: Record<string, Record<string, jest.Mock>>;
+  let prisma: {
+    promotion: { findUnique: jest.Mock; findMany: jest.Mock; create: jest.Mock; update: jest.Mock; updateMany: jest.Mock };
+    promotionRedemption: { findUnique: jest.Mock; findMany: jest.Mock; count: jest.Mock; update: jest.Mock };
+    promotionRule: { findMany: jest.Mock; deleteMany: jest.Mock; createMany: jest.Mock };
+    promotionBenefit: { findMany: jest.Mock; deleteMany: jest.Mock; createMany: jest.Mock };
+    promotionPlanRule: { findMany: jest.Mock; deleteMany: jest.Mock; createMany: jest.Mock };
+    $transaction: jest.Mock;
+  };
   let audit: jest.Mocked<Pick<AuditService, 'log'>>;
   let entitlementService: jest.Mocked<Pick<EntitlementService, 'grantBonus'>>;
   let ruleEngine: jest.Mocked<

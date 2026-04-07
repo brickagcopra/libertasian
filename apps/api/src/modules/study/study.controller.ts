@@ -341,9 +341,9 @@ export class StudyController {
   @ApiOperation({ summary: 'Create a reviewer pack' })
   @TrackEvent('reviewer_pack_started', (req, res) => {
     const response = res.data as Record<string, unknown> | undefined;
-    const pack = response?.data as Record<string, unknown> | undefined;
+    const pack = response?.['data'] as Record<string, unknown> | undefined;
     return {
-      pack_id: (pack?.id as string) ?? '',
+      pack_id: (pack?.['id'] as string) ?? '',
       subject_area: (req.body?.barSubject as string) ?? 'general',
     };
   })
@@ -845,7 +845,7 @@ export class StudyController {
   @ApiOperation({ summary: 'Start a study session' })
   @TrackEvent('flashcard_session_started', (req, res) => {
     const response = res.data as Record<string, unknown> | undefined;
-    const session = response?.data as Record<string, unknown> | undefined;
+    const session = response?.['data'] as Record<string, unknown> | undefined;
     return {
       card_count: 0,
       subject_area: (req.body?.subjectArea as string) ?? 'general',
@@ -876,10 +876,10 @@ export class StudyController {
   @ApiOperation({ summary: 'End a study session' })
   @TrackEvent('study_session_completed', (req, res) => {
     const response = res.data as Record<string, unknown> | undefined;
-    const session = response?.data as Record<string, unknown> | undefined;
+    const session = response?.['data'] as Record<string, unknown> | undefined;
     return {
-      duration_minutes: Math.round(((session?.durationSecs as number) ?? 0) / 60),
-      cards_reviewed: (session?.itemsStudied as number) ?? 0,
+      duration_minutes: Math.round(((session?.['durationSecs'] as number) ?? 0) / 60),
+      cards_reviewed: (session?.['itemsStudied'] as number) ?? 0,
       sections_read: 0,
       subject_area: (req.body?.subjectArea as string) ?? 'general',
     };

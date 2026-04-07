@@ -6,8 +6,21 @@ import { ReportingService } from './reporting.service';
 
 describe('ReportingService', () => {
   let service: ReportingService;
-  let prisma: jest.Mocked<PrismaService>;
-  let redis: jest.Mocked<RedisService>;
+  let prisma: {
+    payment: { aggregate: jest.Mock; groupBy: jest.Mock };
+    subscription: { count: jest.Mock; groupBy: jest.Mock; aggregate: jest.Mock };
+    checkoutPriceSnapshot: { aggregate: jest.Mock };
+    trialRecord: { groupBy: jest.Mock; aggregate: jest.Mock };
+    couponRedemption: { aggregate: jest.Mock };
+    promotionRedemption: { aggregate: jest.Mock };
+    organization: { count: jest.Mock; groupBy: jest.Mock };
+    organizationMember: { count: jest.Mock };
+    $queryRaw: jest.Mock;
+  };
+  let redis: {
+    get: jest.Mock;
+    set: jest.Mock;
+  };
 
   const defaultDto = { startDate: '2026-03-01', endDate: '2026-03-24' };
   const trendDto = { ...defaultDto, period: 'day' };
@@ -63,8 +76,8 @@ describe('ReportingService', () => {
     }).compile();
 
     service = module.get<ReportingService>(ReportingService);
-    prisma = module.get(PrismaService);
-    redis = module.get(RedisService);
+    prisma = module.get(PrismaService) as unknown as typeof prisma;
+    redis = module.get(RedisService) as unknown as typeof redis;
   });
 
   // =====================================================================
@@ -191,9 +204,9 @@ describe('ReportingService', () => {
       const result = await service.getRevenueTrend(trendDto);
 
       expect(result.data).toHaveLength(2);
-      expect(result.data[0].revenueCentavos).toBe(100000);
-      expect(result.data[0].revenuePesos).toBe(1000);
-      expect(result.data[0].paymentCount).toBe(5);
+      expect(result.data[0]!.revenueCentavos).toBe(100000);
+      expect(result.data[0]!.revenuePesos).toBe(1000);
+      expect(result.data[0]!.paymentCount).toBe(5);
       expect(result.periodType).toBe('day');
     });
 
@@ -230,7 +243,7 @@ describe('ReportingService', () => {
       expect(result.data).toHaveLength(2);
       expect(result.totalRevenueCentavos).toBe(800000);
       expect(result.totalRevenuePesos).toBe(8000);
-      expect(result.data[0].planCode).toBe('pro');
+      expect(result.data[0]!.planCode).toBe('pro');
     });
   });
 
@@ -287,9 +300,9 @@ describe('ReportingService', () => {
       const result = await service.getSubscriptionTrend({ ...defaultDto, period: 'week' });
 
       expect(result.data).toHaveLength(2);
-      expect(result.data[0].newSubscriptions).toBe(10);
-      expect(result.data[0].cancellations).toBe(2);
-      expect(result.data[0].netChange).toBe(8);
+      expect(result.data[0]!.newSubscriptions).toBe(10);
+      expect(result.data[0]!.cancellations).toBe(2);
+      expect(result.data[0]!.netChange).toBe(8);
       expect(result.periodType).toBe('week');
     });
   });
@@ -416,10 +429,10 @@ describe('ReportingService', () => {
       const result = await service.getPaymentTrend(trendDto);
 
       expect(result.data).toHaveLength(1);
-      expect(result.data[0].succeededCount).toBe(15);
-      expect(result.data[0].failedCount).toBe(2);
-      expect(result.data[0].succeededAmountCentavos).toBe(150000);
-      expect(result.data[0].succeededAmountPesos).toBe(1500);
+      expect(result.data[0]!.succeededCount).toBe(15);
+      expect(result.data[0]!.failedCount).toBe(2);
+      expect(result.data[0]!.succeededAmountCentavos).toBe(150000);
+      expect(result.data[0]!.succeededAmountPesos).toBe(1500);
     });
   });
 
@@ -486,11 +499,11 @@ describe('ReportingService', () => {
       const result = await service.getTopCoupons(topDto);
 
       expect(result).toHaveLength(1);
-      expect(result[0].couponId).toBe('c-1');
-      expect(result[0].code).toBe('LAUNCH2026');
-      expect(result[0].redemptionCount).toBe(50);
-      expect(result[0].totalDiscountCentavos).toBe(250000);
-      expect(result[0].totalDiscountPesos).toBe(2500);
+      expect(result[0]!.couponId).toBe('c-1');
+      expect(result[0]!.code).toBe('LAUNCH2026');
+      expect(result[0]!.redemptionCount).toBe(50);
+      expect(result[0]!.totalDiscountCentavos).toBe(250000);
+      expect(result[0]!.totalDiscountPesos).toBe(2500);
     });
 
     it('should return empty array when no coupons redeemed', async () => {
@@ -517,9 +530,9 @@ describe('ReportingService', () => {
       const result = await service.getTopPromotions(topDto);
 
       expect(result).toHaveLength(1);
-      expect(result[0].promotionId).toBe('p-1');
-      expect(result[0].slug).toBe('summer-sale');
-      expect(result[0].totalDiscountPesos).toBe(1800);
+      expect(result[0]!.promotionId).toBe('p-1');
+      expect(result[0]!.slug).toBe('summer-sale');
+      expect(result[0]!.totalDiscountPesos).toBe(1800);
     });
   });
 

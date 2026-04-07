@@ -71,9 +71,9 @@ export class BillingController {
   @ApiOperation({ summary: 'Cancel the current subscription' })
   @TrackEvent('subscription_cancelled', (req, res) => {
     const response = res.data as Record<string, unknown> | undefined;
-    const data = response?.data as Record<string, unknown> | undefined;
+    const data = response?.['data'] as Record<string, unknown> | undefined;
     return {
-      plan_code: (data?.planCode as string) ?? 'unknown',
+      plan_code: (data?.['planCode'] as string) ?? 'unknown',
       reason_category: 'user_initiated',
       tenure_days: 0,
     };

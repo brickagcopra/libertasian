@@ -9,7 +9,11 @@ import { CaseComparisonsService } from './case-comparisons.service';
 
 describe('CaseComparisonsService', () => {
   let service: CaseComparisonsService;
-  let prisma: Record<string, Record<string, jest.Mock>>;
+  let prisma: {
+    caseComparison: { create: jest.Mock; findUnique: jest.Mock; findMany: jest.Mock; update: jest.Mock; delete: jest.Mock };
+    legalDocument: { findMany: jest.Mock };
+    matter: { findFirst: jest.Mock };
+  };
   let usageQuota: { checkAndIncrement: jest.Mock };
   let queue: { add: jest.Mock };
 

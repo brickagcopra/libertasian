@@ -5,7 +5,7 @@ import { CouponReservationScheduler } from './coupon-reservation.scheduler';
 
 describe('CouponReservationScheduler', () => {
   let scheduler: CouponReservationScheduler;
-  let couponService: Record<string, jest.Mock>;
+  let couponService: { expireStaleReservations: jest.Mock };
 
   beforeEach(async () => {
     couponService = {

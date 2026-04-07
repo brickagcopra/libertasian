@@ -216,9 +216,9 @@ describe('OcrClientService', () => {
       const result = await service.extractPdfText(Buffer.from('pdf content'), 'document.pdf');
 
       expect(result.pages).toHaveLength(2);
-      expect(result.pages[0].pageNumber).toBe(1);
-      expect(result.pages[0].isOcr).toBe(false);
-      expect(result.pages[1].isOcr).toBe(true);
+      expect(result.pages[0]!.pageNumber).toBe(1);
+      expect(result.pages[0]!.isOcr).toBe(false);
+      expect(result.pages[1]!.isOcr).toBe(true);
       expect(result.totalPages).toBe(2);
       expect(result.totalWordCount).toBe(6);
       expect(result.hasTextLayer).toBe(true);

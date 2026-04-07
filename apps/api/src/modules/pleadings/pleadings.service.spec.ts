@@ -12,7 +12,11 @@ import { PleadingsService } from './pleadings.service';
 
 describe('PleadingsService', () => {
   let service: PleadingsService;
-  let prisma: Record<string, Record<string, jest.Mock>>;
+  let prisma: {
+    pleading: { create: jest.Mock; findUnique: jest.Mock; findMany: jest.Mock; update: jest.Mock; delete: jest.Mock };
+    pleadingTemplate: { findUnique: jest.Mock; findMany: jest.Mock };
+    matter: { findFirst: jest.Mock };
+  };
   let usageQuota: { checkAndIncrement: jest.Mock };
   let queue: { add: jest.Mock };
 

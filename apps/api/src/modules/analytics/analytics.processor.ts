@@ -2,6 +2,8 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 
+import type { Prisma } from '@prisma/client';
+
 import { PrismaService } from '../../prisma/prisma.service';
 import type { AnalyticsEventPayload } from './analytics.service';
 
@@ -67,8 +69,8 @@ export class AnalyticsProcessor extends WorkerHost {
           organizationId: event.organizationId ?? null,
           sessionId: event.sessionId ?? null,
           deviceType: event.deviceType ?? null,
-          properties: event.properties,
-          metadata: event.metadata,
+          properties: event.properties as Prisma.InputJsonValue,
+          metadata: event.metadata as Prisma.InputJsonValue,
           durationMs: event.durationMs ?? null,
           createdAt: new Date(event.createdAt),
         })),

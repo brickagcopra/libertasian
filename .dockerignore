@@ -1,0 +1,60 @@
+# Dependencies — installed inside Docker via pnpm install
+node_modules
+**/node_modules
+
+# Build outputs
+.next
+**/.next
+apps/web/.next
+apps/api/dist
+**/__pycache__
+**/*.pyc
+**/.turbo
+**/.venv
+**/.mypy_cache
+
+# Git
+.git
+.gitignore
+
+# IDE / Editor
+.vscode
+.idea
+*.swp
+*.swo
+
+# Environment files (secrets injected via env_file in compose)
+.env
+.env.*
+!.env.example
+
+# Docker files (not needed inside containers)
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+
+# Documentation
+*.md
+LICENSE
+docs/
+
+# Tests
+**/*.test.ts
+**/*.spec.ts
+**/*.test.tsx
+**/*.spec.tsx
+**/tests/
+**/test/
+**/__tests__/
+**/coverage/
+.nyc_output
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Misc
+.turbo
+.claude
+.github
+infrastructure/nginx/ssl

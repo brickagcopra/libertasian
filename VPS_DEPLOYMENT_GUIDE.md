@@ -400,7 +400,7 @@ The CI/CD pipelines push images to `ghcr.io/<owner>/libertasian-<service>:<tag>`
 ```bash
 # Create a GitHub Personal Access Token (PAT) with read:packages scope
 # Then login:
-echo "YOUR_GITHUB_PAT" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+echo "YOUR_GITHUB_PAT" | docker login ghcr.io -u brick --password-stdin
 ```
 
 > The deploy workflows handle this automatically. For manual deployment, the PAT is needed.

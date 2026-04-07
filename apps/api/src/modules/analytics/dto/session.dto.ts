@@ -19,7 +19,7 @@ export class StartSessionDto {
   @IsOptional()
   referrer?: string;
 
-  @ApiPropertyOptional({ description: 'Additional session properties', type: 'object' })
+  @ApiPropertyOptional({ description: 'Additional session properties', type: 'object', additionalProperties: true })
   @IsObject()
   @IsOptional()
   properties?: Record<string, unknown>;

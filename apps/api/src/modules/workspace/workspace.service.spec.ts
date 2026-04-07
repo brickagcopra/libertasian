@@ -9,12 +9,75 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { WorkspaceService } from './workspace.service';
+import { CreateNoteDto } from './dto/create-note.dto';
 import { NOTIFICATION_EVENTS } from '../notifications/notification.events';
 
 describe('WorkspaceService', () => {
   let service: WorkspaceService;
-  let prisma: jest.Mocked<PrismaService>;
-  let eventEmitter: jest.Mocked<EventEmitter2>;
+  let prisma: {
+    matter: {
+      create: jest.Mock;
+      findMany: jest.Mock;
+      findFirst: jest.Mock;
+      findUnique: jest.Mock;
+      update: jest.Mock;
+      delete: jest.Mock;
+    };
+    matterDocument: {
+      create: jest.Mock;
+      findMany: jest.Mock;
+      findFirst: jest.Mock;
+      delete: jest.Mock;
+    };
+    legalDocument: { count: jest.Mock };
+    userUpload: { count: jest.Mock };
+    note: {
+      create: jest.Mock;
+      findMany: jest.Mock;
+      findFirst: jest.Mock;
+      update: jest.Mock;
+      delete: jest.Mock;
+    };
+    annotation: {
+      create: jest.Mock;
+      findMany: jest.Mock;
+      findFirst: jest.Mock;
+      delete: jest.Mock;
+    };
+    legalDocumentSection: { count: jest.Mock };
+    task: {
+      create: jest.Mock;
+      findMany: jest.Mock;
+      findFirst: jest.Mock;
+      update: jest.Mock;
+      delete: jest.Mock;
+    };
+    organizationMember: { findFirst: jest.Mock };
+    taskComment: {
+      create: jest.Mock;
+      findMany: jest.Mock;
+      findFirst: jest.Mock;
+      delete: jest.Mock;
+    };
+    matterComment: {
+      create: jest.Mock;
+      findMany: jest.Mock;
+      findFirst: jest.Mock;
+      delete: jest.Mock;
+    };
+    auditLog: { findMany: jest.Mock };
+    workspaceShare: {
+      create: jest.Mock;
+      findMany: jest.Mock;
+      findFirst: jest.Mock;
+      findUnique: jest.Mock;
+      update: jest.Mock;
+      delete: jest.Mock;
+    };
+  };
+  let eventEmitter: {
+    emit: jest.Mock;
+  };
 
   const userId = 'user-1';
   const orgId = 'org-1';
@@ -156,8 +219,8 @@ describe('WorkspaceService', () => {
     }).compile();
 
     service = module.get<WorkspaceService>(WorkspaceService);
-    prisma = module.get(PrismaService);
-    eventEmitter = module.get(EventEmitter2);
+    prisma = module.get(PrismaService) as unknown as typeof prisma;
+    eventEmitter = module.get(EventEmitter2) as unknown as typeof eventEmitter;
   });
 
   // =========================================================================
@@ -394,7 +457,7 @@ describe('WorkspaceService', () => {
       (prisma.matter.findFirst as jest.Mock).mockResolvedValue(null);
 
       await expect(
-        service.createNote({ title: 'Note', matterId: 'bad-matter' }, orgId, userId),
+        service.createNote({ title: 'Note', matterId: 'bad-matter' } as CreateNoteDto, orgId, userId),
       ).rejects.toThrow(NotFoundException);
     });
   });
@@ -919,7 +982,7 @@ describe('WorkspaceService', () => {
 
       expect(result.token).toBeDefined();
       expect(result.token.length).toBeGreaterThan(20);
-      expect(result.share.isPasswordProtected).toBe(false);
+      expect(result.share['isPasswordProtected']).toBe(false);
       expect(prisma.workspaceShare.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
@@ -974,8 +1037,8 @@ describe('WorkspaceService', () => {
 
       const result = await service.accessSharedContent('valid-token');
 
-      expect(result.requiresPassword).toBe(false);
-      expect(result.entityType).toBe('matter');
+      expect(result['requiresPassword']).toBe(false);
+      expect(result['entityType']).toBe('matter');
     });
 
     it('should throw NotFoundException for invalid token', async () => {
@@ -1016,7 +1079,7 @@ describe('WorkspaceService', () => {
 
       const result = await service.accessSharedContent('token');
 
-      expect(result.requiresPassword).toBe(true);
+      expect(result['requiresPassword']).toBe(true);
     });
 
     it('should throw UnauthorizedException for wrong password', async () => {

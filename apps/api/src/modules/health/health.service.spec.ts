@@ -6,7 +6,9 @@ import { PrismaService } from '../../prisma/prisma.service';
 
 describe('HealthService', () => {
   let service: HealthService;
-  let prismaService: jest.Mocked<PrismaService>;
+  let prismaService: {
+    $queryRaw: jest.Mock;
+  };
 
   beforeEach(async () => {
     const mockPrismaService = {
@@ -24,7 +26,7 @@ describe('HealthService', () => {
     }).compile();
 
     service = module.get<HealthService>(HealthService);
-    prismaService = module.get(PrismaService);
+    prismaService = module.get(PrismaService) as unknown as typeof prismaService;
   });
 
   afterEach(() => {
@@ -44,9 +46,9 @@ describe('HealthService', () => {
 
     // Assert
     expect(result.status).toBe('ok');
-    expect(result.services.database.status).toBe('up');
-    expect(result.services.database.latencyMs).toBeGreaterThanOrEqual(0);
-    expect(result.services.database.message).toBeUndefined();
+    expect(result.services['database']!.status).toBe('up');
+    expect(result.services['database']!.latencyMs).toBeGreaterThanOrEqual(0);
+    expect(result.services['database']!.message).toBeUndefined();
     expect(prismaService.$queryRaw).toHaveBeenCalledTimes(1);
   });
 
@@ -59,9 +61,9 @@ describe('HealthService', () => {
 
     // Assert
     expect(result.status).toBe('error');
-    expect(result.services.database.status).toBe('down');
-    expect(result.services.database.message).toBe('Database connection failed');
-    expect(result.services.database.latencyMs).toBeUndefined();
+    expect(result.services['database']!.status).toBe('down');
+    expect(result.services['database']!.message).toBe('Database connection failed');
+    expect(result.services['database']!.latencyMs).toBeUndefined();
     expect(prismaService.$queryRaw).toHaveBeenCalledTimes(1);
   });
 
@@ -97,9 +99,9 @@ describe('HealthService', () => {
     const result: HealthCheckResponse = await service.check();
 
     // Assert
-    expect(result.services.database.status).toBe('up');
-    expect(result.services.database.latencyMs).toBeGreaterThanOrEqual(50);
-    expect(result.services.database.latencyMs).toBeLessThan(500); // Allow generous tolerance for CI/slow environments
+    expect(result.services['database']!.status).toBe('up');
+    expect(result.services['database']!.latencyMs).toBeGreaterThanOrEqual(50);
+    expect(result.services['database']!.latencyMs).toBeLessThan(500); // Allow generous tolerance for CI/slow environments
   });
 
   it('should handle database errors gracefully without throwing', async () => {

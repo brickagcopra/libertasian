@@ -22,6 +22,8 @@ describe('UsersService', () => {
     googleId: null,
     mfaSecret: null,
     mfaEnabled: false,
+    onboardingCompletedAt: null as Date | null,
+    userRole: null as string | null,
     createdAt: new Date('2024-01-01T00:00:00.000Z'),
     updatedAt: new Date('2024-01-01T00:00:00.000Z'),
   };

@@ -12,7 +12,19 @@ const mockGuard = { canActivate: jest.fn().mockReturnValue(true) };
 
 describe('PromotionAdminController', () => {
   let controller: PromotionAdminController;
-  let promotionService: Record<string, jest.Mock>;
+  let promotionService: {
+    list: jest.Mock;
+    findByIdWithStats: jest.Mock;
+    create: jest.Mock;
+    update: jest.Mock;
+    archive: jest.Mock;
+    setStatus: jest.Mock;
+    getRedemptionHistory: jest.Mock;
+    revokeRedemption: jest.Mock;
+    setRules: jest.Mock;
+    setBenefits: jest.Mock;
+    setPlanRules: jest.Mock;
+  };
   let auditService: { log: jest.Mock };
 
   const PROMO_ID = '00000000-0000-0000-0000-000000000010';

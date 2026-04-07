@@ -78,7 +78,7 @@ jest.mock('sharp', () => {
     toBuffer: jest.fn().mockResolvedValue(Buffer.alloc(100)),
   };
   const sharpFn = jest.fn().mockReturnValue(sharpInstance);
-  (sharpFn as Record<string, unknown>)['cache'] = jest.fn();
+  (sharpFn as unknown as Record<string, unknown>)['cache'] = jest.fn();
   return { default: sharpFn, __esModule: true };
 });
 

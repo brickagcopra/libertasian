@@ -39,10 +39,52 @@ jest.mock('crypto', () => ({
   createHash: (algorithm: string) => mockCreateHash(algorithm),
 }));
 
+/** Explicit mock type matching the PrismaService mock shape defined in beforeEach.
+ *  Prisma's complex generic method signatures are incompatible with jest.Mocked<>,
+ *  so we define the mock shape manually with jest.Mock for each method. */
+type MockPrismaService = {
+  user: {
+    create: jest.Mock;
+    update: jest.Mock;
+    findUnique: jest.Mock;
+    findFirst: jest.Mock;
+  };
+  organization: {
+    create: jest.Mock;
+  };
+  organizationMember: {
+    create: jest.Mock;
+    findFirst: jest.Mock;
+  };
+  subscription: {
+    create: jest.Mock;
+  };
+  refreshToken: {
+    create: jest.Mock;
+    findUnique: jest.Mock;
+    findFirst: jest.Mock;
+    update: jest.Mock;
+    updateMany: jest.Mock;
+  };
+  $transaction: jest.Mock;
+};
+
+/** Explicit mock type for UsersService. The real sanitize() has strict parameter types
+ *  that conflict with the test's simplified mock data, so we use jest.Mock directly. */
+type MockUsersService = {
+  findByEmail: jest.Mock;
+  findById: jest.Mock;
+  findByGoogleId: jest.Mock;
+  create: jest.Mock;
+  createFromGoogle: jest.Mock;
+  linkGoogleAccount: jest.Mock;
+  sanitize: jest.Mock;
+};
+
 describe('AuthService', () => {
   let service: AuthService;
-  let prismaService: jest.Mocked<PrismaService>;
-  let usersService: jest.Mocked<UsersService>;
+  let prismaService: MockPrismaService;
+  let usersService: MockUsersService;
   let jwtService: jest.Mocked<JwtService>;
   let configService: jest.Mocked<ConfigService>;
   let notificationsService: jest.Mocked<NotificationsService>;
@@ -171,8 +213,8 @@ describe('AuthService', () => {
     }).compile();
 
     service = module.get<AuthService>(AuthService);
-    prismaService = module.get(PrismaService) as jest.Mocked<PrismaService>;
-    usersService = module.get(UsersService) as jest.Mocked<UsersService>;
+    prismaService = module.get(PrismaService) as unknown as MockPrismaService;
+    usersService = module.get(UsersService) as unknown as MockUsersService;
     jwtService = module.get(JwtService) as jest.Mocked<JwtService>;
     configService = module.get(ConfigService) as jest.Mocked<ConfigService>;
     notificationsService = module.get(NotificationsService) as jest.Mocked<NotificationsService>;

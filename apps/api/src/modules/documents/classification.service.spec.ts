@@ -77,7 +77,7 @@ describe('ClassificationService', () => {
       const result = await service.getClassificationReviewQueue({});
       expect(result.items).toHaveLength(1);
       expect(result.meta.hasNext).toBe(false);
-      expect(result.items[0].tagMaps[0].reviewStatus).toBe('needs_review');
+      expect(result.items[0]!.tagMaps[0]!.reviewStatus).toBe('needs_review');
     });
 
     it('should detect hasNext when items exceed limit', async () => {

@@ -12,7 +12,14 @@ describe('AnalyticsService', () => {
   let prisma: jest.Mocked<PrismaService>;
   let redis: jest.Mocked<RedisService>;
   let eventQueue: { add: jest.Mock };
-  let redisClient: Record<string, jest.Mock>;
+  let redisClient: {
+    hset: jest.Mock;
+    hgetall: jest.Mock;
+    hincrby: jest.Mock;
+    expire: jest.Mock;
+    exists: jest.Mock;
+    del: jest.Mock;
+  };
 
   beforeEach(async () => {
     redisClient = {

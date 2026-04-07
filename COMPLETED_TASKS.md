@@ -1,6 +1,29 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-04-03 (Session 183 — VPS Deployment Guide)
+> Last updated: 2026-04-07 (Session 184 — TypeScript Error Fixes in Spec Files)
+
+---
+
+## Session 184 — TypeScript Error Fixes in 3 Spec Files (52 errors fixed)
+
+### Files Modified (3)
+
+1. **apps/api/src/modules/search/search.service.spec.ts** (25 errors fixed)
+   - Replaced `jest.Mocked<PrismaService>`, `jest.Mocked<RedisService>`, `jest.Mocked<OpenSearchService>`, `jest.Mocked<EmbeddingClientService>` with concrete mock types (`MockPrismaService`, `MockRedisService`, `MockOpenSearchService`, `MockEmbeddingClientService`) using `jest.Mock` for each method
+   - Updated `module.get()` casts from `as jest.Mocked<...>` to `as unknown as MockXxxService`
+   - Fixed `redisService.set.mockResolvedValue('OK')` to `mockResolvedValue(undefined)` (method returns `Promise<void>`)
+   - Added `as SearchResultItem` cast for array element access in pagination test
+
+2. **apps/api/src/modules/simulator/simulator.service.spec.ts** (21 errors fixed)
+   - Replaced `jest.Mocked<PricingEngineService>`, `jest.Mocked<ProrationService>`, `jest.Mocked<CouponService>`, `jest.Mocked<PromotionRuleEngineService>` with concrete mock types (`MockPricingEngine`, `MockProrationService`, `MockCouponService`, `MockPromotionRuleEngine`)
+   - Removed `as unknown as jest.Mocked<...>` casts from beforeEach mock construction
+   - Added non-null assertions (`!`) on 18 array index accesses (`result.steps[0]!.toState`, `result.plans[0]!.discountPercentage`, etc.)
+
+3. **apps/api/src/modules/analytics/analytics-aggregation.service.spec.ts** (6 errors fixed)
+   - Replaced `jest.Mocked<PrismaService>` with concrete object type matching mock shape (analyticsEvent, analyticsSession, analyticsFunnelStep, digest, $executeRaw)
+   - Fixed `callPrivate` helper to use non-null assertion on `Record` index access
+   - Added non-null assertions on funnel step array element accesses
+   - Fixed `properties.path` index signature access by using `any[]` type for mock.calls.find callback parameter
 
 ---
 

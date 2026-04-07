@@ -12,8 +12,19 @@ const mockGuard = { canActivate: jest.fn().mockReturnValue(true) };
 
 describe('CouponAdminController', () => {
   let controller: CouponAdminController;
-  let couponService: Record<string, jest.Mock>;
-  let auditService: Record<string, jest.Mock>;
+  let couponService: {
+    list: jest.Mock;
+    findById: jest.Mock;
+    create: jest.Mock;
+    update: jest.Mock;
+    archive: jest.Mock;
+    toggleActive: jest.Mock;
+    getRedemptionHistory: jest.Mock;
+    assignUsers: jest.Mock;
+    assignOrgs: jest.Mock;
+    setPlanRules: jest.Mock;
+  };
+  let auditService: { log: jest.Mock };
 
   const USER = { sub: 'user-1', organizationId: 'org-1', email: 'admin@test.com' } as never;
   const IP = '127.0.0.1';

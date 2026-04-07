@@ -2,4 +2,4 @@ import { SetMetadata } from '@nestjs/common';
 import type { UserRole } from '@libertasian/types';
 
 export const ROLES_KEY = 'roles';
-export const Roles = (...roles: UserRole[]) => SetMetadata(ROLES_KEY, roles);
+export const Roles = (...roles: (`${UserRole}` | UserRole)[]) => SetMetadata(ROLES_KEY, roles);
