@@ -43,6 +43,8 @@ services:
     build:
       context: .
       dockerfile: infrastructure/docker/Dockerfile.web
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://libertasian.com/api/v1}
     container_name: libertasian-web
     restart: always
     expose:
