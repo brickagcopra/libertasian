@@ -26,6 +26,9 @@ COPY . .
 RUN pnpm --filter @libertasian/api prisma:generate
 RUN pnpm --filter @libertasian/api build
 RUN pnpm --filter @libertasian/api deploy --legacy --prod /app/deployed
+# Re-generate Prisma client inside deployed node_modules
+RUN cp -r apps/api/prisma /app/deployed/prisma && \
+    cd /app/deployed && npx prisma generate
 
 # Stage 3: Production
 FROM node:22-alpine AS runner
