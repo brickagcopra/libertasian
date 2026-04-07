@@ -52,7 +52,7 @@ describe('AnalyticsService', () => {
           },
         },
         {
-          provide: getQueueToken('analytics:events'),
+          provide: getQueueToken('analytics-events'),
           useValue: eventQueue,
         },
       ],

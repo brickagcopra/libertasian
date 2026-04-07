@@ -55,7 +55,7 @@ export class AnalyticsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
-    @InjectQueue('analytics:events') private readonly eventQueue: Queue,
+    @InjectQueue('analytics-events') private readonly eventQueue: Queue,
   ) {}
 
   // -----------------------------------------------------------------------

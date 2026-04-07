@@ -8,7 +8,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import type { AnalyticsEventPayload } from './analytics.service';
 
 /**
- * BullMQ worker for the analytics:events queue.
+ * BullMQ worker for the analytics-events queue.
  * Processes events in batches of 100 for efficient DB writes.
  *
  * Per LIBERTASIAN-ANALYTICS.md:
@@ -16,7 +16,7 @@ import type { AnalyticsEventPayload } from './analytics.service';
  * - Batch processing for throughput
  * - Non-blocking — API enqueues and returns immediately
  */
-@Processor('analytics:events', {
+@Processor('analytics-events', {
   concurrency: 5,
 })
 export class AnalyticsProcessor extends WorkerHost {

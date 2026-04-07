@@ -12,7 +12,7 @@ import { AnalyticsService } from './analytics.service';
 
 @Module({
   imports: [
-    BullModule.registerQueue({ name: 'analytics:events' }),
+    BullModule.registerQueue({ name: 'analytics-events' }),
     PrismaModule,
   ],
   controllers: [AnalyticsController, AnalyticsDashboardController],
