@@ -53,6 +53,7 @@ COPY services/worker-service/src ./src
 
 # Non-root user
 RUN groupadd -g 1001 appgroup && useradd -u 1001 -g appgroup -s /bin/sh appuser
+RUN chown -R appuser:appgroup /app
 USER appuser
 
 ENV PYTHONDONTWRITEBYTECODE=1
