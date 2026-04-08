@@ -15,6 +15,7 @@ import { Separator } from '@/components/ui/separator';
 import { loginSchema, type LoginFormData } from '@/features/auth/schemas';
 import { useLogin } from '@/features/auth/hooks/use-auth';
 import { ApiClientError } from '@/lib/api-client';
+import { Logo } from '@/components/brand/logo';
 import { APP_NAME, ROUTES } from '@/lib/constants';
 
 export default function LoginPage() {
@@ -51,10 +52,8 @@ export default function LoginPage() {
   return (
     <main className="flex min-h-screen items-center justify-center px-4">
       <Card className="w-full max-w-md">
-        <CardHeader className="text-center">
-          <CardTitle className="text-3xl font-bold tracking-tight">
-            {APP_NAME}
-          </CardTitle>
+        <CardHeader className="flex flex-col items-center text-center">
+          <Logo width={220} height={48} className="mb-2" />
           <CardDescription>Sign in to your account</CardDescription>
         </CardHeader>
 
