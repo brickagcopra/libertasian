@@ -1,5 +1,7 @@
 import Link from 'next/link';
 
+import { Logo } from '@/components/brand/logo';
+
 const FEATURES = [
   {
     title: 'AI Legal Research',
@@ -119,8 +121,8 @@ export default function HomePage() {
       {/* Header */}
       <header className="sticky top-0 z-50 border-b border-gray-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-          <Link href="/" className="text-xl font-bold text-gray-900">
-            LIBERTASIAN
+          <Link href="/">
+            <Logo width={200} height={44} />
           </Link>
           <nav className="hidden items-center gap-6 sm:flex">
             <Link

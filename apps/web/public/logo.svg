@@ -1,0 +1,145 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 100" width="560" height="100">
+  <defs>
+    <linearGradient id="fire-gradient" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#ff4500" stop-opacity="0.9"/>
+      <stop offset="40%" stop-color="#ff6a00" stop-opacity="0.7"/>
+      <stop offset="70%" stop-color="#ffa500" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#ffd700" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="text-glow" x="-10%" y="-10%" width="120%" height="120%">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feFlood flood-color="#ff6a00" flood-opacity="0.3" result="color"/>
+      <feComposite in="color" in2="blur" operator="in" result="glow"/>
+      <feMerge>
+        <feMergeNode in="glow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <radialGradient id="spark">
+      <stop offset="0%" stop-color="#fff7e0" stop-opacity="1"/>
+      <stop offset="40%" stop-color="#ffd700" stop-opacity="0.8"/>
+      <stop offset="100%" stop-color="#ff6a00" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="fire-turbulence" x="-20%" y="-20%" width="140%" height="140%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.03 0.06" numOctaves="3" seed="2" result="noise">
+        <animate attributeName="seed" values="2;5;8;3;6;2" dur="3s" repeatCount="indefinite"/>
+      </feTurbulence>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="6"/>
+    </filter>
+  </defs>
+
+  <!-- Fire layer -->
+  <g filter="url(#fire-turbulence)" opacity="0.85">
+    <ellipse cx="280" cy="65" rx="220" ry="30" fill="url(#fire-gradient)">
+      <animate attributeName="ry" values="30;35;28;33;30" dur="2s" repeatCount="indefinite"/>
+    </ellipse>
+    <ellipse cx="80" cy="50" rx="12" ry="20" fill="url(#fire-gradient)" opacity="0.6">
+      <animate attributeName="ry" values="20;28;18;24;20" dur="1.5s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="50;44;52;46;50" dur="1.8s" repeatCount="indefinite"/>
+    </ellipse>
+    <ellipse cx="150" cy="50" rx="16" ry="28" fill="url(#fire-gradient)" opacity="0.75">
+      <animate attributeName="ry" values="28;32;24;27;28" dur="1.7s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="50;41;52;44;50" dur="1.95s" repeatCount="indefinite"/>
+    </ellipse>
+    <ellipse cx="220" cy="50" rx="12" ry="20" fill="url(#fire-gradient)" opacity="0.6">
+      <animate attributeName="ry" values="20;32;22;28;20" dur="1.9s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="50;44;52;48;50" dur="2.1s" repeatCount="indefinite"/>
+    </ellipse>
+    <ellipse cx="280" cy="50" rx="20" ry="28" fill="url(#fire-gradient)" opacity="0.9">
+      <animate attributeName="ry" values="28;36;26;32;28" dur="2.1s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="50;41;52;44;50" dur="2.25s" repeatCount="indefinite"/>
+    </ellipse>
+    <ellipse cx="340" cy="50" rx="16" ry="20" fill="url(#fire-gradient)" opacity="0.6">
+      <animate attributeName="ry" values="20;24;18;22;20" dur="1.5s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="50;47;52;48;50" dur="1.65s" repeatCount="indefinite"/>
+    </ellipse>
+    <ellipse cx="410" cy="50" rx="12" ry="28" fill="url(#fire-gradient)" opacity="0.75">
+      <animate attributeName="ry" values="28;32;24;27;28" dur="2.5s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="50;44;52;46;50" dur="2.55s" repeatCount="indefinite"/>
+    </ellipse>
+    <ellipse cx="480" cy="50" rx="20" ry="20" fill="url(#fire-gradient)" opacity="0.6">
+      <animate attributeName="ry" values="20;28;18;24;20" dur="1.9s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="50;41;52;44;50" dur="2.1s" repeatCount="indefinite"/>
+    </ellipse>
+  </g>
+
+  <!-- Sparks -->
+  <g>
+    <circle r="2" fill="url(#spark)">
+      <animate attributeName="cx" values="100;115;105" dur="2.5s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="70;20;-10" dur="2.5s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0;1;0.8;0" dur="2.5s" repeatCount="indefinite"/>
+      <animate attributeName="r" values="2;2.5;0.5" dur="2.5s" repeatCount="indefinite"/>
+    </circle>
+    <circle r="3" fill="url(#spark)">
+      <animate attributeName="cx" values="180;165;185" dur="2.8s" begin="0.4s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="70;20;-10" dur="2.8s" begin="0.4s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0;1;0.8;0" dur="2.8s" begin="0.4s" repeatCount="indefinite"/>
+      <animate attributeName="r" values="3;3;0.5" dur="2.8s" begin="0.4s" repeatCount="indefinite"/>
+    </circle>
+    <circle r="2" fill="url(#spark)">
+      <animate attributeName="cx" values="240;255;240" dur="2.2s" begin="0.8s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="70;20;-10" dur="2.2s" begin="0.8s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0;1;0.8;0" dur="2.2s" begin="0.8s" repeatCount="indefinite"/>
+      <animate attributeName="r" values="2;2;0.5" dur="2.2s" begin="0.8s" repeatCount="indefinite"/>
+    </circle>
+    <circle r="3" fill="url(#spark)">
+      <animate attributeName="cx" values="310;295;310" dur="2.6s" begin="1.2s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="70;20;-10" dur="2.6s" begin="1.2s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0;1;0.8;0" dur="2.6s" begin="1.2s" repeatCount="indefinite"/>
+      <animate attributeName="r" values="3;3.5;0.5" dur="2.6s" begin="1.2s" repeatCount="indefinite"/>
+    </circle>
+    <circle r="2" fill="url(#spark)">
+      <animate attributeName="cx" values="370;385;370" dur="3.0s" begin="0.2s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="70;20;-10" dur="3.0s" begin="0.2s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0;1;0.8;0" dur="3.0s" begin="0.2s" repeatCount="indefinite"/>
+      <animate attributeName="r" values="2;2;0.5" dur="3.0s" begin="0.2s" repeatCount="indefinite"/>
+    </circle>
+    <circle r="3" fill="url(#spark)">
+      <animate attributeName="cx" values="430;415;430" dur="2.4s" begin="0.6s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="70;20;-10" dur="2.4s" begin="0.6s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0;1;0.8;0" dur="2.4s" begin="0.6s" repeatCount="indefinite"/>
+      <animate attributeName="r" values="3;3;0.5" dur="2.4s" begin="0.6s" repeatCount="indefinite"/>
+    </circle>
+    <circle r="2" fill="url(#spark)">
+      <animate attributeName="cx" values="490;505;495" dur="2.7s" begin="1.0s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="70;20;-10" dur="2.7s" begin="1.0s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0;1;0.8;0" dur="2.7s" begin="1.0s" repeatCount="indefinite"/>
+      <animate attributeName="r" values="2;2.5;0.5" dur="2.7s" begin="1.0s" repeatCount="indefinite"/>
+    </circle>
+    <circle r="3" fill="url(#spark)">
+      <animate attributeName="cx" values="140;155;145" dur="2.3s" begin="1.4s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="70;20;-10" dur="2.3s" begin="1.4s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0;1;0.8;0" dur="2.3s" begin="1.4s" repeatCount="indefinite"/>
+      <animate attributeName="r" values="3;3;0.5" dur="2.3s" begin="1.4s" repeatCount="indefinite"/>
+    </circle>
+    <circle r="2" fill="url(#spark)">
+      <animate attributeName="cx" values="350;335;350" dur="2.9s" begin="0.9s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="70;20;-10" dur="2.9s" begin="0.9s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0;1;0.8;0" dur="2.9s" begin="0.9s" repeatCount="indefinite"/>
+      <animate attributeName="r" values="2;2;0.5" dur="2.9s" begin="0.9s" repeatCount="indefinite"/>
+    </circle>
+    <circle r="3" fill="url(#spark)">
+      <animate attributeName="cx" values="460;445;460" dur="2.1s" begin="1.6s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="70;20;-10" dur="2.1s" begin="1.6s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0;1;0.8;0" dur="2.1s" begin="1.6s" repeatCount="indefinite"/>
+      <animate attributeName="r" values="3;3.5;0.5" dur="2.1s" begin="1.6s" repeatCount="indefinite"/>
+    </circle>
+    <circle r="2" fill="url(#spark)">
+      <animate attributeName="cx" values="200;215;205" dur="2.5s" begin="0.3s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="70;20;-10" dur="2.5s" begin="0.3s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0;1;0.8;0" dur="2.5s" begin="0.3s" repeatCount="indefinite"/>
+      <animate attributeName="r" values="2;2;0.5" dur="2.5s" begin="0.3s" repeatCount="indefinite"/>
+    </circle>
+    <circle r="3" fill="url(#spark)">
+      <animate attributeName="cx" values="270;255;270" dur="2.8s" begin="1.1s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="70;20;-10" dur="2.8s" begin="1.1s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0;1;0.8;0" dur="2.8s" begin="1.1s" repeatCount="indefinite"/>
+      <animate attributeName="r" values="3;3;0.5" dur="2.8s" begin="1.1s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+
+  <!-- Text -->
+  <text x="280" y="68" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-weight="900" font-size="52" letter-spacing="6" fill="#1a1a1a" filter="url(#text-glow)">LIBERTASIAN</text>
+  <text x="280" y="68" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-weight="900" font-size="52" letter-spacing="6" fill="none" stroke="#ffd700" stroke-width="0.5" opacity="0.4">LIBERTASIAN</text>
+</svg>

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 import { useAuthStore } from '@/stores/auth-store';
+import { Logo } from '@/components/brand/logo';
 import { useSubscription, meetsMinimumTier } from '@/features/billing/hooks/use-subscription';
 import { useHasPermission } from '@/features/settings/hooks/use-rbac';
 import { cn } from '@/lib/utils';
@@ -159,8 +160,8 @@ export function SidebarContent() {
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-14 items-center border-b px-4">
-        <Link href="/" className="text-lg font-bold tracking-tight">
-          LIBERTASIAN
+        <Link href="/">
+          <Logo width={160} height={36} animated={false} />
         </Link>
       </div>
 
