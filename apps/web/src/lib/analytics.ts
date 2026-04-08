@@ -1,4 +1,5 @@
 import { apiClient } from '@/lib/api-client';
+import { useAuthStore } from '@/stores/auth-store';
 import type {
   TrackEventPayload,
   TrackBatchPayload,
@@ -41,6 +42,10 @@ class AnalyticsClient {
 
   /** Start a new session. Stores sessionId internally. */
   async startSession(entryPath: string, referrer: string): Promise<void> {
+    // Skip analytics session for unauthenticated users
+    const token = useAuthStore.getState().accessToken;
+    if (!token) return;
+
     try {
       const payload: StartSessionPayload = {
         deviceType: 'web',

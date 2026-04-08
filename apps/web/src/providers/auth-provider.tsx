@@ -18,7 +18,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       getAccessToken: () => useAuthStore.getState().accessToken,
       onUnauthorized: () => {
         useAuthStore.getState().logout();
-        window.location.href = '/login';
+        // Don't redirect if already on login/auth pages to prevent loops
+        if (!window.location.pathname.startsWith('/login') &&
+            !window.location.pathname.startsWith('/register')) {
+          window.location.href = '/login';
+        }
       },
     });
   }, [logout]);
