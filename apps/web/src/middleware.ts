@@ -25,6 +25,7 @@ const PUBLIC_PATHS = [
   '/reset-password',
   '/verify-email',
   '/auth/callback',
+  '/onboarding',
 ];
 
 /** Path prefixes that should be accessible without authentication. */
