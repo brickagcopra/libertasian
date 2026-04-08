@@ -1,6 +1,14 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-04-07 (Session 184 — TypeScript Error Fixes in Spec Files)
+> Last updated: 2026-04-08 (Session 185 — Dynamic Homepage with Admin CMS)
+
+---
+
+## Session 185 — Dynamic Homepage CMS
+
+### Pending
+- **Run Prisma migration** when database is available: `pnpm --filter api prisma:migrate:dev --name add-site-content`
+- **End-to-end testing**: Verify homepage renders identically with no DB record, test admin save/reset flow
 
 ---
 

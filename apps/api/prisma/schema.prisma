@@ -2744,7 +2744,7 @@ model ExportJob {
 // migration. Prisma model maps to the parent table. The app role has INSERT-only
 // (no UPDATE/DELETE) enforced at the database level via raw migration.
 model AnalyticsEvent {
-  id               String   @id @default(uuid()) @db.Uuid
+  id               String   @default(uuid()) @db.Uuid
   eventName        String   @map("event_name") @db.VarChar(100)
   eventCategory    String   @map("event_category") @db.VarChar(50)
   // eventCategory: search, ai_answer, digest, scan, study, workspace, auth, billing, navigation, admin
@@ -2760,6 +2760,7 @@ model AnalyticsEvent {
   durationMs       Int?     @map("duration_ms")
   createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
 
+  @@id([id, createdAt])
   @@index([eventName], map: "idx_analytics_event_name")
   @@index([eventCategory], map: "idx_analytics_event_category")
   @@index([sessionId], map: "idx_analytics_event_session")
@@ -3258,4 +3259,20 @@ model FinancialForecast {
   @@index([isActive], map: "idx_forecast_active")
   @@index([createdById], map: "idx_forecast_created_by")
   @@map("financial_forecasts")
+}
+
+// ==========================================================================
+// Site Content — CMS for public pages (homepage, etc.)
+// ==========================================================================
+
+model SiteContent {
+  id        String   @id @default(cuid())
+  key       String   @unique @db.VarChar(100)
+  content   Json
+  version   Int      @default(1)
+  updatedBy String?  @map("updated_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("site_contents")
 }

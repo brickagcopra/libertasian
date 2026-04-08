@@ -1,6 +1,38 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-04-07 (Session 184 — TypeScript Error Fixes in Spec Files)
+> Last updated: 2026-04-08 (Session 185 — Dynamic Homepage with Admin CMS)
+
+---
+
+## Session 185 — Dynamic Homepage with Admin CMS
+
+Made the homepage fully dynamic and editable from the admin panel. All original design/layout preserved.
+
+### Files Created (7)
+1. **apps/api/src/modules/site-content/site-content.module.ts** — NestJS module registration
+2. **apps/api/src/modules/site-content/site-content.controller.ts** — GET (public) + PUT/DELETE (admin) endpoints
+3. **apps/api/src/modules/site-content/site-content.service.ts** — Prisma CRUD for site_contents table
+4. **apps/api/src/modules/site-content/dto/update-site-content.dto.ts** — class-validator DTO
+5. **apps/api/src/modules/site-content/dto/index.ts** — Barrel export
+6. **apps/api/src/modules/site-content/index.ts** — Module barrel export
+7. **apps/web/src/features/admin/hooks/use-site-content.ts** — React Query hooks (useSiteContent, useUpdateSiteContent, useDeleteSiteContent)
+8. **apps/web/src/app/(dashboard)/admin/homepage/page.tsx** — Full admin editor with accordion sections, React Hook Form + Zod, add/remove items, reset to defaults
+
+### Files Modified (3)
+1. **apps/api/prisma/schema.prisma** — Added `SiteContent` model (id, key, content Json, version, updatedBy)
+2. **apps/api/src/app.module.ts** — Registered `SiteContentModule`
+3. **apps/web/src/app/page.tsx** — Converted to async server component with `getHomepageContent()` fetch + deep-merge with hardcoded defaults
+4. **apps/web/src/components/layout/app-sidebar.tsx** — Added "Homepage" admin nav item with HomeIcon
+
+### Architecture
+- **GET /api/v1/site-content/:key** — Public, no auth, 5-min cache headers
+- **PUT /api/v1/site-content/:key** — Admin only (JwtAuthGuard + PermissionsGuard + admin:settings)
+- **DELETE /api/v1/site-content/:key** — Admin only, resets to defaults
+- Homepage fetches content server-side with ISR (revalidate: 300s), falls back to hardcoded defaults if API unavailable or no DB record exists
+- Audit logging on all admin mutations
+
+### Pending
+- Run Prisma migration when DB available: `pnpm --filter api prisma:migrate:dev --name add-site-content`
 
 ---
 

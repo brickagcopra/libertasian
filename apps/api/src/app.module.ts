@@ -46,6 +46,7 @@ import { ExportsModule } from './modules/exports/exports.module';
 import { ExternalApiModule } from './modules/external-api/external-api.module';
 import { FeedModule } from './modules/feed/feed.module';
 import { SimulatorModule } from './modules/simulator/simulator.module';
+import { SiteContentModule } from './modules/site-content/site-content.module';
 import { FeatureFlagsModule } from './modules/feature-flags/feature-flags.module';
 import { PlansModule } from './modules/plans/plans.module';
 import { PricingModule } from './modules/pricing/pricing.module';
@@ -192,6 +193,7 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
     ExternalApiModule,
     FeedModule,
     SimulatorModule,
+    SiteContentModule,
     ReportingModule,
     AccountingModule,
   ],
