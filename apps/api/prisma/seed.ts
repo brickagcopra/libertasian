@@ -11,8 +11,8 @@ const prisma = new PrismaClient();
  *
  * Creates:
  * - Admin user (admin@libertasian.dev / Admin123456!)
- * - Admin organization
- * - Organization membership (admin role)
+ * - Test users (editor, reviewer, user, user2 @libertasian.com / Test123456!)
+ * - Admin organization + memberships for all users
  * - Pro subscription (unlimited entitlements)
  * - Source registry entries (SC E-Library, Lawphil, Official Gazette, Congress)
  *
@@ -24,6 +24,21 @@ const ADMIN_PASSWORD = 'Admin123456!';
 const ADMIN_NAME = 'Dev Admin';
 const ORG_NAME = 'LIBERTASIAN Dev';
 const ORG_SLUG = 'libertasian-dev';
+
+const TEST_PASSWORD = 'Test123456!';
+
+interface TestUser {
+  email: string;
+  fullName: string;
+  role: string;
+}
+
+const TEST_USERS: TestUser[] = [
+  { email: 'editor@libertasian.com', fullName: 'Test Editor', role: 'editor' },
+  { email: 'reviewer@libertasian.com', fullName: 'Test Reviewer', role: 'reviewer' },
+  { email: 'user@libertasian.com', fullName: 'Test User', role: 'user' },
+  { email: 'user2@libertasian.com', fullName: 'Test User 2', role: 'user' },
+];
 
 interface SourceSeed {
   name: string;
@@ -157,7 +172,53 @@ async function main() {
     console.log('  Membership: admin role updated');
   }
 
-  // 4. Create pro subscription
+  // 4. Create test users and their org memberships
+  const testPasswordHash = await bcrypt.hash(TEST_PASSWORD, 12);
+  console.log('\n  Seeding test users...');
+  for (const testUser of TEST_USERS) {
+    const created = await prisma.user.upsert({
+      where: { email: testUser.email },
+      update: {
+        passwordHash: testPasswordHash,
+        fullName: testUser.fullName,
+        status: 'active',
+        emailVerified: true,
+        onboardingCompletedAt: new Date(),
+      },
+      create: {
+        email: testUser.email,
+        passwordHash: testPasswordHash,
+        fullName: testUser.fullName,
+        status: 'active',
+        emailVerified: true,
+        mfaEnabled: false,
+        onboardingCompletedAt: new Date(),
+      },
+    });
+    console.log(`    User: ${created.email} (${created.id}) — role: ${testUser.role}`);
+
+    const existingTestMembership = await prisma.organizationMember.findUnique({
+      where: { organizationId_userId: { organizationId: org.id, userId: created.id } },
+    });
+    if (!existingTestMembership) {
+      await prisma.organizationMember.create({
+        data: {
+          organizationId: org.id,
+          userId: created.id,
+          role: testUser.role,
+          status: 'active',
+        },
+      });
+    } else {
+      await prisma.organizationMember.update({
+        where: { id: existingTestMembership.id },
+        data: { role: testUser.role, status: 'active' },
+      });
+    }
+  }
+  console.log(`  ${TEST_USERS.length} test users seeded.`);
+
+  // 5. Create pro subscription
   const now = new Date();
   const oneYearLater = new Date(now);
   oneYearLater.setFullYear(oneYearLater.getFullYear() + 1);
@@ -189,7 +250,7 @@ async function main() {
     console.log(`  Subscription: active plan already exists (${existingSub.id})`);
   }
 
-  // 5. Seed sources and endpoints
+  // 6. Seed sources and endpoints
   console.log('\n  Seeding ingestion sources...');
   for (const sourceSeed of SOURCES) {
     const existing = await prisma.source.findFirst({
@@ -258,15 +319,16 @@ async function main() {
     }
   }
 
-  // 6. Seed plans, prices, entitlements, and feature flags
+  // 7. Seed plans, prices, entitlements, and feature flags
   await seedPlans(prisma);
   await seedFeatureFlags(prisma);
 
-  // 7. Seed chart of accounts for accounting system
+  // 8. Seed chart of accounts for accounting system
   await seedChartOfAccounts(prisma);
 
   console.log(`\nSeed complete.`);
   console.log(`  Admin login: ${ADMIN_EMAIL} / ${ADMIN_PASSWORD}`);
+  console.log(`  Test users login: ${TEST_USERS.map((u) => u.email).join(', ')} / ${TEST_PASSWORD}`);
   console.log(`  ${SOURCES.length} sources with endpoints seeded.`);
 }
 
