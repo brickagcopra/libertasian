@@ -7,6 +7,7 @@ import { PricingEngineService } from '../pricing/pricing-engine.service';
 import { CouponService } from '../coupons/coupon.service';
 import { PromotionService } from '../promotions/promotion.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { SubscriptionLifecycleService } from '../subscriptions/subscription-lifecycle.service';
 import { BillingService } from './billing.service';
 import { XenditService } from './xendit.service';
@@ -119,6 +120,9 @@ describe('BillingService', () => {
               updateMany: jest.fn(),
               create: jest.fn(),
             },
+            organization: {
+              findUnique: jest.fn(),
+            },
             checkoutPriceSnapshot: {
               create: jest.fn(),
               findUnique: jest.fn(),
@@ -169,6 +173,14 @@ describe('BillingService', () => {
           provide: SubscriptionLifecycleService,
           useValue: {
             executeTransition: jest.fn().mockResolvedValue({ success: true }),
+          },
+        },
+        {
+          provide: NotificationsService,
+          useValue: {
+            sendPaymentReceipt: jest.fn().mockResolvedValue(undefined),
+            sendPaymentFailed: jest.fn().mockResolvedValue(undefined),
+            sendSubscriptionConfirmation: jest.fn().mockResolvedValue(undefined),
           },
         },
       ],

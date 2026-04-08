@@ -26,6 +26,7 @@ model User {
   status                String    @default("active") @db.VarChar(20)
   emailVerified         Boolean   @default(false) @map("email_verified")
   emailVerifyToken      String?   @map("email_verify_token") @db.VarChar(255)
+  emailVerifyTokenExpiresAt DateTime? @map("email_verify_token_expires_at") @db.Timestamptz
   mfaEnabled            Boolean   @default(false) @map("mfa_enabled")
   mfaSecret             String?   @map("mfa_secret") @db.VarChar(500)
   googleId              String?   @unique @map("google_id") @db.VarChar(255)
@@ -104,8 +105,24 @@ model User {
   expensesCreatedBy          ExpenseRecord[]         @relation("ExpenseCreatedBy")
   expensesApprovedBy         ExpenseRecord[]         @relation("ExpenseApprovedBy")
   financialForecasts         FinancialForecast[]     @relation("ForecastCreatedBy")
+  emailPreference            EmailPreference?
 
   @@map("users")
+}
+
+model EmailPreference {
+  id                  String   @id @default(uuid()) @db.Uuid
+  userId              String   @unique @map("user_id") @db.Uuid
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactional       Boolean  @default(true)
+  subscriptionUpdates Boolean  @default(true) @map("subscription_updates")
+  announcements       Boolean  @default(true)
+  blogNotifications   Boolean  @default(true) @map("blog_notifications")
+  unsubscribeToken    String   @unique @map("unsubscribe_token") @db.VarChar(255)
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("email_preferences")
 }
 
 model RefreshToken {

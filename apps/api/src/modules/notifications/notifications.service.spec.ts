@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getQueueToken } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
 
+import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from './notifications.service';
 
 describe('NotificationsService', () => {
@@ -30,6 +31,17 @@ describe('NotificationsService', () => {
             }),
           },
         },
+        {
+          provide: PrismaService,
+          useValue: {
+            user: {
+              findMany: jest.fn().mockResolvedValue([]),
+            },
+            emailPreference: {
+              findUnique: jest.fn(),
+            },
+          },
+        },
       ],
     }).compile();
 
@@ -40,11 +52,11 @@ describe('NotificationsService', () => {
   // ---- sendVerificationEmail ----
 
   describe('sendVerificationEmail', () => {
-    it('should enqueue a verification email with correct data', async () => {
+    it('should enqueue a verification email with 6-digit code', async () => {
       await service.sendVerificationEmail(
         'maria@example.com',
         'Maria Santos',
-        'verify-token-123',
+        '123456',
       );
 
       expect(emailQueue.add).toHaveBeenCalledTimes(1);
@@ -53,7 +65,7 @@ describe('NotificationsService', () => {
         expect.objectContaining({
           to: 'maria@example.com',
           subject: expect.any(String),
-          html: expect.stringContaining('verify-token-123'),
+          html: expect.stringContaining('1'),
         }),
         expect.objectContaining({
           attempts: 3,
@@ -64,18 +76,19 @@ describe('NotificationsService', () => {
       );
     });
 
-    it('should include the correct verification URL', async () => {
+    it('should include each digit of the code in the email body', async () => {
       await service.sendVerificationEmail(
         'test@example.com',
         'Test User',
-        'abc-token',
+        '987654',
       );
 
       const call = emailQueue.add.mock.calls[0];
       const emailData = call[1] as { html: string };
-      expect(emailData.html).toContain(
-        'https://libertasian.com/auth/verify-email?token=abc-token',
-      );
+      // Each digit should appear in the HTML
+      for (const digit of '987654') {
+        expect(emailData.html).toContain(digit);
+      }
     });
   });
 
@@ -159,7 +172,7 @@ describe('NotificationsService', () => {
 
   describe('email queue configuration', () => {
     it('should use exponential backoff with 3 attempts', async () => {
-      await service.sendVerificationEmail('a@b.com', 'A', 'token');
+      await service.sendVerificationEmail('a@b.com', 'A', '123456');
 
       const call = emailQueue.add.mock.calls[0];
       const options = call[2] as Record<string, unknown>;

@@ -33,6 +33,7 @@ import {
   ForgotPasswordDto,
   ResetPasswordDto,
   VerifyEmailDto,
+  ResendVerificationDto,
   MfaVerifyDto,
   MfaDisableDto,
   AcceptInviteDto,
@@ -78,7 +79,7 @@ export class AuthController {
       entityId: result.user.id,
       metadata: { ip },
     });
-    return { success: true, data: result };
+    return { success: true, data: { ...result, verifyEmail: dto.email } };
   }
 
   // ---- Google OAuth ----
@@ -211,33 +212,29 @@ export class AuthController {
   // ---- Email Verification ----
 
   @Post('verify-email')
-  @ApiOperation({ summary: 'Verify email address using token' })
+  @ApiOperation({ summary: 'Verify email address using 6-digit code' })
   async verifyEmail(@Body() dto: VerifyEmailDto, @Ip() ip: string) {
-    await this.authService.verifyEmail(dto.token);
+    await this.authService.verifyEmail(dto.email, dto.code);
     await this.auditService.log({
       actorType: 'system',
       action: 'auth.verify_email',
       entityType: 'user',
-      metadata: { ip },
+      metadata: { ip, email: this.redactEmail(dto.email) },
     });
     return { success: true, data: { message: 'Email verified successfully' } };
   }
 
   @Post('resend-verification')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Resend email verification' })
-  async resendVerification(@CurrentUser() user: JwtPayload, @Ip() ip: string) {
-    await this.authService.resendVerificationEmail(user.sub);
+  @ApiOperation({ summary: 'Resend email verification code (max 3 per 15 min per email)' })
+  async resendVerification(@Body() dto: ResendVerificationDto, @Ip() ip: string) {
+    await this.authService.resendVerificationEmail(dto.email);
     await this.auditService.log({
-      actorUserId: user.sub,
-      actorType: 'user',
+      actorType: 'system',
       action: 'auth.resend_verification',
       entityType: 'user',
-      entityId: user.sub,
-      metadata: { ip },
+      metadata: { ip, email: this.redactEmail(dto.email) },
     });
-    return { success: true, data: { message: 'Verification email sent' } };
+    return { success: true, data: { message: 'If the email is registered, a new verification code has been sent.' } };
   }
 
   // ---- MFA Management ----

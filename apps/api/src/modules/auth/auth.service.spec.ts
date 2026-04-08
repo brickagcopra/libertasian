@@ -156,6 +156,9 @@ describe('AuthService', () => {
             subscription: {
               create: jest.fn(),
             },
+            emailPreference: {
+              create: jest.fn(),
+            },
             refreshToken: {
               create: jest.fn(),
               findUnique: jest.fn(),

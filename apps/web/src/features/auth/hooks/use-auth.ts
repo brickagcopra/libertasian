@@ -32,6 +32,7 @@ interface RegisterResponse {
   success: boolean;
   data: {
     user: AuthUser;
+    verifyEmail: string;
   };
 }
 
@@ -109,8 +110,17 @@ export function useResetPassword() {
 
 export function useVerifyEmail() {
   return useMutation({
-    mutationFn: async (data: { token: string }) => {
+    mutationFn: async (data: { email: string; code: string }) => {
       const res = await apiClient.post<{ success: boolean }>('/auth/verify-email', data);
+      return res;
+    },
+  });
+}
+
+export function useResendVerification() {
+  return useMutation({
+    mutationFn: async (data: { email: string }) => {
+      const res = await apiClient.post<{ success: boolean }>('/auth/resend-verification', data);
       return res;
     },
   });

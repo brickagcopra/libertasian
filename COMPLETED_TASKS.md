@@ -1,6 +1,99 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-04-08 (Session 185 — Dynamic Homepage with Admin CMS)
+> Last updated: 2026-04-08 (Session 186 — Email Templates, Preferences & Verification Code)
+
+---
+
+## Session 186 — Email Templates, Preferences & Verification Code
+
+Expanded the email/notification system with transactional templates, email preferences, and 6-digit OTP verification.
+
+### Task 1: Change email verification to 6-digit code
+- Added `emailVerifyTokenExpiresAt` field to User model (Prisma migration)
+- Updated `verify-email.ts` template to show 6 large spaced digits instead of a link
+- Updated `auth.service.ts`: `register()` generates 6-digit code via `crypto.randomInt`, hashes with SHA-256, sets 15-min expiry
+- Updated `verifyEmail()` to accept `{ email, code }` and check expiry
+- Updated `resendVerificationEmail()` to accept email (public, no auth required)
+- Updated `VerifyEmailDto` to accept `{ email, code }` instead of `{ token }`
+- Added `ResendVerificationDto` with email field
+- Updated `auth.controller.ts` endpoints accordingly
+
+### Task 2: Add 5 new email templates
+- `subscription-confirmation.ts` — plan details, features, next billing date
+- `payment-receipt.ts` — amount, currency, invoice, payment method
+- `payment-failed.ts` — retry date, update payment CTA
+- `announcement.ts` — sanitized HTML content, CTA button, unsubscribe link
+- `blog-notification.ts` — post title, excerpt, author, unsubscribe link
+
+### Task 3: Add EmailPreference model and endpoints
+- Added `EmailPreference` model to Prisma schema with `unsubscribeToken`
+- Created migration `20260408200000_add_email_preferences`
+- Auto-create `EmailPreference` on registration (email + Google OAuth)
+- Added `GET /users/me/email-preferences` (authenticated)
+- Added `PATCH /users/me/email-preferences` (authenticated, upsert)
+- Added `GET /email/unsubscribe?token=&type=` (public, renders HTML confirmation)
+- Created `email-unsubscribe.controller.ts` and `update-email-preferences.dto.ts`
+
+### Task 4: Add NotificationsService methods
+- `sendSubscriptionConfirmation()` — plan activated
+- `sendPaymentReceipt()` — successful payment
+- `sendPaymentFailed()` — failed payment with retry date
+- `sendAnnouncement()` — bulk send with email preference check
+- `sendBlogNotification()` — bulk send with email preference check
+- Added `PrismaService` dependency to `NotificationsService`
+
+### Task 5: Add admin announcement endpoint
+- Created `admin-announcements.controller.ts`
+- `POST /admin/announcements/send` with `JwtAuthGuard + RolesGuard (admin/owner)`
+- Sanitizes content with `sanitize-html` (p, br, strong, em, ul, ol, li, a only)
+- Supports `targetAudience: 'all' | 'subscribers' | 'free'`
+- Batches of 50 users per enqueue
+- Audit log entry for each announcement send
+
+### Task 6: Wire up payment emails to billing module
+- Added `NotificationsService` to `BillingService` constructor
+- After `handlePaymentSuccess`: sends payment receipt + subscription confirmation
+- After `handlePaymentFailed`: sends payment failed email with retry date
+- All wrapped in try-catch to not break webhook processing
+
+### Task 7: Frontend UI
+- Rewrote verify-email page as 6-digit OTP input with auto-advance, paste support, auto-submit
+- Added resend button with 60s countdown timer
+- Register page now redirects to `/auth/verify-email?email=...`
+- Created `use-email-preferences.ts` hook (query + mutation)
+- Added "Notifications" tab to settings page with toggle switches
+- Transactional emails shown as always-on (disabled toggle with explanation)
+
+### Files Created (11)
+1. `apps/api/prisma/migrations/20260408200000_add_email_preferences/migration.sql`
+2. `apps/api/src/modules/notifications/templates/subscription-confirmation.ts`
+3. `apps/api/src/modules/notifications/templates/payment-receipt.ts`
+4. `apps/api/src/modules/notifications/templates/payment-failed.ts`
+5. `apps/api/src/modules/notifications/templates/announcement.ts`
+6. `apps/api/src/modules/notifications/templates/blog-notification.ts`
+7. `apps/api/src/modules/notifications/email-unsubscribe.controller.ts`
+8. `apps/api/src/modules/notifications/admin-announcements.controller.ts`
+9. `apps/api/src/modules/users/dto/update-email-preferences.dto.ts`
+10. `apps/web/src/features/settings/hooks/use-email-preferences.ts`
+11. `apps/web/src/app/(auth)/verify-email/page.tsx` (rewritten)
+
+### Files Modified (14)
+1. `apps/api/prisma/schema.prisma` — Added `emailVerifyTokenExpiresAt` to User, added `EmailPreference` model + relation
+2. `apps/api/src/modules/notifications/templates/verify-email.ts` — 6-digit code display
+3. `apps/api/src/modules/notifications/notifications.service.ts` — 5 new methods, PrismaService injection
+4. `apps/api/src/modules/notifications/notifications.service.spec.ts` — Updated for new API
+5. `apps/api/src/modules/notifications/notifications.module.ts` — Registered new controllers
+6. `apps/api/src/modules/auth/auth.service.ts` — 6-digit code generation, email preference creation
+7. `apps/api/src/modules/auth/auth.controller.ts` — Updated verify/resend endpoints
+8. `apps/api/src/modules/auth/dto/verify-email.dto.ts` — New fields (email, code) + ResendVerificationDto
+9. `apps/api/src/modules/auth/dto/index.ts` — Export ResendVerificationDto
+10. `apps/api/src/modules/auth/auth.service.spec.ts` — Added emailPreference mock
+11. `apps/api/src/modules/users/users.controller.ts` — Email preferences CRUD endpoints
+12. `apps/api/src/modules/billing/billing.service.ts` — Payment notification calls
+13. `apps/api/src/modules/billing/billing.service.spec.ts` — Added NotificationsService + organization mocks
+14. `apps/web/src/features/auth/hooks/use-auth.ts` — Updated useVerifyEmail, added useResendVerification
+15. `apps/web/src/app/(auth)/register/page.tsx` — Redirect to verify-email page
+16. `apps/web/src/app/(dashboard)/settings/page.tsx` — Added Notifications tab
 
 ---
 

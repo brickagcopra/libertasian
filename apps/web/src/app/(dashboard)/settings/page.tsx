@@ -6,6 +6,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import Link from 'next/link';
 import {
+  BellIcon,
   CreditCardIcon,
   KeyRoundIcon,
   UserPlusIcon,
@@ -33,6 +34,10 @@ import {
   useRevokeAllSessions,
 } from '@/features/settings/hooks/use-settings';
 import { useHasPermission } from '@/features/settings/hooks/use-rbac';
+import {
+  useEmailPreferences,
+  useUpdateEmailPreferences,
+} from '@/features/settings/hooks/use-email-preferences';
 import { ApiClientError } from '@/lib/api-client';
 
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -44,6 +49,7 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Switch } from '@/components/ui/switch';
 import {
   Select,
   SelectContent,
@@ -163,6 +169,7 @@ export default function SettingsPage() {
           <TabsTrigger value="account">Account</TabsTrigger>
           <TabsTrigger value="organization">Organization</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
+          <TabsTrigger value="notifications">Notifications</TabsTrigger>
         </TabsList>
 
         <TabsContent value="account">
@@ -173,6 +180,9 @@ export default function SettingsPage() {
         </TabsContent>
         <TabsContent value="security">
           <SecurityTab />
+        </TabsContent>
+        <TabsContent value="notifications">
+          <NotificationsTab />
         </TabsContent>
       </Tabs>
     </div>
@@ -705,6 +715,119 @@ function SessionsSection() {
           {(!sessions || sessions.length === 0) && (
             <p className="px-4 py-6 text-center text-sm text-muted-foreground">No active sessions</p>
           )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ---- Notifications Tab ----
+
+function NotificationsTab() {
+  const { data: prefs, isLoading } = useEmailPreferences();
+  const updatePrefs = useUpdateEmailPreferences();
+  const [successMsg, setSuccessMsg] = useState('');
+
+  if (isLoading) {
+    return (
+      <Card className="max-w-lg">
+        <CardHeader>
+          <Skeleton className="h-6 w-48" />
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="flex items-center justify-between">
+              <Skeleton className="h-4 w-40" />
+              <Skeleton className="h-6 w-10" />
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const handleToggle = async (key: 'subscriptionUpdates' | 'announcements' | 'blogNotifications', value: boolean) => {
+    try {
+      setSuccessMsg('');
+      await updatePrefs.mutateAsync({ [key]: value });
+      setSuccessMsg('Preferences updated.');
+    } catch {
+      // Error handled by TanStack Query
+    }
+  };
+
+  return (
+    <Card className="max-w-lg">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <BellIcon className="h-5 w-5" />
+          Email Notifications
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        {successMsg && (
+          <Alert>
+            <AlertDescription>{successMsg}</AlertDescription>
+          </Alert>
+        )}
+
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Transactional</p>
+              <p className="text-xs text-muted-foreground">
+                Verification, password reset, and payment receipts
+              </p>
+            </div>
+            <Switch checked disabled />
+          </div>
+          <p className="text-xs text-muted-foreground -mt-2">
+            These emails cannot be disabled as they contain essential account information.
+          </p>
+
+          <Separator />
+
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Subscription Updates</p>
+              <p className="text-xs text-muted-foreground">
+                Plan changes, billing reminders, and subscription status
+              </p>
+            </div>
+            <Switch
+              checked={prefs?.subscriptionUpdates ?? true}
+              onCheckedChange={(checked) => handleToggle('subscriptionUpdates', checked)}
+              disabled={updatePrefs.isPending}
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Announcements</p>
+              <p className="text-xs text-muted-foreground">
+                Product updates, new features, and important news
+              </p>
+            </div>
+            <Switch
+              checked={prefs?.announcements ?? true}
+              onCheckedChange={(checked) => handleToggle('announcements', checked)}
+              disabled={updatePrefs.isPending}
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Blog Notifications</p>
+              <p className="text-xs text-muted-foreground">
+                New articles, legal updates, and content publications
+              </p>
+            </div>
+            <Switch
+              checked={prefs?.blogNotifications ?? true}
+              onCheckedChange={(checked) => handleToggle('blogNotifications', checked)}
+              disabled={updatePrefs.isPending}
+            />
+          </div>
         </div>
       </CardContent>
     </Card>

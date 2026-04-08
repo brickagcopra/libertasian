@@ -1,6 +1,17 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-04-08 (Session 185 — Dynamic Homepage with Admin CMS)
+> Last updated: 2026-04-08 (Session 186 — Email Templates, Preferences & Verification Code)
+
+---
+
+## Session 186 — Email Templates, Preferences & Verification Code
+
+### Pending
+- **Run Prisma migration** when database is available: `pnpm --filter api prisma:migrate:dev` (migration `20260408200000_add_email_preferences` adds `email_verify_token_expires_at` to users + `email_preferences` table)
+- **Install sanitize-html types** may need re-running if build fails: `pnpm --filter api add -D @types/sanitize-html`
+- **Resend rate limiting**: Add Redis-based rate limiting for the `POST /auth/resend-verification` endpoint (max 3 resends per 15 min per email). Currently relies on the global throttle.
+- **Backfill email preferences**: Existing users don't have `EmailPreference` rows. Run a one-time migration script or handle gracefully (the GET endpoint returns defaults if no row exists, and PATCH upserts).
+- **End-to-end testing**: Test full verify-email OTP flow, email preferences toggle, admin announcement send, unsubscribe link
 
 ---
 

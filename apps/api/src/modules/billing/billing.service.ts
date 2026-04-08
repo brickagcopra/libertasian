@@ -14,6 +14,7 @@ import { PromotionService } from '../promotions/promotion.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { SubscriptionLifecycleService } from '../subscriptions/subscription-lifecycle.service';
 import { SubscriptionAction, SubscriptionState } from '../subscriptions/subscription-state-machine';
+import { NotificationsService } from '../notifications/notifications.service';
 import { XenditService } from './xendit.service';
 import type { CreateCheckoutDto, PreviewCheckoutDto } from './dto';
 
@@ -30,6 +31,7 @@ export class BillingService {
     private readonly couponService: CouponService,
     private readonly promotionService: PromotionService,
     private readonly lifecycleService: SubscriptionLifecycleService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   // ---- Subscription ----
@@ -399,6 +401,48 @@ export class BillingService {
     this.logger.log(
       `Payment succeeded for org ${payment.organizationId}: ${planCode} (${billingPeriod})`,
     );
+
+    // Send payment notification emails
+    try {
+      const org = await this.prisma.organization.findUnique({
+        where: { id: payment.organizationId },
+        include: { billingOwner: true },
+      });
+      if (org?.billingOwner) {
+        const user = org.billingOwner;
+        const amountFormatted = (payment.amount / 100).toFixed(2);
+        const invoice = await this.prisma.invoice.findFirst({
+          where: { subscriptionId: newSub?.id },
+          orderBy: { createdAt: 'desc' },
+        });
+
+        await this.notificationsService.sendPaymentReceipt({
+          email: user.email,
+          userName: user.fullName ?? 'User',
+          amount: amountFormatted,
+          currency: payment.currency ?? 'PHP',
+          paymentMethod: (metadata['paymentMethod'] as string) ?? 'Card',
+          invoiceNumber: invoice?.invoiceNumber ?? payment.id,
+          date: new Date().toLocaleDateString('en-PH'),
+          planName: planCode,
+        });
+
+        if (newSub) {
+          await this.notificationsService.sendSubscriptionConfirmation({
+            email: user.email,
+            userName: user.fullName ?? 'User',
+            planName: planCode,
+            billingPeriod: billingPeriod ?? 'monthly',
+            features: [],
+            nextBillingDate: newSub.currentPeriodEnd
+              ? new Date(newSub.currentPeriodEnd).toLocaleDateString('en-PH')
+              : 'N/A',
+          });
+        }
+      }
+    } catch (err) {
+      this.logger.error(`Failed to send payment success notifications: ${err}`);
+    }
   }
 
   async handlePaymentFailed(xenditData: Record<string, unknown>) {
@@ -466,6 +510,28 @@ export class BillingService {
     });
 
     this.logger.warn(`Payment failed for org ${payment.organizationId}: ${payment.id}`);
+
+    // Send payment failure notification
+    try {
+      const org = await this.prisma.organization.findUnique({
+        where: { id: payment.organizationId },
+        include: { billingOwner: true },
+      });
+      if (org?.billingOwner) {
+        const user = org.billingOwner;
+        const amountFormatted = `PHP ${(payment.amount / 100).toFixed(2)}`;
+        const retryDate = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toLocaleDateString('en-PH');
+
+        await this.notificationsService.sendPaymentFailed({
+          email: user.email,
+          userName: user.fullName ?? 'User',
+          amount: amountFormatted,
+          retryDate,
+        });
+      }
+    } catch (err) {
+      this.logger.error(`Failed to send payment failure notification: ${err}`);
+    }
   }
 
   // ---- Cancel Subscription ----

@@ -4,8 +4,10 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import * as fs from 'fs';
 
+import { AdminAnnouncementsController } from './admin-announcements.controller';
 import { EmailProcessor } from './email.processor';
 import { EmailService } from './email.service';
+import { EmailUnsubscribeController } from './email-unsubscribe.controller';
 import { NotificationsService } from './notifications.service';
 import { NotificationCenterService } from './notification-center.service';
 import { NotificationCenterController } from './notification-center.controller';
@@ -46,7 +48,7 @@ import { NotificationsGateway } from './notifications.gateway';
       },
     }),
   ],
-  controllers: [NotificationCenterController],
+  controllers: [NotificationCenterController, EmailUnsubscribeController, AdminAnnouncementsController],
   providers: [
     EmailService,
     EmailProcessor,

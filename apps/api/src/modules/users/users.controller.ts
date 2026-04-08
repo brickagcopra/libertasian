@@ -4,8 +4,10 @@ import type { JwtPayload } from '@libertasian/types';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { CompleteOnboardingDto } from './dto/complete-onboarding.dto';
+import { UpdateEmailPreferencesDto } from './dto/update-email-preferences.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UsersService } from './users.service';
 
@@ -19,6 +21,7 @@ export class UsersController {
   constructor(
     private readonly usersService: UsersService,
     private readonly auditService: AuditService,
+    private readonly prisma: PrismaService,
   ) {}
 
   @Get('me')
@@ -69,5 +72,75 @@ export class UsersController {
     });
 
     return { success: true, data: this.usersService.sanitize(user) };
+  }
+
+  // ---- Email Preferences ----
+
+  @Get('me/email-preferences')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get current user email preferences' })
+  async getEmailPreferences(@CurrentUser() payload: JwtPayload) {
+    const prefs = await this.prisma.emailPreference.findUnique({
+      where: { userId: payload.sub },
+    });
+
+    if (!prefs) {
+      // Return defaults if no preference record exists
+      return {
+        success: true,
+        data: {
+          transactional: true,
+          subscriptionUpdates: true,
+          announcements: true,
+          blogNotifications: true,
+        },
+      };
+    }
+
+    return {
+      success: true,
+      data: {
+        transactional: prefs.transactional,
+        subscriptionUpdates: prefs.subscriptionUpdates,
+        announcements: prefs.announcements,
+        blogNotifications: prefs.blogNotifications,
+      },
+    };
+  }
+
+  @Patch('me/email-preferences')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update email preferences' })
+  async updateEmailPreferences(
+    @CurrentUser() payload: JwtPayload,
+    @Body() dto: UpdateEmailPreferencesDto,
+  ) {
+    const prefs = await this.prisma.emailPreference.upsert({
+      where: { userId: payload.sub },
+      update: {
+        ...(dto.subscriptionUpdates !== undefined && { subscriptionUpdates: dto.subscriptionUpdates }),
+        ...(dto.announcements !== undefined && { announcements: dto.announcements }),
+        ...(dto.blogNotifications !== undefined && { blogNotifications: dto.blogNotifications }),
+      },
+      create: {
+        userId: payload.sub,
+        unsubscribeToken: require('crypto').randomBytes(32).toString('hex'),
+        ...(dto.subscriptionUpdates !== undefined && { subscriptionUpdates: dto.subscriptionUpdates }),
+        ...(dto.announcements !== undefined && { announcements: dto.announcements }),
+        ...(dto.blogNotifications !== undefined && { blogNotifications: dto.blogNotifications }),
+      },
+    });
+
+    return {
+      success: true,
+      data: {
+        transactional: prefs.transactional,
+        subscriptionUpdates: prefs.subscriptionUpdates,
+        announcements: prefs.announcements,
+        blogNotifications: prefs.blogNotifications,
+      },
+    };
   }
 }

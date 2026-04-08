@@ -107,17 +107,28 @@ export class AuthService {
       },
     });
 
-    // Generate email verification token
-    const verifyToken = crypto.randomBytes(32).toString('hex');
+    // Create email preferences with unique unsubscribe token
+    await this.prisma.emailPreference.create({
+      data: {
+        userId: user.id,
+        unsubscribeToken: crypto.randomBytes(32).toString('hex'),
+      },
+    });
+
+    // Generate 6-digit email verification code
+    const verifyCode = this.generateVerifyCode();
     await this.prisma.user.update({
       where: { id: user.id },
-      data: { emailVerifyToken: this.hashToken(verifyToken) },
+      data: {
+        emailVerifyToken: this.hashToken(verifyCode),
+        emailVerifyTokenExpiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes
+      },
     });
 
     await this.notificationsService.sendVerificationEmail(
       dto.email,
       dto.fullName,
-      verifyToken,
+      verifyCode,
     );
 
     return { user: this.usersService.sanitize(user) };
@@ -237,6 +248,14 @@ export class AuthService {
             status: 'active',
             seats: 1,
             entitlementsJson: { aiAnswers: 15, searchQueries: 50, digestsPerMonth: 3 },
+          },
+        });
+
+        // Create email preferences for new Google OAuth user
+        await this.prisma.emailPreference.create({
+          data: {
+            userId: user.id,
+            unsubscribeToken: crypto.randomBytes(32).toString('hex'),
           },
         });
       }
@@ -435,40 +454,56 @@ export class AuthService {
 
   // ---- Email Verification ----
 
-  async verifyEmail(token: string): Promise<void> {
-    const tokenHash = this.hashToken(token);
+  async verifyEmail(email: string, code: string): Promise<void> {
+    const codeHash = this.hashToken(code);
 
     const user = await this.prisma.user.findFirst({
-      where: { emailVerifyToken: tokenHash, emailVerified: false },
+      where: { email, emailVerifyToken: codeHash, emailVerified: false },
     });
 
     if (!user) {
-      throw new BadRequestException('Invalid or expired verification token');
+      throw new BadRequestException('Invalid verification code');
+    }
+
+    if (user.emailVerifyTokenExpiresAt && user.emailVerifyTokenExpiresAt < new Date()) {
+      throw new BadRequestException('Verification code has expired. Please request a new one.');
     }
 
     await this.prisma.user.update({
       where: { id: user.id },
-      data: { emailVerified: true, emailVerifyToken: null },
+      data: {
+        emailVerified: true,
+        emailVerifyToken: null,
+        emailVerifyTokenExpiresAt: null,
+      },
     });
   }
 
-  async resendVerificationEmail(userId: string): Promise<void> {
-    const user = await this.usersService.findById(userId);
+  async resendVerificationEmail(email: string): Promise<void> {
+    const user = await this.usersService.findByEmail(email);
+
+    if (!user) {
+      // Don't reveal whether account exists
+      return;
+    }
 
     if (user.emailVerified) {
       throw new BadRequestException('Email is already verified');
     }
 
-    const verifyToken = crypto.randomBytes(32).toString('hex');
+    const verifyCode = this.generateVerifyCode();
     await this.prisma.user.update({
-      where: { id: userId },
-      data: { emailVerifyToken: this.hashToken(verifyToken) },
+      where: { id: user.id },
+      data: {
+        emailVerifyToken: this.hashToken(verifyCode),
+        emailVerifyTokenExpiresAt: new Date(Date.now() + 15 * 60 * 1000),
+      },
     });
 
     await this.notificationsService.sendVerificationEmail(
       user.email,
       user.fullName ?? 'User',
-      verifyToken,
+      verifyCode,
     );
   }
 
@@ -737,6 +772,11 @@ export class AuthService {
   }
 
   // ---- Helpers ----
+
+  /** Generate a random 6-digit numeric code for email verification */
+  private generateVerifyCode(): string {
+    return String(crypto.randomInt(100000, 999999));
+  }
 
   private hashToken(token: string): string {
     return crypto.createHash('sha256').update(token).digest('hex');
