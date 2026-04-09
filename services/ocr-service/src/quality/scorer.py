@@ -11,6 +11,8 @@ import numpy as np
 from numpy.typing import NDArray
 from PIL import Image
 
+Image.MAX_IMAGE_PIXELS = 100_000_000  # 100MP limit, matches Sharp config on NestJS side
+
 from ..config import settings
 from ..schemas import QualityMetrics, QualityScoreResponse
 

@@ -64,6 +64,7 @@ class OfficialGazetteFetcher(BaseFetcher):
 
     def fetch_content(self, url: str) -> FetchedContent:
         """Download an individual Official Gazette document page."""
+        self._validate_url(url)
         self._rate_limit()
         with self._get_client() as client:
             response = client.get(url)

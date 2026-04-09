@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, File, UploadFile
 from ..shared.auth import verify_internal_key
 from ..schemas import QualityScoreResponse
 from .scorer import score_image_quality
+from ..ocr.router import _validate_image_bytes
 
 router = APIRouter(
     prefix="/quality",
@@ -26,4 +27,5 @@ async def score_quality(file: UploadFile = File(...)) -> QualityScoreResponse:
     Score >= 0.4: acceptable.
     """
     image_bytes = await file.read()
+    _validate_image_bytes(image_bytes)
     return score_image_quality(image_bytes)

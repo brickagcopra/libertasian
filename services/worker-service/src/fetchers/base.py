@@ -10,6 +10,7 @@ import logging
 import time
 from abc import ABC, abstractmethod
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from pydantic import BaseModel
@@ -17,6 +18,16 @@ from pydantic import BaseModel
 from ..config import settings
 
 logger = logging.getLogger(__name__)
+
+ALLOWED_DOMAINS: frozenset[str] = frozenset({
+    "elibrary.judiciary.gov.ph",
+    "lawphil.net",
+    "www.lawphil.net",
+    "officialgazette.gov.ph",
+    "www.officialgazette.gov.ph",
+    "congress.gov.ph",
+    "www.congress.gov.ph",
+})
 
 
 class CandidateDoc(BaseModel):
@@ -51,6 +62,14 @@ class BaseFetcher(ABC):
 
     def __init__(self) -> None:
         self._last_request_time: float = 0.0
+
+    def _validate_url(self, url: str) -> None:
+        """Raise ValueError if URL hostname is not in the allowlist."""
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError(f"Invalid URL scheme: {parsed.scheme}")
+        if parsed.hostname not in ALLOWED_DOMAINS:
+            raise ValueError(f"URL hostname not allowed: {parsed.hostname}")
 
     def _rate_limit(self) -> None:
         """Enforce per-domain request delay per CLAUDE.md ingestion settings."""

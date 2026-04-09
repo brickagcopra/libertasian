@@ -48,7 +48,7 @@ async def generate_answer(request: AnswerRequest) -> AnswerResponse:
 
     # 1. Intent classification
     intent = classify_intent(query)
-    logger.info("Query intent: %s for query: %s", intent.value, query[:80])
+    logger.info("Query intent: %s, query_length: %d", intent.value, len(query))
 
     # 2. Hybrid retrieval
     search_result = await hybrid_retrieve(query, intent, top_k=30)
