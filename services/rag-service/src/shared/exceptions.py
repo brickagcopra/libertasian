@@ -19,3 +19,7 @@ class ValidationError(RagPipelineError):
 
 class AbstentionError(RagPipelineError):
     """Raised when the pipeline determines it cannot answer reliably."""
+
+
+class BudgetExceededError(RagPipelineError):
+    """Raised when the monthly LLM budget limit has been reached."""

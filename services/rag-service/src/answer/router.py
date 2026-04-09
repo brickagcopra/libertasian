@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
-from ..shared.exceptions import RagPipelineError
+from ..shared.exceptions import BudgetExceededError, RagPipelineError
 from .schemas import AnswerRequest, AnswerResponse
 from .service import generate_answer, stream_answer
 
@@ -30,6 +30,8 @@ async def post_answer(request: AnswerRequest) -> AnswerResponse:
     """
     try:
         return await generate_answer(request)
+    except BudgetExceededError:
+        raise  # Let global exception handler return 503
     except RagPipelineError as exc:
         logger.warning("RAG pipeline error: %s", exc)
         raise HTTPException(status_code=422, detail=str(exc)) from exc

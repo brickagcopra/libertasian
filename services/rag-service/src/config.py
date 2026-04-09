@@ -12,7 +12,12 @@ class Settings(BaseSettings):
     # PostgreSQL connection URL
     database_url: str = "postgresql://libertasian:libertasian@localhost:5432/libertasian"
 
-    # vLLM — OpenAI-compatible endpoint
+    # OpenAI API (primary — used when openai_api_key is set)
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o-mini"
+    openai_request_timeout: int = 120
+
+    # vLLM fallback (used when openai_api_key is empty)
     vllm_base_url: str = "http://localhost:8000/v1"
     vllm_model: str = "default"
     vllm_request_timeout: int = 120
