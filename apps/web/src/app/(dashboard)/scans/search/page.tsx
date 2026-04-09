@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
+import DOMPurify from 'dompurify';
 import Link from 'next/link';
 import { ArrowLeft, SearchIcon } from 'lucide-react';
 
@@ -140,7 +141,7 @@ export default function UploadSearchPage() {
                             <p
                               key={idx}
                               className="line-clamp-2 text-xs text-muted-foreground"
-                              dangerouslySetInnerHTML={{ __html: snippet }}
+                              dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(snippet, { ALLOWED_TAGS: ['mark', 'em', 'strong', 'b'] }) }}
                             />
                           ))}
                         </div>

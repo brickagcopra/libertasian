@@ -1,3 +1,4 @@
+import DOMPurify from 'dompurify';
 import Link from 'next/link';
 
 import { Badge } from '@/components/ui/badge';
@@ -53,7 +54,7 @@ export function SearchResultCard({ item }: { item: SearchResultItem }) {
                   <p
                     key={i}
                     className="line-clamp-2 text-xs text-muted-foreground [&_mark]:bg-yellow-200 [&_mark]:font-medium"
-                    dangerouslySetInnerHTML={{ __html: snippet }}
+                    dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(snippet, { ALLOWED_TAGS: ['mark', 'em', 'strong', 'b'] }) }}
                   />
                 ))}
               </div>

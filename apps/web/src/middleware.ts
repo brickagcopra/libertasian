@@ -43,28 +43,36 @@ function isAuthPage(pathname: string): boolean {
   return AUTH_PAGES.includes(pathname);
 }
 
+/** Apply security headers to a response. */
+function withSecurityHeaders(response: NextResponse): NextResponse {
+  response.headers.set('X-Content-Type-Options', 'nosniff');
+  response.headers.set('X-Frame-Options', 'DENY');
+  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  return response;
+}
+
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const hasSession = request.cookies.has(SESSION_COOKIE);
 
   // Authenticated user trying to visit auth pages → redirect to search (main dashboard)
   if (hasSession && isAuthPage(pathname)) {
-    return NextResponse.redirect(new URL('/search', request.url));
+    return withSecurityHeaders(NextResponse.redirect(new URL('/search', request.url)));
   }
 
   // Public route → allow through
   if (isPublicRoute(pathname)) {
-    return NextResponse.next();
+    return withSecurityHeaders(NextResponse.next());
   }
 
   // Protected route without session → redirect to login with return URL
   if (!hasSession) {
     const loginUrl = new URL('/login', request.url);
     loginUrl.searchParams.set('from', pathname);
-    return NextResponse.redirect(loginUrl);
+    return withSecurityHeaders(NextResponse.redirect(loginUrl));
   }
 
-  return NextResponse.next();
+  return withSecurityHeaders(NextResponse.next());
 }
 
 export const config = {
