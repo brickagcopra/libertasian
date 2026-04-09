@@ -14,3 +14,5 @@ export { ListSubscriptionMigrationsQueryDto } from './list-subscription-migratio
 export { ForceCancelSubscriptionDto } from './force-cancel-subscription.dto';
 export { ExtendTrialDto } from './extend-trial.dto';
 export { ChangeBillingPeriodDto } from './change-billing-period.dto';
+export { ListLifecycleEventsQueryDto } from './list-lifecycle-events-query.dto';
+export { BulkRetryLifecycleEventsDto } from './bulk-retry-lifecycle-events.dto';

@@ -1386,3 +1386,47 @@ export interface GrantEntitlementOverrideInput {
 export interface RevokeEntitlementOverrideInput {
   reason: string;
 }
+
+// ─── Admin Lifecycle Events Types ────────────────────────
+
+export interface AdminLifecycleEventListItem extends LifecycleEventEntry {
+  subscription: {
+    id: string;
+    planCode: string;
+    status: string;
+    organization: {
+      id: string;
+      name: string;
+    };
+  };
+}
+
+export interface AdminLifecycleEventListResponse {
+  success: boolean;
+  data: AdminLifecycleEventListItem[];
+  nextCursor: string | null;
+  hasNext: boolean;
+}
+
+export interface LifecycleEventStatsData {
+  statusCounts: Record<string, number>;
+  eventTypeCounts: Record<string, number>;
+  pendingDueCount: number;
+}
+
+export interface LifecycleEventStatsResponse {
+  success: boolean;
+  data: LifecycleEventStatsData;
+}
+
+export interface ListLifecycleEventsQuery {
+  status?: string;
+  eventType?: string;
+  subscriptionId?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface BulkRetryResult {
+  count: number;
+}

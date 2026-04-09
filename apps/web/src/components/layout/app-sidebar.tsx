@@ -51,6 +51,7 @@ import {
   BarChart3Icon,
   BrainCircuitIcon,
   HomeIcon,
+  TimerIcon,
 } from 'lucide-react';
 
 interface NavItem {
@@ -101,6 +102,7 @@ const ADMIN_NAV_ITEMS: NavItem[] = [
   { href: '/admin/duplicates', label: 'Duplicates', icon: CopyIcon },
   { href: '/admin/plans', label: 'Plans', icon: CreditCardIcon },
   { href: '/admin/subscriptions', label: 'Subscriptions', icon: CreditCardIcon },
+  { href: '/admin/lifecycle-events', label: 'Lifecycle Events', icon: TimerIcon },
   { href: '/admin/coupons', label: 'Coupons', icon: TicketIcon },
   { href: '/admin/promotions', label: 'Promotions', icon: MegaphoneIcon },
   { href: '/admin/simulator', label: 'Simulator', icon: PlayCircleIcon },

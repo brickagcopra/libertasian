@@ -15,7 +15,11 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
     const inAuthGroup = segments[0] === '(auth)';
     const inPublicGroup = segments[0] === 'shared';
     const inOnboardingGroup = segments[0] === '(onboarding)';
+    const inBillingDeepLink = segments[0] === 'billing';
     const hasCompletedOnboarding = !!user?.onboardingCompletedAt;
+
+    // Allow billing deep links through (Xendit payment redirects)
+    if (inBillingDeepLink) return;
 
     if (!isAuthenticated && !inAuthGroup && !inPublicGroup) {
       router.replace('/(auth)/login');

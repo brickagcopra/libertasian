@@ -1,6 +1,17 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-04-09 (Session 189 — Blog/Ads Finalization)
+> Last updated: 2026-04-09 (Session 191 — Subscription Lifecycle Event Processor)
+
+---
+
+## Session 191 — Subscription Lifecycle Event Processor — ALL COMPLETE
+
+### Remaining for Production Billing Launch
+- **Configure Xendit test mode API keys** in environment variables (`XENDIT_SECRET_KEY`, `XENDIT_WEBHOOK_CALLBACK_TOKEN`)
+- **Run plan seed** on production database: `pnpm --filter api prisma db seed`
+- **Test Xendit webhook** end-to-end with test payment methods
+- **Configure Nginx** webhook route (should already be in place per commit 99ea0ae)
+- **E2E test lifecycle processor** — Manually create lifecycle events with past `scheduledAt` and verify the cron picks them up and transitions subscriptions correctly
 
 ---
 

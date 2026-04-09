@@ -8,6 +8,7 @@ export const NOTIFICATION_EVENTS = {
   COMMUNITY_RATING_RECEIVED: 'notification.community_rating_received',
   EXPERT_VERIFICATION_RESOLVED: 'notification.expert_verification_resolved',
   COMMUNITY_FLAG_ACTIONED: 'notification.community_flag_actioned',
+  SUBSCRIPTION_NOTIFICATION: 'subscription.notification',
 } as const;
 
 // Event payload interfaces
@@ -88,4 +89,14 @@ export interface CommunityFlagActionedEvent {
   /** User ID of the content owner whose content was actioned */
   contentOwnerUserId: string;
   reason: string;
+}
+
+/** Emitted by subscription-lifecycle.service.ts for SEND_NOTIFICATION side effects */
+export interface SubscriptionNotificationEvent {
+  subscriptionId: string;
+  organizationId: string;
+  template: string;
+  fromState: string;
+  toState: string;
+  action: string;
 }

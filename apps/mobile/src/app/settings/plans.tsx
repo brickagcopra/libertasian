@@ -7,10 +7,10 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
+  Linking,
   RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as WebBrowser from 'expo-web-browser';
 import { usePlanInfoList, useActivePromotions } from '../../features/billing/hooks/use-plans';
 import { useSubscription } from '../../features/billing/hooks/use-subscription';
 import { useCreateCheckout, useCheckoutPreview } from '../../features/billing/hooks/use-billing';
@@ -71,7 +71,9 @@ export default function PlansScreen() {
       });
 
       if (result.checkoutUrl) {
-        await WebBrowser.openBrowserAsync(result.checkoutUrl);
+        // Open in system browser (not in-app webview) so user can verify
+        // they're on the real xendit.co domain for payment security
+        await Linking.openURL(result.checkoutUrl);
       }
     } catch (error) {
       Alert.alert(

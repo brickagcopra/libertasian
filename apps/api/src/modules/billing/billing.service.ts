@@ -593,6 +593,32 @@ export class BillingService {
       });
     }
 
+    // Send cancellation notification email
+    try {
+      const org = await this.prisma.organization.findUnique({
+        where: { id: organizationId },
+        include: { billingOwner: true },
+      });
+      if (org?.billingOwner) {
+        const user = org.billingOwner;
+        await this.notificationsService.sendSubscriptionCancelled({
+          email: user.email,
+          userName: user.fullName ?? 'User',
+          planName: sub.planCode,
+          endDate: sub.currentPeriodEnd
+            ? new Date(sub.currentPeriodEnd).toLocaleDateString('en-PH', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+              })
+            : 'N/A',
+          isImmediate: !cancelAtPeriodEnd,
+        });
+      }
+    } catch (err) {
+      this.logger.error(`Failed to send cancellation notification: ${err}`);
+    }
+
     return {
       message: cancelAtPeriodEnd
         ? 'Subscription will be cancelled at end of billing period'

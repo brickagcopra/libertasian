@@ -1,6 +1,31 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-04-09 (Session 189 — Blog/Ads Finalization)
+> Last updated: 2026-04-09 (Session 191 — Subscription Lifecycle Event Processor)
+
+---
+
+## Session 191 — Subscription Lifecycle Event Processor (6 Tasks)
+
+1. **Fixed `calculateScheduledTime()` placeholder** — Replaced hardcoded 30-day fallback in `subscription-lifecycle.service.ts` with actual logic: reads `currentPeriodEnd` for renewals/cancellations, `trialEnd` for trial expiry, adds 7-day grace period offset
+2. **Created lifecycle event processor** — `lifecycle-event-processor.service.ts` with `@Cron('*/60 * * * * *')` polling for due events, claims via optimistic locking, maps event types to state machine actions (`cancellation_end→CANCEL_IMMEDIATELY`, `renewal→RENEW`, `trial_expiry→EXPIRE_TRIAL`, `grace_period_end→SUSPEND`), creates free-tier fallback on cancellation, stale lock recovery every 5 minutes
+3. **Created admin DTOs** — `ListLifecycleEventsQueryDto` (status, eventType, subscriptionId, pagination) and `BulkRetryLifecycleEventsDto` with class-validator decorators
+4. **Created admin service + controller** — `LifecycleEventAdminService` with list/stats/retry/cancel/bulkRetry + `LifecycleEventAdminController` at `admin/subscription-lifecycle-events` with all endpoints guarded by `admin:billing` permission and audit-logged
+5. **Created frontend** — Types (`AdminLifecycleEventListItem`, `LifecycleEventStatsData`, etc.), TanStack Query hooks (`useAdminLifecycleEvents`, `useLifecycleEventStats`, `useRetryLifecycleEvent`, `useCancelLifecycleEvent`, `useBulkRetryLifecycleEvents`), admin page with summary cards/filters/table/actions, sidebar nav item with `TimerIcon`
+6. **Verified** — API `tsc --noEmit` clean, web `tsc --noEmit` clean (only pre-existing errors), 107/109 test suites pass (2 pre-existing failures in analytics)
+
+---
+
+## Session 190 — Billing/Xendit Integration Review (9 Tasks)
+
+1. **Plan seed verified** — `plan-seed.ts` already exists and is called from `seed.ts`; admin panel has full CRUD for plans/prices/entitlements
+2. **Checkout flow verified** — Success/cancel redirect URLs wired correctly in web (`/settings/billing/success`, `/settings/billing/cancel`)
+3. **Frontend checkout verified** — Pricing page CTA links to `/auth/callback?mode=register&plan=X` for unauthenticated users; billing settings page has upgrade/downgrade/cancel flows with checkout preview
+4. **Webhook handling verified** — `webhook.controller.ts` validates Xendit callback token, Redis idempotency (7-day TTL), routes PAID/EXPIRED statuses correctly
+5. **Subscription cancellation email added** — Created `subscription-cancelled.ts` template + `sendSubscriptionCancelled()` in NotificationsService + wired into `billing.service.cancelSubscription()`
+6. **Mobile checkout fixed** — Replaced `WebBrowser.openBrowserAsync` with `Linking.openURL` in `plans.tsx` for payment domain verification security
+7. **Mobile deep link routes created** — Added `app/billing/success.tsx` and `app/billing/cancel.tsx` for Xendit payment redirect handling; updated `_layout.tsx` auth guard to allow billing deep links
+8. **Period-end cancellation email wired** — Added `@OnEvent('subscription.notification')` handler in `notification.listener.ts` to send email when CANCELLING → CANCELLED transition fires (cancel-at-period-end expiry)
+9. **expo-web-browser cleanup verified** — Confirmed zero remaining imports; package was never in mobile `package.json`
 
 ---
 
@@ -9972,3 +9997,16 @@ Phase 3 of the 6-phase testing strategy. Created 5 integration test files + 2 sh
    - Fallback: re-authenticates if refresh fails
    - Full threshold coverage: search + documentRead + aiAnswer + publicEndpoints + auth
    - Purpose: Detect memory leaks, connection pool exhaustion, token expiry bugs
+
+---
+
+## Session 190 — Billing/Xendit Integration Review & Fixes
+
+### Completed
+1. [x] **Verified plan seed script** — `prisma/seeds/plan-seed.ts` already exists with all 5 plans (free, edu, pro, team, enterprise), correct centavo prices, entitlements, and feature flags. Called from `seed.ts`.
+2. [x] **Verified checkout redirect flow** — `successUrl`/`cancelUrl` from DTO passed through to Xendit. Frontend constructs `{origin}/settings/billing/success` and `/cancel`. Success page invalidates billing queries. Cancel page links back to billing.
+3. [x] **Verified frontend checkout button wiring** — Full flow implemented: plan selection → checkout preview → coupon/promotion → price breakdown → proceed to payment → redirect to Xendit invoice URL → success/cancel page. Pricing page CTA links unauthenticated users to `/auth/callback?mode=register&plan=X`.
+4. [x] **Verified webhook handling** — `webhook.controller.ts` verifies callback token, parses event, Redis-based idempotency check (7-day TTL), handles PAID/EXPIRED statuses. `handlePaymentSuccess`: marks payment, expires old subscriptions, creates new subscription + invoice (with snapshot line items), transitions lifecycle, invalidates entitlement cache, finalizes coupon, records promotion, sends emails. `handlePaymentFailed`: marks payment, rollbacks coupon, transitions to PAST_DUE.
+5. [x] **Wired subscription cancellation email** — Created `subscription-cancelled.ts` template (end-of-period vs immediate messaging), added `sendSubscriptionCancelled` method to `NotificationsService`, wired into `BillingService.cancelSubscription`.
+6. [x] **Fixed mobile checkout flow** — Replaced `WebBrowser.openBrowserAsync` with `Linking.openURL` for security (users see real xendit.co domain). Created deep link routes: `app/billing/success.tsx` (invalidates queries, redirects to subscription screen) and `app/billing/cancel.tsx` (redirects to plans screen). Updated `_layout.tsx` auth guard to allow billing deep links through.
+7. [x] **Verified subscription status display** — Web billing page shows: plan name, status badge (active/cancelling), billing period, seats, renewal date, upgrade/change plan dialog, cancel dialog (end-of-period or immediate), payment methods (set default, delete), invoices table with pagination. Mobile subscription screen shows: plan name, status badge, billing period, seats, current period, trial end, cancel notice, change plan and usage links.

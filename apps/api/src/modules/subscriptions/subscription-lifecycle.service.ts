@@ -427,7 +427,7 @@ export class SubscriptionLifecycleService {
     effect: SideEffect,
   ): Promise<void> {
     const eventType = effect.payload?.['eventType'] as string;
-    const scheduledAt = this.calculateScheduledTime(eventType, subscription.id);
+    const scheduledAt = await this.calculateScheduledTime(tx, eventType, subscription.id);
 
     await tx.subscriptionLifecycleEvent.create({
       data: {
@@ -538,12 +538,27 @@ export class SubscriptionLifecycleService {
     }
   }
 
-  private calculateScheduledTime(_eventType: string, _subscriptionId: string): Date {
-    // Default: schedule 30 days from now (renewal).
-    // In production, this would read from subscription.currentPeriodEnd, plan grace days, etc.
-    const scheduled = new Date();
-    scheduled.setDate(scheduled.getDate() + 30);
-    return scheduled;
+  private async calculateScheduledTime(
+    tx: Prisma.TransactionClient,
+    eventType: string,
+    subscriptionId: string,
+  ): Promise<Date> {
+    const sub = await tx.subscription.findUnique({
+      where: { id: subscriptionId },
+      select: { currentPeriodEnd: true, trialEnd: true },
+    });
+
+    switch (eventType) {
+      case 'cancellation_end':
+      case 'renewal':
+        return sub?.currentPeriodEnd ?? new Date(Date.now() + 30 * 86400000);
+      case 'trial_expiry':
+        return sub?.trialEnd ?? new Date(Date.now() + 14 * 86400000);
+      case 'grace_period_end':
+        return new Date((sub?.currentPeriodEnd?.getTime() ?? Date.now()) + 7 * 86400000);
+      default:
+        return new Date(Date.now() + 30 * 86400000);
+    }
   }
 
   // ---- Helpers ----

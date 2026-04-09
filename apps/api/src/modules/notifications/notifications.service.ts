@@ -10,6 +10,7 @@ import { memberInviteTemplate } from './templates/member-invite';
 import { subscriptionConfirmationTemplate } from './templates/subscription-confirmation';
 import { paymentReceiptTemplate } from './templates/payment-receipt';
 import { paymentFailedTemplate } from './templates/payment-failed';
+import { subscriptionCancelledTemplate } from './templates/subscription-cancelled';
 import { announcementTemplate } from './templates/announcement';
 import { blogNotificationTemplate } from './templates/blog-notification';
 
@@ -135,6 +136,26 @@ export class NotificationsService {
 
     await this.enqueue({ to: params.email, subject, html });
     this.logger.log(`Payment failed email enqueued for ${this.redactEmail(params.email)}`);
+  }
+
+  async sendSubscriptionCancelled(params: {
+    email: string;
+    userName: string;
+    planName: string;
+    endDate: string;
+    isImmediate: boolean;
+  }): Promise<void> {
+    const billingUrl = `${this.appUrl}/settings/billing`;
+    const { subject, html } = subscriptionCancelledTemplate({
+      userName: params.userName,
+      planName: params.planName,
+      endDate: params.endDate,
+      isImmediate: params.isImmediate,
+      billingUrl,
+    });
+
+    await this.enqueue({ to: params.email, subject, html });
+    this.logger.log(`Subscription cancelled email enqueued for ${this.redactEmail(params.email)}`);
   }
 
   // ---- Announcement & Blog (preference-respecting bulk sends) ----
