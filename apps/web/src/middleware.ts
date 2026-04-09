@@ -29,7 +29,7 @@ const PUBLIC_PATHS = [
 ];
 
 /** Path prefixes that should be accessible without authentication. */
-const PUBLIC_PREFIXES = ['/shared/'];
+const PUBLIC_PREFIXES = ['/shared/', '/blog'];
 
 function isPublicRoute(pathname: string): boolean {
   if (PUBLIC_PATHS.includes(pathname)) return true;
