@@ -30,6 +30,7 @@ services:
         condition: service_healthy
       web:
         condition: service_healthy
+    networks: [frontend]
     deploy:
       resources:
         limits:
@@ -59,6 +60,7 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+    networks: [frontend]
     deploy:
       resources:
         limits:
@@ -96,6 +98,7 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+    networks: [frontend, backend, ai, storage]
     deploy:
       resources:
         limits:
@@ -127,6 +130,7 @@ services:
         limits:
           cpus: "4"
           memory: 4G
+    networks: [backend, storage]
     command:
       - "postgres"
       - "-c"
@@ -171,6 +175,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks: [backend, ai]
     deploy:
       resources:
         limits:
@@ -205,6 +210,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
+    networks: [ai]
     deploy:
       resources:
         limits:
@@ -232,6 +238,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
+    networks: [storage]
     deploy:
       resources:
         limits:
@@ -252,6 +259,7 @@ services:
       exit 0;
       "
     env_file: .env
+    networks: [storage]
 
   # ====================
   # ClamAV (Malware Scanning)
@@ -270,6 +278,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 120s
+    networks: [backend]
     deploy:
       resources:
         limits:
@@ -300,6 +309,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    networks: [ai]
     deploy:
       resources:
         limits:
@@ -333,6 +343,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    networks: [ai, storage]
     deploy:
       resources:
         limits:
@@ -368,6 +379,7 @@ services:
         condition: service_healthy
       ocr-service:
         condition: service_healthy
+    networks: [ai, storage]
     deploy:
       resources:
         limits:
@@ -397,6 +409,7 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    networks: [ai]
     deploy:
       resources:
         limits:
@@ -425,6 +438,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    networks: [ai]
     deploy:
       resources:
         limits:
@@ -437,3 +451,13 @@ volumes:
   opensearch_data:
   minio_data:
   clamav_data:
+
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
+  ai:
+    driver: bridge
+  storage:
+    driver: bridge
