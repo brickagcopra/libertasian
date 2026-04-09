@@ -56,6 +56,36 @@ const SOURCES: SourceSeed[] = [
       },
     ],
   },
+  {
+    name: 'Official Gazette',
+    type: 'official',
+    domain: 'officialgazette.gov.ph',
+    trustLevel: 'high',
+    fetchStrategy: 'crawler',
+    endpoints: [
+      {
+        endpointUrl: 'https://www.officialgazette.gov.ph/section/laws/',
+        contentTypeHint: 'text/html',
+        parserType: 'official_gazette',
+        scheduleCron: '0 4 * * *', // daily at 4 AM
+      },
+    ],
+  },
+  {
+    name: 'Congress of the Philippines',
+    type: 'official',
+    domain: 'congress.gov.ph',
+    trustLevel: 'high',
+    fetchStrategy: 'crawler',
+    endpoints: [
+      {
+        endpointUrl: 'https://www.congress.gov.ph/legisdocs/',
+        contentTypeHint: 'text/html',
+        parserType: 'congress',
+        scheduleCron: '0 5 * * *', // daily at 5 AM
+      },
+    ],
+  },
 ];
 
 async function main() {

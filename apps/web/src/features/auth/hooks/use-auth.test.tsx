@@ -16,17 +16,15 @@ vi.mock('@/lib/api-client', () => ({
   },
 }));
 
-const mockSetTokens = vi.fn();
+const mockSetAccessToken = vi.fn();
 const mockSetUser = vi.fn();
 const mockLogout = vi.fn();
-const mockRefreshToken = 'mock-refresh-token';
 
 vi.mock('@/stores/auth-store', () => ({
   useAuthStore: vi.fn(() => ({
-    setTokens: mockSetTokens,
+    setAccessToken: mockSetAccessToken,
     setUser: mockSetUser,
     logout: mockLogout,
-    refreshToken: mockRefreshToken,
   })),
 }));
 
@@ -61,7 +59,7 @@ function createWrapper() {
 describe('useLogin', () => {
   beforeEach(() => {
     mockPost.mockReset();
-    mockSetTokens.mockReset();
+    mockSetAccessToken.mockReset();
     mockSetUser.mockReset();
   });
 
@@ -70,7 +68,7 @@ describe('useLogin', () => {
     mockPost.mockResolvedValueOnce({
       success: true,
       data: {
-        tokens: { accessToken: 'at', refreshToken: 'rt' },
+        tokens: { accessToken: 'at' },
         user: mockUser,
         mfaRequired: false,
       },
@@ -90,15 +88,15 @@ describe('useLogin', () => {
       email: 'test@example.com',
       password: 'pass123',
     });
-    expect(mockSetTokens).toHaveBeenCalledWith('at', 'rt');
+    expect(mockSetAccessToken).toHaveBeenCalledWith('at');
     expect(mockSetUser).toHaveBeenCalledWith(mockUser);
   });
 
-  it('does not set tokens when mfaRequired is true', async () => {
+  it('does not set token when mfaRequired is true', async () => {
     mockPost.mockResolvedValueOnce({
       success: true,
       data: {
-        tokens: { accessToken: 'at', refreshToken: 'rt' },
+        tokens: { accessToken: 'at' },
         user: { id: 'u1' },
         mfaRequired: true,
       },
@@ -113,7 +111,7 @@ describe('useLogin', () => {
     });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(mockSetTokens).not.toHaveBeenCalled();
+    expect(mockSetAccessToken).not.toHaveBeenCalled();
   });
 
   it('handles login error', async () => {
@@ -181,9 +179,8 @@ describe('useLogout', () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-    expect(mockPost).toHaveBeenCalledWith('/auth/logout', {
-      refreshToken: mockRefreshToken,
-    });
+    // Refresh token now sent via httpOnly cookie, no body needed
+    expect(mockPost).toHaveBeenCalledWith('/auth/logout');
     expect(mockLogout).toHaveBeenCalled();
   });
 });
@@ -242,12 +239,13 @@ describe('useVerifyEmail', () => {
     });
 
     await act(async () => {
-      result.current.mutate({ token: 'verify-tok' });
+      result.current.mutate({ email: 'test@example.com', code: '123456' });
     });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(mockPost).toHaveBeenCalledWith('/auth/verify-email', {
-      token: 'verify-tok',
+      email: 'test@example.com',
+      code: '123456',
     });
   });
 });
@@ -255,18 +253,15 @@ describe('useVerifyEmail', () => {
 describe('useRefreshToken', () => {
   beforeEach(() => {
     mockPost.mockReset();
-    mockSetTokens.mockReset();
-    mockSetUser.mockReset();
+    mockSetAccessToken.mockReset();
     mockLogout.mockReset();
   });
 
-  it('refreshes tokens successfully', async () => {
-    const mockUser = { id: 'u1', email: 'test@example.com' };
+  it('refreshes token successfully', async () => {
     mockPost.mockResolvedValueOnce({
       success: true,
       data: {
-        tokens: { accessToken: 'new-at', refreshToken: 'new-rt' },
-        user: mockUser,
+        accessToken: 'new-at',
       },
     });
 
@@ -280,11 +275,9 @@ describe('useRefreshToken', () => {
     });
 
     expect(success).toBe(true);
-    expect(mockPost).toHaveBeenCalledWith('/auth/refresh', {
-      refreshToken: mockRefreshToken,
-    });
-    expect(mockSetTokens).toHaveBeenCalledWith('new-at', 'new-rt');
-    expect(mockSetUser).toHaveBeenCalledWith(mockUser);
+    // Refresh token sent via httpOnly cookie, no body
+    expect(mockPost).toHaveBeenCalledWith('/auth/refresh');
+    expect(mockSetAccessToken).toHaveBeenCalledWith('new-at');
   });
 
   it('calls logout on 401 error', async () => {

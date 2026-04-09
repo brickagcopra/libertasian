@@ -8,7 +8,7 @@ import { ROUTES } from '@/lib/constants';
 function OAuthCallbackContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { setTokens } = useAuthStore();
+  const { setAccessToken } = useAuthStore();
   const processed = useRef(false);
 
   useEffect(() => {
@@ -16,16 +16,15 @@ function OAuthCallbackContent() {
     processed.current = true;
 
     const accessToken = searchParams.get('accessToken');
-    const refreshToken = searchParams.get('refreshToken');
 
-    if (accessToken && refreshToken) {
-      // Store tokens — the AuthProvider will pick them up and configure the apiClient
-      setTokens(accessToken, refreshToken);
+    if (accessToken) {
+      // Store access token in memory — refresh token is already in httpOnly cookie
+      setAccessToken(accessToken);
       router.replace(ROUTES.SEARCH);
     } else {
       router.replace(ROUTES.LOGIN);
     }
-  }, [searchParams, setTokens, router]);
+  }, [searchParams, setAccessToken, router]);
 
   return (
     <div className="flex min-h-screen items-center justify-center">

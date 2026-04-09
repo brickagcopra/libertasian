@@ -22,7 +22,7 @@ interface AuthUser {
 interface LoginResponse {
   success: boolean;
   data: {
-    tokens: { accessToken: string; refreshToken: string };
+    tokens: { accessToken: string };
     user: AuthUser;
     mfaRequired: boolean;
   };
@@ -39,13 +39,12 @@ interface RegisterResponse {
 interface RefreshResponse {
   success: boolean;
   data: {
-    tokens: { accessToken: string; refreshToken: string };
-    user: AuthUser;
+    accessToken: string;
   };
 }
 
 export function useLogin() {
-  const { setTokens, setUser } = useAuthStore();
+  const { setAccessToken, setUser } = useAuthStore();
 
   return useMutation({
     mutationFn: async (data: { email: string; password: string; mfaCode?: string }) => {
@@ -54,7 +53,7 @@ export function useLogin() {
     },
     onSuccess: (data) => {
       if (!data.mfaRequired) {
-        setTokens(data.tokens.accessToken, data.tokens.refreshToken);
+        setAccessToken(data.tokens.accessToken);
         setUser(data.user);
       }
     },
@@ -71,13 +70,14 @@ export function useRegister() {
 }
 
 export function useLogout() {
-  const { logout, refreshToken } = useAuthStore();
+  const { logout } = useAuthStore();
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: async () => {
       try {
-        await apiClient.post('/auth/logout', { refreshToken });
+        // Server reads refresh token from httpOnly cookie
+        await apiClient.post('/auth/logout');
       } catch {
         // Logout locally even if server call fails
       }
@@ -127,19 +127,13 @@ export function useResendVerification() {
 }
 
 export function useRefreshToken() {
-  const { refreshToken, setTokens, setUser, logout } = useAuthStore();
+  const { setAccessToken, logout } = useAuthStore();
 
   return useCallback(async () => {
-    if (!refreshToken) {
-      logout();
-      return false;
-    }
     try {
-      const res = await apiClient.post<RefreshResponse>('/auth/refresh', {
-        refreshToken,
-      });
-      setTokens(res.data.tokens.accessToken, res.data.tokens.refreshToken);
-      setUser(res.data.user);
+      // Refresh token is sent automatically via httpOnly cookie
+      const res = await apiClient.post<RefreshResponse>('/auth/refresh');
+      setAccessToken(res.data.accessToken);
       return true;
     } catch (error) {
       if (error instanceof ApiClientError && error.statusCode === 401) {
@@ -147,5 +141,5 @@ export function useRefreshToken() {
       }
       return false;
     }
-  }, [refreshToken, setTokens, setUser, logout]);
+  }, [setAccessToken, logout]);
 }

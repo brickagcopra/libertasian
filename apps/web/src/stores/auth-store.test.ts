@@ -6,26 +6,23 @@ describe('useAuthStore', () => {
     // Reset store to initial state before each test
     useAuthStore.setState({
       accessToken: null,
-      refreshToken: null,
       user: null,
       isAuthenticated: false,
     });
   });
 
-  it('starts with null tokens and unauthenticated', () => {
+  it('starts with null token and unauthenticated', () => {
     const state = useAuthStore.getState();
     expect(state.accessToken).toBeNull();
-    expect(state.refreshToken).toBeNull();
     expect(state.user).toBeNull();
     expect(state.isAuthenticated).toBe(false);
   });
 
-  it('setTokens sets tokens and marks authenticated', () => {
-    useAuthStore.getState().setTokens('access-123', 'refresh-456');
+  it('setAccessToken sets token and marks authenticated', () => {
+    useAuthStore.getState().setAccessToken('access-123');
 
     const state = useAuthStore.getState();
     expect(state.accessToken).toBe('access-123');
-    expect(state.refreshToken).toBe('refresh-456');
     expect(state.isAuthenticated).toBe(true);
   });
 
@@ -38,6 +35,8 @@ describe('useAuthStore', () => {
       organizationId: 'org-1',
       mfaEnabled: false,
       emailVerified: true,
+      onboardingCompletedAt: null,
+      userRole: null,
     };
 
     useAuthStore.getState().setUser(user);
@@ -49,7 +48,7 @@ describe('useAuthStore', () => {
 
   it('logout clears all state', () => {
     // Set up authenticated state
-    useAuthStore.getState().setTokens('access-123', 'refresh-456');
+    useAuthStore.getState().setAccessToken('access-123');
     useAuthStore.getState().setUser({
       id: 'user-1',
       email: 'test@example.com',
@@ -58,6 +57,8 @@ describe('useAuthStore', () => {
       organizationId: 'org-1',
       mfaEnabled: false,
       emailVerified: true,
+      onboardingCompletedAt: null,
+      userRole: null,
     });
 
     // Verify state is set
@@ -68,12 +69,11 @@ describe('useAuthStore', () => {
 
     const state = useAuthStore.getState();
     expect(state.accessToken).toBeNull();
-    expect(state.refreshToken).toBeNull();
     expect(state.user).toBeNull();
     expect(state.isAuthenticated).toBe(false);
   });
 
-  it('setTokens does not affect user', () => {
+  it('setAccessToken does not affect user', () => {
     const user = {
       id: 'user-1',
       email: 'test@example.com',
@@ -82,10 +82,12 @@ describe('useAuthStore', () => {
       organizationId: 'org-1',
       mfaEnabled: false,
       emailVerified: true,
+      onboardingCompletedAt: null,
+      userRole: null,
     };
 
     useAuthStore.getState().setUser(user);
-    useAuthStore.getState().setTokens('new-access', 'new-refresh');
+    useAuthStore.getState().setAccessToken('new-access');
 
     const state = useAuthStore.getState();
     expect(state.user).toEqual(user);

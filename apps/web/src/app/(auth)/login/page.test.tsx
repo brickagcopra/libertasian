@@ -97,7 +97,7 @@ vi.mock('@/lib/api-client', () => ({
 
 vi.mock('@/stores/auth-store', () => ({
   useAuthStore: () => ({
-    setTokens: vi.fn(),
+    setAccessToken: vi.fn(),
     setUser: vi.fn(),
   }),
 }));

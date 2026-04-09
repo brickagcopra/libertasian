@@ -85,6 +85,11 @@ services:
       CLAMAV_HOST: clamav
       CLAMAV_PORT: "3310"
       CLAMAV_ENABLED: "true"
+      JWT_PRIVATE_KEY_PATH: /secrets/jwt-private.pem
+      JWT_PUBLIC_KEY_PATH: /secrets/jwt-public.pem
+    volumes:
+      - ./infrastructure/secrets/jwt-private.pem:/secrets/jwt-private.pem:ro
+      - ./infrastructure/secrets/jwt-public.pem:/secrets/jwt-public.pem:ro
     depends_on:
       postgres:
         condition: service_healthy

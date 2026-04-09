@@ -10,6 +10,7 @@ import {
   Post,
   Req,
   Res,
+  UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -29,7 +30,6 @@ import type { GoogleProfile } from './strategies/google.strategy';
 import {
   RegisterDto,
   LoginDto,
-  RefreshTokenDto,
   ForgotPasswordDto,
   ResetPasswordDto,
   VerifyEmailDto,
@@ -38,6 +38,9 @@ import {
   MfaDisableDto,
   AcceptInviteDto,
 } from './dto';
+
+/** Cookie name for the httpOnly refresh token */
+const REFRESH_COOKIE = 'libertasian-refresh';
 
 /**
  * Auth controller — rate limited to 10 requests per 15 minutes per IP
@@ -50,6 +53,8 @@ import {
 export class AuthController {
   private readonly googleEnabled: boolean;
   private readonly appUrl: string;
+  private readonly refreshTtl: number;
+  private readonly isProduction: boolean;
 
   constructor(
     private readonly authService: AuthService,
@@ -62,6 +67,30 @@ export class AuthController {
       this.configService.get<string>('GOOGLE_CLIENT_SECRET')
     );
     this.appUrl = this.configService.get<string>('APP_URL', 'http://localhost:3000');
+    this.refreshTtl = this.configService.get<number>('JWT_REFRESH_TTL', 604800);
+    this.isProduction = this.configService.get<string>('NODE_ENV') === 'production';
+  }
+
+  /** Set httpOnly cookie with the refresh token */
+  private setRefreshCookie(res: Response, refreshToken: string): void {
+    res.cookie(REFRESH_COOKIE, refreshToken, {
+      httpOnly: true,
+      secure: this.isProduction,
+      sameSite: 'strict',
+      path: '/api/v1/auth',
+      maxAge: this.refreshTtl * 1000,
+    });
+  }
+
+  /** Clear the httpOnly refresh cookie */
+  private clearRefreshCookie(res: Response): void {
+    res.cookie(REFRESH_COOKIE, '', {
+      httpOnly: true,
+      secure: this.isProduction,
+      sameSite: 'strict',
+      path: '/api/v1/auth',
+      maxAge: 0,
+    });
   }
 
   @Post('register')
@@ -114,10 +143,12 @@ export class AuthController {
       metadata: { ip, provider: 'google' },
     });
 
-    // Redirect to frontend with tokens as query params (short-lived, consumed immediately)
+    // Set refresh token as httpOnly cookie — never exposed to JS
+    this.setRefreshCookie(res, result.tokens.refreshToken);
+
+    // Only pass accessToken as query param (short-lived, consumed immediately)
     const params = new URLSearchParams({
       accessToken: result.tokens.accessToken,
-      refreshToken: result.tokens.refreshToken,
     });
     res.redirect(`${this.appUrl}/auth/callback?${params.toString()}`);
   }
@@ -132,11 +163,15 @@ export class AuthController {
     @Body() dto: LoginDto,
     @Ip() ip: string,
     @Headers('user-agent') userAgent: string,
+    @Res({ passthrough: true }) res: Response,
   ) {
     const fingerprint = this.buildDeviceFingerprint(userAgent, ip);
     const result = await this.authService.login(dto, fingerprint);
 
     if (!result.mfaRequired) {
+      // Set refresh token as httpOnly cookie
+      this.setRefreshCookie(res, result.tokens.refreshToken);
+
       await this.auditService.log({
         actorUserId: result.user.id,
         actorType: 'user',
@@ -147,19 +182,38 @@ export class AuthController {
       });
     }
 
-    return { success: true, data: result };
+    // Return only accessToken in body — refreshToken is in httpOnly cookie
+    return {
+      success: true,
+      data: {
+        tokens: { accessToken: result.tokens.accessToken },
+        user: result.user,
+        mfaRequired: result.mfaRequired,
+      },
+    };
   }
 
   @Post('refresh')
-  @ApiOperation({ summary: 'Refresh access token using refresh token' })
+  @ApiOperation({ summary: 'Refresh access token using httpOnly cookie refresh token' })
   async refresh(
-    @Body() dto: RefreshTokenDto,
+    @Req() req: Request,
     @Ip() ip: string,
     @Headers('user-agent') userAgent: string,
+    @Res({ passthrough: true }) res: Response,
   ) {
+    const refreshToken = (req.cookies as Record<string, string>)?.[REFRESH_COOKIE];
+    if (!refreshToken) {
+      throw new UnauthorizedException('No refresh token');
+    }
+
     const fingerprint = this.buildDeviceFingerprint(userAgent, ip);
-    const tokens = await this.authService.refreshTokens(dto.refreshToken, fingerprint);
-    return { success: true, data: tokens };
+    const tokens = await this.authService.refreshTokens(refreshToken, fingerprint);
+
+    // Rotate: set new refresh token as httpOnly cookie
+    this.setRefreshCookie(res, tokens.refreshToken);
+
+    // Return only accessToken in body
+    return { success: true, data: { accessToken: tokens.accessToken } };
   }
 
   @Post('logout')
@@ -167,11 +221,19 @@ export class AuthController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Logout and revoke refresh token family' })
   async logout(
-    @Body() dto: RefreshTokenDto,
+    @Req() req: Request,
     @CurrentUser() user: JwtPayload,
     @Ip() ip: string,
+    @Res({ passthrough: true }) res: Response,
   ) {
-    await this.authService.logout(dto.refreshToken);
+    const refreshToken = (req.cookies as Record<string, string>)?.[REFRESH_COOKIE];
+    if (refreshToken) {
+      await this.authService.logout(refreshToken);
+    }
+
+    // Clear the httpOnly cookie
+    this.clearRefreshCookie(res);
+
     await this.auditService.log({
       actorUserId: user.sub,
       actorType: 'user',

@@ -29,11 +29,10 @@ interface User {
 
 interface AuthState {
   accessToken: string | null;
-  refreshToken: string | null;
   user: User | null;
   isAuthenticated: boolean;
 
-  setTokens: (accessToken: string, refreshToken: string) => void;
+  setAccessToken: (accessToken: string) => void;
   setUser: (user: User) => void;
   logout: () => void;
 }
@@ -42,13 +41,12 @@ export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
       accessToken: null,
-      refreshToken: null,
       user: null,
       isAuthenticated: false,
 
-      setTokens: (accessToken: string, refreshToken: string) => {
+      setAccessToken: (accessToken: string) => {
         setSessionCookie();
-        set({ accessToken, refreshToken, isAuthenticated: true });
+        set({ accessToken, isAuthenticated: true });
       },
 
       setUser: (user: User) => set({ user }),
@@ -57,7 +55,6 @@ export const useAuthStore = create<AuthState>()(
         clearSessionCookie();
         set({
           accessToken: null,
-          refreshToken: null,
           user: null,
           isAuthenticated: false,
         });
@@ -65,9 +62,8 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'libertasian-auth',
+      // Only persist user and isAuthenticated — accessToken stays in memory only
       partialize: (state) => ({
-        accessToken: state.accessToken,
-        refreshToken: state.refreshToken,
         user: state.user,
         isAuthenticated: state.isAuthenticated,
       }),

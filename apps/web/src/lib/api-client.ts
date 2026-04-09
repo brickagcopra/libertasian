@@ -14,21 +14,37 @@ class ApiClient {
   private baseUrl: string;
   private getAccessToken: (() => string | null) | null = null;
   private onUnauthorized: (() => void) | null = null;
+  private refreshAccessToken: (() => Promise<string | null>) | null = null;
+  private refreshPromise: Promise<string | null> | null = null;
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
   }
 
-  /** Configure auth token provider and unauthorized handler */
+  /** Configure auth token provider, unauthorized handler, and silent refresh */
   configure(options: {
     getAccessToken: () => string | null;
     onUnauthorized: () => void;
+    refreshAccessToken: () => Promise<string | null>;
   }) {
     this.getAccessToken = options.getAccessToken;
     this.onUnauthorized = options.onUnauthorized;
+    this.refreshAccessToken = options.refreshAccessToken;
   }
 
-  private async request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
+  /** Attempt a silent token refresh, deduplicating concurrent calls */
+  private async tryRefresh(): Promise<string | null> {
+    if (!this.refreshAccessToken) return null;
+    // Deduplicate: if a refresh is already in-flight, reuse it
+    if (!this.refreshPromise) {
+      this.refreshPromise = this.refreshAccessToken().finally(() => {
+        this.refreshPromise = null;
+      });
+    }
+    return this.refreshPromise;
+  }
+
+  private async request<T>(endpoint: string, options: RequestOptions = {}, isRetry = false): Promise<T> {
     const { params, ...init } = options;
 
     let url = `${this.baseUrl}${endpoint}`;
@@ -51,7 +67,18 @@ class ApiClient {
     const response = await fetch(url, {
       ...init,
       headers,
+      credentials: 'include', // Send httpOnly cookies automatically
     });
+
+    // On 401, try silent refresh once then retry the request
+    if (response.status === 401 && !isRetry) {
+      const newToken = await this.tryRefresh();
+      if (newToken) {
+        return this.request<T>(endpoint, options, true);
+      }
+      this.onUnauthorized?.();
+      throw new ApiClientError('Session expired. Please log in again.', 401);
+    }
 
     if (response.status === 401) {
       this.onUnauthorized?.();
@@ -112,6 +139,7 @@ class ApiClient {
       const url = `${this.baseUrl}${endpoint}`;
 
       xhr.open('POST', url);
+      xhr.withCredentials = true; // Send httpOnly cookies
 
       const token = this.getAccessToken?.();
       if (token) {
@@ -176,7 +204,12 @@ class ApiClient {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const response = await fetch(url, { ...init, method: 'GET', headers });
+    const response = await fetch(url, {
+      ...init,
+      method: 'GET',
+      headers,
+      credentials: 'include',
+    });
 
     if (response.status === 401) {
       this.onUnauthorized?.();
