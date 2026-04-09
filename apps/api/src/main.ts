@@ -39,7 +39,7 @@ async function bootstrap() {
   app.setGlobalPrefix('api/v1');
 
   // Swagger documentation (disabled in production)
-  if (process.env.NODE_ENV !== 'production') {
+  if (process.env['NODE_ENV'] !== 'production') {
     const config = new DocumentBuilder()
       .setTitle('LIBERTASIAN API')
       .setDescription('Philippine Legal AI Platform API')
