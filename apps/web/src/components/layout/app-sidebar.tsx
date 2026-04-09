@@ -49,6 +49,7 @@ import {
   ShieldCheckIcon,
   ScrollTextIcon,
   BarChart3Icon,
+  BrainCircuitIcon,
   HomeIcon,
 } from 'lucide-react';
 
@@ -88,6 +89,7 @@ const WORKSPACE_ITEMS: NavItem[] = [
 
 const ADMIN_NAV_ITEMS: NavItem[] = [
   { href: '/admin', label: 'Dashboard', icon: LayoutDashboardIcon },
+  { href: '/admin/ai-settings', label: 'AI Settings', icon: BrainCircuitIcon },
   { href: '/admin/homepage', label: 'Homepage', icon: HomeIcon },
   { href: '/admin/sources', label: 'Sources', icon: DatabaseIcon },
   { href: '/admin/review', label: 'Review Queue', icon: ClipboardCheckIcon },

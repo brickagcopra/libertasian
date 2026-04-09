@@ -326,6 +326,59 @@ async function main() {
   // 8. Seed chart of accounts for accounting system
   await seedChartOfAccounts(prisma);
 
+  // 9. Seed AI settings defaults
+  console.log('\n  Seeding AI settings...');
+  const AI_SETTINGS_DEFAULTS = [
+    {
+      key: 'llm_monthly_budget_usd',
+      value: { amount: 200, currency: 'USD' },
+      description:
+        'Monthly spending limit for OpenAI API usage. AI features are paused when this limit is reached.',
+    },
+    {
+      key: 'llm_model',
+      value: { model: 'gpt-4o-mini', provider: 'openai' },
+      description: 'The LLM model used for all AI generation tasks.',
+    },
+    {
+      key: 'llm_enabled',
+      value: { enabled: true },
+      description: 'Master switch to enable/disable all AI generation features.',
+    },
+    {
+      key: 'ingestion_schedule',
+      value: {
+        enabled: false,
+        schedules: [
+          { sourceKey: 'supreme_court_elibrary', cron: '0 2 * * *', enabled: false },
+          { sourceKey: 'lawphil', cron: '0 3 * * *', enabled: false },
+          { sourceKey: 'official_gazette', cron: '0 4 * * *', enabled: false },
+          { sourceKey: 'congress', cron: '0 5 * * *', enabled: false },
+        ],
+      },
+      description:
+        'Automatic ingestion schedule. Each source can be independently enabled with a cron expression.',
+    },
+    {
+      key: 'ingestion_rate_limit',
+      value: { max_concurrent_jobs: 2, delay_between_requests_sec: 2 },
+      description: 'Rate limiting for ingestion crawlers to avoid overwhelming source servers.',
+    },
+  ];
+
+  for (const setting of AI_SETTINGS_DEFAULTS) {
+    await prisma.aiSettings.upsert({
+      where: { key: setting.key },
+      update: {},
+      create: {
+        key: setting.key,
+        value: setting.value,
+        description: setting.description,
+      },
+    });
+    console.log(`    AI setting: ${setting.key}`);
+  }
+
   console.log(`\nSeed complete.`);
   console.log(`  Admin login: ${ADMIN_EMAIL} / ${ADMIN_PASSWORD}`);
   console.log(`  Test users login: ${TEST_USERS.map((u) => u.email).join(', ')} / ${TEST_PASSWORD}`);

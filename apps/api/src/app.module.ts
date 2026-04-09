@@ -52,6 +52,7 @@ import { PlansModule } from './modules/plans/plans.module';
 import { PricingModule } from './modules/pricing/pricing.module';
 import { RbacModule } from './modules/rbac/rbac.module';
 import { AccountingModule } from './modules/accounting/accounting.module';
+import { AiSettingsModule } from './modules/ai-settings/ai-settings.module';
 import { ReportingModule } from './modules/reporting/reporting.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
@@ -196,6 +197,7 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
     SiteContentModule,
     ReportingModule,
     AccountingModule,
+    AiSettingsModule,
   ],
   providers: [
     // Global rate limiting guard — applies to all routes by default

@@ -106,6 +106,7 @@ model User {
   expensesApprovedBy         ExpenseRecord[]         @relation("ExpenseApprovedBy")
   financialForecasts         FinancialForecast[]     @relation("ForecastCreatedBy")
   emailPreference            EmailPreference?
+  aiSettingsUpdated          AiSettings[]
 
   @@map("users")
 }
@@ -3292,4 +3293,21 @@ model SiteContent {
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   @@map("site_contents")
+}
+
+// ==========================================================================
+// AI Settings — Admin-managed AI/LLM configuration
+// ==========================================================================
+
+model AiSettings {
+  id            String   @id @default(uuid()) @db.Uuid
+  key           String   @unique @db.VarChar(100)
+  value         Json
+  description   String?  @db.VarChar(500)
+  updatedBy     String?  @map("updated_by") @db.Uuid
+  updatedByUser User?    @relation(fields: [updatedBy], references: [id])
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("ai_settings")
 }
