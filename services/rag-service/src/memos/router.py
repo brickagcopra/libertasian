@@ -3,8 +3,9 @@
 import logging
 from typing import Union
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from ..shared.auth import verify_internal_key
 from .schemas import (
     MemoGenerationRequest,
     MemoGenerationResponse,
@@ -14,7 +15,11 @@ from .service import generate_memo, generate_outline
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/memos", tags=["memos"])
+router = APIRouter(
+    prefix="/memos",
+    tags=["memos"],
+    dependencies=[Depends(verify_internal_key)],
+)
 
 
 @router.post(

@@ -2,14 +2,19 @@
 
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from ..shared.auth import verify_internal_key
 from .schemas import ContradictionRequest, ContradictionResponse
 from .service import generate_contradiction_report
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/contradictions", tags=["contradictions"])
+router = APIRouter(
+    prefix="/contradictions",
+    tags=["contradictions"],
+    dependencies=[Depends(verify_internal_key)],
+)
 
 
 @router.post("/generate", response_model=ContradictionResponse)

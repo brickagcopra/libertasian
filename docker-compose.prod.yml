@@ -294,6 +294,7 @@ services:
       OCR_QUALITY_WARN_THRESHOLD: "0.4"
       OCR_MAX_IMAGE_WIDTH: "2048"
       OCR_MAX_IMAGE_HEIGHT: "2048"
+      OCR_INTERNAL_API_KEY: ${INTERNAL_API_KEY}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
       interval: 30s
@@ -321,6 +322,7 @@ services:
       RAG_OPENSEARCH_URL: https://opensearch:9200
       RAG_REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       RAG_DATABASE_URL: postgresql://${POSTGRES_USER:-libertasian}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-libertasian}
+      RAG_INTERNAL_API_KEY: ${INTERNAL_API_KEY}
     depends_on:
       opensearch:
         condition: service_healthy
@@ -417,6 +419,7 @@ services:
       EMBEDDING_EMBEDDING_DIM: "${EMBEDDING_DIM:-384}"
       EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-cpu}
       EMBEDDING_MAX_BATCH_SIZE: "64"
+      EMBEDDING_INTERNAL_API_KEY: ${INTERNAL_API_KEY}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 30s

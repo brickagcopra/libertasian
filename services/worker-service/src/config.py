@@ -22,8 +22,8 @@ class Settings(BaseSettings):
 
     # S3 / MinIO
     s3_endpoint: str = "http://localhost:9000"
-    s3_access_key: str = "minioadmin"
-    s3_secret_key: str = "minioadmin"
+    s3_access_key: str = ""
+    s3_secret_key: str = ""
     s3_bucket_uploads: str = "libertasian-uploads"
     s3_bucket_corpus: str = "libertasian-corpus"
     s3_region: str = "us-east-1"
@@ -46,7 +46,7 @@ class Settings(BaseSettings):
 
     # NestJS API (for internal service-to-service calls)
     nestjs_api_url: str = "http://localhost:3001/api/v1"
-    internal_api_key: str = "dev-internal-api-key"
+    internal_api_key: str = ""
 
     model_config = {"env_prefix": "WORKER_", "env_file": ".env", "extra": "ignore"}
 

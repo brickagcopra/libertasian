@@ -1,11 +1,16 @@
 """LIBERTASIAN OCR Service — Document classification router."""
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, Depends
 
+from ..shared.auth import verify_internal_key
 from ..schemas import ClassificationResult
 from .classifier import classify_document
 
-router = APIRouter(prefix="/classify", tags=["classify"])
+router = APIRouter(
+    prefix="/classify",
+    tags=["classify"],
+    dependencies=[Depends(verify_internal_key)],
+)
 
 
 @router.post("", response_model=ClassificationResult)

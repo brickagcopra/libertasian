@@ -2,14 +2,19 @@
 
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from ..shared.auth import verify_internal_key
 from .schemas import HearingPrepRequest, HearingPrepResponse
 from .service import generate_hearing_prep
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/hearing-prep", tags=["hearing-prep"])
+router = APIRouter(
+    prefix="/hearing-prep",
+    tags=["hearing-prep"],
+    dependencies=[Depends(verify_internal_key)],
+)
 
 
 @router.post("/generate", response_model=HearingPrepResponse)

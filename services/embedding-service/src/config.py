@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     # Operational limits
     max_input_length: int = 8192
 
+    # Internal API key for service-to-service authentication
+    internal_api_key: str = ""
+
     model_config = {"env_prefix": "EMBEDDING_", "env_file": ".env", "extra": "ignore"}
 
 

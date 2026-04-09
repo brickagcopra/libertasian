@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     # Service URLs for inter-service communication
     worker_service_url: str = "http://localhost:8001"
 
+    # Internal API key for service-to-service authentication
+    internal_api_key: str = ""
+
     model_config = {"env_prefix": "OCR_", "env_file": ".env", "extra": "ignore"}
 
 

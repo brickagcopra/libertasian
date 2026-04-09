@@ -79,6 +79,9 @@ class Settings(BaseSettings):
     # Embedding service (empty string = kNN disabled, BM25 only)
     embedding_service_url: str = ""
 
+    # Internal API key for service-to-service authentication
+    internal_api_key: str = ""
+
     model_config = {"env_prefix": "RAG_", "env_file": ".env", "extra": "ignore"}
 
 

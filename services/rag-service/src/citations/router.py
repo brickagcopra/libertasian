@@ -2,8 +2,9 @@
 
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from ..shared.auth import verify_internal_key
 from .case_codal_suggestions import suggest_case_codal_links
 from .schemas import (
     CaseCodalSuggestionRequest,
@@ -14,7 +15,11 @@ from .schemas import (
 from .service import resolve_citations
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/citations", tags=["citations"])
+router = APIRouter(
+    prefix="/citations",
+    tags=["citations"],
+    dependencies=[Depends(verify_internal_key)],
+)
 
 
 @router.post("/resolve", response_model=CitationResolutionResponse)

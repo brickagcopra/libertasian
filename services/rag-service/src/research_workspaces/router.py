@@ -2,14 +2,19 @@
 
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from ..shared.auth import verify_internal_key
 from .schemas import ResearchQueryRequest, ResearchQueryResponse
 from .service import answer_research_query
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/research_workspaces", tags=["research_workspaces"])
+router = APIRouter(
+    prefix="/research_workspaces",
+    tags=["research_workspaces"],
+    dependencies=[Depends(verify_internal_key)],
+)
 
 
 @router.post("/query", response_model=ResearchQueryResponse)

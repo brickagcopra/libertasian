@@ -34,12 +34,14 @@ export interface AiAnswerResponse {
 export class AiAnswersService {
   private readonly logger = new Logger(AiAnswersService.name);
   private readonly ragServiceUrl: string;
+  private readonly internalApiKey: string;
 
   constructor(
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
   ) {
     this.ragServiceUrl = this.config.get<string>('RAG_SERVICE_URL', 'http://localhost:8000');
+    this.internalApiKey = this.config.get<string>('INTERNAL_API_KEY', '');
   }
 
   /**
@@ -55,7 +57,10 @@ export class AiAnswersService {
 
     const response = await fetch(`${this.ragServiceUrl}/answer`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(this.internalApiKey && { 'X-Internal-Api-Key': this.internalApiKey }),
+      },
       body: JSON.stringify({
         query: dto.query,
         max_passages: dto.maxPassages ?? 8,
@@ -103,7 +108,10 @@ export class AiAnswersService {
       url: `${this.ragServiceUrl}/answer/stream`,
       init: {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(this.internalApiKey && { 'X-Internal-Api-Key': this.internalApiKey }),
+        },
         body: JSON.stringify({
           query: dto.query,
           max_passages: dto.maxPassages ?? 8,

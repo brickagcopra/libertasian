@@ -2,14 +2,19 @@
 
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from ..shared.auth import verify_internal_key
 from .schemas import TimelineRequest, TimelineResponse
 from .service import generate_timeline
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/timelines", tags=["timelines"])
+router = APIRouter(
+    prefix="/timelines",
+    tags=["timelines"],
+    dependencies=[Depends(verify_internal_key)],
+)
 
 
 @router.post("/generate", response_model=TimelineResponse)

@@ -2,12 +2,17 @@
 
 import asyncio
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
+from ..shared.auth import verify_internal_key
 from ..schemas import PdfExtractionResponse
 from .extractor import extract_pdf_text
 
-router = APIRouter(prefix="/pdf", tags=["pdf"])
+router = APIRouter(
+    prefix="/pdf",
+    tags=["pdf"],
+    dependencies=[Depends(verify_internal_key)],
+)
 
 # PDF magic bytes: %PDF
 PDF_MAGIC = b"%PDF"

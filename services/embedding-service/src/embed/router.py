@@ -2,15 +2,20 @@
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from ..config import settings
+from ..shared.auth import verify_internal_key
 from .schemas import BatchEmbedRequest, BatchEmbedResponse, EmbedRequest, EmbedResponse
 from .service import embed_batch, embed_text
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/embed", tags=["embed"])
+router = APIRouter(
+    prefix="/embed",
+    tags=["embed"],
+    dependencies=[Depends(verify_internal_key)],
+)
 
 
 @router.post("", response_model=EmbedResponse)

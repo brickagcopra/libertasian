@@ -1,11 +1,16 @@
 """LIBERTASIAN OCR Service — Quality scoring router."""
 
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, Depends, File, UploadFile
 
+from ..shared.auth import verify_internal_key
 from ..schemas import QualityScoreResponse
 from .scorer import score_image_quality
 
-router = APIRouter(prefix="/quality", tags=["quality"])
+router = APIRouter(
+    prefix="/quality",
+    tags=["quality"],
+    dependencies=[Depends(verify_internal_key)],
+)
 
 
 @router.post("/score", response_model=QualityScoreResponse)

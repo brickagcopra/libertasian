@@ -2,12 +2,17 @@
 
 import asyncio
 
-from fastapi import APIRouter, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 
+from ..shared.auth import verify_internal_key
 from ..schemas import OcrResponse
 from .extractor import extract_text
 
-router = APIRouter(prefix="/ocr", tags=["ocr"])
+router = APIRouter(
+    prefix="/ocr",
+    tags=["ocr"],
+    dependencies=[Depends(verify_internal_key)],
+)
 
 
 @router.post("/extract", response_model=OcrResponse)

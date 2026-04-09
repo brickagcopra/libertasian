@@ -106,7 +106,7 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
         CLAMAV_TIMEOUT: Joi.number().default(30000),
         CLAMAV_ENABLED: Joi.string().valid('true', 'false').default('true'),
         // Internal service-to-service API key (worker-service → NestJS)
-        INTERNAL_API_KEY: Joi.string().default('dev-internal-api-key'),
+        INTERNAL_API_KEY: Joi.string().default(''),
       }),
     }),
 

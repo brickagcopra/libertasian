@@ -76,9 +76,17 @@ export interface CitationExtractionResult {
 export class OcrClientService {
   private readonly logger = new Logger(OcrClientService.name);
   private readonly baseUrl: string;
+  private readonly internalApiKey: string;
 
   constructor(private readonly config: ConfigService) {
     this.baseUrl = this.config.get<string>('OCR_SERVICE_URL', 'http://localhost:8002');
+    this.internalApiKey = this.config.get<string>('INTERNAL_API_KEY', '');
+  }
+
+  private get authHeaders(): Record<string, string> {
+    return this.internalApiKey
+      ? { 'X-Internal-Api-Key': this.internalApiKey }
+      : {};
   }
 
   /**
@@ -106,6 +114,7 @@ export class OcrClientService {
 
       const response = await fetch(url, {
         method: 'POST',
+        headers: this.authHeaders,
         body: formData,
         signal: AbortSignal.timeout(30_000),
       });
@@ -156,6 +165,7 @@ export class OcrClientService {
 
       const response = await fetch(url, {
         method: 'POST',
+        headers: this.authHeaders,
         body: formData,
         signal: AbortSignal.timeout(60_000),
       });
@@ -196,7 +206,7 @@ export class OcrClientService {
     try {
       const response = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...this.authHeaders },
         body: JSON.stringify({ text }),
         signal: AbortSignal.timeout(30_000),
       });
@@ -233,7 +243,7 @@ export class OcrClientService {
     try {
       const response = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...this.authHeaders },
         body: JSON.stringify({ text }),
         signal: AbortSignal.timeout(30_000),
       });
@@ -276,6 +286,7 @@ export class OcrClientService {
 
       const response = await fetch(url, {
         method: 'POST',
+        headers: this.authHeaders,
         body: formData,
         signal: AbortSignal.timeout(120_000),
       });

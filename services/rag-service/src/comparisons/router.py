@@ -2,14 +2,19 @@
 
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from ..shared.auth import verify_internal_key
 from .schemas import ComparisonRequest, ComparisonResponse
 from .service import generate_comparison
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/comparisons", tags=["comparisons"])
+router = APIRouter(
+    prefix="/comparisons",
+    tags=["comparisons"],
+    dependencies=[Depends(verify_internal_key)],
+)
 
 
 @router.post("/generate", response_model=ComparisonResponse)

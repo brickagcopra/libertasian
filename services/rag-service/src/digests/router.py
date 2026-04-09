@@ -2,14 +2,19 @@
 
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from ..shared.auth import verify_internal_key
 from .schemas import DigestGenerationRequest, DigestGenerationResponse
 from .service import generate_digest
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/digests", tags=["digests"])
+router = APIRouter(
+    prefix="/digests",
+    tags=["digests"],
+    dependencies=[Depends(verify_internal_key)],
+)
 
 
 @router.post("/generate", response_model=DigestGenerationResponse)

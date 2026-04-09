@@ -1,11 +1,16 @@
 """LIBERTASIAN OCR Service — Citation extraction router."""
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, Depends
 
+from ..shared.auth import verify_internal_key
 from ..schemas import CitationExtractionResult
 from .extractor import extract_citations
 
-router = APIRouter(prefix="/citations", tags=["citations"])
+router = APIRouter(
+    prefix="/citations",
+    tags=["citations"],
+    dependencies=[Depends(verify_internal_key)],
+)
 
 
 @router.post("/extract", response_model=CitationExtractionResult)

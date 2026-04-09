@@ -22,12 +22,14 @@ interface BatchEmbedResponse {
 export class EmbeddingClientService implements OnModuleInit {
   private readonly logger = new Logger(EmbeddingClientService.name);
   private readonly baseUrl: string;
+  private readonly internalApiKey: string;
 
   constructor(private readonly config: ConfigService) {
     this.baseUrl = this.config.get<string>(
       'EMBEDDING_SERVICE_URL',
       'http://localhost:8001',
     );
+    this.internalApiKey = this.config.get<string>('INTERNAL_API_KEY', '');
   }
 
   async onModuleInit() {
@@ -52,7 +54,10 @@ export class EmbeddingClientService implements OnModuleInit {
     try {
       const response = await fetch(`${this.baseUrl}/embed`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(this.internalApiKey && { 'X-Internal-Api-Key': this.internalApiKey }),
+        },
         body: JSON.stringify({ text }),
         signal: AbortSignal.timeout(30_000),
       });
@@ -82,7 +87,10 @@ export class EmbeddingClientService implements OnModuleInit {
     try {
       const response = await fetch(`${this.baseUrl}/embed/batch`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(this.internalApiKey && { 'X-Internal-Api-Key': this.internalApiKey }),
+        },
         body: JSON.stringify({ texts }),
         signal: AbortSignal.timeout(60_000),
       });

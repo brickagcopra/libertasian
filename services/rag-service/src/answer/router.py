@@ -9,16 +9,21 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
+from ..shared.auth import verify_internal_key
 from ..shared.exceptions import BudgetExceededError, RagPipelineError
 from .schemas import AnswerRequest, AnswerResponse
 from .service import generate_answer, stream_answer
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/answer", tags=["answer"])
+router = APIRouter(
+    prefix="/answer",
+    tags=["answer"],
+    dependencies=[Depends(verify_internal_key)],
+)
 
 
 @router.post("", response_model=AnswerResponse)

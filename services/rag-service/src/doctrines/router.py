@@ -2,14 +2,19 @@
 
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from ..shared.auth import verify_internal_key
 from .schemas import DoctrineExtractionRequest, DoctrineExtractionResponse
 from .service import extract_doctrines
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/doctrines", tags=["doctrines"])
+router = APIRouter(
+    prefix="/doctrines",
+    tags=["doctrines"],
+    dependencies=[Depends(verify_internal_key)],
+)
 
 
 @router.post("/extract", response_model=DoctrineExtractionResponse)
