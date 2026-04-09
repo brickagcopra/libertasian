@@ -9,15 +9,9 @@ export class SiteContentService {
   constructor(private readonly prisma: PrismaService) {}
 
   async findByKey(key: string) {
-    const record = await this.prisma.siteContent.findUnique({
+    return this.prisma.siteContent.findUnique({
       where: { key },
     });
-
-    if (!record) {
-      throw new NotFoundException(`Site content not found for key: ${key}`);
-    }
-
-    return record;
   }
 
   async upsert(key: string, content: Record<string, unknown>, userId: string) {

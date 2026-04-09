@@ -32,9 +32,9 @@ export class PerformanceInterceptor implements NestInterceptor {
           const statusCode = response.statusCode;
           this.logRequest(method, url, statusCode, duration, controller, handler);
         },
-        error: () => {
+        error: (err) => {
           const duration = Date.now() - startTime;
-          const statusCode = response.statusCode >= 400 ? response.statusCode : 500;
+          const statusCode = err?.status || err?.getStatus?.() || 500;
           this.logRequest(method, url, statusCode, duration, controller, handler);
         },
       }),

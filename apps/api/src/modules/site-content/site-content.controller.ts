@@ -31,6 +31,17 @@ export class SiteContentController {
   @Header('Cache-Control', 'public, max-age=300, s-maxage=300')
   async findByKey(@Param('key') key: string) {
     const record = await this.siteContentService.findByKey(key);
+    if (!record) {
+      return {
+        success: true,
+        data: {
+          key,
+          content: {},
+          version: 0,
+          updatedAt: null,
+        },
+      };
+    }
     return {
       success: true,
       data: {
