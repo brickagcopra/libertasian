@@ -373,7 +373,7 @@ export class BlogService {
     return Math.max(1, Math.ceil(words / 200));
   }
 
-  private formatPost(post: Record<string, unknown>) {
+  private formatPost<T extends Record<string, unknown>>(post: T): Omit<T, 'tags'> & { tags: Record<string, unknown>[] } {
     const tags = post['tags'] as Array<{ tag: Record<string, unknown> }> | undefined;
     return {
       ...post,
