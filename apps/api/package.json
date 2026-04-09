@@ -58,7 +58,7 @@
     "helmet": "^8.1.0",
     "ioredis": "^5.10.1",
     "joi": "^18.0.2",
-    "nodemailer": "^8.0.3",
+    "nodemailer": "^8.0.5",
     "otplib": "^13.3.0",
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
