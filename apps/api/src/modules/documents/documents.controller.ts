@@ -11,6 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import type { JwtPayload } from '@libertasian/types';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -44,6 +45,7 @@ export class DocumentsController {
   // ---- Public endpoints (published documents) ----
 
   @Get()
+  @Throttle({ default: { ttl: 60000, limit: 60 } })
   @ApiOperation({ summary: 'List legal documents with filters and cursor pagination' })
   async list(@Query() query: ListDocumentsQueryDto) {
     const result = await this.documentsService.list(query);
@@ -51,6 +53,7 @@ export class DocumentsController {
   }
 
   @Get(':id')
+  @Throttle({ default: { ttl: 60000, limit: 60 } })
   @ApiOperation({ summary: 'Get a legal document by ID' })
   async findById(@Param('id', ParseUUIDPipe) id: string) {
     const doc = await this.documentsService.findById(id);
@@ -58,6 +61,7 @@ export class DocumentsController {
   }
 
   @Get(':id/sections')
+  @Throttle({ default: { ttl: 60000, limit: 60 } })
   @ApiOperation({ summary: 'List all sections of a legal document' })
   async listSections(@Param('id', ParseUUIDPipe) id: string) {
     const sections = await this.documentsService.listSections(id);
@@ -65,6 +69,7 @@ export class DocumentsController {
   }
 
   @Get(':id/sections/:sectionId')
+  @Throttle({ default: { ttl: 60000, limit: 60 } })
   @ApiOperation({ summary: 'Get a specific section with full text' })
   async getSection(
     @Param('id', ParseUUIDPipe) id: string,
@@ -75,6 +80,7 @@ export class DocumentsController {
   }
 
   @Get(':id/citations')
+  @Throttle({ default: { ttl: 60000, limit: 60 } })
   @ApiOperation({ summary: 'List citations from a legal document' })
   async listCitations(@Param('id', ParseUUIDPipe) id: string) {
     const citations = await this.documentsService.listCitations(id);
@@ -82,6 +88,7 @@ export class DocumentsController {
   }
 
   @Get(':id/related')
+  @Throttle({ default: { ttl: 60000, limit: 60 } })
   @ApiOperation({ summary: 'List documents related by citation' })
   async listRelated(@Param('id', ParseUUIDPipe) id: string) {
     const related = await this.documentsService.listRelated(id);

@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import type { JwtPayload } from '@libertasian/types';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -43,6 +44,7 @@ export class SearchController {
   ) {}
 
   @Post()
+  @Throttle({ default: { ttl: 60000, limit: 30 } })
   @ApiOperation({ summary: 'Natural language search across legal documents' })
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -101,6 +103,7 @@ export class SearchController {
   }
 
   @Get('citation/:citation')
+  @Throttle({ default: { ttl: 60000, limit: 30 } })
   @ApiOperation({ summary: 'Exact citation lookup (G.R. No., RA No., etc.)' })
   async searchByCitation(@Param() params: CitationSearchDto) {
     const result = await this.searchService.searchByCitation(params.citation);
@@ -108,6 +111,7 @@ export class SearchController {
   }
 
   @Get('suggestions')
+  @Throttle({ default: { ttl: 60000, limit: 30 } })
   @ApiOperation({ summary: 'Search suggestions / autocomplete' })
   async getSuggestions(@Query() query: SuggestionQueryDto) {
     const suggestions = await this.searchService.getSuggestions(

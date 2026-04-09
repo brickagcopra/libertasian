@@ -56,6 +56,14 @@ export class AuthService {
       this.useRs256 = false;
       this.logger.warn('JWT signing: HS256 (symmetric fallback — NOT for production)');
     }
+
+    // Refuse to start in production without RS256 keys
+    if (this.config.get('NODE_ENV') === 'production' && !this.useRs256) {
+      throw new Error(
+        'FATAL: RS256 JWT signing keys are required in production. ' +
+          'Set JWT_PRIVATE_KEY_PATH or JWT_PRIVATE_KEY environment variable.',
+      );
+    }
   }
 
   // ---- Registration ----
