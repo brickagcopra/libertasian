@@ -1,3 +1,5 @@
+import { randomUUID } from 'crypto';
+
 import {
   BadRequestException,
   Injectable,
@@ -11,6 +13,7 @@ import { AuditService } from '../audit/audit.service';
 import { CouponService } from '../coupons/coupon.service';
 import { PricingEngineService } from '../pricing/pricing-engine.service';
 import { PromotionService } from '../promotions/promotion.service';
+import { EntitlementService } from '../subscriptions/entitlement.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { SubscriptionLifecycleService } from '../subscriptions/subscription-lifecycle.service';
 import { SubscriptionAction, SubscriptionState } from '../subscriptions/subscription-state-machine';
@@ -32,6 +35,7 @@ export class BillingService {
     private readonly promotionService: PromotionService,
     private readonly lifecycleService: SubscriptionLifecycleService,
     private readonly notificationsService: NotificationsService,
+    private readonly entitlementService: EntitlementService,
   ) {}
 
   // ---- Subscription ----
@@ -127,7 +131,7 @@ export class BillingService {
 
     // 3. Create Xendit invoice with final amount
     // Xendit expects whole currency units (PHP), our DB stores centavos → divide by 100
-    const externalId = require('crypto').randomUUID() as string;
+    const externalId = randomUUID();
     const invoice = await this.xenditService.createInvoice({
       amount: Math.round(breakdown.finalAmount / 100),
       currency: breakdown.currency,
@@ -291,7 +295,7 @@ export class BillingService {
 
       // Create invoice — use snapshot line items if available
       const invoiceNumber = await this.generateInvoiceNumber();
-      const snapshot = await this.prisma.checkoutPriceSnapshot.findUnique({
+      const snapshot = await tx.checkoutPriceSnapshot.findUnique({
         where: { paymentId: payment.id },
       });
 
@@ -367,6 +371,9 @@ export class BillingService {
         actorType: 'system',
         metadata: { planCode, billingPeriod, paymentId: payment.id },
       });
+
+      // Invalidate cached entitlements so the new plan limits take effect immediately
+      await this.entitlementService.invalidateEntitlementCache(payment.organizationId);
     }
 
     // Record promotion redemption if applicable
@@ -461,6 +468,13 @@ export class BillingService {
 
     if (payment.status === 'failed') {
       return; // Idempotent
+    }
+
+    if (payment.status === 'succeeded') {
+      this.logger.warn(
+        `Ignoring EXPIRED webhook for already-succeeded payment: ${payment.id}`,
+      );
+      return;
     }
 
     await this.prisma.payment.update({

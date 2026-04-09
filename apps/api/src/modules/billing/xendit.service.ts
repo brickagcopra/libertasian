@@ -1,3 +1,5 @@
+import { timingSafeEqual } from 'crypto';
+
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
@@ -57,7 +59,7 @@ export class XenditService {
       success_redirect_url: params.successRedirectUrl,
       failure_redirect_url: params.failureRedirectUrl,
       invoice_duration: 1800,
-      payment_methods: ['CREDIT_CARD', 'GCASH', 'GRABPAY', 'PAYMAYA'],
+      payment_methods: ['CREDIT_CARD', 'GCASH', 'GRABPAY', 'MAYA'],
       metadata: params.metadata,
     };
 
@@ -89,12 +91,7 @@ export class XenditService {
       return false;
     }
 
-    try {
-      const crypto = require('crypto') as typeof import('crypto');
-      return crypto.timingSafeEqual(tokenBuffer, expectedBuffer);
-    } catch {
-      return false;
-    }
+    return timingSafeEqual(tokenBuffer, expectedBuffer);
   }
 
   /**

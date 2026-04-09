@@ -6,6 +6,7 @@ import { AuditService } from '../audit/audit.service';
 import { PricingEngineService } from '../pricing/pricing-engine.service';
 import { CouponService } from '../coupons/coupon.service';
 import { PromotionService } from '../promotions/promotion.service';
+import { EntitlementService } from '../subscriptions/entitlement.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SubscriptionLifecycleService } from '../subscriptions/subscription-lifecycle.service';
@@ -91,6 +92,7 @@ describe('BillingService', () => {
     payment: { update: jest.fn() },
     subscription: { updateMany: jest.fn(), create: jest.fn().mockResolvedValue({ id: 'sub-new' }), update: jest.fn() },
     invoice: { create: jest.fn() },
+    checkoutPriceSnapshot: { findUnique: jest.fn().mockResolvedValue(null) },
   };
 
   beforeEach(async () => {
@@ -181,6 +183,12 @@ describe('BillingService', () => {
             sendPaymentReceipt: jest.fn().mockResolvedValue(undefined),
             sendPaymentFailed: jest.fn().mockResolvedValue(undefined),
             sendSubscriptionConfirmation: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: EntitlementService,
+          useValue: {
+            invalidateEntitlementCache: jest.fn().mockResolvedValue(undefined),
           },
         },
       ],
@@ -722,6 +730,17 @@ describe('BillingService', () => {
       expect(prisma.payment.update).not.toHaveBeenCalled();
     });
 
+    it('should ignore EXPIRED webhook for already-succeeded payments', async () => {
+      (prisma.payment.findUnique as jest.Mock).mockResolvedValue({
+        ...mockPayment,
+        status: 'succeeded',
+      });
+
+      await service.handlePaymentFailed({ id: 'inv_test_123' });
+
+      expect(prisma.payment.update).not.toHaveBeenCalled();
+    });
+
     it('should handle missing payment gracefully', async () => {
       (prisma.payment.findUnique as jest.Mock).mockResolvedValue(null);
 
@@ -1056,7 +1075,7 @@ describe('BillingService', () => {
       };
 
       (prisma.payment.findUnique as jest.Mock).mockResolvedValue(mockPayment);
-      (prisma.checkoutPriceSnapshot.findUnique as jest.Mock).mockResolvedValue(snapshotData);
+      mockTransactionClient.checkoutPriceSnapshot.findUnique.mockResolvedValue(snapshotData);
       (prisma.$transaction as jest.Mock).mockImplementation(async (cb: (tx: unknown) => Promise<void>) => {
         await cb(mockTransactionClient);
       });
@@ -1091,7 +1110,7 @@ describe('BillingService', () => {
 
     it('should fall back to basic line items when no snapshot', async () => {
       (prisma.payment.findUnique as jest.Mock).mockResolvedValue(mockPayment);
-      (prisma.checkoutPriceSnapshot.findUnique as jest.Mock).mockResolvedValue(null);
+      mockTransactionClient.checkoutPriceSnapshot.findUnique.mockResolvedValue(null);
       (prisma.$transaction as jest.Mock).mockImplementation(async (cb: (tx: unknown) => Promise<void>) => {
         await cb(mockTransactionClient);
       });
@@ -1135,7 +1154,7 @@ describe('BillingService', () => {
       };
 
       (prisma.payment.findUnique as jest.Mock).mockResolvedValue(mockPayment);
-      (prisma.checkoutPriceSnapshot.findUnique as jest.Mock).mockResolvedValue(snapshotWithPromo);
+      mockTransactionClient.checkoutPriceSnapshot.findUnique.mockResolvedValue(snapshotWithPromo);
       (prisma.$transaction as jest.Mock).mockImplementation(async (cb: (tx: unknown) => Promise<void>) => {
         await cb(mockTransactionClient);
       });
@@ -1182,7 +1201,7 @@ describe('BillingService', () => {
         },
       };
       (prisma.payment.findUnique as jest.Mock).mockResolvedValue(paymentWithPromo);
-      (prisma.checkoutPriceSnapshot.findUnique as jest.Mock).mockResolvedValue(null);
+      mockTransactionClient.checkoutPriceSnapshot.findUnique.mockResolvedValue(null);
       (prisma.$transaction as jest.Mock).mockImplementation(async (cb: (tx: unknown) => Promise<void>) => {
         await cb(mockTransactionClient);
       });
@@ -1212,7 +1231,7 @@ describe('BillingService', () => {
 
     it('should not record promotion when no promotionId in metadata', async () => {
       (prisma.payment.findUnique as jest.Mock).mockResolvedValue(mockPayment);
-      (prisma.checkoutPriceSnapshot.findUnique as jest.Mock).mockResolvedValue(null);
+      mockTransactionClient.checkoutPriceSnapshot.findUnique.mockResolvedValue(null);
       (prisma.$transaction as jest.Mock).mockImplementation(async (cb: (tx: unknown) => Promise<void>) => {
         await cb(mockTransactionClient);
       });
@@ -1241,7 +1260,7 @@ describe('BillingService', () => {
         },
       };
       (prisma.payment.findUnique as jest.Mock).mockResolvedValue(paymentWithPromo);
-      (prisma.checkoutPriceSnapshot.findUnique as jest.Mock).mockResolvedValue(null);
+      mockTransactionClient.checkoutPriceSnapshot.findUnique.mockResolvedValue(null);
       (prisma.$transaction as jest.Mock).mockImplementation(async (cb: (tx: unknown) => Promise<void>) => {
         await cb(mockTransactionClient);
       });
