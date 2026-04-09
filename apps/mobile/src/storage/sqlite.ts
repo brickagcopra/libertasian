@@ -39,6 +39,22 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
 
     CREATE INDEX IF NOT EXISTS idx_codals_cache_subject ON codals_cache(subject);
     CREATE INDEX IF NOT EXISTS idx_codal_sections_codal_id ON codal_sections_cache(codal_id);
+
+    CREATE TABLE IF NOT EXISTS blog_posts_cache (
+      id TEXT PRIMARY KEY,
+      slug TEXT NOT NULL UNIQUE,
+      title TEXT NOT NULL,
+      excerpt TEXT,
+      content TEXT,
+      cover_image_url TEXT,
+      author_name TEXT NOT NULL,
+      published_at TEXT,
+      read_time_minutes INTEGER,
+      tags_json TEXT,
+      cached_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_blog_posts_cache_slug ON blog_posts_cache(slug);
   `);
 
   return db;
@@ -298,4 +314,110 @@ export async function getAllCachedCodalIds(): Promise<string[]> {
     'SELECT id FROM codals_cache ORDER BY cached_at DESC',
   );
   return rows.map((r) => r.id);
+}
+
+// =========================================================================
+// Blog Post Caching
+// =========================================================================
+
+export interface CachedBlogPost {
+  id: string;
+  slug: string;
+  title: string;
+  excerpt: string | null;
+  content: string | null;
+  coverImageUrl: string | null;
+  authorName: string;
+  publishedAt: string | null;
+  readTimeMinutes: number | null;
+  tagsJson: string | null;
+  cachedAt: string;
+}
+
+interface BlogPostRow {
+  id: string;
+  slug: string;
+  title: string;
+  excerpt: string | null;
+  content: string | null;
+  cover_image_url: string | null;
+  author_name: string;
+  published_at: string | null;
+  read_time_minutes: number | null;
+  tags_json: string | null;
+  cached_at: string;
+}
+
+function mapBlogRow(row: BlogPostRow): CachedBlogPost {
+  return {
+    id: row.id,
+    slug: row.slug,
+    title: row.title,
+    excerpt: row.excerpt,
+    content: row.content,
+    coverImageUrl: row.cover_image_url,
+    authorName: row.author_name,
+    publishedAt: row.published_at,
+    readTimeMinutes: row.read_time_minutes,
+    tagsJson: row.tags_json,
+    cachedAt: row.cached_at,
+  };
+}
+
+export async function saveBlogPost(post: CachedBlogPost): Promise<void> {
+  const database = await getDb();
+  await database.runAsync(
+    `INSERT OR REPLACE INTO blog_posts_cache
+      (id, slug, title, excerpt, content, cover_image_url, author_name, published_at, read_time_minutes, tags_json, cached_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    post.id,
+    post.slug,
+    post.title,
+    post.excerpt,
+    post.content,
+    post.coverImageUrl,
+    post.authorName,
+    post.publishedAt,
+    post.readTimeMinutes,
+    post.tagsJson,
+    post.cachedAt,
+  );
+}
+
+export async function getCachedBlogPost(slug: string): Promise<CachedBlogPost | null> {
+  const database = await getDb();
+  const row = (await database.getFirstAsync(
+    'SELECT * FROM blog_posts_cache WHERE slug = ?',
+    slug,
+  )) as BlogPostRow | null;
+
+  if (!row) return null;
+  return mapBlogRow(row);
+}
+
+export async function getCachedBlogPosts(limit = 20): Promise<CachedBlogPost[]> {
+  const database = await getDb();
+  const rows: BlogPostRow[] = await database.getAllAsync(
+    'SELECT * FROM blog_posts_cache ORDER BY published_at DESC LIMIT ?',
+    limit,
+  );
+  return rows.map(mapBlogRow);
+}
+
+export async function removeCachedBlogPost(slug: string): Promise<void> {
+  const database = await getDb();
+  await database.runAsync('DELETE FROM blog_posts_cache WHERE slug = ?', slug);
+}
+
+export async function cleanStaleBlogPosts(maxAgeDays = 7): Promise<number> {
+  const database = await getDb();
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - maxAgeDays);
+  const cutoffIso = cutoff.toISOString();
+
+  const result = await database.runAsync(
+    'DELETE FROM blog_posts_cache WHERE cached_at < ?',
+    cutoffIso,
+  );
+  return result.changes;
 }

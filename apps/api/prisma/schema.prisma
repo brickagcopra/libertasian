@@ -107,6 +107,8 @@ model User {
   financialForecasts         FinancialForecast[]     @relation("ForecastCreatedBy")
   emailPreference            EmailPreference?
   aiSettingsUpdated          AiSettings[]
+  blogPosts                  BlogPost[]              @relation("BlogPostAuthor")
+  adCampaigns                AdCampaign[]            @relation("AdCampaignCreator")
 
   @@map("users")
 }
@@ -3310,4 +3312,139 @@ model AiSettings {
   updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   @@map("ai_settings")
+}
+
+// ==========================================================================
+// Blog System
+// ==========================================================================
+
+model BlogPost {
+  id              String    @id @default(uuid()) @db.Uuid
+  slug            String    @unique @db.VarChar(255)
+  title           String    @db.VarChar(255)
+  excerpt         String?   @db.VarChar(500)
+  content         String    @db.Text
+  coverImageUrl   String?   @map("cover_image_url") @db.VarChar(500)
+  coverImageAlt   String?   @map("cover_image_alt") @db.VarChar(255)
+  authorId        String    @map("author_id") @db.Uuid
+  status          String    @default("draft") @db.VarChar(20)
+  publishedAt     DateTime? @map("published_at") @db.Timestamptz
+  metaTitle       String?   @map("meta_title") @db.VarChar(160)
+  metaDescription String?   @map("meta_description") @db.VarChar(320)
+  readTimeMinutes Int?      @map("read_time_minutes")
+  viewCount       Int       @default(0) @map("view_count")
+  featured        Boolean   @default(false)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz
+
+  author User          @relation("BlogPostAuthor", fields: [authorId], references: [id])
+  tags   BlogPostTag[]
+
+  @@index([status, publishedAt(sort: Desc)])
+  @@index([slug])
+  @@index([featured, publishedAt(sort: Desc)])
+  @@map("blog_posts")
+}
+
+model BlogTag {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique @db.VarChar(50)
+  slug      String   @unique @db.VarChar(50)
+  color     String?  @db.VarChar(7)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  posts BlogPostTag[]
+
+  @@map("blog_tags")
+}
+
+model BlogPostTag {
+  postId String @map("post_id") @db.Uuid
+  tagId  String @map("tag_id") @db.Uuid
+
+  post BlogPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  tag  BlogTag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([postId, tagId])
+  @@map("blog_post_tags")
+}
+
+// ==========================================================================
+// Advertising / Promotions System
+// ==========================================================================
+
+model AdCampaign {
+  id                    String    @id @default(uuid()) @db.Uuid
+  name                  String    @db.VarChar(255)
+  status                String    @default("draft") @db.VarChar(20)
+  startDate             DateTime? @map("start_date") @db.Timestamptz
+  endDate               DateTime? @map("end_date") @db.Timestamptz
+  priority              Int       @default(0)
+  targetPages           String[]  @map("target_pages")
+  targetUserType        String?   @map("target_user_type") @db.VarChar(20)
+  maxImpressions        Int?      @map("max_impressions")
+  maxImpressionsPerUser Int?      @map("max_impressions_per_user")
+  impressionCount       Int       @default(0) @map("impression_count")
+  clickCount            Int       @default(0) @map("click_count")
+  dismissCount          Int       @default(0) @map("dismiss_count")
+  showAfterSeconds      Int       @default(0) @map("show_after_seconds")
+  showOncePerSession    Boolean   @default(true) @map("show_once_per_session")
+  createdBy             String    @map("created_by") @db.Uuid
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  creatives AdCreative[]
+  events    AdEvent[]
+  creator   User         @relation("AdCampaignCreator", fields: [createdBy], references: [id])
+
+  @@index([status, startDate, endDate])
+  @@index([priority(sort: Desc)])
+  @@map("ad_campaigns")
+}
+
+model AdCreative {
+  id              String  @id @default(uuid()) @db.Uuid
+  campaignId      String  @map("campaign_id") @db.Uuid
+  displayType     String  @map("display_type") @db.VarChar(30)
+  position        String? @db.VarChar(20)
+  headline        String  @db.VarChar(120)
+  bodyText        String? @map("body_text") @db.VarChar(500)
+  imageUrl        String? @map("image_url") @db.VarChar(500)
+  imageAlt        String? @map("image_alt") @db.VarChar(255)
+  ctaText         String? @map("cta_text") @db.VarChar(50)
+  ctaUrl          String? @map("cta_url") @db.VarChar(500)
+  ctaStyle        String? @map("cta_style") @db.VarChar(20)
+  secondaryCtaText String? @map("secondary_cta_text") @db.VarChar(50)
+  bgColor         String? @map("bg_color") @db.VarChar(7)
+  textColor       String? @map("text_color") @db.VarChar(7)
+  accentColor     String? @map("accent_color") @db.VarChar(7)
+  borderRadius    String? @map("border_radius") @db.VarChar(10)
+  animation       String? @db.VarChar(20)
+  sortOrder       Int     @default(0) @map("sort_order")
+
+  campaign AdCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+  @@map("ad_creatives")
+}
+
+model AdEvent {
+  id         String   @id @default(uuid()) @db.Uuid
+  campaignId String   @map("campaign_id") @db.Uuid
+  creativeId String?  @map("creative_id") @db.Uuid
+  eventType  String   @map("event_type") @db.VarChar(20)
+  userId     String?  @map("user_id") @db.Uuid
+  sessionId  String?  @map("session_id") @db.VarChar(64)
+  page       String?  @db.VarChar(100)
+  ipAddress  String?  @map("ip_address") @db.VarChar(45)
+  userAgent  String?  @map("user_agent") @db.VarChar(255)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  campaign AdCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, eventType])
+  @@index([createdAt(sort: Desc)])
+  @@index([sessionId])
+  @@map("ad_events")
 }

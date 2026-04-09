@@ -44,6 +44,8 @@ import { CouponsModule } from './modules/coupons/coupons.module';
 import { PromotionsModule } from './modules/promotions/promotions.module';
 import { ExportsModule } from './modules/exports/exports.module';
 import { ExternalApiModule } from './modules/external-api/external-api.module';
+import { AdsModule } from './modules/ads/ads.module';
+import { BlogModule } from './modules/blog/blog.module';
 import { FeedModule } from './modules/feed/feed.module';
 import { SimulatorModule } from './modules/simulator/simulator.module';
 import { SiteContentModule } from './modules/site-content/site-content.module';
@@ -192,6 +194,8 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
     PromotionsModule,
     ExportsModule,
     ExternalApiModule,
+    AdsModule,
+    BlogModule,
     FeedModule,
     SimulatorModule,
     SiteContentModule,

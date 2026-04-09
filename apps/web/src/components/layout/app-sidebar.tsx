@@ -68,6 +68,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/study', label: 'Study', icon: GraduationCapIcon },
   { href: '/community', label: 'Community', icon: UsersIcon },
   { href: '/feed', label: 'Feed', icon: NewspaperIcon },
+  { href: '/blog', label: 'Blog', icon: BookOpenIcon },
 ];
 
 const WORKSPACE_ITEMS: NavItem[] = [
@@ -103,6 +104,8 @@ const ADMIN_NAV_ITEMS: NavItem[] = [
   { href: '/admin/coupons', label: 'Coupons', icon: TicketIcon },
   { href: '/admin/promotions', label: 'Promotions', icon: MegaphoneIcon },
   { href: '/admin/simulator', label: 'Simulator', icon: PlayCircleIcon },
+  { href: '/admin/blog', label: 'Blog', icon: BookOpenIcon },
+  { href: '/admin/ads', label: 'Advertising', icon: MegaphoneIcon },
   { href: '/admin/reporting', label: 'Reporting', icon: BarChart3Icon },
   { href: '/admin/analytics', label: 'Analytics', icon: ActivityIcon },
   { href: '/admin/analytics/mobile-scan', label: 'Mobile & Scan', icon: ScanLineIcon },

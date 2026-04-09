@@ -28,4 +28,8 @@ export const STORAGE_KEYS = {
   LAST_STUDY_SUBJECT: 'last_study_subject',
   OFFLINE_CODAL_IDS: 'offline_codal_ids',
   ONBOARDING_COMPLETED: 'onboarding_completed',
+  CACHED_BLOG_POSTS: 'cached_blog_posts',
+  AD_DISMISSED_IDS: 'ad_dismissed_ids',
+  AD_SESSION_ID: 'ad_session_id',
+  AD_IMPRESSED_IDS: 'ad_impressed_ids',
 } as const;

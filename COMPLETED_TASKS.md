@@ -1,6 +1,99 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-04-08 (Session 186 — Email Templates, Preferences & Verification Code)
+> Last updated: 2026-04-09 (Session 189 — Blog/Ads Finalization)
+
+---
+
+## Session 189 — Blog/Ads Finalization (5 Tasks)
+
+1. **Prisma migration applied** — `20260409160959_add_blog_ads` creates BlogPost, BlogTag, BlogPostTag, AdCampaign, AdCreative, AdEvent tables
+2. **RBAC seed run** — 127 permissions (including blog:read/create/update/delete/manage, ads:read/create/update/delete/manage), 417 role→permission mappings, 6 roles
+3. **@tailwindcss/typography installed** — Added to web app, configured via `@plugin '@tailwindcss/typography'` in globals.css (Tailwind v4 pattern)
+4. **Blog inline ad placements** — Created `BlogInlineAd` client component that fetches active campaigns and renders `AdInlineBanner`; inserted after 3rd/6th cards in listing grid (full-width spanning via `col-span-3`), and after content section in blog post detail page
+5. **CTA URL DTO validation** — Added `@IsUrl({ require_protocol: true })` to `ctaUrl` field in both `CreateCreativeDto` and `UpdateCreativeDto`, replacing bare `@IsString()` validation
+
+---
+
+## Session 188 — Mobile Blog/Ads + Content Security
+
+### Phase 8A: Content Security — COMPLETED
+- Created `apps/web/src/components/safe-html-content.tsx` — reusable client component that sanitizes HTML via DOMPurify before rendering
+- Updated `apps/web/src/app/(public)/blog/[slug]/page.tsx` — replaced raw `dangerouslySetInnerHTML` with `<SafeHtmlContent>` component
+- Configured strict DOMPurify allowlist: only safe HTML tags/attributes, no data attributes
+
+### Phase 7A: Mobile Blog Feature — COMPLETED
+- Created `apps/mobile/src/features/blog/types.ts` — BlogTag, BlogAuthor, BlogPost, BlogPostDetail types
+- Created `apps/mobile/src/features/blog/hooks/use-blog.ts` — useBlogPosts (infinite query), useBlogPost, useBlogTags hooks
+- Created `apps/mobile/src/features/blog/components/blog-post-card.tsx` — card component with cover image, tags, meta
+- Created `apps/mobile/src/features/blog/components/blog-list.tsx` — FlatList wrapper with pull-to-refresh, infinite scroll, empty state
+- Created `apps/mobile/src/app/blog/index.tsx` — blog listing screen with horizontal tag filter
+- Created `apps/mobile/src/app/blog/[slug].tsx` — blog detail screen with HTML-to-plaintext stripping
+- Updated `apps/mobile/src/storage/sqlite.ts` — added `blog_posts_cache` table + caching functions (saveBlogPost, getCachedBlogPost, getCachedBlogPosts, removeCachedBlogPost, cleanStaleBlogPosts)
+- Updated `apps/mobile/src/storage/mmkv.ts` — added CACHED_BLOG_POSTS, AD_DISMISSED_IDS, AD_SESSION_ID, AD_IMPRESSED_IDS keys
+
+### Phase 7B: Mobile Ad System — COMPLETED
+- Created `apps/mobile/src/features/ads/types.ts` — AdCreative, AdCampaign, RecordAdEventInput types
+- Created `apps/mobile/src/features/ads/hooks/use-ads.ts` — useActiveAds, useRecordAdEvent hooks
+- Created `apps/mobile/src/features/ads/components/ad-provider.tsx` — AdProvider context with MMKV session/dismiss/impression tracking
+- Created `apps/mobile/src/features/ads/components/ad-modal.tsx` — animated modal with spring animation, CTA + secondary CTA
+- Created `apps/mobile/src/features/ads/components/ad-slide-in.tsx` — slide-in card with position support (left/right)
+- Created `apps/mobile/src/features/ads/components/ad-floating-bar.tsx` — bottom floating bar with headline + CTA
+- Created `apps/mobile/src/features/ads/components/ad-inline-banner.tsx` — inline banner with "Sponsored" label
+- Created `apps/mobile/src/features/ads/components/ad-renderer.tsx` — orchestrator with showAfterSeconds delay, reduced-motion respect
+
+---
+
+## Session 187 — Blog & Advertising Systems
+
+### Phase 1: Database Schema — COMPLETED
+- Added `BlogPost`, `BlogTag`, `BlogPostTag` models to Prisma schema
+- Added `AdCampaign`, `AdCreative`, `AdEvent` models to Prisma schema
+- Added `blogPosts` and `adCampaigns` relations to User model
+- Models follow all existing conventions (UUID PKs, @map snake_case, @@map, Timestamptz, indexes)
+
+### Phase 2: NestJS Blog Module — COMPLETED
+- Created `apps/api/src/modules/blog/dto/` — CreateBlogPostDto, UpdateBlogPostDto, BlogQueryDto, CreateTagDto
+- Created `blog.service.ts` — CRUD for posts/tags, slug generation, read time calculation, cursor-based pagination
+- Created `blog.controller.ts` — Public endpoints: GET /blog (list), GET /blog/tags, GET /blog/:slug
+- Created `blog-admin.controller.ts` — Admin endpoints with blog:manage permission, cover image upload (Sharp + ClamAV)
+- Created `blog.module.ts` — registered in AppModule
+
+### Phase 3: NestJS Ads Module — COMPLETED
+- Created `apps/api/src/modules/ads/dto/` — CreateCampaignDto, UpdateCampaignDto, CreateCreativeDto, UpdateCreativeDto, RecordEventDto
+- Created `ads.service.ts` — Campaign/creative CRUD, event recording, analytics, CTA URL validation
+- Created `ads.controller.ts` — Public: GET /ads/active, POST /ads/events (rate-limited 60/min)
+- Created `ads-admin.controller.ts` — Admin endpoints with ads:manage permission, creative image upload
+- Created `ads.module.ts` — registered in AppModule
+
+### Phase 4: Permissions Update — COMPLETED
+- Added 10 new permissions to rbac-seed.ts: blog:read/create/update/delete/manage, ads:read/create/update/delete/manage
+- Owner/Admin get all permissions automatically (via ALL_CODES)
+- Editor role explicitly gets blog:* permissions
+
+### Phase 5: Next.js Blog Frontend — COMPLETED
+- Created `features/blog/types.ts` — BlogPost, BlogPostDetail, BlogTag, BlogAuthor interfaces
+- Created `features/blog/hooks/use-blog.ts` — Full TanStack Query hooks (13 hooks: public + admin queries + mutations)
+- Created `(public)/blog/page.tsx` — Server-rendered blog listing with tag filters, responsive grid, ISR revalidate 300
+- Created `(public)/blog/[slug]/page.tsx` — Server-rendered post detail with SEO metadata, related posts, prose styling
+- Created `admin/blog/page.tsx` — Blog management dashboard with stats, status tabs, posts table, delete dialog
+- Created `admin/blog/new/page.tsx` — Create post form with TiptapEditor, tag selector, SEO fields, slug auto-generation
+- Created `admin/blog/[id]/edit/page.tsx` — Edit post form with cover image upload, all fields pre-populated
+- Added Blog to sidebar navigation (NAV_ITEMS + ADMIN_NAV_ITEMS)
+- Added Blog link to homepage header nav + footer productLinks
+- Added Blog link to public layout header nav
+
+### Phase 6: Next.js Ads Frontend — COMPLETED
+- Created `features/ads/types.ts` — AdCampaign, AdCreative, CampaignAnalytics interfaces
+- Created `features/ads/hooks/use-ads.ts` — Full TanStack Query hooks (14 hooks)
+- Created ad display components: AdModal, AdSlideIn, AdFloatingBar, AdInlineBanner
+- Created AdProvider (React context) — fetches active ads, manages display state, sessionStorage tracking, debounced event recording
+- Created AdRenderer — orchestrates which ad components to show based on displayType, handles delays
+- Created `admin/ads/page.tsx` — Campaign dashboard with stats, status tabs, table with CTR calculation
+- Created `admin/ads/new/page.tsx` — Create campaign form with targeting, frequency control
+- Created `admin/ads/[id]/page.tsx` — Campaign detail with analytics summary, creatives list, recent events log
+- Created `admin/ads/[id]/edit/page.tsx` — Edit campaign with creative builder (add/delete creatives inline)
+- Added Advertising to admin sidebar
+- Integrated AdProvider + AdRenderer in root layout (after AuthProvider)
 
 ---
 

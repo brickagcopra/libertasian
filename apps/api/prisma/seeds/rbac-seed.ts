@@ -158,6 +158,20 @@ const PERMISSIONS: PermissionSeed[] = [
   { code: 'community:vote', resource: 'community', action: 'vote', category: 'community', description: 'Vote on community content' },
   { code: 'community:flag', resource: 'community', action: 'flag', category: 'community', description: 'Flag inappropriate content' },
   { code: 'community:moderate', resource: 'community', action: 'moderate', category: 'community', description: 'Moderate community flags' },
+
+  // --- Blog ---
+  { code: 'blog:read', resource: 'blog', action: 'read', category: 'blog', description: 'View blog posts' },
+  { code: 'blog:create', resource: 'blog', action: 'create', category: 'blog', description: 'Create blog posts' },
+  { code: 'blog:update', resource: 'blog', action: 'update', category: 'blog', description: 'Edit blog posts' },
+  { code: 'blog:delete', resource: 'blog', action: 'delete', category: 'blog', description: 'Delete blog posts' },
+  { code: 'blog:manage', resource: 'blog', action: 'manage', category: 'blog', description: 'Full blog administration' },
+
+  // --- Advertising ---
+  { code: 'ads:read', resource: 'ads', action: 'read', category: 'ads', description: 'View ad campaigns' },
+  { code: 'ads:create', resource: 'ads', action: 'create', category: 'ads', description: 'Create ad campaigns' },
+  { code: 'ads:update', resource: 'ads', action: 'update', category: 'ads', description: 'Edit ad campaigns' },
+  { code: 'ads:delete', resource: 'ads', action: 'delete', category: 'ads', description: 'Delete ad campaigns' },
+  { code: 'ads:manage', resource: 'ads', action: 'manage', category: 'ads', description: 'Full ad administration' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -231,6 +245,11 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'annotations:read',
     'uploads:read',
     'community:moderate',
+    'blog:read',
+    'blog:create',
+    'blog:update',
+    'blog:delete',
+    'blog:manage',
   ],
 
   // Reviewer: digests read/review/approve/reject, editorial flags, search, workspace read

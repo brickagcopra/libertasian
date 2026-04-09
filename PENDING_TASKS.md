@@ -1,6 +1,26 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-04-08 (Session 186 — Email Templates, Preferences & Verification Code)
+> Last updated: 2026-04-09 (Session 189 — Blog/Ads Finalization)
+
+---
+
+## Session 187-189 — Blog & Advertising Systems — ALL COMPLETE
+
+### Completed (Sessions 187-189)
+- [x] Phase 1: Database Schema (Prisma models + User relations)
+- [x] Phase 2: NestJS Blog Module (DTOs, service, controllers, module)
+- [x] Phase 3: NestJS Ads Module (DTOs, service, controllers, module)
+- [x] Phase 4: Permissions Update (RBAC seed + role assignments)
+- [x] Phase 5: Next.js Blog Frontend (types, hooks, pages, nav)
+- [x] Phase 6: Next.js Ads Frontend (types, hooks, components, provider, admin pages)
+- [x] Phase 7A: Mobile Blog (types, hooks, components, screens, SQLite caching)
+- [x] Phase 7B: Mobile Ads (types, hooks, components, provider, renderer)
+- [x] Phase 8A: Content Security (DOMPurify sanitization for blog HTML)
+- [x] Phase 8B: CTA URL DTO validation (`@IsUrl({ require_protocol: true })` on create/update creative DTOs)
+- [x] Prisma migration `20260409160959_add_blog_ads` applied (BlogPost, BlogTag, BlogPostTag, AdCampaign, AdCreative, AdEvent tables)
+- [x] RBAC seed run (127 permissions, 417 role→permission mappings including blog:* and ads:*)
+- [x] @tailwindcss/typography installed + configured via `@plugin` in globals.css (Tailwind v4)
+- [x] Blog inline ad placements: `BlogInlineAd` component after 3rd/6th cards in listing, after content in detail page
 
 ---
 

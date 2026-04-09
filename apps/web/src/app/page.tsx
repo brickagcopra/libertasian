@@ -252,6 +252,7 @@ const DEFAULT_HOMEPAGE_CONTENT: HomepageContent = {
     contactEmail: 'support@libertasian.com',
     productLinks: [
       { label: 'Features', href: '#features' },
+      { label: 'Blog', href: '/blog' },
       { label: 'Pricing', href: '/pricing' },
       { label: 'Get Started', href: '/auth/callback?mode=register' },
     ],
@@ -321,6 +322,12 @@ export default async function HomePage() {
               className="text-sm font-medium text-gray-600 hover:text-gray-900"
             >
               Features
+            </Link>
+            <Link
+              href="/blog"
+              className="text-sm font-medium text-gray-600 hover:text-gray-900"
+            >
+              Blog
             </Link>
             <Link
               href="/pricing"
