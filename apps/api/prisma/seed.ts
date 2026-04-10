@@ -349,6 +349,7 @@ async function main() {
       value: { enabled: true },
       description: 'Master switch to enable/disable all AI generation features.',
     },
+    // Tiered by source publication velocity. See PR #1 deploy notes for the cost model.
     {
       key: 'ingestion_schedule',
       value: {
@@ -360,10 +361,10 @@ async function main() {
         // the block lifts. See worker-service fetchers and the PR description.
         enabled: true,
         schedules: [
-          { sourceKey: 'supreme_court_elibrary', cron: '0 2 * * *', enabled: true },
-          { sourceKey: 'lawphil', cron: '0 3 * * *', enabled: true },
-          { sourceKey: 'official_gazette', cron: '0 4 * * *', enabled: true },
-          { sourceKey: 'congress', cron: '0 5 * * *', enabled: true },
+          { sourceKey: 'supreme_court_elibrary', cron: '*/30 8-18 * * *', enabled: true },
+          { sourceKey: 'lawphil', cron: '15 * * * *', enabled: true },
+          { sourceKey: 'official_gazette', cron: '0 9,12,15 * * *', enabled: true },
+          { sourceKey: 'congress', cron: '0 10 * * *', enabled: true },
         ],
       },
       description:

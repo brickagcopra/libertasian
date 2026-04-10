@@ -244,6 +244,32 @@ describe('IngestionSchedulerService', () => {
     expect(prisma.ingestionJob.create).not.toHaveBeenCalled();
   });
 
+  // ─── cronMatchesNow: step + range + comma-separated forms ──────────
+  // Exercises '*/30 8-18 * * *' and '0 9,12,15 * * *' — the Option A
+  // prod schedule introduced field forms not covered by the fixtures above.
+  // Observed indirectly via checkSchedules(): on a cron match, the service
+  // proceeds to sourceEndpoint.findFirst; on a miss, it short-circuits.
+
+  it.each([
+    ['*/30 8-18 * * *', new Date(2026, 3, 10, 9, 30, 0), true],  // step minute + hour in range
+    ['*/30 8-18 * * *', new Date(2026, 3, 10, 7, 0, 0), false],  // hour below range
+    ['0 9,12,15 * * *', new Date(2026, 3, 10, 12, 0, 0), true],  // middle value in list
+    ['0 9,12,15 * * *', new Date(2026, 3, 10, 10, 0, 0), false], // hour not in list
+  ] as const)('cronMatchesNow handles %s at %s → match=%s', async (cron, when, shouldMatch) => {
+    jest.setSystemTime(when);
+    aiSettings.getSetting.mockResolvedValue({
+      key: 'ingestion_schedule',
+      value: { enabled: true, schedules: [{ sourceKey: 'supreme_court_elibrary', cron, enabled: true }] },
+    } as never);
+    (prisma.sourceEndpoint.findFirst as jest.Mock).mockResolvedValue(mockEndpoint);
+    (prisma.ingestionJob.findFirst as jest.Mock).mockResolvedValue(null);
+    (prisma.ingestionJob.create as jest.Mock).mockResolvedValue({ id: 'job-1' });
+
+    await service.checkSchedules();
+
+    expect(prisma.sourceEndpoint.findFirst).toHaveBeenCalledTimes(shouldMatch ? 1 : 0);
+  });
+
   // ─── No-config path ──────────────────────────────────────────────────
 
   it('exits cleanly when the ingestion_schedule setting has no value', async () => {
