@@ -1,8 +1,13 @@
 """LIBERTASIAN Worker Service — Supreme Court E-Library fetcher.
 
 Fetches decisions from the Philippine Supreme Court Electronic Library
-(elibrary.judiciary.gov.ph). Parses listing pages to discover decisions
-and downloads individual decision HTML pages.
+(elibrary.judiciary.gov.ph). Parses monthly listing pages to discover
+decisions and downloads individual decision HTML pages.
+
+Site structure (as of 2025):
+  Listing: /thebookshelf/docmonth/{Mon}/{YYYY}/{category}
+  Detail:  /thebookshelf/showdocs/{category}/{doc_id}
+  Category 1 = SC Decisions / Signed Resolutions
 """
 
 from __future__ import annotations
@@ -10,12 +15,20 @@ from __future__ import annotations
 import logging
 import re
 from datetime import UTC, datetime
+from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup, Tag
 
 from .base import BaseFetcher, CandidateDoc, FetchedContent
 
 logger = logging.getLogger(__name__)
+
+# SC E-Library monthly listing URL pattern.
+# Example: https://elibrary.judiciary.gov.ph/thebookshelf/docmonth/Jan/2025/1
+_DOCMONTH_PATTERN = re.compile(
+    r"/thebookshelf/docmonth/\w+/\d{4}/\d+",
+    re.IGNORECASE,
+)
 
 
 class SupremeCourtFetcher(BaseFetcher):
@@ -26,38 +39,50 @@ class SupremeCourtFetcher(BaseFetcher):
         endpoint_url: str,
         last_fetched_at: str | None = None,
     ) -> list[CandidateDoc]:
-        """Parse listing pages from elibrary.judiciary.gov.ph.
+        """Parse monthly listing pages from elibrary.judiciary.gov.ph.
 
-        The SC E-Library presents decisions in paginated listing pages.
-        Each row contains: GR No., title, date, ponente.
+        The SC E-Library presents decisions on monthly pages. Each ``<li>``
+        contains:
+        - ``<strong>`` with the G.R. number
+        - ``<small>`` with the full case title (parties)
+        - trailing text with the decision date (e.g. "January 28, 2025")
         """
         candidates: list[CandidateDoc] = []
 
-        self._rate_limit()
         with self._get_client() as client:
             try:
-                response = client.get(endpoint_url)
-                response.raise_for_status()
+                response = self._fetch_with_retry(client, endpoint_url)
+                if response.status_code >= 400:
+                    logger.warning(
+                        "SC listing returned HTTP %d: %s",
+                        response.status_code,
+                        endpoint_url,
+                    )
+                    return candidates
             except Exception:
                 logger.exception("Failed to fetch SC listing: %s", endpoint_url)
                 return candidates
 
         soup = BeautifulSoup(response.text, "lxml")
 
-        # SC E-Library typically lists decisions in table rows or div containers
-        # Try table-based layout first
-        rows = soup.select("table tr") or soup.select(".decision-item, .case-item")
+        # Primary strategy: parse <li> items inside div#container_title ul
+        container = soup.find("div", id="container_title")
+        if container:
+            items = container.find_all("li")
+        else:
+            # Fallback: any <li> with a showdocs link
+            items = soup.find_all("li")
 
-        for row in rows:
+        for item in items:
             try:
-                candidate = self._parse_listing_row(row, endpoint_url)
+                candidate = self._parse_listing_item(item, endpoint_url)
                 if candidate:
                     candidates.append(candidate)
             except Exception:
-                logger.warning("Failed to parse SC listing row", exc_info=True)
+                logger.warning("Failed to parse SC listing item", exc_info=True)
                 continue
 
-        # Also try link-based discovery as fallback
+        # Fallback: link-based discovery if no <li> items found
         if not candidates:
             candidates = self._discover_from_links(soup, endpoint_url)
 
@@ -71,9 +96,8 @@ class SupremeCourtFetcher(BaseFetcher):
     def fetch_content(self, url: str) -> FetchedContent:
         """Download an individual SC decision page."""
         self._validate_url(url)
-        self._rate_limit()
         with self._get_client() as client:
-            response = client.get(url)
+            response = self._fetch_with_retry(client, url)
             response.raise_for_status()
 
         return FetchedContent(
@@ -84,49 +108,53 @@ class SupremeCourtFetcher(BaseFetcher):
             fetched_at=datetime.now(UTC).isoformat(),
         )
 
-    def _parse_listing_row(
+    # ------------------------------------------------------------------
+    # Parsing helpers
+    # ------------------------------------------------------------------
+
+    def _parse_listing_item(
         self,
-        row: Tag,
+        item: Tag,
         base_url: str,
     ) -> CandidateDoc | None:
-        """Extract candidate info from a listing table row."""
-        cells = row.find_all("td")
-        if len(cells) < 2:
-            return None
+        """Extract candidate info from a <li> on a monthly listing page.
 
-        # Look for a link to the decision
-        link = row.find("a", href=True)
+        Expected structure::
+
+            <li>
+              <a href="…/showdocs/1/69834">
+                <STRONG>G.R. No. 246027</STRONG><br>
+                <small>TITLE OF CASE …</small>
+                January 28, 2025
+              </a>
+              <hr><br>
+            </li>
+        """
+        link = item.find("a", href=True)
         if not link:
             return None
 
-        raw_href = link.get("href", "")
-        href = str(raw_href) if raw_href else ""
-        if not href:
+        raw_href = str(link.get("href", ""))
+        if not raw_href or "showdocs" not in raw_href:
             return None
 
-        # Resolve relative URLs
-        if href.startswith("/") or not href.startswith("http"):
-            from urllib.parse import urljoin
+        href = raw_href if raw_href.startswith("http") else urljoin(base_url, raw_href)
 
-            href = urljoin(base_url, href)
+        # G.R. number from <strong>
+        strong = link.find("strong") or link.find("b")
+        gr_no_raw = strong.get_text(strip=True) if strong else ""
+        gr_no = self._normalize_gr_no(gr_no_raw)
 
-        title = link.get_text(strip=True)
+        # Case title from <small>
+        small = link.find("small")
+        title = small.get_text(strip=True) if small else ""
+        if not title:
+            title = link.get_text(strip=True)
         if not title:
             return None
 
-        # Extract GR No. from title or cell content
-        row_text = row.get_text(" ", strip=True)
-        gr_no = self._extract_gr_no(row_text)
-
-        # Extract date from cells (usually the last or second-to-last cell)
-        decision_date = None
-        ponente = None
-        for cell in cells:
-            cell_text = cell.get_text(strip=True)
-            if not decision_date:
-                decision_date = self._extract_date(cell_text)
-            if not ponente and self._looks_like_name(cell_text):
-                ponente = cell_text
+        # Decision date from trailing text node inside <a>
+        decision_date = self._extract_date_from_link(link)
 
         return CandidateDoc(
             url=href,
@@ -134,8 +162,8 @@ class SupremeCourtFetcher(BaseFetcher):
             gr_no=gr_no,
             document_type="decision",
             decision_date=decision_date,
-            ponente=ponente,
             court="Supreme Court",
+            metadata={"source_doc_id": self._extract_doc_id(href)},
         )
 
     def _discover_from_links(
@@ -143,32 +171,24 @@ class SupremeCourtFetcher(BaseFetcher):
         soup: BeautifulSoup,
         base_url: str,
     ) -> list[CandidateDoc]:
-        """Fallback discovery: find all links that look like case decisions."""
+        """Fallback discovery: find all showdocs links."""
         candidates: list[CandidateDoc] = []
         seen_urls: set[str] = set()
 
         for link in soup.find_all("a", href=True):
-            raw_href = link.get("href", "")
-            href = str(raw_href) if raw_href else ""
-            title = link.get_text(strip=True)
-
-            if not href or not title or len(title) < 10:
+            raw_href = str(link.get("href", ""))
+            if "showdocs" not in raw_href:
                 continue
 
-            # Resolve relative URLs
-            if not href.startswith("http"):
-                from urllib.parse import urljoin
-
-                href = urljoin(base_url, href)
-
+            href = raw_href if raw_href.startswith("http") else urljoin(base_url, raw_href)
             if href in seen_urls:
                 continue
+            seen_urls.add(href)
 
-            # Filter for likely decision links
-            if not self._is_decision_link(href, title):
+            title = link.get_text(strip=True)
+            if not title or len(title) < 10:
                 continue
 
-            seen_urls.add(href)
             gr_no = self._extract_gr_no(title)
 
             candidates.append(
@@ -178,16 +198,34 @@ class SupremeCourtFetcher(BaseFetcher):
                     gr_no=gr_no,
                     document_type="decision",
                     court="Supreme Court",
+                    metadata={"source_doc_id": self._extract_doc_id(href)},
                 )
             )
 
         return candidates
 
+    # ------------------------------------------------------------------
+    # Static extraction helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _normalize_gr_no(text: str) -> str | None:
+        """Normalize G.R. No. string to canonical format."""
+        if not text:
+            return None
+        match = re.search(
+            r"(?i)G\.?\s*R\.?\s*(?:No\.?\s*)?(?:Nos\.?\s*)?([\w\d][\d\-\s,andNos.]+)",
+            text,
+        )
+        if match:
+            return text.strip()
+        return text.strip() if text.strip() else None
+
     @staticmethod
     def _extract_gr_no(text: str) -> str | None:
-        """Extract G.R. No. from text."""
+        """Extract G.R. No. from arbitrary text."""
         match = re.search(
-            r"(?i)G\.?\s*R\.?\s*(?:No\.?\s*)?(\d[\d\-]+)",
+            r"(?i)G\.?\s*R\.?\s*(?:No\.?\s*)?([A-Z]?\-?\d[\d\-]+)",
             text,
         )
         if match:
@@ -195,42 +233,37 @@ class SupremeCourtFetcher(BaseFetcher):
         return None
 
     @staticmethod
-    def _extract_date(text: str) -> str | None:
-        """Try to extract a date string from cell text."""
-        # Common Philippine legal date formats
+    def _extract_date_from_link(link: Tag) -> str | None:
+        """Extract decision date from the trailing text inside <a>.
+
+        After the ``<small>`` and ``<br>`` tags, the date sits as plain text.
+        """
+        # Get all navigable strings (text nodes) within the link
+        texts = list(link.stripped_strings)
+        # The date is typically the last text node
         patterns = [
             r"(\w+ \d{1,2},?\s*\d{4})",  # January 15, 2024
             r"(\d{4}-\d{2}-\d{2})",  # 2024-01-15
-            r"(\d{1,2}/\d{1,2}/\d{4})",  # 01/15/2024
         ]
-        for pattern in patterns:
-            match = re.search(pattern, text)
-            if match:
-                return match.group(1)
+        for text in reversed(texts):
+            for pattern in patterns:
+                match = re.search(pattern, text)
+                if match:
+                    return match.group(1)
         return None
+
+    @staticmethod
+    def _extract_doc_id(href: str) -> str | None:
+        """Extract numeric document ID from showdocs URL."""
+        match = re.search(r"/showdocs/\d+/(\d+)", href)
+        return match.group(1) if match else None
 
     @staticmethod
     def _looks_like_name(text: str) -> bool:
         """Heuristic: does this text look like a Justice name?"""
         if not text or len(text) > 50 or len(text) < 3:
             return False
-        # Names are typically 2-4 capitalized words, possibly with "J." suffix
         parts = text.replace(",", "").split()
         if len(parts) < 2 or len(parts) > 5:
             return False
         return all(p[0].isupper() or p in ("de", "del", "la", "J.") for p in parts)
-
-    @staticmethod
-    def _is_decision_link(href: str, title: str) -> bool:
-        """Heuristic: does this link point to a court decision?"""
-        href_lower = href.lower()
-        title_lower = title.lower()
-
-        # Positive signals
-        if any(k in href_lower for k in ("decision", "ruling", "case", "gr_no", "grno")):
-            return True
-        if re.search(r"(?i)g\.?\s*r\.?\s*no", title):
-            return True
-        return any(
-            k in title_lower for k in ("vs.", "v.", "versus", "people of the philippines")
-        )

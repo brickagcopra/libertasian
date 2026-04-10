@@ -64,7 +64,7 @@ const SOURCES: SourceSeed[] = [
     endpoints: [
       {
         endpointUrl:
-          'https://elibrary.judiciary.gov.ph/thebookshelf/docmonth/category/1',
+          'https://elibrary.judiciary.gov.ph/thebookshelf/docmonth/Jan/2025/1',
         contentTypeHint: 'text/html',
         parserType: 'supreme_court_elibrary',
         scheduleCron: '0 2 * * *',
@@ -79,7 +79,7 @@ const SOURCES: SourceSeed[] = [
     fetchStrategy: 'crawler',
     endpoints: [
       {
-        endpointUrl: 'https://lawphil.net/judjuris/juri_sc.html',
+        endpointUrl: 'https://lawphil.net/judjuris/judjuris.html',
         contentTypeHint: 'text/html',
         parserType: 'lawphil',
         scheduleCron: '0 3 * * *',
@@ -94,7 +94,7 @@ const SOURCES: SourceSeed[] = [
     fetchStrategy: 'crawler',
     endpoints: [
       {
-        endpointUrl: 'https://www.officialgazette.gov.ph/section/issuances/',
+        endpointUrl: 'https://www.officialgazette.gov.ph/section/laws/executive-issuances/',
         contentTypeHint: 'text/html',
         parserType: 'official_gazette',
         scheduleCron: '0 4 * * *',
@@ -109,7 +109,7 @@ const SOURCES: SourceSeed[] = [
     fetchStrategy: 'crawler',
     endpoints: [
       {
-        endpointUrl: 'https://www.congress.gov.ph/legisdocs/',
+        endpointUrl: 'https://www.congress.gov.ph/legisdocs/?v=ra',
         contentTypeHint: 'text/html',
         parserType: 'congress',
         scheduleCron: '0 5 * * *',

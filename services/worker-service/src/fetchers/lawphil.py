@@ -1,8 +1,16 @@
 """LIBERTASIAN Worker Service — Lawphil fetcher.
 
 Fetches Philippine legal documents from lawphil.net.
-Parses index pages to discover jurisprudence and legislation,
+Parses monthly listing pages to discover jurisprudence,
 then downloads individual document HTML pages.
+
+Site structure (as of 2025):
+  Main index:    /judjuris/judjuris.html  (years 1901-present)
+  Year index:    /judjuris/juri{YYYY}/juri{YYYY}.html
+  Month listing: /judjuris/juri{YYYY}/{mon}{YYYY}/{mon}{YYYY}.html
+  Decision page: /judjuris/juri{YYYY}/{mon}{YYYY}/{case_id}_{YYYY}.html
+
+Note: Site encoding is windows-1252, not UTF-8.
 """
 
 from __future__ import annotations
@@ -27,34 +35,56 @@ class LawphilFetcher(BaseFetcher):
         endpoint_url: str,
         last_fetched_at: str | None = None,
     ) -> list[CandidateDoc]:
-        """Parse index pages from lawphil.net.
+        """Parse monthly listing pages from lawphil.net.
 
-        Lawphil organizes documents by year and court. Index pages contain
-        links to individual decisions/statutes.
+        Lawphil organizes SC decisions in monthly pages with an HTML table
+        (``table#s-menu``) where each ``tr.xy`` row contains the case number,
+        date, and case title.
         """
         candidates: list[CandidateDoc] = []
 
-        self._rate_limit()
         with self._get_client() as client:
             try:
-                response = client.get(endpoint_url)
-                response.raise_for_status()
+                response = self._fetch_with_retry(client, endpoint_url)
+                if response.status_code >= 400:
+                    logger.warning(
+                        "Lawphil listing returned HTTP %d: %s",
+                        response.status_code,
+                        endpoint_url,
+                    )
+                    return candidates
             except Exception:
                 logger.exception("Failed to fetch Lawphil listing: %s", endpoint_url)
                 return candidates
 
-        soup = BeautifulSoup(response.text, "lxml")
+        # Lawphil uses windows-1252 encoding
+        html_text = response.content.decode("windows-1252", errors="replace")
+        soup = BeautifulSoup(html_text, "lxml")
         seen_urls: set[str] = set()
 
-        # Lawphil uses simple HTML with links in lists or tables
-        for link in soup.find_all("a", href=True):
-            try:
-                candidate = self._parse_link(link, endpoint_url, seen_urls)
-                if candidate:
-                    candidates.append(candidate)
-            except Exception:
-                logger.warning("Failed to parse Lawphil link", exc_info=True)
-                continue
+        # Primary strategy: parse table#s-menu rows
+        table = soup.find("table", id="s-menu")
+        if table:
+            rows = table.find_all("tr", class_="xy")
+            for row in rows:
+                try:
+                    candidate = self._parse_table_row(row, endpoint_url, seen_urls)
+                    if candidate:
+                        candidates.append(candidate)
+                except Exception:
+                    logger.warning("Failed to parse Lawphil table row", exc_info=True)
+                    continue
+
+        # Fallback: link-based discovery
+        if not candidates:
+            for link in soup.find_all("a", href=True):
+                try:
+                    candidate = self._parse_link(link, endpoint_url, seen_urls)
+                    if candidate:
+                        candidates.append(candidate)
+                except Exception:
+                    logger.warning("Failed to parse Lawphil link", exc_info=True)
+                    continue
 
         logger.info(
             "Discovered %d candidates from Lawphil: %s",
@@ -66,17 +96,97 @@ class LawphilFetcher(BaseFetcher):
     def fetch_content(self, url: str) -> FetchedContent:
         """Download an individual Lawphil document page."""
         self._validate_url(url)
-        self._rate_limit()
         with self._get_client() as client:
-            response = client.get(url)
+            response = self._fetch_with_retry(client, url)
             response.raise_for_status()
+
+        # Decode from windows-1252
+        html_text = response.content.decode("windows-1252", errors="replace")
 
         return FetchedContent(
             url=url,
-            html=response.text,
+            html=html_text,
             content_type=response.headers.get("content-type", "text/html"),
             status_code=response.status_code,
             fetched_at=datetime.now(UTC).isoformat(),
+        )
+
+    # ------------------------------------------------------------------
+    # Parsing helpers
+    # ------------------------------------------------------------------
+
+    def _parse_table_row(
+        self,
+        row: Tag,
+        base_url: str,
+        seen_urls: set[str],
+    ) -> CandidateDoc | None:
+        """Extract candidate info from a ``tr.xy`` row.
+
+        Expected structure::
+
+            <tr class="xy">
+              <td>
+                <a href="gr_259337_2025.html">G.R.No. 259337</a>
+                <br />November 25, 2025
+              </td>
+              <td>
+                Plaintiff <vs>vs.</vs> Defendant
+              </td>
+              <td>  <!-- optional PDF link -->
+                <a href="pdf/gr_259337_2025.pdf"><img ...></a>
+              </td>
+            </tr>
+        """
+        cells = row.find_all("td")
+        if len(cells) < 2:
+            return None
+
+        # First cell: case number link + date
+        first_cell = cells[0]
+        link = first_cell.find("a", href=True)
+        if not link:
+            return None
+
+        raw_href = str(link.get("href", ""))
+        if not raw_href:
+            return None
+
+        # Skip links using xref= attribute (not yet published)
+        if link.get("xref") and not link.get("href"):
+            return None
+        # Some links use class="nya" with xref instead of href
+        if "nya" in (link.get("class") or []) and link.get("xref"):
+            return None
+
+        href = raw_href if raw_href.startswith("http") else urljoin(base_url, raw_href)
+
+        if href in seen_urls:
+            return None
+        seen_urls.add(href)
+
+        # Case number from link text
+        case_number = link.get_text(strip=True)
+        gr_no = self._normalize_case_number(case_number)
+
+        # Date from text after <br> in first cell
+        decision_date = self._extract_date(first_cell.get_text(" ", strip=True))
+
+        # Case title from second cell
+        title = cells[1].get_text(" ", strip=True) if len(cells) > 1 else ""
+
+        if not title and not case_number:
+            return None
+
+        # Detect document type from case number
+        document_type = self._detect_document_type_from_case(case_number)
+
+        return CandidateDoc(
+            url=href,
+            title=title or case_number,
+            gr_no=gr_no,
+            document_type=document_type,
+            decision_date=decision_date,
         )
 
     def _parse_link(
@@ -85,54 +195,79 @@ class LawphilFetcher(BaseFetcher):
         base_url: str,
         seen_urls: set[str],
     ) -> CandidateDoc | None:
-        """Extract candidate info from a link element."""
-        raw_href = link.get("href", "")
-        href = str(raw_href) if raw_href else ""
+        """Fallback: extract candidate info from a link element."""
+        raw_href = str(link.get("href", ""))
         title = link.get_text(strip=True)
 
-        if not href or not title or len(title) < 5:
+        if not raw_href or not title or len(title) < 5:
             return None
 
-        # Resolve relative URLs
-        if not href.startswith("http"):
-            href = urljoin(base_url, href)
+        if not raw_href.startswith("http"):
+            raw_href = urljoin(base_url, raw_href)
 
-        if href in seen_urls:
+        if raw_href in seen_urls:
             return None
 
-        # Filter for relevant document links
-        if not self._is_legal_document_link(href, title):
+        if not self._is_legal_document_link(raw_href, title):
             return None
 
-        seen_urls.add(href)
+        seen_urls.add(raw_href)
 
-        # Detect document type from URL path
-        document_type = self._detect_document_type(href)
-
-        # Extract GR No. if present
+        document_type = self._detect_document_type(raw_href)
         gr_no = self._extract_gr_no(title)
-
-        # Extract date if present in title
         decision_date = self._extract_date(title)
 
         return CandidateDoc(
-            url=href,
+            url=raw_href,
             title=title,
             gr_no=gr_no,
             document_type=document_type,
             decision_date=decision_date,
         )
 
+    # ------------------------------------------------------------------
+    # Static extraction helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _normalize_case_number(text: str) -> str | None:
+        """Normalize case number to canonical format."""
+        if not text:
+            return None
+        # G.R. No. patterns
+        match = re.search(r"(?i)G\.?\s*R\.?\s*(?:No\.?\s*)?(\S+)", text)
+        if match:
+            return f"G.R. No. {match.group(1)}"
+        # A.M. No. patterns
+        match = re.search(r"(?i)A\.?\s*M\.?\s*(?:No\.?\s*)?(\S+)", text)
+        if match:
+            return f"A.M. No. {match.group(1)}"
+        # A.C. No. patterns
+        match = re.search(r"(?i)A\.?\s*C\.?\s*(?:No\.?\s*)?(\S+)", text)
+        if match:
+            return f"A.C. No. {match.group(1)}"
+        return text.strip() if text.strip() else None
+
+    @staticmethod
+    def _detect_document_type_from_case(case_number: str) -> str:
+        """Detect document type from case number prefix."""
+        upper = case_number.upper()
+        if upper.startswith("G.R") or upper.startswith("GR"):
+            return "decision"
+        if upper.startswith("A.M") or upper.startswith("AM"):
+            return "administrative_matter"
+        if upper.startswith("A.C") or upper.startswith("AC"):
+            return "administrative_case"
+        return "decision"
+
     @staticmethod
     def _is_legal_document_link(href: str, title: str) -> bool:
         """Filter for links that point to actual legal documents."""
         href_lower = href.lower()
 
-        # Must be on lawphil.net
         if "lawphil.net" not in href_lower and not href_lower.startswith("/"):
             return False
 
-        # Lawphil document URLs typically contain these path segments
         legal_paths = (
             "/judjuris/",
             "/statutes/",
@@ -143,12 +278,10 @@ class LawphilFetcher(BaseFetcher):
         if any(p in href_lower for p in legal_paths):
             return True
 
-        # Also match by file extension patterns
         if href_lower.endswith(".html") or href_lower.endswith(".htm"):
-            # Exclude navigation/index pages
             return not any(
                 k in href_lower
-                for k in ("index", "menu", "search", "about", "contact")
+                for k in ("index", "menu", "search", "about", "contact", "judjuris.html")
             )
 
         return False

@@ -1,9 +1,9 @@
 """Fetcher tests (Phase 2 — Coverage Gaps).
 
 Tests cover:
-- SupremeCourtFetcher: GR No. extraction, date parsing, name detection, link filtering
+- SupremeCourtFetcher: GR No. extraction, date parsing, name detection, listing parsing
 - LawphilFetcher/OfficialGazetteFetcher/CongressFetcher: basic interface compliance
-- BaseFetcher: rate limiting, client creation
+- BaseFetcher: rate limiting, client creation, retry logic
 - Registry: lookup, unknown types
 """
 
@@ -61,40 +61,35 @@ class TestExtractGrNo:
         assert "12345" in result
 
 
-class TestExtractDate:
-    """Test date extraction from text."""
+class TestNormalizeGrNo:
+    """Test GR No. normalization (used for <strong> tag content)."""
 
-    def test_long_format(self):
-        assert SupremeCourtFetcher._extract_date("January 15, 2024") == "January 15, 2024"
-
-    def test_iso_format(self):
-        assert SupremeCourtFetcher._extract_date("decided on 2024-01-15") == "2024-01-15"
-
-    def test_slash_format(self):
-        assert SupremeCourtFetcher._extract_date("01/15/2024") == "01/15/2024"
-
-    def test_no_date(self):
-        assert SupremeCourtFetcher._extract_date("No date here") is None
-
-    def test_multiple_dates_returns_first(self):
-        text = "January 10, 2024 and February 20, 2024"
-        result = SupremeCourtFetcher._extract_date(text)
-        assert result == "January 10, 2024"
-
-    def test_date_without_comma(self):
-        text = "January 15 2024"
-        result = SupremeCourtFetcher._extract_date(text)
+    def test_standard_gr_no(self):
+        result = SupremeCourtFetcher._normalize_gr_no("G.R. No. 246027")
         assert result is not None
-        assert "January" in result
+        assert "246027" in result
 
-    def test_all_months(self):
-        months = [
-            "January", "February", "March", "April", "May", "June",
-            "July", "August", "September", "October", "November", "December",
-        ]
-        for month in months:
-            result = SupremeCourtFetcher._extract_date(f"{month} 1, 2024")
-            assert result is not None, f"Failed to extract date for {month}"
+    def test_gr_nos_plural(self):
+        result = SupremeCourtFetcher._normalize_gr_no("G.R. Nos. 263919 and 264033")
+        assert result is not None
+        assert "263919" in result
+
+    def test_empty(self):
+        assert SupremeCourtFetcher._normalize_gr_no("") is None
+
+    def test_whitespace_only(self):
+        assert SupremeCourtFetcher._normalize_gr_no("   ") is None
+
+
+class TestExtractDocId:
+    """Test document ID extraction from showdocs URLs."""
+
+    def test_standard_url(self):
+        url = "https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/69834"
+        assert SupremeCourtFetcher._extract_doc_id(url) == "69834"
+
+    def test_no_match(self):
+        assert SupremeCourtFetcher._extract_doc_id("https://example.com/page") is None
 
 
 class TestLooksLikeName:
@@ -125,61 +120,12 @@ class TestLooksLikeName:
         assert SupremeCourtFetcher._looks_like_name("One Two Three Four Five Six") is False
 
 
-class TestIsDecisionLink:
-    """Test decision link heuristic."""
-
-    def test_decision_in_href(self):
-        assert SupremeCourtFetcher._is_decision_link(
-            "http://example.com/decision/123", "Some Title"
-        ) is True
-
-    def test_gr_no_in_title(self):
-        assert SupremeCourtFetcher._is_decision_link(
-            "http://example.com/doc/123", "G.R. No. 123456"
-        ) is True
-
-    def test_vs_in_title(self):
-        assert SupremeCourtFetcher._is_decision_link(
-            "http://example.com/doc/123", "People vs. Dela Cruz"
-        ) is True
-
-    def test_v_dot_in_title(self):
-        assert SupremeCourtFetcher._is_decision_link(
-            "http://example.com/doc/123", "Republic v. Sandiganbayan"
-        ) is True
-
-    def test_unrelated_link(self):
-        assert SupremeCourtFetcher._is_decision_link(
-            "http://example.com/about", "About Us"
-        ) is False
-
-    def test_people_of_philippines_in_title(self):
-        assert SupremeCourtFetcher._is_decision_link(
-            "http://example.com/doc/123", "People of the Philippines v. John Doe"
-        ) is True
-
-
 class TestSupremeCourtFetcherDiscover:
     """Test discover() with mocked HTTP responses."""
 
-    def test_discover_parses_table_rows(self):
+    def _make_fetcher_with_mock(self, html: str) -> tuple[SupremeCourtFetcher, list[CandidateDoc]]:
+        """Helper: create fetcher, mock HTTP, run discover, return candidates."""
         fetcher = SupremeCourtFetcher()
-        html = """
-        <html><body>
-        <table>
-            <tr>
-                <td><a href="/decision/123">G.R. No. 100001 - People v. Smith</a></td>
-                <td>January 15, 2024</td>
-                <td>Carpio, J.</td>
-            </tr>
-            <tr>
-                <td><a href="/decision/456">G.R. No. 100002 - Republic v. Jones</a></td>
-                <td>February 20, 2024</td>
-                <td>Leonen, J.</td>
-            </tr>
-        </table>
-        </body></html>
-        """
 
         mock_response = MagicMock()
         mock_response.text = html
@@ -188,65 +134,105 @@ class TestSupremeCourtFetcherDiscover:
 
         with patch.object(fetcher, "_get_client") as mock_client_ctx:
             mock_client = MagicMock()
-            mock_client.get.return_value = mock_response
             mock_client.__enter__ = MagicMock(return_value=mock_client)
             mock_client.__exit__ = MagicMock(return_value=False)
             mock_client_ctx.return_value = mock_client
 
-            with patch.object(fetcher, "_rate_limit"):
+            with patch.object(fetcher, "_fetch_with_retry", return_value=mock_response):
                 candidates = fetcher.discover("http://example.com/listing")
 
+        return fetcher, candidates
+
+    def test_discover_parses_li_items(self):
+        """Test parsing monthly listing page with <li> items (current site structure)."""
+        html = """
+        <html><body>
+        <div id="container_title">
+        <ul style='list-style:none;'>
+            <li style='text-align:justify;'>
+                <a href='https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/69834'>
+                    <STRONG>G.R. No. 246027</STRONG><br>
+                    <small>SECURITIES AND EXCHANGE COMMISSION VS. 1ACCOUNTANTS PARTY-LIST</small>
+                    January 28, 2025
+                </a>
+                <hr><br>
+            </li>
+            <li style='text-align:justify;'>
+                <a href='https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/69835'>
+                    <STRONG>G.R. No. 263919</STRONG><br>
+                    <small>PEOPLE OF THE PHILIPPINES VS. JOHN DOE</small>
+                    January 29, 2025
+                </a>
+                <hr><br>
+            </li>
+        </ul>
+        </div>
+        </body></html>
+        """
+
+        _, candidates = self._make_fetcher_with_mock(html)
+
         assert len(candidates) == 2
-        assert candidates[0].gr_no == "G.R. No. 100001"
+        assert candidates[0].gr_no is not None
+        assert "246027" in candidates[0].gr_no
         assert candidates[0].court == "Supreme Court"
-        assert candidates[1].gr_no == "G.R. No. 100002"
+        assert candidates[0].decision_date == "January 28, 2025"
+        assert "showdocs/1/69834" in candidates[0].url
+        assert candidates[1].decision_date == "January 29, 2025"
 
     def test_discover_returns_empty_on_http_error(self):
         fetcher = SupremeCourtFetcher()
 
         with patch.object(fetcher, "_get_client") as mock_client_ctx:
             mock_client = MagicMock()
-            mock_client.get.side_effect = Exception("Connection refused")
             mock_client.__enter__ = MagicMock(return_value=mock_client)
             mock_client.__exit__ = MagicMock(return_value=False)
             mock_client_ctx.return_value = mock_client
 
-            with patch.object(fetcher, "_rate_limit"):
+            with patch.object(
+                fetcher, "_fetch_with_retry", side_effect=Exception("Connection refused"),
+            ):
                 candidates = fetcher.discover("http://down.example.com")
 
         assert candidates == []
 
     def test_discover_falls_back_to_link_discovery(self):
-        fetcher = SupremeCourtFetcher()
-        # HTML with no table rows but with links
+        """When no <li> items found, fall back to finding showdocs links."""
         html = """
         <html><body>
         <div>
-            <a href="/case/1">G.R. No. 200001 - People vs. Aquino et al.</a>
+            <a href="https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/12345">
+                G.R. No. 200001 - People vs. Aquino et al. - January 2025
+            </a>
             <a href="/about">About the Court</a>
         </div>
         </body></html>
         """
 
+        _, candidates = self._make_fetcher_with_mock(html)
+
+        gr_candidates = [c for c in candidates if c.gr_no]
+        assert len(gr_candidates) >= 1
+        assert gr_candidates[0].gr_no == "G.R. No. 200001"
+
+    def test_discover_returns_empty_on_403(self):
+        """HTTP 403 returns empty list (not an exception)."""
+        fetcher = SupremeCourtFetcher()
+
         mock_response = MagicMock()
-        mock_response.text = html
-        mock_response.status_code = 200
-        mock_response.raise_for_status = MagicMock()
+        mock_response.status_code = 403
+        mock_response.text = "Forbidden"
 
         with patch.object(fetcher, "_get_client") as mock_client_ctx:
             mock_client = MagicMock()
-            mock_client.get.return_value = mock_response
             mock_client.__enter__ = MagicMock(return_value=mock_client)
             mock_client.__exit__ = MagicMock(return_value=False)
             mock_client_ctx.return_value = mock_client
 
-            with patch.object(fetcher, "_rate_limit"):
+            with patch.object(fetcher, "_fetch_with_retry", return_value=mock_response):
                 candidates = fetcher.discover("http://example.com/listing")
 
-        # Should find the GR link but not "About"
-        gr_candidates = [c for c in candidates if c.gr_no]
-        assert len(gr_candidates) >= 1
-        assert gr_candidates[0].gr_no == "G.R. No. 200001"
+        assert candidates == []
 
 
 class TestSupremeCourtFetcherFetchContent:
@@ -261,15 +247,15 @@ class TestSupremeCourtFetcherFetchContent:
         mock_response.headers = {"content-type": "text/html; charset=utf-8"}
         mock_response.raise_for_status = MagicMock()
 
-        with patch.object(fetcher, "_get_client") as mock_client_ctx:
-            mock_client = MagicMock()
-            mock_client.get.return_value = mock_response
-            mock_client.__enter__ = MagicMock(return_value=mock_client)
-            mock_client.__exit__ = MagicMock(return_value=False)
-            mock_client_ctx.return_value = mock_client
+        with patch.object(fetcher, "_validate_url"):
+            with patch.object(fetcher, "_get_client") as mock_client_ctx:
+                mock_client = MagicMock()
+                mock_client.__enter__ = MagicMock(return_value=mock_client)
+                mock_client.__exit__ = MagicMock(return_value=False)
+                mock_client_ctx.return_value = mock_client
 
-            with patch.object(fetcher, "_rate_limit"):
-                result = fetcher.fetch_content("http://example.com/decision/1")
+                with patch.object(fetcher, "_fetch_with_retry", return_value=mock_response):
+                    result = fetcher.fetch_content("http://example.com/decision/1")
 
         assert isinstance(result, FetchedContent)
         assert result.url == "http://example.com/decision/1"
@@ -310,6 +296,56 @@ class TestBaseFetcherRateLimit:
             with patch("time.sleep") as mock_sleep:
                 fetcher._rate_limit()
                 mock_sleep.assert_not_called()
+
+
+class TestBaseFetcherRetry:
+    """Test _fetch_with_retry exponential backoff."""
+
+    def test_retries_on_500(self):
+        fetcher = SupremeCourtFetcher()
+
+        mock_client = MagicMock()
+        mock_response_500 = MagicMock()
+        mock_response_500.status_code = 500
+        mock_response_200 = MagicMock()
+        mock_response_200.status_code = 200
+
+        mock_client.get.side_effect = [mock_response_500, mock_response_200]
+
+        with patch.object(fetcher, "_rate_limit"):
+            with patch("time.sleep"):
+                result = fetcher._fetch_with_retry(mock_client, "http://example.com")
+
+        assert result.status_code == 200
+        assert mock_client.get.call_count == 2
+
+    def test_returns_immediately_on_404(self):
+        fetcher = SupremeCourtFetcher()
+
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        mock_client.get.return_value = mock_response
+
+        with patch.object(fetcher, "_rate_limit"):
+            result = fetcher._fetch_with_retry(mock_client, "http://example.com")
+
+        assert result.status_code == 404
+        assert mock_client.get.call_count == 1
+
+    def test_returns_immediately_on_403(self):
+        fetcher = SupremeCourtFetcher()
+
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 403
+        mock_client.get.return_value = mock_response
+
+        with patch.object(fetcher, "_rate_limit"):
+            result = fetcher._fetch_with_retry(mock_client, "http://example.com")
+
+        assert result.status_code == 403
+        assert mock_client.get.call_count == 1
 
 
 # ---- Registry ----

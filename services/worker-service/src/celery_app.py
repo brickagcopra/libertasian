@@ -40,7 +40,16 @@ app.conf.update(
     },
 )
 
-# Register task modules (autodiscovers all @shared_task in src/tasks/*.py
-# including: ingestion, OCR, doctrine, citation, categorization,
-# digest, DLQ, and embedding tasks)
-app.autodiscover_tasks(["src.tasks"])
+# Explicit task module registration — autodiscover_tasks looks for a
+# `tasks.py` file inside each package, not `*_tasks.py` files, so we
+# register every module explicitly.
+app.conf.include = [
+    "src.tasks.ingestion_tasks",
+    "src.tasks.ocr_tasks",
+    "src.tasks.embedding_tasks",
+    "src.tasks.digest_tasks",
+    "src.tasks.citation_tasks",
+    "src.tasks.doctrine_tasks",
+    "src.tasks.categorization_tasks",
+    "src.tasks.dlq_tasks",
+]

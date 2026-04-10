@@ -54,7 +54,7 @@ def sample_source(source_id: str) -> dict[str, Any]:
             {
                 "id": make_uuid(),
                 "source_id": source_id,
-                "endpoint_url": "https://elibrary.judiciary.gov.ph/dtSearch/search.html",
+                "endpoint_url": "https://elibrary.judiciary.gov.ph/thebookshelf/docmonth/Jan/2025/1",
                 "parser_type": "supreme_court_elibrary",
                 "status": "active",
                 "last_fetched_at": None,

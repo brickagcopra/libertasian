@@ -1,6 +1,29 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-04-09 (Session 191 — Subscription Lifecycle Event Processor)
+> Last updated: 2026-04-10 (Session 193 — Ingestion Pipeline Fix: Celery + Fetchers)
+
+---
+
+## Session 193 — Ingestion Pipeline Fix: Celery + Fetchers (7 Tasks)
+
+1. **Fixed Celery autodiscover_tasks** — Replaced `app.autodiscover_tasks(["src.tasks"])` with explicit `app.conf.include` list of all 8 task modules (`ingestion_tasks`, `ocr_tasks`, `embedding_tasks`, `digest_tasks`, `citation_tasks`, `doctrine_tasks`, `categorization_tasks`, `dlq_tasks`). Celery autodiscovery looks for `tasks.py` files, not `*_tasks.py` patterns.
+2. **Fixed base fetcher HTTP headers** — Updated `base.py` with browser-like `User-Agent`, `Accept`, `Accept-Language`, `Accept-Encoding` headers to avoid 403 blocks from government sites. Added `_fetch_with_retry()` method with exponential backoff for retryable HTTP status codes (429, 500-504). Added `RETRYABLE_STATUS_CODES` constant. Added `docs.congress.hrep.online` and `legacy.senate.gov.ph` to domain allowlist.
+3. **Rewrote Supreme Court E-Library fetcher** — Updated to match current site structure: monthly listing pages at `/thebookshelf/docmonth/{Mon}/{YYYY}/1` with `<li>` items containing `<strong>` for G.R. number, `<small>` for case title, and trailing text for date. Uses `_fetch_with_retry()`. Parses `div#container_title ul > li` as primary strategy with link-based fallback.
+4. **Rewrote Lawphil fetcher** — Updated to match current site structure: monthly listing pages at `/judjuris/juri{YYYY}/{mon}{YYYY}/{mon}{YYYY}.html` with `table#s-menu tr.xy` rows containing case number, date, and title. Handles windows-1252 encoding. Parses `class="nya"` links (unpublished) correctly.
+5. **Updated Official Gazette fetcher** — Updated to use `_fetch_with_retry()`. Added `_extract_date_from_url()` for WordPress date-based URLs. Improved link filtering to exclude pagination/feed/tag URLs. Updated endpoint URL to `/section/laws/executive-issuances/`.
+6. **Rewrote Congress fetcher** — Added Cloudflare Turnstile detection (`_is_cloudflare_challenge()`). Added Bootstrap 3 panel layout parser for `legisdocs/?v=ra` listing page. Added PDF CDN support (`docs.congress.hrep.online`). Fetcher gracefully returns empty list when Cloudflare blocks access.
+7. **Updated seed scripts & test fixtures** — Updated endpoint URLs in `seed.ts`, `seed-sources.ts`, and `tests/conftest.py`. SC E-Library: `docmonth/Jan/2025/1` (was `docmonth/category/1`). Lawphil: `judjuris.html` (was `juri_sc.html` → 404). Official Gazette: `executive-issuances/` (was `laws/` → 403). Congress: `legisdocs/?v=ra` (was `legisdocs/`).
+
+---
+
+## Session 192 — Mobile App EAS & Store Setup (6 Tasks)
+
+1. **Created `eas.json`** — EAS Build configuration with development (dev client + internal distribution), preview (internal), and production (autoIncrement) profiles. Submit config for Android (Google Play internal track) and iOS (App Store Connect placeholders)
+2. **Updated `app.json`** — Bumped version to `1.0.0`, added `android.versionCode: 1` and `ios.buildNumber: "1"`, added `extra.apiUrl` and `extra.eas.projectId` for EAS integration
+3. **Updated API client** — `api-client.ts` now reads `process.env.API_URL` first (for EAS builds), then `Constants.expoConfig?.extra?.apiUrl` (for Expo Go), with `localhost:3001` fallback
+4. **Created placeholder assets** — Generated `icon.png` (1024x1024), `adaptive-icon.png` (1024x1024), and `splash-icon.png` (200x200) placeholder PNGs in brand navy (#1E3A5F). Replace with real branded assets before store submission
+5. **Verified deep link configuration** — Billing deep links (`libertasian://billing/success`, `libertasian://billing/cancel`) already work via custom URI scheme. Android intent filters for `https://libertasian.com/shared` and iOS Universal Links already configured. Root layout auth guard already exempts billing routes
+6. **Verified type-checking** — `tsc --noEmit` passes for all source files; only pre-existing test file duplicate variable errors remain (unrelated to this session's changes)
 
 ---
 

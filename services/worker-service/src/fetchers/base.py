@@ -27,7 +27,23 @@ ALLOWED_DOMAINS: frozenset[str] = frozenset({
     "www.officialgazette.gov.ph",
     "congress.gov.ph",
     "www.congress.gov.ph",
+    "legacy.senate.gov.ph",
+    "docs.congress.hrep.online",
 })
+
+# Standard browser-like headers to avoid 403 blocks from government sites.
+DEFAULT_HEADERS: dict[str, str] = {
+    "User-Agent": (
+        "Mozilla/5.0 (compatible; LIBERTASIAN-Bot/1.0; "
+        "+https://libertasian.com/bot)"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-PH,en;q=0.9,fil;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
+}
+
+# HTTP status codes that warrant a retry with backoff.
+RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
 
 
 class CandidateDoc(BaseModel):
@@ -60,6 +76,10 @@ class BaseFetcher(ABC):
     pages, and fetch_content() to download individual document pages.
     """
 
+    # Max retries for transient HTTP errors (429, 5xx).
+    MAX_RETRIES: int = 3
+    BACKOFF_BASE: float = 2.0
+
     def __init__(self) -> None:
         self._last_request_time: float = 0.0
 
@@ -80,12 +100,55 @@ class BaseFetcher(ABC):
         self._last_request_time = time.monotonic()
 
     def _get_client(self) -> httpx.Client:
-        """Create an httpx client with ingestion settings."""
+        """Create an httpx client with browser-like headers."""
         return httpx.Client(
             timeout=settings.ingestion_fetch_timeout,
-            headers={"User-Agent": settings.ingestion_user_agent},
+            headers=DEFAULT_HEADERS,
             follow_redirects=True,
         )
+
+    def _fetch_with_retry(
+        self,
+        client: httpx.Client,
+        url: str,
+    ) -> httpx.Response:
+        """GET *url* with exponential backoff on retryable status codes.
+
+        Non-retryable errors (403, 404, etc.) are returned immediately so
+        callers can handle them gracefully.
+        """
+        last_exc: Exception | None = None
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                self._rate_limit()
+                response = client.get(url)
+                if response.status_code not in RETRYABLE_STATUS_CODES:
+                    return response
+                logger.warning(
+                    "Retryable HTTP %d from %s (attempt %d/%d)",
+                    response.status_code,
+                    url,
+                    attempt + 1,
+                    self.MAX_RETRIES,
+                )
+            except httpx.TransportError as exc:
+                logger.warning(
+                    "Transport error fetching %s (attempt %d/%d): %s",
+                    url,
+                    attempt + 1,
+                    self.MAX_RETRIES,
+                    exc,
+                )
+                last_exc = exc
+
+            if attempt < self.MAX_RETRIES - 1:
+                backoff = self.BACKOFF_BASE ** (attempt + 1)
+                time.sleep(backoff)
+
+        # If last attempt got a response, return it even if retryable.
+        if last_exc is None:
+            return response  # type: ignore[possibly-undefined]
+        raise last_exc
 
     @abstractmethod
     def discover(

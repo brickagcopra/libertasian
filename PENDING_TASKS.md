@@ -1,6 +1,48 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-04-09 (Session 191 — Subscription Lifecycle Event Processor)
+> Last updated: 2026-04-10 (Session 193 — Ingestion Pipeline Fix: Celery + Fetchers)
+
+---
+
+## Session 193 — Ingestion Pipeline Fix: Celery + Fetchers — ALL COMPLETE
+
+### Post-deploy Steps
+- **Rebuild worker-service Docker image** — The current container has the broken autodiscover. Push to main and rebuild.
+- **Re-seed endpoint URLs on prod DB** — Run `npx ts-node apps/api/prisma/seed-sources.ts` to update the endpoint URLs in the database (old URLs are cached from the original seed).
+- **Test each fetcher** locally with:
+  ```bash
+  cd services/worker-service
+  python -c "from src.fetchers.supreme_court import SupremeCourtFetcher; f = SupremeCourtFetcher(); print(f.discover('https://elibrary.judiciary.gov.ph/thebookshelf/docmonth/Jan/2025/1'))"
+  ```
+- **Congress.gov.ph Cloudflare limitation** — The Congress fetcher will return 0 candidates from `congress.gov.ph` due to Cloudflare Turnstile. Consider: (a) using Playwright/headless browser, or (b) ingesting Republic Acts via the Official Gazette instead, or (c) constructing PDF URLs directly from `docs.congress.hrep.online/legisdocs/ra_{congress}/RA{number}.pdf`.
+
+---
+
+## Session 192 — Mobile App EAS & Store Setup
+
+### BLOCKER: ErrorOverlay crash in Expo Go
+The app bundles successfully but crashes at runtime with `"Objects are not valid as a React child"` in `@expo/metro-runtime`'s `ErrorOverlay` component. This is a [known Expo SDK 52 bug](https://github.com/expo/expo/issues/33585).
+
+**What we've tried (all failed):**
+- Minimal root layout (`<Text>Hello</Text>`) — still crashes, confirming it's not our code
+- `npx expo install --fix` — fixed 12 mismatched package versions, didn't resolve
+- `--no-dev --clear` mode — ErrorOverlay still active in Expo Go
+- ErrorBoundary + LogBox.ignoreAllLogs — error is above our component tree
+- Metro `resolveRequest` shim to bypass `@expo/metro-runtime/error-overlay` — needs full cache clear to verify
+
+**Root cause traced to:** `expo-router/build/renderRootComponent.js` line 77 wraps app with `withErrorOverlay()` from `@expo/metro-runtime/error-overlay`, which uses a buggy `ErrorToastContainer` component.
+
+**Next steps to try:**
+1. **Full cache nuke** — Kill ALL node processes, delete `node_modules/.cache`, `.expo/`, run `pnpm install` fresh, then `npx expo start --clear`. The metro shim (`metro.config.js` → `error-overlay-shim.js`) may not have been picked up due to stale cache
+2. **Try development build** instead of Expo Go: `npx expo run:android` or `eas build --profile development --platform android`
+3. **Try Expo SDK 53** — `npx expo install expo@latest` (if the bug is fixed in SDK 53)
+4. **Patch `renderRootComponent.js` directly** — Remove the `withErrorOverlay` call as a last resort
+
+### Before Store Submission (after ErrorOverlay fix)
+- **Replace placeholder icons** — Replace `assets/icon.png`, `assets/adaptive-icon.png`, and `assets/splash-icon.png` with real LIBERTASIAN branded assets
+- **Fill in Apple credentials** in `eas.json` submit section (`appleId`, `ascAppId`, `appleTeamId`)
+- **Add `google-services.json`** for Android Play Store submission
+- **Run first EAS build** — `eas build --platform all --profile development`
 
 ---
 
