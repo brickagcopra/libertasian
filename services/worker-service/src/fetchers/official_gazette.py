@@ -38,10 +38,17 @@ class OfficialGazetteFetcher(BaseFetcher):
             try:
                 response = self._fetch_with_retry(client, endpoint_url)
                 if response.status_code == 403:
-                    logger.warning(
-                        "Official Gazette returned 403 (bot-blocked): %s",
-                        endpoint_url,
-                    )
+                    if self._is_cloudflare_challenge(response.text):
+                        logger.warning(
+                            "Official Gazette returned Cloudflare challenge (403). "
+                            "Headless browser required for this source: %s",
+                            endpoint_url,
+                        )
+                    else:
+                        logger.warning(
+                            "Official Gazette returned 403 (bot-blocked): %s",
+                            endpoint_url,
+                        )
                     return candidates
                 if response.status_code >= 400:
                     logger.warning(
@@ -125,6 +132,11 @@ class OfficialGazetteFetcher(BaseFetcher):
             document_type=document_type,
             decision_date=decision_date,
         )
+
+    @staticmethod
+    def _is_cloudflare_challenge(html: str) -> bool:
+        """Detect Cloudflare Turnstile / managed challenge pages."""
+        return "Just a moment" in html or "challenge-platform" in html
 
     @staticmethod
     def _is_legal_document_link(href: str, title: str) -> bool:

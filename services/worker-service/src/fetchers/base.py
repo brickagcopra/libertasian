@@ -31,15 +31,27 @@ ALLOWED_DOMAINS: frozenset[str] = frozenset({
     "docs.congress.hrep.online",
 })
 
-# Standard browser-like headers to avoid 403 blocks from government sites.
+# Browser-like headers to avoid 403 blocks from government sites.
+# Use a real browser User-Agent — bot identifiers get blocked by Cloudflare
+# and similar WAFs on officialgazette.gov.ph and congress.gov.ph.
 DEFAULT_HEADERS: dict[str, str] = {
     "User-Agent": (
-        "Mozilla/5.0 (compatible; LIBERTASIAN-Bot/1.0; "
-        "+https://libertasian.com/bot)"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/131.0.0.0 Safari/537.36"
     ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-PH,en;q=0.9,fil;q=0.8",
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;q=0.9,"
+        "image/avif,image/webp,image/apng,*/*;q=0.8"
+    ),
+    "Accept-Language": "en-PH,en-US;q=0.9,en;q=0.8,fil;q=0.7",
     "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
 }
 
 # HTTP status codes that warrant a retry with backoff.

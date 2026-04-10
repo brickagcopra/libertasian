@@ -4,10 +4,17 @@ Fetches decisions from the Philippine Supreme Court Electronic Library
 (elibrary.judiciary.gov.ph). Parses monthly listing pages to discover
 decisions and downloads individual decision HTML pages.
 
-Site structure (as of 2025):
-  Listing: /thebookshelf/docmonth/{Mon}/{YYYY}/{category}
-  Detail:  /thebookshelf/showdocs/{category}/{doc_id}
-  Category 1 = SC Decisions / Signed Resolutions
+Site structure (as of 2025-2026):
+  Category landing:  /thebookshelf/1  (SC Decisions)
+  Monthly listing:   /thebookshelf/docmonth/{Mon}/{YYYY}/1
+  Detail:            /thebookshelf/showdocs/1/{doc_id}
+
+The monthly listing page renders decisions as bare ``<a>`` tags (with
+``<strong>`` for the G.R. number and ``<small>`` for the title) directly
+inside ``div#container_title`` — they are NOT wrapped in ``<li>`` elements.
+
+The category landing page at ``/thebookshelf/1`` lists monthly links
+(``docmonth/Mon/Year/1``) that the fetcher follows automatically.
 """
 
 from __future__ import annotations
@@ -30,6 +37,9 @@ _DOCMONTH_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Maximum number of monthly pages to follow from a landing page.
+_MAX_MONTHLY_PAGES = 3
+
 
 class SupremeCourtFetcher(BaseFetcher):
     """Fetcher for the Supreme Court E-Library."""
@@ -39,13 +49,14 @@ class SupremeCourtFetcher(BaseFetcher):
         endpoint_url: str,
         last_fetched_at: str | None = None,
     ) -> list[CandidateDoc]:
-        """Parse monthly listing pages from elibrary.judiciary.gov.ph.
+        """Discover SC decisions from elibrary.judiciary.gov.ph.
 
-        The SC E-Library presents decisions on monthly pages. Each ``<li>``
-        contains:
-        - ``<strong>`` with the G.R. number
-        - ``<small>`` with the full case title (parties)
-        - trailing text with the decision date (e.g. "January 28, 2025")
+        Handles two URL types:
+
+        1. **Monthly listing page** (``/docmonth/Mon/Year/1``): contains
+           ``showdocs`` links directly — parse them.
+        2. **Category landing page** (``/thebookshelf/1``): contains
+           ``docmonth`` links — follow the most recent ones and parse each.
         """
         candidates: list[CandidateDoc] = []
 
@@ -63,28 +74,32 @@ class SupremeCourtFetcher(BaseFetcher):
                 logger.exception("Failed to fetch SC listing: %s", endpoint_url)
                 return candidates
 
-        soup = BeautifulSoup(response.text, "lxml")
+            soup = BeautifulSoup(response.text, "lxml")
 
-        # Primary strategy: parse <li> items inside div#container_title ul
-        container = soup.find("div", id="container_title")
-        if container:
-            items = container.find_all("li")
-        else:
-            # Fallback: any <li> with a showdocs link
-            items = soup.find_all("li")
+            # Strategy 1: parse showdocs links from a monthly listing page.
+            candidates = self._parse_showdocs_page(soup, endpoint_url)
 
-        for item in items:
-            try:
-                candidate = self._parse_listing_item(item, endpoint_url)
-                if candidate:
-                    candidates.append(candidate)
-            except Exception:
-                logger.warning("Failed to parse SC listing item", exc_info=True)
-                continue
-
-        # Fallback: link-based discovery if no <li> items found
-        if not candidates:
-            candidates = self._discover_from_links(soup, endpoint_url)
+            # Strategy 2: if no showdocs links found, this may be a category
+            # landing page — discover monthly page URLs and follow them.
+            if not candidates:
+                monthly_urls = self._discover_monthly_urls(soup, endpoint_url)
+                for monthly_url in monthly_urls[:_MAX_MONTHLY_PAGES]:
+                    try:
+                        resp = self._fetch_with_retry(client, monthly_url)
+                        if resp.status_code >= 400:
+                            continue
+                        monthly_soup = BeautifulSoup(resp.text, "lxml")
+                        monthly_candidates = self._parse_showdocs_page(
+                            monthly_soup, monthly_url,
+                        )
+                        candidates.extend(monthly_candidates)
+                    except Exception:
+                        logger.warning(
+                            "Failed to fetch SC monthly page: %s",
+                            monthly_url,
+                            exc_info=True,
+                        )
+                        continue
 
         logger.info(
             "Discovered %d candidates from SC E-Library: %s",
@@ -112,35 +127,64 @@ class SupremeCourtFetcher(BaseFetcher):
     # Parsing helpers
     # ------------------------------------------------------------------
 
-    def _parse_listing_item(
+    def _parse_showdocs_page(
         self,
-        item: Tag,
+        soup: BeautifulSoup,
         base_url: str,
-    ) -> CandidateDoc | None:
-        """Extract candidate info from a <li> on a monthly listing page.
+    ) -> list[CandidateDoc]:
+        """Extract all ``showdocs`` links from a monthly listing page.
 
-        Expected structure::
+        The SC E-Library renders decisions as bare ``<a>`` tags directly
+        inside ``div#container_title``::
 
-            <li>
-              <a href="…/showdocs/1/69834">
+            <div id="container_title">
+              <H3>Jan 2025 | Decisions / Signed Resolutions</H3><HR>
+              <a href='.../showdocs/1/69834'>
                 <STRONG>G.R. No. 246027</STRONG><br>
-                <small>TITLE OF CASE …</small>
+                <small>CASE TITLE …</small>
                 January 28, 2025
               </a>
-              <hr><br>
-            </li>
+              ...
+            </div>
         """
-        link = item.find("a", href=True)
-        if not link:
-            return None
+        candidates: list[CandidateDoc] = []
+        seen_urls: set[str] = set()
 
-        raw_href = str(link.get("href", ""))
-        if not raw_href or "showdocs" not in raw_href:
-            return None
+        # Prefer searching inside the container div, fall back to whole page.
+        container = soup.find("div", id="container_title")
+        search_area = container if container else soup
 
-        href = raw_href if raw_href.startswith("http") else urljoin(base_url, raw_href)
+        for link in search_area.find_all("a", href=True):
+            raw_href = str(link.get("href", ""))
+            if "showdocs" not in raw_href:
+                continue
 
-        # G.R. number from <strong>
+            href = (
+                raw_href
+                if raw_href.startswith("http")
+                else urljoin(base_url, raw_href)
+            )
+            if href in seen_urls:
+                continue
+            seen_urls.add(href)
+
+            try:
+                candidate = self._parse_showdocs_link(link, href)
+                if candidate:
+                    candidates.append(candidate)
+            except Exception:
+                logger.warning("Failed to parse SC listing link", exc_info=True)
+                continue
+
+        return candidates
+
+    def _parse_showdocs_link(
+        self,
+        link: Tag,
+        href: str,
+    ) -> CandidateDoc | None:
+        """Extract candidate info from a single showdocs ``<a>`` tag."""
+        # G.R. number from <strong> or <b>
         strong = link.find("strong") or link.find("b")
         gr_no_raw = strong.get_text(strip=True) if strong else ""
         gr_no = self._normalize_gr_no(gr_no_raw)
@@ -150,8 +194,12 @@ class SupremeCourtFetcher(BaseFetcher):
         title = small.get_text(strip=True) if small else ""
         if not title:
             title = link.get_text(strip=True)
-        if not title:
+        if not title or len(title) < 5:
             return None
+
+        # Fallback: extract GR No. from the title text if not found in <strong>
+        if not gr_no:
+            gr_no = self._extract_gr_no(title)
 
         # Decision date from trailing text node inside <a>
         decision_date = self._extract_date_from_link(link)
@@ -166,43 +214,47 @@ class SupremeCourtFetcher(BaseFetcher):
             metadata={"source_doc_id": self._extract_doc_id(href)},
         )
 
-    def _discover_from_links(
-        self,
+    @staticmethod
+    def _discover_monthly_urls(
         soup: BeautifulSoup,
         base_url: str,
-    ) -> list[CandidateDoc]:
-        """Fallback discovery: find all showdocs links."""
-        candidates: list[CandidateDoc] = []
-        seen_urls: set[str] = set()
+    ) -> list[str]:
+        """Find ``docmonth`` links on a category landing page.
+
+        Returns URLs sorted with the most recent month first.
+        """
+        urls: list[str] = []
+        seen: set[str] = set()
 
         for link in soup.find_all("a", href=True):
             raw_href = str(link.get("href", ""))
-            if "showdocs" not in raw_href:
+            if not _DOCMONTH_PATTERN.search(raw_href):
                 continue
-
-            href = raw_href if raw_href.startswith("http") else urljoin(base_url, raw_href)
-            if href in seen_urls:
-                continue
-            seen_urls.add(href)
-
-            title = link.get_text(strip=True)
-            if not title or len(title) < 10:
-                continue
-
-            gr_no = self._extract_gr_no(title)
-
-            candidates.append(
-                CandidateDoc(
-                    url=href,
-                    title=title,
-                    gr_no=gr_no,
-                    document_type="decision",
-                    court="Supreme Court",
-                    metadata={"source_doc_id": self._extract_doc_id(href)},
-                )
+            href = (
+                raw_href
+                if raw_href.startswith("http")
+                else urljoin(base_url, raw_href)
             )
+            if href not in seen:
+                seen.add(href)
+                urls.append(href)
 
-        return candidates
+        # The landing page lists months in reverse-chronological order already,
+        # but sort by year/month descending to be safe.
+        def _sort_key(url: str) -> tuple[int, int]:
+            m = re.search(r"/docmonth/(\w+)/(\d{4})/", url)
+            if not m:
+                return (0, 0)
+            month_names = {
+                "jan": 1, "feb": 2, "mar": 3, "apr": 4,
+                "may": 5, "jun": 6, "jul": 7, "aug": 8,
+                "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+            }
+            month_num = month_names.get(m.group(1).lower()[:3], 0)
+            return (int(m.group(2)), month_num)
+
+        urls.sort(key=_sort_key, reverse=True)
+        return urls
 
     # ------------------------------------------------------------------
     # Static extraction helpers

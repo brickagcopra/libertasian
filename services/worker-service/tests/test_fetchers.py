@@ -180,6 +180,44 @@ class TestSupremeCourtFetcherDiscover:
         assert "showdocs/1/69834" in candidates[0].url
         assert candidates[1].decision_date == "January 29, 2025"
 
+    def test_discover_parses_bare_anchor_tags(self):
+        """Test parsing when showdocs links are bare <a> tags (no <li> wrapper).
+
+        This matches the actual SC E-Library HTML structure as of 2025-2026,
+        where decisions are rendered directly inside div#container_title
+        without <li> wrapping.
+        """
+        html = """
+        <html><body>
+        <div id="container_title">
+            <H3>Jan 2025 |  Decisions / Signed Resolutions</H3><HR>
+            <a href='https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/69834'>
+                <STRONG>G.R. No. 246027</STRONG><br>
+                <small>SECURITIES AND EXCHANGE COMMISSION VS. 1ACCOUNTANTS</small>
+                January 28, 2025
+            </a>
+            <hr><br>
+            <a href='https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/69861'>
+                <STRONG>G.R. No. 259094</STRONG><br>
+                <small>RODULFO FERRAREN AQUINO VS. PEOPLE OF THE PHILIPPINES</small>
+                January 28, 2025
+            </a>
+        </div>
+        </body></html>
+        """
+
+        _, candidates = self._make_fetcher_with_mock(html)
+
+        assert len(candidates) == 2
+        assert candidates[0].gr_no is not None
+        assert "246027" in candidates[0].gr_no
+        assert candidates[0].court == "Supreme Court"
+        assert candidates[0].decision_date == "January 28, 2025"
+        assert "showdocs/1/69834" in candidates[0].url
+        assert "SECURITIES" in candidates[0].title
+        assert candidates[1].gr_no is not None
+        assert "259094" in candidates[1].gr_no
+
     def test_discover_returns_empty_on_http_error(self):
         fetcher = SupremeCourtFetcher()
 

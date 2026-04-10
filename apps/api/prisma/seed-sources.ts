@@ -34,7 +34,7 @@ const SOURCES: SourceSeed[] = [
     fetchStrategy: 'crawler',
     endpoints: [
       {
-        endpointUrl: 'https://elibrary.judiciary.gov.ph/thebookshelf/docmonth/Jan/2025/1',
+        endpointUrl: 'https://elibrary.judiciary.gov.ph/thebookshelf/1',
         contentTypeHint: 'text/html',
         parserType: 'supreme_court_elibrary',
         scheduleCron: '0 2 * * *', // daily at 2 AM
@@ -49,7 +49,7 @@ const SOURCES: SourceSeed[] = [
     fetchStrategy: 'crawler',
     endpoints: [
       {
-        endpointUrl: 'https://lawphil.net/judjuris/judjuris.html',
+        endpointUrl: 'https://lawphil.net/judjuris/juri2025/juri2025.html',
         contentTypeHint: 'text/html',
         parserType: 'lawphil',
         scheduleCron: '0 3 * * *', // daily at 3 AM

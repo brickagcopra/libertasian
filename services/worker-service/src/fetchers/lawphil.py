@@ -4,13 +4,19 @@ Fetches Philippine legal documents from lawphil.net.
 Parses monthly listing pages to discover jurisprudence,
 then downloads individual document HTML pages.
 
-Site structure (as of 2025):
+Site structure (as of 2025-2026):
   Main index:    /judjuris/judjuris.html  (years 1901-present)
   Year index:    /judjuris/juri{YYYY}/juri{YYYY}.html
   Month listing: /judjuris/juri{YYYY}/{mon}{YYYY}/{mon}{YYYY}.html
   Decision page: /judjuris/juri{YYYY}/{mon}{YYYY}/{case_id}_{YYYY}.html
 
-Note: Site encoding is windows-1252, not UTF-8.
+The fetcher handles three entry points:
+  1. Monthly page (has ``table#s-menu`` with ``tr.xy`` rows) — parse directly.
+  2. Year index page (has links to monthly pages) — follow them and parse.
+  3. Main index page (has links to year pages) — follow the latest year.
+
+Note: Site encoding is windows-1252, not UTF-8.  SSL certificate for
+www.lawphil.net is expired — use lawphil.net (without www).
 """
 
 from __future__ import annotations
@@ -26,6 +32,21 @@ from .base import BaseFetcher, CandidateDoc, FetchedContent
 
 logger = logging.getLogger(__name__)
 
+# Maximum number of monthly pages to follow from a year index.
+_MAX_MONTHLY_PAGES = 3
+
+# Pattern matching monthly page URLs:  .../jan2025/jan2025.html
+_MONTHLY_PAGE_PATTERN = re.compile(
+    r"[a-z]{3}\d{4}/[a-z]{3}\d{4}\.html$",
+    re.IGNORECASE,
+)
+
+# Pattern matching year index URLs:  .../juri2025/juri2025.html
+_YEAR_INDEX_PATTERN = re.compile(
+    r"juri(\d{4})/juri\d{4}\.html$",
+    re.IGNORECASE,
+)
+
 
 class LawphilFetcher(BaseFetcher):
     """Fetcher for lawphil.net legal documents."""
@@ -35,11 +56,15 @@ class LawphilFetcher(BaseFetcher):
         endpoint_url: str,
         last_fetched_at: str | None = None,
     ) -> list[CandidateDoc]:
-        """Parse monthly listing pages from lawphil.net.
+        """Discover SC decisions from lawphil.net.
 
-        Lawphil organizes SC decisions in monthly pages with an HTML table
-        (``table#s-menu``) where each ``tr.xy`` row contains the case number,
-        date, and case title.
+        Handles three URL types:
+
+        1. **Monthly page** (``table#s-menu`` present): parse case rows.
+        2. **Year index** (links to monthly pages): follow the most recent
+           monthly pages and parse each.
+        3. **Main index** (``judjuris.html``): follow the latest year link,
+           then proceed as (2).
         """
         candidates: list[CandidateDoc] = []
 
@@ -57,34 +82,65 @@ class LawphilFetcher(BaseFetcher):
                 logger.exception("Failed to fetch Lawphil listing: %s", endpoint_url)
                 return candidates
 
-        # Lawphil uses windows-1252 encoding
-        html_text = response.content.decode("windows-1252", errors="replace")
-        soup = BeautifulSoup(html_text, "lxml")
-        seen_urls: set[str] = set()
+            # Lawphil uses windows-1252 encoding
+            html_text = response.content.decode("windows-1252", errors="replace")
+            soup = BeautifulSoup(html_text, "lxml")
 
-        # Primary strategy: parse table#s-menu rows
-        table = soup.find("table", id="s-menu")
-        if table:
-            rows = table.find_all("tr", class_="xy")
-            for row in rows:
-                try:
-                    candidate = self._parse_table_row(row, endpoint_url, seen_urls)
-                    if candidate:
-                        candidates.append(candidate)
-                except Exception:
-                    logger.warning("Failed to parse Lawphil table row", exc_info=True)
-                    continue
+            # Check if this is a monthly page with case table.
+            table = soup.find("table", id="s-menu")
+            if table:
+                candidates = self._parse_monthly_table(
+                    table, endpoint_url,
+                )
+            else:
+                # This is a year index or main index — discover monthly URLs.
+                monthly_urls = self._discover_monthly_urls(soup, endpoint_url)
 
-        # Fallback: link-based discovery
-        if not candidates:
-            for link in soup.find_all("a", href=True):
-                try:
-                    candidate = self._parse_link(link, endpoint_url, seen_urls)
-                    if candidate:
-                        candidates.append(candidate)
-                except Exception:
-                    logger.warning("Failed to parse Lawphil link", exc_info=True)
-                    continue
+                # If this looks like the main index (judjuris.html) and no
+                # monthly URLs found, try following the latest year link.
+                if not monthly_urls:
+                    year_url = self._discover_latest_year_url(soup, endpoint_url)
+                    if year_url:
+                        try:
+                            yr_resp = self._fetch_with_retry(client, year_url)
+                            if yr_resp.status_code < 400:
+                                yr_html = yr_resp.content.decode(
+                                    "windows-1252", errors="replace",
+                                )
+                                yr_soup = BeautifulSoup(yr_html, "lxml")
+                                monthly_urls = self._discover_monthly_urls(
+                                    yr_soup, year_url,
+                                )
+                        except Exception:
+                            logger.warning(
+                                "Failed to fetch Lawphil year page: %s",
+                                year_url,
+                                exc_info=True,
+                            )
+
+                # Follow the most recent monthly pages.
+                for monthly_url in monthly_urls[:_MAX_MONTHLY_PAGES]:
+                    try:
+                        m_resp = self._fetch_with_retry(client, monthly_url)
+                        if m_resp.status_code >= 400:
+                            continue
+                        m_html = m_resp.content.decode(
+                            "windows-1252", errors="replace",
+                        )
+                        m_soup = BeautifulSoup(m_html, "lxml")
+                        m_table = m_soup.find("table", id="s-menu")
+                        if m_table:
+                            monthly_cands = self._parse_monthly_table(
+                                m_table, monthly_url,
+                            )
+                            candidates.extend(monthly_cands)
+                    except Exception:
+                        logger.warning(
+                            "Failed to fetch Lawphil monthly page: %s",
+                            monthly_url,
+                            exc_info=True,
+                        )
+                        continue
 
         logger.info(
             "Discovered %d candidates from Lawphil: %s",
@@ -112,7 +168,102 @@ class LawphilFetcher(BaseFetcher):
         )
 
     # ------------------------------------------------------------------
-    # Parsing helpers
+    # Page-level parsers
+    # ------------------------------------------------------------------
+
+    def _parse_monthly_table(
+        self,
+        table: Tag,
+        base_url: str,
+    ) -> list[CandidateDoc]:
+        """Parse all ``tr.xy`` rows from a monthly ``table#s-menu``."""
+        candidates: list[CandidateDoc] = []
+        seen_urls: set[str] = set()
+
+        rows = table.find_all("tr", class_="xy")
+        for row in rows:
+            try:
+                candidate = self._parse_table_row(row, base_url, seen_urls)
+                if candidate:
+                    candidates.append(candidate)
+            except Exception:
+                logger.warning("Failed to parse Lawphil table row", exc_info=True)
+                continue
+
+        return candidates
+
+    @staticmethod
+    def _discover_monthly_urls(
+        soup: BeautifulSoup,
+        base_url: str,
+    ) -> list[str]:
+        """Find monthly page links on a year index page.
+
+        Year index pages have links like ``jan2025/jan2025.html``.
+        Returns URLs sorted with the most recent month first.
+        """
+        month_order = {
+            "jan": 1, "feb": 2, "mar": 3, "apr": 4,
+            "may": 5, "jun": 6, "jul": 7, "aug": 8,
+            "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+        }
+        urls: list[tuple[int, str]] = []
+        seen: set[str] = set()
+
+        for link in soup.find_all("a", href=True):
+            raw_href = str(link.get("href", ""))
+            if not _MONTHLY_PAGE_PATTERN.search(raw_href):
+                continue
+            href = (
+                raw_href
+                if raw_href.startswith("http")
+                else urljoin(base_url, raw_href)
+            )
+            if href in seen:
+                continue
+            seen.add(href)
+
+            # Extract month for sorting (e.g., "jan" from "jan2025.html")
+            m = re.search(r"([a-z]{3})\d{4}\.html$", href, re.IGNORECASE)
+            month_num = month_order.get(m.group(1).lower(), 0) if m else 0
+            urls.append((month_num, href))
+
+        # Sort descending by month number (most recent first).
+        urls.sort(key=lambda x: x[0], reverse=True)
+        return [url for _, url in urls]
+
+    @staticmethod
+    def _discover_latest_year_url(
+        soup: BeautifulSoup,
+        base_url: str,
+    ) -> str | None:
+        """Find the most recent year index link on the main judjuris page.
+
+        The main index (``judjuris.html``) has links like
+        ``juri2025/juri2025.html``.
+        """
+        best_year = 0
+        best_url: str | None = None
+
+        for link in soup.find_all("a", href=True):
+            raw_href = str(link.get("href", ""))
+            m = _YEAR_INDEX_PATTERN.search(raw_href)
+            if not m:
+                continue
+            year = int(m.group(1))
+            if year > best_year:
+                best_year = year
+                href = (
+                    raw_href
+                    if raw_href.startswith("http")
+                    else urljoin(base_url, raw_href)
+                )
+                best_url = href
+
+        return best_url
+
+    # ------------------------------------------------------------------
+    # Row-level parsers
     # ------------------------------------------------------------------
 
     def _parse_table_row(
