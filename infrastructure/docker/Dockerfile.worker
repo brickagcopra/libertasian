@@ -31,7 +31,12 @@ RUN uv pip install --system --no-cache-dir -r pyproject.toml
 # Stage 2: Production
 FROM python:3.12-slim AS runner
 
-# Install runtime-only system dependencies
+# Install runtime-only system dependencies.
+# procps (pgrep) is required for the beat container's healthcheck override
+# in docker-compose, which tests for a live "celery ... beat" process rather
+# than pinging workers (the default `celery inspect ping` doesn't respond on
+# a beat-only container and was causing libertasian-worker-beat to be marked
+# unhealthy in production).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     tesseract-ocr-eng \
@@ -40,6 +45,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     libpq5 \
     curl \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

@@ -72,10 +72,14 @@ const SOURCES: SourceSeed[] = [
     ],
   },
   {
+    // NOTE: Lawphil is a long-running mirror of SC decisions. We classify it as
+    // `official` / `high` trust so its docs clear truthfulness validation on the
+    // same path as SC E-Library docs. See PR description for rationale — this
+    // is a policy call that should be reviewed before merge.
     name: 'Lawphil',
-    type: 'semi_official',
+    type: 'official',
     domain: 'lawphil.net',
-    trustLevel: 'medium',
+    trustLevel: 'high',
     fetchStrategy: 'crawler',
     endpoints: [
       {
@@ -348,12 +352,18 @@ async function main() {
     {
       key: 'ingestion_schedule',
       value: {
-        enabled: false,
+        // Global flag ON by default so scheduled ingestion runs out of the box.
+        // Per-source flags are all ON — including official_gazette and congress.
+        // Those two sit behind Cloudflare Turnstile today and will no-op at the
+        // fetcher layer (CloudflareBlockedError recorded to errors_json), but we
+        // keep their schedules enabled so we keep getting telemetry on whether
+        // the block lifts. See worker-service fetchers and the PR description.
+        enabled: true,
         schedules: [
-          { sourceKey: 'supreme_court_elibrary', cron: '0 2 * * *', enabled: false },
-          { sourceKey: 'lawphil', cron: '0 3 * * *', enabled: false },
-          { sourceKey: 'official_gazette', cron: '0 4 * * *', enabled: false },
-          { sourceKey: 'congress', cron: '0 5 * * *', enabled: false },
+          { sourceKey: 'supreme_court_elibrary', cron: '0 2 * * *', enabled: true },
+          { sourceKey: 'lawphil', cron: '0 3 * * *', enabled: true },
+          { sourceKey: 'official_gazette', cron: '0 4 * * *', enabled: true },
+          { sourceKey: 'congress', cron: '0 5 * * *', enabled: true },
         ],
       },
       description:

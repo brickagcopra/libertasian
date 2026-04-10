@@ -16,6 +16,7 @@ Per CLAUDE.md:
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 from celery import shared_task
@@ -23,6 +24,7 @@ from celery import shared_task
 from ..clients import ingestion_db_client as db
 from ..clients import nestjs_client, s3_client
 from ..config import settings
+from ..fetchers.base import CloudflareBlockedError
 from ..fetchers.registry import get_fetcher
 from ..classifiers.dedup_classifier import DedupClassifier, DedupTier
 from ..normalizers.text_normalizer import (
@@ -257,8 +259,35 @@ def _process_endpoint(
             "errors": [{"error": f"No fetcher for parser_type={parser_type}"}],
         }
 
-    # Discover candidate documents
-    candidates = fetcher.discover(endpoint_url, last_fetched_str)
+    # Discover candidate documents. CloudflareBlockedError is expected for
+    # sources gated behind Turnstile (officialgazette.gov.ph, congress.gov.ph);
+    # we record it as a structured telemetry entry and return cleanly so the
+    # parent job still completes (not fails). Other exceptions propagate and
+    # are handled by the caller.
+    try:
+        candidates = fetcher.discover(endpoint_url, last_fetched_str)
+    except CloudflareBlockedError as cf_exc:
+        logger.warning(
+            "Cloudflare block on endpoint %s (parser=%s): %s",
+            endpoint["id"],
+            parser_type,
+            cf_exc,
+        )
+        return {
+            "found": 0,
+            "created": 0,
+            "updated": 0,
+            "errors": [{
+                "type": "cloudflare_blocked",
+                "endpoint_id": endpoint["id"],
+                "endpoint_url": cf_exc.endpoint_url,
+                "parser_type": parser_type,
+                "status_code": cf_exc.status_code,
+                "cf_type": cf_exc.cf_type,
+                "detected_at": datetime.now(UTC).isoformat(),
+                "message": str(cf_exc),
+            }],
+        }
 
     result: dict[str, Any] = {
         "found": len(candidates),

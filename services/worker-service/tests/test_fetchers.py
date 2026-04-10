@@ -14,7 +14,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.fetchers.base import BaseFetcher, CandidateDoc, FetchedContent
+from src.fetchers.base import (
+    BaseFetcher,
+    CandidateDoc,
+    CloudflareBlockedError,
+    FetchedContent,
+    is_cloudflare_challenge,
+)
+from src.fetchers.congress import CongressFetcher
+from src.fetchers.official_gazette import OfficialGazetteFetcher
 from src.fetchers.registry import FETCHER_REGISTRY, get_fetcher
 from src.fetchers.supreme_court import SupremeCourtFetcher
 
@@ -412,3 +420,137 @@ class TestFetcherRegistry:
             assert isinstance(fetcher, BaseFetcher)
             assert hasattr(fetcher, "discover")
             assert hasattr(fetcher, "fetch_content")
+
+
+# ---- Cloudflare blocker detection ----
+
+
+# A minimal Cloudflare Turnstile "managed challenge" HTML response. The
+# fetcher's detector keys off the well-known phrases "Just a moment" and
+# "challenge-platform"; real responses are ~30KB but only the markers matter.
+CLOUDFLARE_CHALLENGE_HTML = """
+<!doctype html>
+<html>
+<head><title>Just a moment...</title></head>
+<body>
+  <div id="challenge-running">Checking your browser before accessing…</div>
+  <script src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1"></script>
+</body>
+</html>
+""".strip()
+
+
+class TestCloudflareDetection:
+    """Shared `is_cloudflare_challenge` helper."""
+
+    def test_detects_just_a_moment_phrase(self):
+        assert is_cloudflare_challenge(CLOUDFLARE_CHALLENGE_HTML) is True
+
+    def test_detects_challenge_platform_script(self):
+        html = '<script src="/cdn-cgi/challenge-platform/..."></script>'
+        assert is_cloudflare_challenge(html) is True
+
+    def test_does_not_match_ordinary_html(self):
+        html = "<html><body><h1>Hello world</h1></body></html>"
+        assert is_cloudflare_challenge(html) is False
+
+    def test_empty_string(self):
+        assert is_cloudflare_challenge("") is False
+
+    def test_none_safe(self):
+        assert is_cloudflare_challenge(None) is False  # type: ignore[arg-type]
+
+
+class TestCloudflareBlockedErrorMetadata:
+    """CloudflareBlockedError carries structured telemetry fields."""
+
+    def test_defaults(self):
+        err = CloudflareBlockedError(endpoint_url="https://example.com/")
+        assert err.endpoint_url == "https://example.com/"
+        assert err.status_code == 403
+        assert err.cf_type == "managed_challenge"
+        assert "example.com" in str(err)
+
+    def test_custom_type(self):
+        err = CloudflareBlockedError(
+            endpoint_url="https://example.com/",
+            status_code=503,
+            cf_type="js_challenge",
+        )
+        assert err.status_code == 503
+        assert err.cf_type == "js_challenge"
+
+
+class TestOfficialGazetteCloudflareHandling:
+    """OG fetcher raises CloudflareBlockedError on managed challenge 403."""
+
+    def test_raises_on_managed_challenge(self):
+        fetcher = OfficialGazetteFetcher()
+        mock_response = MagicMock()
+        mock_response.status_code = 403
+        mock_response.text = CLOUDFLARE_CHALLENGE_HTML
+
+        mock_client = MagicMock()
+        with patch.object(fetcher, "_get_client") as get_client, \
+                patch.object(fetcher, "_fetch_with_retry", return_value=mock_response):
+            get_client.return_value.__enter__.return_value = mock_client
+            with pytest.raises(CloudflareBlockedError) as exc_info:
+                fetcher.discover(
+                    "https://www.officialgazette.gov.ph/section/laws/executive-issuances/",
+                )
+
+        assert exc_info.value.cf_type == "managed_challenge"
+        assert exc_info.value.status_code == 403
+        assert "officialgazette" in exc_info.value.endpoint_url
+
+    def test_plain_403_returns_empty_not_raise(self):
+        """Non-Cloudflare 403 (generic bot block) should not raise."""
+        fetcher = OfficialGazetteFetcher()
+        mock_response = MagicMock()
+        mock_response.status_code = 403
+        mock_response.text = "<html><body>Forbidden</body></html>"
+
+        mock_client = MagicMock()
+        with patch.object(fetcher, "_get_client") as get_client, \
+                patch.object(fetcher, "_fetch_with_retry", return_value=mock_response):
+            get_client.return_value.__enter__.return_value = mock_client
+            candidates = fetcher.discover(
+                "https://www.officialgazette.gov.ph/section/laws/executive-issuances/",
+            )
+
+        assert candidates == []
+
+
+class TestCongressCloudflareHandling:
+    """Congress fetcher raises CloudflareBlockedError on managed challenge 403."""
+
+    def test_raises_on_managed_challenge(self):
+        fetcher = CongressFetcher()
+        mock_response = MagicMock()
+        mock_response.status_code = 403
+        mock_response.text = CLOUDFLARE_CHALLENGE_HTML
+
+        mock_client = MagicMock()
+        with patch.object(fetcher, "_get_client") as get_client, \
+                patch.object(fetcher, "_fetch_with_retry", return_value=mock_response):
+            get_client.return_value.__enter__.return_value = mock_client
+            with pytest.raises(CloudflareBlockedError) as exc_info:
+                fetcher.discover("https://www.congress.gov.ph/legisdocs/?v=ra")
+
+        assert exc_info.value.cf_type == "managed_challenge"
+        assert exc_info.value.status_code == 403
+        assert "congress" in exc_info.value.endpoint_url
+
+    def test_plain_403_returns_empty_not_raise(self):
+        fetcher = CongressFetcher()
+        mock_response = MagicMock()
+        mock_response.status_code = 403
+        mock_response.text = "<html><body>Forbidden</body></html>"
+
+        mock_client = MagicMock()
+        with patch.object(fetcher, "_get_client") as get_client, \
+                patch.object(fetcher, "_fetch_with_retry", return_value=mock_response):
+            get_client.return_value.__enter__.return_value = mock_client
+            candidates = fetcher.discover("https://www.congress.gov.ph/legisdocs/?v=ra")
+
+        assert candidates == []

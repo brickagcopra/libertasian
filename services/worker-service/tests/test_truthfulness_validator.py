@@ -264,3 +264,47 @@ class TestEdgeCases:
         result = _validate(total_citations=100, resolved_citations=79)
         citation_check = next(c for c in result.checks if c.name == "citation_mapping")
         assert not citation_check.passed
+
+
+# ─── Parameterized trust_level → verdict mapping ────────────────────────
+#
+# Regression suite for Issue 3 (Lawphil vs SC divergence). The only reason
+# Lawphil docs landed as draft/needs_review while SC docs auto-published was
+# `source.trust_level`: the validator treats only `'high'` as official_source.
+# These tests pin the contract so future contributors can't silently weaken
+# or extend the mapping without touching the test suite.
+
+
+@pytest.mark.parametrize(
+    "trust_level,expected_verdict,official_passes",
+    [
+        ("high", Verdict.PUBLISH, True),
+        ("medium", Verdict.HUMAN_REVIEW, False),
+        ("low", Verdict.HUMAN_REVIEW, False),
+        (None, Verdict.HUMAN_REVIEW, False),
+        # Unknown / garbage values must never unlock auto-publish.
+        ("bogus", Verdict.HUMAN_REVIEW, False),
+        ("HIGH", Verdict.HUMAN_REVIEW, False),  # case-sensitive on purpose
+    ],
+)
+def test_trust_level_drives_verdict(
+    trust_level: str | None,
+    expected_verdict: Verdict,
+    official_passes: bool,
+) -> None:
+    """All other checks pass → only trust_level decides publish vs review.
+
+    Lawphil bumping to `trust_level='high'` in seed + migration is the
+    explicit fix for Issue 3. This test enforces that 'high' is the only
+    value that satisfies the `official_source` check.
+    """
+    result = _validate(source_trust_level=trust_level)
+
+    official_check = next(c for c in result.checks if c.name == "official_source")
+    assert official_check.passed is official_passes, (
+        f"trust_level={trust_level!r} expected official_passes={official_passes}"
+    )
+    assert result.verdict == expected_verdict, (
+        f"trust_level={trust_level!r} expected verdict={expected_verdict}, "
+        f"got {result.verdict} (reasons={result.reasons})"
+    )

@@ -58,6 +58,44 @@ DEFAULT_HEADERS: dict[str, str] = {
 RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
 
 
+class CloudflareBlockedError(Exception):
+    """Raised when a source is gated behind a Cloudflare managed challenge.
+
+    This is a *recoverable* condition from the pipeline's point of view: the
+    fetcher did its job, the remote site is simply refusing to serve us without
+    a JavaScript challenge solver (Turnstile). Callers should catch this, mark
+    the endpoint run as "blocked" in ``errors_json`` (keeping job status
+    ``completed``), and continue with the next endpoint.
+
+    This is intentionally distinct from generic HTTP 403 errors so operators
+    can filter telemetry on "site is blocking us behind Cloudflare" vs. other
+    bot mitigations.
+    """
+
+    def __init__(
+        self,
+        endpoint_url: str,
+        status_code: int = 403,
+        cf_type: str = "managed_challenge",
+    ) -> None:
+        self.endpoint_url = endpoint_url
+        self.status_code = status_code
+        self.cf_type = cf_type
+        super().__init__(
+            f"Cloudflare {cf_type} blocked {endpoint_url} (HTTP {status_code})",
+        )
+
+
+def is_cloudflare_challenge(html: str) -> bool:
+    """Detect Cloudflare Turnstile / managed challenge pages.
+
+    Shared helper so every fetcher uses the same detection rules.
+    """
+    if not html:
+        return False
+    return "Just a moment" in html or "challenge-platform" in html
+
+
 class CandidateDoc(BaseModel):
     """A candidate document discovered during crawling."""
 
