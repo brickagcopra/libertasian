@@ -19,11 +19,22 @@ The target product is three things stacked on top of each other:
 
 The single most important architectural decision in this document is to **add a new `backfill_batches` orchestration layer beside the existing `ingestion_jobs` table rather than overloading `ingestion_jobs`**. A backfill batch is an admin-defined unit of historical work with a budget ceiling, checkpoint state, and a start/finish year-range. It spawns many `ingestion_jobs` as children — one per source-per-month or per-source-per-year window — and those children continue to flow through the same fetcher/dedup/parser pipeline that PR #1 repaired. This keeps the daily watch loop unchanged and intact while giving the historical walk a proper home. Every other piece of the design — the derivative fanout, the prompt strategy, the admin panel, the cost model — flows from this split.
 
-A second material finding from the Phase 0a research pass: **the Supreme Court has moved from the traditional eight-subject bar examination structure to a six core-subject structure** for the 2025 and 2026 bar cycles, per Bar Bulletin No. 1, Series of 2026 (as reported by PhilSTAR Life and corroborated by LexRex and Respicio — the SC's own domain `sc.judiciary.gov.ph` returned HTTP 403 for all programmatic fetches in this research round; see [research notes §6](./research-notes-corpus-platform.md)). The subject-taxonomy section below is designed around the **current six-subject reality** with a back-compat mapping to the legacy eight-subject structure, because our historical corpus of bar exam questions (LawPhil archive 2006–2022) was written under the legacy structure and must stay addressable under it.
+A second material finding from the Phase 0a research pass: **the Supreme Court has moved from the traditional eight-subject bar examination structure to a six core-subject structure** for the 2025 and 2026 bar cycles, per Bar Bulletin No. 1, Series of 2026 (as reported by PhilSTAR Life and corroborated by LexRex and Respicio — the SC's own domain `sc.judiciary.gov.ph` returned HTTP 403 for all programmatic fetches in this research round; see [research notes §6](./research-notes-corpus-platform.md)). The subject-taxonomy section below treats the **traditional eight-subject structure (`study_8`) as the primary organising axis** for the corpus and derivative layer — that is the taxonomy LawPhil's bar-question archive is organised around and the taxonomy the historical corpus was written under — and models the **current six-subject bar-administration structure (`bar_admin_6`) as a secondary projection** for bar-cycle surfaces (weightings, what's on this year's exam, day-AM/PM buckets). See §6 and open blocking decision #1 in §0.1.
 
 A third decision worth flagging up front: **prompt text for every LLM call is deferred to prod Claude**. Every LLM call in Section 5 of this document is specified down to the input schema, output schema, validator, and evaluator — but the actual prompt body is a `<<PROD_CLAUDE_DRAFT_PROMPT_HERE>>` placeholder. Prod Claude is the domain expert and will fill those placeholders in. Local Claude (me) does not have the Philippine legal-pedagogy grounding to write those prompts defensibly.
 
 The document below is organised into twelve sections: current-state and headline findings (§1), target data model (§2), backfill engine design (§3), derivative generation pipeline (§4), prompt strategy (§5), subject taxonomy (§6), admin panel additions (§7), disclaimer and rights tracking (§8), cost model (§9), test strategy (§10), migration plan from current state (§11), and phase plan for implementation (§12). Each section that contains a materially unverified assumption ends with an "Open questions" subsection listing what needs human or prod-Claude input.
+
+**Scope framing:** LIBERTASIAN is an educational research platform. Nothing it generates or retrieves is legal advice. The primary corpus is public-domain Philippine government material; everything else — digests, doctrines, MCQs, essay answers, flashcards, outlines, sample pleadings, sample contracts — is an AI-generated derivative layer built on top of that corpus and marked as such in the database schema.
+
+### 0.1 Index of open blocking decisions
+
+These are the only items still owed by the user or by prod Claude before Phase 1 implementation can proceed. They are numbered for stable reference across PRs; do not renumber without updating all callers.
+
+1. **Confirm `study_8` primary / `bar_admin_6` secondary.** Current design in §6 treats the traditional eight-subject study taxonomy (`study_8`) as the primary organising axis for the corpus and derivative layer, and the current six-subject bar-admin taxonomy (`bar_admin_6`) as a secondary, bar-oriented projection. User to confirm before seed data is written.
+2. **Arellano Law Foundation outreach email for LawPhil historical backfill.** A polite "we are doing a one-time historical backfill against your archive" email to Arellano Law Foundation. User action. Blocks nothing technical, but is strongly recommended before the first full-year backfill runs against LawPhil.
+3. **Digest marketplace surface scope.** Whether and how editorial digests are exposed as a browsable surface (search, subject browse, "digest of the day," etc.) is not specified in this document. Deferred until the derivative layer is producing stable output.
+4. **Phase 1 derivative-type scope tier.** Pick one of the three scope tiers in §9.6 (≈$380 / ≈$520 / ≈$750–$888 for the LawPhil historical backfill plus associated derivatives). User action. Determines which derivative types are enabled in the first production run.
 
 ---
 
@@ -47,7 +58,7 @@ From the codebase reconnaissance pass, the following subsystems are production-q
 
 ### 1.2 What needs to change, at a glance
 
-- **New tables:** `backfill_batches`, `backfill_checkpoints`, `derivative_artifacts`, `derivative_generation_jobs`, `mcq_questions`, `mcq_options`, `essay_prompts`, `essay_rubrics`, `bar_exam_sittings`, `subjects`, `subject_topics`, `document_subject_assignments`, `content_disclaimers`, `budget_ledger`. A few existing tables get small additive columns (see §2.3).
+- **New tables:** `backfill_batches`, `backfill_checkpoints`, `derivative_artifacts`, `derivative_generation_jobs`, `mcq_questions`, `mcq_options`, `essay_prompts`, `essay_rubrics`, `bar_exam_sittings`, `subjects`, `subject_topics`, `subject_equivalences`, `document_subject_assignments`, `codal_subject_assignments`, `content_disclaimers`, `budget_ledger`. A few existing tables get small additive columns (see §2.3).
 - **New Celery tasks:** `start_backfill_batch`, `enumerate_backfill_candidates`, `run_backfill_batch_tick`, `generate_derivative`, `validate_derivative`, `classify_document_subjects`.
 - **Generalised validator:** `validate_output(output_type, ...)` replaces the call site of `validate_document(...)` where derivatives are concerned. Legal-document ingestion keeps using `validate_document(...)` unchanged.
 - **Admin panel additions:** Backfill page, Budget page (extends AI-Settings), Schedule page (extends AI-Settings with form-driven cron editor), Derivatives page (re-trigger generation per type per date range), Subjects page (taxonomy browser with AI-assigned counts per subject).
@@ -64,15 +75,32 @@ The prompt that kicked off this work assumes the Philippine bar examination cove
 5. Criminal Law (10%)
 6. Remedial Law, Legal and Judicial Ethics with Practical Exercises (25%)
 
-This matters architecturally because our historical corpus of bar exam questions — LawPhil's archive under `/courts/bm/barQ/[year]/[subject]_Q.html` — covers **2006 through 2022**, and those questions were written against the legacy eight-subject taxonomy. The 2023 and later bar exams, if and when we acquire them, will be under the six-subject taxonomy. We therefore design the `subjects` table as **versioned by `taxonomy_version`** (see §6) so that a 2015 Mercantile Law question maps cleanly to legacy-8.mercantile, a 2026 Commercial and Taxation Laws question maps cleanly to modern-6.commercial_taxation, and both can be surfaced to a student filtering by "Commercial Law" through a compatibility layer. This is tractable but it is not the frame the original prompt anticipated, and it is load-bearing enough that I want it flagged before any schema work begins.
+This matters architecturally, but it does **not** make the six-subject structure the primary organising taxonomy for the LIBERTASIAN corpus. The primary taxonomy is `study_8` — the traditional eight-subject Philippine study taxonomy that LawPhil's bar-question archive is organised around, that eCodal+ and generations of bar-review material use, and that the historical Philippine legal-academic corpus was written under. `bar_admin_6` is modelled as a **secondary** taxonomy that projects from `study_8` via equivalence rows, so that "what's on the bar this cycle" surfaces can still render correctly without reorganising the corpus. Concretely: a 2015 Mercantile Law question is classified under `study_8.mercantile_law` at ingest time (from its LawPhil URL slug — see §3 and §6), and the subject service projects it to `bar_admin_6.commercial_taxation` on read. A 2026 Commercial and Taxation Laws question, if and when we acquire one, is classified into its constituent `study_8` subjects (mercantile and taxation) at ingest time and projected back to `bar_admin_6.commercial_taxation` for the bar-cycle view. The `subjects` table is **versioned by `taxonomy_version`** (see §6) to enforce this split in the schema.
 
-### 1.4 Headline finding #2 — sc.judiciary.gov.ph blocks programmatic fetches
+### 1.4 Sourcing strategy and source-accessibility findings
 
-Every attempted fetch to `sc.judiciary.gov.ph` during the research round returned HTTP 403 from the cloud-originated egress used for this session. Attempted URLs included `/bar-exams/`, `/bar-2025/`, `/category/bar-matters/`, and the Bar Bulletin PDF at `/wp-content/uploads/2025/10/2026-BAR-Bar-Bulletin-No.-1-October-16-2025.pdf`. This means:
+**The MVP corpus is public-domain Philippine government material only.** Nothing else is ingested as a primary source. Everything else — suggested bar answers, model essay answers, sample pleadings, sample contracts, subject outlines, flashcards, IRAC digests, doctrine extracts, MCQs — is an **AI-generated derivative layer** on top of that public-domain corpus. The split between primary (scraped public-domain) and derivative (LLM-generated) is the load-bearing distinction that the §2 data model, the §4 generation pipeline, and the §8 rights/disclaimer model are all built around: **derivatives are never presented as authoritative**, and the `content_rights` column on every derivative row makes the classification machine-readable.
 
-- The architecture cannot assume the SC website is a directly crawlable source for bar bulletins, syllabi, or decisions without additional work on the egress side (residential-grade exit, polite compliance policy, or a formal PIO data-access request). Treat SC as a **semi-accessible source** that may require human-in-the-loop fetching for some paths.
-- LawPhil (Arellano Law Foundation) remains the primary machine-addressable source for SC decisions and pre-2022 bar questions. Its URL structure is fully enumerable (verified in the research notes) — year index → month index → decision file with a `gr_[NUMBER]_[YEAR].html`, `am_[PREFIX]_[YEAR].html`, or `ac_[NUMBER]_[YEAR].html` filename pattern, back to 1901.
-- Official Gazette remains gated on Cloudflare detection that the fetcher base class handles by marking the endpoint blocked rather than crashing the job — but this means OG decisions, EOs, and proclamations may only be ingestible in bursts when Cloudflare is lenient. Treat OG as **semi-official and best-effort**, not as a backbone source.
+**Primary backbone — LawPhil (Arellano Law Foundation).** LawPhil is the primary machine-addressable source for Supreme Court decisions back to 1901 and for bar examination questions published by the Supreme Court between 2006 and 2022. Its URL structure is fully enumerable (verified in the research notes) — year index → month index → decision file with a `gr_[NUMBER]_[YEAR].html`, `am_[PREFIX]_[YEAR].html`, or `ac_[NUMBER]_[YEAR].html` filename pattern, back to 1901. The LawPhil historical backfill is the single largest piece of ingestion work in the plan and is what the backfill engine in §3 is designed around. See open blocking decision #2 in §0.1 for the recommended outreach email to Arellano Law Foundation.
+
+**High-value historical targets explicitly named for the primary corpus:**
+
+- **Old Supreme Court decisions** — LawPhil's jurisprudence archive, walked year by year back to 1901. The corpus is heavy-tailed and the 20th-century material is the single largest block of authoritative content we can obtain without a formal data-access process.
+- **Statutes, Republic Acts, and codals** — Congress of the Philippines for Republic Acts (Congress fetcher, existing), LawPhil's statutes subtree for older Acts and codals, and the Official Gazette for proclamations and executive issuances on a best-effort basis. Codals (Civil Code, Revised Penal Code, Family Code, Labor Code, NIRC, etc.) are ingested at code level but segmented per article/section (see §6 on `codal_subject_assignments`).
+- **Bar examination questions published by the Supreme Court** — LawPhil's `/courts/bm/barQ/[year]/[subject]_Q.html` subtree, 2006–2022, carrying a `study_8` subject assignment **at ingest time** (not as a later enrichment). See §3 on the backfill parser and §4 on the classification pipeline.
+
+**Secondary, best-effort sources:**
+
+- **Official Gazette (officialgazette.gov.ph)** — remains Cloudflare-gated. The existing fetcher base class handles Cloudflare detection by marking the endpoint blocked rather than crashing the job, which means OG decisions, Executive Orders, and Proclamations are ingestible in bursts when Cloudflare is lenient. Treat OG as **semi-official and best-effort**, not as a backbone source.
+- **Congress of the Philippines (congress.gov.ph)** — primary source for Republic Acts. The existing Congress fetcher has a known panel-layout pagination bug flagged in §1.1; beyond that, Congress is a reachable and polite source and is in scope for the backfill engine.
+- **SC e-library (sc.judiciary.gov.ph/e-library)** — included on a best-effort basis when the path is reachable. Stays flagged as **semi-accessible** per the finding below.
+
+**Source-accessibility finding: `sc.judiciary.gov.ph` blocks programmatic fetches.** Every attempted fetch to `sc.judiciary.gov.ph` during the research round returned HTTP 403 from the cloud-originated egress used for this session. Attempted URLs included `/bar-exams/`, `/bar-2025/`, `/category/bar-matters/`, and the Bar Bulletin PDF at `/wp-content/uploads/2025/10/2026-BAR-Bar-Bulletin-No.-1-October-16-2025.pdf`. Architectural consequences:
+
+- The architecture cannot assume `sc.judiciary.gov.ph` is a directly crawlable source for bar bulletins, syllabi, or decisions without additional work on the egress side (residential-grade exit, polite compliance policy, or a formal PIO data-access request). Treat the SC domain as a **semi-accessible source** that may require human-in-the-loop fetching for some paths.
+- LawPhil compensates for almost all of this gap: it carries SC decisions directly and carries pre-2022 bar questions directly, and is fully enumerable at the URL level without search.
+
+**What the MVP does not ingest as primary content.** Suggested bar answers, model essay answers, IRAC digests, doctrine extracts, subject outlines, MCQs, flashcards, sample pleadings, sample contracts — none of these are scraped. They are all produced by the derivative pipeline in §4 from the public-domain primary corpus and are marked `content_rights = 'ai_generated_derivative'` or `'mixed'` on write.
 
 ### 1.5 Open questions
 
@@ -163,7 +191,8 @@ model DerivativeArtifact {
   id                    String   @id @default(uuid()) @db.Uuid
   derivativeType        String   @db.VarChar(40)
   //   case_digest | doctrine_extract | mcq_question | essay_prompt | essay_model_answer
-  //   | flashcard | subject_outline | sample_pleading | sample_contract | one_page_summary
+  //   | suggested_bar_answer | flashcard | subject_outline | sample_pleading
+  //   | sample_contract | one_page_summary
   sourceDocumentId      String?  @db.Uuid        // NULL for standalone derivatives
   sourceSectionId       String?  @db.Uuid
   organizationId        String?  @db.Uuid        // NULL for editorial-corpus derivatives
@@ -192,7 +221,7 @@ model DerivativeArtifact {
   contentDisclaimerId   String   @db.Uuid
 
   modelRunId            String?  @db.Uuid        // links to model_runs
-  taxonomyVersion       String?  @db.VarChar(20) // "modern_6" | "legacy_8"
+  taxonomyVersion       String?  @db.VarChar(20) // "study_8" | "bar_admin_6"
   language              String   @default("en") @db.VarChar(10)
 
   publishedAt           DateTime? @db.Timestamptz
@@ -337,12 +366,12 @@ Key design points:
 model Subject {
   id              String   @id @default(uuid()) @db.Uuid
   code            String   @db.VarChar(40)   // stable machine id
-  //   modern_6.political_pil, modern_6.commercial_taxation, modern_6.civil_land_titles,
-  //   modern_6.labor_social, modern_6.criminal, modern_6.remedial_ethics_practical
-  //   legacy_8.civil_law, legacy_8.criminal_law, legacy_8.remedial_law, legacy_8.political_law,
-  //   legacy_8.labor_law, legacy_8.mercantile_law, legacy_8.taxation, legacy_8.legal_ethics
+  //   study_8.civil_law, study_8.criminal_law, study_8.remedial_law, study_8.political_law,
+  //   study_8.labor_law, study_8.mercantile_law, study_8.taxation, study_8.legal_ethics
+  //   bar_admin_6.political_pil, bar_admin_6.commercial_taxation, bar_admin_6.civil_land_titles,
+  //   bar_admin_6.labor_social, bar_admin_6.criminal, bar_admin_6.remedial_ethics_practical
   name            String   @db.VarChar(200)
-  taxonomyVersion String   @db.VarChar(20)  // modern_6 | legacy_8
+  taxonomyVersion String   @db.VarChar(20)  // study_8 (primary) | bar_admin_6 (secondary)
   weightPercent   Float?                    // e.g., 15.0 for 2026 Political/PIL
   effectiveFrom   Int?                      // year this subject became effective
   effectiveTo     Int?                      // year it stopped being effective (null = current)
@@ -352,8 +381,9 @@ model Subject {
 
   topics                     SubjectTopic[]
   documentAssignments        DocumentSubjectAssignment[]
-  equivalencesAsModern       SubjectEquivalence[] @relation("EquivalenceModern")
-  equivalencesAsLegacy       SubjectEquivalence[] @relation("EquivalenceLegacy")
+  codalAssignments           CodalSubjectAssignment[]
+  equivalencesAsStudy8       SubjectEquivalence[] @relation("EquivalenceStudy8")
+  equivalencesAsBarAdmin6    SubjectEquivalence[] @relation("EquivalenceBarAdmin6")
 
   @@unique([code, taxonomyVersion])
   @@index([taxonomyVersion])
@@ -383,15 +413,15 @@ model SubjectTopic {
 
 model SubjectEquivalence {
   id                String @id @default(uuid()) @db.Uuid
-  modernSubjectId   String @db.Uuid
-  legacySubjectId   String @db.Uuid
+  study8SubjectId   String @db.Uuid  // study_8 row (primary taxonomy)
+  barAdmin6SubjectId String @db.Uuid // bar_admin_6 row (secondary taxonomy)
   relationship      String @db.VarChar(20) // "equivalent" | "partial" | "subset" | "superset"
   notes             String? @db.Text
 
-  modernSubject     Subject @relation("EquivalenceModern", fields: [modernSubjectId], references: [id])
-  legacySubject     Subject @relation("EquivalenceLegacy", fields: [legacySubjectId], references: [id])
+  study8Subject     Subject @relation("EquivalenceStudy8", fields: [study8SubjectId], references: [id])
+  barAdmin6Subject  Subject @relation("EquivalenceBarAdmin6", fields: [barAdmin6SubjectId], references: [id])
 
-  @@unique([modernSubjectId, legacySubjectId])
+  @@unique([study8SubjectId, barAdmin6SubjectId])
   @@map("subject_equivalences")
 }
 
@@ -423,12 +453,39 @@ model DocumentSubjectAssignment {
   @@index([subjectTopicId])
   @@map("document_subject_assignments")
 }
+
+// Codals are first-class legal documents, but their subject binding is
+// many-to-many (one codal → one or more study_8 subjects). The join below
+// mirrors the shape of `document_subject_assignments` deliberately so that
+// the subject service's compat layer can iterate them in the same code path.
+model CodalSubjectAssignment {
+  id                    String   @id @default(uuid()) @db.Uuid
+  legalDocumentId       String   @db.Uuid        // the codal's LegalDocument row
+  subjectId             String   @db.Uuid        // study_8 subject
+  subjectTopicId        String?  @db.Uuid
+  isPrimary             Boolean  @default(false) // a codal can have one primary subject and several secondary
+  classifiedBy          String   @default("manual") @db.VarChar(20)
+  //   manual | ai | rule_based | import
+  manualOverride        Boolean  @default(false)
+  notes                 String?  @db.Text
+  createdAt             DateTime @default(now()) @db.Timestamptz
+  updatedAt             DateTime @updatedAt @db.Timestamptz
+
+  legalDocument         LegalDocument @relation(fields: [legalDocumentId], references: [id], onDelete: Cascade)
+  subject               Subject       @relation(fields: [subjectId], references: [id])
+  subjectTopic          SubjectTopic? @relation(fields: [subjectTopicId], references: [id])
+
+  @@unique([legalDocumentId, subjectId])
+  @@index([subjectId, isPrimary])
+  @@map("codal_subject_assignments")
+}
 ```
 
 Key design points:
 
-- A single `Subject` row represents a subject **in one taxonomy version**. "Civil Law" exists twice — once with `taxonomy_version = "legacy_8"` and once with `taxonomy_version = "modern_6"` — and the two are joined by a `SubjectEquivalence` row with `relationship = "equivalent"`. For the "Remedial Law, Legal and Judicial Ethics with Practical Exercises" modern subject, the equivalence maps to *three* legacy subjects with `relationship = "superset"`. The compatibility layer lives in the subject service, not in the database.
-- A document or derivative can have **multiple subject assignments** in both taxonomy versions. A 2015 SC decision on corporate law gets assigned to `legacy_8.mercantile_law` (primary) *and* to `modern_6.commercial_taxation` (primary) at classification time. A student filtering by "Commercial Law" surfaces either. A bar question from 2012 is assigned only to its legacy subject (that's what it was written under), but the compatibility layer maps the equivalent modern subject on read if the user asks for it.
+- **Two taxonomies, `study_8` primary and `bar_admin_6` secondary.** A single `Subject` row represents a subject **in one taxonomy version**. "Civil Law" exists twice — once with `taxonomy_version = "study_8"` and once with `taxonomy_version = "bar_admin_6"` — and the two are joined by a `SubjectEquivalence` row with `relationship = "equivalent"`. For the "Remedial Law, Legal and Judicial Ethics with Practical Exercises" bar-admin subject, the equivalence maps to *three* study_8 subjects with `relationship = "superset"`. The compatibility layer lives in the subject service, not in the database. See §6 for why `study_8` is primary and open blocking decision #1 in §0.1.
+- A document or derivative can have **multiple subject assignments** in both taxonomy versions. A 2015 SC decision on corporate law gets assigned to `study_8.mercantile_law` (primary) *and* to `bar_admin_6.commercial_taxation` (primary) at classification time. A student filtering by "Commercial Law" surfaces either. A bar question from 2012 is assigned a `study_8` subject **at ingest time** from its LawPhil URL slug (e.g., `/courts/bm/barQ/2012/mercantile_Q.html` → `study_8.mercantile_law`), with an LLM classifier fallback for ambiguous or missing slugs; the bar-admin equivalent is computed on read via the compat layer if the user asks for it.
+- **Codals are categorised by `study_8` subject.** A codal (Civil Code, Revised Penal Code, Labor Code, NIRC, Family Code, etc.) is a single `LegalDocument` row with one or more `CodalSubjectAssignment` entries: the Civil Code → `study_8.civil_law` (primary); the NIRC → `study_8.taxation` (primary); the Labor Code → `study_8.labor_law` (primary); the Corporation Code → `study_8.mercantile_law` (primary). The join shape deliberately mirrors `document_subject_assignments` so that the subject service can iterate both with the same read code. Codal subject assignments are seeded manually for the canonical Philippine codes and can be extended by admin action.
 - `classifiedBy` and `manualOverride` together give the admin the ability to say "this AI classification is wrong, lock it to X, don't let the re-classifier touch it." When `manualOverride = true`, the classifier task skips the row.
 
 ### 2.4 Additive columns on existing tables
@@ -708,6 +765,7 @@ Concrete validator classes:
 - **`DoctrineExtractValidator`** — checks: (a) the doctrine text exists verbatim or near-verbatim in at least one source section (normalised whitespace); (b) the doctrine type is in an allow-list; (c) the doctrine does not paraphrase the court into saying something the source does not say.
 - **`McqQuestionValidator`** — checks: (a) exactly one correct option is marked; (b) distractors are distinct from the correct answer by more than trivial text substitution; (c) the explanation cites at least one source section; (d) the question stem does not leak the answer; (e) the question is well-formed (single question mark, no stray HTML).
 - **`EssayPromptValidator`** — checks: (a) the prompt text is non-empty and well-formed; (b) if a `modelAnswerJson` is provided, each paragraph cites at least one source section; (c) the rubric, if provided, has a scoring scale and criteria list; (d) if the prompt is sourced from a past bar exam, the citation to the `BarExamSitting` row matches the expected year/subject.
+- **`SuggestedBarAnswerValidator`** — checks: (a) the answer body is structured as IRAC (Issue, Rule, Application, Conclusion) with each heading present and non-empty; (b) every Rule paragraph carries at least one inline citation resolving to a `LegalDocument` row (SC decision, codal section, or rule of court) via `provenanceRecords`; (c) every Application paragraph references at least one retrieved source; (d) the answer cites the parent `BarExamSitting` row if the input was a past bar question; (e) the "not legal advice, educational purposes only" disclaimer token is present on write (enforced downstream by the disclaimer FK, but asserted here as a double-check); (f) the answer does not contain hedging phrases that leak the model's uncertainty ("I think", "as an AI", etc.).
 - **`FlashcardValidator`** — checks: (a) front is a well-formed question or term; (b) back is non-empty and cites at least one source section; (c) front and back do not contain answer leakage (e.g., a definition that restates the term verbatim).
 - **`SubjectOutlineValidator`** — checks: (a) at least three sections; (b) each section has at least one paragraph; (c) subject topic anchors in the outline match real `SubjectTopic` rows.
 - **`SamplePleadingValidator` / `SampleContractValidator`** — checks: (a) the template contains all required structural components for its pleading type (caption, parties, body, prayer, verification, signature block); (b) the template does not contain any real case details accidentally copied from a source document; (c) the "not legal advice" disclaimer appears at the top of the content; (d) the template passes a format linter.
@@ -772,7 +830,24 @@ Classification runs once per document, not once per derivative — all derivativ
 
 ## 5. Prompt strategy and evaluation rubrics
 
-**Important:** This section specifies the *shape* of each LLM call — the inputs, the expected output schema, the validator, and the evaluator — but deliberately leaves the *prompt body* as a `<<PROD_CLAUDE_DRAFT_PROMPT_HERE>>` placeholder. Prod Claude is the domain expert on Philippine legal pedagogy and will fill these in during review. Local Claude does not have the grounding to write these prompts defensibly.
+**Important:** This section specifies the *shape* of each LLM call — the inputs, the expected output schema, the validator, and the evaluator — but deliberately leaves the *prompt body* as a `<<PROD_CLAUDE_DRAFT_PROMPT_HERE>>` placeholder. Prod Claude is the domain expert; every prompt body is authored by prod Claude in the voice of a Philippine legal academic, grounded in the sources cited in the research notes, and spot-checked by prod Claude against the golden set. No external lawyer or external curator is in the loop. See §10.2 for the golden-set sourcing plan and §5.0 below for the reference-product study list that prod Claude is expected to consult before drafting.
+
+### 5.0 How Claude frames prompts as a legal expert
+
+Prod Claude is the domain expert in the loop. Every prompt body below is authored by prod Claude, reviewed by the user, and versioned in `prompt_template_version`. There is no external lawyer, no external legal curator, and no human review gate beyond the user. This has three direct implications that every prompt body must honour:
+
+1. **Voice.** Prompt bodies instruct the model to respond in the voice of a Philippine legal academic — formal, citation-dense, careful about doctrine, explicit about procedural context, conservative when doctrine is contested. The voice is **not** that of an American bar-review tutor and **not** that of a chatbot. The `study_8` taxonomy is the axis the voice maps onto.
+2. **Groundedness.** Every prompt body instructs the model to answer **only** from the provided SOURCE PASSAGES and to abstain if the passages are insufficient. The "grounding rule" and "abstention rule" in the common prompt structure below are non-negotiable. Guardrails are enforced downstream by per-type validators (§4.4) and by the RAG-service output validator: citation existence check (every citation string resolves to a `LegalDocument` row or is marked unresolved), passage-supports-claim check (every factual claim in the output maps to a `ProvenanceRecord` row), and abstention-on-low-score (if the reranker top-k score is below threshold, the derivative generation job is skipped rather than producing a low-quality artifact). These guardrails are **mandatory** for every prompt body in this section.
+3. **Reference-product study list.** Before drafting any prompt body, prod Claude is expected to do its own web research on how each of the following reference products structures (a) case digests, (b) MCQ stems and distractors, (c) essay answer rubrics, (d) subject outlines, and (e) flashcards — and to import the strongest patterns (not the full product) into the LIBERTASIAN prompt templates. The five reference products are:
+    - **Quimbee** — U.S. casebook-indexed case briefs with a Rule / Facts / Issue / Holding / Reasoning / Concurrence / Dissent schema under a "closed universe" sourcing policy. Study their case-brief structure and their issue-spotter essay exam format. ([research notes §1](./research-notes-corpus-platform.md#1-competitor-1--quimbee-quimbeecom))
+    - **Anycase.ai** — Philippine-jurisdiction legal research with conversational "analysis with inline cites" output. Study their citation primitives, not their output format. ([research notes §2](./research-notes-corpus-platform.md#2-competitor-2--anycaseai))
+    - **Digest AI (digest.ph)** — Philippine legal research with documented output styles `Comprehensive`, `Concise`, `Bar Exam`, `Free Form`, and sub-actions `Find | Explain | Ask | Draft | Style`. Study how they differentiate "Bar Exam" output from "Comprehensive" output. ([research notes §3](./research-notes-corpus-platform.md#3-competitor-3--digestph-philippine))
+    - **Jurischat (jurischat.net)** — Philippine legal Q&A with claimed grounding in 120,000+ laws/jurisprudence. Study their citation-to-source binding if observable. ([research notes §4](./research-notes-corpus-platform.md#4-competitor-4--jurischat))
+    - **eCodal+** — Philippine codal app with the pre-2025 eight-subject taxonomy; study their subject taxonomy and segmentation granularity (per-Article vs per-Section) as a sanity check for the `study_8` taxonomy and the codal subject bindings in §6. ([research notes §5](./research-notes-corpus-platform.md#5-competitor-5--ecodal-philippine-codal-app))
+
+    Research findings that influence a prompt body are cited back into `research-notes-corpus-platform.md` with URLs — prod Claude adds new rows to §9 of the research notes as it imports patterns. The reference products are a pattern source, not a licensing source: nothing is copied verbatim, and every prompt body is authored fresh for LIBERTASIAN.
+
+### 5.0a Common prompt structure
 
 Every prompt shares a common structure:
 
@@ -1022,32 +1097,203 @@ interface FlashcardOutput {
 
 ### 5.6 Subject outline prompt (`subject_outline.v1`)
 
-**Purpose:** From a set of documents covering a subject or sub-topic, synthesise a structured outline suitable for bar review.
+**Purpose:** Synthesise a structured study outline for one `study_8` subject (one outline per subject). Subject outlines are first-class derivatives — one row in `derivative_artifacts` per `study_8` subject, regenerable on command from `/admin/derivatives`, and surfaced as the "subject outline" study artifact on read. The bar-admin projection uses the same outline rows, joined through `subject_equivalences`.
 
-**Inputs:** A subject/topic code, a curated list of source document IDs (up to a max), and a target depth level.
+**Inputs (type-safe contract):**
+```typescript
+interface SubjectOutlineInput {
+  taxonomyVersion: "study_8";     // outlines are authored in the primary taxonomy
+  subjectCode: string;             // e.g., "study_8.mercantile_law"
+  curatedSourceDocumentIds: string[];
+  //   admin- or pipeline-selected high-signal sources: leading SC decisions,
+  //   the binding codals for the subject (via codal_subject_assignments),
+  //   and representative bar-question sittings.
+  maxDepth: 2 | 3 | 4;            // section → sub-section → bullet (→ sub-bullet)
+  maxContextTokens: number;
+}
+```
 
-**Output schema:** Hierarchical outline with sections, sub-sections, bullet points, each citing source sections.
+**Output schema:**
+```typescript
+interface SubjectOutlineOutput {
+  subjectCode: string;
+  sections: Array<{
+    heading: string;
+    subjectTopicCode: string | null; // must resolve to a real SubjectTopic if non-null
+    paragraphs: string[];
+    subSections: Array<{
+      heading: string;
+      bullets: Array<{ text: string; citedSectionIds: string[] }>;
+    }>;
+  }>;
+  citedAuthorities: Array<{
+    citationText: string;
+    sourceDocumentId: string | null;
+  }>;
+  abstain: boolean;
+  abstainReason: string | null;
+}
+```
 
 **Validator:** `SubjectOutlineValidator`.
+
+**Regeneration semantics:** A subject outline is regenerated when the admin clicks "Regenerate outline for `study_8.<subject>`" on `/admin/derivatives`. Regeneration soft-deletes the previous outline and writes a new `derivative_artifacts` row; both rows are retained under the archive policy in §4.7. Outlines are also automatically stale-flagged (not auto-regenerated) when new high-signal documents are classified into the subject.
 
 **Prompt body:**
 ```
 <<PROD_CLAUDE_DRAFT_PROMPT_HERE — subject outline>>
 ```
 
-### 5.7 Sample pleading and sample contract prompts
+### 5.6a Suggested bar answer prompt (`suggested_bar_answer.v1`)
 
-**Purpose:** Generate generic, educational samples of Philippine legal templates (pleadings and contracts).
+**Purpose:** Given a past bar examination question (ingested as a `LegalDocument` / `BarExamSitting` pair from the LawPhil `/courts/bm/barQ/` subtree), produce a model essay answer in IRAC form with inline citations to the SC decisions, codal sections, and rules of court retrieved via the existing RAG pipeline. Suggested bar answers are the AI-generated analogue of printed suggested-answer books; they are **never presented as authoritative**, and the `content_rights = 'ai_generated_derivative'` column plus the `ai_essay_model_answer.v1` (or a dedicated `ai_suggested_bar_answer.v1`) disclaimer are non-negotiable.
 
-**Inputs:** Template type (e.g., "motion for reconsideration," "deed of sale"), facts stub, optional jurisdiction specifics.
+**Inputs (type-safe contract):**
+```typescript
+interface SuggestedBarAnswerInput {
+  barExamSittingId: string;            // parent sitting row
+  questionText: string;                // the question stem as ingested from LawPhil
+  study8SubjectCode: string;           // from the ingest-time classification
+  subjectTopicCode: string | null;
+  retrievedPassages: Array<{
+    sourceDocumentId: string;
+    sectionId: string;
+    plainText: string;
+    rerankerScore: number;
+  }>;                                  // top-k from the existing RAG retrieval
+  targetAudience: "student" | "practitioner" | "both";
+  maxContextTokens: number;
+}
+```
 
-**Output schema:** Structured template with placeholder fields for user substitution.
+**Output schema:**
+```typescript
+interface SuggestedBarAnswerOutput {
+  answer: {
+    issue: string;                     // ≤ 200 words
+    rule: string;                      // markdown, must include inline citations
+    application: string;               // markdown, must include inline citations
+    conclusion: string;                // ≤ 150 words
+  };
+  citedAuthorities: Array<{
+    citationText: string;              // e.g., "G.R. No. 262600, Jan. 10, 2024"
+    sourceDocumentId: string;          // must resolve
+    sectionIds: string[];
+    citationType: "case" | "statute" | "rule" | "constitutional" | "codal";
+  }>;
+  rerankerTopScore: number;            // echoed back for the abstention check
+  abstain: boolean;
+  abstainReason: string | null;
+}
+```
 
-**Validator:** `SamplePleadingValidator` / `SampleContractValidator`. Critical check: **the template must not contain real case details from any source document.** The validator runs a near-duplicate scan against the corpus to catch accidental lift-and-shift.
+**Validator:** `SuggestedBarAnswerValidator` (see §4.4). Abstention rule: if `rerankerTopScore` is below the configured threshold (default 0.35) or fewer than three passages were retrieved, the job abstains rather than producing an ungrounded answer.
+
+**Evaluator:** Spot-checked by prod Claude against a small rotating sample; scored on whether every Rule/Application paragraph cites a real source and whether the IRAC structure is preserved. No standalone golden set beyond the digest and MCQ ones in §10.2.
+
+**Prompt body:**
+```
+<<PROD_CLAUDE_DRAFT_PROMPT_HERE — suggested bar answer>>
+```
+
+### 5.7 Sample pleading prompt (`sample_pleading.v1`)
+
+**Purpose:** Generate a fillable template for a specific kind of Philippine pleading (complaint, answer, motion to dismiss, petition for review, motion for reconsideration, etc.) grounded in the governing Rule of Court provision and in any controlling SC decisions retrieved for the pleading type. Output is a template with bracketed placeholders, **not** a real pleading for a real case.
+
+**Inputs (type-safe contract):**
+```typescript
+interface SamplePleadingInput {
+  pleadingType: string;                // e.g., "motion_for_reconsideration", "petition_for_review_rule_45"
+  jurisdiction: string;                // e.g., "RTC", "CA", "SC"
+  factPatternStub: string | null;      // optional narrative stub; if null, the template uses generic placeholders
+  retrievedRules: Array<{              // from the governing Rule of Court via the existing RAG pipeline
+    sourceDocumentId: string;
+    sectionId: string;
+    plainText: string;
+  }>;
+  retrievedCases: Array<{              // top-k SC decisions interpreting the rule
+    sourceDocumentId: string;
+    sectionId: string;
+    plainText: string;
+  }>;
+}
+```
+
+**Output schema:**
+```typescript
+interface SamplePleadingOutput {
+  caption: { court: string; caseNumber: string; parties: string };
+  preamble: string;
+  body: Array<{ heading: string; paragraphs: string[] }>;
+  prayer: string;
+  verificationBlock: string;
+  signatureBlock: string;
+  placeholders: Array<{
+    token: string;                     // e.g., "[PLAINTIFF_NAME]"
+    description: string;
+  }>;
+  citedAuthorities: Array<{
+    citationText: string;
+    sourceDocumentId: string;
+    citationType: "rule" | "case" | "statute";
+  }>;
+  abstain: boolean;
+}
+```
+
+**Validator:** `SamplePleadingValidator` (see §4.4). Critical check: **the template must not contain real case details from any source document.** The validator runs a near-duplicate scan against the corpus to catch accidental lift-and-shift, and also enforces: (a) every structural component required by the pleading type is present (caption, parties, body, prayer, verification, signature block); (b) every citation resolves to a real `LegalDocument` row; (c) the "not legal advice" disclaimer token is present on write.
 
 **Prompt body:**
 ```
 <<PROD_CLAUDE_DRAFT_PROMPT_HERE — sample pleading>>
+```
+
+### 5.7a Sample contract prompt (`sample_contract.v1`)
+
+**Purpose:** Generate a fillable template for a specific kind of Philippine contract (lease, employment, sale, NDA, deed of donation, loan agreement, etc.) grounded in the relevant Civil Code provisions and any applicable special laws (Labor Code for employment, Consumer Act for consumer sales, etc.).
+
+**Inputs (type-safe contract):**
+```typescript
+interface SampleContractInput {
+  contractType: string;                // e.g., "lease_residential", "employment_probationary", "deed_of_absolute_sale"
+  jurisdiction: string;                // default "PH"
+  factPatternStub: string | null;
+  retrievedCivilCodeSections: Array<{
+    sourceDocumentId: string;          // the Civil Code LegalDocument
+    sectionId: string;                 // the specific Article
+    plainText: string;
+  }>;
+  retrievedSpecialLaws: Array<{
+    sourceDocumentId: string;
+    sectionId: string;
+    plainText: string;
+  }>;
+}
+```
+
+**Output schema:**
+```typescript
+interface SampleContractOutput {
+  title: string;
+  preamble: string;                    // "This agreement is made on [DATE] by..."
+  parties: Array<{ role: string; placeholder: string }>;
+  recitals: string[];
+  clauses: Array<{ heading: string; paragraphs: string[] }>;
+  signatureBlock: string;
+  placeholders: Array<{ token: string; description: string }>;
+  citedAuthorities: Array<{
+    citationText: string;
+    sourceDocumentId: string;
+    citationType: "codal" | "statute" | "case";
+  }>;
+  abstain: boolean;
+}
+```
+
+**Validator:** `SampleContractValidator` (shape mirrors `SamplePleadingValidator`). Enforces: (a) required clauses for the contract type (e.g., an employment contract must have compensation, probationary period, and termination clauses); (b) every citation resolves to a real codal section or SC decision; (c) near-duplicate scan against the corpus; (d) the "not legal advice" disclaimer token is present on write.
+
+**Prompt body:**
+```
 <<PROD_CLAUDE_DRAFT_PROMPT_HERE — sample contract>>
 ```
 
@@ -1061,7 +1307,7 @@ interface FlashcardOutput {
 ```typescript
 interface SubjectClassificationOutput {
   assignments: Array<{
-    taxonomyVersion: "modern_6" | "legacy_8";
+    taxonomyVersion: "study_8" | "bar_admin_6";
     subjectCode: string;
     subjectTopicCode: string | null;
     confidence: number;                // 0.0–1.0
@@ -1112,44 +1358,58 @@ interface CitationExtractionOutput {
 
 ## 6. Subject taxonomy
 
-### 6.1 Two taxonomies, explicitly versioned
+### 6.1 Two taxonomies, `study_8` primary and `bar_admin_6` secondary
 
 The system maintains **two parallel taxonomies**:
 
-- **`modern_6`** — the current SC six-subject bar structure (2025 and 2026 per Bar Bulletins, see [research notes §6](./research-notes-corpus-platform.md)).
-- **`legacy_8`** — the traditional eight-subject structure used in past bar exams, old syllabi, and most existing Philippine legal taxonomy apps (eCodal+ uses a variant of this, per research notes §5).
+- **`study_8` (primary)** — the traditional eight-subject Philippine law-school and bar-review taxonomy: Civil Law, Criminal Law, Remedial Law, Political Law (with PIL), Labor Law, Mercantile Law, Taxation, and Legal Ethics. This is the taxonomy LawPhil's bar question archive is organised around, the taxonomy eCodal+ uses (per research notes §5), and the taxonomy that the Philippine legal-academic corpus has been organised around for decades. It is the primary organising axis for the LIBERTASIAN corpus and derivative layer because the historical content we are ingesting was written under it and because the study surfaces we intend to build (subject browse, flashcards, MCQs, outlines) map most cleanly to it. See open blocking decision #1 in §0.1.
+- **`bar_admin_6` (secondary)** — the current Supreme Court six-subject bar-administration structure (2025 and 2026 per Bar Bulletins, see [research notes §6](./research-notes-corpus-platform.md)). This taxonomy is load-bearing for bar-examination surfaces (what weight a subject carries on the actual bar, what Day-AM/PM bucket it sits in, which 2026 bulletin names it) but is **not** the primary axis the corpus is classified against. It is computed as a projection of `study_8` via the equivalence table.
 
-Both taxonomies have their own `Subject` rows and their own `SubjectTopic` children. They are joined by `SubjectEquivalence` rows that declare how a modern subject relates to one or more legacy subjects. The compatibility layer in the subject service translates queries between them at read time: a filter on "Commercial Law" (legacy) can be translated to "Commercial and Taxation Laws" (modern) with a `relationship = 'partial'` flag so the UI can show "also matches Commercial and Taxation Laws documents."
+Both taxonomies have their own `Subject` rows and their own `SubjectTopic` children. They are joined by `SubjectEquivalence` rows that declare how a `study_8` subject relates to one or more `bar_admin_6` subjects, and vice versa. The compatibility layer in the subject service translates queries between them at read time: a filter on "Commercial Law" (`study_8.mercantile_law`) translates to "Commercial and Taxation Laws" (`bar_admin_6.commercial_taxation`) with a `relationship = 'partial'` flag so the UI can show "also matches Commercial and Taxation Laws documents."
 
-Every `DocumentSubjectAssignment` carries a `subjectId` that already encodes the taxonomy version (because each `Subject` is per-taxonomy). A document classified at ingestion time is assigned under **both** taxonomies when the equivalence is one-to-one or one-to-many. Documents that predate the modern taxonomy (historical bar exam questions from 2006–2022) are classified under their legacy subjects primarily, with modern equivalents computed on read.
+Every `DocumentSubjectAssignment` carries a `subjectId` that already encodes the taxonomy version (because each `Subject` is per-taxonomy). A document classified at ingestion time is assigned a primary `study_8` subject and, where the equivalence is one-to-one or one-to-many, a secondary `bar_admin_6` subject as well. Bar exam questions carry their `study_8` subject assignment **at ingest time**, derived from the LawPhil URL slug (e.g., `/courts/bm/barQ/2017/mercantile_Q.html` → `study_8.mercantile_law`, `/courts/bm/barQ/2019/civil-I_Q.html` → `study_8.civil_law`). Slugs that don't map cleanly fall back to the LLM classifier (§5.8). Codals carry their `study_8` subject assignments via `codal_subject_assignments`, seeded manually for the canonical Philippine codes (see §2.3).
 
-### 6.2 Modern 6 subjects (`taxonomy_version = "modern_6"`)
+### 6.2 `study_8` subjects (primary, `taxonomy_version = "study_8"`)
 
-Based on [Bar Bulletin No. 1, Series of 2026 as summarised by PhilSTAR Life](https://philstarlife.com/news-and-views/386662-schedule-subject-coverage-2026-bar-exams) and [Respicio & Co.'s summary of the 2025 syllabus](https://www.respicio.ph/bar/2025/syllabus-for-the-2025-bar-examinations):
-
-| Code | Name | 2026 Weight | Notes |
-|---|---|---|---|
-| `modern_6.political_pil` | Political and Public International Law | 15% | Day 1 AM |
-| `modern_6.commercial_taxation` | Commercial and Taxation Laws | 20% | Day 1 PM |
-| `modern_6.civil_land_titles` | Civil Law and Land Titles and Deeds | 20% | Day 2 AM (note the Land Titles inclusion is new for 2026) |
-| `modern_6.labor_social` | Labor Law and Social Legislation | 10% | Day 2 PM |
-| `modern_6.criminal` | Criminal Law | 10% | Day 3 AM |
-| `modern_6.remedial_ethics_practical` | Remedial Law, Legal and Judicial Ethics with Practical Exercises | 25% | Day 3 PM |
-
-### 6.3 Legacy 8 subjects (`taxonomy_version = "legacy_8"`)
-
-The legacy taxonomy is the one LawPhil's bar question archive is organised around (`/courts/bm/barQ/[year]/[subject]_Q.html` with subjects like `civil-I`, `remedial-I`, `mercantile`, `political`, `labor`, `criminal`, `taxation`, `ethics`). The eight subjects:
+The eight-subject study taxonomy. This is the taxonomy LawPhil's bar question archive is organised around (`/courts/bm/barQ/[year]/[subject]_Q.html` with subjects like `civil-I`, `remedial-I`, `mercantile`, `political`, `labor`, `criminal`, `taxation`, `ethics`). The eight subjects:
 
 | Code | Name | Historical weight (typical) |
 |---|---|---|
-| `legacy_8.political_law` | Political Law and Public International Law | ~15% |
-| `legacy_8.labor_law` | Labor Law and Social Legislation | ~10% |
-| `legacy_8.civil_law` | Civil Law | ~15% |
-| `legacy_8.taxation` | Taxation | ~10% |
-| `legacy_8.mercantile_law` | Mercantile (Commercial) Law | ~15% |
-| `legacy_8.criminal_law` | Criminal Law | ~10% |
-| `legacy_8.remedial_law` | Remedial Law | ~20% |
-| `legacy_8.legal_ethics` | Legal and Judicial Ethics | ~5% |
+| `study_8.political_law` | Political Law and Public International Law | ~15% |
+| `study_8.labor_law` | Labor Law and Social Legislation | ~10% |
+| `study_8.civil_law` | Civil Law | ~15% |
+| `study_8.taxation` | Taxation | ~10% |
+| `study_8.mercantile_law` | Mercantile (Commercial) Law | ~15% |
+| `study_8.criminal_law` | Criminal Law | ~10% |
+| `study_8.remedial_law` | Remedial Law | ~20% |
+| `study_8.legal_ethics` | Legal and Judicial Ethics | ~5% |
+
+Canonical codal bindings (seeded via `codal_subject_assignments`, primary binding only; a codal may have additional secondary bindings):
+
+| Codal | `study_8` subject |
+|---|---|
+| Civil Code | `civil_law` |
+| Family Code | `civil_law` |
+| Revised Penal Code | `criminal_law` |
+| Rules of Court | `remedial_law` |
+| Labor Code | `labor_law` |
+| National Internal Revenue Code | `taxation` |
+| Corporation Code / Revised Corporation Code | `mercantile_law` |
+| 1987 Constitution | `political_law` |
+| Code of Professional Responsibility and Accountability | `legal_ethics` |
+
+### 6.3 `bar_admin_6` subjects (secondary, `taxonomy_version = "bar_admin_6"`)
+
+The current Supreme Court six-subject bar-administration structure, based on [Bar Bulletin No. 1, Series of 2026 as summarised by PhilSTAR Life](https://philstarlife.com/news-and-views/386662-schedule-subject-coverage-2026-bar-exams) and [Respicio & Co.'s summary of the 2025 syllabus](https://www.respicio.ph/bar/2025/syllabus-for-the-2025-bar-examinations). Surfaces that filter by "what's on the bar this year" read from this taxonomy; the underlying documents are still classified under `study_8` and projected via `SubjectEquivalence`.
+
+| Code | Name | 2026 Weight | Notes |
+|---|---|---|---|
+| `bar_admin_6.political_pil` | Political and Public International Law | 15% | Day 1 AM |
+| `bar_admin_6.commercial_taxation` | Commercial and Taxation Laws | 20% | Day 1 PM |
+| `bar_admin_6.civil_land_titles` | Civil Law and Land Titles and Deeds | 20% | Day 2 AM (the Land Titles inclusion is new for 2026) |
+| `bar_admin_6.labor_social` | Labor Law and Social Legislation | 10% | Day 2 PM |
+| `bar_admin_6.criminal` | Criminal Law | 10% | Day 3 AM |
+| `bar_admin_6.remedial_ethics_practical` | Remedial Law, Legal and Judicial Ethics with Practical Exercises | 25% | Day 3 PM |
 
 (Historical weights are approximate and varied per bar cycle — the exact weight per year should be sourced from the corresponding year's bar bulletin and stored on the `BarExamSitting` row, not on `Subject`.)
 
@@ -1157,7 +1417,7 @@ The legacy taxonomy is the one LawPhil's bar question archive is organised aroun
 
 Sub-topic data comes from the Respicio summary of Bar Bulletin No. 1, Series of 2025, because the primary SC syllabus PDFs were inaccessible in the research round (documented in [research notes §8](./research-notes-corpus-platform.md)). The sub-topics below are **what we can confidently ship with**; they need a second pass from prod Claude with the actual syllabus PDFs in hand before we lock them down.
 
-**`modern_6.political_pil`:**
+**`bar_admin_6.political_pil`:**
 - Fundamental constitutional doctrines
 - Powers and functions of governmental branches (legislative, executive, judicial)
 - State sovereignty and territorial questions
@@ -1167,11 +1427,11 @@ Sub-topic data comes from the Respicio summary of Bar Bulletin No. 1, Series of 
 - Law on public officers
 - Public international law: treaties, international organisations, human rights, humanitarian law, maritime law
 
-**`modern_6.commercial_taxation`:**
+**`bar_admin_6.commercial_taxation`:**
 - Commercial: Corporation Law, Securities Regulation Code, Transportation (common carriers), Insurance Code, Intellectual Property Code, Banking Laws
 - Taxation: General principles of taxation, National Internal Revenue Code (as amended by TRAIN, CREATE, Ease of Paying Taxes Act), Tariff and Customs Code, Local Government taxation, Real Property taxation, Tax remedies
 
-**`modern_6.civil_land_titles`:**
+**`bar_admin_6.civil_land_titles`:**
 - Persons and Family Relations (Family Code)
 - Property (possession, ownership, easements)
 - Obligations and Contracts
@@ -1180,19 +1440,19 @@ Sub-topic data comes from the Respicio summary of Bar Bulletin No. 1, Series of 
 - Quasi-contracts, quasi-delicts, damages
 - **Land Titles and Deeds** — Torrens system, Property Registration Decree (P.D. 1529)
 
-**`modern_6.labor_social`:**
+**`bar_admin_6.labor_social`:**
 - Labor standards (wages, hours, conditions)
 - Labor relations (unions, collective bargaining, strikes)
 - Termination and due process
 - Social legislation: Social Security Law, GSIS Law, PhilHealth, Pag-IBIG
 - POEA Rules and Regulations for OFWs
 
-**`modern_6.criminal`:**
+**`bar_admin_6.criminal`:**
 - Book I of the Revised Penal Code (general principles, felonies, penalties)
 - Book II of the Revised Penal Code (specific felonies)
 - Special penal laws: Comprehensive Dangerous Drugs Act (R.A. 9165), Anti-Hazing Law, Anti-VAWC (R.A. 9262), Cybercrime Prevention Act, Anti-Photo and Video Voyeurism, Anti-Terrorism Act
 
-**`modern_6.remedial_ethics_practical`:**
+**`bar_admin_6.remedial_ethics_practical`:**
 - Civil Procedure (Rules of Court, Rules 1–71)
 - Special Proceedings
 - Evidence
@@ -1226,10 +1486,34 @@ The existing admin surface already covers a lot — `/admin/ingestion`, `/admin/
 **Content:**
 - **Active batches panel** (top): cards for each batch in `running` or `paused` state showing source, year range, progress bar (`candidatesProcessed / candidatesDiscovered`), budget gauge (`budgetConsumedUsd / budgetCeilingUsd`), last tick time, Pause/Resume/Halt buttons.
 - **Batch history table**: all batches with filters by source, status, date range.
-- **New batch dialog**: form with Source, Endpoint (optional), Year Start, Year End, Month Start (optional), Month End (optional), Budget Ceiling (USD), Admin Notes, "Create and start" / "Create as pending."
-- **Halt/Resume dialog**: warning text explaining mid-document vs hard-kill semantics.
-- **Extend budget dialog**: numeric input with a preview of the new ceiling and a required reason field.
-- **Kill in-flight jobs** (danger zone): big red button, requires typing the batch name to confirm.
+- **New batch dialog** — admin-editable form fields, each backed by a named column:
+
+    | Form field | Backing column | Notes |
+    |---|---|---|
+    | Source | `backfill_batches.source_id` | required |
+    | Source endpoint (optional) | `backfill_batches.source_endpoint_id` | scopes by parser type |
+    | Batch name | `backfill_batches.name` | admin-facing label |
+    | Start date | `backfill_batches.backfill_start_date` | wall-clock date; optional; bounds the overall backfill window |
+    | End date | `backfill_batches.backfill_end_date` | wall-clock date; optional |
+    | Year start / end | `backfill_batches.year_start`, `year_end` | inclusive range of source content years |
+    | Month start / end (optional) | `backfill_batches.month_start`, `month_end` | narrows content range |
+    | Daily ingestion start time | `backfill_batches.daily_window_start_local` | wall-clock time-of-day; the tick worker only creates new child jobs within this window |
+    | Daily ingestion stop time | `backfill_batches.daily_window_stop_local` | wall-clock time-of-day |
+    | Timezone | `backfill_batches.daily_window_tz` | IANA zone, default `Asia/Manila` |
+    | Per-batch budget ceiling (USD) | `backfill_batches.budget_ceiling_usd` | **independent of the monthly and daily global ceilings**; a batch can have its own cap |
+    | Admin notes | `backfill_batches.admin_notes` | |
+    | Create and start / Create as pending | — | determines `status` transition |
+
+    All fields are admin-editable at runtime via a `PATCH /admin/backfill/batches/:id` endpoint; edits to `budget_ceiling_usd` go through the dedicated Extend-Budget flow below.
+- **Hard stop behaviour — "budget exhausted" state.** When an active batch hits **any** budget ceiling that applies to it (its own per-batch `budget_ceiling_usd`, the global monthly ceiling, or the global daily sub-ceiling), the tick worker **stops creating new child jobs, finishes any currently in-flight document within its current lifetime, and then transitions the batch to `halted_budget`**. The halt is mid-document safe: a document that started fetching before the ceiling was hit runs to completion; no new documents are started. When a batch is in `halted_budget`, the `/admin/backfill/batches/:id` detail view shows a **"budget exhausted" panel with exactly two buttons**:
+
+    1. **Extend budget by $X** — opens the Extend Budget dialog (see below).
+    2. **End batch** — transitions the batch to `completed` (if cursor reached end) or a terminal `halted_permanently` state; no further work is scheduled.
+
+    There is **no automatic budget extension**, **no email escalation**, **no Slack/Discord webhook** — the admin sees the halted state the next time they open the panel, and the only way forward is one of the two buttons. The same two-button pattern is used when the global monthly or daily ceiling halts the batch; in that case, the Extend Budget dialog edits the global ceiling on `/admin/budget` rather than the per-batch ceiling.
+- **Extend budget dialog**: numeric input with a preview of the new ceiling (per-batch or global, depending on which limit halted the batch), a required reason field, and a "Resume batch" button that transitions `halted_budget` → `running`.
+- **Halt/Resume dialog** (admin-initiated halt, separate from budget halt): warning text explaining mid-document vs hard-kill semantics. Admin halt transitions `running` → `halted_admin` and the same two buttons pattern ("Extend budget" is replaced with "Resume batch") is shown on the batch detail panel.
+- **Kill in-flight jobs** (danger zone): big red button, requires typing the batch name to confirm. This is the explicit hard-stop path that revokes Celery tasks and leaves in-flight documents potentially half-processed. Not the default.
 
 **API endpoints:**
 - `POST /admin/backfill/batches` — create a new batch. Body: `{ sourceId, sourceEndpointId?, yearStart, yearEnd, monthStart?, monthEnd?, budgetCeilingUsd, adminNotes?, startImmediately: boolean }`.
@@ -1251,34 +1535,50 @@ All write endpoints write to `audit_logs` with `action = "backfill.<verb>"`.
 
 **Content:**
 - **Current month gauge** — big donut showing `current_spend_usd / monthly_ceiling_usd`, with a secondary gauge for daily if a daily ceiling is set.
-- **Budget editor** — inputs for monthly ceiling and optional daily sub-ceiling, with a confirmation dialog before saving.
-- **Alert thresholds** — sliders for 75% / 90% / 100% alert levels, with the admin email recipient list.
+- **Global budget editor** — the two admin-editable runtime controls that bound all LLM spend across the platform:
+
+  | Field | Backing column | Redis key | Notes |
+  |---|---|---|---|
+  | Monthly ceiling (USD) | `ai_settings.llm_monthly_budget_usd` | `llm:config:monthly_budget_usd` | Synced via existing `AiSettingsService.syncBudgetToRedis()` on save. Hard cap across all derivative generation and RAG calls. |
+  | Daily sub-ceiling (USD, optional) | `ai_settings.llm_daily_budget_usd` | `llm:config:daily_budget_usd` | Optional secondary cap. If set, whichever ceiling is hit first triggers the hard stop. Usage is tracked in parallel under `llm:usage:{YYYY-MM-DD}` by the RAG service's `_track_usage` function (a small additive change). |
+
+  Both fields are plain number inputs with a save-confirmation dialog. No sliders, no thresholds, no percentages.
 - **Spend breakdown** — bar chart of spend by derivative type, pie chart of spend by backfill batch, all based on `budget_ledger`.
 - **Per-month history** — table of past months with totals.
+- **Budget exhausted banner** — when either the global monthly or daily ceiling is reached, a banner at the top of the page surfaces the exhausted state and links to each `halted_budget` backfill batch. The banner carries the same two buttons used on `/admin/backfill` — **Extend budget by $X** and **End batch** — scoped to whichever batches are affected. There is no alert-threshold configuration, no email recipient list, and no webhook. The buttons are the entire escalation path.
 
 **API endpoints:**
-- `GET /admin/budget/current` — current month snapshot: `{ monthlyCeiling, dailyCeiling?, monthSpend, daySpend, byType, byBatch }`.
-- `PATCH /admin/budget/settings` — update ceilings and alert thresholds. Body: `{ monthlyCeilingUsd?, dailyCeilingUsd?, alertThresholds?: [75, 90, 100] }`.
+- `GET /admin/budget/current` — current month snapshot: `{ monthlyCeiling, dailyCeiling?, monthSpend, daySpend, byType, byBatch, exhaustedState }`.
+- `PATCH /admin/budget/settings` — update ceilings. Body: `{ monthlyCeilingUsd?, dailyCeilingUsd? }`. The handler writes to `ai_settings` and calls the existing `AiSettingsService.syncBudgetToRedis()` for the monthly key; the daily key is synced in the same transaction via a new `syncDailyBudgetToRedis()` helper.
 - `GET /admin/budget/history` — monthly rollups.
-
-The PATCH endpoint writes to the `ai_settings` table **and** calls the existing `AiSettingsService.syncBudgetToRedis()` to push the new value to Redis. The daily sub-ceiling is new — it adds a second Redis key `llm:config:daily_budget_usd` and a second usage key `llm:usage:{YYYY-MM-DD}` updated in parallel by the RAG service's `_track_usage` function (a small additive change).
 
 ### 7.3 New page: `/admin/schedule`
 
 **Route file:** `apps/web/src/app/(dashboard)/admin/schedule/page.tsx`
 
-The existing `/admin/ai-settings` page has an `ingestion_schedule` editor but it is a raw JSON editor (per recon). The new page gives it a form-driven UI:
+The existing `/admin/ai-settings` page has an `ingestion_schedule` editor but it is a raw JSON editor (per recon). The new page gives it a form-driven UI and surfaces the global ingestion wall-clock window.
 
 **Content:**
 - **Global enable toggle** — single switch, mirrors `ingestion_schedule.enabled`.
+- **Global ingestion window** — admin-editable wall-clock window that gates all backfill ticks and scheduled watch-loop runs. Backed by these `ai_settings` keys:
+
+  | Field | Backing column | Notes |
+  |---|---|---|
+  | Ingestion start time (local) | `ai_settings.ingestion_window_start_local` | Time-of-day (e.g. `02:00`). Beat tasks and backfill ticks skip work outside this window. |
+  | Ingestion stop time (local) | `ai_settings.ingestion_window_stop_local` | Time-of-day (e.g. `06:00`). A currently-running document is finished; no new documents are started once stop time passes. |
+  | Timezone | `ai_settings.ingestion_window_tz` | Olson ID (default `Asia/Manila`). Applied to both start and stop times. |
+  | Overall start date (optional) | `ai_settings.ingestion_enabled_from` | Optional calendar gate. Ingestion is suppressed before this date. |
+  | Overall end date (optional) | `ai_settings.ingestion_enabled_until` | Optional calendar gate. Ingestion is suppressed after this date. |
+
+  The global window is the upper bound; each per-batch window (`backfill_batches.daily_window_*`) can be tighter but can never escape the global bound. Both the beat task (`run_backfill_batch_tick`) and the watch loop read these values at tick-start and short-circuit if outside the window.
 - **Per-source schedule table** — row per source with columns: Source Name, Enabled, Cron (form editor), Next Run Time (computed), Last Run, Actions (Edit, Delete).
 - **Cron form editor** — user-friendly fields (minute, hour, day, month, weekday) with presets ("Every day at 2 AM", "Every 3 hours", "Weekdays at 6 AM").
 - **Test schedule button** — dry run that previews what jobs would be created in the next 24 hours without actually creating them.
 
 **API endpoints:**
-- `GET /admin/schedule` — returns the parsed `ingestion_schedule` value from `ai_settings`.
-- `PUT /admin/schedule` — replaces the whole schedule. Body: `{ enabled, schedules: [{ sourceKey, cron, enabled }] }`.
-- `POST /admin/schedule/preview` — dry-run preview.
+- `GET /admin/schedule` — returns the parsed `ingestion_schedule` value from `ai_settings` plus the global window fields.
+- `PUT /admin/schedule` — replaces the whole schedule. Body: `{ enabled, window: { startLocal, stopLocal, tz, enabledFrom?, enabledUntil? }, schedules: [{ sourceKey, cron, enabled }] }`.
+- `POST /admin/schedule/preview` — dry-run preview honouring both the cron entries and the global window.
 
 ### 7.4 New page: `/admin/derivatives`
 
@@ -1304,7 +1604,7 @@ The existing `/admin/ai-settings` page has an `ingestion_schedule` editor but it
 **Route file:** `apps/web/src/app/(dashboard)/admin/subjects/page.tsx`
 
 **Content:**
-- **Taxonomy picker** — toggle between `modern_6` and `legacy_8` views.
+- **Taxonomy picker** — toggle between `study_8` (primary) and `bar_admin_6` (secondary) views.
 - **Subject tree** — hierarchical view of subjects → sub-topics with document counts.
 - **Equivalence map** — read-only view of `SubjectEquivalence` rows.
 - **Classification coverage** — per-subject counts of documents classified vs unclassified.
@@ -1325,15 +1625,20 @@ Once `/admin/budget` and `/admin/schedule` extract the budget and schedule conce
 
 The existing page gains a **Backfill filter** in its trigger-type facet (the existing facet already supports `scheduled` and `manual` — add `backfill` as a third value) and an optional backfill batch column in the job history table.
 
-### 7.8 Open questions
+### 7.8 Permission gating
 
-- **Who can click the danger buttons?** "Kill in-flight jobs" and "Extend budget" and "Regenerate all" are all potentially expensive. Should they be gated to a super-admin role? I recommend a `can_manage_ingestion` permission that gates Backfill + Derivatives pages and a stricter `can_manage_budget` for the Budget page.
-- **Notification channels.** Budget alerts and backfill halt notifications need to reach the admin. Email is the baseline. Is Slack/Discord webhook integration in scope? I recommend deferring webhooks to a later PR and starting with email-only, since there's already an email infra.
-- **Mobile admin access.** The admin panel is web-only. Is mobile-responsive needed for the new pages? Default: yes, responsive but not optimised; the critical workflow is "halt a runaway backfill from my phone," which just needs the Halt button to be tappable.
+"Kill in-flight jobs", "Extend budget", and "Regenerate all" are all potentially expensive actions. The admin panel gates them with two permissions:
+
+- `can_manage_ingestion` — required to view and act on `/admin/backfill`, `/admin/derivatives`, `/admin/schedule`, and `/admin/subjects`.
+- `can_manage_budget` — required to edit monthly/daily ceilings on `/admin/budget` and to click **Extend budget by $X** on a `halted_budget` batch. Strictly a superset of `can_manage_ingestion`; holders of `can_manage_budget` can do everything the ingestion permission allows plus budget changes.
+
+Escalation from a `halted_budget` state is in-app only: the user with `can_manage_budget` opens `/admin/backfill` or `/admin/budget` and clicks one of the two buttons. There is no email, Slack, Discord, or webhook notification path. The admin is expected to check the dashboard. Mobile responsiveness of the Backfill and Budget pages is sufficient for a phone-based halt.
 
 ---
 
 ## 8. Disclaimer and rights tracking
+
+**LIBERTASIAN is an educational research platform. Nothing it generates or retrieves is legal advice.** This sentence is the single load-bearing assertion underneath every derivative-facing surface in the product. The schema, the API response shape, the reader UI, and the export pipeline all enforce that every AI-generated artifact travels with disclaimer text that says the same thing in context-appropriate form. No external attorney is in the review loop. Claude (prod, acting as software architect for this project) is the author of record for the disclaimer text below, reviewed by the user, not by counsel.
 
 ### 8.1 Content rights model
 
@@ -1355,12 +1660,79 @@ Seeded disclaimer rows (versioned, never edited in place — new version = new r
 | `ai_digest.v1` | case digest | "AI-generated summary for educational purposes only. Not legal advice. Verify against the original decision." |
 | `ai_mcq.v1` | MCQ | "AI-generated practice question for bar review. Not an actual bar exam question. Not legal advice." |
 | `ai_essay_model_answer.v1` | essay answer | "AI-generated model answer for study reference. Not a definitive statement of the law. Not legal advice." |
+| `ai_suggested_bar_answer.v1` | suggested bar answer | "AI-generated model answer to a past bar exam question. For study reference only. Not the official answer and not legal advice." |
 | `sample_pleading.v1` | sample pleading | "Template for educational illustration only. Not a substitute for attorney-drafted pleadings. Not legal advice." |
 | `sample_contract.v1` | sample contract | "Template for educational illustration only. Not a substitute for attorney-drafted contracts. Not legal advice." |
 | `ai_flashcard.v1` | flashcard | "AI-generated study card. Verify before relying on for exam preparation." |
 | `ai_subject_outline.v1` | subject outline | "AI-synthesised study outline. Not a substitute for primary sources or casebook study." |
 
-The full `bodyHtml` for each disclaimer is written by prod Claude / a qualified reviewer and checked in with the seed data, not generated by an LLM.
+The full `bodyHtml` for each disclaimer is checked in with the seed data (not generated at runtime by an LLM). Four canonical long-form drafts authored by prod Claude as software architect, reviewed by the user, not by counsel:
+
+**`ai_digest.v1` — bodyHtml draft**
+
+```html
+<p><strong>AI-generated case digest — educational purposes only.</strong></p>
+<p>This digest was produced by an AI system reading the decision text cited below. It is a
+study aid, not legal advice, not a substitute for reading the full decision, and not a
+statement by LIBERTASIAN, its operators, or any court about the meaning of the ruling.</p>
+<p>The AI may have summarised, paraphrased, or reorganised the court's language. Before
+relying on any proposition stated in this digest — especially for a case, brief, exam
+answer, or client matter — read the full decision at the linked source and verify that
+the facts, holding, doctrine, and dispositive portion correspond to what appears here.</p>
+<p>LIBERTASIAN is an educational research platform. Nothing it generates or retrieves is
+legal advice.</p>
+```
+
+**`ai_mcq.v1` — bodyHtml draft**
+
+```html
+<p><strong>AI-generated multiple-choice question — bar review study aid only.</strong></p>
+<p>This question was written by an AI system based on the source material cited below. It
+is intended as bar review practice. It is <em>not</em> an actual Philippine Bar Exam
+question, is not endorsed by the Supreme Court of the Philippines or any bar review
+school, and does not guarantee coverage of what the actual exam tests.</p>
+<p>The stem, answer, and distractors have been checked by automated validators against the
+source text, but automated validation is not the same as expert review. Treat the correct
+answer as a starting point for study, not as a final statement of Philippine law.</p>
+<p>LIBERTASIAN is an educational research platform. Nothing it generates or retrieves is
+legal advice.</p>
+```
+
+**`sample_pleading.v1` — bodyHtml draft**
+
+```html
+<p><strong>Template pleading — illustrative only. Not a court-ready document.</strong></p>
+<p>This sample pleading was generated by an AI system as an educational illustration of
+Philippine pleading structure. It contains bracketed placeholders (e.g. <code>[CLIENT
+NAME]</code>, <code>[VENUE]</code>) that must be filled in, and its citations should be
+independently verified against the current Rules of Court and applicable jurisprudence.</p>
+<p>This template is <em>not</em>, and must not be used as, a finished pleading for an
+actual case. It has not been reviewed by a Philippine-licensed attorney. It is not a
+substitute for consulting one. Filing an unreviewed pleading based on this template may
+prejudice your case and may expose non-lawyers to unauthorised-practice-of-law
+liability.</p>
+<p>LIBERTASIAN is an educational research platform. Nothing it generates or retrieves is
+legal advice.</p>
+```
+
+**`sample_contract.v1` — bodyHtml draft**
+
+```html
+<p><strong>Template contract — illustrative only. Not a signable instrument.</strong></p>
+<p>This sample contract was generated by an AI system as an educational illustration of
+Philippine contract structure, grounded in the Civil Code and related special laws. It
+contains bracketed placeholders for parties, consideration, dates, and jurisdiction-
+specific terms, and its statutory citations should be verified against the current text of
+the Civil Code and any applicable special law.</p>
+<p>This template is <em>not</em>, and must not be used as, a finalised contract. It has
+not been reviewed by a Philippine-licensed attorney. It is not a substitute for consulting
+one. Signing an unreviewed contract based on this template may create unintended
+obligations or fail to create obligations you intended.</p>
+<p>LIBERTASIAN is an educational research platform. Nothing it generates or retrieves is
+legal advice.</p>
+```
+
+These four drafts are canonical. The remaining seed codes (`public_domain_government.v1`, `ai_essay_model_answer.v1`, `ai_suggested_bar_answer.v1`, `ai_flashcard.v1`, `ai_subject_outline.v1`) follow the same structural pattern — a bold one-line framing, a paragraph on how the content was produced, a paragraph on what it is not, and the closing "LIBERTASIAN is an educational research platform" sentence — and are drafted in the same voice by prod Claude at seed-data authoring time.
 
 ### 8.3 Where the disclaimer appears
 
@@ -1399,11 +1771,23 @@ Updating a disclaimer is a privileged admin action. The flow:
 4. The admin audit log records the change with the full diff of `bodyHtml`.
 5. A manual "Re-link all derivatives of type X to latest disclaimer version" action is available but requires a confirmation and an audit log entry.
 
-### 8.5 Open questions
+### 8.5 Source attribution text format
 
-- **Attorney review.** The disclaimer text should ideally be vetted by a Philippine-licensed attorney before launch, especially the "not legal advice" language. Who is that reviewer? This is a user/organisation question, not a technical one.
-- **Source attribution text format.** Attribution to LawPhil, SC e-library, Official Gazette, Congress, etc., needs a canonical format per source. I recommend one attribution template per `Source` row (new column `attributionTemplate`) populated in seed data.
-- **Derived-of-derived disclaimers.** If a student's private notes quote a derivative, does the disclaimer propagate? Default: yes, at the time of quoting, the derivative's disclaimer is snapshotted into the note's metadata. This is a product decision with light schema implications (`UserNote.quotedDerivativeDisclaimerId` optional FK).
+Attribution to LawPhil, SC e-library, Official Gazette, Congress, and any other source needs a canonical format per source. The schema carries this on the `Source` row itself (new column `attributionTemplate`), populated in seed data, rendered alongside the disclaimer banner for any `public_domain_government` or `mixed` row.
+
+### 8.6 Launch gate: disclaimer visibility
+
+The sole launch gate for any derivative type is **disclaimer text present in the API response and visible in every user-facing surface that renders the derivative**. Specifically:
+
+1. `GET /derivatives/:id` (and every list endpoint that embeds a derivative) MUST return a non-null `disclaimer` object with `{ code, version, shortText, bodyHtml }`. The NestJS controller has a response interceptor that fails closed — any derivative returned without a resolved disclaimer throws 500 and logs a critical alert.
+2. Every reader component (web + mobile) that renders a derivative MUST show the `shortText` in a persistent banner. Storybook snapshot tests per derivative type enforce this. A component that renders a derivative without its disclaimer fails its snapshot and blocks merge.
+3. Every export path (PDF, clipboard copy, shareable link) MUST embed the disclaimer text in the output. An integration test per export path asserts the disclaimer token appears in the rendered bytes.
+
+This gate is met when the seed disclaimer rows (§8.2) are in place, the API interceptor is active, the Storybook tests are green, and the export tests are green. Authorship of the disclaimer text is prod Claude as software architect, reviewed by the user. No external attorney sign-off is required and none is in the loop. The "not legal advice" language is load-bearing, not ornamental.
+
+### 8.7 Derived-of-derived disclaimer propagation
+
+If a student's private note quotes a derivative, the disclaimer propagates at the moment of quoting: the derivative's disclaimer ID is snapshotted into the note's metadata (`UserNote.quotedDerivativeDisclaimerId` optional FK), and the note renderer surfaces the same short-text banner when the quoted passage is shown.
 
 ---
 
@@ -1444,34 +1828,48 @@ Verified from research notes and research:
 
 ### 9.3 Full-corpus processing cost
 
+Using the per-derivative unit costs above, processing the full target corpus into the full derivative set:
+
 - **SC decisions full derivative set (100,000 decisions × $0.0050)** = **$500**.
 - **Statute/codal processing (digest + classification + MCQs, roughly equivalent cost per unit, ~5,000 units × $0.0050)** = **$25**.
-- **Bar exam questions (2,700 × classification + cite extraction, ~$0.0012 each)** = **$3**.
+- **Bar exam questions ingested as source (2,700 × classification + cite extraction, ~$0.0012 each)** = **$3**.
+- **Suggested bar answers (one per bar question, ~2,700 × $0.00225 each — same cost envelope as the essay model answer)** = **$6**.
+- **Sample pleadings + sample contracts (seeded catalogue of ~40 templates × $0.0030 each)** = **$0.12**.
 - **Subject outlines (~50 outlines at $0.008 each)** = **$0.40**.
 - **Classification sweep on already-ingested documents (~20,000 existing docs × $0.00048)** = **$10**.
-- **Total one-time backfill cost**: **~$540**.
+- **Total one-time backfill cost**: **~$544**.
 
-This **fits in ~3 months of the current $200/month ceiling** — roughly: pay the bill for three months and the historical corpus is done. It does **not** fit in a single month, which is why the backfill engine needs to support mid-month halt and resume against the budget ceiling. At the current $200/month cap, a full corpus derivative backfill takes approximately **three months of continuous spend**, after which steady-state watch-loop cost is trivial (a handful of new decisions per day × $0.005 = cents per day).
+Add a 20% retry cushion (validator rejections forcing regeneration) and the full-set figure lands at **~$650**. Embedding costs (`text-embedding-3-small`, ~$0.02 per 1M tokens × 100,000 documents × 2,000 tokens each ≈ **$4**) are trivial but must still accrue against `budget_ledger`.
 
-If the admin raises the ceiling to $500/month, the full backfill completes in **one month plus a buffer**. If the admin raises to $1,000/month, it completes within one month with full safety margin.
+Whether the full set actually lands in one pass or gets staged is a runtime decision driven by the admin-editable monthly and per-batch ceilings (§7.1, §7.2), not by a calendar. The backfill engine supports mid-document halt and resume precisely so that any budget envelope — whatever the admin sets — is a hard wall that stops work gracefully and waits for the admin's two-button response.
 
-### 9.4 Phased rollout within budget
+### 9.4 Derivative-type scope dial
 
-Given the $200/month constraint, the phased rollout proposed in §12 does derivatives by source priority:
+The lever that most visibly controls backfill cost is **which derivative types are enabled** for the first pass. The `ai_settings.derivative_generation.types_enabled` array gates which types fire per document, and the admin can flip types on and off at runtime without schema changes. Three representative configurations bracket the decision:
 
-- **Phase A** (month 1, ~$200): Backfill LawPhil decisions 2015–2025 + full derivative set. ~12,000 decisions × $0.005 = $60 in LLM cost, the rest is headroom for the daily watch loop and iterative prompt tuning.
-- **Phase B** (month 2, ~$200): Backfill LawPhil decisions 2001–2014 + full derivative set. ~17,000 decisions × $0.005 = $85.
-- **Phase C** (month 3, ~$200): Backfill LawPhil decisions pre-2001 + statutes + bar questions. Remaining ~70,000 SC decisions (many with thinner text) × $0.003–$0.005 ≈ $250 — likely spills into month 4.
-- **Phase D** (month 4, ~$100–$200): Finish tail, subject outlines, classification sweep.
+- **Minimum viable scope** — digest + subject classification only. Per-decision cost ≈ **$0.00228**. Full-corpus cost ≈ **$228** + retries/embeddings.
+- **Bar-review scope** — digest + doctrine extract + subject classification + MCQ batch. Per-decision cost ≈ **$0.00378**. Full-corpus cost ≈ **$378** + retries/embeddings.
+- **Full derivative scope** — everything enabled, including essays, suggested bar answers, flashcards, and subject outlines. Full-corpus cost as computed in §9.3, **~$544** + retries/embeddings.
 
-These are conservative phases; they assume prompt tuning will double-spend some documents (regeneration). A more aggressive plan that skips regeneration can finish in three months comfortably.
+The corresponding Phase 1 scope tiers in §9.6 anchor the admin's runtime choice, and blocking decision #4 in §0.1 is exactly this pick.
 
-### 9.5 Open questions
+### 9.5 Model escalation and retries
 
-- **Which derivative types are actually enabled in phase 1?** Enabling all eight derivative types at once multiplies cost. A minimum viable phase 1 might be digest + subject classification only ($0.0023 per decision instead of $0.0050), which halves the backfill cost. This is a product-priority call I am not qualified to make.
-- **Model escalation for quality-sensitive derivatives.** MCQs and essay model answers may need `gpt-4o` ($2.50/$10.00 per 1M) instead of `gpt-4o-mini`. If every MCQ uses gpt-4o, the per-question cost rises from $0.0003 to ~$0.005 — a 16× increase. The decision should be driven by the golden-set evaluation (§5) once prompts are drafted.
-- **Embedding costs.** Not modeled here. Every new document needs an embedding for the vector index. At current OpenAI `text-embedding-3-small` prices ($0.02 per 1M tokens), 100,000 decisions × ~2,000 tokens each × $0.02 / 1M = ~$4. Trivial compared to derivative generation, but it should still count against the budget ledger.
-- **Retry costs.** Validator rejections force regeneration. If 15% of outputs fail validation and get regenerated once, effective cost rises 15%. If the second attempt also fails, a third attempt at 2% adds marginal cost. Budget with a 20% cushion on top of the §9.3 estimates to cover retries.
+- **Model escalation.** MCQs and essay model answers may benefit from escalating to `gpt-4o` ($2.50 / $10.00 per 1M) instead of `gpt-4o-mini`. Per-MCQ cost rises from **$0.0003** to **~$0.005** (16×); per-essay cost rises from **$0.00225** to **~$0.0375**. The escalation toggle lives on `ai_settings.derivative_generation.model_overrides` as a per-type override. The decision to escalate is driven by golden-set evaluation (§10.2), not guessed up front.
+- **Retry cushion.** Budget figures in §9.3 include a 20% multiplier for validator-forced regeneration. Validator rejection rates above 30% for a given derivative type are a signal to revise the prompt before continuing the backfill, not to keep retrying.
+- **Embedding cost.** Tracked under `budget_ledger.operation_type = 'embedding'` so admins can see it alongside generation spend even though it is not rate-limiting.
+
+### 9.6 Phase 1 derivative-type scope tiers
+
+Phase 1 of the historical LawPhil backfill (see §12) runs under one of three scope tiers. The tier is an admin choice made at runtime by setting `derivative_generation.types_enabled` and the per-batch budget ceiling on `backfill_batches.budget_ceiling_usd`. Blocking decision #4 in §0.1 is which of these three tiers the user commits to first; the architecture supports all three identically.
+
+| Tier | Derivative types enabled | Estimated Phase 1 cost (100k SC decisions + retries + embeddings) | Rationale |
+|---|---|---|---|
+| **Tier 1 — Minimum viable** | `case_digest`, `subject_classification` | **≈ $380** | Fastest path to a demonstrable "every SC decision has a clean digest and a subject tag" product surface. Lowest commitment, leaves the full bar-review surface for later phases. |
+| **Tier 2 — Bar-review base** | `case_digest`, `doctrine_extract`, `subject_classification`, `mcq` | **≈ $520** | Adds the doctrine/MCQ loop that makes the product meaningful to bar reviewees. Stretches the budget envelope modestly. Matches the shape of the reference products studied in §5.0 (Quimbee, Anycase, Digest AI). |
+| **Tier 3 — Full derivative set** | All Phase 1 types: `case_digest`, `doctrine_extract`, `subject_classification`, `mcq`, `essay_prompt`, `essay_model_answer`, `suggested_bar_answer`, `flashcard`, `subject_outline` | **≈ $750 – $888** | Full parity with the target surface described in §5 in a single pass. Highest up-front spend, but fewest second-visit regenerations and the cleanest story for users. `sample_pleading` and `sample_contract` are deliberately excluded from Phase 1 and scheduled for Phase 7+ (see §12). |
+
+Each tier's cost assumes `gpt-4o-mini` across the board. Model escalation per §9.5 is a multiplier on the chosen tier. The per-batch budget ceiling on `backfill_batches.budget_ceiling_usd` is expected to be set to the tier number plus a retry cushion (e.g. $450 for Tier 1, $625 for Tier 2, $1,000 for Tier 3). The monthly ceiling on `ai_settings.llm_monthly_budget_usd` is set independently and acts as the outer hard stop across all batches.
 
 ---
 
@@ -1500,13 +1898,13 @@ The user's framing is explicit: the system has bugs and doesn't work, and this r
 
 ### 10.2 Golden sets
 
-Three golden sets exist for quality validation — they are **prerequisites** for any quality claim about derivatives:
+Three golden sets exist for quality validation. They are **prerequisites** for any quality claim about derivatives. All three are curated by prod Claude from the LawPhil archive (as the domain expert per §5.0), then reviewed by the user. No external curator, no external attorney.
 
-1. **Case digest golden set** — 20 hand-written digests of real SC decisions, covering 5 per subject family. Lives at `services/worker-service/tests/golden/case_digests.json`. Each entry has the source document ID, the expected IRAC fields, and the expected citations. The digest evaluator (offline task) compares generated output to these with BLEU-like metrics plus manual sampling.
-2. **MCQ golden set** — 50 hand-written MCQs tagged with subject, sub-topic, and difficulty. Lives at `services/worker-service/tests/golden/mcq_questions.json`. Each entry has the source doctrine, the expected stem, the expected correct answer, and a note on what distractors should *not* look like.
-3. **Subject classification golden set** — 100 hand-labeled documents with their expected subject(s) in both taxonomy versions. Lives at `services/worker-service/tests/golden/subject_classification.json`. Used to track classifier accuracy over time as prompts evolve.
+1. **Case digest golden set** — **20 reference digests** of real SC decisions, covering 2–3 per `study_8` subject. Lives at `services/worker-service/tests/golden/case_digests.json`. Prod Claude selects the source decisions from LawPhil (balancing age, subject, and factual complexity) and drafts the expected IRAC fields and expected citations by reading the full decision text. Each entry has the source document ID, the expected facts/issues/ruling/doctrine/dispositive fields, and the expected cited authorities. The digest evaluator (offline task) compares generated output to these with BLEU-like metrics plus structural IRAC-field-presence checks.
+2. **MCQ golden set** — **50 reference MCQs** tagged with `study_8` subject, sub-topic, and difficulty. Lives at `services/worker-service/tests/golden/mcq_questions.json`. MCQ golden set curation is partially automated: prod Claude drafts the stems and correct answers from source doctrine; automated distractor-quality checks (uniqueness, plausibility, no overlap with correct answer) gate acceptance. Each entry carries the source doctrine passage, the expected stem, the expected correct answer, and a note on what distractors should *not* look like.
+3. **Subject classification golden set** — **100 hand-labeled documents** with their expected subject(s) in both taxonomy versions (`study_8` primary, `bar_admin_6` secondary mapping). Lives at `services/worker-service/tests/golden/subject_classification.json`. Prod Claude labels each document from the LawPhil archive — the ones with clearly identifiable subject signatures are easy; the boundary cases (e.g. a commercial transaction in the context of a family corporation) are exactly the ones the classifier needs to learn from. Used to track classifier accuracy as prompts evolve.
 
-These golden sets do not exist yet. Creating them is a blocking prerequisite for Phase 4 of the implementation plan (§12).
+These golden sets do not exist yet. Creating them is a prerequisite for Phase 4 of the implementation plan (§12); the curation work is scheduled as the first PR of Phase 4.
 
 ### 10.3 End-to-end happy path test
 
@@ -1593,7 +1991,7 @@ All of the following are production-ready after PR #1 and PR #2 and **require no
 
 ### 11.3 Net new
 
-- All tables in §2 — `backfill_batches`, `backfill_checkpoints`, `derivative_artifacts`, `mcq_questions`, `mcq_options`, `essay_prompts`, `bar_exam_sittings`, `derivative_generation_jobs`, `subjects`, `subject_topics`, `subject_equivalences`, `document_subject_assignments`, `content_disclaimers`, `budget_ledger`.
+- All tables in §2 — `backfill_batches`, `backfill_checkpoints`, `derivative_artifacts`, `mcq_questions`, `mcq_options`, `essay_prompts`, `bar_exam_sittings`, `derivative_generation_jobs`, `subjects`, `subject_topics`, `subject_equivalences`, `document_subject_assignments`, `codal_subject_assignments`, `content_disclaimers`, `budget_ledger`.
 - `services/worker-service/src/backfill/` — new module: batch service, enumerator, tick worker, cursor management.
 - `services/worker-service/src/validators/derivative_validators/` — per-type validators (§4.4).
 - `services/worker-service/src/tasks/derivative_tasks.py` — `run_derivative_generation`, `classify_document_subjects` tasks.
@@ -1633,7 +2031,7 @@ Every migration in the phase plan is **additive-only** until the final PR in eac
 
 ## 12. Phase plan — concrete PR sequence
 
-This is the implementation ordering. Each entry is a PR-sized chunk of work with explicit acceptance criteria. Each phase is independently shippable and visible on staging. The first PR in each phase produces a visible change; no "groundwork-only" PRs that take more than a week.
+This is the implementation ordering. Each entry is a PR-sized chunk of work with explicit acceptance criteria. The plan is **dependency-ordered**, not calendar-ordered — there are no week or month labels and no delivery dates. Each phase is independently shippable and independently testable on staging. Each phase's first PR lands a visible change rather than pure plumbing.
 
 ### Phase 1: Foundation (4 PRs)
 
@@ -1646,8 +2044,8 @@ New `/admin/backfill` page rendering an empty table (no data yet) and a "New Bat
 *Acceptance:* admin can create a pending backfill batch via the UI; the row lands in Postgres; the page shows it; audit log has a `backfill.create` entry.
 
 **PR 1.3 — Subject taxonomy tables and seed.**
-Add `subjects`, `subject_topics`, `subject_equivalences`, `document_subject_assignments`. Seed with both `modern_6` and `legacy_8` taxonomies per §6, plus sub-topics at the level of granularity currently available from Respicio (tag them as `source = "respicio_summary"` so a later PR can replace with SC syllabus data).
-*Acceptance:* seed produces 6 modern subjects + 8 legacy subjects + their sub-topics + the equivalence rows; `/admin/subjects` placeholder page shows the tree; no classification runs yet.
+Add `subjects`, `subject_topics`, `subject_equivalences`, `document_subject_assignments`, `codal_subject_assignments`. Seed with both `study_8` (primary) and `bar_admin_6` (secondary) taxonomies per §6, plus the canonical codal bindings (§6.2 table), plus sub-topics at the level of granularity currently available from Respicio (tag them as `source = "respicio_summary"` so a later PR can replace with SC syllabus data).
+*Acceptance:* seed produces 8 `study_8` subjects (primary) + 6 `bar_admin_6` subjects (secondary) + their sub-topics + the equivalence rows + the canonical codal bindings; `/admin/subjects` placeholder page shows the tree rooted on `study_8`; no classification runs yet.
 
 **PR 1.4 — Budget page extraction and daily sub-ceiling.**
 New `/admin/budget` page extracted from `/admin/ai-settings`. Add `llm_daily_budget_usd` setting and the matching Redis key. Extend `_check_budget` to check daily in addition to monthly. Add `BudgetLedger` writes to the LLM call path. Nightly reconcile task.
@@ -1665,7 +2063,7 @@ Implement `run_backfill_batch_tick` Celery Beat task. Each tick reads cursor, cr
 
 **PR 2.3 — Halt/resume/extend-budget controls.**
 Wire the admin UI Pause, Resume, Halt, and Extend Budget actions through to the backfill service. Implement mid-document halt safety. Implement the `halted_budget` automatic transition when a batch hits its ceiling.
-*Acceptance:* admin can halt a running batch; it transitions to `halted_admin` after in-flight jobs complete; admin can extend budget and resume; `halted_budget` fires when the batch hits the ceiling, logs an audit entry, and sends an email alert.
+*Acceptance:* admin can halt a running batch; it transitions to `halted_admin` after in-flight jobs complete; admin can extend budget and resume; `halted_budget` fires when the batch hits the ceiling, logs an audit entry, and surfaces the "Extend budget by $X" / "End batch" buttons on `/admin/backfill`. No email, no Slack, no webhook.
 
 ### Phase 3: Derivative artifacts core (3 PRs)
 
@@ -1719,9 +2117,9 @@ Complete `/admin/derivatives` with full re-trigger controls, cost preview, regen
 A test batch: LawPhil 2020–2025, all derivative types enabled, $100 budget ceiling. Document the run in a `docs/runbooks/first-backfill.md` playbook.
 *Acceptance:* the run completes within budget; runbook is written; any issues encountered are logged as follow-up PRs.
 
-### Phase 7 and beyond (not scoped here)
+### Phase 7 and beyond (out of scope for this plan)
 
-- Sample pleadings and contracts (lower priority; needs more legal review than the prior phases).
+- Sample pleading and sample contract derivative types. Deliberately deferred past Phase 6 because they carry heavier disclaimer surface area and need their own validator tuning pass; the schemas are defined (§5.7, §5.7a) but no generation fires in Phases 1–6.
 - Performance optimisation for large backfills (read replica, sharded OpenSearch).
 - The user scan → private digest path (already functional; not touched by this plan).
 - Mobile app integration with subject-filtered views.
@@ -1735,11 +2133,10 @@ A test batch: LawPhil 2020–2025, all derivative types enabled, $100 budget cei
 - Phase 5 depends on Phase 3 and Phase 4.1.
 - Phase 6 depends on Phase 5.
 
-### 12.2 Open questions
+### 12.2 Sequencing notes
 
-- **Who writes the golden sets?** This is a meaningful labor investment (at least 10–15 hours of expert time). Prod Claude can draft candidates; the user or an external reviewer needs to verify them. This is the single biggest unquantified item in the plan.
-- **Which model for MCQs?** Pending golden-set evaluation. Budget assumes `gpt-4o-mini`; if quality forces `gpt-4o`, rework the cost model for Phase 5.
-- **Is there room to parallelise Phase 2 and Phase 3?** Technically yes — they touch different parts of the codebase — but doing them serially makes integration testing much simpler. My recommendation is serial.
+- **Model escalation for quality-sensitive types.** Phase 5 assumes `gpt-4o-mini` across MCQs, essays, and suggested bar answers. Golden-set evaluation (§10.2) may force per-type escalation to `gpt-4o`, at which point the Phase 1 scope tier in §9.6 gets re-evaluated before the next backfill batch is started.
+- **Phase 2 and Phase 3 run serially.** They touch different parts of the codebase and could run in parallel, but serial execution keeps integration testing simple. Phase 3 starts only after Phase 2 lands.
 
 ---
 
@@ -1800,7 +2197,7 @@ The files referenced throughout this document, for quick navigation during imple
 - **Backfill batch** — an admin-defined unit of historical ingestion work with a budget ceiling and checkpoint state. Parent of many `IngestionJob` rows.
 - **Watch loop** — the daily scheduler-driven ingestion that catches new content. Continues unchanged.
 - **Derivative artifact** — any AI-generated content layered over a source document (digest, MCQ, essay, flashcard, outline, sample pleading, sample contract).
-- **Taxonomy version** — either `modern_6` (SC 2025/2026 structure) or `legacy_8` (traditional Philippine bar structure). Every subject belongs to exactly one taxonomy version.
+- **Taxonomy version** — either `study_8` (primary, traditional eight-subject study/bar-review structure) or `bar_admin_6` (secondary, SC 2025/2026 six-subject bar-administration structure). Every subject belongs to exactly one taxonomy version.
 - **Provenance** — the chain of `ProvenanceRecord` rows linking a derivative artifact back to the source document sections that produced it. Mandatory for every derivative.
 - **Content rights** — `public_domain_government`, `ai_generated_derivative`, or `mixed`. Encoded on every derivative.
 - **Validator verdict** — `publish`, `human_review`, or `quarantine`. Returned by every per-type derivative validator.
