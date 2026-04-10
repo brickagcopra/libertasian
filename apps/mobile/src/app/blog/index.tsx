@@ -29,40 +29,43 @@ export default function BlogScreen() {
     setSelectedTag((prev) => (prev === tagSlug ? undefined : tagSlug));
   }, []);
 
-  const tagFilter = tags.length > 0 ? (
-    <View style={styles.tagFilterContainer}>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.tagScroll}
-      >
-        <TouchableOpacity
-          style={[styles.tagChip, !selectedTag && styles.tagChipActive]}
-          onPress={() => setSelectedTag(undefined)}
+  const TagFilter = useCallback(() => {
+    if (tags.length === 0) return null;
+    return (
+      <View style={styles.tagFilterContainer}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.tagScroll}
         >
-          <Text style={[styles.tagChipText, !selectedTag && styles.tagChipTextActive]}>
-            All
-          </Text>
-        </TouchableOpacity>
-        {tags.map((tag) => (
           <TouchableOpacity
-            key={tag.id}
-            style={[styles.tagChip, selectedTag === tag.slug && styles.tagChipActive]}
-            onPress={() => handleTagPress(tag.slug)}
+            style={[styles.tagChip, !selectedTag && styles.tagChipActive]}
+            onPress={() => setSelectedTag(undefined)}
           >
-            <Text
-              style={[
-                styles.tagChipText,
-                selectedTag === tag.slug && styles.tagChipTextActive,
-              ]}
-            >
-              {tag.name}
+            <Text style={[styles.tagChipText, !selectedTag && styles.tagChipTextActive]}>
+              All
             </Text>
           </TouchableOpacity>
-        ))}
-      </ScrollView>
-    </View>
-  ) : undefined;
+          {tags.map((tag) => (
+            <TouchableOpacity
+              key={tag.id}
+              style={[styles.tagChip, selectedTag === tag.slug && styles.tagChipActive]}
+              onPress={() => handleTagPress(tag.slug)}
+            >
+              <Text
+                style={[
+                  styles.tagChipText,
+                  selectedTag === tag.slug && styles.tagChipTextActive,
+                ]}
+              >
+                {tag.name}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+    );
+  }, [tags, selectedTag, handleTagPress]);
 
   return (
     <View style={styles.container}>
@@ -76,7 +79,7 @@ export default function BlogScreen() {
         isRefreshing={postsQuery.isRefetching && !postsQuery.isFetchingNextPage}
         fetchNextPage={() => postsQuery.fetchNextPage()}
         onRefresh={handleRefresh}
-        ListHeaderComponent={tagFilter}
+        ListHeaderComponent={TagFilter}
       />
     </View>
   );

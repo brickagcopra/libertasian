@@ -2,7 +2,7 @@
   "expo": {
     "name": "LIBERTASIAN",
     "slug": "libertasian",
-    "version": "0.1.0",
+    "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "libertasian",
@@ -16,9 +16,13 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.libertasian.app",
-      "associatedDomains": ["applinks:libertasian.com"]
+      "buildNumber": "1",
+      "associatedDomains": [
+        "applinks:libertasian.com"
+      ]
     },
     "android": {
+      "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
@@ -35,10 +39,28 @@
               "pathPrefix": "/shared"
             }
           ],
-          "category": ["BROWSABLE", "DEFAULT"]
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         }
       ]
     },
-    "plugins": ["expo-router", "expo-secure-store"]
+    "extra": {
+      "apiUrl": "https://libertasian.com/api/v1",
+      "eas": {
+        "projectId": "4da67afe-0d1f-4da9-affe-d1d642f77a79"
+      },
+      "router": {
+        "origin": false
+      }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "@react-native-community/datetimepicker",
+      "expo-sqlite"
+    ],
+    "owner": "brickagcopra"
   }
 }

@@ -2,6 +2,7 @@ import Constants from 'expo-constants';
 import { authStorage } from '../storage/auth-storage';
 
 const API_BASE_URL =
+  process.env.API_URL ??
   (Constants.expoConfig?.extra?.['apiUrl'] as string | undefined) ??
   'http://localhost:3001/api/v1';
 

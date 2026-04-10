@@ -24,7 +24,7 @@ interface FeedListProps {
   emptyIcon?: string;
   emptyTitle?: string;
   emptyMessage?: string;
-  ListHeaderComponent?: React.ReactElement;
+  ListHeaderComponent?: React.ComponentType<unknown>;
 }
 
 export function FeedList({

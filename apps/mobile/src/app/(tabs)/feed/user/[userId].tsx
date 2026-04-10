@@ -16,7 +16,7 @@ export default function UserFeedScreen() {
     feed.refetch();
   }, [feed]);
 
-  const ProfileHeader = (
+  const ProfileHeader = useCallback(() => (
     <View style={styles.profileHeader}>
       <View style={styles.profileAvatar}>
         <Ionicons name="person" size={32} color="#6b7280" />
@@ -26,7 +26,7 @@ export default function UserFeedScreen() {
         {posts.length} {posts.length === 1 ? 'post' : 'posts'}
       </Text>
     </View>
-  );
+  ), [authorName, posts.length]);
 
   return (
     <View style={styles.container}>

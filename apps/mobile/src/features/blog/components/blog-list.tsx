@@ -19,7 +19,7 @@ interface BlogListProps {
   isRefreshing: boolean;
   fetchNextPage: () => void;
   onRefresh: () => void;
-  ListHeaderComponent?: React.ReactElement;
+  ListHeaderComponent?: React.ComponentType<unknown>;
 }
 
 export function BlogList({
