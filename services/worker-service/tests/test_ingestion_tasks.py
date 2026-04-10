@@ -202,6 +202,49 @@ class TestRunIngestionJob:
         assert result["records_updated"] == 1
         mock_ingestion_db.complete_ingestion_job.assert_called_once()
 
+    def test_cloudflare_blocked_endpoint_completes_with_structured_error(
+        self,
+        mock_ingestion_db: MagicMock,
+        job_id: str,
+        source_id: str,
+        sample_source: dict[str, Any],
+    ) -> None:
+        """A Cloudflare-blocked endpoint must not fail the job.
+
+        Regression test for Issue 2: officialgazette.gov.ph and congress.gov.ph
+        sit behind Cloudflare Turnstile. The fetcher raises CloudflareBlockedError;
+        the pipeline must swallow it into errors_json and still complete the job.
+        """
+        from src.fetchers.base import CloudflareBlockedError
+        from src.tasks.ingestion_tasks import _process_endpoint
+
+        endpoint = sample_source["endpoints"][0]
+
+        mock_fetcher = MagicMock()
+        mock_fetcher.discover.side_effect = CloudflareBlockedError(
+            endpoint_url=endpoint["endpoint_url"],
+            status_code=403,
+            cf_type="managed_challenge",
+        )
+
+        with patch("src.tasks.ingestion_tasks.get_fetcher", return_value=mock_fetcher):
+            result = _process_endpoint(source_id=source_id, endpoint=endpoint)
+
+        assert result["found"] == 0
+        assert result["created"] == 0
+        assert result["updated"] == 0
+        assert len(result["errors"]) == 1
+
+        err = result["errors"][0]
+        assert err["type"] == "cloudflare_blocked"
+        assert err["endpoint_id"] == endpoint["id"]
+        assert err["endpoint_url"] == endpoint["endpoint_url"]
+        assert err["parser_type"] == endpoint["parser_type"]
+        assert err["status_code"] == 403
+        assert err["cf_type"] == "managed_challenge"
+        assert "detected_at" in err
+        assert "message" in err
+
 
 # ─── Process Ingestion Candidate ─────────────────────────────────────────
 

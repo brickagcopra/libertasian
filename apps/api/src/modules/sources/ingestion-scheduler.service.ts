@@ -115,28 +115,40 @@ export class IngestionSchedulerService {
     return false;
   }
 
-  /** Create a pending ingestion job for a source if one doesn't already exist. */
+  /**
+   * Create a pending ingestion job for a source if one doesn't already exist.
+   *
+   * Looks up the endpoint by `parserType == sourceKey`, which is the canonical
+   * 1:1 mapping from schedule entries to the fetcher registry keys. The prior
+   * fuzzy domain/name matcher silently dropped `supreme_court_elibrary`
+   * because the row's name is `Supreme Court E-Library` (hyphen) and the
+   * domain is `elibrary.judiciary.gov.ph` (no "supreme"/"court" substring).
+   *
+   * Also populates `sourceEndpointId` on the new IngestionJob so workers can
+   * narrow to the exact endpoint, and so the admin dashboard can link back.
+   */
   private async createJobIfNotExists(sourceKey: string): Promise<void> {
-    // Find the source by domain/name pattern
-    const source = await this.prisma.source.findFirst({
+    const endpoint = await this.prisma.sourceEndpoint.findFirst({
       where: {
-        OR: [
-          { domain: { contains: sourceKey.replace(/_/g, '.') } },
-          { name: { contains: sourceKey.replace(/_/g, ' '), mode: 'insensitive' } },
-        ],
-        enabled: true,
+        parserType: sourceKey,
+        status: 'active',
+        source: { enabled: true },
       },
+      include: { source: true },
     });
 
-    if (!source) {
-      this.logger.warn(`Scheduled source not found: ${sourceKey}`);
+    if (!endpoint) {
+      this.logger.warn(
+        `Scheduled source not found: no active SourceEndpoint with parser_type='${sourceKey}' and an enabled parent source`,
+      );
       return;
     }
 
     // Check for existing pending or running jobs (prevent duplicates)
     const existingJob = await this.prisma.ingestionJob.findFirst({
       where: {
-        sourceId: source.id,
+        sourceId: endpoint.sourceId,
+        sourceEndpointId: endpoint.id,
         status: { in: ['pending', 'running'] },
       },
     });
@@ -150,7 +162,8 @@ export class IngestionSchedulerService {
 
     await this.prisma.ingestionJob.create({
       data: {
-        sourceId: source.id,
+        sourceId: endpoint.sourceId,
+        sourceEndpointId: endpoint.id,
         jobType: 'fetch',
         status: 'pending',
         triggerType: 'scheduled',
@@ -158,7 +171,9 @@ export class IngestionSchedulerService {
       },
     });
 
-    this.logger.log(`Created scheduled ingestion job for source: ${source.name}`);
+    this.logger.log(
+      `Created scheduled ingestion job for source: ${endpoint.source.name} (parser=${sourceKey}, endpoint=${endpoint.id})`,
+    );
   }
 
   /** Check if the LLM budget is exceeded by reading Redis. */

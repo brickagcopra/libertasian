@@ -23,11 +23,25 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup, Tag
 
-from .base import BaseFetcher, CandidateDoc, FetchedContent
+from .base import (
+    BaseFetcher,
+    CandidateDoc,
+    CloudflareBlockedError,
+    FetchedContent,
+    is_cloudflare_challenge,
+)
 
 logger = logging.getLogger(__name__)
 
 # CDN base for direct PDF access (no Cloudflare).
+#
+# TODO: the panel-layout parser currently skips candidates when the listing
+# page doesn't provide an inline PDF link (see `_parse_panel_layout` fallback
+# branch that does `continue` without a Congress number). The CDN layout is
+# documented as ``{CDN}/ra_{congress}/RA{number}.pdf`` but we don't yet know
+# the Congress session number at discovery time. This is orthogonal to the
+# Cloudflare blocker — even if Cloudflare lifts, we'd still need to wire the
+# Congress-number lookup before we get full coverage from this source.
 CONGRESS_PDF_CDN = "https://docs.congress.hrep.online/legisdocs"
 
 
@@ -50,13 +64,17 @@ class CongressFetcher(BaseFetcher):
                 response = self._fetch_with_retry(client, endpoint_url)
                 if response.status_code == 403:
                     # Check if this is a Cloudflare challenge page
-                    if self._is_cloudflare_challenge(response.text):
+                    if is_cloudflare_challenge(response.text):
                         logger.warning(
                             "Congress.gov.ph returned Cloudflare challenge (403). "
                             "Headless browser required for this source: %s",
                             endpoint_url,
                         )
-                        return candidates
+                        raise CloudflareBlockedError(
+                            endpoint_url=endpoint_url,
+                            status_code=403,
+                            cf_type="managed_challenge",
+                        )
                     logger.warning(
                         "Congress returned 403: %s", endpoint_url,
                     )
@@ -68,6 +86,9 @@ class CongressFetcher(BaseFetcher):
                         endpoint_url,
                     )
                     return candidates
+            except CloudflareBlockedError:
+                # Let this propagate — caller records it in errors_json.
+                raise
             except Exception:
                 logger.exception(
                     "Failed to fetch Congress listing: %s", endpoint_url,
@@ -253,11 +274,6 @@ class CongressFetcher(BaseFetcher):
     # ------------------------------------------------------------------
     # Static helpers
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _is_cloudflare_challenge(html: str) -> bool:
-        """Detect Cloudflare Turnstile / managed challenge pages."""
-        return "Just a moment" in html or "challenge-platform" in html
 
     @staticmethod
     def _is_legal_document_link(href: str, title: str) -> bool:
