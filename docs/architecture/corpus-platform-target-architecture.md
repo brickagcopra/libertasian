@@ -3566,18 +3566,24 @@ The existing admin surface already covers a lot — `/admin/ingestion`, `/admin/
 
 All write endpoints write to `audit_logs` with `action = "backfill.<verb>"`.
 
+### 7.1a Schema note — KV storage
+
+`AiSettings` is a key-value table, not a columnar table — each setting lives as one row with a unique `key` and a JSON `value`. The architecture doc's earlier drafts described new settings as columns; that was design-phase optimism. The implementation in commit `a122074` correctly followed the existing KV pattern, and this section has been corrected to match. Future settings additions should follow the same pattern: declare a new key, define the JSON value shape, and extend the service layer to read/write that key.
+
+This note applies only to `AiSettings`. `backfill_batches` (§7.1), `derivative_generation_jobs` (§7.4), `budget_ledger`, and the other new tables introduced elsewhere in this document are genuine columnar tables and should be read literally.
+
 ### 7.2 New page: `/admin/budget`
 
 **Route file:** `apps/web/src/app/(dashboard)/admin/budget/page.tsx` (extracted from `/admin/ai-settings` for cleanliness)
 
 **Content:**
 - **Current month gauge** — big donut showing `current_spend_usd / monthly_ceiling_usd`, with a secondary gauge for daily if a daily ceiling is set.
-- **Global budget editor** — the two admin-editable runtime controls that bound all LLM spend across the platform:
+- **Global budget editor** — the two admin-editable runtime controls that bound all LLM spend across the platform. Both are `AiSettings` rows (see §7.1a — KV storage, not columns):
 
-  | Field | Backing column | Redis key | Notes |
+  | Field | Backing `AiSettings` row (key → JSON value) | Redis key | Notes |
   |---|---|---|---|
-  | Monthly ceiling (USD) | `ai_settings.llm_monthly_budget_usd` | `llm:config:monthly_budget_usd` | Synced via existing `AiSettingsService.syncBudgetToRedis()` on save. Hard cap across all derivative generation and RAG calls. |
-  | Daily sub-ceiling (USD, optional) | `ai_settings.llm_daily_budget_usd` | `llm:config:daily_budget_usd` | Optional secondary cap. If set, whichever ceiling is hit first triggers the hard stop. Usage is tracked in parallel under `llm:usage:{YYYY-MM-DD}` by the RAG service's `_track_usage` function (a small additive change). |
+  | Monthly ceiling (USD) | `llm_monthly_budget_usd` → `{ "amount": number, "currency": "USD" }` | `llm:config:monthly_budget_usd` | Synced via `AiSettingsService.syncBudgetToRedis()` on save. Hard cap across all derivative generation and RAG calls. |
+  | Daily sub-ceiling (USD, optional) | `llm_daily_budget_usd` → `{ "amount": number, "currency": "USD" }` (row absent = no daily cap) | `llm:config:daily_budget_usd` | Optional secondary cap. If set, whichever ceiling is hit first triggers the hard stop. Usage is tracked in parallel under `llm:usage:daily:{YYYY-MM-DD}` by the RAG service's `_track_usage` function. Clearing the daily cap **deletes** the `llm_daily_budget_usd` row (and the Redis key) via the same `syncBudgetToRedis()` call — there is no separate "unset" flag. |
 
   Both fields are plain number inputs with a save-confirmation dialog. No sliders, no thresholds, no percentages.
 - **Spend breakdown** — bar chart of spend by derivative type, pie chart of spend by backfill batch, all based on `budget_ledger`.
@@ -3586,7 +3592,7 @@ All write endpoints write to `audit_logs` with `action = "backfill.<verb>"`.
 
 **API endpoints:**
 - `GET /admin/budget/current` — current month snapshot: `{ monthlyCeiling, dailyCeiling?, monthSpend, daySpend, byType, byBatch, exhaustedState }`.
-- `PATCH /admin/budget/settings` — update ceilings. Body: `{ monthlyCeilingUsd?, dailyCeilingUsd? }`. The handler writes to `ai_settings` and calls the existing `AiSettingsService.syncBudgetToRedis()` for the monthly key; the daily key is synced in the same transaction via a new `syncDailyBudgetToRedis()` helper.
+- `PATCH /admin/budget/settings` — update ceilings. Body: `{ monthlyBudgetUsd, dailyBudgetUsd? }` where `dailyBudgetUsd` may be `null` to explicitly clear an existing daily cap or omitted to leave it unchanged. The handler upserts (or deletes, on explicit `null`) the `llm_monthly_budget_usd` and `llm_daily_budget_usd` rows in `ai_settings`, then calls `AiSettingsService.syncBudgetToRedis()`, which fetches both rows in parallel and writes/deletes both Redis keys in one pass. There is no separate `syncDailyBudgetToRedis()` helper — the single method handles both ceilings. The landed endpoint is `PATCH /admin/ai-settings/budget`; the route will be re-exposed under `/admin/budget/settings` when `/admin/budget` is extracted from `/admin/ai-settings` per §7.6.
 - `GET /admin/budget/history` — monthly rollups.
 
 ### 7.3 New page: `/admin/schedule`
@@ -3597,17 +3603,15 @@ The existing `/admin/ai-settings` page has an `ingestion_schedule` editor but it
 
 **Content:**
 - **Global enable toggle** — single switch, mirrors `ingestion_schedule.enabled`.
-- **Global ingestion window** — admin-editable wall-clock window that gates all backfill ticks and scheduled watch-loop runs. Backed by these `ai_settings` keys:
+- **Global ingestion window** — admin-editable wall-clock window that gates all backfill ticks and scheduled watch-loop runs. Backed by `AiSettings` rows (see §7.1a — KV storage, not columns). The landed impl in commit `a122074` stores the window start, stop, and timezone together in **one compound row**; the two optional calendar gates are separate keys (not yet landed).
 
-  | Field | Backing column | Notes |
+  | Field | Backing `AiSettings` row (key → JSON value) | Notes |
   |---|---|---|
-  | Ingestion start time (local) | `ai_settings.ingestion_window_start_local` | Time-of-day (e.g. `02:00`). Beat tasks and backfill ticks skip work outside this window. |
-  | Ingestion stop time (local) | `ai_settings.ingestion_window_stop_local` | Time-of-day (e.g. `06:00`). A currently-running document is finished; no new documents are started once stop time passes. |
-  | Timezone | `ai_settings.ingestion_window_tz` | Olson ID (default `Asia/Manila`). Applied to both start and stop times. |
-  | Overall start date (optional) | `ai_settings.ingestion_enabled_from` | Optional calendar gate. Ingestion is suppressed before this date. |
-  | Overall end date (optional) | `ai_settings.ingestion_enabled_until` | Optional calendar gate. Ingestion is suppressed after this date. |
+  | Ingestion wall-clock window (start + stop + timezone) | `ingestion_window` → `{ "startLocal": "HH:MM", "stopLocal": "HH:MM", "timezone": "Asia/Manila" }` (compound value; row absent = no window, scheduler runs whenever the cron fires) | `startLocal` and `stopLocal` are 24-hour `HH:MM` strings (e.g. `"02:00"` / `"06:00"`). `timezone` is an IANA Olson ID validated against `INGESTION_WINDOW_TIMEZONES` — a `const` array exported from `apps/api/src/modules/ai-settings/dto.ts` that currently contains only `"Asia/Manila"`. Both the API DTO and the web form read the allowlist from this single source of truth. All three fields **move together** on save — partial updates are not supported by the `updateIngestionWindow` service method; the admin replaces the whole compound value. Beat tasks and backfill ticks skip work outside this window; a currently-running document is finished, but no new documents are started once stop time passes. Synced to three separate Redis keys (`ingestion:window:start_local`, `ingestion:window:stop_local`, `ingestion:window:timezone`) via `AiSettingsService.syncIngestionWindowToRedis()`; if the row is absent, all three Redis keys are **deleted** and the scheduler reverts to cron-only behavior. |
+  | Overall start date (optional, planned — not yet landed) | `ingestion_enabled_from` → JSON shape TBD at implementation time (separate KV row, not part of `ingestion_window`) | Optional calendar gate. Ingestion is suppressed before this date. Tracked as a follow-up to `a122074`. |
+  | Overall end date (optional, planned — not yet landed) | `ingestion_enabled_until` → JSON shape TBD at implementation time (separate KV row, not part of `ingestion_window`) | Optional calendar gate. Ingestion is suppressed after this date. Tracked as a follow-up to `a122074`. |
 
-  The global window is the upper bound; each per-batch window (`backfill_batches.daily_window_*`) can be tighter but can never escape the global bound. Both the beat task (`run_backfill_batch_tick`) and the watch loop read these values at tick-start and short-circuit if outside the window.
+  The global window is the upper bound; each per-batch window (`backfill_batches.daily_window_*` — these **are** real columns, per §7.1) can be tighter but can never escape the global bound. Both the beat task (`run_backfill_batch_tick`) and the watch loop read these values at tick-start and short-circuit if outside the window.
 - **Per-source schedule table** — row per source with columns: Source Name, Enabled, Cron (form editor), Next Run Time (computed), Last Run, Actions (Edit, Delete).
 - **Cron form editor** — user-friendly fields (minute, hour, day, month, weekday) with presets ("Every day at 2 AM", "Every 3 hours", "Weekdays at 6 AM").
 - **Test schedule button** — dry run that previews what jobs would be created in the next 24 hours without actually creating them.
