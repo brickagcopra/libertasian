@@ -13,10 +13,14 @@ describe('AnalyticsAggregationService', () => {
     $executeRaw: jest.Mock;
   };
 
-  // Helpers to access private methods via service instance
+  // Helpers to access private methods via service instance.
+  // `this` must be bound back to the service — every private method in
+  // AnalyticsAggregationService reads `this.prisma` (see e.g.
+  // analytics-aggregation.service.ts:104), so an unbound call drops the
+  // injected PrismaService and throws "Cannot read properties of undefined".
   const callPrivate = (method: string, ...args: unknown[]) => {
     const fn = (service as unknown as Record<string, (...a: unknown[]) => Promise<void>>)[method]!;
-    return fn(...args);
+    return fn.call(service, ...args);
   };
 
   const yesterday = new Date('2026-04-02T00:00:00.000Z');
