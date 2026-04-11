@@ -6,6 +6,7 @@ import {
   createAuthenticatedUser,
   registerTestUser,
   loginTestUser,
+  extractRefreshCookie,
 } from './helpers';
 
 /**
@@ -98,63 +99,80 @@ describe('JWT & Token Security (E2E)', () => {
 
   describe('Refresh token rotation', () => {
     it('should issue new tokens on valid refresh', async () => {
+      // Refresh token is now an httpOnly `libertasian-refresh` cookie
+      // (commit af823bd); send it via Cookie header, receive rotated
+      // token via Set-Cookie header.
       const user = await createAuthenticatedUser(app, {
         email: `refresh-${Date.now()}@test.com`,
       });
 
       const res = await request(app.getHttpServer())
         .post('/api/v1/auth/refresh')
-        .send({ refreshToken: user.refreshToken })
+        .set('Cookie', user.refreshCookie)
         .expect(201);
 
       expect(res.body.success).toBe(true);
       expect(res.body.data.accessToken).toBeDefined();
-      expect(res.body.data.refreshToken).toBeDefined();
-      // New tokens should differ from old ones
-      expect(res.body.data.accessToken).not.toBe(user.accessToken);
-      expect(res.body.data.refreshToken).not.toBe(user.refreshToken);
+      expect(res.body.data.refreshToken).toBeUndefined();
+      // Rotation is asserted against the refresh token only: access
+      // tokens embed `iat` in whole seconds, so back-to-back issues
+      // in the same epoch second produce byte-identical JWTs and a
+      // `not.toBe(user.accessToken)` would be intrinsically racy.
+      // The pre-af823bd version of this test never reached the
+      // assertion because refresh always 401'd on missing cookie.
+      const rotated = extractRefreshCookie(res.headers['set-cookie']);
+      expect(rotated.refreshToken).toBeTruthy();
+      expect(rotated.refreshToken).not.toBe(user.refreshToken);
     });
 
     it('should reject reuse of an already-rotated refresh token (reuse detection)', async () => {
+      // Drive the rotation/reuse flow entirely through Set-Cookie /
+      // Cookie headers since commit af823bd moved the refresh token
+      // out of request/response bodies and into an httpOnly cookie.
       const user = await createAuthenticatedUser(app, {
         email: `reuse-${Date.now()}@test.com`,
       });
 
-      const originalRefresh = user.refreshToken;
+      const originalRefreshCookie = user.refreshCookie;
 
       // First refresh — succeeds and rotates
       const res1 = await request(app.getHttpServer())
         .post('/api/v1/auth/refresh')
-        .send({ refreshToken: originalRefresh })
+        .set('Cookie', originalRefreshCookie)
         .expect(201);
 
-      const newRefresh = res1.body.data.refreshToken;
+      const rotated = extractRefreshCookie(res1.headers['set-cookie']);
+      expect(rotated.refreshCookie).toBeTruthy();
 
-      // Reuse the OLD token — should detect theft and revoke entire family
+      // Reuse the OLD cookie — should detect theft and revoke entire family
       await request(app.getHttpServer())
         .post('/api/v1/auth/refresh')
-        .send({ refreshToken: originalRefresh })
+        .set('Cookie', originalRefreshCookie)
         .expect(401);
 
-      // Even the new token from the first rotation should now be revoked
+      // Even the new cookie from the first rotation should now be revoked
       await request(app.getHttpServer())
         .post('/api/v1/auth/refresh')
-        .send({ refreshToken: newRefresh })
+        .set('Cookie', rotated.refreshCookie)
         .expect(401);
     });
 
     it('should reject refresh with invalid token', async () => {
+      // Cookie-based refresh (af823bd): set a bogus cookie rather than
+      // sending the token in a DTO field the server no longer reads.
       await request(app.getHttpServer())
         .post('/api/v1/auth/refresh')
-        .send({ refreshToken: 'completely-invalid-token' })
+        .set('Cookie', 'libertasian-refresh=completely-invalid-token')
         .expect(401);
     });
 
-    it('should reject refresh with empty token', async () => {
+    it('should reject refresh with empty/missing cookie', async () => {
+      // Post-af823bd: no cookie → controller throws 401 "No refresh token"
+      // before any DTO validation can run, so the old 400 from an empty
+      // body field is no longer reachable.
       await request(app.getHttpServer())
         .post('/api/v1/auth/refresh')
-        .send({ refreshToken: '' })
-        .expect(400);
+        .expect(401);
     });
   });
 
@@ -162,7 +180,8 @@ describe('JWT & Token Security (E2E)', () => {
 
   describe('Device fingerprint binding', () => {
     it('should reject refresh from a different device fingerprint', async () => {
-      // Register and login from "device A"
+      // Register and login from "device A". Refresh token lives in a
+      // Set-Cookie header now (commit af823bd), so we pull it from there.
       const email = `device-fp-${Date.now()}@test.com`;
       const password = 'TestPass123!secure';
       await registerTestUser(app, { email, password });
@@ -173,13 +192,14 @@ describe('JWT & Token Security (E2E)', () => {
         .send({ email, password })
         .expect(201);
 
-      const refreshToken = loginRes.body.data.tokens.refreshToken;
+      const { refreshCookie } = extractRefreshCookie(loginRes.headers['set-cookie']);
+      expect(refreshCookie).toBeTruthy();
 
       // Attempt refresh from "device B" with a different User-Agent
       const refreshRes = await request(app.getHttpServer())
         .post('/api/v1/auth/refresh')
         .set('User-Agent', 'TotallyDifferentBrowser/1.0 Linux')
-        .send({ refreshToken });
+        .set('Cookie', refreshCookie);
 
       // Should be rejected (401) due to device fingerprint mismatch
       // OR succeed if fingerprint is based on IP prefix (same localhost)
@@ -192,6 +212,9 @@ describe('JWT & Token Security (E2E)', () => {
 
   describe('Logout and session revocation', () => {
     it('should revoke all tokens in the family on logout', async () => {
+      // Both /auth/logout and /auth/refresh read the refresh token
+      // from the httpOnly `libertasian-refresh` cookie since af823bd,
+      // so the DTO body is ignored — use .set('Cookie', ...).
       const user = await createAuthenticatedUser(app, {
         email: `logout-${Date.now()}@test.com`,
       });
@@ -200,13 +223,13 @@ describe('JWT & Token Security (E2E)', () => {
       await request(app.getHttpServer())
         .post('/api/v1/auth/logout')
         .set('Authorization', `Bearer ${user.accessToken}`)
-        .send({ refreshToken: user.refreshToken })
+        .set('Cookie', user.refreshCookie)
         .expect(201);
 
       // Refresh should now fail
       await request(app.getHttpServer())
         .post('/api/v1/auth/refresh')
-        .send({ refreshToken: user.refreshToken })
+        .set('Cookie', user.refreshCookie)
         .expect(401);
     });
 
@@ -220,9 +243,10 @@ describe('JWT & Token Security (E2E)', () => {
       // We cannot easily trigger the password reset flow without the email token,
       // but we can verify that changing password invalidates existing refresh tokens.
       // The auth service already tests this — here we verify the E2E behavior.
+      // Refresh token is now carried via the httpOnly cookie (commit af823bd).
       const refreshRes = await request(app.getHttpServer())
         .post('/api/v1/auth/refresh')
-        .send({ refreshToken: login.refreshToken })
+        .set('Cookie', login.refreshCookie)
         .expect(201);
 
       // The refresh itself should work before password reset

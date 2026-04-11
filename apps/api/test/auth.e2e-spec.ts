@@ -1,7 +1,13 @@
 import { INestApplication } from '@nestjs/common';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const request = require('supertest') as typeof import('supertest');
-import { createTestApp, registerTestUser, loginTestUser, createAuthenticatedUser } from './helpers';
+import {
+  createTestApp,
+  registerTestUser,
+  loginTestUser,
+  createAuthenticatedUser,
+  extractRefreshCookie,
+} from './helpers';
 
 describe('Auth (E2E)', () => {
   let app: INestApplication;
@@ -86,7 +92,15 @@ describe('Auth (E2E)', () => {
 
       expect(res.body.success).toBe(true);
       expect(res.body.data.tokens.accessToken).toBeDefined();
-      expect(res.body.data.tokens.refreshToken).toBeDefined();
+      // Refresh token is now issued as an httpOnly Set-Cookie and no
+      // longer appears in the body (commit af823bd RS256 + cookie migration).
+      expect(res.body.data.tokens.refreshToken).toBeUndefined();
+      const setCookie = res.headers['set-cookie'];
+      expect(
+        (Array.isArray(setCookie) ? setCookie : [setCookie]).some(
+          (c) => typeof c === 'string' && c.startsWith('libertasian-refresh='),
+        ),
+      ).toBe(true);
       expect(res.body.data.mfaRequired).toBe(false);
     });
 
@@ -111,40 +125,48 @@ describe('Auth (E2E)', () => {
 
   describe('POST /api/v1/auth/refresh', () => {
     it('should refresh tokens with a valid refresh token', async () => {
-      const { refreshToken } = await createAuthenticatedUser(app);
+      // Refresh token travels in the httpOnly `libertasian-refresh`
+      // cookie (commit af823bd). Set-Cookie → Cookie round-trip.
+      const { refreshToken, refreshCookie } = await createAuthenticatedUser(app);
 
       const res = await request(app.getHttpServer())
         .post('/api/v1/auth/refresh')
-        .send({ refreshToken })
+        .set('Cookie', refreshCookie)
         .expect(201);
 
       expect(res.body.success).toBe(true);
       expect(res.body.data.accessToken).toBeDefined();
-      expect(res.body.data.refreshToken).toBeDefined();
-      // New refresh token should differ from old one (rotation)
-      expect(res.body.data.refreshToken).not.toBe(refreshToken);
+      // The rotated refresh token is in the new Set-Cookie, not the body.
+      expect(res.body.data.refreshToken).toBeUndefined();
+      const rotated = extractRefreshCookie(res.headers['set-cookie']);
+      expect(rotated.refreshToken).toBeTruthy();
+      expect(rotated.refreshToken).not.toBe(refreshToken);
     });
 
     it('should reject reused (already-rotated) refresh token', async () => {
-      const { refreshToken } = await createAuthenticatedUser(app);
+      // Use the raw cookie string for .set('Cookie', ...) — body field
+      // is ignored post-af823bd.
+      const { refreshCookie } = await createAuthenticatedUser(app);
 
       // First refresh — succeeds
       await request(app.getHttpServer())
         .post('/api/v1/auth/refresh')
-        .send({ refreshToken })
+        .set('Cookie', refreshCookie)
         .expect(201);
 
-      // Second refresh with same token — reuse detection, should fail
+      // Second refresh with same cookie — reuse detection, should fail
       await request(app.getHttpServer())
         .post('/api/v1/auth/refresh')
-        .send({ refreshToken })
+        .set('Cookie', refreshCookie)
         .expect(401);
     });
 
     it('should reject invalid refresh token', async () => {
+      // Cookie-based refresh (af823bd): set a bogus cookie value rather
+      // than sending it in the body, which the server now ignores.
       await request(app.getHttpServer())
         .post('/api/v1/auth/refresh')
-        .send({ refreshToken: 'invalid-token' })
+        .set('Cookie', 'libertasian-refresh=invalid-token')
         .expect(401);
     });
   });
@@ -153,18 +175,20 @@ describe('Auth (E2E)', () => {
 
   describe('POST /api/v1/auth/logout', () => {
     it('should revoke refresh token family on logout', async () => {
-      const { accessToken, refreshToken } = await createAuthenticatedUser(app);
+      // Logout and refresh both read the refresh token from the
+      // httpOnly `libertasian-refresh` cookie (commit af823bd).
+      const { accessToken, refreshCookie } = await createAuthenticatedUser(app);
 
       await request(app.getHttpServer())
         .post('/api/v1/auth/logout')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ refreshToken })
+        .set('Cookie', refreshCookie)
         .expect(201);
 
-      // Refresh with the old token should now fail
+      // Refresh with the old cookie should now fail
       await request(app.getHttpServer())
         .post('/api/v1/auth/refresh')
-        .send({ refreshToken })
+        .set('Cookie', refreshCookie)
         .expect(401);
     });
   });
@@ -235,17 +259,19 @@ describe('Auth (E2E)', () => {
     });
 
     it('should revoke all sessions', async () => {
-      const { accessToken, refreshToken } = await createAuthenticatedUser(app);
+      // Refresh token lives in an httpOnly cookie since af823bd; round-trip it
+      // back to the server via .set('Cookie', refreshCookie).
+      const { accessToken, refreshCookie } = await createAuthenticatedUser(app);
 
       await request(app.getHttpServer())
         .delete('/api/v1/auth/sessions')
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(200);
 
-      // Refresh token should be revoked
+      // Refresh cookie should be revoked
       await request(app.getHttpServer())
         .post('/api/v1/auth/refresh')
-        .send({ refreshToken })
+        .set('Cookie', refreshCookie)
         .expect(401);
     });
   });
