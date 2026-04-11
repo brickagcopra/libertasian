@@ -1,7 +1,7 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Job } from 'bullmq';
+import { Job, UnrecoverableError } from 'bullmq';
 import sharp from 'sharp';
 
 import { PrismaService } from '../../prisma/prisma.service';
@@ -238,9 +238,28 @@ export class UploadsProcessor extends WorkerHost {
         this.logger.warn(
           `Upload ${upload.id} rejected: quality score ${qualityScore} < ${QUALITY_REJECT_THRESHOLD}`,
         );
-        return;
+
+        // Terminate the job with UnrecoverableError so the outer
+        // process() catch handler marks the original job record as
+        // failed (instead of the 'completed' cleanup path at
+        // process():143-144 overwriting the 'failed' processingStatus
+        // we just wrote). UnrecoverableError also signals BullMQ not
+        // to retry — a rejected image will fail the same quality
+        // check on every attempt, so retries are wasted work.
+        // See /tmp/security-investigation.md §E2 real_bug.
+        throw new UnrecoverableError(
+          `Image quality too low (${qualityScore.toFixed(2)}). ${qualityResult.recommendation}`,
+        );
       }
     } catch (err) {
+      // Propagate the terminal quality-reject signal to the outer
+      // process() catch handler. Must not be collapsed into the
+      // "graceful degradation" branch below, otherwise the failed
+      // processingStatus we just wrote would be overwritten by the
+      // completion path in process():143-144.
+      if (err instanceof UnrecoverableError) {
+        throw err;
+      }
       this.logger.warn(
         `Quality scoring failed for ${upload.id}, continuing with default: ${err instanceof Error ? err.message : 'Unknown'}`,
       );

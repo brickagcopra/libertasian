@@ -273,19 +273,7 @@ describe('Ingestion Pipeline — Integration', () => {
   // ── Quality Rejection ──────────────────────────────────────────────────
 
   describe('Quality score thresholds', () => {
-    // RECLASSIFIED real_bug: uploads.processor.ts:142-144 unconditionally
-    // runs `updateUploadStatus(uploadId, 'completed')` after
-    // processCameraScan() returns, even when the inner quality-reject
-    // branch (uploads.processor.ts:211-241) already set
-    // processingStatus='failed' and did a plain `return`. That final
-    // updateUploadStatus call overwrites 'failed' with 'completed',
-    // while the earlier `ocrStatus: 'failed'` write is preserved (the
-    // outer path only touches processingStatus). Fixing this requires
-    // a production-code change (either throw from processCameraScan on
-    // reject, or short-circuit in process() when status is already
-    // final) and is out of scope for the Batch 1 test-only sweep. See
-    // /tmp/test-failure-triage.md row E2 for full writeup.
-    it.skip('should reject upload when quality < 0.2', async () => {
+    it('should reject upload when quality < 0.2', async () => {
       const { upload, job } = await createTestUpload();
 
       // Real JPEG — processImage() (uploads.processor.ts:375) runs sharp
@@ -294,16 +282,26 @@ describe('Ingestion Pipeline — Integration', () => {
       jest.spyOn(s3, 'upload').mockResolvedValue(undefined);
       jest.spyOn(clamav, 'scanBuffer').mockResolvedValue(mockClamavClean());
       jest.spyOn(ocrClient, 'scoreQuality').mockResolvedValue(mockQualityScoreReject());
+      // Spied (but never called) so the `.not.toHaveBeenCalled()`
+      // short-circuit assertion below has a real mock to introspect.
+      const extractTextSpy = jest.spyOn(ocrClient, 'extractText');
       jest.spyOn(uploadSearch, 'indexUpload').mockResolvedValue(undefined);
 
-      await processor.process(createUploadJob(upload.id, job.id));
+      // Quality reject is terminal: the processor throws
+      // `UnrecoverableError` from the inner reject branch so the outer
+      // process() catch finalises job/upload records as 'failed'
+      // instead of the 'completed' cleanup path overwriting them.
+      // BullMQ recognises UnrecoverableError as non-retryable.
+      await expect(
+        processor.process(createUploadJob(upload.id, job.id)),
+      ).rejects.toThrow(/quality too low/i);
 
       const updatedUpload = await prisma.userUpload.findUnique({ where: { id: upload.id } });
       expect(updatedUpload?.ocrStatus).toBe('failed');
       expect(updatedUpload?.processingStatus).toBe('failed');
 
       // OCR extraction should NOT have been called (short-circuited)
-      expect(ocrClient.extractText).not.toHaveBeenCalled();
+      expect(extractTextSpy).not.toHaveBeenCalled();
 
       // Quality failure job should be recorded
       const qualityJobs = await prisma.uploadProcessingJob.findMany({
