@@ -3448,3 +3448,30 @@ model AdEvent {
   @@index([sessionId])
   @@map("ad_events")
 }
+
+// ==========================================================================
+// Content Disclaimers (§8.2 / §8.6 of corpus-platform target architecture)
+//
+// Single source of truth for disclaimer text attached to every
+// AI-generated derivative artifact before it leaves the API. The
+// AttachDisclaimerInterceptor reads rows from this table via
+// ContentDisclaimersService and splices them into derivative responses.
+//
+// Versioning: one active row per contentClass. Updates bump `version`
+// and rewrite the row in place. Per-artifact version pinning (for
+// frozen display on historical derivatives) is a follow-up.
+// ==========================================================================
+
+model ContentDisclaimer {
+  id           String   @id @default(uuid()) @db.Uuid
+  contentClass String   @unique @map("content_class") @db.VarChar(100)
+  bodyHtml     String   @map("body_html") @db.Text
+  bodyPlain    String   @map("body_plain") @db.Text
+  version      Int      @default(1)
+  isActive     Boolean  @default(true) @map("is_active")
+  authorNote   String?  @map("author_note") @db.Text
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("content_disclaimers")
+}

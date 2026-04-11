@@ -1,6 +1,6 @@
 import { BullModule } from '@nestjs/bullmq';
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -9,7 +9,9 @@ import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis'
 import * as Joi from 'joi';
 
 import { AppThrottlerGuard } from './common/guards/app-throttler.guard';
+import { AttachDisclaimerInterceptor } from './common/interceptors/attach-disclaimer.interceptor';
 import { RedisModule } from './common/services/redis.module';
+import { ContentDisclaimersModule } from './modules/content-disclaimers/content-disclaimers.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { AiAnswersModule } from './modules/ai-answers/ai-answers.module';
 import { AuditModule } from './modules/audit/audit.module';
@@ -161,6 +163,7 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
     PricingModule,
     FeatureFlagsModule,
     SubscriptionsModule,
+    ContentDisclaimersModule,
 
     // Domain modules
     AnalyticsModule,
@@ -210,6 +213,14 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
     {
       provide: APP_GUARD,
       useClass: AppThrottlerGuard,
+    },
+    // §8.6 launch gate — attach a ContentDisclaimer envelope to every
+    // derivative response before it leaves the API. Handlers opt in via
+    // @DerivativeResponse() metadata or by returning a payload whose
+    // top-level `derivativeType` field matches a seeded contentClass.
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: AttachDisclaimerInterceptor,
     },
   ],
 })
