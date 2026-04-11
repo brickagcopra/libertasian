@@ -143,13 +143,26 @@ export class FeedService {
     });
   }
 
-  async getPost(postId: string, userId: string) {
-    const post = await this.prisma.feedPost.findUnique({
-      where: { id: postId },
+  async getPost(postId: string, userId: string, viewerOrgId: string) {
+    // Tenant-visibility scoping enforced at the DB layer: a single
+    // NotFoundException branch covers "post doesn't exist", "soft-deleted",
+    // "non-published", and "not readable from viewer's org". Keeping one
+    // exception shape prevents an attacker from fingerprinting the
+    // existence or org membership of a post via error type. (E14)
+    const post = await this.prisma.feedPost.findFirst({
+      where: {
+        id: postId,
+        status: 'published',
+        deletedAt: null,
+        OR: [
+          { visibility: 'public' },
+          { visibility: 'organization', organizationId: viewerOrgId },
+        ],
+      },
       select: POST_SELECT,
     });
 
-    if (!post || post.status !== 'published') {
+    if (!post) {
       throw new NotFoundException('Post not found');
     }
 
@@ -196,13 +209,39 @@ export class FeedService {
     );
   }
 
-  async getBookmarkedPosts(query: FeedQueryDto, userId: string) {
+  async getBookmarkedPosts(
+    query: FeedQueryDto,
+    userId: string,
+    viewerOrgId: string,
+  ) {
     const limit = query.limit ?? 20;
 
+    // Tenant visibility + liveness enforced at the DB layer via a
+    // relational filter on `post`. Prisma only returns bookmark rows
+    // whose related post is published, not soft-deleted, and readable
+    // to the viewer (public, or organization-scoped to the viewer's
+    // org). This closes the E14-class bypass where a stale bookmark
+    // (e.g. created while a post was public, then flipped to
+    // organization visibility) would otherwise keep leaking the post's
+    // full content via /feed/bookmarks. It also removes the former
+    // JS-side `.filter(... !b.post.updatedAt)` typo, which had meant
+    // `updatedAt` instead of `deletedAt` and was always truthy —
+    // folded into this same fix as a side effect of moving the filter
+    // into the query.
     const bookmarks = await this.prisma.feedPostBookmark.findMany({
       take: limit + 1,
       ...(query.cursor && { skip: 1, cursor: { id: query.cursor } }),
-      where: { userId },
+      where: {
+        userId,
+        post: {
+          status: 'published',
+          deletedAt: null,
+          OR: [
+            { visibility: 'public' },
+            { visibility: 'organization', organizationId: viewerOrgId },
+          ],
+        },
+      },
       orderBy: { createdAt: 'desc' },
       include: {
         post: {
@@ -215,9 +254,7 @@ export class FeedService {
     const results = hasNext ? bookmarks.slice(0, limit) : bookmarks;
 
     const items = await Promise.all(
-      results
-        .filter((b) => b.post.status === 'published' && !b.post.updatedAt)
-        .map((b) => this.formatPost(b.post, userId)),
+      results.map((b) => this.formatPost(b.post, userId)),
     );
 
     return {

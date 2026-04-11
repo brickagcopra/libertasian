@@ -440,5 +440,179 @@ describe('Authentication & Authorization Security (E2E)', () => {
         expect([403, 404]).toContain(getRes.status);
       }
     });
+
+    // E14 companion: public posts must remain readable cross-tenant.
+    it('should allow cross-tenant reads of a public feed post', async () => {
+      const userA = await createAuthenticatedUser(app, {
+        email: `feed-pub-a-${Date.now()}@test.com`,
+      });
+      const userB = await createAuthenticatedUser(app, {
+        email: `feed-pub-b-${Date.now()}@test.com`,
+      });
+
+      const createRes = await request(app.getHttpServer())
+        .post('/api/v1/feed/posts')
+        .set('Authorization', `Bearer ${userA.accessToken}`)
+        .send({ textContent: 'Hello world', visibility: 'public' })
+        .expect(201);
+
+      const postId = createRes.body.data.id;
+
+      const getRes = await request(app.getHttpServer())
+        .get(`/api/v1/feed/posts/${postId}`)
+        .set('Authorization', `Bearer ${userB.accessToken}`)
+        .expect(200);
+
+      expect(getRes.body.success).toBe(true);
+      expect(getRes.body.data.id).toBe(postId);
+      expect(getRes.body.data.visibility).toBe('public');
+      expect(getRes.body.data.textContent).toBe('Hello world');
+    });
+
+    // E14 companion: soft-deleted posts must not leak cross-tenant.
+    it('should return 404 cross-tenant for a soft-deleted public post', async () => {
+      const userA = await createAuthenticatedUser(app, {
+        email: `feed-del-a-${Date.now()}@test.com`,
+      });
+      const userB = await createAuthenticatedUser(app, {
+        email: `feed-del-b-${Date.now()}@test.com`,
+      });
+
+      const createRes = await request(app.getHttpServer())
+        .post('/api/v1/feed/posts')
+        .set('Authorization', `Bearer ${userA.accessToken}`)
+        .send({ textContent: 'Doomed post', visibility: 'public' })
+        .expect(201);
+
+      const postId = createRes.body.data.id;
+
+      // Author soft-deletes the post.
+      await request(app.getHttpServer())
+        .delete(`/api/v1/feed/posts/${postId}`)
+        .set('Authorization', `Bearer ${userA.accessToken}`)
+        .expect(204);
+
+      // Cross-tenant viewer receives NotFound — same shape as the
+      // "never existed" branch, preventing existence fingerprinting.
+      await request(app.getHttpServer())
+        .get(`/api/v1/feed/posts/${postId}`)
+        .set('Authorization', `Bearer ${userB.accessToken}`)
+        .expect(404);
+    });
+
+    // E14 companion: same-tenant reads of an organization-scoped
+    // post still succeed. The author is trivially in the post's org,
+    // so using the author as the reader is the simplest same-tenant
+    // case without needing member-invite plumbing in the test.
+    it('should allow same-tenant read of an organization feed post', async () => {
+      const user = await createAuthenticatedUser(app, {
+        email: `feed-same-${Date.now()}@test.com`,
+      });
+
+      const createRes = await request(app.getHttpServer())
+        .post('/api/v1/feed/posts')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .send({ textContent: 'Team update', visibility: 'organization' })
+        .expect(201);
+
+      const postId = createRes.body.data.id;
+
+      const getRes = await request(app.getHttpServer())
+        .get(`/api/v1/feed/posts/${postId}`)
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .expect(200);
+
+      expect(getRes.body.data.id).toBe(postId);
+      expect(getRes.body.data.visibility).toBe('organization');
+    });
+
+    // E14 companion (getBookmarkedPosts bypass): a user bookmarks a
+    // public post, the author later flips visibility to organization,
+    // and the stale bookmark must be filtered out server-side. The
+    // DB filter (not a JS post-filter) is what drops the row, so we
+    // assert that the post does not appear in the returned array.
+    it('should not leak stale bookmarks after a post flips to organization visibility', async () => {
+      const userA = await createAuthenticatedUser(app, {
+        email: `feed-bm-a-${Date.now()}@test.com`,
+      });
+      const userB = await createAuthenticatedUser(app, {
+        email: `feed-bm-b-${Date.now()}@test.com`,
+      });
+
+      // userA publishes a public post.
+      const createRes = await request(app.getHttpServer())
+        .post('/api/v1/feed/posts')
+        .set('Authorization', `Bearer ${userA.accessToken}`)
+        .send({ textContent: 'Initially public', visibility: 'public' })
+        .expect(201);
+
+      const postId = createRes.body.data.id;
+
+      // userB (different org) bookmarks it while it is public.
+      await request(app.getHttpServer())
+        .post(`/api/v1/feed/posts/${postId}/bookmark`)
+        .set('Authorization', `Bearer ${userB.accessToken}`)
+        .expect(204);
+
+      // Sanity check: bookmark shows up while the post is public.
+      const beforeRes = await request(app.getHttpServer())
+        .get('/api/v1/feed/bookmarks')
+        .set('Authorization', `Bearer ${userB.accessToken}`)
+        .expect(200);
+
+      const beforeIds = (beforeRes.body.data as Array<{ id: string }>).map(
+        (p) => p.id,
+      );
+      expect(beforeIds).toContain(postId);
+
+      // userA flips visibility to organization.
+      await request(app.getHttpServer())
+        .patch(`/api/v1/feed/posts/${postId}`)
+        .set('Authorization', `Bearer ${userA.accessToken}`)
+        .send({ visibility: 'organization' })
+        .expect(200);
+
+      // userB's bookmark list must no longer surface the post. The
+      // filter is enforced at the DB layer, so the returned array
+      // must not contain a row with this id.
+      const afterRes = await request(app.getHttpServer())
+        .get('/api/v1/feed/bookmarks')
+        .set('Authorization', `Bearer ${userB.accessToken}`)
+        .expect(200);
+
+      const afterIds = (afterRes.body.data as Array<{ id: string }>).map(
+        (p) => p.id,
+      );
+      expect(afterIds).not.toContain(postId);
+    });
+
+    // E14 companion (getBookmarkedPosts): same-tenant bookmarks of
+    // organization-scoped posts still surface in /feed/bookmarks.
+    it('should still return same-tenant bookmarks of organization posts', async () => {
+      const user = await createAuthenticatedUser(app, {
+        email: `feed-bm-same-${Date.now()}@test.com`,
+      });
+
+      const createRes = await request(app.getHttpServer())
+        .post('/api/v1/feed/posts')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .send({ textContent: 'Team link', visibility: 'organization' })
+        .expect(201);
+
+      const postId = createRes.body.data.id;
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/feed/posts/${postId}/bookmark`)
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .expect(204);
+
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/feed/bookmarks')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .expect(200);
+
+      const ids = (res.body.data as Array<{ id: string }>).map((p) => p.id);
+      expect(ids).toContain(postId);
+    });
   });
 });

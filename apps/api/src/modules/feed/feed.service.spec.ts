@@ -57,6 +57,7 @@ const mockPrisma = {
   feedPost: {
     create: jest.fn(),
     findUnique: jest.fn(),
+    findFirst: jest.fn(),
     findMany: jest.fn(),
     update: jest.fn(),
   },
@@ -286,10 +287,15 @@ describe('FeedService', () => {
   // ─── Get Post ─────────────────────────────────────────────────────────────
 
   describe('getPost', () => {
-    it('should return post with interaction flags', async () => {
-      mockPrisma.feedPost.findUnique.mockResolvedValue(mockPost);
+    // After the E14 fix, getPost() uses findFirst with a `where`
+    // clause that enforces tenant visibility at the DB layer. Unit
+    // tests mock findFirst; the DB filter semantics are covered by
+    // auth-security.e2e-spec.ts cross-tenant cases.
 
-      const result = await service.getPost(POST_ID, USER_ID);
+    it('should return post with interaction flags', async () => {
+      mockPrisma.feedPost.findFirst.mockResolvedValue(mockPost);
+
+      const result = await service.getPost(POST_ID, USER_ID, ORG_ID);
 
       expect(result.id).toBe(POST_ID);
       expect(result.isLikedByMe).toBe(false);
@@ -297,25 +303,47 @@ describe('FeedService', () => {
     });
 
     it('should reflect liked + bookmarked state', async () => {
-      mockPrisma.feedPost.findUnique.mockResolvedValue(mockPost);
+      mockPrisma.feedPost.findFirst.mockResolvedValue(mockPost);
       mockPrisma.feedPostLike.findUnique.mockResolvedValue({ id: 'like-1' });
       mockPrisma.feedPostBookmark.findUnique.mockResolvedValue({ id: 'bm-1' });
 
-      const result = await service.getPost(POST_ID, USER_ID);
+      const result = await service.getPost(POST_ID, USER_ID, ORG_ID);
 
       expect(result.isLikedByMe).toBe(true);
       expect(result.isBookmarkedByMe).toBe(true);
     });
 
-    it('should throw on non-published post', async () => {
-      mockPrisma.feedPost.findUnique.mockResolvedValue({
-        ...mockPost,
-        status: 'hidden',
-      });
+    it('should throw NotFound when the post is filtered out by the DB', async () => {
+      // The DB-level filter (non-published / soft-deleted / not
+      // readable cross-tenant) collapses all four cases into a single
+      // null result. The service throws NotFoundException with the
+      // same message regardless of which branch was hit — this is
+      // the anti-fingerprinting guarantee for E14.
+      mockPrisma.feedPost.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.getPost(POST_ID, USER_ID),
+        service.getPost(POST_ID, USER_ID, ORG_ID),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should pass viewer org id into the Prisma where clause', async () => {
+      mockPrisma.feedPost.findFirst.mockResolvedValue(mockPost);
+
+      await service.getPost(POST_ID, USER_ID, ORG_ID);
+
+      expect(mockPrisma.feedPost.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: POST_ID,
+            status: 'published',
+            deletedAt: null,
+            OR: [
+              { visibility: 'public' },
+              { visibility: 'organization', organizationId: ORG_ID },
+            ],
+          }),
+        }),
+      );
     });
   });
 

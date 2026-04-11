@@ -90,7 +90,11 @@ export class FeedController {
     @CurrentUser() user: JwtPayload,
     @Query() query: FeedQueryDto,
   ) {
-    const result = await this.feedService.getBookmarkedPosts(query, user.sub);
+    const result = await this.feedService.getBookmarkedPosts(
+      query,
+      user.sub,
+      user.organizationId,
+    );
     return { success: true, data: result.items, meta: { hasNext: result.hasNext, nextCursor: result.nextCursor } };
   }
 
@@ -106,7 +110,11 @@ export class FeedController {
     @CurrentUser() user: JwtPayload,
     @Param('postId', ParseUUIDPipe) postId: string,
   ) {
-    const data = await this.feedService.getPost(postId, user.sub);
+    const data = await this.feedService.getPost(
+      postId,
+      user.sub,
+      user.organizationId,
+    );
     return { success: true, data };
   }
 
