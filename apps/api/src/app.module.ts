@@ -12,6 +12,7 @@ import { AppThrottlerGuard } from './common/guards/app-throttler.guard';
 import { AttachDisclaimerInterceptor } from './common/interceptors/attach-disclaimer.interceptor';
 import { RedisModule } from './common/services/redis.module';
 import { ContentDisclaimersModule } from './modules/content-disclaimers/content-disclaimers.module';
+import { DerivativeArtifactModule } from './modules/derivative-artifact/derivative-artifact.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { AiAnswersModule } from './modules/ai-answers/ai-answers.module';
 import { AuditModule } from './modules/audit/audit.module';
@@ -164,6 +165,7 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
     FeatureFlagsModule,
     SubscriptionsModule,
     ContentDisclaimersModule,
+    DerivativeArtifactModule,
 
     // Domain modules
     AnalyticsModule,

@@ -109,6 +109,9 @@ model User {
   aiSettingsUpdated          AiSettings[]
   blogPosts                  BlogPost[]              @relation("BlogPostAuthor")
   adCampaigns                AdCampaign[]            @relation("AdCampaignCreator")
+  // Derivative artifacts (§2.2)
+  derivativeArtifactsCreated DerivativeArtifact[]      @relation("DerivativeCreatedBy")
+  derivativeJobsTriggered    DerivativeGenerationJob[] @relation("DerivativeJobTriggeredBy")
 
   @@map("users")
 }
@@ -215,6 +218,8 @@ model Organization {
   // Accounting relations
   journalEntryLines           JournalEntryLine[]
   revenueSchedules            RevenueSchedule[]
+  // Derivative artifacts (§2.2)
+  derivativeArtifacts         DerivativeArtifact[]
 
   @@map("organizations")
 }
@@ -485,6 +490,9 @@ model LegalDocument {
   caseCodalAsCodal      CaseCodalLink[]        @relation("CaseCodalCodal")
   canonicalSimilarities DocumentSimilarity[]   @relation("CanonicalDocument")
   matchedCandidates     IngestionCandidate[]   @relation("CandidateMatchedDoc")
+  // Derivative artifacts (§2.2)
+  derivativeArtifacts     DerivativeArtifact[]
+  derivativeGenerationJobs DerivativeGenerationJob[]
 
   @@index([documentType], map: "idx_legal_docs_type")
   @@index([grNo], map: "idx_legal_docs_gr_no")
@@ -537,6 +545,8 @@ model LegalDocumentSection {
   reviewerPackItems ReviewerPackItem[]
   doctrineExtracts  DoctrineExtract[]
   caseCodalLinks    CaseCodalLink[]
+  // Derivative artifacts (§2.2)
+  derivativeArtifacts DerivativeArtifact[]
 
   @@index([legalDocumentId], map: "idx_sections_doc_id")
   @@index([sectionType], map: "idx_sections_type")
@@ -1192,12 +1202,19 @@ model ModelRun {
   latencyMs             Int?     @map("latency_ms")
   createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz
 
+  // Derivative artifacts (§2.2)
+  derivativeArtifacts DerivativeArtifact[]
+
   @@map("model_runs")
 }
 
 model ProvenanceRecord {
   id               String   @id @default(uuid()) @db.Uuid
-  entityType       String   @map("entity_type") @db.VarChar(20)
+  // entityType was VarChar(20) pre-PR 1.1. Widened to VarChar(40) to fit
+  // "derivative_artifact" and the other generalised entity type strings
+  // from §2.4 without a CHECK constraint — validation lives at the
+  // service layer (see DerivativeArtifactService.create).
+  entityType       String   @map("entity_type") @db.VarChar(40)
   entityId         String   @map("entity_id") @db.Uuid
   sourceDocumentId String   @map("source_document_id") @db.Uuid
   sourceSectionId  String?  @map("source_section_id") @db.Uuid
@@ -3473,5 +3490,127 @@ model ContentDisclaimer {
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
+  // Back-reference for the non-null FK on DerivativeArtifact (§2.2, §2.5).
+  // Every derivative must attach a disclaimer — enforced at the DB level.
+  derivativeArtifacts DerivativeArtifact[]
+
   @@map("content_disclaimers")
+}
+
+// ==========================================================================
+// 5.X Derivative Artifacts (§2.2)
+//
+// Parent table for all AI-generated derivative content (case digests,
+// doctrine extracts, MCQs, essay prompts, outlines, flashcards, sample
+// pleadings, sample contracts, ...). Per-type child tables (McqQuestion,
+// EssayPrompt, DocumentSubjectAssignment, ...) land with their respective
+// per-type PRs; the back-reference fields are deliberately omitted here
+// to keep this migration foundation-only.
+//
+// Invariant (§4.5): a DerivativeArtifact row is never written without at
+// least one ProvenanceRecord row in the same transaction. The service
+// layer (DerivativeArtifactService.create) enforces this — there is no
+// DB-level CHECK constraint by design.
+// ==========================================================================
+
+model DerivativeArtifact {
+  id                        String    @id @default(uuid()) @db.Uuid
+  derivativeType            String    @map("derivative_type") @db.VarChar(40)
+  //   case_digest | doctrine_extract | mcq_question | essay_prompt | essay_model_answer
+  //   | suggested_bar_answer | flashcard | subject_outline | sample_pleading
+  //   | sample_contract | one_page_summary
+  sourceDocumentId          String?   @map("source_document_id") @db.Uuid
+  sourceSectionId           String?   @map("source_section_id") @db.Uuid
+  organizationId            String?   @map("organization_id") @db.Uuid
+  createdByUserId           String?   @map("created_by_user_id") @db.Uuid
+  derivativeGenerationJobId String?   @map("derivative_generation_job_id") @db.Uuid
+
+  title                     String    @db.Text
+  contentJson               Json      @map("content_json")
+  contentPlainText          String?   @map("content_plain_text") @db.Text
+  contentHash               String    @map("content_hash") @db.VarChar(128)
+  tokenCount                Int?      @map("token_count")
+
+  confidenceScore           Float?    @map("confidence_score") @db.Real
+  reviewStatus              String    @default("draft") @map("review_status") @db.VarChar(20)
+  //   draft | needs_human_review | approved | rejected
+  validatorVerdict          String?   @map("validator_verdict") @db.VarChar(20)
+  validatorReasonsJson      Json?     @map("validator_reasons_json")
+  visibility                String    @default("private") @db.VarChar(20)
+  //   private | public_editorial | unlisted
+
+  audience                  String    @default("both") @db.VarChar(20)
+  //   student | practitioner | both
+
+  contentRights             String    @map("content_rights") @db.VarChar(40)
+  //   public_domain_government | ai_generated_derivative | mixed
+  contentDisclaimerId       String    @map("content_disclaimer_id") @db.Uuid
+
+  modelRunId                String?   @map("model_run_id") @db.Uuid
+  taxonomyVersion           String?   @map("taxonomy_version") @db.VarChar(20)
+  //   study_8 | bar_admin_6 — populated by the subject classifier (later PR)
+  language                  String    @default("en") @db.VarChar(10)
+
+  publishedAt               DateTime? @map("published_at") @db.Timestamptz
+  createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt                 DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Relations
+  sourceDocument          LegalDocument?           @relation(fields: [sourceDocumentId], references: [id])
+  sourceSection           LegalDocumentSection?    @relation(fields: [sourceSectionId], references: [id])
+  organization            Organization?            @relation(fields: [organizationId], references: [id])
+  createdByUser           User?                    @relation("DerivativeCreatedBy", fields: [createdByUserId], references: [id])
+  derivativeGenerationJob DerivativeGenerationJob? @relation(fields: [derivativeGenerationJobId], references: [id])
+  modelRun                ModelRun?                @relation(fields: [modelRunId], references: [id])
+  contentDisclaimer       ContentDisclaimer        @relation(fields: [contentDisclaimerId], references: [id])
+
+  // Deferred relations — child tables land with their own PRs:
+  //   - mcqQuestion, essayPrompt: Phase 5 (per-type PRs)
+  //   - subjectAssignments:       subjects-seeding PR
+  //   - Digest.derivativeArtifactId dual-write: case_digest dual-write PR
+
+  @@index([derivativeType, reviewStatus])
+  @@index([sourceDocumentId, derivativeType])
+  @@index([organizationId, derivativeType])
+  @@index([visibility, derivativeType, publishedAt])
+  @@unique([sourceDocumentId, derivativeType, taxonomyVersion])
+  // ^ One artifact per (source, type, taxonomy). PostgreSQL treats NULL as
+  //   distinct in unique constraints, so uniqueness only actually bites
+  //   when all three columns are non-null — acceptable for Phase 1 because
+  //   taxonomyVersion is only populated by the classifier in a later PR.
+  @@map("derivative_artifacts")
+}
+
+model DerivativeGenerationJob {
+  id                    String    @id @default(uuid()) @db.Uuid
+  derivativeType        String    @map("derivative_type") @db.VarChar(40)
+  triggerType           String    @map("trigger_type") @db.VarChar(20)
+  //   scheduled | manual | backfill_followup
+  sourceDocumentId      String?   @map("source_document_id") @db.Uuid
+  backfillBatchId       String?   @map("backfill_batch_id") @db.Uuid
+  // ^ No `backfillBatch` relation yet — the BackfillBatch model lands with
+  //   the backfill-engine PR. The column is added here so that PR can
+  //   attach the relation without rewriting existing rows.
+  status                String    @default("pending") @db.VarChar(20)
+  //   pending | running | validating | completed | failed | skipped_budget
+  promptTemplateVersion String?   @map("prompt_template_version") @db.VarChar(40)
+  modelName             String?   @map("model_name") @db.VarChar(100)
+  tokensIn              Int       @default(0) @map("tokens_in")
+  tokensOut             Int       @default(0) @map("tokens_out")
+  estimatedCostUsd      Decimal   @default(0) @map("estimated_cost_usd") @db.Decimal(10, 6)
+  startedAt             DateTime? @map("started_at") @db.Timestamptz
+  finishedAt            DateTime? @map("finished_at") @db.Timestamptz
+  errorJson             Json?     @map("error_json")
+  triggeredByUserId     String?   @map("triggered_by_user_id") @db.Uuid
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  sourceDocument      LegalDocument?       @relation(fields: [sourceDocumentId], references: [id])
+  triggeredByUser     User?                @relation("DerivativeJobTriggeredBy", fields: [triggeredByUserId], references: [id])
+  derivativeArtifacts DerivativeArtifact[]
+
+  @@index([derivativeType, status])
+  @@index([backfillBatchId])
+  @@index([sourceDocumentId, derivativeType])
+  @@map("derivative_generation_jobs")
 }
