@@ -122,14 +122,15 @@ describe('Camera Scan -> Digest — Integration', () => {
   }
 
   async function createDocumentWithDigest(orgId: string, userId: string) {
-    // Create a source first
+    // Create a source first. Source schema (schema.prisma:401-422)
+    // requires `type` and `name`; the earlier `slug`/`sourceType`/
+    // `baseUrl` columns were removed from the model, so we pass only
+    // the columns the current Prisma Source model actually has.
     const source = await prisma.source.create({
       data: {
-        name: 'Test Source',
-        slug: `test-source-${Date.now()}`,
-        sourceType: 'official',
+        name: `Test Source ${Date.now()}`,
+        type: 'official',
         trustLevel: 'official',
-        baseUrl: 'https://test.gov.ph',
       },
     });
 
@@ -396,11 +397,24 @@ describe('Camera Scan -> Digest — Integration', () => {
 
     it('should create model_run audit record for document digest', async () => {
       const { org, user } = await createTestContext();
-      const { doc, digest } = await createDocumentWithDigest(org.id, user.id);
+      const { doc, sections, digest } = await createDocumentWithDigest(org.id, user.id);
 
+      // digests.processor.ts:118 writes provenance rows straight from
+      // ragResponse.provenance[], and provenance_records has UUID FK
+      // columns (source_section_id, source_document_id). The default
+      // mockRagDigestResponse stub uses 'section-1'/'doc-1' strings,
+      // which Prisma rejects as invalid UUIDs. Override with real IDs
+      // matching the sibling test at line 356.
       global.fetch = jest.fn().mockResolvedValue({
         ok: true,
-        json: async () => mockRagDigestResponse(),
+        json: async () =>
+          mockRagDigestResponse({
+            provenance: [
+              { field: 'facts', source_section_id: sections[0]!.id, source_document_id: doc.id },
+              { field: 'issues', source_section_id: sections[1]!.id, source_document_id: doc.id },
+              { field: 'ruling', source_section_id: sections[2]!.id, source_document_id: doc.id },
+            ],
+          }),
       }) as jest.Mock;
 
       await digestsProcessor.process(createDigestJob(digest.id, doc.id));
@@ -417,11 +431,22 @@ describe('Camera Scan -> Digest — Integration', () => {
 
     it('should set needs_human_review for low confidence digest', async () => {
       const { org, user } = await createTestContext();
-      const { doc, digest } = await createDocumentWithDigest(org.id, user.id);
+      const { doc, sections, digest } = await createDocumentWithDigest(org.id, user.id);
 
+      // Same reason as the sibling test: pass real UUIDs to avoid
+      // tripping the provenance_records UUID constraint at
+      // digests.processor.ts:118.
       global.fetch = jest.fn().mockResolvedValue({
         ok: true,
-        json: async () => mockRagDigestResponse({ confidence_score: 0.45 }),
+        json: async () =>
+          mockRagDigestResponse({
+            confidence_score: 0.45,
+            provenance: [
+              { field: 'facts', source_section_id: sections[0]!.id, source_document_id: doc.id },
+              { field: 'issues', source_section_id: sections[1]!.id, source_document_id: doc.id },
+              { field: 'ruling', source_section_id: sections[2]!.id, source_document_id: doc.id },
+            ],
+          }),
       }) as jest.Mock;
 
       await digestsProcessor.process(createDigestJob(digest.id, doc.id));
