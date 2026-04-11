@@ -361,6 +361,10 @@ describe('UsersService', () => {
     it('should return only non-sensitive user fields', () => {
       const result = service.sanitize(mockUser);
 
+      // users.service.ts:124-136 — sanitize() now also returns
+      // onboardingCompletedAt and userRole because completeOnboarding()
+      // was added to the service after this spec was written. Both fields
+      // are non-sensitive and safe for the client to read.
       expect(result).toEqual({
         id: mockUser.id,
         email: mockUser.email,
@@ -369,6 +373,8 @@ describe('UsersService', () => {
         status: mockUser.status,
         emailVerified: mockUser.emailVerified,
         mfaEnabled: mockUser.mfaEnabled,
+        onboardingCompletedAt: mockUser.onboardingCompletedAt,
+        userRole: mockUser.userRole,
         createdAt: mockUser.createdAt,
         updatedAt: mockUser.updatedAt,
       });
