@@ -19,7 +19,12 @@ import { MfaGuard } from '../../common/guards/mfa.guard';
 import { TenantGuard } from '../../common/guards/tenant.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { AiSettingsService } from './ai-settings.service';
-import { UpdateAiSettingDto, ResetUsageDto } from './dto';
+import {
+  ResetUsageDto,
+  UpdateAiSettingDto,
+  UpdateBudgetDto,
+  UpdateIngestionWindowDto,
+} from './dto';
 
 /**
  * Admin AI settings controller — manages LLM budget, model selection,
@@ -40,6 +45,34 @@ export class AiSettingsController {
   @ApiOperation({ summary: 'Get all AI settings' })
   async getAll() {
     return this.aiSettings.getAllSettings();
+  }
+
+  @Patch('budget')
+  @ApiOperation({
+    summary: 'Update the global LLM budget ceilings (monthly + optional daily)',
+  })
+  async updateBudget(
+    @Body() dto: UpdateBudgetDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    await this.aiSettings.updateBudget(
+      { monthlyBudgetUsd: dto.monthlyBudgetUsd, dailyBudgetUsd: dto.dailyBudgetUsd },
+      user.sub,
+    );
+    return { success: true };
+  }
+
+  @Patch('ingestion-window')
+  @ApiOperation({ summary: 'Update the global ingestion wall-clock window' })
+  async updateIngestionWindow(
+    @Body() dto: UpdateIngestionWindowDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    await this.aiSettings.updateIngestionWindow(
+      { startLocal: dto.startLocal, stopLocal: dto.stopLocal, timezone: dto.timezone },
+      user.sub,
+    );
+    return { success: true };
   }
 
   @Get(':key')

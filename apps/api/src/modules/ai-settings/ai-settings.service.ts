@@ -16,11 +16,30 @@ const SETTINGS_CACHE_PREFIX = 'ai_settings:';
 /** Redis key where the RAG service reads the monthly budget. */
 const BUDGET_REDIS_KEY = 'llm:config:monthly_budget_usd';
 
+/** Redis key where the RAG service reads the optional daily budget cap (§7.2). */
+const DAILY_BUDGET_REDIS_KEY = 'llm:config:daily_budget_usd';
+
 /** Redis hash key pattern for monthly LLM usage. */
 const USAGE_KEY_PREFIX = 'llm:usage:';
 
+/** Redis keys for the global ingestion wall-clock window (§7.3). */
+const INGESTION_WINDOW_START_KEY = 'ingestion:window:start_local';
+const INGESTION_WINDOW_STOP_KEY = 'ingestion:window:stop_local';
+const INGESTION_WINDOW_TZ_KEY = 'ingestion:window:timezone';
+
+/** AI settings row keys that back the budget and window admin forms. */
+const MONTHLY_BUDGET_SETTING_KEY = 'llm_monthly_budget_usd';
+const DAILY_BUDGET_SETTING_KEY = 'llm_daily_budget_usd';
+const INGESTION_WINDOW_SETTING_KEY = 'ingestion_window';
+
 /** Redis keys to track which threshold alerts have already been sent this month. */
 const ALERT_SENT_PREFIX = 'llm:alert_sent:';
+
+export interface IngestionWindowValue {
+  startLocal: string;
+  stopLocal: string;
+  timezone: string;
+}
 
 export interface UsageSummary {
   tokensIn: number;
@@ -49,6 +68,7 @@ export class AiSettingsService implements OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     await this.syncBudgetToRedis();
+    await this.syncIngestionWindowToRedis();
   }
 
   /** Read a single AI setting by key, with Redis caching. */
@@ -97,8 +117,13 @@ export class AiSettingsService implements OnModuleInit {
     await this.redis.del(`${SETTINGS_CACHE_PREFIX}${key}`);
 
     // If budget changed, sync to Redis for RAG service
-    if (key === 'llm_monthly_budget_usd') {
+    if (key === MONTHLY_BUDGET_SETTING_KEY || key === DAILY_BUDGET_SETTING_KEY) {
       await this.syncBudgetToRedis();
+    }
+
+    // If ingestion window changed, sync to Redis for the scheduler
+    if (key === INGESTION_WINDOW_SETTING_KEY) {
+      await this.syncIngestionWindowToRedis();
     }
 
     await this.audit.log({
@@ -113,22 +138,196 @@ export class AiSettingsService implements OnModuleInit {
     this.logger.log(`AI setting updated: ${key} by user ${userId}`);
   }
 
-  /** Sync the monthly budget from DB to the Redis key the RAG service reads. */
+  /**
+   * Sync both the monthly and daily budget ceilings from the DB to the Redis
+   * keys the RAG service reads. If the daily setting row is missing or its
+   * amount is null, the daily Redis key is DELETED (meaning "no daily cap").
+   */
   async syncBudgetToRedis(): Promise<void> {
     try {
-      const setting = await this.prisma.aiSettings.findUnique({
-        where: { key: 'llm_monthly_budget_usd' },
-      });
-      if (setting && typeof setting.value === 'object' && setting.value !== null) {
-        const amount = (setting.value as Record<string, unknown>)['amount'];
-        if (typeof amount === 'number') {
-          await this.redis.set(BUDGET_REDIS_KEY, String(amount));
-          this.logger.log(`Budget synced to Redis: $${amount}`);
-        }
+      const [monthlySetting, dailySetting] = await Promise.all([
+        this.prisma.aiSettings.findUnique({ where: { key: MONTHLY_BUDGET_SETTING_KEY } }),
+        this.prisma.aiSettings.findUnique({ where: { key: DAILY_BUDGET_SETTING_KEY } }),
+      ]);
+
+      const monthlyAmount = extractAmount(monthlySetting?.value);
+      if (monthlyAmount !== null) {
+        await this.redis.set(BUDGET_REDIS_KEY, String(monthlyAmount));
+        this.logger.log(`Monthly budget synced to Redis: $${monthlyAmount}`);
+      }
+
+      const dailyAmount = extractAmount(dailySetting?.value);
+      if (dailyAmount !== null) {
+        await this.redis.set(DAILY_BUDGET_REDIS_KEY, String(dailyAmount));
+        this.logger.log(`Daily budget synced to Redis: $${dailyAmount}`);
+      } else {
+        await this.redis.del(DAILY_BUDGET_REDIS_KEY);
       }
     } catch (err) {
       this.logger.error('Failed to sync budget to Redis', err);
     }
+  }
+
+  /**
+   * Sync the global ingestion wall-clock window from the DB to the three
+   * Redis keys the scheduler reads. Null/missing fields DELETE the
+   * corresponding Redis keys so the scheduler reverts to its default
+   * cron-only behavior.
+   */
+  async syncIngestionWindowToRedis(): Promise<void> {
+    try {
+      const setting = await this.prisma.aiSettings.findUnique({
+        where: { key: INGESTION_WINDOW_SETTING_KEY },
+      });
+
+      const window = extractIngestionWindow(setting?.value);
+      if (window === null) {
+        await Promise.all([
+          this.redis.del(INGESTION_WINDOW_START_KEY),
+          this.redis.del(INGESTION_WINDOW_STOP_KEY),
+          this.redis.del(INGESTION_WINDOW_TZ_KEY),
+        ]);
+        return;
+      }
+
+      await Promise.all([
+        this.redis.set(INGESTION_WINDOW_START_KEY, window.startLocal),
+        this.redis.set(INGESTION_WINDOW_STOP_KEY, window.stopLocal),
+        this.redis.set(INGESTION_WINDOW_TZ_KEY, window.timezone),
+      ]);
+      this.logger.log(
+        `Ingestion window synced to Redis: ${window.startLocal}–${window.stopLocal} ${window.timezone}`,
+      );
+    } catch (err) {
+      this.logger.error('Failed to sync ingestion window to Redis', err);
+    }
+  }
+
+  /**
+   * Update the global LLM budget ceilings (monthly required, daily optional)
+   * in a single admin action. Writes to `ai_settings`, syncs to Redis, and
+   * writes an audit log entry capturing the diff of the changed fields.
+   */
+  async updateBudget(
+    input: { monthlyBudgetUsd: number; dailyBudgetUsd?: number | null },
+    userId: string,
+  ): Promise<void> {
+    const [monthlyExisting, dailyExisting] = await Promise.all([
+      this.prisma.aiSettings.findUnique({ where: { key: MONTHLY_BUDGET_SETTING_KEY } }),
+      this.prisma.aiSettings.findUnique({ where: { key: DAILY_BUDGET_SETTING_KEY } }),
+    ]);
+
+    const previousMonthly = extractAmount(monthlyExisting?.value);
+    const previousDaily = extractAmount(dailyExisting?.value);
+
+    await this.prisma.aiSettings.upsert({
+      where: { key: MONTHLY_BUDGET_SETTING_KEY },
+      update: {
+        value: { amount: input.monthlyBudgetUsd, currency: 'USD' } as object,
+        updatedBy: userId,
+      },
+      create: {
+        key: MONTHLY_BUDGET_SETTING_KEY,
+        value: { amount: input.monthlyBudgetUsd, currency: 'USD' } as object,
+        updatedBy: userId,
+      },
+    });
+
+    if (input.dailyBudgetUsd === undefined) {
+      // Leave daily unchanged.
+    } else if (input.dailyBudgetUsd === null) {
+      // Explicit clear — delete the daily setting row so the Redis key is
+      // dropped by the next sync and the RAG service treats daily as unset.
+      if (dailyExisting) {
+        await this.prisma.aiSettings.delete({ where: { key: DAILY_BUDGET_SETTING_KEY } });
+      }
+    } else {
+      await this.prisma.aiSettings.upsert({
+        where: { key: DAILY_BUDGET_SETTING_KEY },
+        update: {
+          value: { amount: input.dailyBudgetUsd, currency: 'USD' } as object,
+          updatedBy: userId,
+        },
+        create: {
+          key: DAILY_BUDGET_SETTING_KEY,
+          value: { amount: input.dailyBudgetUsd, currency: 'USD' } as object,
+          updatedBy: userId,
+        },
+      });
+    }
+
+    await this.redis.del(`${SETTINGS_CACHE_PREFIX}${MONTHLY_BUDGET_SETTING_KEY}`);
+    await this.redis.del(`${SETTINGS_CACHE_PREFIX}${DAILY_BUDGET_SETTING_KEY}`);
+
+    await this.syncBudgetToRedis();
+
+    await this.audit.log({
+      actorUserId: userId,
+      actorType: 'admin',
+      action: 'update_budget_or_window',
+      entityType: 'ai_settings',
+      entityId: MONTHLY_BUDGET_SETTING_KEY,
+      metadata: {
+        changed: 'budget',
+        monthly: { old: previousMonthly, new: input.monthlyBudgetUsd },
+        daily:
+          input.dailyBudgetUsd === undefined
+            ? { old: previousDaily, new: previousDaily, unchanged: true }
+            : { old: previousDaily, new: input.dailyBudgetUsd },
+      },
+    });
+
+    this.logger.log(
+      `Budget updated by user ${userId}: monthly=$${input.monthlyBudgetUsd}` +
+        (input.dailyBudgetUsd === undefined
+          ? ''
+          : ` daily=${input.dailyBudgetUsd === null ? 'null' : `$${input.dailyBudgetUsd}`}`),
+    );
+  }
+
+  /**
+   * Update the global ingestion wall-clock window. All three fields
+   * (startLocal, stopLocal, timezone) move together — partial updates
+   * are intentionally not supported by this method.
+   */
+  async updateIngestionWindow(
+    input: IngestionWindowValue,
+    userId: string,
+  ): Promise<void> {
+    const existing = await this.prisma.aiSettings.findUnique({
+      where: { key: INGESTION_WINDOW_SETTING_KEY },
+    });
+    const previous = extractIngestionWindow(existing?.value);
+
+    await this.prisma.aiSettings.upsert({
+      where: { key: INGESTION_WINDOW_SETTING_KEY },
+      update: { value: input as unknown as object, updatedBy: userId },
+      create: {
+        key: INGESTION_WINDOW_SETTING_KEY,
+        value: input as unknown as object,
+        updatedBy: userId,
+      },
+    });
+
+    await this.redis.del(`${SETTINGS_CACHE_PREFIX}${INGESTION_WINDOW_SETTING_KEY}`);
+    await this.syncIngestionWindowToRedis();
+
+    await this.audit.log({
+      actorUserId: userId,
+      actorType: 'admin',
+      action: 'update_budget_or_window',
+      entityType: 'ai_settings',
+      entityId: INGESTION_WINDOW_SETTING_KEY,
+      metadata: {
+        changed: 'ingestion_window',
+        old: previous,
+        new: input,
+      },
+    });
+
+    this.logger.log(
+      `Ingestion window updated by user ${userId}: ${input.startLocal}–${input.stopLocal} ${input.timezone}`,
+    );
   }
 
   /** Get current month's LLM usage from Redis. */
@@ -291,4 +490,31 @@ export class AiSettingsService implements OnModuleInit {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   }
+}
+
+/** Extract an `{amount: number}` value from a stored AiSettings JSON blob. */
+function extractAmount(value: unknown): number | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = (value as Record<string, unknown>)['amount'];
+  return typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
+}
+
+/**
+ * Extract an `{startLocal, stopLocal, timezone}` value from a stored
+ * AiSettings JSON blob. Returns null when any required field is missing.
+ */
+function extractIngestionWindow(value: unknown): IngestionWindowValue | null {
+  if (!value || typeof value !== 'object') return null;
+  const obj = value as Record<string, unknown>;
+  const startLocal = obj['startLocal'];
+  const stopLocal = obj['stopLocal'];
+  const timezone = obj['timezone'];
+  if (
+    typeof startLocal !== 'string' ||
+    typeof stopLocal !== 'string' ||
+    typeof timezone !== 'string'
+  ) {
+    return null;
+  }
+  return { startLocal, stopLocal, timezone };
 }

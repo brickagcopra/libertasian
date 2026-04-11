@@ -73,35 +73,68 @@ def _current_month_key() -> str:
     return f"llm:usage:{datetime.now(UTC).strftime('%Y-%m')}"
 
 
+def _current_day_key() -> str:
+    """Return the Redis hash key for today's usage (UTC day boundary)."""
+    return f"llm:usage:daily:{datetime.now(UTC).strftime('%Y-%m-%d')}"
+
+
+def _parse_budget(raw: Any) -> float | None:
+    """Parse a Redis budget value. Returns None if missing, malformed, or <= 0."""
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
 # ---------------------------------------------------------------------------
 # Budget enforcement
 # ---------------------------------------------------------------------------
 async def _check_budget() -> None:
-    """Raise BudgetExceededError if the monthly spend exceeds the admin limit.
+    """Raise BudgetExceededError if the current spend exceeds an admin limit.
 
-    Budget is enforced via a single Redis read — no DB call on the hot path.
+    Two ceilings are enforced, both optional:
+
+    - Monthly (``llm:config:monthly_budget_usd``): required ceiling for most
+      deployments. Tracked in ``llm:usage:{YYYY-MM}``.
+    - Daily (``llm:config:daily_budget_usd``): optional secondary ceiling
+      added by §7.2 of the corpus-platform target architecture. Tracked in
+      ``llm:usage:daily:{YYYY-MM-DD}``. Whichever cap is hit first triggers
+      the hard stop; the error message distinguishes daily from monthly
+      exhaustion so the admin panel can surface the right "Extend budget"
+      flow.
+
+    Budget is enforced via Redis reads — no DB call on the hot path.
     """
     redis = await _get_redis()
-    budget_raw = await redis.get("llm:config:monthly_budget_usd")
-    if budget_raw is None:
-        return  # No budget configured — unlimited
 
-    try:
-        budget = float(budget_raw)
-    except (TypeError, ValueError):
-        return
+    monthly_budget = _parse_budget(await redis.get("llm:config:monthly_budget_usd"))
+    daily_budget = _parse_budget(await redis.get("llm:config:daily_budget_usd"))
 
-    if budget <= 0:
-        return
+    if monthly_budget is None and daily_budget is None:
+        return  # No budgets configured — unlimited
 
-    current_cost_raw = await redis.hget(_current_month_key(), "estimated_cost_usd")
-    current_cost = float(current_cost_raw) if current_cost_raw else 0.0
+    if daily_budget is not None:
+        daily_cost_raw = await redis.hget(_current_day_key(), "estimated_cost_usd")
+        daily_cost = float(daily_cost_raw) if daily_cost_raw else 0.0
+        if daily_cost >= daily_budget:
+            raise BudgetExceededError(
+                f"Daily LLM budget of ${daily_budget:.2f} exceeded "
+                f"(today's spend: ${daily_cost:.2f})"
+            )
 
-    if current_cost >= budget:
-        raise BudgetExceededError(
-            f"Monthly LLM budget of ${budget:.2f} exceeded "
-            f"(current spend: ${current_cost:.2f})"
+    if monthly_budget is not None:
+        monthly_cost_raw = await redis.hget(
+            _current_month_key(), "estimated_cost_usd"
         )
+        monthly_cost = float(monthly_cost_raw) if monthly_cost_raw else 0.0
+        if monthly_cost >= monthly_budget:
+            raise BudgetExceededError(
+                f"Monthly LLM budget of ${monthly_budget:.2f} exceeded "
+                f"(current spend: ${monthly_cost:.2f})"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -112,22 +145,30 @@ async def _track_usage(
     tokens_out: int,
     model: str,
 ) -> None:
-    """Increment monthly aggregate token usage in Redis."""
+    """Increment monthly and daily aggregate token usage in Redis.
+
+    Writes both ``llm:usage:{YYYY-MM}`` and ``llm:usage:daily:{YYYY-MM-DD}``
+    in a single pipeline. The daily key backs the optional daily-budget
+    killswitch added in §7.2 of the corpus-platform target architecture.
+    """
     try:
         redis = await _get_redis()
-        key = _current_month_key()
-        pipe = redis.pipeline()
-        pipe.hincrby(key, "tokens_in", tokens_in)
-        pipe.hincrby(key, "tokens_out", tokens_out)
-        pipe.hincrby(key, "request_count", 1)
+        month_key = _current_month_key()
+        day_key = _current_day_key()
 
-        # Estimated cost
         input_price, output_price = MODEL_PRICING.get(model, (0.0, 0.0))
         cost = (tokens_in * input_price + tokens_out * output_price) / 1_000_000
-        pipe.hincrbyfloat(key, "estimated_cost_usd", cost)
 
-        # Ensure the key expires eventually (keep 90 days of history)
-        pipe.expire(key, 90 * 86400)
+        pipe = redis.pipeline()
+        for key, ttl_seconds in (
+            (month_key, 90 * 86400),
+            (day_key, 35 * 86400),
+        ):
+            pipe.hincrby(key, "tokens_in", tokens_in)
+            pipe.hincrby(key, "tokens_out", tokens_out)
+            pipe.hincrby(key, "request_count", 1)
+            pipe.hincrbyfloat(key, "estimated_cost_usd", cost)
+            pipe.expire(key, ttl_seconds)
         await pipe.execute()
     except Exception:
         # Token tracking must never block generation
