@@ -86,7 +86,17 @@ describe('Analytics (E2E)', () => {
         })
         .expect(400);
 
-      expect(res.body.message).toContain('Unknown event name');
+      // track-event.dto.ts:22 uses class-validator `@IsIn(VALID_EVENT_NAMES)`
+      // on eventName, so ValidationPipe now produces the standard
+      // "eventName must be one of the following values: ..." message
+      // instead of the old hand-written "Unknown event name" error.
+      // res.body.message is an array from class-validator errors, so use
+      // `expect.arrayContaining` with a substring matcher.
+      expect(res.body.message).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('eventName must be one of the following values'),
+        ]),
+      );
     });
 
     it('should reject events with properties exceeding 10KB', async () => {
