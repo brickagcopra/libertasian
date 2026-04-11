@@ -3564,8 +3564,15 @@ model DerivativeArtifact {
   modelRun                ModelRun?                @relation(fields: [modelRunId], references: [id])
   contentDisclaimer       ContentDisclaimer        @relation(fields: [contentDisclaimerId], references: [id])
 
+  // MCQ child table (§2.2). `mcqQuestion` is non-null-ish in practice for
+  // artifacts whose derivativeType is 'mcq_question', but Prisma models
+  // the relation as optional because the base row itself does not know
+  // which type-specific child exists until the transactional write
+  // finishes. Service-layer `createMcqQuestion` is the only writer.
+  mcqQuestion             McqQuestion?
+
   // Deferred relations — child tables land with their own PRs:
-  //   - mcqQuestion, essayPrompt: Phase 5 (per-type PRs)
+  //   - essayPrompt:              Phase 5 (per-type PRs)
   //   - subjectAssignments:       subjects-seeding PR
   //   - Digest.derivativeArtifactId dual-write: case_digest dual-write PR
 
@@ -3613,4 +3620,64 @@ model DerivativeGenerationJob {
   @@index([backfillBatchId])
   @@index([sourceDocumentId, derivativeType])
   @@map("derivative_generation_jobs")
+}
+
+// ---------------------------------------------------------------------------
+// MCQ child tables (§2.2)
+//
+// Every MCQ is a `DerivativeArtifact` row with `derivativeType = 'mcq_question'`
+// plus one `mcq_questions` row (query-side metadata for subject/topic and
+// difficulty filtering) plus exactly four `mcq_options` rows (A, B, C, D).
+//
+// The §5.3 output schema is ALSO mirrored into `derivativeArtifact.contentJson`
+// so surfaces that already consume the base row don't need a child-table join
+// to render the question. The child tables are the source of truth for
+// structured queries (join on subject topic, filter by difficulty, aggregate
+// answer correctness over McqAttempt once that table lands).
+//
+// The §5.3 content-quality checks (distractor plausibility, stem doesn't
+// leak the answer, supporting section IDs exist, subject-coherence) live in
+// the `McqQuestionValidator` (§4.4) — NOT in this schema and NOT in the
+// service write path. This PR only enforces the five structural invariants
+// (four options, one correct, labels A/B/C/D, stem present, explanation
+// present) because those are the invariants that make the rows themselves
+// coherent on disk. Content rules run upstream, in the generation pipeline.
+// ---------------------------------------------------------------------------
+
+model McqQuestion {
+  id                   String  @id @default(uuid()) @db.Uuid
+  derivativeArtifactId String  @unique @map("derivative_artifact_id") @db.Uuid
+  questionStem         String  @map("question_stem") @db.Text
+  explanation          String? @db.Text
+  difficulty           String  @default("medium") @db.VarChar(10)
+  //   easy | medium | hard | bar_exam_level
+  questionFormat       String  @default("single_best") @map("question_format") @db.VarChar(20)
+  //   single_best | multi_select | true_false
+  subjectTopicId       String? @map("subject_topic_id") @db.Uuid
+  // ^ No `subjectTopic` relation yet — the SubjectTopic model lands with the
+  //   subjects-seeding PR. Column is added here so that PR can attach the
+  //   relation without rewriting existing rows.
+
+  derivativeArtifact DerivativeArtifact @relation(fields: [derivativeArtifactId], references: [id], onDelete: Cascade)
+  options            McqOption[]
+
+  @@index([subjectTopicId, difficulty])
+  @@map("mcq_questions")
+}
+
+model McqOption {
+  id            String  @id @default(uuid()) @db.Uuid
+  mcqQuestionId String  @map("mcq_question_id") @db.Uuid
+  optionLabel   String  @map("option_label") @db.VarChar(4)
+  //   "A" | "B" | "C" | "D" — uniqueness enforced via @@unique below
+  optionText    String  @map("option_text") @db.Text
+  isCorrect     Boolean @default(false) @map("is_correct")
+  rationale     String? @db.Text
+  //   Why this option is right/wrong. Populated by the generator; validator
+  //   checks that the correct option's rationale cites a source section.
+
+  mcqQuestion McqQuestion @relation(fields: [mcqQuestionId], references: [id], onDelete: Cascade)
+
+  @@unique([mcqQuestionId, optionLabel])
+  @@map("mcq_options")
 }

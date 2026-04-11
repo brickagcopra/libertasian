@@ -8,7 +8,11 @@ import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { DerivativeArtifactService } from './derivative-artifact.service';
-import { CreateDerivativeArtifactDto } from './dto';
+import {
+  CreateDerivativeArtifactDto,
+  CreateMcqQuestionDto,
+  McqOptionInputDto,
+} from './dto';
 
 /**
  * Unit tests for `DerivativeArtifactService.create`. The Prisma client is
@@ -20,12 +24,15 @@ type MockTx = {
   contentDisclaimer: { findUnique: jest.Mock };
   derivativeArtifact: { create: jest.Mock };
   provenanceRecord: { createMany: jest.Mock };
+  mcqQuestion: { create: jest.Mock };
+  mcqOption: { create: jest.Mock };
 };
 
 const DISCLAIMER_ID = '00000000-0000-0000-0000-000000000001';
 const SOURCE_DOC_ID = '00000000-0000-0000-0000-000000000010';
 const SOURCE_SECTION_ID = '00000000-0000-0000-0000-000000000011';
 const ARTIFACT_ID = '00000000-0000-0000-0000-0000000000aa';
+const MCQ_QUESTION_ID = '00000000-0000-0000-0000-0000000000bb';
 
 const makeDto = (
   overrides: Partial<CreateDerivativeArtifactDto> = {},
@@ -103,6 +110,27 @@ describe('DerivativeArtifactService', () => {
       },
       provenanceRecord: {
         createMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      mcqQuestion: {
+        create: jest.fn().mockImplementation(async ({ data }) => ({
+          id: MCQ_QUESTION_ID,
+          derivativeArtifactId: data.derivativeArtifactId,
+          questionStem: data.questionStem,
+          explanation: data.explanation,
+          difficulty: data.difficulty,
+          questionFormat: data.questionFormat,
+          subjectTopicId: data.subjectTopicId ?? null,
+        })),
+      },
+      mcqOption: {
+        create: jest.fn().mockImplementation(async ({ data }) => ({
+          id: `opt-${data.optionLabel}`,
+          mcqQuestionId: data.mcqQuestionId,
+          optionLabel: data.optionLabel,
+          optionText: data.optionText,
+          isCorrect: data.isCorrect,
+          rationale: data.rationale ?? null,
+        })),
       },
     };
 
@@ -281,6 +309,229 @@ describe('DerivativeArtifactService', () => {
       await expect(service.create(makeDto())).rejects.toThrow(
         BadRequestException,
       );
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // createMcqQuestion — structural invariants + transactional write
+  // -------------------------------------------------------------------
+  describe('createMcqQuestion', () => {
+    const makeOption = (
+      overrides: Partial<McqOptionInputDto> = {},
+    ): McqOptionInputDto => ({
+      optionLabel: 'A',
+      optionText: 'Option text',
+      isCorrect: false,
+      rationale: 'Because.',
+      ...overrides,
+    });
+
+    const makeMcqDto = (
+      overrides: Partial<CreateMcqQuestionDto> = {},
+    ): CreateMcqQuestionDto => ({
+      sourceDocumentId: SOURCE_DOC_ID,
+      title: 'Art. 1305 MCQ',
+      contentHash: 'sha256:mcq',
+      contentRights: 'ai_generated_derivative',
+      contentDisclaimerId: DISCLAIMER_ID,
+      questionStem:
+        'Under Philippine civil law, when is a contract said to be perfected?',
+      explanation:
+        'A contract is perfected by mere consent under Art. 1305 of the Civil Code.',
+      difficulty: 'medium',
+      questionFormat: 'single_best',
+      options: [
+        makeOption({ optionLabel: 'A', optionText: 'When the offer is made.' }),
+        makeOption({
+          optionLabel: 'B',
+          optionText: 'When the parties reach a meeting of the minds.',
+          isCorrect: true,
+          rationale: 'Consent perfects the contract — Art. 1305.',
+        }),
+        makeOption({ optionLabel: 'C', optionText: 'When consideration is paid.' }),
+        makeOption({ optionLabel: 'D', optionText: 'When it is reduced to writing.' }),
+      ],
+      supportingSectionIds: ['00000000-0000-0000-0000-000000000021'],
+      provenanceRecords: [
+        {
+          sourceDocumentId: SOURCE_DOC_ID,
+          sourceSectionId: SOURCE_SECTION_ID,
+          provenanceType: 'source_passage',
+        },
+      ],
+      ...overrides,
+    });
+
+    describe('happy path', () => {
+      it('writes artifact + question + four options inside one transaction and returns the triple', async () => {
+        tx.derivativeArtifact.create.mockResolvedValueOnce(
+          makeArtifactRow({ derivativeType: 'mcq_question' }),
+        );
+
+        const result = await service.createMcqQuestion(makeMcqDto());
+
+        expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+        expect(tx.contentDisclaimer.findUnique).toHaveBeenCalledTimes(1);
+        expect(tx.derivativeArtifact.create).toHaveBeenCalledTimes(1);
+        expect(tx.provenanceRecord.createMany).toHaveBeenCalledTimes(1);
+        expect(tx.mcqQuestion.create).toHaveBeenCalledTimes(1);
+        expect(tx.mcqOption.create).toHaveBeenCalledTimes(4);
+
+        // The base artifact row is written with derivativeType forced to
+        // 'mcq_question' and contentJson built from the structured fields.
+        const artifactArgs = tx.derivativeArtifact.create.mock.calls[0][0] as {
+          data: Record<string, unknown>;
+        };
+        expect(artifactArgs.data['derivativeType']).toBe('mcq_question');
+        expect(artifactArgs.data['contentJson']).toMatchObject({
+          questionStem: expect.stringContaining('Philippine civil law'),
+          explanation: expect.stringContaining('Art. 1305'),
+          difficultySelfReport: 'medium',
+          supportingSectionIds: [
+            '00000000-0000-0000-0000-000000000021',
+          ],
+        });
+        const cj = artifactArgs.data['contentJson'] as {
+          options: Array<{ label: string; isCorrect: boolean }>;
+        };
+        expect(cj.options).toHaveLength(4);
+        expect(cj.options.map((o) => o.label)).toEqual(['A', 'B', 'C', 'D']);
+        expect(cj.options.filter((o) => o.isCorrect)).toHaveLength(1);
+
+        // McqQuestion row gets the structured columns.
+        const questionArgs = tx.mcqQuestion.create.mock.calls[0][0] as {
+          data: Record<string, unknown>;
+        };
+        expect(questionArgs.data).toMatchObject({
+          derivativeArtifactId: ARTIFACT_ID,
+          difficulty: 'medium',
+          questionFormat: 'single_best',
+        });
+
+        // Options are written with the correct labels.
+        const optionCalls = tx.mcqOption.create.mock.calls.map(
+          (c) => (c[0] as { data: { optionLabel: string } }).data.optionLabel,
+        );
+        expect(optionCalls.sort()).toEqual(['A', 'B', 'C', 'D']);
+
+        expect(result.artifact.id).toBe(ARTIFACT_ID);
+        expect(result.mcqQuestion.id).toBe(MCQ_QUESTION_ID);
+        expect(result.mcqOptions).toHaveLength(4);
+      });
+
+      it('defaults difficulty to medium when neither difficulty nor difficultySelfReport supplied', async () => {
+        const dto = makeMcqDto({
+          difficulty: undefined,
+          difficultySelfReport: undefined,
+        });
+        await service.createMcqQuestion(dto);
+
+        const questionArgs = tx.mcqQuestion.create.mock.calls[0][0] as {
+          data: Record<string, unknown>;
+        };
+        expect(questionArgs.data['difficulty']).toBe('medium');
+
+        const artifactArgs = tx.derivativeArtifact.create.mock.calls[0][0] as {
+          data: { contentJson: { difficultySelfReport: string } };
+        };
+        expect(artifactArgs.data.contentJson.difficultySelfReport).toBe('medium');
+      });
+    });
+
+    describe('structural invariants', () => {
+      it('throws BadRequestException when questionStem is empty', async () => {
+        await expect(
+          service.createMcqQuestion(makeMcqDto({ questionStem: '   ' })),
+        ).rejects.toThrow(BadRequestException);
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+      });
+
+      it('throws BadRequestException when explanation is empty', async () => {
+        await expect(
+          service.createMcqQuestion(makeMcqDto({ explanation: '' })),
+        ).rejects.toThrow(BadRequestException);
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+      });
+
+      it('throws BadRequestException when options.length !== 4', async () => {
+        const threeOptions = makeMcqDto().options.slice(0, 3);
+        await expect(
+          service.createMcqQuestion(makeMcqDto({ options: threeOptions })),
+        ).rejects.toThrow(/exactly 4 options/i);
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+      });
+
+      it('throws BadRequestException when zero options are marked correct', async () => {
+        const noCorrect = makeMcqDto().options.map((o) => ({
+          ...o,
+          isCorrect: false,
+        }));
+        await expect(
+          service.createMcqQuestion(makeMcqDto({ options: noCorrect })),
+        ).rejects.toThrow(/exactly one correct option/i);
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+      });
+
+      it('throws BadRequestException when more than one option is marked correct', async () => {
+        const twoCorrect = makeMcqDto().options.map((o, i) => ({
+          ...o,
+          isCorrect: i === 0 || i === 1,
+        }));
+        await expect(
+          service.createMcqQuestion(makeMcqDto({ options: twoCorrect })),
+        ).rejects.toThrow(/exactly one correct option/i);
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+      });
+
+      it('throws BadRequestException when labels are not exactly {A, B, C, D} (duplicate)', async () => {
+        const dupLabels = makeMcqDto().options.map((o, i) =>
+          i === 3 ? { ...o, optionLabel: 'A' as const } : o,
+        );
+        await expect(
+          service.createMcqQuestion(makeMcqDto({ options: dupLabels })),
+        ).rejects.toThrow(/labels \{A, B, C, D\}/);
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+      });
+
+      it('throws BadRequestException when provenanceRecords is empty (inherited §4.5 guard)', async () => {
+        await expect(
+          service.createMcqQuestion(makeMcqDto({ provenanceRecords: [] })),
+        ).rejects.toThrow(/§4\.5/);
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('error mapping', () => {
+      it('throws NotFoundException and skips artifact write when the disclaimer does not exist', async () => {
+        tx.contentDisclaimer.findUnique.mockResolvedValueOnce(null);
+
+        await expect(
+          service.createMcqQuestion(makeMcqDto()),
+        ).rejects.toThrow(NotFoundException);
+
+        expect(tx.derivativeArtifact.create).not.toHaveBeenCalled();
+        expect(tx.mcqQuestion.create).not.toHaveBeenCalled();
+        expect(tx.mcqOption.create).not.toHaveBeenCalled();
+      });
+
+      it('wraps P2002 from mcq_options label collision as ConflictException', async () => {
+        const p2002 = new Prisma.PrismaClientKnownRequestError(
+          'Unique constraint failed',
+          {
+            code: 'P2002',
+            clientVersion: '0.0.0-test',
+            meta: { target: ['mcq_question_id', 'option_label'] },
+          },
+        );
+        tx.mcqOption.create.mockRejectedValue(p2002);
+
+        const err = await service
+          .createMcqQuestion(makeMcqDto())
+          .then(() => null)
+          .catch((e: unknown) => e);
+
+        expect(err).toBeInstanceOf(ConflictException);
+      });
     });
   });
 });
