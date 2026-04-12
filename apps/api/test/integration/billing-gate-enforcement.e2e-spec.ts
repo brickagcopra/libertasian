@@ -330,9 +330,9 @@ describe('Billing Gate Enforcement — Integration', () => {
       // Clear cache
       await redis.del(`cache:entitlements:${orgId}`);
 
-      // First call populates cache
+      // quotas/usage calls resolveEffectiveEntitlements() which populates cache
       await request(app.getHttpServer())
-        .get('/api/v1/subscriptions/entitlements')
+        .get('/api/v1/quotas/usage')
         .set('Authorization', `Bearer ${user.accessToken}`);
 
       // Verify cache exists
@@ -352,17 +352,17 @@ describe('Billing Gate Enforcement — Integration', () => {
       });
       const orgId = await getOrgId(user.accessToken);
 
-      // Clear and populate cache
+      // Clear and populate cache via quotas/usage (calls resolveEffectiveEntitlements)
       await redis.del(`cache:entitlements:${orgId}`);
       await request(app.getHttpServer())
-        .get('/api/v1/subscriptions/entitlements')
+        .get('/api/v1/quotas/usage')
         .set('Authorization', `Bearer ${user.accessToken}`);
 
       // Spy on Prisma to verify cache hit (no DB call on second request)
       const findManySpy = jest.spyOn(prisma.entitlementOverride, 'findMany');
 
       await request(app.getHttpServer())
-        .get('/api/v1/subscriptions/entitlements')
+        .get('/api/v1/quotas/usage')
         .set('Authorization', `Bearer ${user.accessToken}`);
 
       // If cache hit, entitlementOverride.findMany should not be called
@@ -381,14 +381,14 @@ describe('Billing Gate Enforcement — Integration', () => {
       });
       const orgId = await getOrgId(user.accessToken);
 
-      // Populate cache with free plan
+      // Populate cache with free plan via quotas/usage (calls resolveEffectiveEntitlements)
       await redis.del(`cache:entitlements:${orgId}`);
       await request(app.getHttpServer())
-        .get('/api/v1/subscriptions/entitlements')
+        .get('/api/v1/quotas/usage')
         .set('Authorization', `Bearer ${user.accessToken}`);
 
-      // Upgrade (setSubscription invalidates cache)
-      await setSubscription(orgId, 'pro');
+      // Upgrade — pass empty entitlements to clear any stored free-tier overrides
+      await setSubscription(orgId, 'pro', {});
 
       // Cache should be cleared
       const cached = await redis.get(`cache:entitlements:${orgId}`);
@@ -396,12 +396,12 @@ describe('Billing Gate Enforcement — Integration', () => {
 
       // Next call should return pro entitlements
       const res = await request(app.getHttpServer())
-        .get('/api/v1/subscriptions/entitlements')
+        .get('/api/v1/quotas/usage')
         .set('Authorization', `Bearer ${user.accessToken}`);
 
       if (res.status === 200) {
-        // Pro has 200 AI answers (per default entitlements)
-        expect(res.body.data.aiAnswers).toBeGreaterThan(15);
+        // Pro has unlimited AI answers (-1) per default entitlements
+        expect(res.body.data.quotas.aiAnswers.limit).toBe(-1);
       }
     });
   });
