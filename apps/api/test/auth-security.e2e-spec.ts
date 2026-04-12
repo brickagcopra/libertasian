@@ -1,7 +1,9 @@
 import { INestApplication } from '@nestjs/common';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const request = require('supertest') as typeof import('supertest');
+import * as crypto from 'crypto';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { S3Service } from '../src/modules/uploads/s3.service';
 import {
   createTestApp,
   createAuthenticatedUser,
@@ -24,10 +26,12 @@ import {
 describe('Authentication & Authorization Security (E2E)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
+  let s3: S3Service;
 
   beforeAll(async () => {
     app = await createTestApp();
     prisma = app.get(PrismaService);
+    s3 = app.get(S3Service);
   }, 30000);
 
   afterAll(async () => {
@@ -715,6 +719,175 @@ describe('Authentication & Authorization Security (E2E)', () => {
         .post(`/api/v1/feed/posts/${postId}/like`)
         .set('Authorization', `Bearer ${user.accessToken}`)
         .expect(204);
+    });
+  });
+
+  // ---- BYPASS #1 — cross-tenant feed media image protection ----
+  //
+  // Prior to commit P2 `FeedMediaService.getMediaImage` selected the
+  // parent post's `visibility` and `organizationId` but never used
+  // them in the non-owner access check — dead defensive code that
+  // only validated `status === 'published'` and `deletedAt`. Any
+  // authenticated viewer holding a mediaId could therefore fetch the
+  // processed image bytes of an organization-scoped post belonging
+  // to a tenant they were not a member of. This batch asserts the
+  // post-attached fallback now requires the viewer's organization
+  // match the post's when `visibility === 'organization'`, and that
+  // soft-deleted posts drop out of the allowed set regardless of
+  // visibility.
+  describe('Cross-tenant feed media isolation (BYPASS #1)', () => {
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    // Directly seed a ready FeedPostMedia + attached FeedPost via
+    // Prisma so the test can bypass the real upload/BullMQ pipeline.
+    // S3 writes are not performed here — tests that need to exercise
+    // the bytes-return happy path mock `s3.get` in-situ, which
+    // sidesteps the AWS SDK dynamic-import issue under jest-vm.
+    async function seedMediaPost(opts: {
+      ownerUserId: string;
+      organizationId: string;
+      visibility: 'public' | 'organization';
+      deleted?: boolean;
+    }): Promise<{ mediaId: string; processedObjectKey: string }> {
+      const processedObjectKey =
+        `feed/${opts.organizationId}/${crypto.randomUUID()}/feed.jpg`;
+      const originalObjectKey =
+        `feed-temp/${opts.organizationId}/${opts.ownerUserId}/${crypto.randomUUID()}/raw.jpg`;
+
+      const media = await prisma.feedPostMedia.create({
+        data: {
+          ownerUserId: opts.ownerUserId,
+          organizationId: opts.organizationId,
+          originalObjectKey,
+          processedObjectKey,
+          mimeType: 'image/jpeg',
+          originalFileSize: 500,
+          sha256Checksum: crypto.randomBytes(32).toString('hex'),
+          processingStatus: 'ready',
+          moderationStatus: 'approved',
+        },
+      });
+
+      await prisma.feedPost.create({
+        data: {
+          organizationId: opts.organizationId,
+          authorId: opts.ownerUserId,
+          textContent: `bypass-1-test-${Date.now()}`,
+          visibility: opts.visibility,
+          status: 'published',
+          mediaId: media.id,
+          deletedAt: opts.deleted ? new Date() : null,
+        },
+      });
+
+      return { mediaId: media.id, processedObjectKey };
+    }
+
+    // Registered users auto-create a personal organization on
+    // signup; the membership row is the source of truth for the
+    // org_id the JWT carries. Look it up here so the seeded post
+    // lands in the same tenant as the authenticated viewer.
+    async function getUserOrgId(userId: string): Promise<string> {
+      const member = await prisma.organizationMember.findFirst({
+        where: { userId, status: 'active' },
+      });
+      if (!member) {
+        throw new Error(`No active organization member row for ${userId}`);
+      }
+      return member.organizationId;
+    }
+
+    it('should block cross-tenant image reads on an org-scoped post with 403', async () => {
+      const userA = await createAuthenticatedUser(app, {
+        email: `fm-bypass1-a-${Date.now()}@test.com`,
+      });
+      const userB = await createAuthenticatedUser(app, {
+        email: `fm-bypass1-b-${Date.now()}@test.com`,
+      });
+      const orgA = await getUserOrgId(userA.userId);
+
+      const { mediaId } = await seedMediaPost({
+        ownerUserId: userA.userId,
+        organizationId: orgA,
+        visibility: 'organization',
+      });
+
+      // userB (different tenant) must NOT receive image bytes. The
+      // fix short-circuits on the OR-filter miss and throws
+      // ForbiddenException before any S3 call is attempted.
+      await request(app.getHttpServer())
+        .get(`/api/v1/feed/media/${mediaId}/image`)
+        .set('Authorization', `Bearer ${userB.accessToken}`)
+        .expect(403);
+    });
+
+    it('should return the processed image bytes for the media owner (same-tenant happy path)', async () => {
+      const user = await createAuthenticatedUser(app, {
+        email: `fm-bypass1-own-${Date.now()}@test.com`,
+      });
+      const orgId = await getUserOrgId(user.userId);
+
+      // Minimal JPEG magic bytes. Content is arbitrary for this
+      // test — we only assert the endpoint returns the buffer the
+      // S3 layer would have delivered after the auth check passes.
+      const jpegBytes = Buffer.from([
+        0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00,
+      ]);
+
+      // Mock S3 get to return our fake buffer. The AWS SDK's dynamic
+      // imports don't play well with jest's vm sandbox, and the
+      // actual S3 round-trip is irrelevant to the authorization
+      // contract under test — we just need the controller to reach
+      // the S3 layer to prove the auth check passed.
+      jest.spyOn(s3, 'get').mockResolvedValue(jpegBytes);
+
+      const { mediaId } = await seedMediaPost({
+        ownerUserId: user.userId,
+        organizationId: orgId,
+        visibility: 'organization',
+      });
+
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/feed/media/${mediaId}/image`)
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .buffer(true)
+        .parse((response, cb) => {
+          const chunks: Buffer[] = [];
+          response.on('data', (c: Buffer) => chunks.push(c));
+          response.on('end', () => cb(null, Buffer.concat(chunks)));
+        })
+        .expect(200);
+
+      expect(res.headers['content-type']).toContain('image/jpeg');
+      expect(Buffer.isBuffer(res.body)).toBe(true);
+      expect((res.body as Buffer).length).toBe(jpegBytes.length);
+    });
+
+    it('should return 403 for cross-tenant reads of a soft-deleted post (even when public)', async () => {
+      const userA = await createAuthenticatedUser(app, {
+        email: `fm-bypass1-del-a-${Date.now()}@test.com`,
+      });
+      const userB = await createAuthenticatedUser(app, {
+        email: `fm-bypass1-del-b-${Date.now()}@test.com`,
+      });
+      const orgA = await getUserOrgId(userA.userId);
+
+      // Public visibility + deleted: the OR-filter's public branch
+      // matches, but `deletedAt: null` drops the row. Confirms the
+      // tombstone filter cannot be bypassed via public visibility.
+      const { mediaId } = await seedMediaPost({
+        ownerUserId: userA.userId,
+        organizationId: orgA,
+        visibility: 'public',
+        deleted: true,
+      });
+
+      await request(app.getHttpServer())
+        .get(`/api/v1/feed/media/${mediaId}/image`)
+        .set('Authorization', `Bearer ${userB.accessToken}`)
+        .expect(403);
     });
   });
 });

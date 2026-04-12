@@ -251,6 +251,7 @@ export class FeedController {
       mediaId,
       validVariant,
       user.sub,
+      user.organizationId,
     );
 
     res.set({
