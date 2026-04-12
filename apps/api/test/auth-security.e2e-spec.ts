@@ -1,6 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const request = require('supertest') as typeof import('supertest');
+import { PrismaService } from '../src/prisma/prisma.service';
 import {
   createTestApp,
   createAuthenticatedUser,
@@ -22,9 +23,11 @@ import {
  */
 describe('Authentication & Authorization Security (E2E)', () => {
   let app: INestApplication;
+  let prisma: PrismaService;
 
   beforeAll(async () => {
     app = await createTestApp();
+    prisma = app.get(PrismaService);
   }, 30000);
 
   afterAll(async () => {
@@ -613,6 +616,105 @@ describe('Authentication & Authorization Security (E2E)', () => {
 
       const ids = (res.body.data as Array<{ id: string }>).map((p) => p.id);
       expect(ids).toContain(postId);
+    });
+  });
+
+  // ---- BYPASS #2 — cross-tenant write protection on feed interactions ----
+  //
+  // Prior to commit P1 the `FeedInteractionsService.validatePostExists`
+  // helper only checked status + deletedAt. Any authenticated user in
+  // any tenant could like, bookmark, comment on, or report an
+  // organization-scoped post belonging to a tenant they were not a
+  // member of. This batch asserts the four write paths all return 404
+  // (matching the anti-fingerprinting read-path shape) and that the
+  // comment/report rows are NOT persisted.
+  describe('Cross-tenant feed interaction isolation (BYPASS #2)', () => {
+    async function createOrgPostAsUserA(): Promise<{
+      postId: string;
+      userA: Awaited<ReturnType<typeof createAuthenticatedUser>>;
+      userB: Awaited<ReturnType<typeof createAuthenticatedUser>>;
+    }> {
+      const userA = await createAuthenticatedUser(app, {
+        email: `fi-a-${Date.now()}-${Math.random()}@test.com`,
+      });
+      const userB = await createAuthenticatedUser(app, {
+        email: `fi-b-${Date.now()}-${Math.random()}@test.com`,
+      });
+      const createRes = await request(app.getHttpServer())
+        .post('/api/v1/feed/posts')
+        .set('Authorization', `Bearer ${userA.accessToken}`)
+        .send({ textContent: 'org-only', visibility: 'organization' })
+        .expect(201);
+      return { postId: createRes.body.data.id as string, userA, userB };
+    }
+
+    it('should block cross-tenant likePost on an org-scoped post with 404', async () => {
+      const { postId, userB } = await createOrgPostAsUserA();
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/feed/posts/${postId}/like`)
+        .set('Authorization', `Bearer ${userB.accessToken}`)
+        .expect(404);
+    });
+
+    it('should block cross-tenant bookmarkPost on an org-scoped post with 404', async () => {
+      const { postId, userB } = await createOrgPostAsUserA();
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/feed/posts/${postId}/bookmark`)
+        .set('Authorization', `Bearer ${userB.accessToken}`)
+        .expect(404);
+    });
+
+    it('should block cross-tenant createComment and write no comment row', async () => {
+      const { postId, userB } = await createOrgPostAsUserA();
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/feed/posts/${postId}/comments`)
+        .set('Authorization', `Bearer ${userB.accessToken}`)
+        .send({ textContent: 'injected from another tenant' })
+        .expect(404);
+
+      // Anti-injection: the comment row must never have been written.
+      const comments = await prisma.feedComment.findMany({
+        where: { postId, authorId: userB.userId },
+      });
+      expect(comments).toHaveLength(0);
+    });
+
+    it('should block cross-tenant reportPost and write no report row', async () => {
+      const { postId, userB } = await createOrgPostAsUserA();
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/feed/posts/${postId}/report`)
+        .set('Authorization', `Bearer ${userB.accessToken}`)
+        .send({ reason: 'spam' })
+        .expect(404);
+
+      const reports = await prisma.feedPostReport.findMany({
+        where: { postId, reporterUserId: userB.userId },
+      });
+      expect(reports).toHaveLength(0);
+    });
+
+    // One happy-path case covers all four write verbs — the guard
+    // shape is shared by a single private helper, so repeating the
+    // same-tenant case per verb would add no real coverage.
+    it('should still allow same-tenant likePost on an org-scoped post', async () => {
+      const user = await createAuthenticatedUser(app, {
+        email: `fi-same-${Date.now()}@test.com`,
+      });
+      const createRes = await request(app.getHttpServer())
+        .post('/api/v1/feed/posts')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .send({ textContent: 'my org', visibility: 'organization' })
+        .expect(201);
+      const postId = createRes.body.data.id as string;
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/feed/posts/${postId}/like`)
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .expect(204);
     });
   });
 });

@@ -15,11 +15,14 @@ const USER_ID = 'user-1';
 const OTHER_USER_ID = 'user-2';
 const POST_ID = 'post-1';
 const COMMENT_ID = 'comment-1';
+const ORG_ID = 'org-1';
 
+// `validatePostReadable` now runs a `findFirst` with a visibility
+// OR-filter (BYPASS #2 fix). The unit tests only need a row with an
+// `id` to pass the null check — the filter logic itself is exercised
+// by the auth-security e2e suite against a real database.
 const mockPublishedPost = {
   id: POST_ID,
-  status: 'published',
-  deletedAt: null,
 };
 
 const mockComment = {
@@ -42,6 +45,7 @@ const mockComment = {
 const mockPrisma = {
   feedPost: {
     findUnique: jest.fn(),
+    findFirst: jest.fn(),
     update: jest.fn(),
   },
   feedPostLike: {
@@ -87,7 +91,11 @@ describe('FeedInteractionsService', () => {
     service = module.get<FeedInteractionsService>(FeedInteractionsService);
     jest.clearAllMocks();
 
-    // Default: post exists
+    // Default: post exists and is readable by the caller.
+    // `validatePostReadable` uses `findFirst` (BYPASS #2 fix); the
+    // legacy `findUnique` mock is kept for the comment branches that
+    // still use it (parent lookup, update/delete, moderation).
+    mockPrisma.feedPost.findFirst.mockResolvedValue(mockPublishedPost);
     mockPrisma.feedPost.findUnique.mockResolvedValue(mockPublishedPost);
     mockPrisma.feedPost.update.mockResolvedValue({});
   });
@@ -98,7 +106,7 @@ describe('FeedInteractionsService', () => {
     it('should create a like and increment count', async () => {
       mockPrisma.feedPostLike.create.mockResolvedValue({ id: 'like-1' });
 
-      await service.likePost(POST_ID, USER_ID);
+      await service.likePost(POST_ID, USER_ID, ORG_ID);
 
       expect(mockPrisma.feedPostLike.create).toHaveBeenCalledWith({
         data: { postId: POST_ID, userId: USER_ID },
@@ -112,7 +120,7 @@ describe('FeedInteractionsService', () => {
     it('should be idempotent (no-op on duplicate)', async () => {
       mockPrisma.feedPostLike.create.mockRejectedValue({ code: 'P2002' });
 
-      await service.likePost(POST_ID, USER_ID);
+      await service.likePost(POST_ID, USER_ID, ORG_ID);
 
       // Should not increment count
       expect(mockPrisma.feedPost.update).not.toHaveBeenCalledWith(
@@ -123,10 +131,11 @@ describe('FeedInteractionsService', () => {
     });
 
     it('should throw on non-existent post', async () => {
-      mockPrisma.feedPost.findUnique.mockResolvedValue(null);
+      // validatePostReadable uses findFirst (BYPASS #2 fix)
+      mockPrisma.feedPost.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.likePost('non-existent', USER_ID),
+        service.likePost('non-existent', USER_ID, ORG_ID),
       ).rejects.toThrow(NotFoundException);
     });
   });
@@ -163,7 +172,7 @@ describe('FeedInteractionsService', () => {
     it('should create a bookmark', async () => {
       mockPrisma.feedPostBookmark.create.mockResolvedValue({ id: 'bm-1' });
 
-      await service.bookmarkPost(POST_ID, USER_ID);
+      await service.bookmarkPost(POST_ID, USER_ID, ORG_ID);
 
       expect(mockPrisma.feedPostBookmark.create).toHaveBeenCalledWith({
         data: { postId: POST_ID, userId: USER_ID },
@@ -193,6 +202,7 @@ describe('FeedInteractionsService', () => {
         POST_ID,
         { textContent: 'Great post!' },
         USER_ID,
+        ORG_ID,
       );
 
       expect(result.id).toBe(COMMENT_ID);
@@ -216,6 +226,7 @@ describe('FeedInteractionsService', () => {
         POST_ID,
         { textContent: 'Good reply', parentId: 'parent-1' },
         USER_ID,
+        ORG_ID,
       );
 
       expect(mockPrisma.feedComment.create).toHaveBeenCalled();
@@ -230,6 +241,7 @@ describe('FeedInteractionsService', () => {
           POST_ID,
           { textContent: 'Nested reply', parentId: 'reply-1' },
           USER_ID,
+          ORG_ID,
         ),
       ).rejects.toThrow(BadRequestException);
     });
@@ -243,6 +255,7 @@ describe('FeedInteractionsService', () => {
           POST_ID,
           { textContent: 'Wrong post', parentId: 'other-1' },
           USER_ID,
+          ORG_ID,
         ),
       ).rejects.toThrow(BadRequestException);
     });
@@ -318,6 +331,7 @@ describe('FeedInteractionsService', () => {
         POST_ID,
         { reason: 'spam' },
         USER_ID,
+        ORG_ID,
       );
 
       expect(result.id).toBe('report-1');
@@ -327,7 +341,7 @@ describe('FeedInteractionsService', () => {
       mockPrisma.feedPostReport.create.mockRejectedValue({ code: 'P2002' });
 
       await expect(
-        service.reportPost(POST_ID, { reason: 'spam' }, USER_ID),
+        service.reportPost(POST_ID, { reason: 'spam' }, USER_ID, ORG_ID),
       ).rejects.toThrow(BadRequestException);
     });
   });

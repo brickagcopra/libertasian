@@ -19,8 +19,8 @@ export class FeedInteractionsService {
   // Likes (Posts)
   // =========================================================================
 
-  async likePost(postId: string, userId: string) {
-    await this.validatePostExists(postId);
+  async likePost(postId: string, userId: string, viewerOrgId: string) {
+    await this.validatePostReadable(postId, viewerOrgId);
 
     // Upsert-like: ignore if already exists (unique constraint)
     try {
@@ -58,8 +58,8 @@ export class FeedInteractionsService {
   // Bookmarks
   // =========================================================================
 
-  async bookmarkPost(postId: string, userId: string) {
-    await this.validatePostExists(postId);
+  async bookmarkPost(postId: string, userId: string, viewerOrgId: string) {
+    await this.validatePostReadable(postId, viewerOrgId);
 
     try {
       await this.prisma.feedPostBookmark.create({
@@ -95,8 +95,13 @@ export class FeedInteractionsService {
   // Comments
   // =========================================================================
 
-  async createComment(postId: string, dto: CreateCommentDto, userId: string) {
-    await this.validatePostExists(postId);
+  async createComment(
+    postId: string,
+    dto: CreateCommentDto,
+    userId: string,
+    viewerOrgId: string,
+  ) {
+    await this.validatePostReadable(postId, viewerOrgId);
 
     // Validate parent if provided (must belong to same post, max 1 level deep)
     if (dto.parentId) {
@@ -299,8 +304,13 @@ export class FeedInteractionsService {
   // Reports
   // =========================================================================
 
-  async reportPost(postId: string, dto: ReportPostDto, userId: string) {
-    await this.validatePostExists(postId);
+  async reportPost(
+    postId: string,
+    dto: ReportPostDto,
+    userId: string,
+    viewerOrgId: string,
+  ) {
+    await this.validatePostReadable(postId, viewerOrgId);
 
     try {
       const report = await this.prisma.feedPostReport.create({
@@ -427,12 +437,29 @@ export class FeedInteractionsService {
 
   // ─── Private Helpers ────────────────────────────────────────────────────
 
-  private async validatePostExists(postId: string) {
-    const post = await this.prisma.feedPost.findUnique({
-      where: { id: postId },
-      select: { id: true, status: true, deletedAt: true },
+  // Tenant-visibility scoping enforced at the DB layer: a single
+  // NotFoundException branch covers "post doesn't exist", "soft-deleted",
+  // "non-published", and "not readable from viewer's org". Prior to this
+  // fix the helper only checked status + deletedAt, which allowed a
+  // cross-tenant attacker with any postId to write to likePost,
+  // bookmarkPost, createComment, and reportPost against an
+  // organization-scoped post belonging to a tenant they were not a
+  // member of (BYPASS #2, write-path E14-class). Mirrors the getPost
+  // fix shape exactly. (BYPASS #2 / security-investigation.md)
+  private async validatePostReadable(postId: string, viewerOrgId: string) {
+    const post = await this.prisma.feedPost.findFirst({
+      where: {
+        id: postId,
+        status: 'published',
+        deletedAt: null,
+        OR: [
+          { visibility: 'public' },
+          { visibility: 'organization', organizationId: viewerOrgId },
+        ],
+      },
+      select: { id: true },
     });
-    if (!post || post.status !== 'published' || post.deletedAt) {
+    if (!post) {
       throw new NotFoundException('Post not found');
     }
   }

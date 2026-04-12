@@ -294,7 +294,7 @@ export class FeedController {
     @CurrentUser() user: JwtPayload,
     @Param('postId', ParseUUIDPipe) postId: string,
   ) {
-    await this.interactionsService.likePost(postId, user.sub);
+    await this.interactionsService.likePost(postId, user.sub, user.organizationId);
     await this.auditService.log({
       actorUserId: user.sub,
       actorType: 'user',
@@ -330,7 +330,7 @@ export class FeedController {
     @CurrentUser() user: JwtPayload,
     @Param('postId', ParseUUIDPipe) postId: string,
   ) {
-    await this.interactionsService.bookmarkPost(postId, user.sub);
+    await this.interactionsService.bookmarkPost(postId, user.sub, user.organizationId);
     await this.auditService.log({
       actorUserId: user.sub,
       actorType: 'user',
@@ -366,7 +366,12 @@ export class FeedController {
     @Param('postId', ParseUUIDPipe) postId: string,
     @Body() dto: ReportPostDto,
   ) {
-    const data = await this.interactionsService.reportPost(postId, dto, user.sub);
+    const data = await this.interactionsService.reportPost(
+      postId,
+      dto,
+      user.sub,
+      user.organizationId,
+    );
     await this.auditService.log({
       actorUserId: user.sub,
       actorType: 'user',
@@ -405,7 +410,12 @@ export class FeedController {
     @Param('postId', ParseUUIDPipe) postId: string,
     @Body() dto: CreateCommentDto,
   ) {
-    const data = await this.interactionsService.createComment(postId, dto, user.sub);
+    const data = await this.interactionsService.createComment(
+      postId,
+      dto,
+      user.sub,
+      user.organizationId,
+    );
     await this.auditService.log({
       actorUserId: user.sub,
       actorType: 'user',
