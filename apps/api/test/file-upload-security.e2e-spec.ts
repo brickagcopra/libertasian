@@ -270,53 +270,53 @@ describe('File Upload Security (E2E)', () => {
     });
   });
 
+  // E15a/b (security-investigation.md): uploadFile and uploadCameraScan
+  // previously returned a 200 with an error-shaped JSON body ({ success:
+  // false, error: { message, statusCode: 400 } }) when no file was
+  // attached, instead of throwing a proper BadRequestException. Clients
+  // that only checked HTTP status interpreted this as a successful 200.
+  // Both branches now throw BadRequestException, yielding a real 400
+  // with the standard NestJS exception envelope.
   describe('Empty and missing files', () => {
-    it('should reject empty file upload', async () => {
+    it('should reject empty file upload with 400', async () => {
       const user = await createAuthenticatedUser(app, {
         email: `empty-file-${Date.now()}@test.com`,
       });
 
       const emptyBuffer = Buffer.alloc(0);
 
-      const res = await request(app.getHttpServer())
+      await request(app.getHttpServer())
         .post('/api/v1/uploads')
         .set('Authorization', `Bearer ${user.accessToken}`)
         .attach('file', emptyBuffer, {
           filename: 'empty.pdf',
           contentType: 'application/pdf',
-        });
-
-      expect([400, 500]).toContain(res.status);
-      expect(res.status).not.toBe(202);
+        })
+        .expect(400);
     });
 
-    it('should reject request with no file attached', async () => {
+    it('should reject request with no file attached with 400', async () => {
       const user = await createAuthenticatedUser(app, {
         email: `no-file-${Date.now()}@test.com`,
       });
 
-      const res = await request(app.getHttpServer())
+      await request(app.getHttpServer())
         .post('/api/v1/uploads')
         .set('Authorization', `Bearer ${user.accessToken}`)
-        .send({});
-
-      // Should return 400 (no file) not 202
-      expect([400, 500]).toContain(res.status);
-      expect(res.status).not.toBe(202);
+        .send({})
+        .expect(400);
     });
 
-    it('should reject camera scan with no files attached', async () => {
+    it('should reject camera scan with no files attached with 400', async () => {
       const user = await createAuthenticatedUser(app, {
         email: `no-scan-files-${Date.now()}@test.com`,
       });
 
-      const res = await request(app.getHttpServer())
+      await request(app.getHttpServer())
         .post('/api/v1/uploads/camera-scan')
         .set('Authorization', `Bearer ${user.accessToken}`)
-        .field('captureMode', 'single_page');
-
-      expect([400, 500]).toContain(res.status);
-      expect(res.status).not.toBe(202);
+        .field('captureMode', 'single_page')
+        .expect(400);
     });
   });
 
