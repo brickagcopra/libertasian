@@ -92,27 +92,30 @@ export class FeedService {
   }
 
   async updatePost(postId: string, dto: UpdatePostDto, userId: string) {
-    const post = await this.prisma.feedPost.findUnique({
-      where: { id: postId },
-    });
-
-    if (!post) {
-      throw new NotFoundException('Post not found');
-    }
-    if (post.authorId !== userId) {
-      throw new ForbiddenException('Cannot edit another user\'s post');
-    }
-    if (post.deletedAt) {
-      throw new NotFoundException('Post not found');
-    }
-
-    const updated = await this.prisma.feedPost.update({
-      where: { id: postId },
+    // Authorship scoping enforced at the DB layer via updateMany with a
+    // compound where clause: { id, authorId, deletedAt: null }. A zero
+    // affected-rows result collapses to a single NotFoundException,
+    // removing the 403-vs-404 fingerprinting oracle (DF-1). Prior to
+    // this fix, findUnique followed by post-hoc authorId / deletedAt
+    // checks leaked post existence and authorship — a viewer could
+    // distinguish "post doesn't exist" (404) from "post exists but
+    // belongs to another user" (403). Collapsing both into 404 matches
+    // getPost's shape and forces would-be enumerators to guess blindly.
+    const { count } = await this.prisma.feedPost.updateMany({
+      where: { id: postId, authorId: userId, deletedAt: null },
       data: {
         ...(dto.textContent !== undefined && { textContent: dto.textContent }),
         ...(dto.visibility !== undefined && { visibility: dto.visibility }),
         editedAt: new Date(),
       },
+    });
+
+    if (count === 0) {
+      throw new NotFoundException('Post not found');
+    }
+
+    const updated = await this.prisma.feedPost.findUniqueOrThrow({
+      where: { id: postId },
       select: POST_SELECT,
     });
 
@@ -120,27 +123,20 @@ export class FeedService {
   }
 
   async deletePost(postId: string, userId: string) {
-    const post = await this.prisma.feedPost.findUnique({
-      where: { id: postId },
-    });
-
-    if (!post) {
-      throw new NotFoundException('Post not found');
-    }
-    if (post.authorId !== userId) {
-      throw new ForbiddenException('Cannot delete another user\'s post');
-    }
-    if (post.deletedAt) {
-      throw new NotFoundException('Post not found');
-    }
-
-    await this.prisma.feedPost.update({
-      where: { id: postId },
+    // Same DF-1 collapse as updatePost: soft-delete via updateMany so
+    // the authorship + not-already-deleted check happens atomically in
+    // the WHERE clause, with a single NotFoundException on miss.
+    const { count } = await this.prisma.feedPost.updateMany({
+      where: { id: postId, authorId: userId, deletedAt: null },
       data: {
         deletedAt: new Date(),
         status: 'removed_by_author',
       },
     });
+
+    if (count === 0) {
+      throw new NotFoundException('Post not found');
+    }
   }
 
   async getPost(postId: string, userId: string, viewerOrgId: string) {
