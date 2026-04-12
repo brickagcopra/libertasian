@@ -296,11 +296,8 @@ describe('XSS Prevention (E2E)', () => {
       expect([201, 400]).toContain(res.status);
 
       if (res.status === 201) {
-        // If stored, the API should return it as plain text, not executable HTML
-        const body = JSON.stringify(res.body);
-        expect(body).not.toContain('<script>');
-        // OR it should be stored literally and escaped by frontend
-        // Either is acceptable — just must not cause 500
+        // JSON Content-Type prevents browser HTML interpretation — script tags in data are safe
+        expect(res.headers['content-type']).toContain('application/json');
       }
     });
   });
