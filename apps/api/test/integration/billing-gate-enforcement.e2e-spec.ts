@@ -414,11 +414,13 @@ describe('Billing Gate Enforcement — Integration', () => {
         email: `billing-external-${Date.now()}@test.com`,
       });
 
+      // Route is POST-only; ApiKeyAuthGuard rejects Bearer JWT with 401
       const res = await request(app.getHttpServer())
-        .get('/api/v1/external-api/search')
-        .set('Authorization', `Bearer ${user.accessToken}`);
+        .post('/api/v1/external-api/search')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .send({ query: 'test' });
 
-      // Free user should be blocked (403 from SubscriptionGuard or ApiKeyAuthGuard)
+      // Free user should be blocked (401 from ApiKeyAuthGuard or 403 from SubscriptionGuard)
       expect([401, 403]).toContain(res.status);
     });
 
