@@ -86,6 +86,55 @@ export function useUpdateAiSetting() {
   });
 }
 
+/**
+ * Update the global LLM budget ceilings (monthly + optional daily) in one
+ * call. Backs the §7.2 admin budget form. Pass `dailyBudgetUsd: null` to
+ * explicitly clear an existing daily cap.
+ */
+export function useUpdateBudget() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: {
+      monthlyBudgetUsd: number;
+      dailyBudgetUsd?: number | null;
+    }) => {
+      return apiClient.patch<{ success: boolean }>(
+        '/admin/ai-settings/budget',
+        input,
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: aiSettingsKeys.all });
+      queryClient.invalidateQueries({ queryKey: aiSettingsKeys.usage });
+    },
+  });
+}
+
+/**
+ * Update the global ingestion wall-clock window (§7.3). All three fields
+ * (startLocal, stopLocal, timezone) move together.
+ */
+export function useUpdateIngestionWindow() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: {
+      startLocal: string;
+      stopLocal: string;
+      timezone: string;
+    }) => {
+      return apiClient.patch<{ success: boolean }>(
+        '/admin/ai-settings/ingestion-window',
+        input,
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: aiSettingsKeys.all });
+    },
+  });
+}
+
 /** Trigger an ingestion run for a specific source. */
 export function useRunIngestion() {
   const queryClient = useQueryClient();

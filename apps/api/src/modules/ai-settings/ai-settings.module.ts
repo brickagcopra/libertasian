@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
 import { AiSettingsController } from './ai-settings.controller';
 import { AiSettingsService } from './ai-settings.service';
+import { BudgetController } from './budget.controller';
 import { ModelRunsController } from './model-runs.controller';
 
 /**
@@ -16,7 +17,7 @@ import { ModelRunsController } from './model-runs.controller';
  */
 @Module({
   imports: [AuditModule],
-  controllers: [AiSettingsController, ModelRunsController],
+  controllers: [AiSettingsController, BudgetController, ModelRunsController],
   providers: [AiSettingsService],
   exports: [AiSettingsService],
 })

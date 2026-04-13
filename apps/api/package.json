@@ -10,7 +10,7 @@
     "start:debug": "dotenv -e ../../.env -- nest start --debug --watch",
     "lint": "eslint src/",
     "test": "jest",
-    "test:e2e": "jest --config ./test/jest-e2e.json",
+    "test:e2e": "dotenv -e ../../.env -- jest --config ./test/jest-e2e.json",
     "type-check": "tsc --noEmit",
     "generate:jwt-keys": "ts-node scripts/generate-jwt-keys.ts",
     "prisma:generate": "dotenv -e ../../.env -- prisma generate",

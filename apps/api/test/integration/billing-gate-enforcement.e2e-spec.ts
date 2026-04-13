@@ -71,6 +71,74 @@ describe('Billing Gate Enforcement — Integration', () => {
     await redis.del(`cache:entitlements:${orgId}`);
   }
 
+  /**
+   * Grant organizations:update permission to a user via RBAC role assignment.
+   * Lets PermissionsGuard pass so SubscriptionGuard can be tested in isolation.
+   */
+  async function grantOrgUpdatePermission(userId: string, orgId: string) {
+    const permission = await prisma.permission.upsert({
+      where: { code: 'organizations:update' },
+      update: {},
+      create: {
+        code: 'organizations:update',
+        resource: 'organizations',
+        action: 'update',
+        category: 'admin',
+        description: 'Update organization settings',
+        isSystem: true,
+      },
+    });
+
+    let ownerRole = await prisma.roleDefinition.findFirst({
+      where: { slug: 'owner', isSystem: true },
+    });
+    if (!ownerRole) {
+      ownerRole = await prisma.roleDefinition.create({
+        data: {
+          name: 'Owner',
+          slug: 'owner',
+          description: 'Organization owner with full access',
+          isSystem: true,
+          requiresMfa: false,
+        },
+      });
+    }
+
+    await prisma.rolePermission.upsert({
+      where: {
+        roleId_permissionId: {
+          roleId: ownerRole.id,
+          permissionId: permission.id,
+        },
+      },
+      update: {},
+      create: {
+        roleId: ownerRole.id,
+        permissionId: permission.id,
+      },
+    });
+
+    const member = await prisma.organizationMember.findFirst({
+      where: { userId, organizationId: orgId, status: 'active' },
+    });
+
+    if (member) {
+      await prisma.memberRole.upsert({
+        where: {
+          organizationMemberId_roleDefinitionId: {
+            organizationMemberId: member.id,
+            roleDefinitionId: ownerRole.id,
+          },
+        },
+        update: {},
+        create: {
+          organizationMemberId: member.id,
+          roleDefinitionId: ownerRole.id,
+        },
+      });
+    }
+  }
+
   // ── Free Tier Blocking ─────────────────────────────────────────────────
 
   describe('Free tier blocking', () => {
@@ -78,24 +146,36 @@ describe('Billing Gate Enforcement — Integration', () => {
       const user = await createAuthenticatedUser(app, {
         email: `billing-free-1-${Date.now()}@test.com`,
       });
+      const orgId = await getOrgId(user.accessToken);
 
-      await request(app.getHttpServer())
+      // Seed RBAC so PermissionsGuard passes — SubscriptionGuard should block
+      await grantOrgUpdatePermission(user.userId, orgId);
+
+      const res = await request(app.getHttpServer())
         .post('/api/v1/api-keys')
         .set('Authorization', `Bearer ${user.accessToken}`)
         .send({ name: 'Test Key', permissions: ['search'] })
         .expect(403);
+
+      // Confirm the 403 is from SubscriptionGuard, not PermissionsGuard
+      expect(res.body.message).toMatch(/enterprise.*subscription/i);
     });
 
     it('should return 403 with descriptive upgrade message', async () => {
       const user = await createAuthenticatedUser(app, {
         email: `billing-free-2-${Date.now()}@test.com`,
       });
+      const orgId = await getOrgId(user.accessToken);
+
+      // Seed RBAC so PermissionsGuard passes — SubscriptionGuard should block
+      await grantOrgUpdatePermission(user.userId, orgId);
 
       const res = await request(app.getHttpServer())
         .get('/api/v1/api-keys')
         .set('Authorization', `Bearer ${user.accessToken}`)
         .expect(403);
 
+      // Confirm the 403 is a subscription message, not a permissions message
       expect(res.body.message).toMatch(/enterprise.*subscription/i);
     });
   });
@@ -250,9 +330,9 @@ describe('Billing Gate Enforcement — Integration', () => {
       // Clear cache
       await redis.del(`cache:entitlements:${orgId}`);
 
-      // First call populates cache
+      // quotas/usage calls resolveEffectiveEntitlements() which populates cache
       await request(app.getHttpServer())
-        .get('/api/v1/subscriptions/entitlements')
+        .get('/api/v1/quotas/usage')
         .set('Authorization', `Bearer ${user.accessToken}`);
 
       // Verify cache exists
@@ -272,17 +352,17 @@ describe('Billing Gate Enforcement — Integration', () => {
       });
       const orgId = await getOrgId(user.accessToken);
 
-      // Clear and populate cache
+      // Clear and populate cache via quotas/usage (calls resolveEffectiveEntitlements)
       await redis.del(`cache:entitlements:${orgId}`);
       await request(app.getHttpServer())
-        .get('/api/v1/subscriptions/entitlements')
+        .get('/api/v1/quotas/usage')
         .set('Authorization', `Bearer ${user.accessToken}`);
 
       // Spy on Prisma to verify cache hit (no DB call on second request)
       const findManySpy = jest.spyOn(prisma.entitlementOverride, 'findMany');
 
       await request(app.getHttpServer())
-        .get('/api/v1/subscriptions/entitlements')
+        .get('/api/v1/quotas/usage')
         .set('Authorization', `Bearer ${user.accessToken}`);
 
       // If cache hit, entitlementOverride.findMany should not be called
@@ -301,14 +381,14 @@ describe('Billing Gate Enforcement — Integration', () => {
       });
       const orgId = await getOrgId(user.accessToken);
 
-      // Populate cache with free plan
+      // Populate cache with free plan via quotas/usage (calls resolveEffectiveEntitlements)
       await redis.del(`cache:entitlements:${orgId}`);
       await request(app.getHttpServer())
-        .get('/api/v1/subscriptions/entitlements')
+        .get('/api/v1/quotas/usage')
         .set('Authorization', `Bearer ${user.accessToken}`);
 
-      // Upgrade (setSubscription invalidates cache)
-      await setSubscription(orgId, 'pro');
+      // Upgrade — pass empty entitlements to clear any stored free-tier overrides
+      await setSubscription(orgId, 'pro', {});
 
       // Cache should be cleared
       const cached = await redis.get(`cache:entitlements:${orgId}`);
@@ -316,12 +396,12 @@ describe('Billing Gate Enforcement — Integration', () => {
 
       // Next call should return pro entitlements
       const res = await request(app.getHttpServer())
-        .get('/api/v1/subscriptions/entitlements')
+        .get('/api/v1/quotas/usage')
         .set('Authorization', `Bearer ${user.accessToken}`);
 
       if (res.status === 200) {
-        // Pro has 200 AI answers (per default entitlements)
-        expect(res.body.data.aiAnswers).toBeGreaterThan(15);
+        // Pro has unlimited AI answers (-1) per default entitlements
+        expect(res.body.data.quotas.aiAnswers.limit).toBe(-1);
       }
     });
   });
@@ -334,11 +414,13 @@ describe('Billing Gate Enforcement — Integration', () => {
         email: `billing-external-${Date.now()}@test.com`,
       });
 
+      // Route is POST-only; ApiKeyAuthGuard rejects Bearer JWT with 401
       const res = await request(app.getHttpServer())
-        .get('/api/v1/external-api/search')
-        .set('Authorization', `Bearer ${user.accessToken}`);
+        .post('/api/v1/external-api/search')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .send({ query: 'test' });
 
-      // Free user should be blocked (403 from SubscriptionGuard or ApiKeyAuthGuard)
+      // Free user should be blocked (401 from ApiKeyAuthGuard or 403 from SubscriptionGuard)
       expect([401, 403]).toContain(res.status);
     });
 
@@ -367,28 +449,28 @@ describe('Billing Gate Enforcement — Integration', () => {
       });
       const orgId = await getOrgId(user.accessToken);
 
+      // Seed RBAC so PermissionsGuard passes — lets us test SubscriptionGuard in isolation
+      await grantOrgUpdatePermission(user.userId, orgId);
+
       // Start as enterprise
       await setSubscription(orgId, 'enterprise');
 
-      // Verify access to enterprise endpoint
+      // Verify access to enterprise endpoint — should pass both guards now
       const beforeRes = await request(app.getHttpServer())
         .get('/api/v1/api-keys')
-        .set('Authorization', `Bearer ${user.accessToken}`);
-
-      // Should pass subscription guard (may still fail on permissions guard)
-      if (beforeRes.status === 403) {
-        expect(beforeRes.body.message).not.toMatch(/enterprise.*subscription/i);
-      }
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .expect(200);
 
       // Downgrade to free
       await setSubscription(orgId, 'free');
 
-      // Verify blocked
+      // Verify blocked by SubscriptionGuard after downgrade
       const afterRes = await request(app.getHttpServer())
         .get('/api/v1/api-keys')
         .set('Authorization', `Bearer ${user.accessToken}`)
         .expect(403);
 
+      // Confirm the 403 is a subscription message, not a permissions message
       expect(afterRes.body.message).toMatch(/enterprise.*subscription/i);
     });
   });

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -86,10 +87,7 @@ export class UploadsController {
     @Ip() ip: string,
   ) {
     if (!file) {
-      return {
-        success: false,
-        error: { message: 'No file provided', statusCode: 400 },
-      };
+      throw new BadRequestException('No file provided');
     }
 
     const result = await this.uploadsService.uploadFile(
@@ -145,10 +143,7 @@ export class UploadsController {
     @Ip() ip: string,
   ) {
     if (!files || files.length === 0) {
-      return {
-        success: false,
-        error: { message: 'No files provided', statusCode: 400 },
-      };
+      throw new BadRequestException('No files provided');
     }
 
     // Enforce plan-based camera scan quota

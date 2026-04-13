@@ -1,7 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const request = require('supertest') as typeof import('supertest');
-import { createTestApp, createAuthenticatedUser } from '../helpers';
+import { createTestApp, createAuthenticatedUser, disableRateLimiting } from '../helpers';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { EmbeddingClientService } from '../../src/modules/search/embedding-client.service';
 import { OpenSearchService } from '../../src/modules/search/opensearch.service';
@@ -50,6 +50,8 @@ describe('Search & RAG Answer — Integration', () => {
   afterEach(() => {
     jest.restoreAllMocks();
     global.fetch = originalFetch;
+    // Re-apply throttle bypass after restoreAllMocks clears it
+    disableRateLimiting();
   });
 
   // ── Search Pipeline ────────────────────────────────────────────────────

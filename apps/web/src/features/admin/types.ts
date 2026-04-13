@@ -629,3 +629,157 @@ export interface BatchAssignResult {
   processed: number;
   digestIds: string[];
 }
+
+// ---- Backfill Orchestration ----
+
+export interface BackfillBatch {
+  id: string;
+  sourceId: string;
+  sourceEndpointId?: string;
+  name: string;
+  description?: string;
+  yearStart: number;
+  yearEnd: number;
+  monthStart?: number;
+  monthEnd?: number;
+  status: string;
+  budgetCeilingUsd: number;
+  budgetConsumedUsd: number;
+  candidatesDiscovered: number;
+  candidatesProcessed: number;
+  candidatesSkipped: number;
+  candidatesFailed: number;
+  documentsCreated: number;
+  documentsUpdated: number;
+  startedAt?: string;
+  finishedAt?: string;
+  lastTickAt?: string;
+  adminNotes?: string;
+  createdAt: string;
+  updatedAt: string;
+  source?: { id: string; name: string };
+}
+
+// ---- Budget Management (§7.2) ----
+
+export interface BudgetSnapshot {
+  monthlyCeiling: number;
+  dailyCeiling: number | null;
+  monthSpend: number;
+  daySpend: number;
+  monthUtilizationPercent: number;
+  dayUtilizationPercent: number | null;
+  month: string;
+  day: string;
+}
+
+export interface LedgerScopeSummary {
+  scope: string;
+  totalAmountUsd: number;
+  totalTokensIn: number;
+  totalTokensOut: number;
+  totalRequests: number;
+}
+
+export interface LedgerMonthSummary {
+  periodYearMonth: string;
+  totalAmountUsd: number;
+  totalTokensIn: number;
+  totalTokensOut: number;
+  totalRequests: number;
+}
+
+export interface BudgetCurrentResponse {
+  snapshot: BudgetSnapshot;
+  byScope: LedgerScopeSummary[];
+}
+
+// ---- Golden Sets (PR 4.1) ----
+
+export interface GoldenSetEntry {
+  id: string;
+  goldenSetType: string;
+  sourceDocumentId: string | null;
+  referenceDataJson: Record<string, unknown>;
+  status: string;
+  reviewNotes: string | null;
+  reviewedByUserId: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  sourceDocument?: {
+    id: string;
+    title: string;
+    citationText: string | null;
+  } | null;
+  reviewedByUser?: {
+    id: string;
+    fullName: string;
+  } | null;
+}
+
+export interface EvaluationRun {
+  id: string;
+  goldenSetType: string;
+  promptTemplateVersion: string;
+  modelName: string;
+  totalEntries: number;
+  passingEntries: number;
+  passRate: number;
+  scoreDetailsJson: Record<string, unknown>;
+  status: string;
+  startedAt: string;
+  finishedAt: string | null;
+  createdAt: string;
+}
+
+export interface GoldenSetStats {
+  caseDigest: { total: number; approved: number; pending: number };
+  subjectClassification: { total: number; approved: number; pending: number };
+  mcqQuestion: { total: number; approved: number; pending: number };
+}
+
+// ---- Derivatives Admin (PR 6.1) ----
+
+export interface DerivativeTypeStats {
+  derivativeType: string;
+  totalArtifacts: number;
+  pendingJobs: number;
+  failedJobs: number;
+  completedJobs: number;
+  spendThisMonth: number;
+}
+
+export interface DerivativeStatsResponse {
+  byType: DerivativeTypeStats[];
+  globalEnabled: boolean;
+  typesEnabled: Record<string, boolean>;
+}
+
+export interface DerivativeJob {
+  id: string;
+  derivativeType: string;
+  status: string;
+  sourceDocumentId?: string;
+  sourceDocument?: { id: string; title: string };
+  promptTemplateVersion?: string;
+  modelName?: string;
+  tokensIn: number;
+  tokensOut: number;
+  estimatedCostUsd: number;
+  errorJson?: Record<string, unknown>;
+  startedAt?: string;
+  finishedAt?: string;
+  createdAt: string;
+}
+
+export interface EnqueueResult {
+  enqueuedCount: number;
+  estimatedCostUsd: number;
+  jobIds: string[];
+}
+
+export interface DerivativeSettings {
+  enabled: boolean;
+  typesEnabled: Record<string, boolean>;
+}

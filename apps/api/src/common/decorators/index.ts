@@ -4,3 +4,4 @@ export type { PermissionsMetadata, PermissionMatchMode } from './permissions.dec
 export { CurrentUser } from './current-user.decorator';
 export { RequiredSubscription } from './subscription.decorator';
 export { RequiredApiKeyPermissions } from './api-key-permissions.decorator';
+export { DerivativeResponse, DERIVATIVE_RESPONSE_KEY } from './derivative-response.decorator';

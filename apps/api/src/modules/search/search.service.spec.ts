@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { Logger } from '@nestjs/common';
+import { Logger, ServiceUnavailableException } from '@nestjs/common';
 
 import { SearchService } from './search.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -279,6 +279,42 @@ describe('SearchService', () => {
       expect((result.items[0] as SearchResultItem)?.id).toBe('doc-20');
       expect(result.meta.page).toBe(2);
       expect(result.meta.limit).toBe(10);
+    });
+
+    // E3b (security-investigation.md): index_not_found_exception from
+    // OpenSearch should return an empty result envelope (not a 500).
+    it('should return empty envelope on index_not_found_exception (E3b)', async () => {
+      redisService.get.mockResolvedValue(null);
+
+      const indexNotFoundError = {
+        meta: {
+          body: {
+            error: { type: 'index_not_found_exception', reason: 'no such index [legal_keyword]' },
+            status: 404,
+          },
+        },
+        message: 'index_not_found_exception',
+      };
+      openSearchService.searchKeyword.mockRejectedValue(indexNotFoundError);
+      embeddingClientService.embed.mockResolvedValue(null);
+
+      const result = await service.search(searchDto);
+
+      expect(result.items).toEqual([]);
+      expect(result.meta.total).toBe(0);
+      expect(result.meta.cached).toBe(false);
+      expect(result.meta.searchType).toBe('keyword_only');
+    });
+
+    // E3b: any other OpenSearch failure should throw 503 with a
+    // generic message (no upstream details leaked).
+    it('should throw ServiceUnavailableException on generic OpenSearch error (E3b)', async () => {
+      redisService.get.mockResolvedValue(null);
+      openSearchService.searchKeyword.mockRejectedValue(new Error('connection refused'));
+      embeddingClientService.embed.mockResolvedValue(null);
+
+      await expect(service.search(searchDto)).rejects.toThrow(ServiceUnavailableException);
+      await expect(service.search(searchDto)).rejects.toThrow('Search temporarily unavailable');
     });
   });
 

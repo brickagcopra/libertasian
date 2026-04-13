@@ -16,10 +16,12 @@ import httpx
 import pytest
 
 from src.core.generation import (
+    _check_budget,
     generate_completion,
     get_model_info,
     stream_completion,
 )
+from src.shared.exceptions import BudgetExceededError
 
 
 # ---------------------------------------------------------------------------
@@ -604,3 +606,122 @@ class TestGetModelInfo:
         assert isinstance(info, dict)
         assert "model_name" in info
         assert "vllm_base_url" in info
+
+
+# ===========================================================================
+# _check_budget — monthly and optional daily cap enforcement (§7.2)
+# ===========================================================================
+
+
+def _make_mock_redis(
+    *,
+    monthly_budget: str | None = None,
+    daily_budget: str | None = None,
+    monthly_spend: str | None = None,
+    daily_spend: str | None = None,
+) -> AsyncMock:
+    """Build an AsyncMock redis client returning canned budget values."""
+    redis = AsyncMock()
+
+    async def _get(key: str) -> str | None:
+        if key == "llm:config:monthly_budget_usd":
+            return monthly_budget
+        if key == "llm:config:daily_budget_usd":
+            return daily_budget
+        return None
+
+    async def _hget(key: str, field: str) -> str | None:
+        if field != "estimated_cost_usd":
+            return None
+        if key.startswith("llm:usage:daily:"):
+            return daily_spend
+        if key.startswith("llm:usage:"):
+            return monthly_spend
+        return None
+
+    redis.get = _get
+    redis.hget = _hget
+    return redis
+
+
+class TestCheckBudget:
+    """Test the dual monthly/daily budget killswitch in _check_budget."""
+
+    @pytest.mark.asyncio
+    async def test_no_budget_configured_is_noop(self) -> None:
+        redis = _make_mock_redis()
+        with patch("src.core.generation._get_redis", AsyncMock(return_value=redis)):
+            await _check_budget()  # should not raise
+
+    @pytest.mark.asyncio
+    async def test_monthly_only_under_budget(self) -> None:
+        redis = _make_mock_redis(monthly_budget="200", monthly_spend="50.00")
+        with patch("src.core.generation._get_redis", AsyncMock(return_value=redis)):
+            await _check_budget()
+
+    @pytest.mark.asyncio
+    async def test_monthly_only_over_budget_raises(self) -> None:
+        redis = _make_mock_redis(monthly_budget="200", monthly_spend="200.01")
+        with patch("src.core.generation._get_redis", AsyncMock(return_value=redis)):
+            with pytest.raises(BudgetExceededError) as exc_info:
+                await _check_budget()
+        assert "Monthly" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_daily_cap_trips_before_monthly(self) -> None:
+        """Daily spend at cap must raise even though monthly spend is well under budget."""
+        redis = _make_mock_redis(
+            monthly_budget="200",
+            daily_budget="15",
+            monthly_spend="50.00",
+            daily_spend="15.00",
+        )
+        with patch("src.core.generation._get_redis", AsyncMock(return_value=redis)):
+            with pytest.raises(BudgetExceededError) as exc_info:
+                await _check_budget()
+        assert "Daily" in str(exc_info.value)
+        assert "Monthly" not in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_monthly_trips_when_daily_under(self) -> None:
+        """When daily is under but monthly is exhausted, monthly wins."""
+        redis = _make_mock_redis(
+            monthly_budget="200",
+            daily_budget="15",
+            monthly_spend="200.00",
+            daily_spend="5.00",
+        )
+        with patch("src.core.generation._get_redis", AsyncMock(return_value=redis)):
+            with pytest.raises(BudgetExceededError) as exc_info:
+                await _check_budget()
+        assert "Monthly" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_daily_unset_means_no_daily_enforcement(self) -> None:
+        """With daily budget unset, the daily spend never triggers BudgetExceededError."""
+        redis = _make_mock_redis(
+            monthly_budget="200",
+            daily_budget=None,
+            monthly_spend="50.00",
+            daily_spend="999.99",
+        )
+        with patch("src.core.generation._get_redis", AsyncMock(return_value=redis)):
+            await _check_budget()  # should not raise
+
+    @pytest.mark.asyncio
+    async def test_daily_only_unset_monthly_enforced(self) -> None:
+        redis = _make_mock_redis(monthly_budget="100", monthly_spend="100.50")
+        with patch("src.core.generation._get_redis", AsyncMock(return_value=redis)):
+            with pytest.raises(BudgetExceededError):
+                await _check_budget()
+
+    @pytest.mark.asyncio
+    async def test_malformed_daily_budget_is_ignored(self) -> None:
+        redis = _make_mock_redis(
+            monthly_budget="100",
+            daily_budget="not-a-number",
+            monthly_spend="10.00",
+            daily_spend="50.00",
+        )
+        with patch("src.core.generation._get_redis", AsyncMock(return_value=redis)):
+            await _check_budget()  # malformed daily is treated as unset

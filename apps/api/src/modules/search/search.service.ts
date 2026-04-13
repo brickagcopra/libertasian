@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 
 import { RedisService } from '../../common/services/redis.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -69,8 +69,27 @@ export class SearchService {
       };
     }
 
-    // Attempt hybrid search (BM25 + kNN with RRF)
-    const result = await this.hybridSearch(dto, page, limit);
+    // Attempt hybrid search (BM25 + kNN with RRF).
+    // Wrap in try/catch to handle OpenSearch index-not-found (E3b) and
+    // other upstream failures gracefully instead of leaking 500s.
+    let result: Awaited<ReturnType<SearchService['hybridSearch']>>;
+    try {
+      result = await this.hybridSearch(dto, page, limit);
+    } catch (err: unknown) {
+      // OpenSearch index_not_found_exception → return empty envelope
+      if (this.isIndexNotFound(err)) {
+        this.logger.warn(
+          `Search index missing — returning empty results (index: [redacted])`,
+        );
+        return {
+          items: [],
+          meta: { total: 0, maxScore: null, page, limit, timedOut: false, cached: false, searchType: 'keyword_only' as const },
+        };
+      }
+      // Any other OpenSearch / network error → 503
+      this.logger.error('Search upstream failure', (err as Error).message);
+      throw new ServiceUnavailableException('Search temporarily unavailable');
+    }
 
     const response = {
       items: result.items,
@@ -88,8 +107,8 @@ export class SearchService {
     // Store in cache (non-blocking)
     this.redis
       .set(cacheKey, JSON.stringify(response), SEARCH_CACHE_TTL)
-      .catch((err) =>
-        this.logger.warn('Failed to cache search result', (err as Error).message),
+      .catch((cacheErr) =>
+        this.logger.warn('Failed to cache search result', (cacheErr as Error).message),
       );
 
     return response;
@@ -528,5 +547,21 @@ export class SearchService {
       .trim()
       .replace(/\s+/g, ' ')
       .replace(/^(GR|G\.R\.|GRN|G\.R\.N\.?)\s*(?:No\.?)?\s*/i, 'G.R. No. ');
+  }
+
+  /**
+   * Detect OpenSearch index_not_found_exception from the @opensearch-project
+   * client's ResponseError shape. The error body structure is:
+   *   { meta: { body: { error: { type: 'index_not_found_exception' } } } }
+   * or sometimes flattened to the top-level body property.
+   */
+  private isIndexNotFound(err: unknown): boolean {
+    if (!err || typeof err !== 'object') return false;
+    const e = err as Record<string, unknown>;
+    // ResponseError shape: err.meta.body.error.type
+    const meta = e['meta'] as Record<string, unknown> | undefined;
+    const body = (meta?.['body'] ?? e['body']) as Record<string, unknown> | undefined;
+    const errObj = body?.['error'] as Record<string, unknown> | undefined;
+    return errObj?.['type'] === 'index_not_found_exception';
   }
 }

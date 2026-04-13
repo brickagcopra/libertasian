@@ -7,6 +7,8 @@ import {
   useAiUsage,
   useAiUsageHistory,
   useUpdateAiSetting,
+  useUpdateBudget,
+  useUpdateIngestionWindow,
   useRunIngestion,
 } from '@/features/admin/hooks/use-ai-settings';
 import { AdminCardSkeleton } from '@/components/ui/skeleton';
@@ -27,6 +29,11 @@ const CRON_PRESETS = [
   { label: 'Weekly on Sunday', cron: '0 2 * * 0' },
 ];
 
+/** Allowlisted timezones for the §7.3 ingestion window picker. */
+const INGESTION_WINDOW_TIMEZONES = ['Asia/Manila'] as const;
+
+const HH_MM_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
+
 // ---- Helper to get a setting value from the settings array ----
 
 function getSettingValue<T>(
@@ -46,6 +53,8 @@ export default function AiSettingsPage() {
   const { data: usage, isLoading: usageLoading } = useAiUsage();
   const { data: history } = useAiUsageHistory();
   const updateSetting = useUpdateAiSetting();
+  const updateBudget = useUpdateBudget();
+  const updateIngestionWindow = useUpdateIngestionWindow();
   const runIngestion = useRunIngestion();
 
   if (settingsLoading || usageLoading) {
@@ -65,6 +74,7 @@ export default function AiSettingsPage() {
   }
 
   const budget = getSettingValue<{ amount: number }>(settings, 'llm_monthly_budget_usd', { amount: 200 });
+  const dailyBudget = getSettingValue<{ amount: number } | null>(settings, 'llm_daily_budget_usd', null);
   const llmModel = getSettingValue<{ model: string; provider: string }>(settings, 'llm_model', {
     model: 'gpt-4o-mini',
     provider: 'openai',
@@ -74,6 +84,11 @@ export default function AiSettingsPage() {
     enabled: boolean;
     schedules: { sourceKey: string; cron: string; enabled: boolean }[];
   }>(settings, 'ingestion_schedule', { enabled: false, schedules: [] });
+  const ingestionWindow = getSettingValue<{
+    startLocal: string;
+    stopLocal: string;
+    timezone: string;
+  } | null>(settings, 'ingestion_window', null);
 
   return (
     <div className="space-y-8">
@@ -87,13 +102,22 @@ export default function AiSettingsPage() {
         usage={usage}
         history={history}
         budget={budget}
+        dailyBudget={dailyBudget}
         llmEnabled={llmEnabled}
         llmModel={llmModel}
         onUpdateSetting={updateSetting.mutate}
-        isPending={updateSetting.isPending}
+        onUpdateBudget={updateBudget.mutate}
+        isPending={updateSetting.isPending || updateBudget.isPending}
       />
 
-      {/* Section 2: Ingestion Schedule */}
+      {/* Section 2: Ingestion Window (§7.3) */}
+      <IngestionWindowSection
+        window={ingestionWindow}
+        onUpdateWindow={updateIngestionWindow.mutate}
+        isPending={updateIngestionWindow.isPending}
+      />
+
+      {/* Section 3: Ingestion Schedule */}
       <IngestionScheduleSection
         schedule={ingestionSchedule}
         onUpdateSchedule={(value) => updateSetting.mutate({ key: 'ingestion_schedule', value })}
@@ -102,12 +126,14 @@ export default function AiSettingsPage() {
         isPending={updateSetting.isPending}
       />
 
-      {/* Section 3: Configuration Summary */}
+      {/* Section 4: Configuration Summary */}
       <ConfigSummarySection
         model={llmModel}
         budget={budget}
+        dailyBudget={dailyBudget}
         enabled={llmEnabled.enabled}
         ingestionEnabled={ingestionSchedule.enabled}
+        ingestionWindow={ingestionWindow}
       />
     </div>
   );
@@ -119,26 +145,56 @@ function UsageBudgetSection({
   usage,
   history,
   budget,
+  dailyBudget,
   llmEnabled,
   llmModel,
   onUpdateSetting,
+  onUpdateBudget,
   isPending,
 }: {
   usage: { estimatedCostUsd: number; budgetUsd: number; tokensIn: number; tokensOut: number; requestCount: number; utilizationPercent: number } | undefined;
   history: { month: string; estimatedCostUsd: number }[] | undefined;
   budget: { amount: number };
+  dailyBudget: { amount: number } | null;
   llmEnabled: { enabled: boolean };
   llmModel: { model: string; provider: string };
   onUpdateSetting: (args: { key: string; value: Record<string, unknown> }) => void;
+  onUpdateBudget: (args: { monthlyBudgetUsd: number; dailyBudgetUsd?: number | null }) => void;
   isPending: boolean;
 }) {
-  const [budgetInput, setBudgetInput] = useState(String(budget.amount));
+  const [monthlyInput, setMonthlyInput] = useState(String(budget.amount));
+  const [dailyInput, setDailyInput] = useState(dailyBudget ? String(dailyBudget.amount) : '');
+  const [budgetError, setBudgetError] = useState<string | null>(null);
 
   const costUsd = usage?.estimatedCostUsd ?? 0;
   const budgetUsd = usage?.budgetUsd ?? budget.amount;
   const utilization = budgetUsd > 0 ? (costUsd / budgetUsd) * 100 : 0;
   const barColor = utilization < 60 ? 'bg-green-500' : utilization < 85 ? 'bg-yellow-500' : 'bg-red-500';
   const avgCost = (usage?.requestCount ?? 0) > 0 ? costUsd / usage!.requestCount : 0;
+
+  const handleSaveBudget = () => {
+    setBudgetError(null);
+    const monthly = Number(monthlyInput);
+    if (!Number.isFinite(monthly) || monthly < 0 || monthly > 100000) {
+      setBudgetError('Monthly budget must be a number between 0 and 100,000.');
+      return;
+    }
+
+    let daily: number | null | undefined;
+    const trimmed = dailyInput.trim();
+    if (trimmed === '') {
+      daily = null;
+    } else {
+      const parsed = Number(trimmed);
+      if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100000) {
+        setBudgetError('Daily budget must be a number between 0 and 100,000, or blank.');
+        return;
+      }
+      daily = parsed;
+    }
+
+    onUpdateBudget({ monthlyBudgetUsd: monthly, dailyBudgetUsd: daily });
+  };
 
   return (
     <div className="rounded-lg border bg-white p-6 shadow-sm">
@@ -184,21 +240,37 @@ function UsageBudgetSection({
         </div>
       )}
 
-      {/* Budget input */}
+      {/* Budget inputs (§7.2 — monthly required, daily optional) */}
       <div className="flex flex-wrap items-end gap-4">
         <div>
           <label className="mb-1 block text-sm font-medium text-gray-700">Monthly Budget Limit (USD)</label>
           <input
             type="number"
             min={0}
-            max={10000}
-            value={budgetInput}
-            onChange={(e) => setBudgetInput(e.target.value)}
+            max={100000}
+            step={1}
+            value={monthlyInput}
+            onChange={(e) => setMonthlyInput(e.target.value)}
             className="w-32 rounded-md border px-3 py-1.5 text-sm"
           />
         </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium text-gray-700">
+            Daily Budget Limit (USD) <span className="text-gray-400">— optional</span>
+          </label>
+          <input
+            type="number"
+            min={0}
+            max={100000}
+            step={1}
+            placeholder="leave blank for no daily cap"
+            value={dailyInput}
+            onChange={(e) => setDailyInput(e.target.value)}
+            className="w-56 rounded-md border px-3 py-1.5 text-sm"
+          />
+        </div>
         <button
-          onClick={() => onUpdateSetting({ key: 'llm_monthly_budget_usd', value: { amount: Number(budgetInput), currency: 'USD' } })}
+          onClick={handleSaveBudget}
           disabled={isPending}
           className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
         >
@@ -216,6 +288,15 @@ function UsageBudgetSection({
           </button>
         </div>
       </div>
+      {budgetError && (
+        <p className="mt-2 text-xs text-red-600">{budgetError}</p>
+      )}
+      {dailyBudget && (
+        <p className="mt-2 text-xs text-gray-500">
+          Current daily cap: <span className="font-medium">${dailyBudget.amount.toFixed(2)}</span>. Clear the
+          daily input and click Save to remove the cap.
+        </p>
+      )}
 
       {/* Model selector */}
       <div className="mt-4">
@@ -237,7 +318,104 @@ function UsageBudgetSection({
   );
 }
 
-// ---- Section 2: Ingestion Schedule ----
+// ---- Section 2: Ingestion Window (§7.3) ----
+
+function IngestionWindowSection({
+  window,
+  onUpdateWindow,
+  isPending,
+}: {
+  window: { startLocal: string; stopLocal: string; timezone: string } | null;
+  onUpdateWindow: (input: { startLocal: string; stopLocal: string; timezone: string }) => void;
+  isPending: boolean;
+}) {
+  const [startLocal, setStartLocal] = useState(window?.startLocal ?? '02:00');
+  const [stopLocal, setStopLocal] = useState(window?.stopLocal ?? '06:00');
+  const [timezone, setTimezone] = useState<string>(
+    window?.timezone ?? INGESTION_WINDOW_TIMEZONES[0],
+  );
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSave = () => {
+    setError(null);
+    if (!HH_MM_REGEX.test(startLocal)) {
+      setError('Start time must be in 24-hour HH:MM format (e.g. 02:00).');
+      return;
+    }
+    if (!HH_MM_REGEX.test(stopLocal)) {
+      setError('Stop time must be in 24-hour HH:MM format (e.g. 06:00).');
+      return;
+    }
+    if (!(INGESTION_WINDOW_TIMEZONES as readonly string[]).includes(timezone)) {
+      setError(`Timezone must be one of: ${INGESTION_WINDOW_TIMEZONES.join(', ')}.`);
+      return;
+    }
+    onUpdateWindow({ startLocal, stopLocal, timezone });
+  };
+
+  return (
+    <div className="rounded-lg border bg-white p-6 shadow-sm">
+      <h2 className="mb-1 text-lg font-semibold">Ingestion Wall-Clock Window</h2>
+      <p className="mb-4 text-xs text-gray-500">
+        Restrict automatic ingestion to a daily wall-clock window. Scheduled crawls outside this
+        window will be deferred until the next in-window tick.
+      </p>
+
+      <div className="flex flex-wrap items-end gap-4">
+        <div>
+          <label className="mb-1 block text-sm font-medium text-gray-700">Start (local)</label>
+          <input
+            type="time"
+            value={startLocal}
+            onChange={(e) => setStartLocal(e.target.value)}
+            className="w-32 rounded-md border px-3 py-1.5 text-sm"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium text-gray-700">Stop (local)</label>
+          <input
+            type="time"
+            value={stopLocal}
+            onChange={(e) => setStopLocal(e.target.value)}
+            className="w-32 rounded-md border px-3 py-1.5 text-sm"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium text-gray-700">Timezone</label>
+          <select
+            value={timezone}
+            onChange={(e) => setTimezone(e.target.value)}
+            className="rounded-md border px-3 py-1.5 text-sm"
+          >
+            {INGESTION_WINDOW_TIMEZONES.map((tz) => (
+              <option key={tz} value={tz}>
+                {tz}
+              </option>
+            ))}
+          </select>
+        </div>
+        <button
+          onClick={handleSave}
+          disabled={isPending}
+          className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+        >
+          Save Window
+        </button>
+      </div>
+      {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+      {window && (
+        <p className="mt-3 text-xs text-gray-500">
+          Active:{' '}
+          <span className="font-medium">
+            {window.startLocal}–{window.stopLocal} {window.timezone}
+          </span>
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ---- Section 3: Ingestion Schedule ----
 
 function IngestionScheduleSection({
   schedule,
@@ -361,18 +539,22 @@ function IngestionScheduleSection({
   );
 }
 
-// ---- Section 3: Configuration Summary ----
+// ---- Section 4: Configuration Summary ----
 
 function ConfigSummarySection({
   model,
   budget,
+  dailyBudget,
   enabled,
   ingestionEnabled,
+  ingestionWindow,
 }: {
   model: { model: string; provider: string };
   budget: { amount: number };
+  dailyBudget: { amount: number } | null;
   enabled: boolean;
   ingestionEnabled: boolean;
+  ingestionWindow: { startLocal: string; stopLocal: string; timezone: string } | null;
 }) {
   return (
     <div className="rounded-lg border bg-white p-6 shadow-sm">
@@ -391,6 +573,12 @@ function ConfigSummarySection({
           <dd className="mt-0.5 font-medium">${budget.amount}/month</dd>
         </div>
         <div>
+          <dt className="text-gray-500">Daily Budget</dt>
+          <dd className="mt-0.5 font-medium">
+            {dailyBudget ? `$${dailyBudget.amount}/day` : <span className="text-gray-400">not set</span>}
+          </dd>
+        </div>
+        <div>
           <dt className="text-gray-500">AI Features</dt>
           <dd className={`mt-0.5 font-medium ${enabled ? 'text-green-600' : 'text-red-600'}`}>
             {enabled ? 'Enabled' : 'Disabled'}
@@ -400,6 +588,14 @@ function ConfigSummarySection({
           <dt className="text-gray-500">Auto Ingestion</dt>
           <dd className={`mt-0.5 font-medium ${ingestionEnabled ? 'text-green-600' : 'text-gray-400'}`}>
             {ingestionEnabled ? 'Enabled' : 'Disabled'}
+          </dd>
+        </div>
+        <div className="sm:col-span-3">
+          <dt className="text-gray-500">Ingestion Window</dt>
+          <dd className="mt-0.5 font-medium">
+            {ingestionWindow
+              ? `${ingestionWindow.startLocal}–${ingestionWindow.stopLocal} ${ingestionWindow.timezone}`
+              : <span className="text-gray-400">not set (crawls run whenever scheduled)</span>}
           </dd>
         </div>
       </dl>

@@ -388,7 +388,15 @@ describe('Community Feed (E2E)', () => {
   // 4. Ownership Enforcement
   // =========================================================================
   describe('Ownership enforcement', () => {
-    it('should forbid user B from editing user A post', async () => {
+    // DF-1 (security-investigation.md): updatePost/deletePost previously
+    // split into a 403 branch ('not your post') and a 404 branch ('post
+    // not found' / 'soft-deleted') via a findUnique + post-hoc authorId
+    // check. That split was an existence + authorship oracle — a
+    // non-author viewer could infer a post's existence and ownership
+    // from the error code. Both branches now collapse to a single
+    // NotFoundException via updateMany's compound where clause, so
+    // these tests assert 404 (not 403).
+    it('should return 404 (not 403) when user B edits user A post (DF-1 collapse)', async () => {
       const userA = await createAuthenticatedUser(app, {
         email: `owner-edit-a-${Date.now()}@test.com`,
       });
@@ -405,10 +413,10 @@ describe('Community Feed (E2E)', () => {
         .patch(`/api/v1/feed/posts/${post.id}`)
         .set('Authorization', `Bearer ${userB.accessToken}`)
         .send({ textContent: 'B tries to edit' })
-        .expect(403);
+        .expect(404);
     });
 
-    it('should forbid user B from deleting user A post', async () => {
+    it('should return 404 (not 403) when user B deletes user A post (DF-1 collapse)', async () => {
       const userA = await createAuthenticatedUser(app, {
         email: `owner-del-a-${Date.now()}@test.com`,
       });
@@ -424,7 +432,58 @@ describe('Community Feed (E2E)', () => {
       await request(app.getHttpServer())
         .delete(`/api/v1/feed/posts/${post.id}`)
         .set('Authorization', `Bearer ${userB.accessToken}`)
-        .expect(403);
+        .expect(404);
+    });
+
+    it('should return byte-equal 404 bodies for non-existent and non-owned posts (DF-1 oracle closure)', async () => {
+      // If the error body differs between "post doesn't exist" and
+      // "post exists but belongs to another user", an attacker can
+      // still fingerprint existence via the response payload even
+      // though both return 404. Assert byte-equal bodies to prove the
+      // oracle is fully closed.
+      const userA = await createAuthenticatedUser(app, {
+        email: `df1-oracle-a-${Date.now()}@test.com`,
+      });
+      const userB = await createAuthenticatedUser(app, {
+        email: `df1-oracle-b-${Date.now()}@test.com`,
+      });
+
+      const postA = await createPostAs(userA.accessToken, {
+        textContent: 'A owns this oracle post',
+        visibility: 'public',
+      });
+
+      const nonExistentId = '00000000-0000-0000-0000-000000000000';
+
+      const existsRes = await request(app.getHttpServer())
+        .patch(`/api/v1/feed/posts/${postA.id}`)
+        .set('Authorization', `Bearer ${userB.accessToken}`)
+        .send({ textContent: 'should fail with 404' })
+        .expect(404);
+
+      const notExistsRes = await request(app.getHttpServer())
+        .patch(`/api/v1/feed/posts/${nonExistentId}`)
+        .set('Authorization', `Bearer ${userB.accessToken}`)
+        .send({ textContent: 'should fail with 404' })
+        .expect(404);
+
+      // Strip anything that could legitimately differ between
+      // requests (timestamps, request IDs). NestJS's default
+      // exception body is { statusCode, message, error } — all
+      // three must match byte-for-byte.
+      expect(existsRes.body).toEqual(notExistsRes.body);
+
+      const deleteExistsRes = await request(app.getHttpServer())
+        .delete(`/api/v1/feed/posts/${postA.id}`)
+        .set('Authorization', `Bearer ${userB.accessToken}`)
+        .expect(404);
+
+      const deleteNotExistsRes = await request(app.getHttpServer())
+        .delete(`/api/v1/feed/posts/${nonExistentId}`)
+        .set('Authorization', `Bearer ${userB.accessToken}`)
+        .expect(404);
+
+      expect(deleteExistsRes.body).toEqual(deleteNotExistsRes.body);
     });
 
     it('should forbid user B from editing user A comment', async () => {
@@ -703,6 +762,13 @@ describe('Community Feed (E2E)', () => {
   // 7. Interactions — Bookmarks
   // =========================================================================
   describe('Interactions — bookmarks', () => {
+    // The E18 `!b.post.updatedAt` typo on feed.service.ts:219 is now
+    // resolved. The whole JS-side `.filter` was removed as part of
+    // the E14 expanded fix — the visibility + status + deletedAt
+    // filter lives in the Prisma `where` clause on
+    // `getBookmarkedPosts` now, which makes the typo unreachable by
+    // construction. See auth-security.e2e-spec.ts for the
+    // cross-tenant bookmark-leak companion cases.
     it('should bookmark and unbookmark a post', async () => {
       const user = await createAuthenticatedUser(app, {
         email: `bookmark-1-${Date.now()}@test.com`,

@@ -155,8 +155,23 @@ export class FeedMediaService {
 
   /**
    * Get the image buffer from S3 for a specific variant (feed or thumb).
+   *
+   * Non-owner access is gated by the parent post's tenant visibility: a
+   * viewer in a different organization cannot fetch the image bytes of
+   * an organization-scoped post even if they learn the mediaId. Prior to
+   * this fix (BYPASS #1 in security-investigation.md) the guard only
+   * checked status + deletedAt and ignored the visibility/organizationId
+   * it selected — dead defensive code that allowed cross-tenant image
+   * reads on org-scoped posts. Mirrors the getPost tenant-scoping fix
+   * shape exactly. `viewerOrgId` is threaded from the authenticated
+   * session at the controller boundary.
    */
-  async getMediaImage(mediaId: string, variant: 'feed' | 'thumb', userId: string) {
+  async getMediaImage(
+    mediaId: string,
+    variant: 'feed' | 'thumb',
+    userId: string,
+    viewerOrgId: string,
+  ) {
     const media = await this.prisma.feedPostMedia.findUnique({
       where: { id: mediaId },
     });
@@ -165,13 +180,23 @@ export class FeedMediaService {
       throw new NotFoundException('Media not found');
     }
 
-    // Allow access if user owns it OR the media is attached to a published post
+    // Allow access if user owns it OR the media is attached to a
+    // published post the viewer is entitled to read (public, or
+    // organization-scoped and the viewer is in that organization).
     if (media.ownerUserId !== userId) {
-      const post = await this.prisma.feedPost.findUnique({
-        where: { mediaId },
-        select: { status: true, visibility: true, organizationId: true, deletedAt: true },
+      const post = await this.prisma.feedPost.findFirst({
+        where: {
+          mediaId,
+          status: 'published',
+          deletedAt: null,
+          OR: [
+            { visibility: 'public' },
+            { visibility: 'organization', organizationId: viewerOrgId },
+          ],
+        },
+        select: { id: true },
       });
-      if (!post || post.status !== 'published' || post.deletedAt) {
+      if (!post) {
         throw new ForbiddenException('Access denied');
       }
     }

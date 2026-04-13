@@ -433,9 +433,10 @@ describe('API Keys & External API (E2E)', () => {
         .set('X-API-Key', rawKey)
         .send({ query: 'civil code obligations' });
 
-      // Should be either 200 (success) or 404/500/503 (OpenSearch index missing or service down)
+      // Should be either 200/201 (success) or 404/500/503 (OpenSearch index missing or service down)
       // The key auth succeeds if we don't get 401/403
-      expect([200, 404, 500, 502, 503]).toContain(res.status);
+      // POST returns 201 by default in NestJS
+      expect([200, 201, 404, 500, 502, 503]).toContain(res.status);
     });
 
     it('should reject requests missing required permission', async () => {

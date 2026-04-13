@@ -1,6 +1,6 @@
 import { BullModule } from '@nestjs/bullmq';
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -9,7 +9,10 @@ import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis'
 import * as Joi from 'joi';
 
 import { AppThrottlerGuard } from './common/guards/app-throttler.guard';
+import { AttachDisclaimerInterceptor } from './common/interceptors/attach-disclaimer.interceptor';
 import { RedisModule } from './common/services/redis.module';
+import { ContentDisclaimersModule } from './modules/content-disclaimers/content-disclaimers.module';
+import { DerivativeArtifactModule } from './modules/derivative-artifact/derivative-artifact.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { AiAnswersModule } from './modules/ai-answers/ai-answers.module';
 import { AuditModule } from './modules/audit/audit.module';
@@ -34,6 +37,7 @@ import { OrganizationsModule } from './modules/organizations/organizations.modul
 import { SearchModule } from './modules/search/search.module';
 import { SourcesModule } from './modules/sources/sources.module';
 import { StudyModule } from './modules/study/study.module';
+import { SubjectsModule } from './modules/subjects/subjects.module';
 import { SubscriptionsModule } from './modules/subscriptions/subscriptions.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
 import { UsersModule } from './modules/users/users.module';
@@ -55,6 +59,10 @@ import { PricingModule } from './modules/pricing/pricing.module';
 import { RbacModule } from './modules/rbac/rbac.module';
 import { AccountingModule } from './modules/accounting/accounting.module';
 import { AiSettingsModule } from './modules/ai-settings/ai-settings.module';
+import { BackfillModule } from './modules/backfill/backfill.module';
+import { GoldenSetsModule } from './modules/golden-sets/golden-sets.module';
+import { DerivativesAdminModule } from './modules/derivatives-admin/derivatives-admin.module';
+import { InternalModule } from './modules/internal/internal.module';
 import { ReportingModule } from './modules/reporting/reporting.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
@@ -161,6 +169,8 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
     PricingModule,
     FeatureFlagsModule,
     SubscriptionsModule,
+    ContentDisclaimersModule,
+    DerivativeArtifactModule,
 
     // Domain modules
     AnalyticsModule,
@@ -187,6 +197,7 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
     TimelinesModule,
     UploadsModule,
     StudyModule,
+    SubjectsModule,
     WorkspaceModule,
     ApiKeysModule,
     BillingModule,
@@ -202,6 +213,10 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
     ReportingModule,
     AccountingModule,
     AiSettingsModule,
+    BackfillModule,
+    GoldenSetsModule,
+    DerivativesAdminModule,
+    InternalModule,
   ],
   providers: [
     // Global rate limiting guard — applies to all routes by default
@@ -210,6 +225,14 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
     {
       provide: APP_GUARD,
       useClass: AppThrottlerGuard,
+    },
+    // §8.6 launch gate — attach a ContentDisclaimer envelope to every
+    // derivative response before it leaves the API. Handlers opt in via
+    // @DerivativeResponse() metadata or by returning a payload whose
+    // top-level `derivativeType` field matches a seeded contentClass.
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: AttachDisclaimerInterceptor,
     },
   ],
 })

@@ -57,8 +57,11 @@ const mockPrisma = {
   feedPost: {
     create: jest.fn(),
     findUnique: jest.fn(),
+    findUniqueOrThrow: jest.fn(),
+    findFirst: jest.fn(),
     findMany: jest.fn(),
     update: jest.fn(),
+    updateMany: jest.fn(),
   },
   feedPostMedia: {
     findUnique: jest.fn(),
@@ -215,8 +218,8 @@ describe('FeedService', () => {
 
   describe('updatePost', () => {
     it('should update own post', async () => {
-      mockPrisma.feedPost.findUnique.mockResolvedValue(mockPost);
-      mockPrisma.feedPost.update.mockResolvedValue({
+      mockPrisma.feedPost.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.feedPost.findUniqueOrThrow.mockResolvedValue({
         ...mockPost,
         textContent: 'Updated content',
         editedAt: new Date(),
@@ -228,16 +231,17 @@ describe('FeedService', () => {
       expect(result.editedAt).not.toBeNull();
     });
 
-    it('should reject update on another user\'s post', async () => {
-      mockPrisma.feedPost.findUnique.mockResolvedValue(mockPost);
+    it('should reject update on another user\'s post (collapsed to NotFoundException)', async () => {
+      // DF-1: updateMany with authorId mismatch returns count=0, collapsed to 404
+      mockPrisma.feedPost.updateMany.mockResolvedValue({ count: 0 });
 
       await expect(
         service.updatePost(POST_ID, { textContent: 'Hijack' }, OTHER_USER_ID),
-      ).rejects.toThrow(ForbiddenException);
+      ).rejects.toThrow(NotFoundException);
     });
 
     it('should reject update on non-existent post', async () => {
-      mockPrisma.feedPost.findUnique.mockResolvedValue(null);
+      mockPrisma.feedPost.updateMany.mockResolvedValue({ count: 0 });
 
       await expect(
         service.updatePost('non-existent', { textContent: 'Test' }, USER_ID),
@@ -245,10 +249,8 @@ describe('FeedService', () => {
     });
 
     it('should reject update on deleted post', async () => {
-      mockPrisma.feedPost.findUnique.mockResolvedValue({
-        ...mockPost,
-        deletedAt: new Date(),
-      });
+      // DF-1: updateMany where clause includes deletedAt: null, so deleted posts yield count=0
+      mockPrisma.feedPost.updateMany.mockResolvedValue({ count: 0 });
 
       await expect(
         service.updatePost(POST_ID, { textContent: 'Test' }, USER_ID),
@@ -260,13 +262,12 @@ describe('FeedService', () => {
 
   describe('deletePost', () => {
     it('should soft-delete own post', async () => {
-      mockPrisma.feedPost.findUnique.mockResolvedValue(mockPost);
-      mockPrisma.feedPost.update.mockResolvedValue({});
+      mockPrisma.feedPost.updateMany.mockResolvedValue({ count: 1 });
 
       await service.deletePost(POST_ID, USER_ID);
 
-      expect(mockPrisma.feedPost.update).toHaveBeenCalledWith({
-        where: { id: POST_ID },
+      expect(mockPrisma.feedPost.updateMany).toHaveBeenCalledWith({
+        where: { id: POST_ID, authorId: USER_ID, deletedAt: null },
         data: {
           deletedAt: expect.any(Date),
           status: 'removed_by_author',
@@ -274,22 +275,28 @@ describe('FeedService', () => {
       });
     });
 
-    it('should reject delete on another user\'s post', async () => {
-      mockPrisma.feedPost.findUnique.mockResolvedValue(mockPost);
+    it('should reject delete on another user\'s post (collapsed to NotFoundException)', async () => {
+      // DF-1: updateMany with authorId mismatch returns count=0, collapsed to 404
+      mockPrisma.feedPost.updateMany.mockResolvedValue({ count: 0 });
 
       await expect(
         service.deletePost(POST_ID, OTHER_USER_ID),
-      ).rejects.toThrow(ForbiddenException);
+      ).rejects.toThrow(NotFoundException);
     });
   });
 
   // ─── Get Post ─────────────────────────────────────────────────────────────
 
   describe('getPost', () => {
-    it('should return post with interaction flags', async () => {
-      mockPrisma.feedPost.findUnique.mockResolvedValue(mockPost);
+    // After the E14 fix, getPost() uses findFirst with a `where`
+    // clause that enforces tenant visibility at the DB layer. Unit
+    // tests mock findFirst; the DB filter semantics are covered by
+    // auth-security.e2e-spec.ts cross-tenant cases.
 
-      const result = await service.getPost(POST_ID, USER_ID);
+    it('should return post with interaction flags', async () => {
+      mockPrisma.feedPost.findFirst.mockResolvedValue(mockPost);
+
+      const result = await service.getPost(POST_ID, USER_ID, ORG_ID);
 
       expect(result.id).toBe(POST_ID);
       expect(result.isLikedByMe).toBe(false);
@@ -297,25 +304,47 @@ describe('FeedService', () => {
     });
 
     it('should reflect liked + bookmarked state', async () => {
-      mockPrisma.feedPost.findUnique.mockResolvedValue(mockPost);
+      mockPrisma.feedPost.findFirst.mockResolvedValue(mockPost);
       mockPrisma.feedPostLike.findUnique.mockResolvedValue({ id: 'like-1' });
       mockPrisma.feedPostBookmark.findUnique.mockResolvedValue({ id: 'bm-1' });
 
-      const result = await service.getPost(POST_ID, USER_ID);
+      const result = await service.getPost(POST_ID, USER_ID, ORG_ID);
 
       expect(result.isLikedByMe).toBe(true);
       expect(result.isBookmarkedByMe).toBe(true);
     });
 
-    it('should throw on non-published post', async () => {
-      mockPrisma.feedPost.findUnique.mockResolvedValue({
-        ...mockPost,
-        status: 'hidden',
-      });
+    it('should throw NotFound when the post is filtered out by the DB', async () => {
+      // The DB-level filter (non-published / soft-deleted / not
+      // readable cross-tenant) collapses all four cases into a single
+      // null result. The service throws NotFoundException with the
+      // same message regardless of which branch was hit — this is
+      // the anti-fingerprinting guarantee for E14.
+      mockPrisma.feedPost.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.getPost(POST_ID, USER_ID),
+        service.getPost(POST_ID, USER_ID, ORG_ID),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should pass viewer org id into the Prisma where clause', async () => {
+      mockPrisma.feedPost.findFirst.mockResolvedValue(mockPost);
+
+      await service.getPost(POST_ID, USER_ID, ORG_ID);
+
+      expect(mockPrisma.feedPost.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: POST_ID,
+            status: 'published',
+            deletedAt: null,
+            OR: [
+              { visibility: 'public' },
+              { visibility: 'organization', organizationId: ORG_ID },
+            ],
+          }),
+        }),
+      );
     });
   });
 

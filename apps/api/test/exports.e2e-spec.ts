@@ -19,6 +19,24 @@ describe('Exports (E2E)', () => {
   });
 
   // =========================================================================
+  // Helper: look up the org a freshly-created test user belongs to.
+  // The login response's sanitized user (users.service.ts:124-136
+  // `sanitize()`) does not expose organizationId, so `user.user.organizationId`
+  // is always undefined. Query the membership table directly instead.
+  // =========================================================================
+
+  async function getUserOrgId(userId: string): Promise<string> {
+    const membership = await prisma.organizationMember.findFirst({
+      where: { userId },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (!membership) {
+      throw new Error(`No organization membership found for user ${userId}`);
+    }
+    return membership.organizationId;
+  }
+
+  // =========================================================================
   // Helper: create note via API
   // =========================================================================
 
@@ -45,13 +63,19 @@ describe('Exports (E2E)', () => {
   // Helper: create digest directly in DB (digests require legal_document link)
   // =========================================================================
 
+  // Deterministic UUID for the shared E2E export source row. The old
+  // 'e2e-export-source' string literal was rejected by Prisma because
+  // Source.id is @db.Uuid (schema.prisma:402). Keep a fixed valid
+  // UUID so the upsert still returns the same row across test runs.
+  const EXPORT_TEST_SOURCE_ID = '00000000-0000-4e2e-8e2e-000000000001';
+
   async function createTestDigest(userId: string, orgId: string) {
     // Create minimal source
     const source = await prisma.source.upsert({
-      where: { id: 'e2e-export-source' },
+      where: { id: EXPORT_TEST_SOURCE_ID },
       update: {},
       create: {
-        id: 'e2e-export-source',
+        id: EXPORT_TEST_SOURCE_ID,
         name: 'E2E Export Test Source',
         type: 'editorial',
         trustLevel: 'medium',
@@ -246,7 +270,9 @@ describe('Exports (E2E)', () => {
         email: `exp-digest-pdf-${Date.now()}@libertasian-test.com`,
       });
 
-      const digest = await createTestDigest(user.userId, user.user.organizationId);
+      // user.user.organizationId is undefined (see getUserOrgId comment).
+      const orgId = await getUserOrgId(user.userId);
+      const digest = await createTestDigest(user.userId, orgId);
 
       const res = await request(app.getHttpServer())
         .post('/api/v1/exports')
@@ -285,7 +311,9 @@ describe('Exports (E2E)', () => {
         email: `exp-dig-other-${Date.now()}@libertasian-test.com`,
       });
 
-      const digest = await createTestDigest(userA.userId, userA.user.organizationId);
+      // userA.user.organizationId is undefined (see getUserOrgId comment).
+      const orgIdA = await getUserOrgId(userA.userId);
+      const digest = await createTestDigest(userA.userId, orgIdA);
 
       const res = await request(app.getHttpServer())
         .post('/api/v1/exports')
@@ -601,10 +629,15 @@ describe('Exports (E2E)', () => {
         email: `exp-dl-processing-${Date.now()}@libertasian-test.com`,
       });
 
-      // Directly create a 'processing' export job
+      // Directly create a 'processing' export job. user.user.organizationId
+      // is undefined in the login response (see getUserOrgId comment), so
+      // look the org up from the membership table. Without this, Prisma
+      // throws `Argument `organization` is missing` because organizationId
+      // is a required FK on ExportJob (schema.prisma:2748).
+      const orgId = await getUserOrgId(user.userId);
       const job = await prisma.exportJob.create({
         data: {
-          organizationId: user.user.organizationId,
+          organizationId: orgId,
           userId: user.userId,
           contentType: 'note',
           contentId: '00000000-0000-0000-0000-000000000000',
@@ -625,10 +658,13 @@ describe('Exports (E2E)', () => {
         email: `exp-dl-expired-${Date.now()}@libertasian-test.com`,
       });
 
-      // Directly create an expired 'completed' export job
+      // Directly create an expired 'completed' export job (see
+      // getUserOrgId comment for why we can't read organizationId
+      // straight off `user.user`).
+      const orgId = await getUserOrgId(user.userId);
       const job = await prisma.exportJob.create({
         data: {
-          organizationId: user.user.organizationId,
+          organizationId: orgId,
           userId: user.userId,
           contentType: 'note',
           contentId: '00000000-0000-0000-0000-000000000000',
@@ -654,9 +690,11 @@ describe('Exports (E2E)', () => {
         email: `exp-dl-failed-${Date.now()}@libertasian-test.com`,
       });
 
+      // user.user.organizationId is undefined (see getUserOrgId comment).
+      const orgId = await getUserOrgId(user.userId);
       const job = await prisma.exportJob.create({
         data: {
-          organizationId: user.user.organizationId,
+          organizationId: orgId,
           userId: user.userId,
           contentType: 'note',
           contentId: '00000000-0000-0000-0000-000000000000',
