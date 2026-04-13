@@ -1,6 +1,53 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-04-12 (Session 199 — Fix 7 Pre-Existing E2E Failures)
+> Last updated: 2026-04-13 (Session 202 — Document Browser, Search Enhancements, Navigation Polish, Offline Indicators)
+
+---
+
+## Session 202 — Document Browser, Search Enhancements, Navigation Polish, Offline Indicators (7 Tasks)
+
+**Commit:** `feat(mobile): add document browser, search filters, navigation polish, and offline indicators`
+**Full 3-prompt series:** Mobile corpus/platform architecture — syllabus, derivatives, admin, documents, search
+
+1. **Document types and hooks** (`src/features/documents/types.ts`, `src/features/documents/hooks/use-documents.ts`) — Added DocumentListItem, DocumentFilters, DocumentListResponse, DocumentCitation, RelatedDocument interfaces. Created useDocuments (infinite query with cursor pagination), useDocumentCitations, useRelatedDocuments hooks.
+
+2. **Document browser screen** (`src/app/documents/index.tsx`) — Full browsable list of legal documents with: search bar, filter chips (document type 7 options, court 4 options, bar subject dynamic), FlatList with useInfiniteQuery cursor pagination, document cards with type badge/digest badge/metadata/section count, pull-to-refresh, offline banner, empty state with contextual message.
+
+3. **Enhanced document reader** (`src/app/reader/[id].tsx`) — Added tabbed content: Sections (default), Citations (with navigation to cited documents), Related (with relevance scores). Added "View Digest" button when digest exists (replaces Generate Digest). Added citationText to header title fallback. Deep links: citation cards navigate to /reader/:id, related documents navigate to /reader/:id, View Digest navigates to /digest/:id.
+
+4. **Search enhancements** (`src/app/(tabs)/index.tsx`, `src/features/search/types.ts`) — Added barSubjectCode to SearchFilters. Added bar subject filter chips from useBarSubjects in filter panel. Added digest generation icon button on each search result card (triggers Alert confirm -> POST /digests/generate). Added "Browse All Documents" card linking to /documents/ in the pre-search state.
+
+5. **Navigation links and offline indicators** — Added "Legal Documents" banner in study tab linking to /documents/. Document browser shows offline banner when network is disconnected. Verified existing deep links: digest detail -> View Source Document, syllabus topic resources -> appropriate screens.
+
+6. **Tests** — Created `use-documents.test.ts` (6 tests: citations/related fetch, disabled states). Created `documents/index.test.tsx` (7 tests: loading, empty, list render, card navigation, header, filter toggle, bar subject chips). Updated `reader/[id].test.tsx` (added new hook mocks, updated assertions for tabbed layout). Updated `(tabs)/index.test.tsx` (added bar subjects and digest generation mocks).
+
+7. **Updated tracking files** — COMPLETED_TASKS.md and PENDING_TASKS.md.
+
+---
+
+## Session 201 — Digest Filters, Admin Derivatives, Classification Review, Study Stats (4 Tasks)
+
+1. **Enhanced digest list with filters and sort** (`src/app/(tabs)/digests.tsx`, `src/features/digests/hooks/use-digests.ts`, `src/features/digests/types.ts`) — Added horizontal ScrollView filter bar with toggle chips for digestType (4 options), reviewStatus (5 options), sourceOrigin (3 options), barSubjectCode (dynamic from useBarSubjects). Sort control via bottom sheet modal (newest/oldest/highest confidence/lowest confidence). "Clear all" button when filters active. Updated useDigests hook to pass barSubjectCode, sourceOrigin, visibility, orderBy, orderDirection params. Updated DigestFilters type with orderBy/orderDirection.
+
+2. **Admin derivatives page** (`src/features/admin/hooks/use-admin-derivatives.ts`, `src/app/admin/derivatives/index.tsx`, `src/app/admin/derivatives/index.test.tsx`) — Created hooks: useDerivativeStats, useRecentGenerationJobs, useTriggerDigestGeneration. Dashboard with stats cards, type/status breakdowns, recent generation jobs FlatList, trigger generation modal. Added Derivatives card to admin dashboard. 6 tests.
+
+3. **Classification review screens** (`src/features/admin/hooks/use-admin-classification.ts`, `src/app/admin/classification/index.tsx`, `[id].tsx`, tests) — Created 6 hooks for queue, stats, detail, confirm, reject, override. List screen with stats bar, classification cards with action buttons, override modal with Picker. Detail screen with document info, AI prediction, action buttons, collapsible override form. Added Classification card to admin dashboard. 13 tests.
+
+4. **Study tab enhancements** (`src/app/(tabs)/study.tsx`) — Added study stats section below syllabus banner showing current streak (flame icon), total study time, total sessions. Uses existing useStudyStats hook. Wired into pull-to-refresh.
+
+---
+
+## Session 200 — Mobile Syllabus Screens, Digest Derivatives, Content Disclaimers (9 Tasks)
+
+1. **Created syllabus list screen** (`src/app/study/syllabus/index.tsx`) — FlatList of syllabi with subject color coding, bar exam readiness ring header, pull-to-refresh, empty state, navigation to subject detail.
+2. **Created syllabus subject detail screen** (`src/app/study/syllabus/[subject].tsx`) — Topic tree with collapsible parent nodes, checkbox status cycling (not_started -> in_progress -> completed), progress summary bar, resource count badges, navigation to topic detail.
+3. **Created topic detail screen** (`src/app/study/syllabus/[subject]/topic/[topicId].tsx`) — Topic info with description, parent breadcrumb, linked resources list with type-specific icons/colors/badges, navigation to reader/digest/flashcards/reviewer-packs.
+4. **Added syllabus section to study tab** (`src/app/(tabs)/study.tsx`) — ReadinessRing + readiness score + CTA between community banner and quick stats, wired up useBarExamReadiness hook.
+5. **Updated Digest types** (`src/features/digests/types.ts`) — Added 15 derivative fields (iracIssue/Rule/Application/Conclusion, mcqStem/ChoiceA-D/CorrectChoice/Explanation, essayPrompt/ModelAnswer, subjectOutlineJson, barSubjectCode/Secondary) to Digest interface. Added barSubjectCode/sourceOrigin/visibility to DigestFilters.
+6. **Updated digest detail screen** (`src/app/digest/[id].tsx`) — Added IRAC Analysis collapsible section, interactive MCQ card (tap-to-reveal answers with correct/wrong highlighting + explanation + try again), Essay Prompt section with collapsible Model Answer (ALAC), Subject Outline nested tree, barSubjectCode colored badge, ContentDisclaimer integration.
+7. **Created ContentDisclaimer component** (`src/features/documents/components/content-disclaimer.tsx`) — Maps contentClass (official_text/ai_generated/community/user_private) to color-coded disclaimer banners with icon, supports compact mode.
+8. **Integrated ContentDisclaimer** — Added to digest detail screen (below title) and reader screen (below doc title, compact mode).
+9. **Created 4 test files (24 new tests)** — `syllabus/index.test.tsx` (5 tests), `syllabus/[subject].test.tsx` (6 tests), `syllabus/[subject]/topic/[topicId].test.tsx` (6 tests), `content-disclaimer.test.tsx` (7 tests). All 51 tests in matched suites passing.
 
 ---
 

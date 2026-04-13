@@ -29,6 +29,18 @@ const ADMIN_CARDS: AdminCard[] = [
     icon: 'checkmark-circle-outline',
     route: '/admin/review',
   },
+  {
+    title: 'Derivatives',
+    description: 'Monitor AI digest generation jobs, stats, and trigger new generations.',
+    icon: 'flask-outline',
+    route: '/admin/derivatives',
+  },
+  {
+    title: 'Classification',
+    description: 'Review low-confidence AI classifications and manually override subject tags.',
+    icon: 'pricetags-outline',
+    route: '/admin/classification',
+  },
 ];
 
 export default function AdminDashboardScreen() {

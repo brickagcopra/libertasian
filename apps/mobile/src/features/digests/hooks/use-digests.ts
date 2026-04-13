@@ -10,6 +10,13 @@ export function useDigests(filters: DigestFilters = {}) {
   if (filters.reviewStatus) params['reviewStatus'] = filters.reviewStatus;
   if (filters.legalDocumentId)
     params['legalDocumentId'] = filters.legalDocumentId;
+  if (filters.barSubjectCode)
+    params['barSubjectCode'] = filters.barSubjectCode;
+  if (filters.sourceOrigin) params['sourceOrigin'] = filters.sourceOrigin;
+  if (filters.visibility) params['visibility'] = filters.visibility;
+  if (filters.orderBy) params['orderBy'] = filters.orderBy;
+  if (filters.orderDirection)
+    params['orderDirection'] = filters.orderDirection;
 
   return useQuery({
     queryKey: ['digests', filters],

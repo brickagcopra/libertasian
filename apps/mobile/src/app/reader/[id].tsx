@@ -16,13 +16,21 @@ import {
   useDocumentSections,
 } from '../../features/documents/hooks/use-document';
 import {
+  useDocumentCitations,
+  useRelatedDocuments,
+} from '../../features/documents/hooks/use-documents';
+import {
   useBookmarks,
   useCreateBookmark,
 } from '../../features/bookmarks/hooks/use-bookmarks';
-import { useGenerateDigest } from '../../features/digests/hooks/use-digests';
+import { useDigests, useGenerateDigest } from '../../features/digests/hooks/use-digests';
 import { useRecentlyViewed } from '../../features/documents/hooks/use-recently-viewed';
 import { useOfflineCodals } from '../../features/study/hooks/use-offline-codals';
 import { OfflineBadge } from '../../features/study/components/offline-badge';
+import { ContentDisclaimer } from '../../features/documents/components/content-disclaimer';
+import type { DocumentCitation, RelatedDocument, DocumentSection } from '../../features/documents/types';
+
+type ContentTab = 'sections' | 'citations' | 'related';
 
 export default function ReaderScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -31,6 +39,17 @@ export default function ReaderScreen() {
   const { data: doc, isLoading: docLoading, error: docError } = useDocument(documentId);
   const { data: sections, isLoading: sectionsLoading } =
     useDocumentSections(documentId);
+
+  const [activeTab, setActiveTab] = useState<ContentTab>('sections');
+  const { data: citations, isLoading: citationsLoading } =
+    useDocumentCitations(documentId, activeTab === 'citations');
+  const { data: related, isLoading: relatedLoading } =
+    useRelatedDocuments(documentId, activeTab === 'related');
+
+  const { data: existingDigests } = useDigests({ legalDocumentId: documentId, limit: 1 });
+  const hasExistingDigest =
+    existingDigests?.data && existingDigests.data.length > 0;
+  const existingDigestId = hasExistingDigest ? existingDigests.data[0].id : null;
 
   const { data: bookmarksData } = useBookmarks({ legalDocumentId: documentId });
   const createBookmark = useCreateBookmark();
@@ -99,7 +118,7 @@ export default function ReaderScreen() {
                   text: 'View Digest',
                   onPress: () => {
                     if (digestId) {
-                      router.push(`/digests/${digestId}` as never);
+                      router.push(`/digest/${digestId}`);
                     }
                   },
                 },
@@ -155,11 +174,14 @@ export default function ReaderScreen() {
     );
   }
 
+  const sectionCount = sections?.length ?? doc._count?.sections ?? 0;
+  const citationCount = doc._count?.citations ?? 0;
+
   return (
     <>
       <Stack.Screen
         options={{
-          title: doc.shortTitle ?? 'Document',
+          title: doc.shortTitle ?? doc.citationText ?? 'Document',
           headerBackTitle: 'Back',
         }}
       />
@@ -180,6 +202,11 @@ export default function ReaderScreen() {
           </View>
 
           <Text style={styles.docTitle}>{doc.title}</Text>
+
+          <ContentDisclaimer
+            contentClass={doc.isOfficial ? 'official_text' : 'community'}
+            compact
+          />
 
           <View style={styles.metaGrid}>
             {doc.grNo ? (
@@ -214,21 +241,32 @@ export default function ReaderScreen() {
             ) : null}
           </View>
 
+          {/* Action Row */}
           <View style={styles.actionRow}>
-            <TouchableOpacity
-              style={styles.generateDigestButton}
-              onPress={handleGenerateDigest}
-              disabled={generateDigest.isPending}
-            >
-              {generateDigest.isPending ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <>
-                  <Ionicons name="document-text-outline" size={16} color="#fff" />
-                  <Text style={styles.generateDigestText}>Generate Digest</Text>
-                </>
-              )}
-            </TouchableOpacity>
+            {hasExistingDigest ? (
+              <TouchableOpacity
+                style={styles.viewDigestButton}
+                onPress={() => router.push(`/digest/${existingDigestId}`)}
+              >
+                <Ionicons name="document-text" size={16} color="#059669" />
+                <Text style={styles.viewDigestText}>View Digest</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={styles.generateDigestButton}
+                onPress={handleGenerateDigest}
+                disabled={generateDigest.isPending}
+              >
+                {generateDigest.isPending ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <>
+                    <Ionicons name="document-text-outline" size={16} color="#fff" />
+                    <Text style={styles.generateDigestText}>Generate Digest</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity
               style={[
@@ -260,6 +298,7 @@ export default function ReaderScreen() {
             </TouchableOpacity>
           </View>
 
+          {/* Bookmark */}
           <View style={styles.bookmarkSection}>
             {isBookmarked ? (
               <View style={styles.bookmarkedBadge}>
@@ -311,49 +350,246 @@ export default function ReaderScreen() {
           </View>
         </View>
 
-        <View style={styles.sectionsContainer}>
-          <Text style={styles.sectionHeader}>Document Content</Text>
-          {sectionsLoading ? (
-            <ActivityIndicator
-              color="#1a56db"
-              style={styles.sectionLoader}
-            />
-          ) : sections && sections.length > 0 ? (
-            sections.map((section) => (
-              <View key={section.id} style={styles.sectionCard}>
-                <View style={styles.sectionTitleRow}>
-                  <Text style={styles.sectionLabel}>
-                    {section.sectionLabel ??
-                      section.sectionType.replace(/_/g, ' ')}
-                  </Text>
-                  {section.pageStart !== null ? (
-                    <Text style={styles.pageRef}>
-                      p.{section.pageStart}
-                      {section.pageEnd && section.pageEnd !== section.pageStart
-                        ? `-${section.pageEnd}`
-                        : ''}
-                    </Text>
-                  ) : null}
-                </View>
-                {section.plainText ? (
-                  <Text style={styles.sectionText}>{section.plainText}</Text>
-                ) : (
-                  <Text style={styles.noContentText}>
-                    Section content not available
-                  </Text>
-                )}
-              </View>
-            ))
+        {/* Content Tabs */}
+        <View style={styles.tabBar}>
+          <TouchableOpacity
+            style={[styles.tab, activeTab === 'sections' && styles.tabActive]}
+            onPress={() => setActiveTab('sections')}
+          >
+            <Text
+              style={[
+                styles.tabText,
+                activeTab === 'sections' && styles.tabTextActive,
+              ]}
+            >
+              Sections{sectionCount > 0 ? ` (${sectionCount})` : ''}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tab, activeTab === 'citations' && styles.tabActive]}
+            onPress={() => setActiveTab('citations')}
+          >
+            <Text
+              style={[
+                styles.tabText,
+                activeTab === 'citations' && styles.tabTextActive,
+              ]}
+            >
+              Citations{citationCount > 0 ? ` (${citationCount})` : ''}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tab, activeTab === 'related' && styles.tabActive]}
+            onPress={() => setActiveTab('related')}
+          >
+            <Text
+              style={[
+                styles.tabText,
+                activeTab === 'related' && styles.tabTextActive,
+              ]}
+            >
+              Related
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Tab Content */}
+        <View style={styles.tabContent}>
+          {activeTab === 'sections' ? (
+            <SectionsTab sections={sections ?? []} loading={sectionsLoading} />
+          ) : activeTab === 'citations' ? (
+            <CitationsTab citations={citations ?? []} loading={citationsLoading} />
           ) : (
-            <View style={styles.noSections}>
-              <Ionicons name="document-outline" size={32} color="#d1d5db" />
-              <Text style={styles.noSectionsText}>
-                No sections available for this document
-              </Text>
-            </View>
+            <RelatedTab documents={related ?? []} loading={relatedLoading} />
           )}
         </View>
       </ScrollView>
+    </>
+  );
+}
+
+function SectionsTab({
+  sections,
+  loading,
+}: {
+  sections: DocumentSection[];
+  loading: boolean;
+}) {
+  if (loading) {
+    return <ActivityIndicator color="#1a56db" style={styles.tabLoader} />;
+  }
+
+  if (sections.length === 0) {
+    return (
+      <View style={styles.noContent}>
+        <Ionicons name="document-outline" size={32} color="#d1d5db" />
+        <Text style={styles.noContentText}>
+          No sections available for this document
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <>
+      {sections.map((section) => (
+        <View key={section.id} style={styles.sectionCard}>
+          <View style={styles.sectionTitleRow}>
+            <Text style={styles.sectionLabel}>
+              {section.sectionLabel ??
+                section.sectionType.replace(/_/g, ' ')}
+            </Text>
+            {section.pageStart !== null ? (
+              <Text style={styles.pageRef}>
+                p.{section.pageStart}
+                {section.pageEnd && section.pageEnd !== section.pageStart
+                  ? `-${section.pageEnd}`
+                  : ''}
+              </Text>
+            ) : null}
+          </View>
+          {section.plainText ? (
+            <Text style={styles.sectionText}>{section.plainText}</Text>
+          ) : (
+            <Text style={styles.noSectionContentText}>
+              Section content not available
+            </Text>
+          )}
+        </View>
+      ))}
+    </>
+  );
+}
+
+function CitationsTab({
+  citations,
+  loading,
+}: {
+  citations: DocumentCitation[];
+  loading: boolean;
+}) {
+  if (loading) {
+    return <ActivityIndicator color="#1a56db" style={styles.tabLoader} />;
+  }
+
+  if (citations.length === 0) {
+    return (
+      <View style={styles.noContent}>
+        <Ionicons name="link-outline" size={32} color="#d1d5db" />
+        <Text style={styles.noContentText}>
+          No citations found for this document
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <>
+      {citations.map((citation) => (
+        <TouchableOpacity
+          key={citation.id}
+          style={styles.citationCard}
+          onPress={() => {
+            if (citation.citedDocumentId) {
+              router.push(`/reader/${citation.citedDocumentId}`);
+            }
+          }}
+          activeOpacity={citation.citedDocumentId ? 0.7 : 1}
+          disabled={!citation.citedDocumentId}
+        >
+          <View style={styles.citationHeader}>
+            <View style={styles.citationTypeBadge}>
+              <Text style={styles.citationTypeBadgeText}>
+                {citation.citationType.replace(/_/g, ' ')}
+              </Text>
+            </View>
+            {citation.citedDocumentId ? (
+              <Ionicons name="open-outline" size={14} color="#1a56db" />
+            ) : null}
+          </View>
+          <Text style={styles.citationText} numberOfLines={2}>
+            {citation.citationText}
+          </Text>
+          {citation.context ? (
+            <Text style={styles.citationContext} numberOfLines={2}>
+              {citation.context}
+            </Text>
+          ) : null}
+          {citation.citedDocument ? (
+            <Text style={styles.citedDocTitle} numberOfLines={1}>
+              {citation.citedDocument.title}
+            </Text>
+          ) : null}
+        </TouchableOpacity>
+      ))}
+    </>
+  );
+}
+
+function RelatedTab({
+  documents,
+  loading,
+}: {
+  documents: RelatedDocument[];
+  loading: boolean;
+}) {
+  if (loading) {
+    return <ActivityIndicator color="#1a56db" style={styles.tabLoader} />;
+  }
+
+  if (documents.length === 0) {
+    return (
+      <View style={styles.noContent}>
+        <Ionicons name="git-compare-outline" size={32} color="#d1d5db" />
+        <Text style={styles.noContentText}>
+          No related documents found
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <>
+      {documents.map((doc) => (
+        <TouchableOpacity
+          key={doc.id}
+          style={styles.relatedCard}
+          onPress={() => router.push(`/reader/${doc.id}`)}
+          activeOpacity={0.7}
+        >
+          <View style={styles.relatedHeader}>
+            <View style={styles.relatedTypeBadge}>
+              <Text style={styles.relatedTypeBadgeText}>
+                {doc.documentType.replace(/_/g, ' ')}
+              </Text>
+            </View>
+            <Text style={styles.relevanceScore}>
+              {Math.round(doc.relevanceScore * 100)}% match
+            </Text>
+          </View>
+          <Text style={styles.relatedTitle} numberOfLines={2}>
+            {doc.title}
+          </Text>
+          <View style={styles.relatedMeta}>
+            {doc.court ? (
+              <Text style={styles.relatedMetaText}>
+                {doc.court.replace(/_/g, ' ')}
+              </Text>
+            ) : null}
+            {doc.grNo ? (
+              <Text style={styles.relatedMetaText}>{doc.grNo}</Text>
+            ) : null}
+            {doc.decisionDate ? (
+              <Text style={styles.relatedMetaText}>
+                {new Date(doc.decisionDate).toLocaleDateString('en-US', {
+                  year: 'numeric',
+                  month: 'short',
+                })}
+              </Text>
+            ) : null}
+          </View>
+        </TouchableOpacity>
+      ))}
     </>
   );
 }
@@ -450,6 +686,22 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '600',
   },
+  viewDigestButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#ecfdf5',
+    borderWidth: 1,
+    borderColor: '#059669',
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 8,
+  },
+  viewDigestText: {
+    fontSize: 13,
+    color: '#059669',
+    fontWeight: '600',
+  },
   offlineButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -528,14 +780,37 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   bookmarkSaveText: { fontSize: 13, color: '#fff', fontWeight: '600' },
-  sectionsContainer: { padding: 16 },
-  sectionHeader: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#111827',
-    marginBottom: 12,
+
+  // Tabs
+  tabBar: {
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
   },
-  sectionLoader: { paddingVertical: 20 },
+  tab: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  tabActive: {
+    borderBottomColor: '#1a56db',
+  },
+  tabText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#6b7280',
+  },
+  tabTextActive: {
+    color: '#1a56db',
+    fontWeight: '600',
+  },
+  tabContent: { padding: 16 },
+  tabLoader: { paddingVertical: 20 },
+
+  // Sections
   sectionCard: {
     backgroundColor: '#fff',
     borderRadius: 10,
@@ -566,7 +841,108 @@ const styles = StyleSheet.create({
     color: '#374151',
     lineHeight: 22,
   },
-  noContentText: { fontSize: 13, color: '#9ca3af', fontStyle: 'italic' },
-  noSections: { alignItems: 'center', paddingVertical: 32, gap: 8 },
-  noSectionsText: { fontSize: 14, color: '#9ca3af', textAlign: 'center' },
+  noSectionContentText: { fontSize: 13, color: '#9ca3af', fontStyle: 'italic' },
+
+  // No content
+  noContent: { alignItems: 'center', paddingVertical: 32, gap: 8 },
+  noContentText: { fontSize: 14, color: '#9ca3af', textAlign: 'center' },
+
+  // Citations
+  citationCard: {
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  citationHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  citationTypeBadge: {
+    backgroundColor: '#fef3c7',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  citationTypeBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#92400e',
+    textTransform: 'capitalize',
+  },
+  citationText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+    lineHeight: 20,
+    marginBottom: 4,
+  },
+  citationContext: {
+    fontSize: 13,
+    color: '#6b7280',
+    lineHeight: 19,
+    fontStyle: 'italic',
+  },
+  citedDocTitle: {
+    fontSize: 12,
+    color: '#1a56db',
+    marginTop: 4,
+    fontWeight: '500',
+  },
+
+  // Related
+  relatedCard: {
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  relatedHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  relatedTypeBadge: {
+    backgroundColor: '#eff6ff',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  relatedTypeBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#1d4ed8',
+    textTransform: 'capitalize',
+  },
+  relevanceScore: {
+    fontSize: 11,
+    color: '#059669',
+    fontWeight: '600',
+  },
+  relatedTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+    lineHeight: 20,
+    marginBottom: 6,
+  },
+  relatedMeta: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  relatedMetaText: { fontSize: 12, color: '#6b7280' },
 });

@@ -32,7 +32,13 @@ jest.mock('../../features/bookmarks/hooks/use-bookmarks', () => ({
 }));
 
 jest.mock('../../features/digests/hooks/use-digests', () => ({
+  useDigests: () => ({ data: null }),
   useGenerateDigest: () => ({ mutateAsync: jest.fn(), isPending: false }),
+}));
+
+jest.mock('../../features/documents/hooks/use-documents', () => ({
+  useDocumentCitations: () => ({ data: [], isLoading: false }),
+  useRelatedDocuments: () => ({ data: [], isLoading: false }),
 }));
 
 jest.mock('../../features/documents/hooks/use-recently-viewed', () => ({
@@ -164,7 +170,11 @@ describe('ReaderScreen', () => {
       isLoading: false,
     });
     const { getByText } = render(<ReaderScreen />, { wrapper: createWrapper() });
-    expect(getByText('Document Content')).toBeTruthy();
+    // Tabs should be visible
+    expect(getByText(/Sections/)).toBeTruthy();
+    expect(getByText(/Citations/)).toBeTruthy();
+    expect(getByText(/Related/)).toBeTruthy();
+    // Sections tab is active by default
     expect(getByText('Facts')).toBeTruthy();
     expect(getByText('The facts of the case...')).toBeTruthy();
     expect(getByText('p.1-3')).toBeTruthy();

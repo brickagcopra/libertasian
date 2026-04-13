@@ -1,6 +1,36 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-04-12 (Session 199 — Fix 7 Pre-Existing E2E Failures)
+> Last updated: 2026-04-13 (Session 202 — Document Browser, Search Enhancements, Navigation Polish, Offline Indicators)
+
+---
+
+## Session 202 — Document Browser, Search Enhancements, Navigation Polish, Offline Indicators — ALL COMPLETE
+
+No pending items. All 7 tasks completed (13 new tests, multiple existing tests updated).
+
+**Follow-up items (future sessions):**
+- Document browser could add column/list view toggle for different layouts
+- Search results: track which documents already have digests (to show "View Digest" vs "Generate Digest" on cards)
+- Stale data indicator on digest detail screen (show "last fetched X minutes ago" when from cache)
+- Document browser: add sort options (newest, alphabetical, most cited)
+- Digest filter bar could add infinite scroll / cursor-based pagination for digest list
+- Classification override modal uses `@react-native-picker/picker` — verify it's installed (`npx expo install @react-native-picker/picker`)
+- Admin derivatives: real-time job status polling/WebSocket for generation jobs
+- Study stats: weekly chart/sparkline for sessions per day
+- Consider adding `codal_section` resource navigation (from Session 200)
+- MCQ section: keyboard navigation for accessibility
+- Offline support for syllabus data (cache syllabi + progress in SQLite)
+
+---
+
+## Session 200 — Mobile Syllabus Screens — ALL COMPLETE
+
+No pending items. All 9 tasks completed and verified (24 new tests passing, 51 total in matched suites).
+
+**Follow-up items (future sessions):**
+- Consider adding `codal_section` resource navigation (currently no-op since no `/study/codals/section/:id` route exists)
+- MCQ section could support keyboard navigation for accessibility
+- Offline support for syllabus data (cache syllabi + progress in SQLite)
 
 ---
 

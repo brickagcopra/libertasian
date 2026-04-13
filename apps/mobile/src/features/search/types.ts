@@ -6,6 +6,7 @@ export interface SearchFilters {
   grNo?: string;
   dateFrom?: string;
   dateTo?: string;
+  barSubjectCode?: string;
   publishedOnly?: boolean;
   page?: number;
   limit?: number;

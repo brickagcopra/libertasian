@@ -13,7 +13,18 @@ import { Ionicons } from '@expo/vector-icons';
 import { useBarSubjects } from '../../features/study/hooks/use-bar-subjects';
 import { useFlashcardSets } from '../../features/study/hooks/use-flashcard-sets';
 import { useReviewerPacks } from '../../features/study/hooks/use-reviewer-packs';
+import { useStudyStats } from '../../features/study/hooks/use-study-sessions';
+import { useBarExamReadiness } from '../../features/study/hooks/use-syllabus';
 import { SubjectGrid } from '../../features/study/components/subject-grid';
+import { ReadinessRing } from '../../features/study/components/readiness-ring';
+
+function formatStudyTime(totalSecs: number): string {
+  if (totalSecs < 60) return `${totalSecs}s`;
+  const hours = Math.floor(totalSecs / 3600);
+  const minutes = Math.floor((totalSecs % 3600) / 60);
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
 
 export default function StudyTab() {
   const {
@@ -28,12 +39,16 @@ export default function StudyTab() {
   const { data: packsData, refetch: refetchPacks } = useReviewerPacks({
     limit: 5,
   });
+  const { data: readiness, refetch: refetchReadiness } = useBarExamReadiness();
+  const { data: studyStats, refetch: refetchStudyStats } = useStudyStats();
 
   const handleRefresh = useCallback(() => {
     refetchSubjects();
     refetchSets();
     refetchPacks();
-  }, [refetchSubjects, refetchSets, refetchPacks]);
+    refetchReadiness();
+    refetchStudyStats();
+  }, [refetchSubjects, refetchSets, refetchPacks, refetchReadiness, refetchStudyStats]);
 
   if (subjectsLoading) {
     return (
@@ -77,6 +92,59 @@ export default function StudyTab() {
         <Ionicons name="chevron-forward" size={16} color="#9ca3af" />
       </TouchableOpacity>
 
+      {/* Bar Exam Syllabus */}
+      {readiness ? (
+        <TouchableOpacity
+          style={styles.syllabusBanner}
+          onPress={() => router.push('/study/syllabus/')}
+          activeOpacity={0.7}
+        >
+          <ReadinessRing
+            pct={readiness.overallPct}
+            size={52}
+            strokeWidth={5}
+            color="#4f46e5"
+          />
+          <View style={styles.syllabusContent}>
+            <Text style={styles.syllabusTitle}>Bar Exam Syllabus</Text>
+            <Text style={styles.syllabusScore}>
+              {readiness.overallPct}% readiness \u00b7 {readiness.completedTopics}/
+              {readiness.totalTopics} topics
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color="#9ca3af" />
+        </TouchableOpacity>
+      ) : null}
+
+      {/* Study Stats */}
+      {studyStats ? (
+        <View style={styles.studyStatsCard}>
+          <View style={styles.studyStatItem}>
+            <Ionicons name="flame-outline" size={20} color="#f59e0b" />
+            <Text style={styles.studyStatValue}>
+              {studyStats.streak.current}
+            </Text>
+            <Text style={styles.studyStatLabel}>Day Streak</Text>
+          </View>
+          <View style={styles.studyStatDivider} />
+          <View style={styles.studyStatItem}>
+            <Ionicons name="time-outline" size={20} color="#1a56db" />
+            <Text style={styles.studyStatValue}>
+              {formatStudyTime(studyStats.totalStudyTimeSecs)}
+            </Text>
+            <Text style={styles.studyStatLabel}>Total Time</Text>
+          </View>
+          <View style={styles.studyStatDivider} />
+          <View style={styles.studyStatItem}>
+            <Ionicons name="book-outline" size={20} color="#059669" />
+            <Text style={styles.studyStatValue}>
+              {studyStats.totalSessions}
+            </Text>
+            <Text style={styles.studyStatLabel}>Sessions</Text>
+          </View>
+        </View>
+      ) : null}
+
       {/* Quick Stats */}
       <View style={styles.statsRow}>
         <View style={styles.statCard}>
@@ -92,6 +160,24 @@ export default function StudyTab() {
           <Text style={styles.statLabel}>Reviewer Packs</Text>
         </View>
       </View>
+
+      {/* Legal Documents Link */}
+      <TouchableOpacity
+        style={styles.documentsBanner}
+        onPress={() => router.push('/documents/')}
+        activeOpacity={0.7}
+      >
+        <View style={styles.documentsIconBox}>
+          <Ionicons name="library-outline" size={20} color="#1a56db" />
+        </View>
+        <View style={styles.documentsContent}>
+          <Text style={styles.documentsTitle}>Legal Documents</Text>
+          <Text style={styles.documentsDesc}>
+            Browse cases, statutes & issuances
+          </Text>
+        </View>
+        <Ionicons name="chevron-forward" size={16} color="#9ca3af" />
+      </TouchableOpacity>
 
       {/* Bar Subjects */}
       <View style={styles.section}>
@@ -245,6 +331,98 @@ const styles = StyleSheet.create({
   communityDesc: {
     fontSize: 11,
     color: '#3b82f6',
+    marginTop: 1,
+  },
+  syllabusBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 12,
+    gap: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  syllabusContent: { flex: 1 },
+  syllabusTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  syllabusScore: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginTop: 2,
+  },
+  studyStatsCard: {
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 12,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  studyStatItem: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 2,
+  },
+  studyStatValue: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  studyStatLabel: {
+    fontSize: 10,
+    color: '#6b7280',
+  },
+  studyStatDivider: {
+    width: 1,
+    height: 32,
+    backgroundColor: '#e5e7eb',
+  },
+  documentsBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 12,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  documentsIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: '#eff6ff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  documentsContent: { flex: 1 },
+  documentsTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  documentsDesc: {
+    fontSize: 11,
+    color: '#6b7280',
     marginTop: 1,
   },
   statsRow: {

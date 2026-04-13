@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   RefreshControl,
   ScrollView,
+  Alert,
 } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,6 +19,8 @@ import {
   useRecentlyViewed,
   type RecentlyViewedItem,
 } from '../../features/documents/hooks/use-recently-viewed';
+import { useBarSubjects } from '../../features/study/hooks/use-bar-subjects';
+import { useGenerateDigest } from '../../features/digests/hooks/use-digests';
 import { SearchTabBar } from '../../features/search/components/search-tabs';
 import { AiSummaryResults } from '../../features/search/components/ai-summary-results';
 import { DigestsResults } from '../../features/search/components/digests-results';
@@ -39,7 +42,13 @@ const COURTS = [
   'CTA',
 ] as const;
 
-function SearchResultCard({ item }: { item: SearchResultItem }) {
+function SearchResultCard({
+  item,
+  onGenerateDigest,
+}: {
+  item: SearchResultItem;
+  onGenerateDigest: (id: string) => void;
+}) {
   const highlight =
     item.highlights?.find((h) => h.fragments.length > 0)?.fragments[0] ?? null;
 
@@ -62,6 +71,13 @@ function SearchResultCard({ item }: { item: SearchResultItem }) {
             </View>
           ) : null}
         </View>
+        <TouchableOpacity
+          onPress={() => onGenerateDigest(item.id)}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          style={styles.digestIconButton}
+        >
+          <Ionicons name="document-text-outline" size={18} color="#1a56db" />
+        </TouchableOpacity>
       </View>
 
       <Text style={styles.resultTitle} numberOfLines={2}>
@@ -112,11 +128,18 @@ export default function SearchScreen() {
   const [filterPonente, setFilterPonente] = useState('');
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
+  const [filterBarSubject, setFilterBarSubject] = useState('');
 
   // Search history & recently viewed
   const { history, addEntry: addHistory, removeEntry: removeHistory, clearHistory } =
     useSearchHistory();
   const { recentlyViewed } = useRecentlyViewed();
+
+  // Bar subjects for filter
+  const { data: barSubjects } = useBarSubjects();
+
+  // Digest generation from search results
+  const generateDigest = useGenerateDigest();
 
   const activeFilterCount = useMemo(() => {
     let count = 0;
@@ -126,8 +149,9 @@ export default function SearchScreen() {
     if (filterPonente.trim()) count++;
     if (filterDateFrom.trim()) count++;
     if (filterDateTo.trim()) count++;
+    if (filterBarSubject) count++;
     return count;
-  }, [filterDocType, filterCourt, filterGrNo, filterPonente, filterDateFrom, filterDateTo]);
+  }, [filterDocType, filterCourt, filterGrNo, filterPonente, filterDateFrom, filterDateTo, filterBarSubject]);
 
   const filters: SearchFilters = {
     query: submittedQuery,
@@ -140,6 +164,7 @@ export default function SearchScreen() {
     ...(filterPonente.trim() ? { ponente: filterPonente.trim() } : {}),
     ...(filterDateFrom.trim() ? { dateFrom: filterDateFrom.trim() } : {}),
     ...(filterDateTo.trim() ? { dateTo: filterDateTo.trim() } : {}),
+    ...(filterBarSubject ? { barSubjectCode: filterBarSubject } : {}),
   };
 
   const { data, isLoading, isFetching, refetch } = useSearch(
@@ -172,11 +197,61 @@ export default function SearchScreen() {
     setFilterPonente('');
     setFilterDateFrom('');
     setFilterDateTo('');
+    setFilterBarSubject('');
   }, []);
 
+  const handleGenerateDigestFromSearch = useCallback(
+    (documentId: string) => {
+      Alert.alert(
+        'Generate Digest',
+        'Generate an AI case digest for this document?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Generate',
+            onPress: async () => {
+              try {
+                const result = await generateDigest.mutateAsync({
+                  legalDocumentId: documentId,
+                  digestType: 'case_digest',
+                });
+                const digestId =
+                  result && typeof result === 'object' && 'data' in result
+                    ? (result as { data: { id: string } }).data.id
+                    : undefined;
+                Alert.alert('Success', 'Digest generated successfully.', [
+                  {
+                    text: 'View Digest',
+                    onPress: () => {
+                      if (digestId) {
+                        router.push(`/digest/${digestId}`);
+                      }
+                    },
+                  },
+                  { text: 'OK' },
+                ]);
+              } catch {
+                Alert.alert(
+                  'Error',
+                  'Failed to generate digest. Check your subscription and quota.',
+                );
+              }
+            },
+          },
+        ],
+      );
+    },
+    [generateDigest],
+  );
+
   const renderItem = useCallback(
-    ({ item }: { item: SearchResultItem }) => <SearchResultCard item={item} />,
-    [],
+    ({ item }: { item: SearchResultItem }) => (
+      <SearchResultCard
+        item={item}
+        onGenerateDigest={handleGenerateDigestFromSearch}
+      />
+    ),
+    [handleGenerateDigestFromSearch],
   );
 
   const keyExtractor = useCallback((item: SearchResultItem) => item.id, []);
@@ -312,6 +387,39 @@ export default function SearchScreen() {
             </ScrollView>
           </View>
 
+          {barSubjects && barSubjects.length > 0 ? (
+            <View style={styles.filterSection}>
+              <Text style={styles.filterLabel}>Bar Subject</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                <View style={styles.chipRow}>
+                  {barSubjects.map((subj) => (
+                    <TouchableOpacity
+                      key={subj.code}
+                      style={[
+                        styles.chip,
+                        filterBarSubject === subj.code ? styles.chipActive : null,
+                      ]}
+                      onPress={() =>
+                        setFilterBarSubject((prev) =>
+                          prev === subj.code ? '' : subj.code,
+                        )
+                      }
+                    >
+                      <Text
+                        style={[
+                          styles.chipText,
+                          filterBarSubject === subj.code ? styles.chipTextActive : null,
+                        ]}
+                      >
+                        {subj.name}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </ScrollView>
+            </View>
+          ) : null}
+
           <View style={styles.filterRow}>
             <View style={styles.filterFieldHalf}>
               <Text style={styles.filterLabel}>G.R. No.</Text>
@@ -438,6 +546,22 @@ export default function SearchScreen() {
               ))}
             </View>
           ) : null}
+
+          {/* Browse All Documents Link */}
+          <TouchableOpacity
+            style={styles.browseAllCard}
+            onPress={() => router.push('/documents/')}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="library-outline" size={20} color="#1a56db" />
+            <View style={styles.browseAllContent}>
+              <Text style={styles.browseAllTitle}>Browse All Documents</Text>
+              <Text style={styles.browseAllDesc}>
+                Explore the full legal document corpus
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color="#9ca3af" />
+          </TouchableOpacity>
 
           {/* Default empty state */}
           {history.length === 0 && recentlyViewed.length === 0 ? (
@@ -700,9 +824,14 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
     elevation: 1,
   },
+  digestIconButton: {
+    padding: 4,
+    borderRadius: 4,
+  },
   resultHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 6,
   },
   badges: { flexDirection: 'row', gap: 6 },
@@ -772,6 +901,29 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   loadingText: { fontSize: 14, color: '#6b7280' },
+  browseAllCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#eff6ff',
+    borderRadius: 10,
+    padding: 12,
+    marginHorizontal: 12,
+    marginTop: 12,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  browseAllContent: { flex: 1 },
+  browseAllTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1a56db',
+  },
+  browseAllDesc: {
+    fontSize: 11,
+    color: '#3b82f6',
+    marginTop: 1,
+  },
   paginationRow: { alignItems: 'center', paddingVertical: 16 },
   pageButton: {
     backgroundColor: '#1a56db',

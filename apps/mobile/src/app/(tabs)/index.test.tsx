@@ -18,6 +18,14 @@ jest.mock('../../features/documents/hooks/use-recently-viewed', () => ({
   useRecentlyViewed: () => mockUseRecentlyViewed(),
 }));
 
+jest.mock('../../features/study/hooks/use-bar-subjects', () => ({
+  useBarSubjects: () => ({ data: [] }),
+}));
+
+jest.mock('../../features/digests/hooks/use-digests', () => ({
+  useGenerateDigest: () => ({ mutateAsync: jest.fn(), isPending: false }),
+}));
+
 jest.mock('expo-router', () => ({
   Stack: { Screen: () => null },
   router: { push: jest.fn() },

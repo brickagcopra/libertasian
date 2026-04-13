@@ -19,6 +19,23 @@ export interface Digest {
   visibility: string;
   createdAt: string;
   updatedAt: string;
+  // Derivative fields (Phase 3)
+  iracIssue: string | null;
+  iracRule: string | null;
+  iracApplication: string | null;
+  iracConclusion: string | null;
+  mcqStem: string | null;
+  mcqChoiceA: string | null;
+  mcqChoiceB: string | null;
+  mcqChoiceC: string | null;
+  mcqChoiceD: string | null;
+  mcqCorrectChoice: string | null;
+  mcqExplanation: string | null;
+  essayPrompt: string | null;
+  essayModelAnswer: string | null;
+  subjectOutlineJson: Record<string, unknown> | null;
+  barSubjectCode: string | null;
+  barSubjectSecondary: string | null;
 }
 
 export interface DigestsResponse {
@@ -33,4 +50,9 @@ export interface DigestFilters {
   digestType?: string;
   reviewStatus?: string;
   legalDocumentId?: string;
+  barSubjectCode?: string;
+  sourceOrigin?: string;
+  visibility?: string;
+  orderBy?: 'createdAt' | 'confidenceScore';
+  orderDirection?: 'asc' | 'desc';
 }
