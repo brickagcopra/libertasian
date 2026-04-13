@@ -31,6 +31,7 @@ import {
   AlertTriangleIcon,
   FlaskConicalIcon,
   ActivityIcon,
+  ArchiveRestoreIcon,
   SettingsIcon,
   LayoutDashboardIcon,
   DatabaseIcon,
@@ -52,6 +53,10 @@ import {
   BrainCircuitIcon,
   HomeIcon,
   TimerIcon,
+  WalletIcon,
+  AwardIcon,
+  TagsIcon,
+  SparklesIcon,
 } from 'lucide-react';
 
 interface NavItem {
@@ -92,8 +97,10 @@ const WORKSPACE_ITEMS: NavItem[] = [
 const ADMIN_NAV_ITEMS: NavItem[] = [
   { href: '/admin', label: 'Dashboard', icon: LayoutDashboardIcon },
   { href: '/admin/ai-settings', label: 'AI Settings', icon: BrainCircuitIcon },
+  { href: '/admin/budget', label: 'Budget', icon: WalletIcon },
   { href: '/admin/homepage', label: 'Homepage', icon: HomeIcon },
   { href: '/admin/sources', label: 'Sources', icon: DatabaseIcon },
+  { href: '/admin/backfill', label: 'Backfill', icon: ArchiveRestoreIcon },
   { href: '/admin/review', label: 'Review Queue', icon: ClipboardCheckIcon },
   { href: '/admin/flags', label: 'Flags', icon: FlagIcon },
   { href: '/admin/doctrines', label: 'Doctrines', icon: BookOpenIcon },
@@ -108,6 +115,9 @@ const ADMIN_NAV_ITEMS: NavItem[] = [
   { href: '/admin/simulator', label: 'Simulator', icon: PlayCircleIcon },
   { href: '/admin/blog', label: 'Blog', icon: BookOpenIcon },
   { href: '/admin/ads', label: 'Advertising', icon: MegaphoneIcon },
+  { href: '/admin/subjects', label: 'Subjects', icon: TagsIcon },
+  { href: '/admin/golden-sets', label: 'Golden Sets', icon: AwardIcon },
+  { href: '/admin/derivatives', label: 'Derivatives', icon: SparklesIcon },
   { href: '/admin/reporting', label: 'Reporting', icon: BarChart3Icon },
   { href: '/admin/analytics', label: 'Analytics', icon: ActivityIcon },
   { href: '/admin/analytics/mobile-scan', label: 'Mobile & Scan', icon: ScanLineIcon },

@@ -7,6 +7,17 @@ import { AppModule } from '../src/app.module';
 import { AppThrottlerGuard } from '../src/common/guards/app-throttler.guard';
 
 /**
+ * Disable rate limiting by mocking canActivate on the throttler guard prototype.
+ * Call this in beforeAll AND beforeEach if the suite uses jest.restoreAllMocks()
+ * in afterEach, since restoreAllMocks clears prototype spies.
+ */
+export function disableRateLimiting(): void {
+  jest
+    .spyOn(AppThrottlerGuard.prototype, 'canActivate')
+    .mockResolvedValue(true);
+}
+
+/**
  * Bootstrap the NestJS application for E2E testing.
  * Requires a running PostgreSQL and Redis instance.
  * Rate limiting is disabled to prevent 429 errors during test runs.
@@ -15,9 +26,7 @@ export async function createTestApp(): Promise<INestApplication> {
   // Disable rate limiting by mocking canActivate on the throttler guard prototype.
   // This is more reliable than overrideProvider(APP_GUARD) which doesn't work
   // with NestJS multi-provider tokens.
-  jest
-    .spyOn(AppThrottlerGuard.prototype, 'canActivate')
-    .mockResolvedValue(true);
+  disableRateLimiting();
 
   const moduleFixture: TestingModule = await Test.createTestingModule({
     imports: [AppModule],

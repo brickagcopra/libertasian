@@ -22,6 +22,9 @@ const DAILY_BUDGET_REDIS_KEY = 'llm:config:daily_budget_usd';
 /** Redis hash key pattern for monthly LLM usage. */
 const USAGE_KEY_PREFIX = 'llm:usage:';
 
+/** Redis hash key pattern for daily LLM usage (written by RAG service). */
+const DAILY_USAGE_KEY_PREFIX = 'llm:usage:daily:';
+
 /** Redis keys for the global ingestion wall-clock window (§7.3). */
 const INGESTION_WINDOW_START_KEY = 'ingestion:window:start_local';
 const INGESTION_WINDOW_STOP_KEY = 'ingestion:window:stop_local';
@@ -50,6 +53,54 @@ export interface UsageSummary {
   budgetRemainingUsd: number;
   utilizationPercent: number;
   month: string;
+}
+
+export interface DailyUsageSummary {
+  tokensIn: number;
+  tokensOut: number;
+  requestCount: number;
+  estimatedCostUsd: number;
+  dailyBudgetUsd: number | null;
+  day: string;
+}
+
+export interface BudgetSnapshot {
+  monthlyCeiling: number;
+  dailyCeiling: number | null;
+  monthSpend: number;
+  daySpend: number;
+  monthUtilizationPercent: number;
+  dayUtilizationPercent: number | null;
+  month: string;
+  day: string;
+}
+
+export interface LedgerMonthSummary {
+  periodYearMonth: string;
+  totalAmountUsd: number;
+  totalTokensIn: number;
+  totalTokensOut: number;
+  totalRequests: number;
+}
+
+export interface LedgerScopeSummary {
+  scope: string;
+  totalAmountUsd: number;
+  totalTokensIn: number;
+  totalTokensOut: number;
+  totalRequests: number;
+}
+
+export interface CreateLedgerEntryDto {
+  periodYearMonth: string;
+  periodDay?: string;
+  scope: string;
+  amountUsd: number;
+  tokensIn?: number;
+  tokensOut?: number;
+  requestCount?: number;
+  modelName?: string;
+  modelRunId?: string;
 }
 
 @Injectable()
@@ -486,9 +537,155 @@ export class AiSettingsService implements OnModuleInit {
     }
   }
 
+  /** Get today's daily LLM usage from Redis. */
+  async getDailyUsageSummary(day?: string): Promise<DailyUsageSummary> {
+    const targetDay = day ?? this.currentDay();
+    const usageKey = `${DAILY_USAGE_KEY_PREFIX}${targetDay}`;
+
+    const client = this.redis.getClient();
+    const data = await client.hgetall(usageKey);
+
+    const tokensIn = parseInt(data['tokens_in'] || '0', 10);
+    const tokensOut = parseInt(data['tokens_out'] || '0', 10);
+    const requestCount = parseInt(data['request_count'] || '0', 10);
+    const estimatedCostUsd = parseFloat(data['estimated_cost_usd'] || '0');
+
+    const dailyBudgetRaw = await this.redis.get(DAILY_BUDGET_REDIS_KEY);
+    const dailyBudgetUsd = dailyBudgetRaw ? parseFloat(dailyBudgetRaw) : null;
+
+    return {
+      tokensIn,
+      tokensOut,
+      requestCount,
+      estimatedCostUsd: Math.round(estimatedCostUsd * 100) / 100,
+      dailyBudgetUsd,
+      day: targetDay,
+    };
+  }
+
+  /** Consolidated snapshot for the budget admin page. */
+  async getBudgetSnapshot(): Promise<BudgetSnapshot> {
+    const month = this.currentMonth();
+    const day = this.currentDay();
+
+    const client = this.redis.getClient();
+    const [monthlyBudgetRaw, dailyBudgetRaw, monthData, dayData] = await Promise.all([
+      this.redis.get(BUDGET_REDIS_KEY),
+      this.redis.get(DAILY_BUDGET_REDIS_KEY),
+      client.hgetall(`${USAGE_KEY_PREFIX}${month}`),
+      client.hgetall(`${DAILY_USAGE_KEY_PREFIX}${day}`),
+    ]);
+
+    const monthlyCeiling = monthlyBudgetRaw ? parseFloat(monthlyBudgetRaw) : 0;
+    const dailyCeiling = dailyBudgetRaw ? parseFloat(dailyBudgetRaw) : null;
+    const monthSpend = parseFloat(monthData['estimated_cost_usd'] || '0');
+    const daySpend = parseFloat(dayData['estimated_cost_usd'] || '0');
+
+    return {
+      monthlyCeiling,
+      dailyCeiling,
+      monthSpend: Math.round(monthSpend * 100) / 100,
+      daySpend: Math.round(daySpend * 100) / 100,
+      monthUtilizationPercent:
+        monthlyCeiling > 0 ? Math.round((monthSpend / monthlyCeiling) * 1000) / 10 : 0,
+      dayUtilizationPercent:
+        dailyCeiling !== null && dailyCeiling > 0
+          ? Math.round((daySpend / dailyCeiling) * 1000) / 10
+          : null,
+      month,
+      day,
+    };
+  }
+
+  /** Ledger history grouped by month. */
+  async getLedgerHistory(months: number = 12): Promise<LedgerMonthSummary[]> {
+    const rows = await this.prisma.$queryRaw<
+      {
+        period_year_month: string;
+        total_amount_usd: string;
+        total_tokens_in: bigint;
+        total_tokens_out: bigint;
+        total_requests: bigint;
+      }[]
+    >`
+      SELECT
+        period_year_month,
+        SUM(amount_usd)::text    AS total_amount_usd,
+        SUM(tokens_in)           AS total_tokens_in,
+        SUM(tokens_out)          AS total_tokens_out,
+        SUM(request_count)       AS total_requests
+      FROM budget_ledger
+      GROUP BY period_year_month
+      ORDER BY period_year_month DESC
+      LIMIT ${months}
+    `;
+
+    return rows.map((r) => ({
+      periodYearMonth: r.period_year_month,
+      totalAmountUsd: parseFloat(r.total_amount_usd),
+      totalTokensIn: Number(r.total_tokens_in),
+      totalTokensOut: Number(r.total_tokens_out),
+      totalRequests: Number(r.total_requests),
+    }));
+  }
+
+  /** Ledger breakdown by scope for a given month. */
+  async getLedgerByScope(periodYearMonth: string): Promise<LedgerScopeSummary[]> {
+    const rows = await this.prisma.$queryRaw<
+      {
+        scope: string;
+        total_amount_usd: string;
+        total_tokens_in: bigint;
+        total_tokens_out: bigint;
+        total_requests: bigint;
+      }[]
+    >`
+      SELECT
+        scope,
+        SUM(amount_usd)::text    AS total_amount_usd,
+        SUM(tokens_in)           AS total_tokens_in,
+        SUM(tokens_out)          AS total_tokens_out,
+        SUM(request_count)       AS total_requests
+      FROM budget_ledger
+      WHERE period_year_month = ${periodYearMonth}
+      GROUP BY scope
+      ORDER BY SUM(amount_usd) DESC
+    `;
+
+    return rows.map((r) => ({
+      scope: r.scope,
+      totalAmountUsd: parseFloat(r.total_amount_usd),
+      totalTokensIn: Number(r.total_tokens_in),
+      totalTokensOut: Number(r.total_tokens_out),
+      totalRequests: Number(r.total_requests),
+    }));
+  }
+
+  /** Record a single ledger entry. */
+  async recordLedgerEntry(entry: CreateLedgerEntryDto) {
+    return this.prisma.budgetLedger.create({
+      data: {
+        periodYearMonth: entry.periodYearMonth,
+        periodDay: entry.periodDay,
+        scope: entry.scope,
+        amountUsd: entry.amountUsd,
+        tokensIn: entry.tokensIn ?? 0,
+        tokensOut: entry.tokensOut ?? 0,
+        requestCount: entry.requestCount ?? 1,
+        modelName: entry.modelName,
+        modelRunId: entry.modelRunId,
+      },
+    });
+  }
+
   private currentMonth(): string {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  }
+
+  private currentDay(): string {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   }
 }
 

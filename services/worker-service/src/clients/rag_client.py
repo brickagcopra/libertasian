@@ -99,3 +99,32 @@ def resolve_citations(
         response = client.post(url, json=payload)
         response.raise_for_status()
         return response.json()
+
+
+def generate_completion(
+    system_prompt: str,
+    user_prompt: str,
+    temperature: float = 0,
+) -> dict[str, Any]:
+    """Call RAG service generic completion endpoint for structured output.
+
+    Args:
+        system_prompt: System prompt with instructions.
+        user_prompt: User prompt with document content.
+        temperature: LLM temperature (0 for deterministic classification).
+
+    Returns:
+        Dict with content (str or dict), model_name, tokens_in, tokens_out.
+    """
+    url = f"{settings.rag_service_url}/completions/generate"
+    payload: dict[str, Any] = {
+        "system_prompt": system_prompt,
+        "user_prompt": user_prompt,
+        "temperature": temperature,
+        "response_format": "json",
+    }
+
+    with httpx.Client(timeout=settings.rag_request_timeout) as client:
+        response = client.post(url, json=payload)
+        response.raise_for_status()
+        return response.json()

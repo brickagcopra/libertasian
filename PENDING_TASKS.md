@@ -1,6 +1,44 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-04-10 (Session 193 — Ingestion Pipeline Fix: Celery + Fetchers)
+> Last updated: 2026-04-12 (Session 199 — Fix 7 Pre-Existing E2E Failures)
+
+---
+
+## Session 199 — Fix 7 Pre-Existing E2E Failures — ALL COMPLETE
+
+No pending items. All 7 target E2E failures fixed (test-only changes). 39/49 suites passing. 10 remaining failures are pre-existing from branch WIP (schema drift for `digests.model_run_id`, AuditService DI in derivative-artifact/mcq-question, content-disclaimers app.close(), and others).
+
+---
+
+## Session 198 — PR 6.1: Derivatives Admin Page — ALL COMPLETE
+
+No pending items. All 6 tasks completed and verified (23 new tests passing, 133 existing tests passing, no regressions).
+
+**Note:** `prisma generate` could not be run because the Prisma query engine DLL was locked by another process. The `deletedAt` field is correctly in the schema and `prisma format` succeeded. Once the DLL is unlocked (e.g., restart any running dev server), run `pnpm --filter api prisma:generate` to regenerate the client. The `tsc --noEmit` check shows zero errors from our new code — only pre-existing backfill TS errors remain.
+
+---
+
+## Session 197 — PR 5.3: Flashcard + Subject Outline — ALL COMPLETE
+
+No pending items. All 7 tasks completed and verified (41 new tests passing, no regressions).
+
+---
+
+## Session 196 — PR 5.2: Essay Prompt + ALAC Model Answer — ALL COMPLETE
+
+No pending items. All 6 tasks completed and verified (30 new tests passing, no regressions).
+
+---
+
+## Session 195 — PR 5.1: MCQ Derivative Type End-to-End — ALL COMPLETE
+
+No pending items. All 9 tasks completed and verified (32 new tests passing, no regressions).
+
+---
+
+## Session 194 — PR 4.3: Doctrine Extract Type End-to-End — ALL COMPLETE
+
+No pending items. All 8 tasks completed and verified (29 new tests passing, full suite green).
 
 ---
 

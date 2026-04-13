@@ -18,25 +18,25 @@ datasource db {
 // ==========================================================================
 
 model User {
-  id                    String    @id @default(uuid()) @db.Uuid
-  email                 String    @unique @db.VarChar(255)
-  passwordHash          String?   @map("password_hash") @db.VarChar(255)
-  fullName              String    @map("full_name") @db.VarChar(255)
-  phone                 String?   @db.VarChar(50)
-  status                String    @default("active") @db.VarChar(20)
-  emailVerified         Boolean   @default(false) @map("email_verified")
-  emailVerifyToken      String?   @map("email_verify_token") @db.VarChar(255)
+  id                        String    @id @default(uuid()) @db.Uuid
+  email                     String    @unique @db.VarChar(255)
+  passwordHash              String?   @map("password_hash") @db.VarChar(255)
+  fullName                  String    @map("full_name") @db.VarChar(255)
+  phone                     String?   @db.VarChar(50)
+  status                    String    @default("active") @db.VarChar(20)
+  emailVerified             Boolean   @default(false) @map("email_verified")
+  emailVerifyToken          String?   @map("email_verify_token") @db.VarChar(255)
   emailVerifyTokenExpiresAt DateTime? @map("email_verify_token_expires_at") @db.Timestamptz
-  mfaEnabled            Boolean   @default(false) @map("mfa_enabled")
-  mfaSecret             String?   @map("mfa_secret") @db.VarChar(500)
-  googleId              String?   @unique @map("google_id") @db.VarChar(255)
-  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
-  onboardingCompletedAt DateTime? @map("onboarding_completed_at") @db.Timestamptz
-  userRole              String?   @map("user_role") @db.VarChar(30)
+  mfaEnabled                Boolean   @default(false) @map("mfa_enabled")
+  mfaSecret                 String?   @map("mfa_secret") @db.VarChar(500)
+  googleId                  String?   @unique @map("google_id") @db.VarChar(255)
+  createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt                 DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  onboardingCompletedAt     DateTime? @map("onboarding_completed_at") @db.Timestamptz
+  userRole                  String?   @map("user_role") @db.VarChar(30)
 
   // Relations
-  ownedOrganizations         Organization[]          @relation("BillingOwner")
+  ownedOrganizations         Organization[]            @relation("BillingOwner")
   memberships                OrganizationMember[]
   refreshTokens              RefreshToken[]
   passwordResets             PasswordReset[]
@@ -51,12 +51,12 @@ model User {
   flashcardSets              FlashcardSet[]
   reviewerPacks              ReviewerPack[]
   studyProgress              StudyProgress[]
-  tasksCreated               Task[]                  @relation("TaskCreatedBy")
-  tasksAssigned              Task[]                  @relation("TaskAssignedTo")
+  tasksCreated               Task[]                    @relation("TaskCreatedBy")
+  tasksAssigned              Task[]                    @relation("TaskAssignedTo")
   taskComments               TaskComment[]
   matterComments             MatterComment[]
   workspaceShares            WorkspaceShare[]
-  assignedDigestReviews      Digest[]                @relation("DigestAssignedReviewer")
+  assignedDigestReviews      Digest[]                  @relation("DigestAssignedReviewer")
   caseCodalLinks             CaseCodalLink[]
   legalMemos                 LegalMemo[]
   pleadings                  Pleading[]
@@ -72,46 +72,49 @@ model User {
   notifications              Notification[]
   communityRatings           CommunityRating[]
   communityVotes             CommunityVote[]
-  communityFlags             CommunityFlag[]         @relation("CommunityFlagReporter")
-  communityFlagsResolved     CommunityFlag[]         @relation("CommunityFlagResolver")
+  communityFlags             CommunityFlag[]           @relation("CommunityFlagReporter")
+  communityFlagsResolved     CommunityFlag[]           @relation("CommunityFlagResolver")
   expertVerification         ExpertVerification?
-  assignedMemberRoles        MemberRole[]            @relation("MemberRoleAssignedBy")
-  subscriptionHistoryActions SubscriptionHistory[]   @relation("HistoryActor")
-  complimentaryGranted       ComplimentaryAccess[]   @relation("ComplimentaryGrantedBy")
-  complimentaryRevoked       ComplimentaryAccess[]   @relation("ComplimentaryRevokedBy")
-  initiatedMigrations        SubscriptionMigration[] @relation("MigrationInitiatedBy")
-  overridesCreated           EntitlementOverride[]   @relation("OverrideCreatedBy")
-  overridesRevoked           EntitlementOverride[]   @relation("OverrideRevokedBy")
-  couponsCreated             Coupon[]                @relation("CouponCreatedBy")
-  couponRedemptions          CouponRedemption[]      @relation("CouponRedemptionUser")
-  couponUserAssignments      CouponUserAssignment[]  @relation("CouponUserAssignment")
-  promotionsCreated          Promotion[]             @relation("PromotionCreatedBy")
-  promotionRedemptions       PromotionRedemption[]   @relation("PromotionRedemptionUser")
-  similarityReviews          DocumentSimilarity[]    @relation("SimilarityReviewer")
-  triggeredIngestionJobs     IngestionJob[]          @relation("IngestionJobTriggeredBy")
-  feedPosts                  FeedPost[]              @relation("FeedPostAuthor")
-  feedPostMedia              FeedPostMedia[]         @relation("FeedMediaOwner")
-  feedComments               FeedComment[]           @relation("FeedCommentAuthor")
-  feedPostLikes              FeedPostLike[]          @relation("FeedPostLikeUser")
-  feedCommentLikes           FeedCommentLike[]       @relation("FeedCommentLikeUser")
-  feedPostBookmarks          FeedPostBookmark[]      @relation("FeedPostBookmarkUser")
-  feedPostReports            FeedPostReport[]        @relation("FeedPostReportReporter")
-  feedPostReportsResolved    FeedPostReport[]        @relation("FeedPostReportResolver")
+  assignedMemberRoles        MemberRole[]              @relation("MemberRoleAssignedBy")
+  subscriptionHistoryActions SubscriptionHistory[]     @relation("HistoryActor")
+  complimentaryGranted       ComplimentaryAccess[]     @relation("ComplimentaryGrantedBy")
+  complimentaryRevoked       ComplimentaryAccess[]     @relation("ComplimentaryRevokedBy")
+  initiatedMigrations        SubscriptionMigration[]   @relation("MigrationInitiatedBy")
+  overridesCreated           EntitlementOverride[]     @relation("OverrideCreatedBy")
+  overridesRevoked           EntitlementOverride[]     @relation("OverrideRevokedBy")
+  couponsCreated             Coupon[]                  @relation("CouponCreatedBy")
+  couponRedemptions          CouponRedemption[]        @relation("CouponRedemptionUser")
+  couponUserAssignments      CouponUserAssignment[]    @relation("CouponUserAssignment")
+  promotionsCreated          Promotion[]               @relation("PromotionCreatedBy")
+  promotionRedemptions       PromotionRedemption[]     @relation("PromotionRedemptionUser")
+  similarityReviews          DocumentSimilarity[]      @relation("SimilarityReviewer")
+  triggeredIngestionJobs     IngestionJob[]            @relation("IngestionJobTriggeredBy")
+  feedPosts                  FeedPost[]                @relation("FeedPostAuthor")
+  feedPostMedia              FeedPostMedia[]           @relation("FeedMediaOwner")
+  feedComments               FeedComment[]             @relation("FeedCommentAuthor")
+  feedPostLikes              FeedPostLike[]            @relation("FeedPostLikeUser")
+  feedCommentLikes           FeedCommentLike[]         @relation("FeedCommentLikeUser")
+  feedPostBookmarks          FeedPostBookmark[]        @relation("FeedPostBookmarkUser")
+  feedPostReports            FeedPostReport[]          @relation("FeedPostReportReporter")
+  feedPostReportsResolved    FeedPostReport[]          @relation("FeedPostReportResolver")
   exportJobs                 ExportJob[]
   // Accounting relations
-  accountingPeriodsClosedBy  AccountingPeriod[]      @relation("PeriodClosedBy")
-  journalEntriesPostedBy     JournalEntry[]          @relation("JournalEntryPostedBy")
-  journalEntriesVoidedBy     JournalEntry[]          @relation("JournalEntryVoidedBy")
-  expensesCreatedBy          ExpenseRecord[]         @relation("ExpenseCreatedBy")
-  expensesApprovedBy         ExpenseRecord[]         @relation("ExpenseApprovedBy")
-  financialForecasts         FinancialForecast[]     @relation("ForecastCreatedBy")
+  accountingPeriodsClosedBy  AccountingPeriod[]        @relation("PeriodClosedBy")
+  journalEntriesPostedBy     JournalEntry[]            @relation("JournalEntryPostedBy")
+  journalEntriesVoidedBy     JournalEntry[]            @relation("JournalEntryVoidedBy")
+  expensesCreatedBy          ExpenseRecord[]           @relation("ExpenseCreatedBy")
+  expensesApprovedBy         ExpenseRecord[]           @relation("ExpenseApprovedBy")
+  financialForecasts         FinancialForecast[]       @relation("ForecastCreatedBy")
   emailPreference            EmailPreference?
   aiSettingsUpdated          AiSettings[]
-  blogPosts                  BlogPost[]              @relation("BlogPostAuthor")
-  adCampaigns                AdCampaign[]            @relation("AdCampaignCreator")
+  blogPosts                  BlogPost[]                @relation("BlogPostAuthor")
+  adCampaigns                AdCampaign[]              @relation("AdCampaignCreator")
   // Derivative artifacts (§2.2)
   derivativeArtifactsCreated DerivativeArtifact[]      @relation("DerivativeCreatedBy")
   derivativeJobsTriggered    DerivativeGenerationJob[] @relation("DerivativeJobTriggeredBy")
+  createdBackfillBatches     BackfillBatch[]           @relation("BackfillBatchCreatedBy")
+  // Golden sets (PR 4.1)
+  goldenSetReviews           GoldenSetEntry[]          @relation("GoldenSetReviewer")
 
   @@map("users")
 }
@@ -417,6 +420,7 @@ model Source {
   legalDocuments      LegalDocument[]
   ingestionJobs       IngestionJob[]
   ingestionCandidates IngestionCandidate[]
+  backfillBatches     BackfillBatch[]
 
   @@map("sources")
 }
@@ -433,8 +437,9 @@ model SourceEndpoint {
   status          String    @default("active") @db.VarChar(20)
 
   // Relations
-  source        Source         @relation(fields: [sourceId], references: [id], onDelete: Cascade)
-  ingestionJobs IngestionJob[]
+  source          Source          @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  ingestionJobs   IngestionJob[]
+  backfillBatches BackfillBatch[]
 
   @@map("source_endpoints")
 }
@@ -468,31 +473,36 @@ model LegalDocument {
   updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   // Relations
-  source                Source?                @relation(fields: [sourceId], references: [id])
-  versions              LegalDocumentVersion[]
-  sections              LegalDocumentSection[]
-  tagMaps               LegalDocumentTagMap[]
-  citationsFrom         Citation[]             @relation("CitationsFrom")
-  citationsTo           Citation[]             @relation("CitationsTo")
-  digests               Digest[]
-  bookmarks             Bookmark[]
-  annotations           Annotation[]
-  matterDocuments       MatterDocument[]
-  editorialFlags        EditorialFlag[]        @relation("DocEditorialFlags")
-  provenanceRecords     ProvenanceRecord[]
-  embeddings            Embedding[]            @relation("DocEmbeddings")
-  flashcards            Flashcard[]
-  reviewerPackItems     ReviewerPackItem[]
-  doctrineExtracts      DoctrineExtract[]
-  similaritiesAsA       DocumentSimilarity[]   @relation("SimilarityDocA")
-  similaritiesAsB       DocumentSimilarity[]   @relation("SimilarityDocB")
-  caseCodalAsCase       CaseCodalLink[]        @relation("CaseCodalCase")
-  caseCodalAsCodal      CaseCodalLink[]        @relation("CaseCodalCodal")
-  canonicalSimilarities DocumentSimilarity[]   @relation("CanonicalDocument")
-  matchedCandidates     IngestionCandidate[]   @relation("CandidateMatchedDoc")
+  source                   Source?                     @relation(fields: [sourceId], references: [id])
+  versions                 LegalDocumentVersion[]
+  sections                 LegalDocumentSection[]
+  tagMaps                  LegalDocumentTagMap[]
+  citationsFrom            Citation[]                  @relation("CitationsFrom")
+  citationsTo              Citation[]                  @relation("CitationsTo")
+  digests                  Digest[]
+  bookmarks                Bookmark[]
+  annotations              Annotation[]
+  matterDocuments          MatterDocument[]
+  editorialFlags           EditorialFlag[]             @relation("DocEditorialFlags")
+  provenanceRecords        ProvenanceRecord[]
+  embeddings               Embedding[]                 @relation("DocEmbeddings")
+  flashcards               Flashcard[]
+  reviewerPackItems        ReviewerPackItem[]
+  doctrineExtracts         DoctrineExtract[]
+  similaritiesAsA          DocumentSimilarity[]        @relation("SimilarityDocA")
+  similaritiesAsB          DocumentSimilarity[]        @relation("SimilarityDocB")
+  caseCodalAsCase          CaseCodalLink[]             @relation("CaseCodalCase")
+  caseCodalAsCodal         CaseCodalLink[]             @relation("CaseCodalCodal")
+  canonicalSimilarities    DocumentSimilarity[]        @relation("CanonicalDocument")
+  matchedCandidates        IngestionCandidate[]        @relation("CandidateMatchedDoc")
   // Derivative artifacts (§2.2)
-  derivativeArtifacts     DerivativeArtifact[]
+  derivativeArtifacts      DerivativeArtifact[]
   derivativeGenerationJobs DerivativeGenerationJob[]
+  barExamSittings          BarExamSitting[]
+  // Subject taxonomy assignments (§5.8c)
+  subjectAssignments       DocumentSubjectAssignment[]
+  // Golden sets (PR 4.1)
+  goldenSetEntries         GoldenSetEntry[]
 
   @@index([documentType], map: "idx_legal_docs_type")
   @@index([grNo], map: "idx_legal_docs_gr_no")
@@ -534,17 +544,17 @@ model LegalDocumentSection {
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
 
   // Relations
-  legalDocument     LegalDocument          @relation(fields: [legalDocumentId], references: [id], onDelete: Cascade)
-  parentSection     LegalDocumentSection?  @relation("SectionHierarchy", fields: [parentSectionId], references: [id])
-  childSections     LegalDocumentSection[] @relation("SectionHierarchy")
-  citations         Citation[]
-  bookmarks         Bookmark[]
-  annotations       Annotation[]
-  provenanceRecords ProvenanceRecord[]
-  flashcards        Flashcard[]
-  reviewerPackItems ReviewerPackItem[]
-  doctrineExtracts  DoctrineExtract[]
-  caseCodalLinks    CaseCodalLink[]
+  legalDocument       LegalDocument          @relation(fields: [legalDocumentId], references: [id], onDelete: Cascade)
+  parentSection       LegalDocumentSection?  @relation("SectionHierarchy", fields: [parentSectionId], references: [id])
+  childSections       LegalDocumentSection[] @relation("SectionHierarchy")
+  citations           Citation[]
+  bookmarks           Bookmark[]
+  annotations         Annotation[]
+  provenanceRecords   ProvenanceRecord[]
+  flashcards          Flashcard[]
+  reviewerPackItems   ReviewerPackItem[]
+  doctrineExtracts    DoctrineExtract[]
+  caseCodalLinks      CaseCodalLink[]
   // Derivative artifacts (§2.2)
   derivativeArtifacts DerivativeArtifact[]
 
@@ -627,43 +637,54 @@ model Embedding {
 // ==========================================================================
 
 model Digest {
-  id                     String   @id @default(uuid()) @db.Uuid
-  legalDocumentId        String?  @map("legal_document_id") @db.Uuid
-  organizationId         String?  @map("organization_id") @db.Uuid
-  userId                 String?  @map("user_id") @db.Uuid
-  assignedReviewerUserId String?  @map("assigned_reviewer_user_id") @db.Uuid
-  sourceOrigin           String   @map("source_origin") @db.VarChar(30)
-  title                  String
-  digestType             String   @map("digest_type") @db.VarChar(30)
-  facts                  String?
-  issues                 String?
-  ruling                 String?
-  doctrine               String?
-  dispositive            String?
-  summary                String?
-  petitionerArguments    String?  @map("petitioner_arguments")
-  respondentArguments    String?  @map("respondent_arguments")
-  citedAuthoritiesJson   Json     @default("[]") @map("cited_authorities_json")
-  confidenceScore        Float?   @map("confidence_score") @db.Real
-  reviewStatus           String   @default("draft") @map("review_status") @db.VarChar(30)
-  visibility             String   @default("private") @db.VarChar(20)
-  avgRating              Float?   @map("avg_rating") @db.Real
-  ratingCount            Int      @default(0) @map("rating_count")
-  voteScore              Int      @default(0) @map("vote_score")
-  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt              DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  id                        String   @id @default(uuid()) @db.Uuid
+  legalDocumentId           String?  @map("legal_document_id") @db.Uuid
+  organizationId            String?  @map("organization_id") @db.Uuid
+  userId                    String?  @map("user_id") @db.Uuid
+  assignedReviewerUserId    String?  @map("assigned_reviewer_user_id") @db.Uuid
+  sourceOrigin              String   @map("source_origin") @db.VarChar(30)
+  title                     String
+  digestType                String   @map("digest_type") @db.VarChar(30)
+  facts                     String?
+  issues                    String?
+  ruling                    String?
+  doctrine                  String?
+  dispositive               String?
+  summary                   String?
+  petitionerArguments       String?  @map("petitioner_arguments")
+  respondentArguments       String?  @map("respondent_arguments")
+  citedAuthoritiesJson      Json     @default("[]") @map("cited_authorities_json")
+  confidenceScore           Float?   @map("confidence_score") @db.Real
+  reviewStatus              String   @default("draft") @map("review_status") @db.VarChar(30)
+  visibility                String   @default("private") @db.VarChar(20)
+  avgRating                 Float?   @map("avg_rating") @db.Real
+  ratingCount               Int      @default(0) @map("rating_count")
+  voteScore                 Int      @default(0) @map("vote_score")
+  // AI generation metadata (PR 3.2)
+  modelRunId                String?  @map("model_run_id") @db.Uuid
+  promptTemplateVersion     String?  @map("prompt_template_version") @db.VarChar(40)
+  validatorVerdict          String?  @map("validator_verdict") @db.VarChar(20)
+  validatorReasonsJson      Json?    @map("validator_reasons_json")
+  contentDisclaimerId       String?  @map("content_disclaimer_id") @db.Uuid
+  derivativeGenerationJobId String?  @map("derivative_generation_job_id") @db.Uuid
+  sectionUsageJson          Json?    @map("section_usage_json")
+  createdAt                 DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt                 DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   // Relations
-  legalDocument     LegalDocument?     @relation(fields: [legalDocumentId], references: [id])
-  organization      Organization?      @relation(fields: [organizationId], references: [id])
-  user              User?              @relation(fields: [userId], references: [id])
-  assignedReviewer  User?              @relation("DigestAssignedReviewer", fields: [assignedReviewerUserId], references: [id])
-  reviews           DigestReview[]
-  doctrineExtracts  DoctrineExtract[]
-  editorialFlags    EditorialFlag[]    @relation("DigestEditorialFlags")
-  flashcards        Flashcard[]
-  reviewerPackItems ReviewerPackItem[]
-  userUploads       UserUpload[]
+  legalDocument           LegalDocument?           @relation(fields: [legalDocumentId], references: [id])
+  organization            Organization?            @relation(fields: [organizationId], references: [id])
+  user                    User?                    @relation(fields: [userId], references: [id])
+  assignedReviewer        User?                    @relation("DigestAssignedReviewer", fields: [assignedReviewerUserId], references: [id])
+  modelRun                ModelRun?                @relation(fields: [modelRunId], references: [id])
+  contentDisclaimer       ContentDisclaimer?       @relation(fields: [contentDisclaimerId], references: [id])
+  derivativeGenerationJob DerivativeGenerationJob? @relation(fields: [derivativeGenerationJobId], references: [id])
+  reviews                 DigestReview[]
+  doctrineExtracts        DoctrineExtract[]
+  editorialFlags          EditorialFlag[]          @relation("DigestEditorialFlags")
+  flashcards              Flashcard[]
+  reviewerPackItems       ReviewerPackItem[]
+  userUploads             UserUpload[]
 
   @@index([legalDocumentId], map: "idx_digests_doc")
   @@index([userId], map: "idx_digests_user")
@@ -1088,12 +1109,16 @@ model IngestionJob {
   triggeredByUserId String?   @map("triggered_by_user_id") @db.Uuid
   errorsJson        Json?     @default("[]") @map("errors_json")
 
+  backfillBatchId String? @map("backfill_batch_id") @db.Uuid
+
   // Relations
   source          Source               @relation(fields: [sourceId], references: [id])
   sourceEndpoint  SourceEndpoint?      @relation(fields: [sourceEndpointId], references: [id])
   triggeredByUser User?                @relation("IngestionJobTriggeredBy", fields: [triggeredByUserId], references: [id])
+  backfillBatch   BackfillBatch?       @relation(fields: [backfillBatchId], references: [id])
   candidates      IngestionCandidate[]
 
+  @@index([backfillBatchId])
   @@map("ingestion_jobs")
 }
 
@@ -1203,7 +1228,13 @@ model ModelRun {
   createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz
 
   // Derivative artifacts (§2.2)
-  derivativeArtifacts DerivativeArtifact[]
+  derivativeArtifacts    DerivativeArtifact[]
+  // Digests (PR 3.2)
+  digests                Digest[]
+  // Subject taxonomy classifier runs (§5.8c)
+  subjectClassifications DocumentSubjectAssignment[]
+  // Budget ledger entries (§7.2)
+  budgetLedgerEntries    BudgetLedger[]
 
   @@map("model_runs")
 }
@@ -2781,21 +2812,21 @@ model ExportJob {
 // migration. Prisma model maps to the parent table. The app role has INSERT-only
 // (no UPDATE/DELETE) enforced at the database level via raw migration.
 model AnalyticsEvent {
-  id               String   @default(uuid()) @db.Uuid
-  eventName        String   @map("event_name") @db.VarChar(100)
-  eventCategory    String   @map("event_category") @db.VarChar(50)
+  id             String   @default(uuid()) @db.Uuid
+  eventName      String   @map("event_name") @db.VarChar(100)
+  eventCategory  String   @map("event_category") @db.VarChar(50)
   // eventCategory: search, ai_answer, digest, scan, study, workspace, auth, billing, navigation, admin
-  userId           String?  @map("user_id") @db.Uuid
-  organizationId   String?  @map("organization_id") @db.Uuid
-  sessionId        String?  @map("session_id") @db.VarChar(100)
-  deviceType       String?  @map("device_type") @db.VarChar(20)
+  userId         String?  @map("user_id") @db.Uuid
+  organizationId String?  @map("organization_id") @db.Uuid
+  sessionId      String?  @map("session_id") @db.VarChar(100)
+  deviceType     String?  @map("device_type") @db.VarChar(20)
   // deviceType: web, ios, android
-  properties       Json     @default("{}") @db.JsonB
+  properties     Json     @default("{}") @db.JsonB
   // flexible event payload — validated against event taxonomy
-  metadata         Json     @default("{}") @db.JsonB
+  metadata       Json     @default("{}") @db.JsonB
   // user_agent, ip_hash, app_version, screen_resolution
-  durationMs       Int?     @map("duration_ms")
-  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+  durationMs     Int?     @map("duration_ms")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
 
   @@id([id, createdAt])
   @@index([eventName], map: "idx_analytics_event_name")
@@ -2865,16 +2896,16 @@ model AnalyticsFunnelStep {
 }
 
 model AnalyticsRetentionCohort {
-  id              String   @id @default(uuid()) @db.Uuid
-  cohortWeek      DateTime @map("cohort_week") @db.Date
-  retentionWeek   Int      @map("retention_week")
+  id             String   @id @default(uuid()) @db.Uuid
+  cohortWeek     DateTime @map("cohort_week") @db.Date
+  retentionWeek  Int      @map("retention_week")
   // week 0, 1, 2, ..., 12
-  userCount       Int      @map("user_count")
-  returningCount  Int      @map("returning_count")
-  retentionRate   Float    @map("retention_rate")
-  planSegment     String?  @map("plan_segment") @db.VarChar(20)
+  userCount      Int      @map("user_count")
+  returningCount Int      @map("returning_count")
+  retentionRate  Float    @map("retention_rate")
+  planSegment    String?  @map("plan_segment") @db.VarChar(20)
   // null = all users; 'free', 'edu', 'pro', 'team'
-  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
 
   @@unique([cohortWeek, retentionWeek, planSegment], map: "uq_retention_cohort")
   @@index([cohortWeek], map: "idx_retention_cohort_week")
@@ -2964,19 +2995,19 @@ enum SnapshotType {
 
 // Chart of Accounts — the backbone of double-entry accounting
 model ChartOfAccount {
-  id             String        @id @default(uuid()) @db.Uuid
-  code           String        @unique @db.VarChar(10)
-  name           String        @db.VarChar(255)
-  accountType    AccountType   @map("account_type")
-  subType        String?       @map("sub_type") @db.VarChar(50)
+  id            String        @id @default(uuid()) @db.Uuid
+  code          String        @unique @db.VarChar(10)
+  name          String        @db.VarChar(255)
+  accountType   AccountType   @map("account_type")
+  subType       String?       @map("sub_type") @db.VarChar(50)
   // subType: e.g. current_asset, non_current_asset, current_liability, etc.
-  parentCode     String?       @map("parent_code") @db.VarChar(10)
-  normalBalance  NormalBalance @map("normal_balance")
-  isActive       Boolean       @default(true) @map("is_active")
-  description    String?
-  displayOrder   Int           @default(0) @map("display_order")
-  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt      DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  parentCode    String?       @map("parent_code") @db.VarChar(10)
+  normalBalance NormalBalance @map("normal_balance")
+  isActive      Boolean       @default(true) @map("is_active")
+  description   String?
+  displayOrder  Int           @default(0) @map("display_order")
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   // Relations
   journalEntryLines JournalEntryLine[]
@@ -3003,13 +3034,13 @@ model AccountingPeriod {
   updatedAt  DateTime               @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   // Relations
-  closedBy               User?                    @relation("PeriodClosedBy", fields: [closedById], references: [id])
-  journalEntries         JournalEntry[]
-  revenueRecognitions    RevenueRecognitionEntry[]
-  expenseRecords         ExpenseRecord[]
-  budgetItems            BudgetItem[]
-  financialSnapshots     FinancialSnapshot[]
-  saasMetrics            SaasMetricsMonthly?
+  closedBy            User?                     @relation("PeriodClosedBy", fields: [closedById], references: [id])
+  journalEntries      JournalEntry[]
+  revenueRecognitions RevenueRecognitionEntry[]
+  expenseRecords      ExpenseRecord[]
+  budgetItems         BudgetItem[]
+  financialSnapshots  FinancialSnapshot[]
+  saasMetrics         SaasMetricsMonthly?
 
   @@index([status], map: "idx_accounting_period_status")
   @@index([startDate, endDate], map: "idx_accounting_period_dates")
@@ -3037,10 +3068,10 @@ model JournalEntry {
   updatedAt   DateTime               @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   // Relations
-  period   AccountingPeriod   @relation(fields: [periodId], references: [id])
-  postedBy User?              @relation("JournalEntryPostedBy", fields: [postedById], references: [id])
-  voidedBy User?              @relation("JournalEntryVoidedBy", fields: [voidedById], references: [id])
-  lines    JournalEntryLine[]
+  period              AccountingPeriod          @relation(fields: [periodId], references: [id])
+  postedBy            User?                     @relation("JournalEntryPostedBy", fields: [postedById], references: [id])
+  voidedBy            User?                     @relation("JournalEntryVoidedBy", fields: [voidedById], references: [id])
+  lines               JournalEntryLine[]
   revenueRecognitions RevenueRecognitionEntry[]
 
   @@index([periodId, status], map: "idx_je_period_status")
@@ -3052,23 +3083,23 @@ model JournalEntry {
 
 // Journal Entry Line — individual debit or credit entry
 model JournalEntryLine {
-  id              String  @id @default(uuid()) @db.Uuid
-  journalEntryId  String  @map("journal_entry_id") @db.Uuid
-  accountId       String  @map("account_id") @db.Uuid
-  debitAmount     Int     @default(0) @map("debit_amount")
+  id             String   @id @default(uuid()) @db.Uuid
+  journalEntryId String   @map("journal_entry_id") @db.Uuid
+  accountId      String   @map("account_id") @db.Uuid
+  debitAmount    Int      @default(0) @map("debit_amount")
   // amount in centavos
-  creditAmount    Int     @default(0) @map("credit_amount")
+  creditAmount   Int      @default(0) @map("credit_amount")
   // amount in centavos
-  description     String?
-  organizationId  String? @map("organization_id") @db.Uuid
-  subscriptionId  String? @map("subscription_id") @db.Uuid
-  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  description    String?
+  organizationId String?  @map("organization_id") @db.Uuid
+  subscriptionId String?  @map("subscription_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
 
   // Relations
-  journalEntry JournalEntry  @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  journalEntry JournalEntry   @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
   account      ChartOfAccount @relation(fields: [accountId], references: [id])
-  organization Organization? @relation(fields: [organizationId], references: [id])
-  subscription Subscription? @relation(fields: [subscriptionId], references: [id])
+  organization Organization?  @relation(fields: [organizationId], references: [id])
+  subscription Subscription?  @relation(fields: [subscriptionId], references: [id])
 
   @@index([journalEntryId], map: "idx_jel_journal_entry")
   @@index([accountId, journalEntryId], map: "idx_jel_account_entry")
@@ -3165,14 +3196,14 @@ model ExpenseRecord {
 
 // Budget per account per period
 model BudgetItem {
-  id             String @id @default(uuid()) @db.Uuid
-  accountId      String @map("account_id") @db.Uuid
-  periodId       String @map("period_id") @db.Uuid
-  budgetedAmount Int    @map("budgeted_amount")
+  id             String   @id @default(uuid()) @db.Uuid
+  accountId      String   @map("account_id") @db.Uuid
+  periodId       String   @map("period_id") @db.Uuid
+  budgetedAmount Int      @map("budgeted_amount")
   // budgeted amount in centavos
-  actualAmount   Int    @default(0) @map("actual_amount")
+  actualAmount   Int      @default(0) @map("actual_amount")
   // actual amount in centavos (updated by variance computation)
-  variance       Int    @default(0)
+  variance       Int      @default(0)
   // variance in centavos (actual - budgeted)
   notes          String?
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
@@ -3205,68 +3236,68 @@ model FinancialSnapshot {
 
 // Monthly SaaS metrics snapshot
 model SaasMetricsMonthly {
-  id                     String   @id @default(uuid()) @db.Uuid
-  periodId               String   @unique @map("period_id") @db.Uuid
-  periodDate             DateTime @unique @map("period_date") @db.Date
+  id         String   @id @default(uuid()) @db.Uuid
+  periodId   String   @unique @map("period_id") @db.Uuid
+  periodDate DateTime @unique @map("period_date") @db.Date
   // First day of the month, e.g. 2026-01-01
 
   // MRR breakdown (all centavos)
-  mrr                    Int      @default(0)
-  mrrNew                 Int      @default(0) @map("mrr_new")
-  mrrExpansion           Int      @default(0) @map("mrr_expansion")
-  mrrContraction         Int      @default(0) @map("mrr_contraction")
-  mrrChurn               Int      @default(0) @map("mrr_churn")
-  arr                    Int      @default(0)
-  netNewMrr              Int      @default(0) @map("net_new_mrr")
+  mrr            Int @default(0)
+  mrrNew         Int @default(0) @map("mrr_new")
+  mrrExpansion   Int @default(0) @map("mrr_expansion")
+  mrrContraction Int @default(0) @map("mrr_contraction")
+  mrrChurn       Int @default(0) @map("mrr_churn")
+  arr            Int @default(0)
+  netNewMrr      Int @default(0) @map("net_new_mrr")
 
   // Subscriber counts
-  subscriberCount        Int      @default(0) @map("subscriber_count")
-  newSubscribers         Int      @default(0) @map("new_subscribers")
-  churnedSubscribers     Int      @default(0) @map("churned_subscribers")
+  subscriberCount    Int @default(0) @map("subscriber_count")
+  newSubscribers     Int @default(0) @map("new_subscribers")
+  churnedSubscribers Int @default(0) @map("churned_subscribers")
 
   // Churn & retention rates (stored as basis points, e.g. 250 = 2.50%)
-  revenueChurnRate       Int      @default(0) @map("revenue_churn_rate")
-  logoChurnRate          Int      @default(0) @map("logo_churn_rate")
-  nrr                    Int      @default(0)
+  revenueChurnRate Int @default(0) @map("revenue_churn_rate")
+  logoChurnRate    Int @default(0) @map("logo_churn_rate")
+  nrr              Int @default(0)
   // Net revenue retention in basis points
-  grr                    Int      @default(0)
+  grr              Int @default(0)
   // Gross revenue retention in basis points
 
   // Unit economics (centavos where applicable)
-  arpu                   Int      @default(0)
-  cac                    Int      @default(0)
-  ltv                    Int      @default(0)
-  ltvCacRatio            Int      @default(0) @map("ltv_cac_ratio")
+  arpu             Int @default(0)
+  cac              Int @default(0)
+  ltv              Int @default(0)
+  ltvCacRatio      Int @default(0) @map("ltv_cac_ratio")
   // stored as ratio × 100, e.g. 350 = 3.5x
-  cacPaybackMonths       Int      @default(0) @map("cac_payback_months")
+  cacPaybackMonths Int @default(0) @map("cac_payback_months")
 
   // Profitability (basis points for percentages, centavos for amounts)
-  grossMarginPercent     Int      @default(0) @map("gross_margin_percent")
-  operatingMarginPercent Int      @default(0) @map("operating_margin_percent")
-  ruleOf40               Int      @default(0) @map("rule_of_40")
+  grossMarginPercent     Int @default(0) @map("gross_margin_percent")
+  operatingMarginPercent Int @default(0) @map("operating_margin_percent")
+  ruleOf40               Int @default(0) @map("rule_of_40")
   // Rule of 40 score in basis points
 
   // Cash metrics (centavos)
-  burnRate               Int      @default(0) @map("burn_rate")
-  runwayMonths           Int      @default(0) @map("runway_months")
+  burnRate     Int @default(0) @map("burn_rate")
+  runwayMonths Int @default(0) @map("runway_months")
 
   // P&L summary (centavos)
-  totalRevenue           Int      @default(0) @map("total_revenue")
-  totalCogs              Int      @default(0) @map("total_cogs")
-  grossProfit            Int      @default(0) @map("gross_profit")
-  totalOpex              Int      @default(0) @map("total_opex")
-  netIncome              Int      @default(0) @map("net_income")
+  totalRevenue Int @default(0) @map("total_revenue")
+  totalCogs    Int @default(0) @map("total_cogs")
+  grossProfit  Int @default(0) @map("gross_profit")
+  totalOpex    Int @default(0) @map("total_opex")
+  netIncome    Int @default(0) @map("net_income")
 
   // Balance sheet highlights (centavos)
-  cashBalance            Int      @default(0) @map("cash_balance")
-  deferredRevenueBalance Int      @default(0) @map("deferred_revenue_balance")
-  arBalance              Int      @default(0) @map("ar_balance")
+  cashBalance            Int @default(0) @map("cash_balance")
+  deferredRevenueBalance Int @default(0) @map("deferred_revenue_balance")
+  arBalance              Int @default(0) @map("ar_balance")
 
   // Flexible additional data
-  data                   Json     @default("{}") @db.JsonB
+  data Json @default("{}") @db.JsonB
 
-  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt              DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   // Relations
   period AccountingPeriod @relation(fields: [periodId], references: [id])
@@ -3277,18 +3308,18 @@ model SaasMetricsMonthly {
 
 // Financial forecast scenarios
 model FinancialForecast {
-  id             String   @id @default(uuid()) @db.Uuid
-  forecastName   String   @map("forecast_name") @db.VarChar(255)
-  createdById    String   @map("created_by_id") @db.Uuid
-  isActive       Boolean  @default(true) @map("is_active")
-  assumptions    Json     @default("{}") @db.JsonB
+  id            String   @id @default(uuid()) @db.Uuid
+  forecastName  String   @map("forecast_name") @db.VarChar(255)
+  createdById   String   @map("created_by_id") @db.Uuid
+  isActive      Boolean  @default(true) @map("is_active")
+  assumptions   Json     @default("{}") @db.JsonB
   // assumptions: growth rates, churn improvement, pricing changes, etc.
-  periods        Json     @default("[]") @db.JsonB
+  periods       Json     @default("[]") @db.JsonB
   // periods: array of monthly forecast data
-  forecastStart  DateTime @map("forecast_start") @db.Date
-  forecastEnd    DateTime @map("forecast_end") @db.Date
-  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  forecastStart DateTime @map("forecast_start") @db.Date
+  forecastEnd   DateTime @map("forecast_end") @db.Date
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   // Relations
   createdBy User @relation("ForecastCreatedBy", fields: [createdById], references: [id])
@@ -3421,24 +3452,24 @@ model AdCampaign {
 }
 
 model AdCreative {
-  id              String  @id @default(uuid()) @db.Uuid
-  campaignId      String  @map("campaign_id") @db.Uuid
-  displayType     String  @map("display_type") @db.VarChar(30)
-  position        String? @db.VarChar(20)
-  headline        String  @db.VarChar(120)
-  bodyText        String? @map("body_text") @db.VarChar(500)
-  imageUrl        String? @map("image_url") @db.VarChar(500)
-  imageAlt        String? @map("image_alt") @db.VarChar(255)
-  ctaText         String? @map("cta_text") @db.VarChar(50)
-  ctaUrl          String? @map("cta_url") @db.VarChar(500)
-  ctaStyle        String? @map("cta_style") @db.VarChar(20)
+  id               String  @id @default(uuid()) @db.Uuid
+  campaignId       String  @map("campaign_id") @db.Uuid
+  displayType      String  @map("display_type") @db.VarChar(30)
+  position         String? @db.VarChar(20)
+  headline         String  @db.VarChar(120)
+  bodyText         String? @map("body_text") @db.VarChar(500)
+  imageUrl         String? @map("image_url") @db.VarChar(500)
+  imageAlt         String? @map("image_alt") @db.VarChar(255)
+  ctaText          String? @map("cta_text") @db.VarChar(50)
+  ctaUrl           String? @map("cta_url") @db.VarChar(500)
+  ctaStyle         String? @map("cta_style") @db.VarChar(20)
   secondaryCtaText String? @map("secondary_cta_text") @db.VarChar(50)
-  bgColor         String? @map("bg_color") @db.VarChar(7)
-  textColor       String? @map("text_color") @db.VarChar(7)
-  accentColor     String? @map("accent_color") @db.VarChar(7)
-  borderRadius    String? @map("border_radius") @db.VarChar(10)
-  animation       String? @db.VarChar(20)
-  sortOrder       Int     @default(0) @map("sort_order")
+  bgColor          String? @map("bg_color") @db.VarChar(7)
+  textColor        String? @map("text_color") @db.VarChar(7)
+  accentColor      String? @map("accent_color") @db.VarChar(7)
+  borderRadius     String? @map("border_radius") @db.VarChar(10)
+  animation        String? @db.VarChar(20)
+  sortOrder        Int     @default(0) @map("sort_order")
 
   campaign AdCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
 
@@ -3493,6 +3524,8 @@ model ContentDisclaimer {
   // Back-reference for the non-null FK on DerivativeArtifact (§2.2, §2.5).
   // Every derivative must attach a disclaimer — enforced at the DB level.
   derivativeArtifacts DerivativeArtifact[]
+  // Digests (PR 3.2) — optional disclaimer attachment for AI-generated digests
+  digests             Digest[]
 
   @@map("content_disclaimers")
 }
@@ -3514,46 +3547,47 @@ model ContentDisclaimer {
 // ==========================================================================
 
 model DerivativeArtifact {
-  id                        String    @id @default(uuid()) @db.Uuid
-  derivativeType            String    @map("derivative_type") @db.VarChar(40)
+  id                        String  @id @default(uuid()) @db.Uuid
+  derivativeType            String  @map("derivative_type") @db.VarChar(40)
   //   case_digest | doctrine_extract | mcq_question | essay_prompt | essay_model_answer
   //   | suggested_bar_answer | flashcard | subject_outline | sample_pleading
   //   | sample_contract | one_page_summary
-  sourceDocumentId          String?   @map("source_document_id") @db.Uuid
-  sourceSectionId           String?   @map("source_section_id") @db.Uuid
-  organizationId            String?   @map("organization_id") @db.Uuid
-  createdByUserId           String?   @map("created_by_user_id") @db.Uuid
-  derivativeGenerationJobId String?   @map("derivative_generation_job_id") @db.Uuid
+  sourceDocumentId          String? @map("source_document_id") @db.Uuid
+  sourceSectionId           String? @map("source_section_id") @db.Uuid
+  organizationId            String? @map("organization_id") @db.Uuid
+  createdByUserId           String? @map("created_by_user_id") @db.Uuid
+  derivativeGenerationJobId String? @map("derivative_generation_job_id") @db.Uuid
 
-  title                     String    @db.Text
-  contentJson               Json      @map("content_json")
-  contentPlainText          String?   @map("content_plain_text") @db.Text
-  contentHash               String    @map("content_hash") @db.VarChar(128)
-  tokenCount                Int?      @map("token_count")
+  title            String  @db.Text
+  contentJson      Json    @map("content_json")
+  contentPlainText String? @map("content_plain_text") @db.Text
+  contentHash      String  @map("content_hash") @db.VarChar(128)
+  tokenCount       Int?    @map("token_count")
 
-  confidenceScore           Float?    @map("confidence_score") @db.Real
-  reviewStatus              String    @default("draft") @map("review_status") @db.VarChar(20)
+  confidenceScore      Float?  @map("confidence_score") @db.Real
+  reviewStatus         String  @default("draft") @map("review_status") @db.VarChar(20)
   //   draft | needs_human_review | approved | rejected
-  validatorVerdict          String?   @map("validator_verdict") @db.VarChar(20)
-  validatorReasonsJson      Json?     @map("validator_reasons_json")
-  visibility                String    @default("private") @db.VarChar(20)
+  validatorVerdict     String? @map("validator_verdict") @db.VarChar(20)
+  validatorReasonsJson Json?   @map("validator_reasons_json")
+  visibility           String  @default("private") @db.VarChar(20)
   //   private | public_editorial | unlisted
 
-  audience                  String    @default("both") @db.VarChar(20)
+  audience String @default("both") @db.VarChar(20)
   //   student | practitioner | both
 
-  contentRights             String    @map("content_rights") @db.VarChar(40)
+  contentRights       String @map("content_rights") @db.VarChar(40)
   //   public_domain_government | ai_generated_derivative | mixed
-  contentDisclaimerId       String    @map("content_disclaimer_id") @db.Uuid
+  contentDisclaimerId String @map("content_disclaimer_id") @db.Uuid
 
-  modelRunId                String?   @map("model_run_id") @db.Uuid
-  taxonomyVersion           String?   @map("taxonomy_version") @db.VarChar(20)
+  modelRunId      String? @map("model_run_id") @db.Uuid
+  taxonomyVersion String? @map("taxonomy_version") @db.VarChar(20)
   //   study_8 | bar_admin_6 — populated by the subject classifier (later PR)
-  language                  String    @default("en") @db.VarChar(10)
+  language        String  @default("en") @db.VarChar(10)
 
-  publishedAt               DateTime? @map("published_at") @db.Timestamptz
-  createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt                 DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  publishedAt DateTime? @map("published_at") @db.Timestamptz
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz
 
   // Relations
   sourceDocument          LegalDocument?           @relation(fields: [sourceDocumentId], references: [id])
@@ -3569,18 +3603,23 @@ model DerivativeArtifact {
   // the relation as optional because the base row itself does not know
   // which type-specific child exists until the transactional write
   // finishes. Service-layer `createMcqQuestion` is the only writer.
-  mcqQuestion             McqQuestion?
+  mcqQuestion McqQuestion?
+
+  // EssayPrompt child table (§2.2). Same one-to-one pattern as mcqQuestion.
+  essayPrompt EssayPrompt?
+
+  // Subject taxonomy assignments (§5.8c)
+  subjectAssignments DocumentSubjectAssignment[]
 
   // Deferred relations — child tables land with their own PRs:
-  //   - essayPrompt:              Phase 5 (per-type PRs)
-  //   - subjectAssignments:       subjects-seeding PR
   //   - Digest.derivativeArtifactId dual-write: case_digest dual-write PR
 
+  @@unique([sourceDocumentId, derivativeType, taxonomyVersion])
   @@index([derivativeType, reviewStatus])
   @@index([sourceDocumentId, derivativeType])
   @@index([organizationId, derivativeType])
   @@index([visibility, derivativeType, publishedAt])
-  @@unique([sourceDocumentId, derivativeType, taxonomyVersion])
+  @@index([deletedAt])
   // ^ One artifact per (source, type, taxonomy). PostgreSQL treats NULL as
   //   distinct in unique constraints, so uniqueness only actually bites
   //   when all three columns are non-null — acceptable for Phase 1 because
@@ -3615,6 +3654,7 @@ model DerivativeGenerationJob {
   sourceDocument      LegalDocument?       @relation(fields: [sourceDocumentId], references: [id])
   triggeredByUser     User?                @relation("DerivativeJobTriggeredBy", fields: [triggeredByUserId], references: [id])
   derivativeArtifacts DerivativeArtifact[]
+  digests             Digest[]
 
   @@index([derivativeType, status])
   @@index([backfillBatchId])
@@ -3654,11 +3694,9 @@ model McqQuestion {
   questionFormat       String  @default("single_best") @map("question_format") @db.VarChar(20)
   //   single_best | multi_select | true_false
   subjectTopicId       String? @map("subject_topic_id") @db.Uuid
-  // ^ No `subjectTopic` relation yet — the SubjectTopic model lands with the
-  //   subjects-seeding PR. Column is added here so that PR can attach the
-  //   relation without rewriting existing rows.
 
   derivativeArtifact DerivativeArtifact @relation(fields: [derivativeArtifactId], references: [id], onDelete: Cascade)
+  subjectTopic       SubjectTopic?      @relation(fields: [subjectTopicId], references: [id])
   options            McqOption[]
 
   @@index([subjectTopicId, difficulty])
@@ -3680,4 +3718,297 @@ model McqOption {
 
   @@unique([mcqQuestionId, optionLabel])
   @@map("mcq_options")
+}
+
+// ---------------------------------------------------------------------------
+// Bar Exam Sitting (§2.2)
+//
+// Reference table for a specific bar examination administration: a particular
+// year, part (e.g., "Day 1 AM", "remedial-I"), and subject. Links essay
+// prompts to historical bar exam metadata and optionally to a source
+// LegalDocument (the exam paper itself, if ingested into the corpus).
+//
+// @@unique([year, part, subjectStudyCode]) prevents duplicates for the same
+// sitting/subject combination. Taxonomy codes use the study_8 and
+// bar_admin_6 classification systems defined in the architecture doc.
+// ---------------------------------------------------------------------------
+
+model BarExamSitting {
+  id                  String  @id @default(uuid()) @db.Uuid
+  year                Int
+  part                String? @db.VarChar(20)
+  subjectStudyCode    String? @map("subject_study_code") @db.VarChar(40)
+  subjectBarAdminCode String? @map("subject_bar_admin_code") @db.VarChar(40)
+  chairperson         String? @db.VarChar(255)
+  sourceDocumentId    String? @map("source_document_id") @db.Uuid
+  sourceUrl           String? @map("source_url") @db.Text
+  taxonomyVersion     String  @map("taxonomy_version") @db.VarChar(20)
+
+  sourceDocument LegalDocument? @relation(fields: [sourceDocumentId], references: [id])
+  essayPrompts   EssayPrompt[]
+
+  @@unique([year, part, subjectStudyCode])
+  @@index([year])
+  @@map("bar_exam_sittings")
+}
+
+// ---------------------------------------------------------------------------
+// EssayPrompt child table (§2.2)
+//
+// Every essay prompt is a `DerivativeArtifact` row with
+// `derivativeType = 'essay_prompt'` plus one `essay_prompts` row holding
+// the structured/queryable fields (prompt text, model answer, rubric,
+// optional bar exam sitting link).
+//
+// The §5.4 output schema is ALSO mirrored into `derivativeArtifact.contentJson`
+// so surfaces that already consume the base row don't need a child-table join
+// to render the prompt. The child table is the source of truth for structured
+// queries (filter by bar exam sitting, time limit, subject topic).
+// ---------------------------------------------------------------------------
+
+model EssayPrompt {
+  id                   String  @id @default(uuid()) @db.Uuid
+  derivativeArtifactId String  @unique @map("derivative_artifact_id") @db.Uuid
+  promptText           String  @map("prompt_text") @db.Text
+  suggestedTimeMinutes Int?    @map("suggested_time_minutes")
+  modelAnswerJson      Json?   @map("model_answer_json")
+  rubricJson           Json?   @map("rubric_json")
+  subjectTopicId       String? @map("subject_topic_id") @db.Uuid
+  barExamSittingId     String? @map("bar_exam_sitting_id") @db.Uuid
+
+  derivativeArtifact DerivativeArtifact @relation(fields: [derivativeArtifactId], references: [id], onDelete: Cascade)
+  subjectTopic       SubjectTopic?      @relation(fields: [subjectTopicId], references: [id])
+  barExamSitting     BarExamSitting?    @relation(fields: [barExamSittingId], references: [id])
+
+  @@index([subjectTopicId])
+  @@index([barExamSittingId])
+  @@map("essay_prompts")
+}
+
+// ---------------------------------------------------------------------------
+// §5.8c Subject Taxonomy
+//
+// Two coexisting taxonomy systems:
+//   - study_8:     8-subject bar review study taxonomy (primary for study mode)
+//   - bar_admin_6: 6-subject SC administrative grouping (secondary overlay)
+//
+// SubjectEquivalence bridges the two taxonomies so bar-admin-facing surfaces
+// can resolve back to the granular study_8 subjects used for document
+// classification and quiz generation.
+//
+// DocumentSubjectAssignment is the many-to-many join between documents
+// (LegalDocument or DerivativeArtifact) and subjects/topics, supporting
+// both AI-classified and manually overridden assignments.
+// ---------------------------------------------------------------------------
+
+model Subject {
+  id              String   @id @default(uuid()) @db.Uuid
+  code            String   @db.VarChar(40)
+  name            String   @db.VarChar(200)
+  taxonomyVersion String   @map("taxonomy_version") @db.VarChar(20)
+  weightPercent   Float?   @map("weight_percent")
+  effectiveFrom   Int?     @map("effective_from")
+  effectiveTo     Int?     @map("effective_to")
+  displayOrder    Int      @default(0) @map("display_order")
+  description     String?  @db.Text
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  topics                 SubjectTopic[]
+  documentAssignments    DocumentSubjectAssignment[]
+  equivalencesAsBarAdmin SubjectEquivalence[]        @relation("EquivalenceBarAdmin")
+  equivalencesAsStudy    SubjectEquivalence[]        @relation("EquivalenceStudy")
+
+  @@unique([code, taxonomyVersion])
+  @@index([taxonomyVersion])
+  @@map("subjects")
+}
+
+model SubjectTopic {
+  id           String  @id @default(uuid()) @db.Uuid
+  subjectId    String  @map("subject_id") @db.Uuid
+  parentId     String? @map("parent_id") @db.Uuid
+  code         String  @db.VarChar(80)
+  name         String  @db.VarChar(255)
+  description  String? @db.Text
+  displayOrder Int     @default(0) @map("display_order")
+
+  subject             Subject                     @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  parent              SubjectTopic?               @relation("TopicHierarchy", fields: [parentId], references: [id])
+  children            SubjectTopic[]              @relation("TopicHierarchy")
+  documentAssignments DocumentSubjectAssignment[]
+  mcqQuestions        McqQuestion[]
+  essayPrompts        EssayPrompt[]
+
+  @@unique([subjectId, code])
+  @@index([subjectId, parentId, displayOrder])
+  @@map("subject_topics")
+}
+
+model SubjectEquivalence {
+  id                String  @id @default(uuid()) @db.Uuid
+  studySubjectId    String  @map("study_subject_id") @db.Uuid
+  barAdminSubjectId String  @map("bar_admin_subject_id") @db.Uuid
+  relationship      String  @db.VarChar(20)
+  notes             String? @db.Text
+
+  studySubject    Subject @relation("EquivalenceStudy", fields: [studySubjectId], references: [id])
+  barAdminSubject Subject @relation("EquivalenceBarAdmin", fields: [barAdminSubjectId], references: [id])
+
+  @@unique([studySubjectId, barAdminSubjectId])
+  @@map("subject_equivalences")
+}
+
+model DocumentSubjectAssignment {
+  id                   String   @id @default(uuid()) @db.Uuid
+  legalDocumentId      String?  @map("legal_document_id") @db.Uuid
+  derivativeArtifactId String?  @map("derivative_artifact_id") @db.Uuid
+  subjectId            String   @map("subject_id") @db.Uuid
+  subjectTopicId       String?  @map("subject_topic_id") @db.Uuid
+  isPrimary            Boolean  @default(false) @map("is_primary")
+  confidence           Float?
+  classifiedBy         String   @default("ai") @map("classified_by") @db.VarChar(20)
+  classifierModelRunId String?  @map("classifier_model_run_id") @db.Uuid
+  manualOverride       Boolean  @default(false) @map("manual_override")
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  legalDocument      LegalDocument?      @relation(fields: [legalDocumentId], references: [id], onDelete: Cascade)
+  derivativeArtifact DerivativeArtifact? @relation(fields: [derivativeArtifactId], references: [id], onDelete: Cascade)
+  subject            Subject             @relation(fields: [subjectId], references: [id])
+  subjectTopic       SubjectTopic?       @relation(fields: [subjectTopicId], references: [id])
+  classifierModelRun ModelRun?           @relation(fields: [classifierModelRunId], references: [id])
+
+  @@unique([legalDocumentId, subjectId, subjectTopicId])
+  @@unique([derivativeArtifactId, subjectId, subjectTopicId])
+  @@index([subjectId, isPrimary])
+  @@index([subjectTopicId])
+  @@map("document_subject_assignments")
+}
+
+// ==========================================================================
+// Backfill Orchestration
+// ==========================================================================
+
+model BackfillBatch {
+  id                   String    @id @default(uuid()) @db.Uuid
+  sourceId             String    @map("source_id") @db.Uuid
+  sourceEndpointId     String?   @map("source_endpoint_id") @db.Uuid
+  name                 String    @db.VarChar(255)
+  description          String?   @db.Text
+  yearStart            Int       @map("year_start")
+  yearEnd              Int       @map("year_end")
+  monthStart           Int?      @map("month_start")
+  monthEnd             Int?      @map("month_end")
+  status               String    @default("pending") @db.VarChar(20)
+  // pending | enumerating | running | paused | halted_budget | halted_admin | completed | failed
+  budgetCeilingUsd     Decimal   @map("budget_ceiling_usd") @db.Decimal(10, 4)
+  budgetConsumedUsd    Decimal   @default(0) @map("budget_consumed_usd") @db.Decimal(10, 4)
+  candidatesDiscovered Int       @default(0) @map("candidates_discovered")
+  candidatesProcessed  Int       @default(0) @map("candidates_processed")
+  candidatesSkipped    Int       @default(0) @map("candidates_skipped")
+  candidatesFailed     Int       @default(0) @map("candidates_failed")
+  documentsCreated     Int       @default(0) @map("documents_created")
+  documentsUpdated     Int       @default(0) @map("documents_updated")
+  checkpointState      Json      @default("{}") @map("checkpoint_state")
+  startedAt            DateTime? @map("started_at") @db.Timestamptz
+  finishedAt           DateTime? @map("finished_at") @db.Timestamptz
+  lastTickAt           DateTime? @map("last_tick_at") @db.Timestamptz
+  adminNotes           String?   @map("admin_notes") @db.Text
+  createdByUserId      String    @map("created_by_user_id") @db.Uuid
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Relations
+  source         Source               @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  sourceEndpoint SourceEndpoint?      @relation(fields: [sourceEndpointId], references: [id])
+  createdByUser  User                 @relation("BackfillBatchCreatedBy", fields: [createdByUserId], references: [id])
+  ingestionJobs  IngestionJob[]
+  checkpoints    BackfillCheckpoint[]
+
+  @@index([sourceId, status])
+  @@index([status, lastTickAt])
+  @@map("backfill_batches")
+}
+
+model BackfillCheckpoint {
+  id              String   @id @default(uuid()) @db.Uuid
+  backfillBatchId String   @map("backfill_batch_id") @db.Uuid
+  cursorJson      Json     @map("cursor_json")
+  candidatesSeen  Int      @default(0) @map("candidates_seen")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  backfillBatch BackfillBatch @relation(fields: [backfillBatchId], references: [id], onDelete: Cascade)
+
+  @@index([backfillBatchId, createdAt])
+  @@map("backfill_checkpoints")
+}
+
+/// Append-only spend history for LLM budget tracking (§7.2).
+/// Each row records one cost event (per model run or batch aggregate).
+model BudgetLedger {
+  id              String   @id @default(uuid()) @db.Uuid
+  periodYearMonth String   @map("period_year_month") @db.VarChar(7)
+  periodDay       String?  @map("period_day") @db.VarChar(10)
+  scope           String   @db.VarChar(80)
+  amountUsd       Decimal  @map("amount_usd") @db.Decimal(10, 6)
+  tokensIn        Int      @default(0) @map("tokens_in")
+  tokensOut       Int      @default(0) @map("tokens_out")
+  requestCount    Int      @default(1) @map("request_count")
+  modelName       String?  @map("model_name") @db.VarChar(100)
+  modelRunId      String?  @map("model_run_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  modelRun ModelRun? @relation(fields: [modelRunId], references: [id])
+
+  @@index([periodYearMonth, scope])
+  @@index([periodDay, scope])
+  @@index([scope, createdAt])
+  @@map("budget_ledger")
+}
+
+// ==========================================================================
+// Golden Sets & Evaluation (PR 4.1)
+//
+// AI-drafted golden set entries stored in the database for evaluation.
+// Three types: case_digest, subject_classification, mcq_question.
+// Admin reviews/approves each entry before it becomes evaluation baseline.
+// ==========================================================================
+
+model GoldenSetEntry {
+  id                String    @id @default(uuid()) @db.Uuid
+  goldenSetType     String    @map("golden_set_type") @db.VarChar(30)
+  sourceDocumentId  String?   @map("source_document_id") @db.Uuid
+  referenceDataJson Json      @map("reference_data_json")
+  status            String    @default("draft") @db.VarChar(20)
+  reviewNotes       String?   @map("review_notes") @db.Text
+  reviewedByUserId  String?   @map("reviewed_by_user_id") @db.Uuid
+  reviewedAt        DateTime? @map("reviewed_at") @db.Timestamptz
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  sourceDocument LegalDocument? @relation(fields: [sourceDocumentId], references: [id])
+  reviewedByUser User?          @relation("GoldenSetReviewer", fields: [reviewedByUserId], references: [id])
+
+  @@index([goldenSetType, status])
+  @@index([sourceDocumentId])
+  @@map("golden_set_entries")
+}
+
+model EvaluationRun {
+  id                    String    @id @default(uuid()) @db.Uuid
+  goldenSetType         String    @map("golden_set_type") @db.VarChar(30)
+  promptTemplateVersion String    @map("prompt_template_version") @db.VarChar(40)
+  modelName             String    @map("model_name") @db.VarChar(100)
+  totalEntries          Int       @map("total_entries")
+  passingEntries        Int       @map("passing_entries")
+  passRate              Float     @map("pass_rate") @db.Real
+  scoreDetailsJson      Json      @map("score_details_json")
+  status                String    @default("running") @db.VarChar(20)
+  startedAt             DateTime  @default(now()) @map("started_at") @db.Timestamptz
+  finishedAt            DateTime? @map("finished_at") @db.Timestamptz
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([goldenSetType, promptTemplateVersion])
+  @@map("evaluation_runs")
 }

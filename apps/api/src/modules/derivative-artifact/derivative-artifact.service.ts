@@ -7,14 +7,18 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type {
+  BarExamSitting,
   DerivativeArtifact,
+  EssayPrompt,
   McqOption,
   McqQuestion,
 } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import {
+  CreateBarExamSittingDto,
   CreateDerivativeArtifactDto,
+  CreateEssayPromptDto,
   CreateMcqQuestionDto,
   MCQ_OPTION_LABELS,
 } from './dto';
@@ -246,6 +250,169 @@ export class DerivativeArtifactService {
   }
 
   /**
+   * Transactionally write an essay prompt: one `DerivativeArtifact` row with
+   * `derivativeType = 'essay_prompt'` plus one `EssayPrompt` child row.
+   * Either the whole graph lands or nothing lands.
+   *
+   * Structural invariants enforced here, BEFORE the transaction opens:
+   *
+   *   1. `promptText` is present and non-empty after trimming.
+   *   2. If `rubricJson` contains `criteria` array with `maxPoints` and a
+   *      `totalPoints` field, the criteria maxPoints must sum to totalPoints.
+   *   3. At least one provenance record (§4.5).
+   *
+   * Inside the transaction:
+   *   4. If `barExamSittingId` is provided, verify the row exists.
+   *
+   * Returns the persisted artifact + essay prompt so the caller can
+   * continue wiring without a round-trip re-read.
+   */
+  async createEssayPrompt(dto: CreateEssayPromptDto): Promise<{
+    artifact: DerivativeArtifact;
+    essayPrompt: EssayPrompt;
+  }> {
+    // -------- Structural invariants (pre-transaction) ----------------
+    if (!dto.promptText || dto.promptText.trim().length === 0) {
+      throw new BadRequestException(
+        'EssayPrompt requires a non-empty promptText',
+      );
+    }
+
+    // Rubric sum validation: if criteria[].maxPoints and totalPoints
+    // are both present, they must agree.
+    if (dto.rubricJson) {
+      this.validateRubricJson(dto.rubricJson);
+    }
+
+    // Base-DTO §4.5 defence-in-depth guard.
+    if (!dto.provenanceRecords || dto.provenanceRecords.length === 0) {
+      throw new BadRequestException(
+        'DerivativeArtifact requires at least one provenance record (§4.5)',
+      );
+    }
+
+    // -------- Build base DTO + structured contentJson ----------------
+    const contentJson = {
+      promptText: dto.promptText,
+      suggestedTimeMinutes: dto.suggestedTimeMinutes ?? null,
+      modelAnswerJson: dto.modelAnswerJson ?? null,
+      rubricJson: dto.rubricJson ?? null,
+    };
+
+    const baseDto: CreateDerivativeArtifactDto = {
+      derivativeType: 'essay_prompt',
+      sourceDocumentId: dto.sourceDocumentId,
+      sourceSectionId: dto.sourceSectionId,
+      organizationId: dto.organizationId,
+      createdByUserId: dto.createdByUserId,
+      derivativeGenerationJobId: dto.derivativeGenerationJobId,
+      title: dto.title,
+      contentJson: contentJson as Record<string, unknown>,
+      contentPlainText: dto.contentPlainText,
+      contentHash: dto.contentHash,
+      tokenCount: dto.tokenCount,
+      confidenceScore: dto.confidenceScore,
+      reviewStatus: dto.reviewStatus,
+      validatorVerdict: dto.validatorVerdict,
+      validatorReasonsJson: dto.validatorReasonsJson,
+      visibility: dto.visibility,
+      audience: dto.audience,
+      contentRights: dto.contentRights,
+      contentDisclaimerId: dto.contentDisclaimerId,
+      modelRunId: dto.modelRunId,
+      taxonomyVersion: dto.taxonomyVersion,
+      language: dto.language,
+      provenanceRecords: dto.provenanceRecords,
+    };
+
+    // -------- Transactional write ------------------------------------
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        // If barExamSittingId is supplied, verify it exists before writing.
+        if (dto.barExamSittingId) {
+          const sitting = await tx.barExamSitting.findUnique({
+            where: { id: dto.barExamSittingId },
+            select: { id: true },
+          });
+          if (!sitting) {
+            throw new BadRequestException(
+              `BarExamSitting ${dto.barExamSittingId} not found`,
+            );
+          }
+        }
+
+        const artifact = await this.writeArtifactInTx(tx, baseDto);
+
+        const essayPrompt = await tx.essayPrompt.create({
+          data: {
+            derivativeArtifactId: artifact.id,
+            promptText: dto.promptText,
+            suggestedTimeMinutes: dto.suggestedTimeMinutes,
+            modelAnswerJson: dto.modelAnswerJson as Prisma.InputJsonValue | undefined,
+            rubricJson: dto.rubricJson as Prisma.InputJsonValue | undefined,
+            subjectTopicId: dto.subjectTopicId,
+            barExamSittingId: dto.barExamSittingId,
+          },
+        });
+
+        return { artifact, essayPrompt };
+      });
+    } catch (err) {
+      throw this.mapWriteError(err);
+    }
+  }
+
+  /**
+   * Create a `BarExamSitting` reference row. The
+   * `@@unique([year, part, subjectStudyCode])` constraint prevents
+   * duplicates — P2002 errors surface as `ConflictException`.
+   */
+  async createBarExamSitting(dto: CreateBarExamSittingDto): Promise<BarExamSitting> {
+    try {
+      return await this.prisma.barExamSitting.create({
+        data: {
+          year: dto.year,
+          part: dto.part,
+          subjectStudyCode: dto.subjectStudyCode,
+          subjectBarAdminCode: dto.subjectBarAdminCode,
+          chairperson: dto.chairperson,
+          sourceDocumentId: dto.sourceDocumentId,
+          sourceUrl: dto.sourceUrl,
+          taxonomyVersion: dto.taxonomyVersion,
+        },
+      });
+    } catch (err) {
+      throw this.mapWriteError(err);
+    }
+  }
+
+  /**
+   * Validate that `rubricJson.criteria[].maxPoints` sum to
+   * `rubricJson.totalPoints` when both are present.
+   */
+  private validateRubricJson(rubric: Record<string, unknown>): void {
+    const criteria = rubric['criteria'];
+    const totalPoints = rubric['totalPoints'];
+    if (!Array.isArray(criteria) || typeof totalPoints !== 'number') {
+      return; // Fields not present — nothing to validate.
+    }
+
+    const sum = criteria.reduce((acc: number, c: unknown) => {
+      if (typeof c === 'object' && c !== null && 'maxPoints' in c) {
+        const mp = (c as { maxPoints: unknown }).maxPoints;
+        return acc + (typeof mp === 'number' ? mp : 0);
+      }
+      return acc;
+    }, 0);
+
+    if (sum !== totalPoints) {
+      throw new BadRequestException(
+        `Rubric criteria maxPoints sum (${sum}) does not match totalPoints (${totalPoints})`,
+      );
+    }
+  }
+
+  /**
    * Inner transactional helper — writes one artifact + its provenance
    * rows inside an already-open transaction context. Caller owns the
    * `$transaction` bracket and the error mapping.
@@ -335,15 +502,16 @@ export class DerivativeArtifactService {
     }
 
     if (err instanceof Prisma.PrismaClientKnownRequestError) {
-      // Unique constraint — either §2.2 (source, type, taxonomy) on
-      // derivative_artifacts, or (mcqQuestionId, optionLabel) on
-      // mcq_options (duplicate labels slipping through the pre-check).
+      // Unique constraint — §2.2 (source, type, taxonomy) on
+      // derivative_artifacts, (mcqQuestionId, optionLabel) on mcq_options,
+      // or (year, part, subjectStudyCode) on bar_exam_sittings.
       if (err.code === 'P2002') {
         return new ConflictException(
-          'A derivative_artifact with the same (sourceDocumentId, ' +
-            'derivativeType, taxonomyVersion) already exists, or an MCQ ' +
-            'option label collided within the same question. Delete the ' +
-            'existing row before regenerating.',
+          'A unique constraint was violated: either a derivative_artifact ' +
+            'with the same (sourceDocumentId, derivativeType, taxonomyVersion) ' +
+            'already exists, an MCQ option label collided, or a BarExamSitting ' +
+            'with the same (year, part, subjectStudyCode) already exists. ' +
+            'Delete the existing row before retrying.',
         );
       }
       // Foreign-key violation on any of the other relations.

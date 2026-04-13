@@ -9,6 +9,7 @@ import {
   createAuthenticatedUser,
   registerTestUser,
   loginTestUser,
+  disableRateLimiting,
 } from './helpers';
 
 /**
@@ -738,6 +739,8 @@ describe('Authentication & Authorization Security (E2E)', () => {
   describe('Cross-tenant feed media isolation (BYPASS #1)', () => {
     afterEach(() => {
       jest.restoreAllMocks();
+      // Re-apply throttle bypass after restoreAllMocks clears it
+      disableRateLimiting();
     });
 
     // Directly seed a ready FeedPostMedia + attached FeedPost via

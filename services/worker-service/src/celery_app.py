@@ -37,6 +37,19 @@ app.conf.update(
             "task": "ingestion.poll_pending_jobs",
             "schedule": 60.0,  # Every 60 seconds
         },
+        "backfill-tick": {
+            "task": "backfill.tick",
+            "schedule": 30.0,  # Every 30 seconds
+        },
+        "backfill-check-budgets": {
+            "task": "backfill.check_budgets",
+            "schedule": 300.0,  # Every 5 minutes
+        },
+        "classify-unclassified-nightly": {
+            "task": "classification.classify_unclassified_batch",
+            "schedule": crontab(hour=3, minute=0),  # 3 AM Manila time
+            "kwargs": {"limit": 100},
+        },
     },
 )
 
@@ -48,8 +61,16 @@ app.conf.include = [
     "src.tasks.ocr_tasks",
     "src.tasks.embedding_tasks",
     "src.tasks.digest_tasks",
+    "src.tasks.digest_generation_tasks",
     "src.tasks.citation_tasks",
     "src.tasks.doctrine_tasks",
     "src.tasks.categorization_tasks",
     "src.tasks.dlq_tasks",
+    "src.tasks.backfill_tasks",
+    "src.tasks.classification_generation_tasks",
+    "src.tasks.doctrine_generation_tasks",
+    "src.tasks.mcq_generation_tasks",
+    "src.tasks.essay_generation_tasks",
+    "src.tasks.flashcard_generation_tasks",
+    "src.tasks.outline_generation_tasks",
 ]

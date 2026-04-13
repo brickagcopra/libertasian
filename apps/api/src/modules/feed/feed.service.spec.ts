@@ -57,9 +57,11 @@ const mockPrisma = {
   feedPost: {
     create: jest.fn(),
     findUnique: jest.fn(),
+    findUniqueOrThrow: jest.fn(),
     findFirst: jest.fn(),
     findMany: jest.fn(),
     update: jest.fn(),
+    updateMany: jest.fn(),
   },
   feedPostMedia: {
     findUnique: jest.fn(),
@@ -216,8 +218,8 @@ describe('FeedService', () => {
 
   describe('updatePost', () => {
     it('should update own post', async () => {
-      mockPrisma.feedPost.findUnique.mockResolvedValue(mockPost);
-      mockPrisma.feedPost.update.mockResolvedValue({
+      mockPrisma.feedPost.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.feedPost.findUniqueOrThrow.mockResolvedValue({
         ...mockPost,
         textContent: 'Updated content',
         editedAt: new Date(),
@@ -229,16 +231,17 @@ describe('FeedService', () => {
       expect(result.editedAt).not.toBeNull();
     });
 
-    it('should reject update on another user\'s post', async () => {
-      mockPrisma.feedPost.findUnique.mockResolvedValue(mockPost);
+    it('should reject update on another user\'s post (collapsed to NotFoundException)', async () => {
+      // DF-1: updateMany with authorId mismatch returns count=0, collapsed to 404
+      mockPrisma.feedPost.updateMany.mockResolvedValue({ count: 0 });
 
       await expect(
         service.updatePost(POST_ID, { textContent: 'Hijack' }, OTHER_USER_ID),
-      ).rejects.toThrow(ForbiddenException);
+      ).rejects.toThrow(NotFoundException);
     });
 
     it('should reject update on non-existent post', async () => {
-      mockPrisma.feedPost.findUnique.mockResolvedValue(null);
+      mockPrisma.feedPost.updateMany.mockResolvedValue({ count: 0 });
 
       await expect(
         service.updatePost('non-existent', { textContent: 'Test' }, USER_ID),
@@ -246,10 +249,8 @@ describe('FeedService', () => {
     });
 
     it('should reject update on deleted post', async () => {
-      mockPrisma.feedPost.findUnique.mockResolvedValue({
-        ...mockPost,
-        deletedAt: new Date(),
-      });
+      // DF-1: updateMany where clause includes deletedAt: null, so deleted posts yield count=0
+      mockPrisma.feedPost.updateMany.mockResolvedValue({ count: 0 });
 
       await expect(
         service.updatePost(POST_ID, { textContent: 'Test' }, USER_ID),
@@ -261,13 +262,12 @@ describe('FeedService', () => {
 
   describe('deletePost', () => {
     it('should soft-delete own post', async () => {
-      mockPrisma.feedPost.findUnique.mockResolvedValue(mockPost);
-      mockPrisma.feedPost.update.mockResolvedValue({});
+      mockPrisma.feedPost.updateMany.mockResolvedValue({ count: 1 });
 
       await service.deletePost(POST_ID, USER_ID);
 
-      expect(mockPrisma.feedPost.update).toHaveBeenCalledWith({
-        where: { id: POST_ID },
+      expect(mockPrisma.feedPost.updateMany).toHaveBeenCalledWith({
+        where: { id: POST_ID, authorId: USER_ID, deletedAt: null },
         data: {
           deletedAt: expect.any(Date),
           status: 'removed_by_author',
@@ -275,12 +275,13 @@ describe('FeedService', () => {
       });
     });
 
-    it('should reject delete on another user\'s post', async () => {
-      mockPrisma.feedPost.findUnique.mockResolvedValue(mockPost);
+    it('should reject delete on another user\'s post (collapsed to NotFoundException)', async () => {
+      // DF-1: updateMany with authorId mismatch returns count=0, collapsed to 404
+      mockPrisma.feedPost.updateMany.mockResolvedValue({ count: 0 });
 
       await expect(
         service.deletePost(POST_ID, OTHER_USER_ID),
-      ).rejects.toThrow(ForbiddenException);
+      ).rejects.toThrow(NotFoundException);
     });
   });
 

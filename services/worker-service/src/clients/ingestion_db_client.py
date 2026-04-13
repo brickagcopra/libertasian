@@ -732,6 +732,23 @@ def complete_ingestion_job_with_dedup(
 # ─── Digest Generation Operations ──────────────────────────────────────
 
 
+def get_legal_document(document_id: str) -> dict[str, Any] | None:
+    """Fetch a legal document by ID with full metadata for digest generation."""
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """SELECT id, title, short_title, document_type, gr_no,
+                      citation_text, court, ponente, decision_date,
+                      source_id, is_official, status, truthfulness_status,
+                      confidence_score
+               FROM legal_documents
+               WHERE id = %s""",
+            (document_id,),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
 def get_document_sections_for_digest(doc_id: str) -> list[dict[str, Any]]:
     """Fetch full document sections for digest generation."""
     with get_connection() as conn, \

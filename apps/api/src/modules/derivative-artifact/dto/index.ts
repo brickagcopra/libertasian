@@ -19,3 +19,5 @@ export type {
 } from './create-mcq-question.dto';
 export { McqOptionInputDto, MCQ_OPTION_LABELS } from './mcq-option-input.dto';
 export type { McqOptionLabel } from './mcq-option-input.dto';
+export { CreateEssayPromptDto } from './create-essay-prompt.dto';
+export { CreateBarExamSittingDto } from './create-bar-exam-sitting.dto';

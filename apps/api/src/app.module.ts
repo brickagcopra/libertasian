@@ -37,6 +37,7 @@ import { OrganizationsModule } from './modules/organizations/organizations.modul
 import { SearchModule } from './modules/search/search.module';
 import { SourcesModule } from './modules/sources/sources.module';
 import { StudyModule } from './modules/study/study.module';
+import { SubjectsModule } from './modules/subjects/subjects.module';
 import { SubscriptionsModule } from './modules/subscriptions/subscriptions.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
 import { UsersModule } from './modules/users/users.module';
@@ -58,6 +59,10 @@ import { PricingModule } from './modules/pricing/pricing.module';
 import { RbacModule } from './modules/rbac/rbac.module';
 import { AccountingModule } from './modules/accounting/accounting.module';
 import { AiSettingsModule } from './modules/ai-settings/ai-settings.module';
+import { BackfillModule } from './modules/backfill/backfill.module';
+import { GoldenSetsModule } from './modules/golden-sets/golden-sets.module';
+import { DerivativesAdminModule } from './modules/derivatives-admin/derivatives-admin.module';
+import { InternalModule } from './modules/internal/internal.module';
 import { ReportingModule } from './modules/reporting/reporting.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
@@ -192,6 +197,7 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
     TimelinesModule,
     UploadsModule,
     StudyModule,
+    SubjectsModule,
     WorkspaceModule,
     ApiKeysModule,
     BillingModule,
@@ -207,6 +213,10 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
     ReportingModule,
     AccountingModule,
     AiSettingsModule,
+    BackfillModule,
+    GoldenSetsModule,
+    DerivativesAdminModule,
+    InternalModule,
   ],
   providers: [
     // Global rate limiting guard — applies to all routes by default
