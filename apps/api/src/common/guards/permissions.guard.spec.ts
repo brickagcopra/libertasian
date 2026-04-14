@@ -1,3 +1,6 @@
+import * as fs from 'fs';
+import * as path from 'path';
+
 import { ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 
@@ -284,5 +287,87 @@ describe('PermissionsGuard', () => {
         expect(message).toContain('documents:update');
       }
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Static check: every @RequiredPermissions code must exist in the RBAC seed
+// ---------------------------------------------------------------------------
+
+describe('RBAC seed coverage', () => {
+  /** Parse permission codes from the seed file (avoids importing outside rootDir) */
+  function parseSeededCodes(): Set<string> {
+    const seedPath = path.resolve(__dirname, '../../../prisma/seeds/rbac-seed.ts');
+    const content = fs.readFileSync(seedPath, 'utf-8');
+    const codes = new Set<string>();
+    // Match `code: 'some:code'` entries in the PERMISSIONS array
+    const codePattern = /code:\s*'([^']+)'/g;
+    let m: RegExpExecArray | null;
+    while ((m = codePattern.exec(content)) !== null) {
+      if (m[1]) codes.add(m[1]);
+    }
+    return codes;
+  }
+
+  /** Recursively collect .ts source files (excluding tests) */
+  function collectSourceFiles(dir: string): string[] {
+    const files: string[] = [];
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory() && entry.name !== 'node_modules') {
+        files.push(...collectSourceFiles(fullPath));
+      } else if (
+        entry.isFile() &&
+        entry.name.endsWith('.ts') &&
+        !entry.name.endsWith('.spec.ts') &&
+        !entry.name.endsWith('.test.ts')
+      ) {
+        files.push(fullPath);
+      }
+    }
+    return files;
+  }
+
+  /** Extract permission codes from @RequiredPermissions(...) in source files */
+  function extractUsedCodes(files: string[]): Set<string> {
+    const codes = new Set<string>();
+    const decoratorPattern = /@RequiredPermissions\(([\s\S]*?)\)/g;
+    const stringPattern = /'([^']+)'|"([^"]+)"/g;
+
+    for (const file of files) {
+      const content = fs.readFileSync(file, 'utf-8');
+      let decoratorMatch: RegExpExecArray | null;
+      while ((decoratorMatch = decoratorPattern.exec(content)) !== null) {
+        const args = decoratorMatch[1] ?? '';
+        let strMatch: RegExpExecArray | null;
+        while ((strMatch = stringPattern.exec(args)) !== null) {
+          const code: string | undefined = strMatch[1] ?? strMatch[2];
+          // Skip mode strings ('any', 'all') and non-permission values
+          if (code !== undefined && code !== 'any' && code !== 'all' && code.includes(':')) {
+            codes.add(code);
+          }
+        }
+      }
+    }
+    return codes;
+  }
+
+  it('should have every @RequiredPermissions code present in the seed PERMISSIONS array', () => {
+    const seededCodes = parseSeededCodes();
+    expect(seededCodes.size).toBeGreaterThan(0);
+
+    const srcDir = path.resolve(__dirname, '../..');
+    const sourceFiles = collectSourceFiles(srcDir);
+    const usedCodes = extractUsedCodes(sourceFiles);
+    expect(usedCodes.size).toBeGreaterThan(0);
+
+    const missing = [...usedCodes].filter((code) => !seededCodes.has(code)).sort();
+
+    if (missing.length > 0) {
+      fail(
+        `The following @RequiredPermissions codes are used in controllers but missing from the RBAC seed:\n` +
+          missing.map((c) => `  - ${c}`).join('\n'),
+      );
+    }
   });
 });

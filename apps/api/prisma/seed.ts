@@ -4,6 +4,7 @@ import * as bcrypt from 'bcrypt';
 import { seedPlans, seedFeatureFlags } from './seeds/plan-seed';
 import { seedContentDisclaimers } from './seed-disclaimers';
 import { seedChartOfAccounts } from '../src/modules/accounting/constants/chart-of-accounts.seed';
+import { seedRbac } from './seeds/rbac-seed';
 
 const prisma = new PrismaClient();
 
@@ -334,6 +335,9 @@ async function main() {
   // 8b. Seed canonical content_disclaimers rows (§8.2 / §8.6)
   console.log('\n  Seeding content disclaimers...');
   await seedContentDisclaimers(prisma);
+
+  // 8c. Seed RBAC permissions, roles, and mappings
+  await seedRbac(prisma);
 
   // 9. Seed AI settings defaults
   console.log('\n  Seeding AI settings...');
