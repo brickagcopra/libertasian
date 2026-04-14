@@ -10,16 +10,19 @@ import type {
   EnqueueResult,
 } from '../types';
 
+/** Standard API response envelope from NestJS controllers */
+type ApiEnvelope<T> = { success: boolean; data: T };
+
 // ---- Queries ----
 
 export function useDerivativeStats() {
   return useQuery({
     queryKey: ['admin', 'derivatives', 'stats'],
     queryFn: async () => {
-      const res = await apiClient.get<DerivativeStatsResponse>(
+      const res = await apiClient.get<ApiEnvelope<DerivativeStatsResponse>>(
         '/admin/derivatives/stats',
       );
-      return res;
+      return res.data;
     },
     refetchInterval: 30_000,
   });
@@ -29,10 +32,10 @@ export function useDerivativeSettings() {
   return useQuery({
     queryKey: ['admin', 'derivatives', 'settings'],
     queryFn: async () => {
-      const res = await apiClient.get<DerivativeSettings>(
+      const res = await apiClient.get<ApiEnvelope<DerivativeSettings>>(
         '/admin/derivatives/settings',
       );
-      return res;
+      return res.data;
     },
   });
 }
@@ -51,11 +54,11 @@ export function useDerivativeJobs(params?: {
       if (params?.status) qp['status'] = params.status;
       if (params?.page) qp['page'] = String(params.page);
       if (params?.limit) qp['limit'] = String(params.limit);
-      const res = await apiClient.get<{ data: DerivativeJob[]; total: number }>(
+      const res = await apiClient.get<ApiEnvelope<{ data: DerivativeJob[]; total: number }>>(
         '/admin/derivatives/jobs',
         { params: qp },
       );
-      return res;
+      return res.data;
     },
   });
 }
@@ -64,10 +67,10 @@ export function useDerivativeJob(id: string) {
   return useQuery({
     queryKey: ['admin', 'derivatives', 'jobs', id],
     queryFn: async () => {
-      const res = await apiClient.get<DerivativeJob>(
+      const res = await apiClient.get<ApiEnvelope<DerivativeJob>>(
         `/admin/derivatives/jobs/${id}`,
       );
-      return res;
+      return res.data;
     },
     enabled: !!id,
   });
@@ -82,11 +85,11 @@ export function useUpdateDerivativeSettings() {
       enabled?: boolean;
       typesEnabled?: Record<string, boolean>;
     }) => {
-      const res = await apiClient.patch<void>(
+      const res = await apiClient.patch<ApiEnvelope<void>>(
         '/admin/derivatives/settings',
         dto,
       );
-      return res;
+      return res.data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'derivatives'] });
@@ -107,11 +110,11 @@ export function useEnqueueGeneration() {
       regenerateExisting?: boolean;
       maxCount?: number;
     }) => {
-      const res = await apiClient.post<EnqueueResult>(
+      const res = await apiClient.post<ApiEnvelope<EnqueueResult>>(
         '/admin/derivatives/generate',
         dto,
       );
-      return res;
+      return res.data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'derivatives'] });
@@ -135,10 +138,10 @@ export function useRegenerateArtifact() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
-      const res = await apiClient.post<{ jobId: string }>(
+      const res = await apiClient.post<ApiEnvelope<{ jobId: string }>>(
         `/admin/derivatives/artifacts/${id}/regenerate`,
       );
-      return res;
+      return res.data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'derivatives'] });

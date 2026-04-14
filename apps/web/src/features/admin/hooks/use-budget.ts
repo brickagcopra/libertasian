@@ -5,6 +5,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api-client';
 import type { BudgetCurrentResponse, LedgerMonthSummary } from '../types';
 
+/** Standard API response envelope from NestJS controllers */
+type ApiEnvelope<T> = { success: boolean; data: T };
+
 const budgetKeys = {
   current: ['budget', 'current'] as const,
   history: ['budget', 'history'] as const,
@@ -15,7 +18,7 @@ export function useBudgetSnapshot() {
   return useQuery({
     queryKey: budgetKeys.current,
     queryFn: async () => {
-      const res = await apiClient.get<BudgetCurrentResponse>('/admin/budget/current');
+      const res = await apiClient.get<ApiEnvelope<BudgetCurrentResponse>>('/admin/budget/current');
       return res.data;
     },
     refetchInterval: 30000,
@@ -27,7 +30,7 @@ export function useBudgetHistory() {
   return useQuery({
     queryKey: budgetKeys.history,
     queryFn: async () => {
-      const res = await apiClient.get<LedgerMonthSummary[]>('/admin/budget/history?months=12');
+      const res = await apiClient.get<ApiEnvelope<LedgerMonthSummary[]>>('/admin/budget/history?months=12');
       return res.data;
     },
   });
@@ -39,7 +42,7 @@ export function useUpdateBudgetSettings() {
 
   return useMutation({
     mutationFn: async (input: { monthlyCeilingUsd?: number; dailyCeilingUsd?: number }) => {
-      const res = await apiClient.patch<{ success: boolean }>('/admin/budget/settings', input);
+      const res = await apiClient.patch<ApiEnvelope<void>>('/admin/budget/settings', input);
       return res.data;
     },
     onSuccess: () => {
