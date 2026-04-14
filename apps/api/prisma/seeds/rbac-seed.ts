@@ -21,7 +21,7 @@ interface PermissionSeed {
   description: string;
 }
 
-const PERMISSIONS: PermissionSeed[] = [
+export const PERMISSIONS: PermissionSeed[] = [
   // --- Corpus ---
   { code: 'documents:read', resource: 'documents', action: 'read', category: 'corpus', description: 'View legal documents' },
   { code: 'documents:create', resource: 'documents', action: 'create', category: 'corpus', description: 'Create legal documents' },
@@ -129,6 +129,10 @@ const PERMISSIONS: PermissionSeed[] = [
   { code: 'admin:coverage-gaps', resource: 'admin', action: 'coverage-gaps', category: 'admin', description: 'View coverage gap analysis' },
   { code: 'admin:duplicates', resource: 'admin', action: 'duplicates', category: 'admin', description: 'Manage document duplicates' },
   { code: 'admin:knowledge-graph', resource: 'admin', action: 'knowledge-graph', category: 'admin', description: 'Access knowledge graph' },
+  { code: 'admin:settings', resource: 'admin', action: 'settings', category: 'admin', description: 'Manage platform settings (derivatives, backfill, site content)' },
+  { code: 'admin:documents', resource: 'admin', action: 'documents', category: 'admin', description: 'Manage document classification and metadata' },
+  { code: 'admin:billing', resource: 'admin', action: 'billing', category: 'admin', description: 'Manage billing, subscriptions, coupons, and promotions' },
+  { code: 'admin:ai-settings', resource: 'admin', action: 'ai-settings', category: 'admin', description: 'Manage AI model settings and budgets' },
   { code: 'users:read', resource: 'users', action: 'read', category: 'admin', description: 'View organization members' },
   { code: 'users:update', resource: 'users', action: 'update', category: 'admin', description: 'Update user profiles' },
   { code: 'users:deactivate', resource: 'users', action: 'deactivate', category: 'admin', description: 'Deactivate/suspend users' },
@@ -363,6 +367,18 @@ export interface SeededRbac {
 
 export async function seedRbac(prisma: PrismaClient): Promise<SeededRbac> {
   console.log('\n--- Seeding RBAC data ---');
+
+  // 0. Reconcile legacy 'system-admin' slug → 'admin' (prod DB may have this)
+  const legacyAdmin = await prisma.roleDefinition.findFirst({
+    where: { slug: 'system-admin', isSystem: true, organizationId: null },
+  });
+  if (legacyAdmin) {
+    await prisma.roleDefinition.update({
+      where: { id: legacyAdmin.id },
+      data: { slug: 'admin' },
+    });
+    console.log('  Renamed legacy role slug system-admin → admin');
+  }
 
   // 1. Seed permissions
   console.log('  Seeding permissions...');
