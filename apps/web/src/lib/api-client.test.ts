@@ -126,4 +126,121 @@ describe('ApiClient', () => {
     expect(url).toContain('q=test');
     expect(url).toContain('limit=10');
   });
+
+  describe('concurrent 401 deduplication', () => {
+    it('fires only one refresh when multiple 401s arrive concurrently', async () => {
+      const refreshFn = vi.fn().mockResolvedValue('new-token-abc');
+      apiClient.configure({
+        getAccessToken: () => 'expired-token',
+        onUnauthorized: vi.fn(),
+        refreshAccessToken: refreshFn,
+      });
+
+      // All 3 initial requests return 401
+      mockFetch
+        .mockResolvedValueOnce({ ok: false, status: 401, json: () => Promise.resolve({ message: 'Expired' }) })
+        .mockResolvedValueOnce({ ok: false, status: 401, json: () => Promise.resolve({ message: 'Expired' }) })
+        .mockResolvedValueOnce({ ok: false, status: 401, json: () => Promise.resolve({ message: 'Expired' }) })
+        // All 3 retries succeed
+        .mockResolvedValueOnce({ ok: true, status: 200, json: () => Promise.resolve({ data: 'a' }) })
+        .mockResolvedValueOnce({ ok: true, status: 200, json: () => Promise.resolve({ data: 'b' }) })
+        .mockResolvedValueOnce({ ok: true, status: 200, json: () => Promise.resolve({ data: 'c' }) });
+
+      const [r1, r2, r3] = await Promise.all([
+        apiClient.get('/a'),
+        apiClient.get('/b'),
+        apiClient.get('/c'),
+      ]);
+
+      expect(r1).toEqual({ data: 'a' });
+      expect(r2).toEqual({ data: 'b' });
+      expect(r3).toEqual({ data: 'c' });
+      // refreshAccessToken should only be called once (deduplicated)
+      expect(refreshFn).toHaveBeenCalledTimes(1);
+      // 3 initial + 3 retries = 6 fetch calls
+      expect(mockFetch).toHaveBeenCalledTimes(6);
+
+      // Clean up
+      apiClient.configure({
+        getAccessToken: () => null,
+        onUnauthorized: vi.fn(),
+        refreshAccessToken: vi.fn(),
+      });
+    });
+
+    it('deduplicates apiClient.refresh() when called concurrently', async () => {
+      const refreshFn = vi.fn().mockResolvedValue('new-token-dedup');
+      apiClient.configure({
+        getAccessToken: () => null,
+        onUnauthorized: vi.fn(),
+        refreshAccessToken: refreshFn,
+      });
+
+      const [t1, t2] = await Promise.all([
+        apiClient.refresh(),
+        apiClient.refresh(),
+      ]);
+
+      expect(t1).toBe('new-token-dedup');
+      expect(t2).toBe('new-token-dedup');
+      expect(refreshFn).toHaveBeenCalledTimes(1);
+
+      // Clean up
+      apiClient.configure({
+        getAccessToken: () => null,
+        onUnauthorized: vi.fn(),
+        refreshAccessToken: vi.fn(),
+      });
+    });
+
+    it('deduplicates apiClient.refresh() with concurrent 401 interceptor', async () => {
+      let resolveRefresh: (value: string) => void;
+      const refreshPromise = new Promise<string>((resolve) => {
+        resolveRefresh = resolve;
+      });
+      const refreshFn = vi.fn().mockReturnValue(refreshPromise);
+
+      apiClient.configure({
+        getAccessToken: () => 'expired',
+        onUnauthorized: vi.fn(),
+        refreshAccessToken: refreshFn,
+      });
+
+      // Initial request returns 401 — triggers interceptor refresh
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: () => Promise.resolve({ message: 'Expired' }),
+      });
+      // Retry after refresh
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ data: 'ok' }),
+      });
+
+      // Start a 401-triggered refresh via apiClient.get()
+      const getPromise = apiClient.get('/test');
+
+      // While that refresh is in-flight, call apiClient.refresh() directly
+      const directRefreshPromise = apiClient.refresh();
+
+      // Resolve the shared refresh
+      resolveRefresh!('shared-token');
+
+      const [getResult, directToken] = await Promise.all([getPromise, directRefreshPromise]);
+
+      expect(getResult).toEqual({ data: 'ok' });
+      expect(directToken).toBe('shared-token');
+      // Only one refresh call despite two code paths
+      expect(refreshFn).toHaveBeenCalledTimes(1);
+
+      // Clean up
+      apiClient.configure({
+        getAccessToken: () => null,
+        onUnauthorized: vi.fn(),
+        refreshAccessToken: vi.fn(),
+      });
+    });
+  });
 });

@@ -444,6 +444,61 @@ describe('AuthService', () => {
     });
   });
 
+  describe('refreshTokens', () => {
+    const deviceFingerprint = 'device-fp-abc';
+    const rawRefreshToken = 'raw-refresh-token-hex';
+    // Use originalCrypto directly since the jest.mock for crypto hasn't been
+    // configured with mockImplementation yet at describe-block parse time.
+    const tokenHash = (originalCrypto as typeof import('crypto')).createHash('sha256').update(rawRefreshToken).digest('hex');
+
+    const mockStoredToken = {
+      id: 'token-1',
+      userId: 'user-123',
+      tokenHash,
+      familyId: 'family-abc',
+      deviceFingerprint,
+      isRevoked: false,
+      expiresAt: new Date(Date.now() + 86400_000), // 1 day from now
+      createdAt: new Date(),
+      user: mockUser,
+    };
+
+    it('should revoke entire family when token is already revoked (reuse detection)', async () => {
+      const revokedToken = { ...mockStoredToken, isRevoked: true };
+      prismaService.refreshToken.findFirst.mockResolvedValueOnce(revokedToken);
+
+      await expect(
+        service.refreshTokens(rawRefreshToken, deviceFingerprint),
+      ).rejects.toThrow(UnauthorizedException);
+
+      expect(prismaService.refreshToken.updateMany).toHaveBeenCalledWith({
+        where: { familyId: 'family-abc' },
+        data: { isRevoked: true },
+      });
+    });
+
+    it('should successfully rotate a non-revoked token', async () => {
+      prismaService.refreshToken.findFirst
+        .mockResolvedValueOnce(mockStoredToken) // lookup by tokenHash
+        .mockResolvedValueOnce(null);           // replacedByTokenId lookup
+
+      prismaService.organizationMember.findFirst.mockResolvedValue(mockMembership);
+      prismaService.refreshToken.update.mockResolvedValue({});
+      prismaService.refreshToken.create.mockResolvedValue({});
+      jwtService.sign.mockReturnValue('fresh-access-token');
+
+      const result = await service.refreshTokens(rawRefreshToken, deviceFingerprint);
+
+      expect(result.accessToken).toBe('fresh-access-token');
+      expect(result.refreshToken).toEqual(expect.any(String));
+      // Old token should be revoked
+      expect(prismaService.refreshToken.update).toHaveBeenCalledWith({
+        where: { id: 'token-1' },
+        data: { isRevoked: true },
+      });
+    });
+  });
+
   describe('loginWithGoogle', () => {
     const googleProfile = {
       googleId: 'google-123',

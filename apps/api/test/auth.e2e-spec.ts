@@ -161,6 +161,36 @@ describe('Auth (E2E)', () => {
         .expect(401);
     });
 
+    it('should reject second concurrent refresh with same token (reuse detection)', async () => {
+      const { refreshCookie } = await createAuthenticatedUser(app);
+
+      // First refresh — succeeds and rotates the token
+      const first = await request(app.getHttpServer())
+        .post('/api/v1/auth/refresh')
+        .set('Cookie', refreshCookie)
+        .expect(201);
+
+      expect(first.body.success).toBe(true);
+
+      // Second refresh with the same (now-revoked) cookie — strict reuse
+      // detection revokes the entire family. Client-side single-flight
+      // prevents this race; server enforces as defense-in-depth.
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/refresh')
+        .set('Cookie', refreshCookie)
+        .expect(401);
+
+      // The rotated token from the first call should also be revoked
+      // (entire family revoked by reuse detection)
+      const firstCookie = extractRefreshCookie(first.headers['set-cookie']);
+      if (firstCookie.refreshCookie) {
+        await request(app.getHttpServer())
+          .post('/api/v1/auth/refresh')
+          .set('Cookie', firstCookie.refreshCookie)
+          .expect(401);
+      }
+    });
+
     it('should reject invalid refresh token', async () => {
       // Cookie-based refresh (af823bd): set a bogus cookie value rather
       // than sending it in the body, which the server now ignores.

@@ -207,13 +207,30 @@ export class AuthController {
     }
 
     const fingerprint = this.buildDeviceFingerprint(userAgent, ip);
-    const tokens = await this.authService.refreshTokens(refreshToken, fingerprint);
 
-    // Rotate: set new refresh token as httpOnly cookie
-    this.setRefreshCookie(res, tokens.refreshToken);
+    try {
+      const tokens = await this.authService.refreshTokens(refreshToken, fingerprint);
 
-    // Return only accessToken in body
-    return { success: true, data: { accessToken: tokens.accessToken } };
+      // Rotate: set new refresh token as httpOnly cookie
+      this.setRefreshCookie(res, tokens.refreshToken);
+
+      // Return only accessToken in body
+      return { success: true, data: { accessToken: tokens.accessToken } };
+    } catch (err) {
+      if (err instanceof UnauthorizedException) {
+        await this.auditService.log({
+          actorType: 'system',
+          action: 'auth.refresh_rejected',
+          entityType: 'refresh_token',
+          metadata: {
+            ip,
+            userAgent: this.truncateUserAgent(userAgent),
+            reason: err.message,
+          },
+        });
+      }
+      throw err;
+    }
   }
 
   @Post('logout')

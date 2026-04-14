@@ -313,9 +313,11 @@ export class AuthService {
       throw new UnauthorizedException('Invalid refresh token');
     }
 
-    // Check if token was already used (reuse detection)
+    // Reuse detection: if the token was already rotated, revoke the entire family.
+    // Concurrent browser refreshes (startup rehydration + 401 interceptor) are
+    // prevented client-side by a single-flight guard on the refresh promise.
+    // The server enforces strict reuse detection as defense-in-depth.
     if (storedToken.isRevoked) {
-      // Revoke the entire family — potential token theft
       this.logger.warn(`Refresh token reuse detected for family ${storedToken.familyId}`);
       await this.prisma.refreshToken.updateMany({
         where: { familyId: storedToken.familyId },

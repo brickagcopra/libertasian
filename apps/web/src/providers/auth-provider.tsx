@@ -49,29 +49,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     // On mount, if we have a persisted session but no accessToken (page reload),
-    // try a silent refresh to restore the access token from the httpOnly cookie
+    // try a silent refresh to restore the access token from the httpOnly cookie.
+    // Uses apiClient.refresh() which shares the same single-flight guard as the
+    // 401 interceptor, preventing duplicate /auth/refresh calls on page load.
     const state = useAuthStore.getState();
     if (state.isAuthenticated && !state.accessToken) {
-      fetch(
-        `${process.env['NEXT_PUBLIC_API_URL'] || 'http://localhost:3001/api/v1'}/auth/refresh`,
-        {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-        },
-      )
-        .then((res) => (res.ok ? res.json() : null))
-        .then((body: { success: boolean; data: { accessToken: string } } | null) => {
-          if (body?.success && body.data.accessToken) {
-            useAuthStore.getState().setAccessToken(body.data.accessToken);
-          } else {
-            // Cookie expired or invalid — clear local state
-            useAuthStore.getState().logout();
-          }
-        })
-        .catch(() => {
-          // Network error — don't force logout, they might be offline
-        });
+      apiClient.refresh().then((token) => {
+        if (!token) {
+          // Cookie expired or invalid — clear local state
+          useAuthStore.getState().logout();
+        }
+      }).catch(() => {
+        // Network error — don't force logout, they might be offline
+      });
     }
   }, [logout]);
 
