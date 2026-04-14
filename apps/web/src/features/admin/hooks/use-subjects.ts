@@ -49,6 +49,9 @@ export interface SubjectEquivalence {
   barAdminSubject?: SubjectItem;
 }
 
+/** Standard API response envelope from NestJS controllers */
+type ApiEnvelope<T> = { success: boolean; data: T };
+
 // ---- Queries ----
 
 export function useSubjects(taxonomy?: string) {
@@ -57,8 +60,8 @@ export function useSubjects(taxonomy?: string) {
     queryFn: async () => {
       const qp: Record<string, string> = {};
       if (taxonomy) qp['taxonomy'] = taxonomy;
-      const res = await apiClient.get<SubjectItem[]>('/subjects', { params: qp });
-      return res;
+      const res = await apiClient.get<ApiEnvelope<SubjectItem[]>>('/subjects', { params: qp });
+      return res.data;
     },
   });
 }
@@ -67,8 +70,8 @@ export function useSubjectTopics(subjectId: string) {
   return useQuery({
     queryKey: ['admin', 'subjects', subjectId, 'topics'],
     queryFn: async () => {
-      const res = await apiClient.get<SubjectTopic[]>(`/subjects/${subjectId}/topics`);
-      return res;
+      const res = await apiClient.get<ApiEnvelope<SubjectTopic[]>>(`/subjects/${subjectId}/topics`);
+      return res.data;
     },
     enabled: !!subjectId,
   });
@@ -78,8 +81,8 @@ export function useClassificationCoverage() {
   return useQuery({
     queryKey: ['admin', 'subjects', 'coverage'],
     queryFn: async () => {
-      const res = await apiClient.get<ClassificationCoverage>('/subjects/coverage');
-      return res;
+      const res = await apiClient.get<ApiEnvelope<ClassificationCoverage>>('/subjects/coverage');
+      return res.data;
     },
   });
 }
@@ -88,10 +91,10 @@ export function useSubjectEquivalences(studySubjectId: string) {
   return useQuery({
     queryKey: ['admin', 'subjects', 'equivalences', studySubjectId],
     queryFn: async () => {
-      const res = await apiClient.get<SubjectEquivalence[]>(
+      const res = await apiClient.get<ApiEnvelope<SubjectEquivalence[]>>(
         `/subjects/equivalences/${studySubjectId}`,
       );
-      return res;
+      return res.data;
     },
     enabled: !!studySubjectId,
   });
@@ -103,10 +106,10 @@ export function useClassifyUnclassified() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async () => {
-      const res = await apiClient.post<{ success: boolean; message: string }>(
+      const res = await apiClient.post<ApiEnvelope<{ message: string }>>(
         '/subjects/batch-classify',
       );
-      return res;
+      return res.data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'subjects'] });

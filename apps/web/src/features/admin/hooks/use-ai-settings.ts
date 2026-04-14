@@ -24,6 +24,9 @@ interface UsageSummary {
   month: string;
 }
 
+/** Standard API response envelope from NestJS controllers */
+type ApiEnvelope<T> = { success: boolean; data: T };
+
 // ---- Query Keys ----
 
 const aiSettingsKeys = {
@@ -39,7 +42,7 @@ export function useAiSettings() {
   return useQuery({
     queryKey: aiSettingsKeys.all,
     queryFn: async () => {
-      const res = await apiClient.get<AiSetting[]>('/admin/ai-settings');
+      const res = await apiClient.get<ApiEnvelope<AiSetting[]>>('/admin/ai-settings');
       return res.data;
     },
   });
@@ -50,7 +53,7 @@ export function useAiUsage() {
   return useQuery({
     queryKey: aiSettingsKeys.usage,
     queryFn: async () => {
-      const res = await apiClient.get<UsageSummary>('/admin/ai-settings/usage/current');
+      const res = await apiClient.get<ApiEnvelope<UsageSummary>>('/admin/ai-settings/usage/current');
       return res.data;
     },
     refetchInterval: 30000,
@@ -62,7 +65,7 @@ export function useAiUsageHistory() {
   return useQuery({
     queryKey: aiSettingsKeys.usageHistory,
     queryFn: async () => {
-      const res = await apiClient.get<UsageSummary[]>('/admin/ai-settings/usage/history?months=12');
+      const res = await apiClient.get<ApiEnvelope<UsageSummary[]>>('/admin/ai-settings/usage/history?months=12');
       return res.data;
     },
   });
@@ -74,10 +77,9 @@ export function useUpdateAiSetting() {
 
   return useMutation({
     mutationFn: async ({ key, value }: { key: string; value: Record<string, unknown> }) => {
-      const res = await apiClient.patch<{ success: boolean }>(`/admin/ai-settings/${key}`, {
+      await apiClient.patch<ApiEnvelope<void>>(`/admin/ai-settings/${key}`, {
         value,
       });
-      return res.data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: aiSettingsKeys.all });
@@ -99,7 +101,7 @@ export function useUpdateBudget() {
       monthlyBudgetUsd: number;
       dailyBudgetUsd?: number | null;
     }) => {
-      return apiClient.patch<{ success: boolean }>(
+      await apiClient.patch<ApiEnvelope<void>>(
         '/admin/ai-settings/budget',
         input,
       );
@@ -124,7 +126,7 @@ export function useUpdateIngestionWindow() {
       stopLocal: string;
       timezone: string;
     }) => {
-      return apiClient.patch<{ success: boolean }>(
+      await apiClient.patch<ApiEnvelope<void>>(
         '/admin/ai-settings/ingestion-window',
         input,
       );
@@ -141,8 +143,7 @@ export function useRunIngestion() {
 
   return useMutation({
     mutationFn: async (sourceId: string) => {
-      const res = await apiClient.post<{ success: boolean }>(`/admin/sources/${sourceId}/fetch`);
-      return res.data;
+      await apiClient.post<ApiEnvelope<void>>(`/admin/sources/${sourceId}/fetch`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: aiSettingsKeys.all });
@@ -156,11 +157,10 @@ export function useResetUsage() {
 
   return useMutation({
     mutationFn: async (month: string) => {
-      const res = await apiClient.post<{ success: boolean }>('/admin/ai-settings/usage/reset', {
+      await apiClient.post<ApiEnvelope<void>>('/admin/ai-settings/usage/reset', {
         month,
         confirmation: 'RESET',
       });
-      return res.data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: aiSettingsKeys.usage });
