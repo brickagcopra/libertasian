@@ -44,6 +44,11 @@ class ApiClient {
     return this.refreshPromise;
   }
 
+  /** Trigger a silent token refresh. Deduplicated with the 401 interceptor. */
+  async refresh(): Promise<string | null> {
+    return this.tryRefresh();
+  }
+
   private async request<T>(endpoint: string, options: RequestOptions = {}, isRetry = false): Promise<T> {
     const { params, ...init } = options;
 

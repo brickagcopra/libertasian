@@ -1,10 +1,24 @@
 import Constants from 'expo-constants';
+import { Platform } from 'react-native';
 import { authStorage } from '../storage/auth-storage';
 
-const API_BASE_URL =
-  process.env.API_URL ??
-  (Constants.expoConfig?.extra?.['apiUrl'] as string | undefined) ??
-  'http://localhost:3001/api/v1';
+function resolveApiBaseUrl(): string {
+  // In development, use the correct loopback for the platform:
+  // - Android emulator: 10.0.2.2 maps to host machine's localhost
+  // - iOS simulator / web: localhost works directly
+  if (__DEV__) {
+    const host = Platform.OS === 'android' ? '10.0.2.2' : 'localhost';
+    return `http://${host}:3001/api/v1`;
+  }
+
+  // Production: use the URL from app.json extra config
+  return (
+    (Constants.expoConfig?.extra?.['apiUrl'] as string | undefined) ??
+    'https://libertasian.com/api/v1'
+  );
+}
+
+const API_BASE_URL = resolveApiBaseUrl();
 
 interface RequestOptions extends RequestInit {
   params?: Record<string, string>;

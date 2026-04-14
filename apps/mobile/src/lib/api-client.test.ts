@@ -341,6 +341,65 @@ describe('apiClient.getDownloadUrl', () => {
   });
 });
 
+describe('apiClient - concurrent 401 deduplication', () => {
+  it('fires only one refresh when 5 parallel requests all get 401', async () => {
+    // All 5 initial requests return 401
+    for (let i = 0; i < 5; i++) {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: () => Promise.resolve({ message: 'Token expired' }),
+      });
+    }
+
+    // Single refresh call succeeds
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          accessToken: 'new-access-token',
+          refreshToken: 'new-refresh-token',
+        }),
+    });
+
+    // All 5 retries succeed
+    for (let i = 0; i < 5; i++) {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ success: true, data: `result-${i}` }),
+      });
+    }
+
+    const results = await Promise.all([
+      apiClient.get('/a'),
+      apiClient.get('/b'),
+      apiClient.get('/c'),
+      apiClient.get('/d'),
+      apiClient.get('/e'),
+    ]);
+
+    // All 5 should resolve successfully
+    expect(results).toHaveLength(5);
+    results.forEach((r) => {
+      expect(r).toHaveProperty('success', true);
+    });
+
+    // Refresh endpoint should be called exactly once (deduplicated)
+    const refreshCalls = mockFetch.mock.calls.filter(
+      ([url]: [string]) => typeof url === 'string' && url.includes('/auth/refresh'),
+    );
+    expect(refreshCalls).toHaveLength(1);
+
+    // setAccessToken and setRefreshToken called exactly once
+    expect(mockSetAccessToken).toHaveBeenCalledTimes(1);
+    expect(mockSetRefreshToken).toHaveBeenCalledTimes(1);
+    expect(mockSetAccessToken).toHaveBeenCalledWith('new-access-token');
+    expect(mockSetRefreshToken).toHaveBeenCalledWith('new-refresh-token');
+  });
+});
+
 describe('URL building', () => {
   it('filters out empty string params', async () => {
     mockFetch.mockResolvedValueOnce({
