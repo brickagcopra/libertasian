@@ -569,6 +569,71 @@ export class DigestsService {
     });
   }
 
+  /**
+   * Get a digest by ID for admin review. Bypasses user/org visibility checks.
+   * Authorization is handled by controller guards (RequiredPermissions).
+   */
+  async findByIdAdmin(digestId: string) {
+    const digest = await this.prisma.digest.findUnique({
+      where: { id: digestId },
+      include: {
+        legalDocument: {
+          select: {
+            id: true,
+            title: true,
+            shortTitle: true,
+            citationText: true,
+            grNo: true,
+            court: true,
+            decisionDate: true,
+            documentType: true,
+            ponente: true,
+          },
+        },
+        reviews: {
+          select: {
+            id: true,
+            verdict: true,
+            notes: true,
+            truthfulnessScore: true,
+            completenessScore: true,
+            citationAccuracyScore: true,
+            createdAt: true,
+            reviewer: {
+              select: { id: true, fullName: true },
+            },
+          },
+          orderBy: { createdAt: 'desc' as const },
+        },
+        derivativeGenerationJob: {
+          select: {
+            id: true,
+            derivativeType: true,
+            modelName: true,
+            promptTemplateVersion: true,
+            startedAt: true,
+            finishedAt: true,
+            tokensIn: true,
+            tokensOut: true,
+            estimatedCostUsd: true,
+          },
+        },
+        _count: {
+          select: {
+            doctrineExtracts: true,
+            editorialFlags: true,
+          },
+        },
+      },
+    });
+
+    if (!digest) {
+      throw new NotFoundException('Digest not found');
+    }
+
+    return digest;
+  }
+
   // =====================================================================
   // Admin Review Queue Methods — Phase 5 Batch 4
   // =====================================================================

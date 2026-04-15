@@ -783,3 +783,64 @@ export interface DerivativeSettings {
   enabled: boolean;
   typesEnabled: Record<string, boolean>;
 }
+
+export interface AdminDigestDetail {
+  id: string;
+  title: string;
+  digestType: string;
+  sourceOrigin: string;
+  facts: string | null;
+  issues: string | null;
+  ruling: string | null;
+  doctrine: string | null;
+  dispositive: string | null;
+  summary: string | null;
+  petitionerArguments: string | null;
+  respondentArguments: string | null;
+  confidenceScore: number | null;
+  reviewStatus: string;
+  visibility: string;
+  citedAuthoritiesJson: unknown;
+  createdAt: string;
+  legalDocument: {
+    id: string;
+    title: string;
+    shortTitle: string | null;
+    citationText: string | null;
+    grNo: string | null;
+    court: string | null;
+    decisionDate: string | null;
+    documentType: string;
+    ponente: string | null;
+  } | null;
+  reviews: Array<{
+    id: string;
+    verdict: string;
+    notes: string | null;
+    truthfulnessScore: number | null;
+    completenessScore: number | null;
+    citationAccuracyScore: number | null;
+    createdAt: string;
+    reviewer: { id: string; fullName: string | null } | null;
+  }>;
+  derivativeGenerationJob: {
+    id: string;
+    derivativeType: string;
+    modelName: string | null;
+    promptTemplateVersion: string | null;
+    startedAt: string | null;
+    finishedAt: string | null;
+    tokensIn: number;
+    tokensOut: number;
+    estimatedCostUsd: number;
+  } | null;
+  _count: {
+    doctrineExtracts: number;
+    editorialFlags: number;
+  };
+}
+
+export interface JobDigestResponse {
+  jobStatus: string;
+  digest: AdminDigestDetail | null;
+}

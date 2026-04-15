@@ -8,6 +8,7 @@ import type {
   DerivativeSettings,
   DerivativeJob,
   EnqueueResult,
+  JobDigestResponse,
 } from '../types';
 
 /** Standard API response envelope from NestJS controllers */
@@ -73,6 +74,19 @@ export function useDerivativeJob(id: string) {
       return res.data;
     },
     enabled: !!id,
+  });
+}
+
+export function useJobDigest(jobId: string, opts?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['admin', 'derivatives', 'jobs', jobId, 'digest'],
+    queryFn: async () => {
+      const res = await apiClient.get<ApiEnvelope<JobDigestResponse>>(
+        `/admin/derivatives/jobs/${jobId}/digest`,
+      );
+      return res.data;
+    },
+    enabled: opts?.enabled !== false && !!jobId,
   });
 }
 
