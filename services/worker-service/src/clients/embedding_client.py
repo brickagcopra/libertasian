@@ -15,6 +15,11 @@ from ..config import settings
 logger = logging.getLogger(__name__)
 
 
+def _internal_headers() -> dict[str, str]:
+    """Return auth headers for internal service-to-service calls."""
+    return {"X-Internal-Api-Key": settings.internal_api_key}
+
+
 def generate_embedding(text: str) -> dict[str, Any]:
     """Generate an embedding for a single text.
 
@@ -28,7 +33,7 @@ def generate_embedding(text: str) -> dict[str, Any]:
     payload = {"text": text}
 
     with httpx.Client(timeout=settings.embedding_request_timeout) as client:
-        response = client.post(url, json=payload)
+        response = client.post(url, json=payload, headers=_internal_headers())
         response.raise_for_status()
         return response.json()
 
@@ -60,7 +65,7 @@ def generate_embeddings_batch(texts: list[str]) -> dict[str, Any]:
         payload = {"texts": chunk}
 
         with httpx.Client(timeout=settings.embedding_request_timeout) as client:
-            response = client.post(url, json=payload)
+            response = client.post(url, json=payload, headers=_internal_headers())
             response.raise_for_status()
             result = response.json()
 

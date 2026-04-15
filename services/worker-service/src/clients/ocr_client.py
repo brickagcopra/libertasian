@@ -14,6 +14,11 @@ from ..config import settings
 logger = logging.getLogger(__name__)
 
 
+def _internal_headers() -> dict[str, str]:
+    """Return auth headers for internal service-to-service calls."""
+    return {"X-Internal-Api-Key": settings.internal_api_key}
+
+
 def score_quality(image_bytes: bytes, filename: str = "image.jpg") -> dict[str, Any]:
     """Call the OCR service quality scoring endpoint.
 
@@ -28,7 +33,7 @@ def score_quality(image_bytes: bytes, filename: str = "image.jpg") -> dict[str, 
     files = {"file": (filename, image_bytes)}
 
     with httpx.Client(timeout=settings.quality_request_timeout) as client:
-        response = client.post(url, files=files)
+        response = client.post(url, files=files, headers=_internal_headers())
         response.raise_for_status()
         result: dict[str, Any] = response.json()
         return result
@@ -54,7 +59,7 @@ def extract_text(
     data = {"language": language}
 
     with httpx.Client(timeout=settings.ocr_request_timeout) as client:
-        response = client.post(url, files=files, data=data)
+        response = client.post(url, files=files, data=data, headers=_internal_headers())
         response.raise_for_status()
         result: dict[str, Any] = response.json()
         return result
@@ -72,7 +77,7 @@ def classify_document(text: str) -> dict[str, Any]:
     url = f"{settings.ocr_service_url}/classify"
 
     with httpx.Client(timeout=settings.classify_request_timeout) as client:
-        response = client.post(url, json={"text": text})
+        response = client.post(url, json={"text": text}, headers=_internal_headers())
         response.raise_for_status()
         result: dict[str, Any] = response.json()
         return result
@@ -90,7 +95,7 @@ def extract_citations(text: str) -> dict[str, Any]:
     url = f"{settings.ocr_service_url}/citations/extract"
 
     with httpx.Client(timeout=settings.citation_request_timeout) as client:
-        response = client.post(url, json={"text": text})
+        response = client.post(url, json={"text": text}, headers=_internal_headers())
         response.raise_for_status()
         result: dict[str, Any] = response.json()
         return result
