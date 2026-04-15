@@ -4,6 +4,7 @@
  * Per PRD: WS-01 through WS-10.
  * Per CLAUDE.md: Tenant isolation, org-scoped data, cursor pagination.
  */
+export {};
 
 const mockGet = jest.fn();
 const mockPost = jest.fn();

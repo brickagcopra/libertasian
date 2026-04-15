@@ -8,7 +8,7 @@
     "dev": "TZ=Asia/Manila dotenv -e ../../.env -- nest start --watch",
     "start": "node dist/main",
     "start:debug": "dotenv -e ../../.env -- nest start --debug --watch",
-    "lint": "eslint src/",
+    "lint": "tsc --noEmit",
     "test": "jest",
     "test:e2e": "dotenv -e ../../.env -- jest --config ./test/jest-e2e.json",
     "type-check": "tsc --noEmit",

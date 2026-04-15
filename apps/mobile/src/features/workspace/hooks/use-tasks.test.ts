@@ -34,9 +34,9 @@ describe('useTasks', () => {
 
   it('passes filters', async () => {
     mockGet.mockResolvedValueOnce({ data: [], meta: { hasNext: false } });
-    renderHook(() => useTasks({ status: 'open', matterId: 'm1', priority: 'high' }), { wrapper: createWrapper() });
+    renderHook(() => useTasks({ status: 'todo', matterId: 'm1', priority: 'high' }), { wrapper: createWrapper() });
     await waitFor(() => expect(mockGet).toHaveBeenCalled());
-    expect(mockGet).toHaveBeenCalledWith('/tasks', { params: { status: 'open', matterId: 'm1', priority: 'high' } });
+    expect(mockGet).toHaveBeenCalledWith('/tasks', { params: { status: 'todo', matterId: 'm1', priority: 'high' } });
   });
 });
 

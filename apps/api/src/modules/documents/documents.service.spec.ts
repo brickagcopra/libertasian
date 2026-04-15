@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { DocumentsService } from './documents.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
 import {
   CreateLegalDocumentDto,
   UpdateLegalDocumentDto,
@@ -11,6 +12,7 @@ import {
 describe('DocumentsService', () => {
   let service: DocumentsService;
   let prismaService: jest.Mocked<PrismaService>;
+  let auditService: jest.Mocked<AuditService>;
 
   const mockPrismaService = {
     legalDocument: {
@@ -28,6 +30,17 @@ describe('DocumentsService', () => {
     citation: {
       findMany: jest.fn(),
     },
+    derivativeGenerationJob: {
+      findFirst: jest.fn(),
+      create: jest.fn(),
+    },
+    derivativeArtifact: {
+      findFirst: jest.fn(),
+    },
+  };
+
+  const mockAuditService = {
+    log: jest.fn().mockResolvedValue(undefined),
   };
 
   beforeEach(async () => {
@@ -38,11 +51,16 @@ describe('DocumentsService', () => {
           provide: PrismaService,
           useValue: mockPrismaService,
         },
+        {
+          provide: AuditService,
+          useValue: mockAuditService,
+        },
       ],
     }).compile();
 
     service = module.get<DocumentsService>(DocumentsService);
     prismaService = module.get(PrismaService);
+    auditService = module.get(AuditService);
   });
 
   afterEach(() => {
@@ -553,6 +571,146 @@ describe('DocumentsService', () => {
       await expect(service.publishDocument('non-existent')).rejects.toThrow(
         new NotFoundException('Legal document not found'),
       );
+    });
+
+    it('should auto-enqueue 2 derivative jobs when no existing jobs or artifacts', async () => {
+      const mockDoc = {
+        id: 'doc-1',
+        title: 'Test Document',
+        status: 'draft',
+        truthfulnessStatus: 'needs_review',
+        isPublished: false,
+        source: { id: 'source-1', trustLevel: 'high' },
+        editorialFlags: [],
+      };
+
+      mockPrismaService.legalDocument.findUnique.mockResolvedValue(mockDoc);
+      mockPrismaService.legalDocument.update.mockResolvedValue({
+        ...mockDoc,
+        status: 'published',
+        truthfulnessStatus: 'verified',
+        isPublished: true,
+      });
+
+      // No existing jobs or artifacts
+      mockPrismaService.derivativeGenerationJob.findFirst.mockResolvedValue(null);
+      mockPrismaService.derivativeArtifact.findFirst.mockResolvedValue(null);
+
+      let jobCounter = 0;
+      mockPrismaService.derivativeGenerationJob.create.mockImplementation(async () => {
+        jobCounter += 1;
+        return { id: `job-${jobCounter}` };
+      });
+
+      await service.publishDocument('doc-1');
+
+      // Allow fire-and-forget promise to resolve
+      await new Promise(process.nextTick);
+
+      expect(mockPrismaService.derivativeGenerationJob.create).toHaveBeenCalledTimes(2);
+      expect(mockPrismaService.derivativeGenerationJob.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          derivativeType: 'case_digest',
+          triggerType: 'auto_publish',
+          sourceDocumentId: 'doc-1',
+          status: 'pending',
+          triggeredByUserId: null,
+        }),
+      });
+      expect(mockPrismaService.derivativeGenerationJob.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          derivativeType: 'doctrine_extract',
+          triggerType: 'auto_publish',
+          sourceDocumentId: 'doc-1',
+          status: 'pending',
+          triggeredByUserId: null,
+        }),
+      });
+
+      expect(mockAuditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'document.auto_enqueue_derivatives',
+          entityType: 'legal_document',
+          entityId: 'doc-1',
+          metadata: expect.objectContaining({
+            enqueuedTypes: ['case_digest', 'doctrine_extract'],
+            skippedTypes: [],
+          }),
+        }),
+      );
+    });
+
+    it('should skip case_digest when a pending job already exists', async () => {
+      const mockDoc = {
+        id: 'doc-1',
+        title: 'Test Document',
+        status: 'draft',
+        truthfulnessStatus: 'needs_review',
+        isPublished: false,
+        source: { id: 'source-1', trustLevel: 'high' },
+        editorialFlags: [],
+      };
+
+      mockPrismaService.legalDocument.findUnique.mockResolvedValue(mockDoc);
+      mockPrismaService.legalDocument.update.mockResolvedValue({
+        ...mockDoc,
+        status: 'published',
+        truthfulnessStatus: 'verified',
+        isPublished: true,
+      });
+
+      // case_digest has a pending job; doctrine_extract does not
+      mockPrismaService.derivativeGenerationJob.findFirst.mockImplementation(
+        async (args: { where: { derivativeType: string } }) => {
+          if (args.where.derivativeType === 'case_digest') {
+            return { id: 'existing-job-1' };
+          }
+          return null;
+        },
+      );
+      mockPrismaService.derivativeArtifact.findFirst.mockResolvedValue(null);
+      mockPrismaService.derivativeGenerationJob.create.mockResolvedValue({
+        id: 'job-new',
+      });
+
+      await service.publishDocument('doc-1');
+      await new Promise(process.nextTick);
+
+      // Only doctrine_extract should be created
+      expect(mockPrismaService.derivativeGenerationJob.create).toHaveBeenCalledTimes(1);
+      expect(mockPrismaService.derivativeGenerationJob.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          derivativeType: 'doctrine_extract',
+        }),
+      });
+
+      expect(mockAuditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            enqueuedTypes: ['doctrine_extract'],
+            skippedTypes: ['case_digest'],
+          }),
+        }),
+      );
+    });
+
+    it('should not enqueue when high-severity editorial flags block publish', async () => {
+      const mockDoc = {
+        id: 'doc-1',
+        title: 'Test Document',
+        status: 'draft',
+        source: { id: 'source-1', trustLevel: 'high' },
+        editorialFlags: [{ id: 'flag-1' }],
+      };
+
+      mockPrismaService.legalDocument.findUnique.mockResolvedValue(mockDoc);
+
+      await expect(service.publishDocument('doc-1')).rejects.toThrow(
+        BadRequestException,
+      );
+
+      expect(mockPrismaService.legalDocument.update).not.toHaveBeenCalled();
+      expect(mockPrismaService.derivativeGenerationJob.create).not.toHaveBeenCalled();
     });
   });
 

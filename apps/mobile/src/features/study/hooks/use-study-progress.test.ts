@@ -57,9 +57,9 @@ describe('useUpsertStudyProgress', () => {
     mockPatch.mockResolvedValueOnce({ entityType: 'codal', entityId: '1', progress: 100 });
     const { result } = renderHook(() => useUpsertStudyProgress(), { wrapper: createWrapper() });
     await act(async () => {
-      result.current.mutate({ entityType: 'codal', entityId: '1', input: { progress: 100 } });
+      result.current.mutate({ entityType: 'codal', entityId: '1', input: { status: 'completed', progressPct: 100 } });
     });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(mockPatch).toHaveBeenCalledWith('/study/progress/codal/1', { progress: 100 });
+    expect(mockPatch).toHaveBeenCalledWith('/study/progress/codal/1', { status: 'completed', progressPct: 100 });
   });
 });

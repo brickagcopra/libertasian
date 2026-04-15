@@ -4,6 +4,7 @@
  * Per PRD: SRCH-01 through SRCH-12, DOC-01 through DOC-08.
  * Per CLAUDE.md: Citation normalization, OpenSearch, ETag caching.
  */
+export {};
 
 const mockPost = jest.fn();
 const mockGet = jest.fn();

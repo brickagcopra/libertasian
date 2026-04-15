@@ -7,6 +7,7 @@ import {
 import type { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
 import {
   CreateLegalDocumentDto,
   UpdateLegalDocumentDto,
@@ -14,11 +15,16 @@ import {
   CreateDocumentSectionDto,
 } from './dto';
 
+const AUTO_ENQUEUE_DERIVATIVE_TYPES = ['case_digest', 'doctrine_extract'] as const;
+
 @Injectable()
 export class DocumentsService {
   private readonly logger = new Logger(DocumentsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   // ---- Legal Document CRUD ----
 
@@ -313,7 +319,7 @@ export class DocumentsService {
       );
     }
 
-    return this.prisma.legalDocument.update({
+    const updated = await this.prisma.legalDocument.update({
       where: { id },
       data: {
         status: 'published',
@@ -321,6 +327,89 @@ export class DocumentsService {
         isPublished: true,
       },
     });
+
+    // Auto-enqueue derivative generation jobs (fire-and-forget — never
+    // block the publish response).
+    this.enqueueDerivativeJobs(id).catch((err) => {
+      this.logger.error(
+        `Failed to auto-enqueue derivative jobs for document ${id}`,
+        err,
+      );
+    });
+
+    return updated;
+  }
+
+  private async enqueueDerivativeJobs(documentId: string): Promise<void> {
+    const enqueuedTypes: string[] = [];
+    const skippedTypes: string[] = [];
+    const jobIds: string[] = [];
+
+    for (const derivativeType of AUTO_ENQUEUE_DERIVATIVE_TYPES) {
+      // Skip if a pending or running job already exists
+      const existingJob =
+        await this.prisma.derivativeGenerationJob.findFirst({
+          where: {
+            derivativeType,
+            sourceDocumentId: documentId,
+            status: { in: ['pending', 'running'] },
+          },
+          select: { id: true },
+        });
+
+      if (existingJob) {
+        skippedTypes.push(derivativeType);
+        continue;
+      }
+
+      // Skip if a non-deleted artifact already exists
+      const existingArtifact =
+        await this.prisma.derivativeArtifact.findFirst({
+          where: {
+            derivativeType,
+            sourceDocumentId: documentId,
+            deletedAt: null,
+          },
+          select: { id: true },
+        });
+
+      if (existingArtifact) {
+        skippedTypes.push(derivativeType);
+        continue;
+      }
+
+      const job = await this.prisma.derivativeGenerationJob.create({
+        data: {
+          derivativeType,
+          triggerType: 'auto_publish',
+          sourceDocumentId: documentId,
+          status: 'pending',
+          triggeredByUserId: null,
+        },
+      });
+
+      enqueuedTypes.push(derivativeType);
+      jobIds.push(job.id);
+    }
+
+    await this.audit.log({
+      actorType: 'system',
+      action: 'document.auto_enqueue_derivatives',
+      entityType: 'legal_document',
+      entityId: documentId,
+      metadata: {
+        actor_label: 'auto_publish',
+        enqueuedTypes,
+        skippedTypes,
+        jobIds,
+      },
+    });
+
+    if (enqueuedTypes.length > 0) {
+      this.logger.log(
+        `Auto-enqueued derivative jobs for document ${documentId}: ${enqueuedTypes.join(', ')}`,
+      );
+    }
   }
 
   async quarantineDocument(id: string) {

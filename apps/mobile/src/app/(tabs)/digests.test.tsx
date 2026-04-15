@@ -74,7 +74,7 @@ describe('DigestsTab', () => {
       wrapper: createWrapper(),
     });
 
-    expect(queryByText('No digests yet')).toBeTruthy();
+    expect(queryByText('No digests found')).toBeTruthy();
     expect(
       queryByText('Generate case digests from legal documents using AI'),
     ).toBeTruthy();

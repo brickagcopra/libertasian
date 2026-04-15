@@ -12,7 +12,7 @@ jest.mock('../../../lib/api-client', () => ({
 
 const mockGet = apiClient.get as jest.MockedFunction<typeof apiClient.get>;
 const mockPost = apiClient.post as jest.MockedFunction<typeof apiClient.post>;
-const mockPatch = (apiClient as Record<string, unknown>).patch as jest.MockedFunction<typeof apiClient.get>;
+const mockPatch = apiClient.patch as jest.MockedFunction<typeof apiClient.patch>;
 const mockDelete = apiClient.delete as jest.MockedFunction<typeof apiClient.delete>;
 
 function createWrapper() {
