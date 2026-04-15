@@ -19,6 +19,7 @@ from src.digests.schemas import (
     ProvenanceEntry,
 )
 from src.digests.service import (
+    _coerce_text,
     _compute_confidence,
     _extract_provenance,
     _format_sections,
@@ -76,6 +77,50 @@ def _make_full_digest_data() -> dict[str, Any]:
             },
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# _coerce_text
+# ---------------------------------------------------------------------------
+
+
+class TestCoerceText:
+    def test_string_passthrough(self) -> None:
+        assert _coerce_text("hello") == "hello"
+
+    def test_empty_string_returns_none(self) -> None:
+        assert _coerce_text("") is None
+        assert _coerce_text("   ") is None
+
+    def test_none_returns_none(self) -> None:
+        assert _coerce_text(None) is None
+
+    def test_list_of_strings_joined_as_bullets(self) -> None:
+        result = _coerce_text(["Issue one", "Issue two"])
+        assert result is not None
+        assert "- Issue one" in result
+        assert "- Issue two" in result
+        assert "\n\n" in result
+
+    def test_single_item_list(self) -> None:
+        result = _coerce_text(["Only issue"])
+        assert result == "- Only issue"
+
+    def test_empty_list_returns_none(self) -> None:
+        assert _coerce_text([]) is None
+
+    def test_list_with_empty_strings_filtered(self) -> None:
+        result = _coerce_text(["Valid", "", None, "Also valid"])
+        assert result is not None
+        assert "- Valid" in result
+        assert "- Also valid" in result
+
+    def test_list_of_all_empty_returns_none(self) -> None:
+        assert _coerce_text(["", None]) is None
+
+    def test_unexpected_type_stringified(self) -> None:
+        result = _coerce_text(42)
+        assert result == "42"
 
 
 # ---------------------------------------------------------------------------
@@ -398,6 +443,16 @@ class TestComputeConfidence:
         # Should be rounded to 2 decimal places
         assert confidence == round(confidence, 2)
 
+    def test_list_valued_fields_counted_as_filled(self) -> None:
+        """When the LLM returns list[str] for a field, it should still count."""
+        data = _make_full_digest_data()
+        data["issues"] = ["Issue one", "Issue two"]
+        data["facts"] = ["Fact one", "Fact two"]
+        sections = self._make_sections(5)
+
+        confidence = _compute_confidence(data, sections)
+        assert confidence > 0.7
+
 
 # ---------------------------------------------------------------------------
 # generate_digest — full pipeline
@@ -542,6 +597,30 @@ class TestGenerateDigest:
         call_kwargs = self.mock_generate.call_args.kwargs
         assert call_kwargs.get("response_format") == "json_object"
         assert call_kwargs.get("temperature") == 0.2
+
+    @pytest.mark.asyncio
+    async def test_list_valued_issues_coerced_to_string(self) -> None:
+        """When the LLM returns issues as a list, they should be coerced to a bulleted string."""
+        data = _make_full_digest_data()
+        data["issues"] = [
+            "Whether the Court of Appeals erred in affirming the conviction.",
+            "Whether the evidence was sufficient to prove guilt beyond reasonable doubt of murder.",
+        ]
+        data["facts"] = ["Fact one.", "Fact two."]
+        self.mock_generate.return_value = json.dumps(data)
+
+        request = DigestGenerationRequest(
+            document_id="doc-0001",
+            sections=[_make_section()],
+        )
+        response = await generate_digest(request)
+
+        assert isinstance(response, DigestGenerationResponse)
+        assert isinstance(response.issues, str)
+        assert "- Whether the Court of Appeals" in response.issues
+        assert "- Whether the evidence" in response.issues
+        assert isinstance(response.facts, str)
+        assert "- Fact one." in response.facts
 
     @pytest.mark.asyncio
     async def test_null_empty_string_fields_become_none(self) -> None:
