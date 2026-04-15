@@ -8,9 +8,9 @@ jest.mock('../../features/camera-scan/hooks/use-uploads', () => ({
   useUploads: (...args: unknown[]) => mockUseUploads(...args),
 }));
 
-const mockUseSubscription = jest.fn();
-jest.mock('../../features/subscription/hooks/use-subscription', () => ({
-  useSubscription: () => mockUseSubscription(),
+const mockUseQuotaUsage = jest.fn();
+jest.mock('../../features/billing/hooks/use-quotas', () => ({
+  useQuotaUsage: () => mockUseQuotaUsage(),
 }));
 
 jest.mock('expo-router', () => ({
@@ -45,7 +45,7 @@ function createWrapper() {
 describe('ScanTab', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockUseSubscription.mockReturnValue({
+    mockUseQuotaUsage.mockReturnValue({
       data: null,
     });
   });
@@ -147,10 +147,11 @@ describe('ScanTab', () => {
       refetch: jest.fn(),
       isRefetching: false,
     });
-    mockUseSubscription.mockReturnValue({
+    mockUseQuotaUsage.mockReturnValue({
       data: {
-        entitlements: { cameraScansPerMonth: 20 },
-        usage: { cameraScansUsed: 5 },
+        quotas: {
+          camera_scans_per_month: { limit: 20, used: 5 },
+        },
       },
     });
 
@@ -168,10 +169,11 @@ describe('ScanTab', () => {
       refetch: jest.fn(),
       isRefetching: false,
     });
-    mockUseSubscription.mockReturnValue({
+    mockUseQuotaUsage.mockReturnValue({
       data: {
-        entitlements: { cameraScansPerMonth: -1 },
-        usage: { cameraScansUsed: 100 },
+        quotas: {
+          camera_scans_per_month: { limit: -1, used: 100 },
+        },
       },
     });
 
