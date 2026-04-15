@@ -51,7 +51,10 @@ def _make_sections(count: int = 3) -> list[LegalDocumentSectionSnapshot]:
 
 
 def _make_content(**overrides: object) -> dict:
-    """Build a content dict that passes all CaseDigestValidator checks."""
+    """Build a content dict that passes all CaseDigestValidator checks.
+
+    Uses RAG DigestGenerationResponse snake_case format.
+    """
     sections = _make_sections()
     defaults: dict = {
         "facts": " ".join(["word"] * 100),  # 100 words, within 80-1000
@@ -59,20 +62,16 @@ def _make_content(**overrides: object) -> dict:
         "ruling": " ".join(["word"] * 150),  # 150 words, within 100-1500
         "doctrine": " ".join(["word"] * 50),  # 50 words, within 30-400
         "dispositive": " ".join(["word"] * 20),  # 20 words, within 10-300
-        "citedAuthorities": [
-            {"citationText": "G.R. No. 111", "sectionIds": ["sec-000"]},
+        "cited_authorities": [
+            {"citation_text": "G.R. No. 111", "document_type": "case"},
         ],
-        "sectionUsage": [
-            {
-                "sectionId": sections[0].id,
-                "fields": ["facts", "issues"],
-            },
-            {
-                "sectionId": sections[1].id,
-                "fields": ["ruling", "doctrine"],
-            },
+        "provenance": [
+            {"field": "facts", "source_section_id": sections[0].id, "source_document_id": "doc-001"},
+            {"field": "issues", "source_section_id": sections[0].id, "source_document_id": "doc-001"},
+            {"field": "ruling", "source_section_id": sections[1].id, "source_document_id": "doc-001"},
+            {"field": "doctrine", "source_section_id": sections[1].id, "source_document_id": "doc-001"},
         ],
-        "confidenceSelfReport": 0.8,
+        "confidence_score": 0.8,
     }
     defaults.update(overrides)
     return defaults
@@ -269,11 +268,10 @@ class TestCaseDigestValidatorHumanReview:
         validator = CaseDigestValidator()
         sections = _make_sections()
         content = _make_content(
-            sectionUsage=[
-                {
-                    "sectionId": sections[0].id,
-                    "fields": ["issues", "ruling", "doctrine"],  # no "facts"
-                },
+            provenance=[
+                {"field": "issues", "source_section_id": sections[0].id, "source_document_id": "doc-001"},
+                {"field": "ruling", "source_section_id": sections[0].id, "source_document_id": "doc-001"},
+                {"field": "doctrine", "source_section_id": sections[0].id, "source_document_id": "doc-001"},
             ],
         )
 
@@ -293,11 +291,10 @@ class TestCaseDigestValidatorHumanReview:
         validator = CaseDigestValidator()
         sections = _make_sections()
         content = _make_content(
-            sectionUsage=[
-                {
-                    "sectionId": sections[0].id,
-                    "fields": ["facts", "issues", "ruling"],  # no "doctrine"
-                },
+            provenance=[
+                {"field": "facts", "source_section_id": sections[0].id, "source_document_id": "doc-001"},
+                {"field": "issues", "source_section_id": sections[0].id, "source_document_id": "doc-001"},
+                {"field": "ruling", "source_section_id": sections[0].id, "source_document_id": "doc-001"},
             ],
         )
 
@@ -315,7 +312,7 @@ class TestCaseDigestValidatorHumanReview:
     def test_confidence_below_threshold(self) -> None:
         """12. Confidence below 0.5 -> HUMAN_REVIEW."""
         validator = CaseDigestValidator()
-        content = _make_content(confidenceSelfReport=0.3)
+        content = _make_content(confidence_score=0.3)
 
         result = validator.validate(
             derivative_type="case_digest",
@@ -329,15 +326,15 @@ class TestCaseDigestValidatorHumanReview:
         assert "confidence_threshold" in warning_names
 
     def test_section_id_not_in_source_sections(self) -> None:
-        """14. Section ID in usage not in source_sections -> HUMAN_REVIEW."""
+        """14. Section ID in provenance not in source_sections -> HUMAN_REVIEW."""
         validator = CaseDigestValidator()
         sections = _make_sections()
         content = _make_content(
-            sectionUsage=[
-                {
-                    "sectionId": "non-existent-section-id",
-                    "fields": ["facts", "issues", "ruling", "doctrine"],
-                },
+            provenance=[
+                {"field": "facts", "source_section_id": "non-existent-section-id", "source_document_id": "doc-001"},
+                {"field": "issues", "source_section_id": "non-existent-section-id", "source_document_id": "doc-001"},
+                {"field": "ruling", "source_section_id": "non-existent-section-id", "source_document_id": "doc-001"},
+                {"field": "doctrine", "source_section_id": "non-existent-section-id", "source_document_id": "doc-001"},
             ],
         )
 
@@ -352,12 +349,12 @@ class TestCaseDigestValidatorHumanReview:
         warning_names = [c.name for c in result.warnings]
         assert any(name.startswith("section_exists_") for name in warning_names)
 
-    def test_citation_without_section_ids(self) -> None:
-        """15. Citation without sectionIds -> HUMAN_REVIEW."""
+    def test_citation_without_text(self) -> None:
+        """15. Citation without citation_text -> HUMAN_REVIEW."""
         validator = CaseDigestValidator()
         content = _make_content(
-            citedAuthorities=[
-                {"citationText": "G.R. No. 111", "sectionIds": None},
+            cited_authorities=[
+                {"citation_text": "", "document_type": "case"},
             ],
         )
 

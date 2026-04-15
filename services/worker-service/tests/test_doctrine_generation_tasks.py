@@ -93,25 +93,21 @@ VALID_VERBATIM = (
     "who hold positions of authority in the government"
 )
 
-VALID_LLM_CONTENT: dict[str, Any] = {
+# RAG DoctrineExtractionResponse shape — flat, snake_case, no content wrapper
+FAKE_RAG_RESPONSE: dict[str, Any] = {
+    "document_id": "doc-001",
     "doctrines": [
         {
             "text": VALID_DOCTRINE_TEXT,
-            "verbatimSourceText": VALID_VERBATIM,
-            "sectionId": "sec-001",
-            "doctrineType": "rule",
-            "relatedDoctrines": [],
+            "normalized_text": VALID_DOCTRINE_TEXT.strip()[:500],
+            "doctrine_type": "ratio_decidendi",
+            "source_section_id": "sec-001",
+            "confidence": 0.85,
         },
     ],
-    "abstain": False,
-    "abstainReason": None,
-}
-
-FAKE_LLM_RESPONSE: dict[str, Any] = {
-    "content": VALID_LLM_CONTENT,
+    "strategy_used": "sections_only",
     "model_name": "gpt-4o-mini",
-    "tokens_in": 1500,
-    "tokens_out": 800,
+    "prompt_template_version": "doctrine_extract.v1",
 }
 
 
@@ -143,7 +139,7 @@ class TestGenerateDoctrineExtract:
         mock_db.get_legal_document.return_value = FAKE_DOC
         mock_db.get_document_sections_for_digest.return_value = FAKE_SECTIONS
         mock_db.create_model_run.return_value = "model-run-001"
-        mock_rag.generate_completion.return_value = FAKE_LLM_RESPONSE
+        mock_rag.extract_doctrines.return_value = FAKE_RAG_RESPONSE
         mock_validate.return_value = DerivativeValidationResult(
             verdict=DerivativeVerdict.PUBLISH,
             checks=[],
@@ -203,7 +199,7 @@ class TestGenerateDoctrineExtract:
         """Validator quarantine: missing verbatim text -> job failed, no write."""
         mock_db.get_legal_document.return_value = FAKE_DOC
         mock_db.get_document_sections_for_digest.return_value = FAKE_SECTIONS
-        mock_rag.generate_completion.return_value = FAKE_LLM_RESPONSE
+        mock_rag.extract_doctrines.return_value = FAKE_RAG_RESPONSE
         mock_validate.return_value = DerivativeValidationResult(
             verdict=DerivativeVerdict.QUARANTINE,
             checks=[
@@ -238,7 +234,7 @@ class TestGenerateDoctrineExtract:
         """Validator quarantine: invalid doctrine type -> job failed."""
         mock_db.get_legal_document.return_value = FAKE_DOC
         mock_db.get_document_sections_for_digest.return_value = FAKE_SECTIONS
-        mock_rag.generate_completion.return_value = FAKE_LLM_RESPONSE
+        mock_rag.extract_doctrines.return_value = FAKE_RAG_RESPONSE
         mock_validate.return_value = DerivativeValidationResult(
             verdict=DerivativeVerdict.QUARANTINE,
             checks=[
@@ -274,7 +270,7 @@ class TestGenerateDoctrineExtract:
         mock_db.get_legal_document.return_value = FAKE_DOC
         mock_db.get_document_sections_for_digest.return_value = FAKE_SECTIONS
         mock_db.create_model_run.return_value = "model-run-001"
-        mock_rag.generate_completion.return_value = FAKE_LLM_RESPONSE
+        mock_rag.extract_doctrines.return_value = FAKE_RAG_RESPONSE
         mock_validate.return_value = DerivativeValidationResult(
             verdict=DerivativeVerdict.HUMAN_REVIEW,
             checks=[
@@ -315,7 +311,7 @@ class TestGenerateDoctrineExtract:
         mock_db.get_legal_document.return_value = FAKE_DOC
         mock_db.get_document_sections_for_digest.return_value = FAKE_SECTIONS
         mock_db.create_model_run.return_value = "model-run-001"
-        mock_rag.generate_completion.return_value = FAKE_LLM_RESPONSE
+        mock_rag.extract_doctrines.return_value = FAKE_RAG_RESPONSE
         mock_validate.return_value = DerivativeValidationResult(
             verdict=DerivativeVerdict.HUMAN_REVIEW,
             checks=[
@@ -354,7 +350,7 @@ class TestGenerateDoctrineExtract:
         mock_db.get_legal_document.return_value = FAKE_DOC
         mock_db.get_document_sections_for_digest.return_value = FAKE_SECTIONS
         mock_db.create_model_run.return_value = "model-run-001"
-        mock_rag.generate_completion.return_value = FAKE_LLM_RESPONSE
+        mock_rag.extract_doctrines.return_value = FAKE_RAG_RESPONSE
         mock_validate.return_value = DerivativeValidationResult(
             verdict=DerivativeVerdict.HUMAN_REVIEW,
             checks=[
@@ -381,52 +377,70 @@ class TestGenerateDoctrineExtract:
     @patch("src.tasks.doctrine_generation_tasks.nestjs_client")
     @patch("src.tasks.doctrine_generation_tasks.rag_client")
     @patch("src.tasks.doctrine_generation_tasks.db")
-    def test_8_invalid_json(
+    def test_8_rag_http_error(
         self,
         mock_db: MagicMock,
         mock_rag: MagicMock,
         mock_nestjs: MagicMock,
     ) -> None:
-        """LLM returns invalid JSON -> job failed."""
+        """RAG service returns HTTP error -> job failed."""
+        import httpx
+
         mock_db.get_legal_document.return_value = FAKE_DOC
         mock_db.get_document_sections_for_digest.return_value = FAKE_SECTIONS
-        mock_rag.generate_completion.return_value = {
-            **FAKE_LLM_RESPONSE,
-            "content": "This is not JSON {broken",
-        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.text = "Internal Server Error"
+        mock_rag.extract_doctrines.side_effect = httpx.HTTPStatusError(
+            "Server Error",
+            request=MagicMock(),
+            response=mock_response,
+        )
         mock_nestjs.update_job_status.return_value = True
 
         result = _run_task("job-001", "doc-001")
 
         assert result["status"] == "failed"
-        assert result["reason"] == "invalid_json"
+        assert "http_error" in result["reason"]
 
     @patch("src.tasks.doctrine_generation_tasks.nestjs_client")
     @patch("src.tasks.doctrine_generation_tasks.rag_client")
     @patch("src.tasks.doctrine_generation_tasks.db")
-    def test_9_abstain_no_write(
+    @patch("src.tasks.doctrine_generation_tasks.validate_derivative")
+    def test_9_empty_doctrines_quarantine(
         self,
+        mock_validate: MagicMock,
         mock_db: MagicMock,
         mock_rag: MagicMock,
         mock_nestjs: MagicMock,
     ) -> None:
-        """Abstain -> no write, job failed."""
+        """RAG returns no doctrines -> validator quarantines."""
+        empty_response = {
+            **FAKE_RAG_RESPONSE,
+            "doctrines": [],
+        }
         mock_db.get_legal_document.return_value = FAKE_DOC
         mock_db.get_document_sections_for_digest.return_value = FAKE_SECTIONS
-        mock_rag.generate_completion.return_value = {
-            **FAKE_LLM_RESPONSE,
-            "content": {
-                "doctrines": [],
-                "abstain": True,
-                "abstainReason": "No doctrinal holdings",
-            },
-        }
+        mock_rag.extract_doctrines.return_value = empty_response
+        mock_validate.return_value = DerivativeValidationResult(
+            verdict=DerivativeVerdict.QUARANTINE,
+            checks=[
+                ValidatorCheck(
+                    name="doctrines_present",
+                    passed=False,
+                    reason="No doctrines extracted",
+                    severity="error",
+                ),
+            ],
+            reasons=["No doctrines extracted"],
+        )
         mock_nestjs.update_job_status.return_value = True
 
         result = _run_task("job-001", "doc-001")
 
         assert result["status"] == "failed"
-        assert result["reason"] == "abstained"
+        assert result["reason"] == "validation_quarantine"
         mock_nestjs.write_doctrines.assert_not_called()
 
 
@@ -477,11 +491,11 @@ class TestHelperFunctions:
     """Tests for helper functions."""
 
     def test_build_provenance_records(self) -> None:
-        """Provenance records built from doctrine sectionIds."""
+        """Provenance records built from RAG doctrine source_section_ids."""
         content = {
             "doctrines": [
-                {"sectionId": "sec-001"},
-                {"sectionId": "sec-002"},
+                {"source_section_id": "sec-001"},
+                {"source_section_id": "sec-002"},
             ],
         }
         provenance = _build_provenance_records(content, "doc-001", FAKE_SECTIONS)
@@ -492,10 +506,50 @@ class TestHelperFunctions:
         assert provenance[0]["provenanceType"] == "source_passage"
 
     def test_build_doctrine_entries(self) -> None:
-        """Doctrine entries built correctly."""
-        entries = _build_doctrine_entries(VALID_LLM_CONTENT)
+        """Doctrine entries built correctly from RAG snake_case response."""
+        entries = _build_doctrine_entries(FAKE_RAG_RESPONSE)
 
         assert len(entries) == 1
         assert entries[0]["text"] == VALID_DOCTRINE_TEXT
-        assert entries[0]["doctrineType"] == "rule"
-        assert entries[0]["sectionId"] == "sec-001"
+        assert entries[0]["doctrineType"] == "ratio_decidendi"
+        assert entries[0]["sourceSectionId"] == "sec-001"
+
+
+class TestIntegrationDoctrineRAGShape:
+    """Integration-style test: RAG's real response shape flows through the task."""
+
+    @patch("src.tasks.doctrine_generation_tasks.nestjs_client")
+    @patch("src.tasks.doctrine_generation_tasks.rag_client")
+    @patch("src.tasks.doctrine_generation_tasks.db")
+    def test_rag_response_completes_end_to_end(
+        self,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        mock_nestjs: MagicMock,
+    ) -> None:
+        """RAG's real DoctrineExtractionResponse shape -> task completes with status: completed."""
+        mock_db.get_legal_document.return_value = FAKE_DOC
+        mock_db.get_document_sections_for_digest.return_value = FAKE_SECTIONS
+        mock_db.create_model_run.return_value = "model-run-001"
+        mock_rag.extract_doctrines.return_value = FAKE_RAG_RESPONSE
+        mock_nestjs.write_doctrines.return_value = {
+            "artifactId": "artifact-001",
+            "doctrineIds": ["doctrine-001"],
+        }
+        mock_nestjs.update_job_status.return_value = True
+
+        result = _run_task("job-001", "doc-001")
+
+        assert result["status"] == "completed"
+        assert result["artifact_id"] == "artifact-001"
+        assert result["doctrine_ids"] == ["doctrine-001"]
+
+        # Verify provenance was built from RAG's source_section_id
+        write_call = mock_nestjs.write_doctrines.call_args
+        payload = write_call.args[0]
+        assert len(payload["provenanceRecords"]) >= 1
+        assert payload["provenanceRecords"][0]["sourceSectionId"] == "sec-001"
+
+        # Verify doctrine entries map RAG snake_case -> NestJS camelCase
+        assert payload["doctrines"][0]["doctrineType"] == "ratio_decidendi"
+        assert payload["doctrines"][0]["sourceSectionId"] == "sec-001"

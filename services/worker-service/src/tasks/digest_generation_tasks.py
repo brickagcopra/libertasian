@@ -14,7 +14,6 @@ Per CLAUDE.md:
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from typing import Any
@@ -25,11 +24,8 @@ from celery import shared_task
 from ..clients import ingestion_db_client as db
 from ..clients import nestjs_client
 from ..clients import rag_client
-from ..config import settings
 from ..prompts.case_digest_v1 import (
-    CASE_DIGEST_SYSTEM_PROMPT,
     PROMPT_TEMPLATE_VERSION,
-    build_user_prompt,
 )
 from ..validators.derivative_validators import (
     DerivativeVerdict,
@@ -126,16 +122,6 @@ def generate_case_digest(
                 "reason": eligibility.skip_reason,
             }
 
-        # Step 4: Build prompt
-        user_prompt = build_user_prompt(
-            title=doc.get("title", ""),
-            citation=doc.get("citation_text"),
-            court=doc.get("court"),
-            decision_date=doc.get("decision_date"),
-            ponente=doc.get("ponente"),
-            sections=sections_with_text,
-        )
-
         # Step 5: Call LLM
         start_time = time.monotonic()
         llm_response = rag_client.generate_digest(
@@ -146,31 +132,12 @@ def generate_case_digest(
         latency_ms = int((time.monotonic() - start_time) * 1000)
 
         model_name = llm_response.get("model_name", "unknown")
-        tokens_in = llm_response.get("tokens_in", 0)
-        tokens_out = llm_response.get("tokens_out", 0)
+        # RAG digest endpoint does not return token usage counts
+        tokens_in = 0
+        tokens_out = 0
 
-        # Step 6: Parse JSON output
-        raw_content = llm_response.get("content")
-        if isinstance(raw_content, str):
-            try:
-                content = json.loads(raw_content)
-            except json.JSONDecodeError:
-                _fail_job(job_id, "LLM returned invalid JSON", model_name=model_name)
-                return {"status": "failed", "reason": "invalid_json"}
-        elif isinstance(raw_content, dict):
-            content = raw_content
-        else:
-            _fail_job(job_id, "LLM returned unexpected content type", model_name=model_name)
-            return {"status": "failed", "reason": "unexpected_content_type"}
-
-        # Check for abstention
-        if content.get("abstain"):
-            _fail_job(
-                job_id,
-                f"LLM abstained: {content.get('abstainReason', 'unknown')}",
-                model_name=model_name,
-            )
-            return {"status": "failed", "reason": "abstained"}
+        # RAG returns flat DigestGenerationResponse — no content wrapper
+        content = llm_response
 
         # Step 7: Validate with CaseDigestValidator
         source_doc_snapshot = LegalDocumentSnapshot(
@@ -217,7 +184,7 @@ def generate_case_digest(
             }
 
         # Determine review status
-        confidence = content.get("confidenceSelfReport", 0.0)
+        confidence = content.get("confidence_score", 0.0)
         is_official = doc.get("is_official", False)
 
         if validation_result.verdict == DerivativeVerdict.HUMAN_REVIEW:
@@ -257,9 +224,9 @@ def generate_case_digest(
             "doctrine": content.get("doctrine"),
             "dispositive": content.get("dispositive"),
             "summary": content.get("summary"),
-            "petitionerArguments": content.get("petitionerArguments"),
-            "respondentArguments": content.get("respondentArguments"),
-            "citedAuthoritiesJson": content.get("citedAuthorities", []),
+            "petitionerArguments": content.get("petitioner_arguments"),
+            "respondentArguments": content.get("respondent_arguments"),
+            "citedAuthoritiesJson": content.get("cited_authorities", []),
             "confidenceScore": confidence,
             "reviewStatus": review_status,
             "visibility": "private",
@@ -273,7 +240,9 @@ def generate_case_digest(
             "modelRunId": model_run_id,
             "promptTemplateVersion": PROMPT_TEMPLATE_VERSION,
             "derivativeGenerationJobId": job_id,
-            "sectionUsageJson": content.get("sectionUsage", []),
+            "sectionUsageJson": _build_section_usage_from_provenance(
+                content.get("provenance", []),
+            ),
             "provenanceRecords": provenance_records,
         }
 
@@ -349,23 +318,27 @@ def _build_provenance_records(
     document_id: str,
     sections: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Build provenance records from LLM sectionUsage output."""
-    section_usage = content.get("sectionUsage", [])
+    """Build provenance records from RAG provenance output.
+
+    RAG returns provenance as:
+      [{field, source_section_id, source_document_id}, ...]
+    """
+    provenance_entries = content.get("provenance", [])
     section_ids = {s["id"] for s in sections}
     provenance: list[dict[str, Any]] = []
     seen: set[str] = set()
 
-    for usage in section_usage:
-        if not isinstance(usage, dict):
+    for entry in provenance_entries:
+        if not isinstance(entry, dict):
             continue
-        section_id = usage.get("sectionId")
+        section_id = entry.get("source_section_id")
         if not section_id or section_id not in section_ids:
             continue
         if section_id in seen:
             continue
         seen.add(section_id)
         provenance.append({
-            "sourceDocumentId": document_id,
+            "sourceDocumentId": entry.get("source_document_id", document_id),
             "sourceSectionId": section_id,
             "provenanceType": "source_passage",
         })
@@ -379,6 +352,32 @@ def _build_provenance_records(
         })
 
     return provenance
+
+
+def _build_section_usage_from_provenance(
+    provenance: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Transform RAG provenance entries into sectionUsage format for the DB column.
+
+    RAG provenance: [{field, source_section_id, source_document_id}, ...]
+    DB expects:     [{sectionId, fields: [...]}, ...]
+    """
+    section_fields: dict[str, list[str]] = {}
+    for entry in provenance:
+        if not isinstance(entry, dict):
+            continue
+        section_id = entry.get("source_section_id")
+        field = entry.get("field")
+        if not section_id or not field:
+            continue
+        if section_id not in section_fields:
+            section_fields[section_id] = []
+        if field not in section_fields[section_id]:
+            section_fields[section_id].append(field)
+    return [
+        {"sectionId": sid, "fields": fields}
+        for sid, fields in section_fields.items()
+    ]
 
 
 def _format_issues(issues: Any) -> str | None:

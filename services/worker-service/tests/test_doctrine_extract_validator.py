@@ -82,10 +82,10 @@ VALID_VERBATIM = (
 def _make_doctrine(overrides: dict | None = None) -> dict:
     base = {
         "text": VALID_DOCTRINE_TEXT,
-        "verbatimSourceText": VALID_VERBATIM,
-        "sectionId": "sec-001",
-        "doctrineType": "rule",
-        "relatedDoctrines": [],
+        "normalized_text": VALID_DOCTRINE_TEXT.strip()[:500],
+        "doctrine_type": "ratio_decidendi",
+        "source_section_id": "sec-001",
+        "confidence": 0.85,
     }
     if overrides:
         base.update(overrides)
@@ -136,20 +136,20 @@ class TestDoctrineExtractValidator:
         assert result.verdict == DerivativeVerdict.QUARANTINE
         assert any("No doctrines extracted" in r for r in result.reasons)
 
-    def test_3_missing_verbatim_quarantine(self) -> None:
-        """Missing verbatimSourceText -> QUARANTINE."""
+    def test_3_zero_word_doctrine_quarantine(self) -> None:
+        """Empty doctrine text -> QUARANTINE."""
         content = _make_content(doctrines=[
-            _make_doctrine({"verbatimSourceText": ""}),
+            _make_doctrine({"text": ""}),
         ])
         result = _validate(content)
 
         assert result.verdict == DerivativeVerdict.QUARANTINE
-        assert any("Missing verbatimSourceText" in r for r in result.reasons)
+        assert any("0 words" in r for r in result.reasons)
 
     def test_4_invalid_doctrine_type_quarantine(self) -> None:
         """Invalid doctrine type -> QUARANTINE."""
         content = _make_content(doctrines=[
-            _make_doctrine({"doctrineType": "invalid_type"}),
+            _make_doctrine({"doctrine_type": "invalid_type"}),
         ])
         result = _validate(content)
 
@@ -205,7 +205,7 @@ class TestDoctrineExtractValidator:
     def test_9_section_id_not_in_source_human_review(self) -> None:
         """Section ID not in source -> HUMAN_REVIEW."""
         content = _make_content(doctrines=[
-            _make_doctrine({"sectionId": "nonexistent-section-id"}),
+            _make_doctrine({"source_section_id": "nonexistent-section-id"}),
         ])
         result = _validate(content)
 
