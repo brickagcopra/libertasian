@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     embedding_request_timeout: int = 120
     embedding_batch_size: int = 64
 
+    # Derivative generation
+    derivative_poll_batch_size: int = 10
+
     # NestJS API (for internal service-to-service calls)
     nestjs_api_url: str = "http://localhost:3001/api/v1"
     internal_api_key: str = ""

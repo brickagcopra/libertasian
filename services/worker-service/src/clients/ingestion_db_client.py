@@ -729,6 +729,31 @@ def complete_ingestion_job_with_dedup(
     )
 
 
+# ─── Derivative Job Claim ──────────────────────────────────────────────
+
+
+def claim_derivative_job(job_id: str) -> bool:
+    """Atomically claim a dispatched derivative job by setting status to 'running'.
+
+    Returns True if the job was claimed (was still 'dispatched' or 'pending'),
+    False otherwise (already running, completed, or failed).
+    Uses optimistic locking via WHERE status IN ('dispatched', 'pending').
+    """
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """UPDATE derivative_generation_jobs
+                   SET status = 'running', started_at = NOW()
+                   WHERE id = %s AND status IN ('dispatched', 'pending')""",
+            (job_id,),
+        )
+        claimed = bool(cur.rowcount > 0)
+    if claimed:
+        logger.info("Claimed derivative job %s", job_id)
+    else:
+        logger.warning("Failed to claim derivative job %s (already claimed?)", job_id)
+    return claimed
+
+
 # ─── Digest Generation Operations ──────────────────────────────────────
 
 

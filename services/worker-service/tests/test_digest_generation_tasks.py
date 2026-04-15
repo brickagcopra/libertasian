@@ -156,9 +156,9 @@ class TestGenerateCaseDigest:
         assert result["status"] == "completed"
         assert result["digest_id"] == "digest-001"
         mock_nestjs.write_digest.assert_called_once()
-        # Verify job was marked running then completed
+        # Verify job was claimed via DB then marked completed via NestJS
+        mock_db.claim_derivative_job.assert_called_once_with("job-001")
         calls = mock_nestjs.update_job_status.call_args_list
-        assert calls[0].args == ("job-001", "running")
         assert calls[-1].args[0] == "job-001"
         assert calls[-1].args[1] == "completed"
 
