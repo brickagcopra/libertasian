@@ -14,7 +14,6 @@ Per CLAUDE.md:
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from typing import Any
@@ -214,51 +213,28 @@ def generate_doctrine_extract(
                 "reason": eligibility.skip_reason,
             }
 
-        # Step 4: Build prompt
-        user_prompt = _build_user_prompt(
-            title=doc.get("title", ""),
-            citation=doc.get("citation_text"),
-            court=doc.get("court"),
-            decision_date=str(doc.get("decision_date")) if doc.get("decision_date") else None,
-            ponente=doc.get("ponente"),
-            sections=sections_with_text,
-        )
-
-        # Step 5: Call LLM
+        # Step 5: Call RAG doctrine extraction endpoint
         start_time = time.monotonic()
-        llm_response = rag_client.generate_completion(
-            system_prompt=DOCTRINE_EXTRACT_SYSTEM_PROMPT,
-            user_prompt=user_prompt,
-            temperature=0,
+        llm_response = rag_client.extract_doctrines(
+            document_id=document_id,
+            sections=[
+                {
+                    "id": s["id"],
+                    "section_type": s.get("section_type", "body"),
+                    "plain_text": s.get("plain_text", ""),
+                }
+                for s in sections_with_text
+            ],
         )
         latency_ms = int((time.monotonic() - start_time) * 1000)
 
         model_name = llm_response.get("model_name", "unknown")
-        tokens_in = llm_response.get("tokens_in", 0)
-        tokens_out = llm_response.get("tokens_out", 0)
+        # RAG doctrine endpoint does not return token usage counts
+        tokens_in = 0
+        tokens_out = 0
 
-        # Step 6: Parse JSON output
-        raw_content = llm_response.get("content")
-        if isinstance(raw_content, str):
-            try:
-                content = json.loads(raw_content)
-            except json.JSONDecodeError:
-                _fail_job(job_id, "LLM returned invalid JSON", model_name=model_name)
-                return {"status": "failed", "reason": "invalid_json"}
-        elif isinstance(raw_content, dict):
-            content = raw_content
-        else:
-            _fail_job(job_id, "LLM returned unexpected content type", model_name=model_name)
-            return {"status": "failed", "reason": "unexpected_content_type"}
-
-        # Check for abstention
-        if content.get("abstain"):
-            _fail_job(
-                job_id,
-                f"LLM abstained: {content.get('abstainReason', 'unknown')}",
-                model_name=model_name,
-            )
-            return {"status": "failed", "reason": "abstained"}
+        # RAG returns flat DoctrineExtractionResponse — no content wrapper
+        content = llm_response
 
         # Step 7: Validate with DoctrineExtractValidator
         source_doc_snapshot = LegalDocumentSnapshot(
@@ -425,7 +401,7 @@ def _build_provenance_records(
     document_id: str,
     sections: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Build provenance records from doctrines' sectionId fields."""
+    """Build provenance records from RAG doctrines' source_section_id fields."""
     doctrines = content.get("doctrines", [])
     section_ids = {s["id"] for s in sections}
     provenance: list[dict[str, Any]] = []
@@ -434,7 +410,7 @@ def _build_provenance_records(
     for doctrine in doctrines:
         if not isinstance(doctrine, dict):
             continue
-        section_id = doctrine.get("sectionId")
+        section_id = doctrine.get("source_section_id")
         if not section_id or section_id not in section_ids:
             continue
         if section_id in seen:
@@ -458,7 +434,10 @@ def _build_provenance_records(
 
 
 def _build_doctrine_entries(content: dict[str, Any]) -> list[dict[str, Any]]:
-    """Build doctrine entry dicts for the NestJS write payload."""
+    """Build doctrine entry dicts for the NestJS write payload.
+
+    RAG returns snake_case keys; NestJS expects camelCase.
+    """
     doctrines = content.get("doctrines", [])
     entries: list[dict[str, Any]] = []
 
@@ -467,13 +446,14 @@ def _build_doctrine_entries(content: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         entry: dict[str, Any] = {
             "text": doctrine.get("text", ""),
-            "verbatimSourceText": doctrine.get("verbatimSourceText", ""),
-            "doctrineType": doctrine.get("doctrineType", "rule"),
+            "doctrineType": doctrine.get("doctrine_type", "other"),
         }
-        if doctrine.get("sectionId"):
-            entry["sectionId"] = doctrine["sectionId"]
-        if doctrine.get("relatedDoctrines"):
-            entry["relatedDoctrines"] = doctrine["relatedDoctrines"]
+        if doctrine.get("normalized_text"):
+            entry["normalizedText"] = doctrine["normalized_text"]
+        if doctrine.get("source_section_id"):
+            entry["sourceSectionId"] = doctrine["source_section_id"]
+        if doctrine.get("confidence") is not None:
+            entry["confidence"] = doctrine["confidence"]
         entries.append(entry)
 
     return entries

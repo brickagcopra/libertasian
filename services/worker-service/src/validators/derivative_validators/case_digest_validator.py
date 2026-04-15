@@ -93,34 +93,34 @@ class CaseDigestValidator:
         # 4. Cited authority resolution check
         # NOTE: actual citation resolution (looking up LegalDocument IDs) happens
         # at the NestJS write path. Here we just check structural completeness.
-        cited = content.get("citedAuthorities", [])
+        # RAG returns cited_authorities: [{citation_text, document_type, gr_no}]
+        cited = content.get("cited_authorities", [])
         if isinstance(cited, list):
             for i, c in enumerate(cited):
-                has_text = bool(c.get("citationText"))
-                has_sections = bool(c.get("sectionIds"))
+                has_text = bool(c.get("citation_text"))
                 checks.append(
                     ValidatorCheck(
                         name=f"citation_{i}_complete",
-                        passed=has_text and has_sections,
-                        reason=(
-                            f"Citation {i}: text={'yes' if has_text else 'no'}, "
-                            f"sections={'yes' if has_sections else 'no'}"
-                        ),
+                        passed=has_text,
+                        reason=f"Citation {i}: text={'yes' if has_text else 'no'}",
                         severity="warning",
                     )
                 )
 
-        # 5. Provenance: sectionUsage for each IRAC field (except dispositive)
-        section_usage = content.get("sectionUsage", [])
-        section_ids_in_usage: set[str] = set()
+        # 5. Provenance: RAG returns [{field, source_section_id, source_document_id}]
+        provenance = content.get("provenance", [])
+        section_ids_in_provenance: set[str] = set()
         fields_covered: set[str] = set()
-        if isinstance(section_usage, list):
-            for entry in section_usage:
-                sid = entry.get("sectionId")
+        if isinstance(provenance, list):
+            for entry in provenance:
+                if not isinstance(entry, dict):
+                    continue
+                field = entry.get("field")
+                sid = entry.get("source_section_id")
+                if field:
+                    fields_covered.add(field)
                 if sid:
-                    section_ids_in_usage.add(sid)
-                for f in entry.get("fields", []):
-                    fields_covered.add(f)
+                    section_ids_in_provenance.add(sid)
 
         for field_name in ["facts", "issues", "ruling", "doctrine"]:
             covered = field_name in fields_covered
@@ -135,7 +135,7 @@ class CaseDigestValidator:
 
         # 6. Section IDs referenced must exist in source_sections
         valid_section_ids = {s.id for s in source_sections}
-        for sid in section_ids_in_usage:
+        for sid in section_ids_in_provenance:
             exists = sid in valid_section_ids
             checks.append(
                 ValidatorCheck(
@@ -146,8 +146,8 @@ class CaseDigestValidator:
                 )
             )
 
-        # 7. Self-reported confidence
-        confidence = content.get("confidenceSelfReport", 0)
+        # 7. Confidence score from RAG
+        confidence = content.get("confidence_score", 0)
         checks.append(
             ValidatorCheck(
                 name="confidence_threshold",

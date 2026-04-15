@@ -13,7 +13,16 @@ from . import (
     register_validator,
 )
 
-VALID_DOCTRINE_TYPES = {"rule", "test", "definition", "exception", "procedural"}
+VALID_DOCTRINE_TYPES = {
+    "ratio_decidendi",
+    "obiter_dictum",
+    "stare_decisis",
+    "statutory_construction",
+    "constitutional_interpretation",
+    "procedural_rule",
+    "evidentiary_rule",
+    "other",
+}
 MAX_DOCTRINES_PER_DOCUMENT = 5
 MAX_RELATED_LINKS_PER_DOCTRINE = 3
 MIN_DOCTRINE_WORDS = 20
@@ -74,8 +83,8 @@ class DoctrineExtractValidator:
         for i, doctrine in enumerate(doctrines):
             prefix = f"doctrine_{i}"
 
-            # 3. Doctrine type in allow-list
-            dtype = doctrine.get("doctrineType", "")
+            # 3. Doctrine type in allow-list (RAG returns snake_case doctrine_type)
+            dtype = doctrine.get("doctrine_type", "")
             checks.append(ValidatorCheck(
                 name=f"{prefix}_type",
                 passed=dtype in VALID_DOCTRINE_TYPES,
@@ -93,16 +102,10 @@ class DoctrineExtractValidator:
                 severity="warning" if word_count > 0 else "error",
             ))
 
-            # 5. Verbatim source text present
-            verbatim = doctrine.get("verbatimSourceText", "")
-            if not verbatim:
-                checks.append(ValidatorCheck(
-                    name=f"{prefix}_verbatim_present",
-                    passed=False,
-                    reason="Missing verbatimSourceText",
-                    severity="error",
-                ))
-            else:
+            # 5. Verbatim source text check (only if present — RAG doctrine
+            #    endpoint does not return verbatimSourceText)
+            verbatim = doctrine.get("verbatimSourceText") or doctrine.get("verbatim_source_text")
+            if verbatim:
                 # 6. Verbatim match against source sections
                 match_found = _check_verbatim_match(verbatim, section_texts)
                 checks.append(ValidatorCheck(
@@ -112,8 +115,8 @@ class DoctrineExtractValidator:
                     severity="warning",  # forces human_review, not quarantine
                 ))
 
-            # 7. Section ID valid
-            section_id = doctrine.get("sectionId")
+            # 7. Section ID valid (RAG returns source_section_id)
+            section_id = doctrine.get("source_section_id")
             if section_id:
                 valid_section = section_id in section_texts
                 checks.append(ValidatorCheck(

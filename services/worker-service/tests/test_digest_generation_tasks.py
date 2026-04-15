@@ -30,6 +30,7 @@ from src.prompts.case_digest_v1 import (
 )
 from src.tasks.digest_generation_tasks import (
     _build_provenance_records,
+    _build_section_usage_from_provenance,
     _format_issues,
     generate_case_digest,
 )
@@ -75,35 +76,31 @@ FAKE_SECTIONS = [
     },
 ]
 
-VALID_LLM_CONTENT = {
+# RAG DigestGenerationResponse shape — flat, snake_case, no content wrapper
+FAKE_RAG_RESPONSE: dict[str, Any] = {
     "facts": "The accused was charged with plunder involving ill-gotten wealth. " * 15,
-    "issues": [
-        "Whether the Sandiganbayan erred in convicting the accused",
-        "Whether the evidence was sufficient to prove guilt beyond reasonable doubt",
-    ],
+    "issues": "- Whether the Sandiganbayan erred in convicting the accused\n\n- Whether the evidence was sufficient to prove guilt beyond reasonable doubt",
     "ruling": "The Supreme Court affirmed the conviction. " * 20,
     "doctrine": "The doctrine of command responsibility applies to civilian officials. " * 8,
     "dispositive": "WHEREFORE, the appeal is DENIED. The decision of the Sandiganbayan is AFFIRMED.",
     "summary": "The Court upheld the plunder conviction.",
-    "citedAuthorities": [
+    "petitioner_arguments": None,
+    "respondent_arguments": None,
+    "cited_authorities": [
         {
-            "citationText": "People v. Estrada, G.R. No. 164368",
-            "sectionIds": ["sec-001"],
-            "citationType": "case",
+            "citation_text": "People v. Estrada, G.R. No. 164368",
+            "document_type": "case",
+            "gr_no": "G.R. No. 164368",
         },
     ],
-    "sectionUsage": [
-        {"sectionId": "sec-001", "fields": ["facts", "issues", "ruling"]},
-        {"sectionId": "sec-002", "fields": ["dispositive"]},
+    "provenance": [
+        {"field": "facts", "source_section_id": "sec-001", "source_document_id": "doc-001"},
+        {"field": "issues", "source_section_id": "sec-001", "source_document_id": "doc-001"},
+        {"field": "ruling", "source_section_id": "sec-001", "source_document_id": "doc-001"},
+        {"field": "dispositive", "source_section_id": "sec-002", "source_document_id": "doc-001"},
     ],
-    "confidenceSelfReport": 0.85,
-}
-
-FAKE_RAG_RESPONSE: dict[str, Any] = {
-    "content": VALID_LLM_CONTENT,
+    "confidence_score": 0.85,
     "model_name": "gpt-4o-mini",
-    "tokens_in": 1500,
-    "tokens_out": 800,
     "prompt_template_version": PROMPT_TEMPLATE_VERSION,
 }
 
@@ -297,25 +294,47 @@ class TestGenerateCaseDigest:
     @patch("src.tasks.digest_generation_tasks.nestjs_client")
     @patch("src.tasks.digest_generation_tasks.rag_client")
     @patch("src.tasks.digest_generation_tasks.db")
-    def test_6_invalid_json(
+    @patch("src.tasks.digest_generation_tasks.validate_derivative")
+    def test_6_missing_irac_fields_quarantine(
         self,
+        mock_validate: MagicMock,
         mock_db: MagicMock,
         mock_rag: MagicMock,
         mock_nestjs: MagicMock,
     ) -> None:
-        """LLM returns invalid JSON -> job failed."""
+        """RAG returns response with missing IRAC fields -> validator quarantines."""
+        from src.validators.derivative_validators import (
+            DerivativeValidationResult,
+            DerivativeVerdict,
+            ValidatorCheck,
+        )
+
+        sparse_response = {
+            **FAKE_RAG_RESPONSE,
+            "facts": None,
+            "ruling": None,
+        }
         mock_db.get_legal_document.return_value = FAKE_DOC
         mock_db.get_document_sections_for_digest.return_value = FAKE_SECTIONS
-        mock_rag.generate_digest.return_value = {
-            **FAKE_RAG_RESPONSE,
-            "content": "This is not JSON {broken",
-        }
+        mock_rag.generate_digest.return_value = sparse_response
+        mock_validate.return_value = DerivativeValidationResult(
+            verdict=DerivativeVerdict.QUARANTINE,
+            checks=[
+                ValidatorCheck(
+                    name="irac_field_facts",
+                    passed=False,
+                    reason="IRAC field 'facts' is missing",
+                    severity="error",
+                ),
+            ],
+            reasons=["IRAC field 'facts' is missing"],
+        )
         mock_nestjs.update_job_status.return_value = True
 
         result = _run_task("job-001", "doc-001")
 
         assert result["status"] == "failed"
-        assert result["reason"] == "invalid_json"
+        assert result["reason"] == "validation_quarantine"
 
     @patch("src.tasks.digest_generation_tasks.nestjs_client")
     @patch("src.tasks.digest_generation_tasks.rag_client")
@@ -423,21 +442,37 @@ class TestPromptBuilding:
 class TestProvenanceBuilding:
     """Tests for provenance record construction."""
 
-    def test_11_provenance_from_section_usage(self) -> None:
-        """Provenance records built correctly from sectionUsage."""
+    def test_11_provenance_from_rag_provenance(self) -> None:
+        """Provenance records built correctly from RAG provenance entries."""
         content = {
-            "sectionUsage": [
-                {"sectionId": "sec-001", "fields": ["facts", "ruling"]},
-                {"sectionId": "sec-002", "fields": ["dispositive"]},
+            "provenance": [
+                {"field": "facts", "source_section_id": "sec-001", "source_document_id": "doc-001"},
+                {"field": "ruling", "source_section_id": "sec-001", "source_document_id": "doc-001"},
+                {"field": "dispositive", "source_section_id": "sec-002", "source_document_id": "doc-001"},
             ],
         }
         provenance = _build_provenance_records(content, "doc-001", FAKE_SECTIONS)
 
-        assert len(provenance) == 2
+        assert len(provenance) == 2  # deduplicated by section_id
         assert provenance[0]["sourceDocumentId"] == "doc-001"
         assert provenance[0]["sourceSectionId"] == "sec-001"
         assert provenance[0]["provenanceType"] == "source_passage"
         assert provenance[1]["sourceSectionId"] == "sec-002"
+
+    def test_section_usage_from_provenance(self) -> None:
+        """sectionUsageJson built correctly from RAG provenance entries."""
+        provenance = [
+            {"field": "facts", "source_section_id": "sec-001", "source_document_id": "doc-001"},
+            {"field": "ruling", "source_section_id": "sec-001", "source_document_id": "doc-001"},
+            {"field": "dispositive", "source_section_id": "sec-002", "source_document_id": "doc-001"},
+        ]
+        usage = _build_section_usage_from_provenance(provenance)
+
+        assert len(usage) == 2
+        sec1 = next(u for u in usage if u["sectionId"] == "sec-001")
+        assert set(sec1["fields"]) == {"facts", "ruling"}
+        sec2 = next(u for u in usage if u["sectionId"] == "sec-002")
+        assert sec2["fields"] == ["dispositive"]
 
 
 class TestModelRunRecording:
@@ -478,6 +513,41 @@ class TestModelRunRecording:
         assert call_kwargs.kwargs["model_name"] == "gpt-4o-mini"
         assert call_kwargs.kwargs["prompt_template_version"] == PROMPT_TEMPLATE_VERSION
         assert call_kwargs.kwargs["input_ref"] == "doc:doc-001"
+
+
+class TestIntegrationDigestRAGShape:
+    """Integration-style test: RAG's real response shape flows through the task."""
+
+    @patch("src.tasks.digest_generation_tasks.nestjs_client")
+    @patch("src.tasks.digest_generation_tasks.rag_client")
+    @patch("src.tasks.digest_generation_tasks.db")
+    def test_rag_response_completes_end_to_end(
+        self,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        mock_nestjs: MagicMock,
+    ) -> None:
+        """RAG's real DigestGenerationResponse shape -> task completes with status: completed."""
+        mock_db.get_legal_document.return_value = FAKE_DOC
+        mock_db.get_document_sections_for_digest.return_value = FAKE_SECTIONS
+        mock_db.create_model_run.return_value = "model-run-001"
+        mock_rag.generate_digest.return_value = FAKE_RAG_RESPONSE
+        mock_nestjs.write_digest.return_value = {"digestId": "digest-001"}
+        mock_nestjs.update_job_status.return_value = True
+
+        result = _run_task("job-001", "doc-001")
+
+        assert result["status"] == "completed"
+        assert result["digest_id"] == "digest-001"
+        assert result["confidence_score"] == 0.85
+
+        # Verify write payload uses correct snake_case -> camelCase mapping
+        write_call = mock_nestjs.write_digest.call_args
+        payload = write_call.args[0]
+        assert payload["confidenceScore"] == 0.85
+        assert payload["citedAuthoritiesJson"][0]["citation_text"] == "People v. Estrada, G.R. No. 164368"
+        assert len(payload["sectionUsageJson"]) == 2
+        assert len(payload["provenanceRecords"]) == 2
 
 
 class TestFormatIssues:
