@@ -40,12 +40,12 @@ export class SourcesHealthProcessor extends WorkerHost {
 
     // Audit log the automated health check
     await this.auditService.log({
-      actorUserId: 'system',
       actorType: 'system',
       action: 'source_health.automated_recompute',
       entityType: 'source',
-      entityId: 'all',
       metadata: {
+        actor_label: 'system',
+        entity_key: 'all',
         triggeredBy: job.data.triggeredBy,
         totalSources: reports.length,
         unhealthyCount: unhealthy.length,

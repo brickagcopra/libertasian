@@ -432,8 +432,8 @@ export class DerivativesAdminService {
       actorType: 'admin',
       action: 'derivatives_admin.update_settings',
       entityType: 'ai_settings',
-      entityId: 'derivative_generation',
       metadata: {
+        entity_key: 'derivative_generation',
         enabled: dto.enabled,
         typesEnabled: dto.typesEnabled,
       },

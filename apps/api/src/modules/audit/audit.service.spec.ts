@@ -7,6 +7,10 @@ describe('AuditService', () => {
   let service: AuditService;
   let prisma: jest.Mocked<PrismaService>;
 
+  const VALID_UUID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
+  const VALID_UUID_2 = 'b2c3d4e5-f6a7-8901-bcde-f12345678901';
+  const VALID_ORG_UUID = 'c3d4e5f6-a7b8-9012-cdef-123456789012';
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -31,23 +35,23 @@ describe('AuditService', () => {
       (prisma.auditLog.create as jest.Mock).mockResolvedValue({ id: 'log-1' });
 
       await service.log({
-        organizationId: 'org-1',
-        actorUserId: 'user-1',
+        organizationId: VALID_ORG_UUID,
+        actorUserId: VALID_UUID,
         actorType: 'user',
         action: 'create',
         entityType: 'Matter',
-        entityId: 'matter-1',
+        entityId: VALID_UUID_2,
         metadata: { title: 'Test Matter' },
       });
 
       expect(prisma.auditLog.create).toHaveBeenCalledWith({
         data: {
-          organizationId: 'org-1',
-          actorUserId: 'user-1',
+          organizationId: VALID_ORG_UUID,
+          actorUserId: VALID_UUID,
           actorType: 'user',
           action: 'create',
           entityType: 'Matter',
-          entityId: 'matter-1',
+          entityId: VALID_UUID_2,
           metadataJson: { title: 'Test Matter' },
         },
       });
@@ -82,7 +86,7 @@ describe('AuditService', () => {
         actorType: 'admin',
         action: 'approve',
         entityType: 'Digest',
-        entityId: 'digest-1',
+        entityId: VALID_UUID,
       });
 
       expect(prisma.auditLog.create).toHaveBeenCalledWith(
@@ -105,7 +109,7 @@ describe('AuditService', () => {
           actorType: 'user',
           action: 'delete',
           entityType: 'Note',
-          entityId: 'note-1',
+          entityId: VALID_UUID,
         }),
       ).resolves.toBeUndefined();
     });
@@ -138,7 +142,7 @@ describe('AuditService', () => {
         actorType: 'admin',
         action: 'publish',
         entityType: 'LegalDocument',
-        entityId: 'doc-1',
+        entityId: VALID_UUID,
         metadata,
       });
 
@@ -149,6 +153,127 @@ describe('AuditService', () => {
           }),
         }),
       );
+    });
+
+    // --- Non-UUID coercion tests ---
+
+    it('should move non-UUID entityId into metadata.entity_key', async () => {
+      (prisma.auditLog.create as jest.Mock).mockResolvedValue({ id: 'log-6' });
+
+      await service.log({
+        actorUserId: VALID_UUID,
+        actorType: 'admin',
+        action: 'ai_settings.update',
+        entityType: 'ai_settings',
+        entityId: 'rag.model_name',
+        metadata: { oldValue: 'v1', newValue: 'v2' },
+      });
+
+      expect(prisma.auditLog.create).toHaveBeenCalledWith({
+        data: {
+          organizationId: undefined,
+          actorUserId: VALID_UUID,
+          actorType: 'admin',
+          action: 'ai_settings.update',
+          entityType: 'ai_settings',
+          entityId: undefined,
+          metadataJson: {
+            entity_key: 'rag.model_name',
+            oldValue: 'v1',
+            newValue: 'v2',
+          },
+        },
+      });
+    });
+
+    it('should move non-UUID actorUserId into metadata.actor_label and set actorType to system', async () => {
+      (prisma.auditLog.create as jest.Mock).mockResolvedValue({ id: 'log-7' });
+
+      await service.log({
+        actorUserId: 'system',
+        actorType: 'system',
+        action: 'source_health.automated_recompute',
+        entityType: 'source',
+        entityId: 'all',
+      });
+
+      expect(prisma.auditLog.create).toHaveBeenCalledWith({
+        data: {
+          organizationId: undefined,
+          actorUserId: undefined,
+          actorType: 'system',
+          action: 'source_health.automated_recompute',
+          entityType: 'source',
+          entityId: undefined,
+          metadataJson: {
+            actor_label: 'system',
+            entity_key: 'all',
+          },
+        },
+      });
+    });
+
+    it('should keep valid UUID entityId and actorUserId unchanged', async () => {
+      (prisma.auditLog.create as jest.Mock).mockResolvedValue({ id: 'log-8' });
+
+      await service.log({
+        actorUserId: VALID_UUID,
+        actorType: 'user',
+        action: 'update',
+        entityType: 'Matter',
+        entityId: VALID_UUID_2,
+      });
+
+      expect(prisma.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          actorUserId: VALID_UUID,
+          entityId: VALID_UUID_2,
+        }),
+      });
+    });
+
+    it('should coerce non-UUID actorUserId with admin actorType to system', async () => {
+      (prisma.auditLog.create as jest.Mock).mockResolvedValue({ id: 'log-9' });
+
+      await service.log({
+        actorUserId: 'cron-scheduler',
+        actorType: 'admin',
+        action: 'scheduled_task',
+        entityType: 'Job',
+      });
+
+      expect(prisma.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          actorUserId: undefined,
+          actorType: 'system',
+          metadataJson: expect.objectContaining({
+            actor_label: 'cron-scheduler',
+          }),
+        }),
+      });
+    });
+
+    it('should preserve existing metadata when coercing non-UUID values', async () => {
+      (prisma.auditLog.create as jest.Mock).mockResolvedValue({ id: 'log-10' });
+
+      await service.log({
+        actorType: 'admin',
+        action: 'derivatives_admin.update_settings',
+        entityType: 'ai_settings',
+        entityId: 'derivative_generation',
+        metadata: { enabled: true, typesEnabled: ['digest', 'summary'] },
+      });
+
+      expect(prisma.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          entityId: undefined,
+          metadataJson: {
+            entity_key: 'derivative_generation',
+            enabled: true,
+            typesEnabled: ['digest', 'summary'],
+          },
+        }),
+      });
     });
   });
 });
