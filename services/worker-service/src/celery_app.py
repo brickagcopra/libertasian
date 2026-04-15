@@ -50,6 +50,10 @@ app.conf.update(
             "schedule": crontab(hour=3, minute=0),  # 3 AM Manila time
             "kwargs": {"limit": 100},
         },
+        "poll-pending-derivative-jobs": {
+            "task": "derivatives.poll_pending_jobs",
+            "schedule": 30.0,  # Every 30 seconds
+        },
     },
 )
 
@@ -73,4 +77,5 @@ app.conf.include = [
     "src.tasks.essay_generation_tasks",
     "src.tasks.flashcard_generation_tasks",
     "src.tasks.outline_generation_tasks",
+    "src.tasks.derivative_dispatch_tasks",
 ]

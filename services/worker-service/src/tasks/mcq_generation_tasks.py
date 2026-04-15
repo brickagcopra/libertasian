@@ -94,8 +94,10 @@ def generate_mcq_questions(
         difficulty,
     )
 
-    # Step 1: Update job -> running
-    nestjs_client.update_job_status(job_id, "running")
+    # Step 1: Idempotency guard — claim job atomically
+    if not db.claim_derivative_job(job_id):
+        logger.info("Job %s already claimed or in terminal state, skipping", job_id)
+        return {"job_id": job_id, "status": "already_claimed"}
 
     try:
         # Step 2: Load source document
