@@ -15,6 +15,11 @@ from ..config import settings
 logger = logging.getLogger(__name__)
 
 
+def _internal_headers() -> dict[str, str]:
+    """Return auth headers for internal service-to-service calls."""
+    return {"X-Internal-Api-Key": settings.internal_api_key}
+
+
 def extract_doctrines(
     document_id: str,
     strategy: str = "auto",
@@ -43,7 +48,7 @@ def extract_doctrines(
         payload["sections"] = sections
 
     with httpx.Client(timeout=settings.rag_request_timeout) as client:
-        response = client.post(url, json=payload)
+        response = client.post(url, json=payload, headers=_internal_headers())
         response.raise_for_status()
         return response.json()
 
@@ -71,7 +76,7 @@ def generate_digest(
     }
 
     with httpx.Client(timeout=settings.rag_request_timeout) as client:
-        response = client.post(url, json=payload)
+        response = client.post(url, json=payload, headers=_internal_headers())
         response.raise_for_status()
         return response.json()
 
@@ -96,7 +101,7 @@ def resolve_citations(
     }
 
     with httpx.Client(timeout=settings.rag_request_timeout) as client:
-        response = client.post(url, json=payload)
+        response = client.post(url, json=payload, headers=_internal_headers())
         response.raise_for_status()
         return response.json()
 
@@ -125,6 +130,6 @@ def generate_completion(
     }
 
     with httpx.Client(timeout=settings.rag_request_timeout) as client:
-        response = client.post(url, json=payload)
+        response = client.post(url, json=payload, headers=_internal_headers())
         response.raise_for_status()
         return response.json()
