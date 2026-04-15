@@ -4,6 +4,7 @@
  * Per PRD: STU-01 through STU-08.
  * Per PDD: Bar subject categorization, spaced repetition, offline codals.
  */
+export {};
 
 const mockGet = jest.fn();
 const mockPost = jest.fn();

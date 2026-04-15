@@ -45,17 +45,17 @@ describe('useSubmitFlashcardReview', () => {
     mockPost.mockResolvedValueOnce({ success: true, data: { id: 'r1', quality: 4 } });
     const { result } = renderHook(() => useSubmitFlashcardReview(), { wrapper: createWrapper() });
     await act(async () => {
-      result.current.mutate({ flashcardId: 'c1', input: { quality: 4 } });
+      result.current.mutate({ flashcardId: 'c1', input: { response: 'good' } });
     });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(mockPost).toHaveBeenCalledWith('/study/flashcards/c1/review', { quality: 4 });
+    expect(mockPost).toHaveBeenCalledWith('/study/flashcards/c1/review', { response: 'good' });
   });
 
   it('handles errors', async () => {
     mockPost.mockRejectedValueOnce(new Error('fail'));
     const { result } = renderHook(() => useSubmitFlashcardReview(), { wrapper: createWrapper() });
     await act(async () => {
-      result.current.mutate({ flashcardId: 'c1', input: { quality: 3 } });
+      result.current.mutate({ flashcardId: 'c1', input: { response: 'hard' } });
     });
     await waitFor(() => expect(result.current.isError).toBe(true));
   });

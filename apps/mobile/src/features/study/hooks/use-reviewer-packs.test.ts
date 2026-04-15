@@ -92,9 +92,9 @@ describe('useAddReviewerPackItem', () => {
   it('posts item to pack', async () => {
     mockPost.mockResolvedValueOnce({ id: 'i1', packId: 'p1' });
     const { result } = renderHook(() => useAddReviewerPackItem('p1'), { wrapper: createWrapper() });
-    await act(async () => { result.current.mutate({ entityType: 'document', entityId: 'd1' }); });
+    await act(async () => { result.current.mutate({ itemType: 'legal_document', legalDocumentId: 'd1' }); });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(mockPost).toHaveBeenCalledWith('/study/reviewer-packs/p1/items', expect.objectContaining({ entityType: 'document' }));
+    expect(mockPost).toHaveBeenCalledWith('/study/reviewer-packs/p1/items', expect.objectContaining({ itemType: 'legal_document' }));
   });
 });
 
@@ -102,9 +102,9 @@ describe('useUpdateReviewerPackItem', () => {
   it('patches item', async () => {
     mockPatch.mockResolvedValueOnce({ id: 'i1' });
     const { result } = renderHook(() => useUpdateReviewerPackItem('p1'), { wrapper: createWrapper() });
-    await act(async () => { result.current.mutate({ id: 'i1', input: { notes: 'Updated' } }); });
+    await act(async () => { result.current.mutate({ id: 'i1', input: { note: 'Updated' } }); });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(mockPatch).toHaveBeenCalledWith('/study/reviewer-pack-items/i1', { notes: 'Updated' });
+    expect(mockPatch).toHaveBeenCalledWith('/study/reviewer-pack-items/i1', { note: 'Updated' });
   });
 });
 

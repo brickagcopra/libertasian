@@ -57,6 +57,10 @@ function TestConsumer() {
             status: 'active',
             emailVerified: true,
             mfaEnabled: false,
+            onboardingCompletedAt: null,
+            userRole: 'user',
+            organizationRole: 'member',
+            organizationId: 'org-1',
             createdAt: '2024-01-01',
           })
         }

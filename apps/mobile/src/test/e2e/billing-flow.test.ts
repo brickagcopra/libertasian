@@ -4,6 +4,7 @@
  * Per PRD: Xendit integration for Philippine payments.
  * Per CLAUDE.md: Plan-based quotas, subscription enforcement at API level.
  */
+export {};
 
 const mockGet = jest.fn();
 const mockPost = jest.fn();

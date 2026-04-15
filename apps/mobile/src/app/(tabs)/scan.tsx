@@ -11,7 +11,7 @@ import {
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useUploads } from '../../features/camera-scan/hooks/use-uploads';
-import { useSubscription } from '../../features/subscription/hooks/use-subscription';
+import { useQuotaUsage } from '../../features/billing/hooks/use-quotas';
 import type { UploadListItem } from '../../features/camera-scan/types';
 
 function statusColor(status: string): string {
@@ -78,11 +78,12 @@ function ScanItem({ item }: { item: UploadListItem }) {
 
 export default function ScanTab() {
   const { data, isLoading, refetch, isRefetching } = useUploads({ uploadType: 'camera_scan' });
-  const { data: subscription } = useSubscription();
+  const { data: quotaData } = useQuotaUsage();
 
   const uploads = data?.uploads ?? [];
-  const monthlyLimit = subscription?.entitlements?.cameraScansPerMonth ?? null;
-  const isUnlimited = monthlyLimit === -1 || monthlyLimit === null;
+  const cameraQuota = quotaData?.quotas?.['camera_scans_per_month'];
+  const monthlyLimit = cameraQuota?.limit ?? null;
+  const isUnlimited = monthlyLimit === null || monthlyLimit < 0;
 
   const handleStartScan = useCallback(() => {
     router.push('/scan/capture');
@@ -113,7 +114,7 @@ export default function ScanTab() {
           <View style={styles.quotaRow}>
             <Ionicons name="pie-chart-outline" size={14} color="#6b7280" />
             <Text style={styles.quotaText}>
-              {subscription?.usage?.cameraScansUsed ?? 0} / {monthlyLimit} scans this month
+              {cameraQuota?.used ?? 0} / {monthlyLimit} scans this month
             </Text>
           </View>
         )}

@@ -39,7 +39,7 @@ describe('useStartStudySession', () => {
   it('starts a session', async () => {
     mockPost.mockResolvedValueOnce({ success: true, data: { id: 's1', barSubject: 'civil_law' } });
     const { result } = renderHook(() => useStartStudySession(), { wrapper: createWrapper() });
-    await act(async () => { result.current.mutate({ barSubject: 'civil_law', activityType: 'flashcard_review' }); });
+    await act(async () => { result.current.mutate({ entityType: 'flashcard_set', entityId: 'set-1', barSubject: 'civil_law' }); });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(mockPost).toHaveBeenCalledWith('/study/sessions/start', expect.objectContaining({ barSubject: 'civil_law' }));
   });
@@ -49,8 +49,8 @@ describe('useEndStudySession', () => {
   it('ends a session', async () => {
     mockPost.mockResolvedValueOnce({ success: true, data: { id: 's1', durationMinutes: 15 } });
     const { result } = renderHook(() => useEndStudySession(), { wrapper: createWrapper() });
-    await act(async () => { result.current.mutate({ sessionId: 's1', input: { cardsReviewed: 10 } }); });
+    await act(async () => { result.current.mutate({ sessionId: 's1', input: { itemsStudied: 10 } }); });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(mockPost).toHaveBeenCalledWith('/study/sessions/s1/end', { cardsReviewed: 10 });
+    expect(mockPost).toHaveBeenCalledWith('/study/sessions/s1/end', { itemsStudied: 10 });
   });
 });

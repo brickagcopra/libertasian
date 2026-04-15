@@ -5,6 +5,7 @@
  * Per CLAUDE.md: Private-by-default, quality thresholds, free tier restrictions.
  * Per PRD: SCAN-01 through SCAN-07.
  */
+export {};
 
 const mockPost = jest.fn();
 const mockGet = jest.fn();

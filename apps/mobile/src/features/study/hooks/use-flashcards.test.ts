@@ -39,7 +39,7 @@ describe('useCreateFlashcard', () => {
   it('posts to correct endpoint', async () => {
     mockPost.mockResolvedValueOnce({ id: 'c2', front: 'Q2', back: 'A2' });
     const { result } = renderHook(() => useCreateFlashcard('set-1'), { wrapper: createWrapper() });
-    await act(async () => { result.current.mutate({ front: 'Q2', back: 'A2', cardType: 'definition' }); });
+    await act(async () => { result.current.mutate({ front: 'Q2', back: 'A2', sourceType: 'manual' }); });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(mockPost).toHaveBeenCalledWith('/study/flashcard-sets/set-1/flashcards', expect.objectContaining({ front: 'Q2' }));
   });
