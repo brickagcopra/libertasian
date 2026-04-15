@@ -4,6 +4,7 @@
  * Per PRD: Community marketplace, expert verification, moderation.
  * Per CLAUDE.md: Socket.io for real-time, rate limiting, content moderation.
  */
+export {};
 
 const mockGet = jest.fn();
 const mockPost = jest.fn();

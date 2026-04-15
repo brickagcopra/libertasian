@@ -16,10 +16,10 @@ jest.mock('@expo/vector-icons', () => ({
 }));
 
 const mockUseInfiniteCodals = jest.fn();
-const mockUseOfflineFallback = jest.fn(() => ({ data: [], isLoading: false }));
+const mockUseOfflineFallback = jest.fn().mockReturnValue({ data: [], isLoading: false });
 jest.mock('../../../features/study/hooks/use-codals', () => ({
-  useInfiniteCodals: (...args: unknown[]) => mockUseInfiniteCodals(...args),
-  useOfflineCodals: (...args: unknown[]) => mockUseOfflineFallback(...args),
+  useInfiniteCodals: (filters: unknown) => mockUseInfiniteCodals(filters),
+  useOfflineCodals: (filters: unknown) => mockUseOfflineFallback(filters),
 }));
 
 jest.mock('../../../features/study/hooks/use-offline-codals', () => ({

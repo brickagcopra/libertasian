@@ -80,11 +80,10 @@ export default function SharedContentScreen() {
     );
   }
 
-  // Error state
-  if (error || submitPassword.error) {
+  // Error state (password errors shown inline in password form below)
+  if (error) {
     const errMsg =
       (error as Error)?.message ??
-      (submitPassword.error as Error)?.message ??
       'Failed to load shared content';
     return (
       <>

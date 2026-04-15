@@ -62,7 +62,10 @@ jest.mock('expo-router', () => ({
 }));
 
 jest.mock('@expo/vector-icons', () => ({
-  Ionicons: 'Ionicons',
+  Ionicons: ({ name, ...rest }: { name: string }) => {
+    const { Text } = require('react-native');
+    return <Text {...rest}>{name}</Text>;
+  },
 }));
 
 // ---- Tests ----
@@ -87,9 +90,10 @@ describe('DerivativesScreen', () => {
     render(<DerivativesScreen />);
 
     expect(screen.getByText('By Type')).toBeTruthy();
-    expect(screen.getByText('case digest')).toBeTruthy();
+    // "case digest" appears in both the breakdown and job cards
+    expect(screen.getAllByText('case digest').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('80')).toBeTruthy();
-    expect(screen.getByText('statute summary')).toBeTruthy();
+    expect(screen.getAllByText('statute summary').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('40')).toBeTruthy();
   });
 
@@ -128,8 +132,9 @@ describe('DerivativesScreen', () => {
   it('opens generate modal on header button press', () => {
     render(<DerivativesScreen />);
 
-    // The header right button should be rendered via Stack.Screen mock
-    // The modal trigger is in the header
+    // The header right button is rendered via Stack.Screen mock (headerRight)
+    // Press the icon button to open the modal
+    fireEvent.press(screen.getByText('add-circle-outline'));
     expect(screen.getByText('Trigger Digest Generation')).toBeTruthy();
   });
 });

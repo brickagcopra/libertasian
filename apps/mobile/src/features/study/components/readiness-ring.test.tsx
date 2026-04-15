@@ -13,7 +13,7 @@ jest.mock('react-native-svg', () => {
     Circle: (props: Record<string, unknown>) =>
       React.createElement(View, { testID: 'svg-circle', ...props }),
   };
-}, { virtual: true });
+});
 
 describe('ReadinessRing', () => {
   it('renders percentage text', () => {

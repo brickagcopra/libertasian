@@ -4,6 +4,7 @@
  * Per CLAUDE.md: MMKV for hot data, SQLite for structured cache, ETag sync.
  * Per PRD: STU-07/STU-08 offline codals, cached digests.
  */
+export {};
 
 const mockGet = jest.fn();
 

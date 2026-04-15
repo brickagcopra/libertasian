@@ -61,7 +61,7 @@ export default function FlashcardPlayerScreen() {
   const flashcards = cards ?? [];
   const currentCard = flashcards[currentIndex];
   const total = flashcards.length;
-  const reviewStats = reviewStatsData?.data;
+  const reviewStats = reviewStatsData;
 
   // Track progress and start session on first load
   useEffect(() => {
@@ -80,7 +80,7 @@ export default function FlashcardPlayerScreen() {
         },
         {
           onSuccess: (data) => {
-            sessionIdRef.current = data.data.id;
+            sessionIdRef.current = data.id;
           },
         },
       );

@@ -86,6 +86,7 @@ export function useOfflineCodals(filters: {
         citationText: c.citationText,
         promulgationDate: c.promulgationDate,
         isOfficial: c.isOfficial,
+        sectionCount: c.sectionCount,
       }));
 
       // Client-side filtering
