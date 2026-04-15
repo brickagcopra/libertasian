@@ -27,7 +27,7 @@ export class AuditService {
       let actorUserId: string | undefined = entry.actorUserId;
       let actorType = entry.actorType;
       if (actorUserId && !isUUID(actorUserId)) {
-        metadata.actor_label = actorUserId;
+        metadata['actor_label'] = actorUserId;
         actorUserId = undefined;
         if (actorType !== 'system') {
           actorType = 'system';
@@ -37,7 +37,7 @@ export class AuditService {
       // Coerce non-UUID entityId into metadata
       let entityId: string | undefined = entry.entityId;
       if (entityId && !isUUID(entityId)) {
-        metadata.entity_key = entityId;
+        metadata['entity_key'] = entityId;
         entityId = undefined;
       }
 
