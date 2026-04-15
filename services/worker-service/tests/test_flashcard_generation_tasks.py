@@ -33,7 +33,6 @@ FAKE_DOC: dict[str, Any] = {
     "court": "Supreme Court",
     "decision_date": "2025-01-01",
     "subject": "Criminal Law",
-    "confidence_score": 0.9,
     "is_official": True,
 }
 

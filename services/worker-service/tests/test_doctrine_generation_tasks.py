@@ -59,7 +59,6 @@ FAKE_DOC: dict[str, Any] = {
     "ponente": "Justice Cruz",
     "decision_date": "2025-01-01",
     "is_official": True,
-    "confidence_score": 0.9,
 }
 
 FAKE_SECTIONS: list[dict[str, Any]] = [
