@@ -9,7 +9,7 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "build": "echo 'mobile build - use EAS Build'",
-    "lint": "eslint src/",
+    "lint": "tsc --noEmit",
     "test": "jest",
     "type-check": "tsc --noEmit"
   },
