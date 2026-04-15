@@ -17,6 +17,27 @@ from .schemas import (
 logger = logging.getLogger(__name__)
 
 
+def _coerce_text(value: Any) -> str | None:
+    """Coerce a digest field value to str or None.
+
+    LLMs sometimes return list[str] instead of str for DFIR+ fields like
+    ``issues`` or ``facts``.  This normalises the value at the service
+    boundary so downstream code always sees ``str | None``.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value if value.strip() else None
+    if isinstance(value, list):
+        items = [str(item).strip() for item in value if item]
+        if not items:
+            return None
+        # If the items look like enumerated points, bullet them.
+        return "\n\n".join(f"- {item}" for item in items)
+    # Unexpected type — stringify as fallback
+    return str(value)
+
+
 async def generate_digest(
     request: DigestGenerationRequest,
 ) -> DigestGenerationResponse:
@@ -60,14 +81,14 @@ async def generate_digest(
     provenance = _extract_provenance(digest_data, request.document_id)
 
     return DigestGenerationResponse(
-        summary=digest_data.get("summary") or None,
-        facts=digest_data.get("facts") or None,
-        petitioner_arguments=digest_data.get("petitioner_arguments") or None,
-        respondent_arguments=digest_data.get("respondent_arguments") or None,
-        issues=digest_data.get("issues") or None,
-        ruling=digest_data.get("ruling") or None,
-        doctrine=digest_data.get("doctrine") or None,
-        dispositive=digest_data.get("dispositive") or None,
+        summary=_coerce_text(digest_data.get("summary")),
+        facts=_coerce_text(digest_data.get("facts")),
+        petitioner_arguments=_coerce_text(digest_data.get("petitioner_arguments")),
+        respondent_arguments=_coerce_text(digest_data.get("respondent_arguments")),
+        issues=_coerce_text(digest_data.get("issues")),
+        ruling=_coerce_text(digest_data.get("ruling")),
+        doctrine=_coerce_text(digest_data.get("doctrine")),
+        dispositive=_coerce_text(digest_data.get("dispositive")),
         cited_authorities=[
             CitedAuthority(
                 citation_text=c.get("citation_text", ""),
@@ -167,9 +188,10 @@ def _compute_confidence(
     ]
 
     # Source coverage: proportion of fields with content
+    # Use _coerce_text so list-valued fields (from LLM drift) are counted
     filled = sum(
         1 for f in dfir_fields
-        if digest_data.get(f) and isinstance(digest_data[f], str) and digest_data[f].strip()
+        if _coerce_text(digest_data.get(f)) is not None
     )
     # petitioner_arguments and respondent_arguments may legitimately be null
     # so use 6 as the denominator for required fields

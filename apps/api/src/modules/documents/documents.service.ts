@@ -169,6 +169,7 @@ export class DocumentsService {
         sectionLabel: true,
         parentSectionId: true,
         ordering: true,
+        plainText: true,
         pageStart: true,
         pageEnd: true,
         tokenCount: true,

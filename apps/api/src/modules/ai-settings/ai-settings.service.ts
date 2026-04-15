@@ -182,8 +182,7 @@ export class AiSettingsService implements OnModuleInit {
       actorType: 'admin',
       action: 'ai_settings.update',
       entityType: 'ai_settings',
-      entityId: key,
-      metadata: { key, oldValue: oldValue ?? null, newValue: value },
+      metadata: { entity_key: key, oldValue: oldValue ?? null, newValue: value },
     });
 
     this.logger.log(`AI setting updated: ${key} by user ${userId}`);

@@ -410,6 +410,7 @@ describe('DocumentsService', () => {
           id: 'section-1',
           sectionType: 'facts',
           sectionLabel: 'Facts',
+          plainText: 'The petitioner filed a complaint.',
           ordering: 1,
           pageStart: 1,
           pageEnd: 3,
@@ -420,6 +421,7 @@ describe('DocumentsService', () => {
           id: 'section-2',
           sectionType: 'issues',
           sectionLabel: 'Issues',
+          plainText: 'Whether the dismissal was legal.',
           ordering: 2,
           pageStart: 3,
           pageEnd: 5,
@@ -439,6 +441,16 @@ describe('DocumentsService', () => {
         orderBy: { ordering: 'asc' },
         select: expect.any(Object),
       });
+    });
+
+    it('should include plainText in the select for reader rendering', async () => {
+      mockPrismaService.legalDocument.count.mockResolvedValue(1);
+      mockPrismaService.legalDocumentSection.findMany.mockResolvedValue([]);
+
+      await service.listSections('doc-1');
+
+      const call = mockPrismaService.legalDocumentSection.findMany.mock.calls[0]![0]!;
+      expect(call.select).toHaveProperty('plainText', true);
     });
 
     it('should throw NotFoundException when document does not exist', async () => {
