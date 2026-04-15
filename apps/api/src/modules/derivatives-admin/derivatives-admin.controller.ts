@@ -10,7 +10,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { JwtPayload } from '@libertasian/types';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -73,6 +73,13 @@ export class DerivativesAdminController {
   @Get('jobs/:id')
   async getJob(@Param('id', ParseUUIDPipe) id: string) {
     const data = await this.service.getJob(id);
+    return { success: true, data };
+  }
+
+  @Get('jobs/:id/digest')
+  @ApiOperation({ summary: 'Get the digest artifact produced by a derivative generation job' })
+  async getJobDigest(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.service.getJobDigest(id);
     return { success: true, data };
   }
 

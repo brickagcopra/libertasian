@@ -13,8 +13,9 @@ import {
   useRetryDerivativeJob,
   useRegenerateArtifact,
   useSoftDeleteArtifact,
+  useJobDigest,
 } from '@/features/admin/hooks/use-derivatives-admin';
-import type { DerivativeTypeStats, DerivativeJob } from '@/features/admin/types';
+import type { DerivativeTypeStats, DerivativeJob, AdminDigestDetail } from '@/features/admin/types';
 import { AdminCardSkeleton } from '@/components/ui/skeleton';
 
 const DERIVATIVE_TYPES = [
@@ -550,6 +551,100 @@ export default function DerivativesAdminPage() {
 
 // ─── Sub-components ──────────────────────────────────────
 
+const REVIEW_STATUS_COLORS: Record<string, string> = {
+  draft: 'bg-gray-100 text-gray-700',
+  ai_generated: 'bg-blue-100 text-blue-700',
+  needs_human_review: 'bg-yellow-100 text-yellow-700',
+  approved: 'bg-green-100 text-green-700',
+  rejected: 'bg-red-100 text-red-700',
+};
+
+function DigestSection({ heading, content }: { heading: string; content: string | null | undefined }) {
+  if (!content) return null;
+  return (
+    <div>
+      <h4 className="text-sm font-semibold text-gray-700">{heading}</h4>
+      <p className="mt-1 text-sm text-gray-800" style={{ whiteSpace: 'pre-line' }}>{content}</p>
+    </div>
+  );
+}
+
+function DigestContentPanel({ digest }: { digest: AdminDigestDetail }) {
+  const citedAuthorities = parseCitedAuthorities(digest.citedAuthoritiesJson);
+
+  return (
+    <div className="mt-4 space-y-4 border-t pt-4">
+      <div>
+        <h4 className="text-base font-semibold text-gray-900">{digest.title}</h4>
+        {digest.legalDocument?.citationText && (
+          <p className="text-xs text-gray-500">{digest.legalDocument.citationText}</p>
+        )}
+        <div className="mt-1 flex items-center gap-2">
+          <span className="text-xs text-gray-500">
+            Confidence: {digest.confidenceScore !== null ? `${(digest.confidenceScore * 100).toFixed(0)}%` : 'N/A'}
+          </span>
+          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${REVIEW_STATUS_COLORS[digest.reviewStatus] ?? 'bg-gray-100 text-gray-700'}`}>
+            {digest.reviewStatus}
+          </span>
+        </div>
+      </div>
+
+      <DigestSection heading="Summary" content={digest.summary} />
+      <DigestSection heading="Facts" content={digest.facts} />
+      <DigestSection heading="Petitioner Arguments" content={digest.petitionerArguments} />
+      <DigestSection heading="Respondent Arguments" content={digest.respondentArguments} />
+      <DigestSection heading="Issues" content={digest.issues} />
+      <DigestSection heading="Ruling" content={digest.ruling} />
+      <DigestSection heading="Doctrine" content={digest.doctrine} />
+
+      {digest.dispositive && (
+        <div className="rounded border border-blue-200 bg-blue-50 p-3">
+          <h4 className="text-sm font-semibold text-blue-800">Dispositive</h4>
+          <p className="mt-1 text-sm text-blue-900" style={{ whiteSpace: 'pre-line' }}>{digest.dispositive}</p>
+        </div>
+      )}
+
+      {citedAuthorities.length > 0 && (
+        <div>
+          <h4 className="text-sm font-semibold text-gray-700">Cited Authorities</h4>
+          <ul className="mt-1 list-inside list-disc space-y-0.5 text-sm text-gray-800">
+            {citedAuthorities.map((cite, i) => (
+              <li key={i}>{cite}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="pt-2">
+        <Link
+          href={`/admin/digests/${digest.id}`}
+          className="text-xs font-medium text-blue-600 hover:text-blue-800"
+        >
+          View full digest &rarr;
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function parseCitedAuthorities(json: unknown): string[] {
+  if (!json) return [];
+  try {
+    const arr = Array.isArray(json) ? json : [];
+    return arr
+      .map((item: unknown) => {
+        if (typeof item === 'string') return item;
+        if (item && typeof item === 'object' && 'citationText' in item) {
+          return String((item as { citationText: string }).citationText);
+        }
+        return null;
+      })
+      .filter((s): s is string => s !== null);
+  } catch {
+    return [];
+  }
+}
+
 function JobDetailPanel({
   job,
   onRetry,
@@ -561,6 +656,12 @@ function JobDetailPanel({
   onRegenerate: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
+  const shouldFetchDigest = !!job && job.status === 'completed' && job.derivativeType === 'case_digest';
+  const { data: digestData, isLoading: digestLoading, error: digestError } = useJobDigest(
+    job?.id ?? '',
+    { enabled: shouldFetchDigest },
+  );
+
   if (!job) return <p className="mt-2 text-sm text-gray-400">Job not found in current page</p>;
 
   return (
@@ -613,6 +714,28 @@ function JobDetailPanel({
           Delete
         </button>
       </div>
+
+      {/* Digest content section */}
+      {shouldFetchDigest && (
+        <>
+          {digestLoading && (
+            <p className="text-sm text-gray-400">Loading digest...</p>
+          )}
+          {digestError && (
+            <p className="text-sm text-red-500">
+              Error loading digest: {digestError instanceof Error ? digestError.message : 'Unknown error'}
+            </p>
+          )}
+          {digestData && !digestData.digest && (
+            <p className="text-sm text-amber-600">
+              Generation completed but no digest artifact was written — investigate.
+            </p>
+          )}
+          {digestData?.digest && (
+            <DigestContentPanel digest={digestData.digest} />
+          )}
+        </>
+      )}
     </div>
   );
 }

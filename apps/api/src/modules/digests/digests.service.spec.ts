@@ -937,6 +937,105 @@ describe('DigestsService', () => {
     });
   });
 
+  // ---- findByIdAdmin ----
+
+  describe('findByIdAdmin', () => {
+    it('should return an AI-generated digest with userId=null and organizationId=null', async () => {
+      const aiGeneratedDigest = {
+        ...mockDigest,
+        id: 'ai-digest-1',
+        userId: null,
+        organizationId: null,
+        visibility: 'private',
+        sourceOrigin: 'official_pipeline',
+        confidenceScore: 0.75,
+        reviewStatus: 'needs_human_review',
+        legalDocument: mockLegalDocument,
+        reviews: [],
+        derivativeGenerationJob: {
+          id: 'job-1',
+          derivativeType: 'case_digest',
+          modelName: 'gpt-4o',
+          promptTemplateVersion: 'v1.0',
+          startedAt: new Date().toISOString(),
+          finishedAt: new Date().toISOString(),
+          tokensIn: 5000,
+          tokensOut: 2000,
+          estimatedCostUsd: 0.08,
+        },
+        _count: { doctrineExtracts: 2, editorialFlags: 0 },
+      };
+
+      prismaService.digest.findUnique.mockResolvedValue(aiGeneratedDigest);
+
+      const result = await service.findByIdAdmin('ai-digest-1');
+
+      expect(result).toEqual(aiGeneratedDigest);
+      expect(result.userId).toBeNull();
+      expect(result.organizationId).toBeNull();
+      expect(result.visibility).toBe('private');
+    });
+
+    it('should throw NotFoundException if digest does not exist', async () => {
+      prismaService.digest.findUnique.mockResolvedValue(null);
+
+      await expect(service.findByIdAdmin('nonexistent-id')).rejects.toThrow(
+        NotFoundException,
+      );
+      await expect(service.findByIdAdmin('nonexistent-id')).rejects.toThrow(
+        'Digest not found',
+      );
+    });
+
+    it('should NOT call assertDigestAccess (no visibility enforcement)', async () => {
+      const privateDigestDifferentUser = {
+        ...mockDigest,
+        userId: 'other-user',
+        organizationId: 'other-org',
+        visibility: 'private',
+        legalDocument: mockLegalDocument,
+        reviews: [],
+        derivativeGenerationJob: null,
+        _count: { doctrineExtracts: 0, editorialFlags: 0 },
+      };
+
+      prismaService.digest.findUnique.mockResolvedValue(privateDigestDifferentUser);
+
+      // findByIdAdmin should succeed without userId/orgId — no access check
+      const result = await service.findByIdAdmin('digest-1');
+      expect(result).toEqual(privateDigestDifferentUser);
+    });
+
+    it('should include derivativeGenerationJob in response', async () => {
+      const digestWithJob = {
+        ...mockDigest,
+        userId: null,
+        organizationId: null,
+        legalDocument: mockLegalDocument,
+        reviews: [],
+        derivativeGenerationJob: {
+          id: 'job-1',
+          derivativeType: 'case_digest',
+          modelName: 'gpt-4o',
+          promptTemplateVersion: 'v1.0',
+          startedAt: null,
+          finishedAt: null,
+          tokensIn: 0,
+          tokensOut: 0,
+          estimatedCostUsd: 0,
+        },
+        _count: { doctrineExtracts: 0, editorialFlags: 0 },
+      };
+
+      prismaService.digest.findUnique.mockResolvedValue(digestWithJob);
+
+      const result = await service.findByIdAdmin('digest-1');
+
+      expect(result.derivativeGenerationJob).toBeDefined();
+      expect(result.derivativeGenerationJob?.id).toBe('job-1');
+    });
+  });
+
   // ---- findByDocumentIds ----
 
   describe('findByDocumentIds', () => {

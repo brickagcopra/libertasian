@@ -57,6 +57,13 @@ export class DigestsAdminController {
     return { success: true, data: stats };
   }
 
+  @Get(':id')
+  @ApiOperation({ summary: 'Get full digest detail (admin view, bypasses visibility checks)' })
+  async findById(@Param('id', ParseUUIDPipe) id: string) {
+    const digest = await this.digestsService.findByIdAdmin(id);
+    return { success: true, data: digest };
+  }
+
   @Post(':id/assign')
   @ApiOperation({ summary: 'Assign a reviewer to a digest' })
   async assignReviewer(
