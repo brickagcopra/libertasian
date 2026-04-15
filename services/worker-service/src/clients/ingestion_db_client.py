@@ -523,7 +523,7 @@ def create_editorial_flag_for_failed_task(
         cur.execute(
             """INSERT INTO editorial_flags
                    (id, legal_document_id, flag_type, severity, status,
-                    description, created_at)
+                    details, created_at)
                    VALUES (%s, %s, %s, %s, 'open', %s, NOW())""",
             (
                 flag_id,
@@ -764,8 +764,7 @@ def get_legal_document(document_id: str) -> dict[str, Any] | None:
         cur.execute(
             """SELECT id, title, short_title, document_type, gr_no,
                       citation_text, court, ponente, decision_date,
-                      source_id, is_official, status, truthfulness_status,
-                      confidence_score
+                      source_id, is_official, status, truthfulness_status
                FROM legal_documents
                WHERE id = %s""",
             (document_id,),

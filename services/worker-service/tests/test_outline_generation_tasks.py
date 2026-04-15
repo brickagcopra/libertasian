@@ -33,7 +33,6 @@ FAKE_DOC_1: dict[str, Any] = {
     "court": "Supreme Court",
     "decision_date": "2025-01-01",
     "subject": "Criminal Law",
-    "confidence_score": 0.9,
 }
 
 FAKE_DOC_2: dict[str, Any] = {
@@ -44,7 +43,6 @@ FAKE_DOC_2: dict[str, Any] = {
     "court": "Court of Appeals",
     "decision_date": "2024-06-15",
     "subject": "Criminal Law",
-    "confidence_score": 0.85,
 }
 
 FAKE_SECTIONS_1: list[dict[str, Any]] = [

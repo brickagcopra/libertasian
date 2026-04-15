@@ -52,7 +52,6 @@ FAKE_DOC = {
     "is_official": True,
     "status": "published",
     "truthfulness_status": "verified",
-    "confidence_score": 0.9,
 }
 
 FAKE_SECTIONS = [
