@@ -35,6 +35,10 @@ vi.mock('@/features/settings/hooks/use-rbac', () => ({
   useHasPermission: () => ({ hasPermission: false, isLoading: false }),
 }));
 
+vi.mock('@/components/brand/logo', () => ({
+  Logo: () => <div>LIBERTASIAN</div>,
+}));
+
 import { AppSidebar, SidebarContent } from './app-sidebar';
 
 describe('SidebarContent', () => {

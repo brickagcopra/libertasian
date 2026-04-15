@@ -49,8 +49,15 @@ describe('STORAGE_KEYS', () => {
     expect(STORAGE_KEYS.ONBOARDING_COMPLETED).toBe('onboarding_completed');
   });
 
-  it('has 9 storage keys', () => {
-    expect(Object.keys(STORAGE_KEYS)).toHaveLength(9);
+  it('has 13 storage keys', () => {
+    expect(Object.keys(STORAGE_KEYS)).toHaveLength(13);
+  });
+
+  it('defines blog and ad storage keys', () => {
+    expect(STORAGE_KEYS.CACHED_BLOG_POSTS).toBe('cached_blog_posts');
+    expect(STORAGE_KEYS.AD_DISMISSED_IDS).toBe('ad_dismissed_ids');
+    expect(STORAGE_KEYS.AD_SESSION_ID).toBe('ad_session_id');
+    expect(STORAGE_KEYS.AD_IMPRESSED_IDS).toBe('ad_impressed_ids');
   });
 });
 

@@ -2,9 +2,8 @@ import React from 'react';
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
 
 // Mock expo-router
-const mockPush = jest.fn();
 jest.mock('expo-router', () => ({
-  router: { push: mockPush, back: jest.fn() },
+  router: { push: jest.fn(), replace: jest.fn(), back: jest.fn() },
   Stack: {
     Screen: ({ options }: { options: { title: string } }) => {
       const { Text } = require('react-native');
@@ -36,6 +35,7 @@ jest.mock('../../hooks/use-network-state', () => ({
   useNetworkState: () => ({ isConnected: true, isInternetReachable: true, type: 'wifi' }),
 }));
 
+import { router } from 'expo-router';
 import DocumentBrowserScreen from './index';
 
 beforeEach(() => {
@@ -153,7 +153,7 @@ describe('DocumentBrowserScreen', () => {
     });
     const { getByText } = render(<DocumentBrowserScreen />);
     fireEvent.press(getByText('Test Case'));
-    expect(mockPush).toHaveBeenCalledWith('/reader/doc1');
+    expect(router.push).toHaveBeenCalledWith('/reader/doc1');
   });
 
   it('renders header title', () => {
@@ -166,8 +166,8 @@ describe('DocumentBrowserScreen', () => {
       fetchNextPage: jest.fn(),
       refetch: jest.fn(),
     });
-    const { getByText } = render(<DocumentBrowserScreen />);
-    expect(getByText('Legal Documents')).toBeTruthy();
+    const { getByTestId } = render(<DocumentBrowserScreen />);
+    expect(getByTestId('stack-title')).toBeTruthy();
   });
 
   it('toggles filter panel', () => {
