@@ -565,21 +565,21 @@ export function useSubmitReview() {
       id,
       verdict,
       notes,
-      truthfulness,
-      completeness,
-      citationAccuracy,
+      truthfulnessScore,
+      completenessScore,
+      citationAccuracyScore,
     }: {
       id: string;
       verdict: string;
       notes?: string;
-      truthfulness?: number;
-      completeness?: number;
-      citationAccuracy?: number;
+      truthfulnessScore?: number;
+      completenessScore?: number;
+      citationAccuracyScore?: number;
     }) => {
       const res = await apiClient.post<{
         success: boolean;
         data: { digestId: string; reviewId: string; newStatus: string; verdict: string };
-      }>(`/admin/digests/${id}/review`, { verdict, notes, truthfulness, completeness, citationAccuracy });
+      }>(`/admin/digests/${id}/review`, { verdict, notes, truthfulnessScore, completenessScore, citationAccuracyScore });
       return res.data;
     },
     onSuccess: () => {
