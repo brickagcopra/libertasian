@@ -42,6 +42,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { DigestContentPanel } from '@/features/digests/components/digest-content-panel';
 import { AiSummaryTab } from './_components/ai-summary-tab';
 import { DigestsTab } from './_components/digests-tab';
 
@@ -88,6 +89,11 @@ export default function ReaderPage() {
   const [showAnnotations, setShowAnnotations] = useState(true);
 
   const isBookmarked = bookmarksData?.data?.some((b) => b.legalDocumentId === id) ?? false;
+
+  // Public editorial digest to show inline in fulltext view
+  const editorialDigest = (digestsData?.data ?? []).find(
+    (d) => d.visibility === 'public_editorial',
+  );
 
   const handleBookmark = async () => {
     try {
@@ -321,6 +327,25 @@ export default function ReaderPage() {
           </TabsList>
 
           <TabsContent value="fulltext" className="mt-4">
+            {/* Inline editorial digest */}
+            {editorialDigest && (
+              <Card className="mb-6 border-blue-200 bg-blue-50/30">
+                <CardContent className="pt-5">
+                  <div className="mb-3 flex items-center gap-2">
+                    <FileTextIcon className="h-4 w-4 text-blue-600" />
+                    <span className="text-sm font-semibold text-blue-800">Case Digest</span>
+                    <Badge className="bg-green-100 text-green-700 hover:bg-green-100">
+                      Approved
+                    </Badge>
+                  </div>
+                  <DigestContentPanel
+                    digest={editorialDigest}
+                    showHeader={false}
+                  />
+                </CardContent>
+              </Card>
+            )}
+
             {sections && sections.length > 0 ? (
               <div className="space-y-6">
                 {sections.map((section) => (
