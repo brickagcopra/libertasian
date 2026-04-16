@@ -511,12 +511,23 @@ export class DerivativesAdminService {
       });
 
       if (!digest) {
-        throw new NotFoundException('No output to delete for this job');
+        // No output — delete the job record itself (e.g. failed jobs)
+        await this.prisma.derivativeGenerationJob.delete({ where: { id: jobId } });
+        await this.audit.log({
+          actorUserId: userId,
+          actorType: 'admin',
+          action: 'derivative_job.admin_delete',
+          entityType: 'derivative_generation_job',
+          entityId: jobId,
+          metadata: { derivativeType: job.derivativeType, status: job.status, reason: 'no_output' },
+        });
+        return;
       }
 
       // Digest model has no deletedAt — hard delete (admin reviewer rejection;
       // the source of truth is the legal_document).
       await this.prisma.digest.delete({ where: { id: digest.id } });
+      await this.prisma.derivativeGenerationJob.delete({ where: { id: jobId } });
 
       await this.audit.log({
         actorUserId: userId,
@@ -541,10 +552,21 @@ export class DerivativesAdminService {
     });
 
     if (!artifact) {
-      throw new NotFoundException('No output to delete for this job');
+      // No output — delete the job record itself (e.g. failed jobs)
+      await this.prisma.derivativeGenerationJob.delete({ where: { id: jobId } });
+      await this.audit.log({
+        actorUserId: userId,
+        actorType: 'admin',
+        action: 'derivative_job.admin_delete',
+        entityType: 'derivative_generation_job',
+        entityId: jobId,
+        metadata: { derivativeType: job.derivativeType, status: job.status, reason: 'no_output' },
+      });
+      return;
     }
 
     await this.softDeleteArtifact(artifact.id, userId);
+    await this.prisma.derivativeGenerationJob.delete({ where: { id: jobId } });
   }
 
   // ─── Settings ─────────────────────────────────────────────
