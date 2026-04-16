@@ -39,10 +39,18 @@ export default function AdminDigestDetailPage() {
   const [completeness, setCompleteness] = useState(80);
   const [citationAccuracy, setCitationAccuracy] = useState(80);
   const [actionMsg, setActionMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [submittedVerdict, setSubmittedVerdict] = useState<string | null>(null);
+
+  const verdictLabels: Record<string, { pending: string; done: string; message: string }> = {
+    approved: { pending: 'Approving...', done: 'Approved \u2713', message: 'Digest approved successfully. Redirecting...' },
+    revision_requested: { pending: 'Requesting Revision...', done: 'Revision Requested \u2713', message: 'Revision requested. Redirecting...' },
+    rejected: { pending: 'Rejecting...', done: 'Rejected \u2713', message: 'Digest rejected. Redirecting...' },
+  };
 
   const handleReview = async (verdict: string) => {
+    setSubmittedVerdict(verdict);
     try {
-      const result = await submitReview.mutateAsync({
+      await submitReview.mutateAsync({
         id,
         verdict,
         notes: notes || undefined,
@@ -50,11 +58,11 @@ export default function AdminDigestDetailPage() {
         completeness: completeness / 100,
         citationAccuracy: citationAccuracy / 100,
       });
-      setActionMsg({ type: 'success', text: `${result.verdict} — new status: ${result.newStatus}` });
+      setActionMsg({ type: 'success', text: verdictLabels[verdict]?.message ?? 'Review submitted. Redirecting...' });
       queryClient.invalidateQueries({ queryKey: ['admin', 'digest', id] });
-      // Navigate back after a brief delay so user sees the success message
       setTimeout(() => router.push('/admin/derivatives'), 1500);
     } catch {
+      setSubmittedVerdict(null);
       setActionMsg({ type: 'error', text: `Failed to submit ${verdict} review.` });
     }
   };
@@ -378,29 +386,35 @@ export default function AdminDigestDetailPage() {
               <div className="flex flex-col gap-2">
                 <Button
                   onClick={() => handleReview('approved')}
-                  disabled={submitReview.isPending}
+                  disabled={submitReview.isPending || submittedVerdict !== null}
                   className="w-full bg-green-600 hover:bg-green-700"
                 >
                   <Check className="mr-1.5 h-4 w-4" />
-                  {submitReview.isPending ? 'Submitting...' : 'Approve'}
+                  {submittedVerdict === 'approved'
+                    ? (submitReview.isPending ? verdictLabels.approved.pending : verdictLabels.approved.done)
+                    : 'Approve'}
                 </Button>
                 <Button
                   variant="outline"
                   onClick={() => handleReview('revision_requested')}
-                  disabled={submitReview.isPending}
+                  disabled={submitReview.isPending || submittedVerdict !== null}
                   className="w-full border-yellow-400 text-yellow-700 hover:bg-yellow-50"
                 >
                   <RotateCcw className="mr-1.5 h-4 w-4" />
-                  Request Revision
+                  {submittedVerdict === 'revision_requested'
+                    ? (submitReview.isPending ? verdictLabels.revision_requested.pending : verdictLabels.revision_requested.done)
+                    : 'Request Revision'}
                 </Button>
                 <Button
                   variant="destructive"
                   onClick={() => handleReview('rejected')}
-                  disabled={submitReview.isPending}
+                  disabled={submitReview.isPending || submittedVerdict !== null}
                   className="w-full"
                 >
                   <X className="mr-1.5 h-4 w-4" />
-                  Reject
+                  {submittedVerdict === 'rejected'
+                    ? (submitReview.isPending ? verdictLabels.rejected.pending : verdictLabels.rejected.done)
+                    : 'Reject'}
                 </Button>
               </div>
             </CardContent>
