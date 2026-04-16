@@ -199,7 +199,9 @@ export default function DoctrineDetailPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Doctrine Detail</h1>
+          <h1 className="text-2xl font-bold">
+            {(doctrine.doctrineType ?? 'Doctrine').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+          </h1>
           <p className="mt-1 text-xs text-muted-foreground">ID: {doctrine.id}</p>
         </div>
         <Button variant="outline" size="sm" asChild>
@@ -225,7 +227,7 @@ export default function DoctrineDetailPage() {
             </Badge>
             {doctrine.confidence !== null && (
               <Badge className={confidenceColor}>
-                {(doctrine.confidence * 100).toFixed(0)}%
+                Confidence: {(doctrine.confidence * 100).toFixed(0)}%
               </Badge>
             )}
             <Badge className={reviewStatusVariants[doctrine.reviewStatus ?? ''] ?? 'bg-muted text-muted-foreground'}>
@@ -279,7 +281,11 @@ export default function DoctrineDetailPage() {
             </div>
           ) : (
             <>
-              <p className="whitespace-pre-wrap text-sm">{doctrine.text}</p>
+              <div className="rounded-lg border-l-4 border-blue-500 bg-blue-50/50 p-4">
+                <p className="text-sm leading-relaxed text-gray-800 italic">
+                  &ldquo;{doctrine.text}&rdquo;
+                </p>
+              </div>
               {doctrine.normalizedText && doctrine.normalizedText !== doctrine.text && (
                 <p className="mt-2 text-xs text-muted-foreground">
                   Normalized: {doctrine.normalizedText}
@@ -290,31 +296,34 @@ export default function DoctrineDetailPage() {
 
           {/* Source Info */}
           <Separator className="my-4" />
-          {doctrine.legalDocument && (
-            <p className="text-xs text-muted-foreground">
-              Document:{' '}
-              <Link href={`/reader/${doctrine.legalDocument.id}`} className="text-blue-600 hover:underline">
-                {doctrine.legalDocument.title}
-              </Link>
-              {doctrine.legalDocument.grNo && ` (${doctrine.legalDocument.grNo})`}
-              {doctrine.legalDocument.court && ` — ${doctrine.legalDocument.court}`}
-              {doctrine.legalDocument.decisionDate && `, ${new Date(doctrine.legalDocument.decisionDate).toLocaleDateString()}`}
-            </p>
-          )}
-          {doctrine.digest && (
-            <p className="mt-1 text-xs text-muted-foreground">
-              Digest:{' '}
-              <Link href={`/digests/${doctrine.digest.id}`} className="text-blue-600 hover:underline">
-                {doctrine.digest.title}
-              </Link>
-            </p>
-          )}
-          {doctrine.sourceSection && (
-            <p className="mt-1 text-xs text-muted-foreground">
-              Section: {doctrine.sourceSection.sectionType}
-              {doctrine.sourceSection.sectionLabel && ` — ${doctrine.sourceSection.sectionLabel}`}
-            </p>
-          )}
+          <div className="mt-4 rounded-md bg-gray-50 p-3">
+            <h3 className="mb-2 text-xs font-semibold uppercase text-muted-foreground">Source</h3>
+            {doctrine.legalDocument && (
+              <p className="text-xs text-muted-foreground">
+                Document:{' '}
+                <Link href={`/reader/${doctrine.legalDocument.id}`} className="text-blue-600 hover:underline">
+                  {doctrine.legalDocument.title}
+                </Link>
+                {doctrine.legalDocument.grNo && ` (${doctrine.legalDocument.grNo})`}
+                {doctrine.legalDocument.court && ` — ${doctrine.legalDocument.court}`}
+                {doctrine.legalDocument.decisionDate && `, ${new Date(doctrine.legalDocument.decisionDate).toLocaleDateString()}`}
+              </p>
+            )}
+            {doctrine.digest && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Digest:{' '}
+                <Link href={`/digests/${doctrine.digest.id}`} className="text-blue-600 hover:underline">
+                  {doctrine.digest.title}
+                </Link>
+              </p>
+            )}
+            {doctrine.sourceSection && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Section: {doctrine.sourceSection.sectionType}
+                {doctrine.sourceSection.sectionLabel && ` — ${doctrine.sourceSection.sectionLabel}`}
+              </p>
+            )}
+          </div>
 
           {/* Actions */}
           <Separator className="my-4" />
