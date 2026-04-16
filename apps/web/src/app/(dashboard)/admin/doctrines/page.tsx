@@ -287,7 +287,7 @@ function DoctrineCard({ doctrine }: { doctrine: DoctrineListItem }) {
               </Badge>
               {doctrine.confidence !== null && (
                 <Badge className={confidenceColor}>
-                  {(doctrine.confidence * 100).toFixed(0)}%
+                  Confidence: {(doctrine.confidence * 100).toFixed(0)}%
                 </Badge>
               )}
               <Badge className={reviewStatusVariants[doctrine.reviewStatus ?? ''] ?? 'bg-muted text-muted-foreground'}>
@@ -297,7 +297,9 @@ function DoctrineCard({ doctrine }: { doctrine: DoctrineListItem }) {
                 {new Date(doctrine.createdAt).toLocaleDateString()}
               </span>
             </div>
-            <p className="mt-2 text-sm line-clamp-3">{doctrine.text}</p>
+            <p className="mt-2 text-sm italic text-gray-700 line-clamp-3 border-l-2 border-blue-300 pl-3">
+              &ldquo;{doctrine.text}&rdquo;
+            </p>
             {doctrine.legalDocument && (
               <p className="mt-1 text-xs text-muted-foreground">
                 Source: {doctrine.legalDocument.title}
