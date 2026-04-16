@@ -83,6 +83,13 @@ export class DerivativesAdminController {
     return { success: true, data };
   }
 
+  @Get('jobs/:id/doctrines')
+  @ApiOperation({ summary: 'Get doctrine extracts produced by a derivative generation job' })
+  async getJobDoctrines(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.service.getJobDoctrines(id);
+    return { success: true, data };
+  }
+
   @Post('jobs/:id/retry')
   async retryJob(
     @Param('id', ParseUUIDPipe) id: string,
