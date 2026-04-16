@@ -50,6 +50,7 @@ vi.mock('@/features/admin/hooks/use-derivatives-admin', () => ({
   useRetryDerivativeJob: () => ({ mutate: vi.fn() }),
   useRegenerateArtifact: () => ({ mutate: vi.fn() }),
   useSoftDeleteArtifact: () => ({ mutate: vi.fn() }),
+  useDeleteJobOutput: () => ({ mutate: vi.fn() }),
   useJobDigest: mockUseJobDigest,
 }));
 

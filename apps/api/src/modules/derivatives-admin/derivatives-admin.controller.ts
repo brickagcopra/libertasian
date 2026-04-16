@@ -101,6 +101,16 @@ export class DerivativesAdminController {
     return { success: true, data };
   }
 
+  @Delete('jobs/:id/output')
+  @ApiOperation({ summary: 'Delete the output (digest or artifact) produced by a derivative generation job' })
+  async deleteJobOutput(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    await this.service.deleteJobOutput(id, user.sub);
+    return { success: true };
+  }
+
   @Delete('artifacts/:id')
   async softDeleteArtifact(
     @Param('id', ParseUUIDPipe) id: string,
