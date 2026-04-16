@@ -844,3 +844,17 @@ export interface JobDigestResponse {
   jobStatus: string;
   digest: AdminDigestDetail | null;
 }
+
+export interface JobDoctrineItem {
+  id: string;
+  text: string;
+  doctrineType: string | null;
+  confidence: number | null;
+  reviewStatus: string;
+  createdAt: string;
+}
+
+export interface JobDoctrinesResponse {
+  jobStatus: string;
+  doctrines: JobDoctrineItem[];
+}

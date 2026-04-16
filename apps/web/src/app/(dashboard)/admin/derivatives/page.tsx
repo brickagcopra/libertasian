@@ -14,8 +14,9 @@ import {
   useRegenerateArtifact,
   useDeleteJobOutput,
   useJobDigest,
+  useJobDoctrines,
 } from '@/features/admin/hooks/use-derivatives-admin';
-import type { DerivativeTypeStats, DerivativeJob, AdminDigestDetail } from '@/features/admin/types';
+import type { DerivativeTypeStats, DerivativeJob, AdminDigestDetail, JobDoctrineItem } from '@/features/admin/types';
 import { AdminCardSkeleton } from '@/components/ui/skeleton';
 
 const DERIVATIVE_TYPES = [
@@ -645,6 +646,52 @@ function parseCitedAuthorities(json: unknown): string[] {
   }
 }
 
+const DOCTRINE_TYPE_COLORS: Record<string, string> = {
+  rule: 'bg-blue-100 text-blue-700',
+  test: 'bg-purple-100 text-purple-700',
+  definition: 'bg-teal-100 text-teal-700',
+  exception: 'bg-orange-100 text-orange-700',
+  procedural: 'bg-gray-100 text-gray-700',
+};
+
+function DoctrineExtractsPanel({ doctrines }: { doctrines: JobDoctrineItem[] }) {
+  return (
+    <div className="mt-4 space-y-3 border-t pt-4">
+      <h4 className="text-base font-semibold text-gray-900">
+        Extracted Doctrines ({doctrines.length})
+      </h4>
+      {doctrines.map((d) => (
+        <div key={d.id} className="rounded border bg-gray-50 p-3">
+          <div className="flex items-center gap-2">
+            {d.doctrineType && (
+              <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${DOCTRINE_TYPE_COLORS[d.doctrineType] ?? 'bg-gray-100 text-gray-700'}`}>
+                {d.doctrineType}
+              </span>
+            )}
+            <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${REVIEW_STATUS_COLORS[d.reviewStatus] ?? 'bg-gray-100 text-gray-700'}`}>
+              {d.reviewStatus}
+            </span>
+            {d.confidence !== null && (
+              <span className="text-xs text-gray-500">
+                {(d.confidence * 100).toFixed(0)}% confidence
+              </span>
+            )}
+          </div>
+          <p className="mt-2 text-sm text-gray-800" style={{ whiteSpace: 'pre-line' }}>
+            {d.text.length > 300 ? `${d.text.slice(0, 300)}...` : d.text}
+          </p>
+          <Link
+            href={`/admin/doctrines/${d.id}`}
+            className="mt-1 inline-block text-xs font-medium text-blue-600 hover:text-blue-800"
+          >
+            View full doctrine &rarr;
+          </Link>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function JobDetailPanel({
   job,
   onRetry,
@@ -657,9 +704,14 @@ function JobDetailPanel({
   onDelete: (id: string) => void;
 }) {
   const shouldFetchDigest = !!job && job.status === 'completed' && job.derivativeType === 'case_digest';
+  const shouldFetchDoctrines = !!job && job.status === 'completed' && job.derivativeType === 'doctrine_extract';
   const { data: digestData, isLoading: digestLoading, error: digestError } = useJobDigest(
     job?.id ?? '',
     { enabled: shouldFetchDigest },
+  );
+  const { data: doctrinesData, isLoading: doctrinesLoading, error: doctrinesError } = useJobDoctrines(
+    job?.id ?? '',
+    { enabled: shouldFetchDoctrines },
   );
 
   if (!job) return <p className="mt-2 text-sm text-gray-400">Job not found in current page</p>;
@@ -733,6 +785,28 @@ function JobDetailPanel({
           )}
           {digestData?.digest && (
             <DigestContentPanel digest={digestData.digest} />
+          )}
+        </>
+      )}
+
+      {/* Doctrine extracts section */}
+      {shouldFetchDoctrines && (
+        <>
+          {doctrinesLoading && (
+            <p className="text-sm text-gray-400">Loading doctrine extracts...</p>
+          )}
+          {doctrinesError && (
+            <p className="text-sm text-red-500">
+              Error loading doctrines: {doctrinesError instanceof Error ? doctrinesError.message : 'Unknown error'}
+            </p>
+          )}
+          {doctrinesData && doctrinesData.doctrines.length === 0 && (
+            <p className="text-sm text-amber-600">
+              Generation completed but no doctrine extracts were written — investigate.
+            </p>
+          )}
+          {doctrinesData && doctrinesData.doctrines.length > 0 && (
+            <DoctrineExtractsPanel doctrines={doctrinesData.doctrines} />
           )}
         </>
       )}
