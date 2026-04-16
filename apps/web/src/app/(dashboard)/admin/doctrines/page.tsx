@@ -282,16 +282,16 @@ function DoctrineCard({ doctrine }: { doctrine: DoctrineListItem }) {
             className="flex-1 text-left hover:opacity-80"
           >
             <div className="flex flex-wrap items-center gap-2">
-              <Badge className={doctrineTypeVariants[doctrine.doctrineType] ?? 'bg-muted text-muted-foreground'}>
-                {doctrine.doctrineType.replace(/_/g, ' ')}
+              <Badge className={doctrineTypeVariants[doctrine.doctrineType ?? ''] ?? 'bg-muted text-muted-foreground'}>
+                {(doctrine.doctrineType ?? 'unknown').replace(/_/g, ' ')}
               </Badge>
               {doctrine.confidence !== null && (
                 <Badge className={confidenceColor}>
                   {(doctrine.confidence * 100).toFixed(0)}%
                 </Badge>
               )}
-              <Badge className={reviewStatusVariants[doctrine.reviewStatus] ?? 'bg-muted text-muted-foreground'}>
-                {doctrine.reviewStatus.replace(/_/g, ' ')}
+              <Badge className={reviewStatusVariants[doctrine.reviewStatus ?? ''] ?? 'bg-muted text-muted-foreground'}>
+                {(doctrine.reviewStatus ?? 'unknown').replace(/_/g, ' ')}
               </Badge>
               <span className="text-xs text-muted-foreground">
                 {new Date(doctrine.createdAt).toLocaleDateString()}

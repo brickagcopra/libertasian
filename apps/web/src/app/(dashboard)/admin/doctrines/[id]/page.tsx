@@ -220,16 +220,16 @@ export default function DoctrineDetailPage() {
       <Card>
         <CardContent className="p-4">
           <div className="mb-3 flex flex-wrap items-center gap-2">
-            <Badge className={doctrineTypeVariants[doctrine.doctrineType] ?? 'bg-muted text-muted-foreground'}>
-              {doctrine.doctrineType.replace(/_/g, ' ')}
+            <Badge className={doctrineTypeVariants[doctrine.doctrineType ?? ''] ?? 'bg-muted text-muted-foreground'}>
+              {(doctrine.doctrineType ?? 'unknown').replace(/_/g, ' ')}
             </Badge>
             {doctrine.confidence !== null && (
               <Badge className={confidenceColor}>
                 {(doctrine.confidence * 100).toFixed(0)}%
               </Badge>
             )}
-            <Badge className={reviewStatusVariants[doctrine.reviewStatus] ?? 'bg-muted text-muted-foreground'}>
-              {doctrine.reviewStatus.replace(/_/g, ' ')}
+            <Badge className={reviewStatusVariants[doctrine.reviewStatus ?? ''] ?? 'bg-muted text-muted-foreground'}>
+              {(doctrine.reviewStatus ?? 'unknown').replace(/_/g, ' ')}
             </Badge>
             <span className="text-xs text-muted-foreground">
               Created {new Date(doctrine.createdAt).toLocaleDateString()}
