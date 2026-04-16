@@ -86,7 +86,6 @@ export default function DerivativesAdminPage() {
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [confirmGenerate, setConfirmGenerate] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
-  const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [actionMsg, setActionMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   if (statsLoading) {
@@ -517,7 +516,7 @@ export default function DerivativesAdminPage() {
             job={(jobsData?.data ?? []).find((j: DerivativeJob) => j.id === selectedJobId)}
             onRetry={(id: string) => retryJob.mutate(id)}
             onRegenerate={(id: string) => regenerate.mutate(id)}
-            onDelete={(id: string) => { setDeleteConfirmId(id); setDeleteConfirmText(''); }}
+            onDelete={(id: string) => { setDeleteConfirmId(id); }}
           />
         </div>
       )}
@@ -528,15 +527,9 @@ export default function DerivativesAdminPage() {
           <div className="mx-4 w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
             <h3 className="text-lg font-semibold text-red-600">Delete Job Output</h3>
             <p className="mt-2 text-sm text-gray-600">
-              Type &quot;delete&quot; to confirm deletion of this job&apos;s output.
+              Are you sure you want to delete this job&apos;s output?
+              This action cannot be undone.
             </p>
-            <input
-              type="text"
-              value={deleteConfirmText}
-              onChange={(e) => setDeleteConfirmText(e.target.value)}
-              placeholder='Type "delete"'
-              className="mt-2 w-full rounded border-gray-300 text-sm"
-            />
             <div className="mt-4 flex justify-end gap-3">
               <button
                 onClick={() => setDeleteConfirmId(null)}
@@ -557,7 +550,7 @@ export default function DerivativesAdminPage() {
                     },
                   });
                 }}
-                disabled={deleteConfirmText !== 'delete' || deleteOutput.isPending}
+                disabled={deleteOutput.isPending}
                 className="rounded bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
               >
                 {deleteOutput.isPending ? 'Deleting...' : 'Delete'}
