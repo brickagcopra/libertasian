@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { apiClient } from '@/lib/api-client';
 
-interface Digest {
+export interface Digest {
   id: string;
   title: string;
   digestType: string;

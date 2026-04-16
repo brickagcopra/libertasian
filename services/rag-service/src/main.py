@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from .answer.router import router as answer_router
 from .citations.router import router as citations_router
 from .comparisons.router import router as comparisons_router
+from .completions.router import router as completions_router
 from .config import settings
 from .contradictions.router import router as contradictions_router
 from .digests.router import router as digests_router
@@ -63,6 +64,7 @@ app.include_router(timelines_router)
 app.include_router(hearing_prep_router)
 app.include_router(answer_router)
 app.include_router(digests_router)
+app.include_router(completions_router)
 
 
 class HealthResponse(BaseModel):

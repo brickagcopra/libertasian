@@ -126,9 +126,20 @@ export class DigestsAdminController {
         ip,
         verdict: dto.verdict,
         newStatus: result.newStatus,
+        newVisibility: result.newVisibility,
         reviewId: result.reviewId,
       },
     });
+    if (result.newVisibility === 'public_editorial') {
+      await this.auditService.log({
+        actorUserId: user.sub,
+        actorType: 'admin',
+        action: 'digest.publish_editorial',
+        entityType: 'digest',
+        entityId: id,
+        metadata: { ip, reviewId: result.reviewId },
+      });
+    }
     return { success: true, data: result };
   }
 

@@ -12,10 +12,12 @@ import {
   useEnqueueGeneration,
   useRetryDerivativeJob,
   useRegenerateArtifact,
-  useSoftDeleteArtifact,
+  useDeleteJobOutput,
   useJobDigest,
+  useJobDoctrines,
 } from '@/features/admin/hooks/use-derivatives-admin';
-import type { DerivativeTypeStats, DerivativeJob, AdminDigestDetail } from '@/features/admin/types';
+import type { DerivativeTypeStats, DerivativeJob, JobDoctrineItem } from '@/features/admin/types';
+import { DigestContentPanel } from '@/features/digests/components/digest-content-panel';
 import { AdminCardSkeleton } from '@/components/ui/skeleton';
 
 const DERIVATIVE_TYPES = [
@@ -53,7 +55,7 @@ export default function DerivativesAdminPage() {
   const enqueue = useEnqueueGeneration();
   const retryJob = useRetryDerivativeJob();
   const regenerate = useRegenerateArtifact();
-  const softDelete = useSoftDeleteArtifact();
+  const deleteOutput = useDeleteJobOutput();
 
   // Job list state
   const [jobFilterType, setJobFilterType] = useState<string>('');
@@ -513,9 +515,9 @@ export default function DerivativesAdminPage() {
       {deleteConfirmId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="mx-4 w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
-            <h3 className="text-lg font-semibold text-red-600">Delete Artifact</h3>
+            <h3 className="text-lg font-semibold text-red-600">Delete Job Output</h3>
             <p className="mt-2 text-sm text-gray-600">
-              Type &quot;delete&quot; to confirm soft-deletion of this artifact.
+              Type &quot;delete&quot; to confirm deletion of this job&apos;s output.
             </p>
             <input
               type="text"
@@ -533,7 +535,7 @@ export default function DerivativesAdminPage() {
               </button>
               <button
                 onClick={() => {
-                  softDelete.mutate(deleteConfirmId);
+                  deleteOutput.mutate(deleteConfirmId);
                   setDeleteConfirmId(null);
                 }}
                 disabled={deleteConfirmText !== 'delete'}
@@ -559,90 +561,53 @@ const REVIEW_STATUS_COLORS: Record<string, string> = {
   rejected: 'bg-red-100 text-red-700',
 };
 
-function DigestSection({ heading, content }: { heading: string; content: string | null | undefined }) {
-  if (!content) return null;
+// DigestContentPanel and parseCitedAuthorities are imported from
+// @/features/digests/components/digest-content-panel
+
+const DOCTRINE_TYPE_COLORS: Record<string, string> = {
+  rule: 'bg-blue-100 text-blue-700',
+  test: 'bg-purple-100 text-purple-700',
+  definition: 'bg-teal-100 text-teal-700',
+  exception: 'bg-orange-100 text-orange-700',
+  procedural: 'bg-gray-100 text-gray-700',
+};
+
+function DoctrineExtractsPanel({ doctrines }: { doctrines: JobDoctrineItem[] }) {
   return (
-    <div>
-      <h4 className="text-sm font-semibold text-gray-700">{heading}</h4>
-      <p className="mt-1 text-sm text-gray-800" style={{ whiteSpace: 'pre-line' }}>{content}</p>
+    <div className="mt-4 space-y-3 border-t pt-4">
+      <h4 className="text-base font-semibold text-gray-900">
+        Extracted Doctrines ({doctrines.length})
+      </h4>
+      {doctrines.map((d) => (
+        <div key={d.id} className="rounded border bg-gray-50 p-3">
+          <div className="flex items-center gap-2">
+            {d.doctrineType && (
+              <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${DOCTRINE_TYPE_COLORS[d.doctrineType] ?? 'bg-gray-100 text-gray-700'}`}>
+                {d.doctrineType}
+              </span>
+            )}
+            <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${REVIEW_STATUS_COLORS[d.reviewStatus] ?? 'bg-gray-100 text-gray-700'}`}>
+              {d.reviewStatus}
+            </span>
+            {d.confidence !== null && (
+              <span className="text-xs text-gray-500">
+                {(d.confidence * 100).toFixed(0)}% confidence
+              </span>
+            )}
+          </div>
+          <p className="mt-2 text-sm text-gray-800" style={{ whiteSpace: 'pre-line' }}>
+            {d.text.length > 300 ? `${d.text.slice(0, 300)}...` : d.text}
+          </p>
+          <Link
+            href={`/admin/doctrines/${d.id}`}
+            className="mt-1 inline-block text-xs font-medium text-blue-600 hover:text-blue-800"
+          >
+            View full doctrine &rarr;
+          </Link>
+        </div>
+      ))}
     </div>
   );
-}
-
-function DigestContentPanel({ digest }: { digest: AdminDigestDetail }) {
-  const citedAuthorities = parseCitedAuthorities(digest.citedAuthoritiesJson);
-
-  return (
-    <div className="mt-4 space-y-4 border-t pt-4">
-      <div>
-        <h4 className="text-base font-semibold text-gray-900">{digest.title}</h4>
-        {digest.legalDocument?.citationText && (
-          <p className="text-xs text-gray-500">{digest.legalDocument.citationText}</p>
-        )}
-        <div className="mt-1 flex items-center gap-2">
-          <span className="text-xs text-gray-500">
-            Confidence: {digest.confidenceScore !== null ? `${(digest.confidenceScore * 100).toFixed(0)}%` : 'N/A'}
-          </span>
-          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${REVIEW_STATUS_COLORS[digest.reviewStatus] ?? 'bg-gray-100 text-gray-700'}`}>
-            {digest.reviewStatus}
-          </span>
-        </div>
-      </div>
-
-      <DigestSection heading="Summary" content={digest.summary} />
-      <DigestSection heading="Facts" content={digest.facts} />
-      <DigestSection heading="Petitioner Arguments" content={digest.petitionerArguments} />
-      <DigestSection heading="Respondent Arguments" content={digest.respondentArguments} />
-      <DigestSection heading="Issues" content={digest.issues} />
-      <DigestSection heading="Ruling" content={digest.ruling} />
-      <DigestSection heading="Doctrine" content={digest.doctrine} />
-
-      {digest.dispositive && (
-        <div className="rounded border border-blue-200 bg-blue-50 p-3">
-          <h4 className="text-sm font-semibold text-blue-800">Dispositive</h4>
-          <p className="mt-1 text-sm text-blue-900" style={{ whiteSpace: 'pre-line' }}>{digest.dispositive}</p>
-        </div>
-      )}
-
-      {citedAuthorities.length > 0 && (
-        <div>
-          <h4 className="text-sm font-semibold text-gray-700">Cited Authorities</h4>
-          <ul className="mt-1 list-inside list-disc space-y-0.5 text-sm text-gray-800">
-            {citedAuthorities.map((cite, i) => (
-              <li key={i}>{cite}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      <div className="pt-2">
-        <Link
-          href={`/admin/digests/${digest.id}`}
-          className="text-xs font-medium text-blue-600 hover:text-blue-800"
-        >
-          View full digest &rarr;
-        </Link>
-      </div>
-    </div>
-  );
-}
-
-function parseCitedAuthorities(json: unknown): string[] {
-  if (!json) return [];
-  try {
-    const arr = Array.isArray(json) ? json : [];
-    return arr
-      .map((item: unknown) => {
-        if (typeof item === 'string') return item;
-        if (item && typeof item === 'object' && 'citationText' in item) {
-          return String((item as { citationText: string }).citationText);
-        }
-        return null;
-      })
-      .filter((s): s is string => s !== null);
-  } catch {
-    return [];
-  }
 }
 
 function JobDetailPanel({
@@ -657,9 +622,14 @@ function JobDetailPanel({
   onDelete: (id: string) => void;
 }) {
   const shouldFetchDigest = !!job && job.status === 'completed' && job.derivativeType === 'case_digest';
+  const shouldFetchDoctrines = !!job && job.status === 'completed' && job.derivativeType === 'doctrine_extract';
   const { data: digestData, isLoading: digestLoading, error: digestError } = useJobDigest(
     job?.id ?? '',
     { enabled: shouldFetchDigest },
+  );
+  const { data: doctrinesData, isLoading: doctrinesLoading, error: doctrinesError } = useJobDoctrines(
+    job?.id ?? '',
+    { enabled: shouldFetchDoctrines },
   );
 
   if (!job) return <p className="mt-2 text-sm text-gray-400">Job not found in current page</p>;
@@ -732,7 +702,35 @@ function JobDetailPanel({
             </p>
           )}
           {digestData?.digest && (
-            <DigestContentPanel digest={digestData.digest} />
+            <div className="mt-4 border-t pt-4">
+              <DigestContentPanel
+                digest={digestData.digest}
+                citedAuthoritiesJson={digestData.digest.citedAuthoritiesJson}
+                detailHref={`/admin/digests/${digestData.digest.id}`}
+              />
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Doctrine extracts section */}
+      {shouldFetchDoctrines && (
+        <>
+          {doctrinesLoading && (
+            <p className="text-sm text-gray-400">Loading doctrine extracts...</p>
+          )}
+          {doctrinesError && (
+            <p className="text-sm text-red-500">
+              Error loading doctrines: {doctrinesError instanceof Error ? doctrinesError.message : 'Unknown error'}
+            </p>
+          )}
+          {doctrinesData && doctrinesData.doctrines.length === 0 && (
+            <p className="text-sm text-amber-600">
+              Generation completed but no doctrine extracts were written — investigate.
+            </p>
+          )}
+          {doctrinesData && doctrinesData.doctrines.length > 0 && (
+            <DoctrineExtractsPanel doctrines={doctrinesData.doctrines} />
           )}
         </>
       )}

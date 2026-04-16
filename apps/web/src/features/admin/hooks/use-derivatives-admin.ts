@@ -9,6 +9,7 @@ import type {
   DerivativeJob,
   EnqueueResult,
   JobDigestResponse,
+  JobDoctrinesResponse,
 } from '../types';
 
 /** Standard API response envelope from NestJS controllers */
@@ -83,6 +84,19 @@ export function useJobDigest(jobId: string, opts?: { enabled?: boolean }) {
     queryFn: async () => {
       const res = await apiClient.get<ApiEnvelope<JobDigestResponse>>(
         `/admin/derivatives/jobs/${jobId}/digest`,
+      );
+      return res.data;
+    },
+    enabled: opts?.enabled !== false && !!jobId,
+  });
+}
+
+export function useJobDoctrines(jobId: string, opts?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['admin', 'derivatives', 'jobs', jobId, 'doctrines'],
+    queryFn: async () => {
+      const res = await apiClient.get<ApiEnvelope<JobDoctrinesResponse>>(
+        `/admin/derivatives/jobs/${jobId}/doctrines`,
       );
       return res.data;
     },
@@ -168,6 +182,18 @@ export function useSoftDeleteArtifact() {
   return useMutation({
     mutationFn: async (id: string) => {
       await apiClient.delete(`/admin/derivatives/artifacts/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'derivatives'] });
+    },
+  });
+}
+
+export function useDeleteJobOutput() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (jobId: string) => {
+      await apiClient.delete(`/admin/derivatives/jobs/${jobId}/output`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'derivatives'] });
