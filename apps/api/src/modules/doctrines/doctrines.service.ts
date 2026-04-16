@@ -312,19 +312,11 @@ export class DoctrinesService {
       throw new NotFoundException('Legal document not found');
     }
 
-    // Create placeholder doctrine in draft status
-    const placeholder = await this.prisma.doctrineExtract.create({
-      data: {
-        legalDocumentId: document.id,
-        text: `[Extracting...] ${document.shortTitle ?? document.title}`,
-        reviewStatus: 'draft',
-      },
-    });
-
     // Call RAG service to extract doctrines via internal HTTP
+    const url = `${this.ragServiceUrl}/doctrines/extract`;
+    let response: Response;
     try {
-      const url = `${this.ragServiceUrl}/doctrines/extract`;
-      const response = await fetch(url, {
+      response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -336,90 +328,64 @@ export class DoctrinesService {
         }),
         signal: AbortSignal.timeout(180_000),
       });
-
-      if (!response.ok) {
-        const body = await response.text();
-        throw new Error(`RAG service error ${response.status}: ${body}`);
-      }
-
-      const result = (await response.json()) as {
-        document_id: string;
-        doctrines: {
-          text: string;
-          normalized_text: string | null;
-          doctrine_type: string;
-          source_section_id: string | null;
-          confidence: number;
-        }[];
-        model_name: string;
-        prompt_template_version: string;
-      };
-
-      // Record model run for audit per CLAUDE.md
-      await this.prisma.modelRun.create({
-        data: {
-          runType: 'doctrine_extraction',
-          modelName: result.model_name,
-          promptTemplateVersion: result.prompt_template_version,
-          inputRef: `document:${document.id}`,
-          outputRef: `doctrine:${placeholder.id}`,
-          confidence: null,
-        },
-      });
-
-      // Update placeholder with first doctrine and create additional extracts
-      if (result.doctrines.length > 0) {
-        const first = result.doctrines[0]!;
-        await this.prisma.doctrineExtract.update({
-          where: { id: placeholder.id },
-          data: {
-            text: first.text,
-            normalizedText: first.normalized_text,
-            doctrineType: first.doctrine_type,
-            sourceSectionId: first.source_section_id,
-            confidence: first.confidence,
-            reviewStatus: first.confidence >= 0.7 ? 'pending_review' : 'needs_human_review',
-          },
-        });
-
-        // Create additional doctrine extracts if multiple found
-        if (result.doctrines.length > 1) {
-          await this.prisma.doctrineExtract.createMany({
-            data: result.doctrines.slice(1).map((d) => ({
-              legalDocumentId: document.id,
-              text: d.text,
-              normalizedText: d.normalized_text,
-              doctrineType: d.doctrine_type,
-              sourceSectionId: d.source_section_id,
-              confidence: d.confidence,
-              reviewStatus: d.confidence >= 0.7 ? 'pending_review' : 'needs_human_review',
-            })),
-          });
-        }
-      }
-
-      this.logger.log(
-        `Doctrine extraction completed: documentId=${document.id}, count=${result.doctrines.length}, strategy=${dto.strategy ?? 'auto'}`,
-      );
-    } catch (err) {
-      const errorMessage =
-        err instanceof Error ? err.message : 'Unknown extraction error';
-      this.logger.error(
-        `Doctrine extraction failed for document ${document.id}: ${errorMessage}`,
-      );
-
-      await this.prisma.doctrineExtract.update({
-        where: { id: placeholder.id },
-        data: {
-          text: `[Extraction failed] ${document.shortTitle ?? document.title}`,
-          reviewStatus: 'failed',
-        },
-      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown extraction error';
+      this.logger.error(`Doctrine extraction failed for ${dto.legalDocumentId}: ${message}`);
+      throw new BadRequestException(`Doctrine extraction failed: ${message}`);
     }
 
-    // Return the doctrine with document info
-    const doctrine = await this.prisma.doctrineExtract.findUnique({
-      where: { id: placeholder.id },
+    if (!response.ok) {
+      const body = await response.text();
+      this.logger.error(`Doctrine extraction failed for ${dto.legalDocumentId}: RAG service error ${response.status}: ${body}`);
+      throw new BadRequestException(`Doctrine extraction failed: RAG service error ${response.status}: ${body}`);
+    }
+
+    const result = (await response.json()) as {
+      document_id: string;
+      doctrines: {
+        text: string;
+        normalized_text: string | null;
+        doctrine_type: string;
+        source_section_id: string | null;
+        confidence: number;
+      }[];
+      model_name: string;
+      prompt_template_version: string;
+    };
+
+    // Create doctrine records from successful response
+    const createdDoctrines = await this.prisma.doctrineExtract.createMany({
+      data: result.doctrines.map((d) => ({
+        legalDocumentId: document.id,
+        text: d.text,
+        normalizedText: d.normalized_text,
+        doctrineType: d.doctrine_type,
+        sourceSectionId: d.source_section_id,
+        confidence: d.confidence,
+        reviewStatus: d.confidence >= 0.7 ? 'pending_review' : 'needs_human_review',
+      })),
+    });
+
+    // Record model run for audit per CLAUDE.md
+    await this.prisma.modelRun.create({
+      data: {
+        runType: 'doctrine_extraction',
+        modelName: result.model_name,
+        promptTemplateVersion: result.prompt_template_version,
+        inputRef: `document:${document.id}`,
+        outputRef: `doctrines:count=${createdDoctrines.count}`,
+        confidence: null,
+      },
+    });
+
+    this.logger.log(
+      `Doctrine extraction completed: documentId=${document.id}, count=${result.doctrines.length}, strategy=${dto.strategy ?? 'auto'}`,
+    );
+
+    // Return the first created doctrine with document info
+    const firstDoctrine = await this.prisma.doctrineExtract.findFirst({
+      where: { legalDocumentId: document.id },
+      orderBy: { createdAt: 'desc' },
       include: {
         legalDocument: {
           select: { id: true, title: true, citationText: true, grNo: true },
@@ -427,7 +393,7 @@ export class DoctrinesService {
       },
     });
 
-    return doctrine;
+    return firstDoctrine;
   }
 
   // ---- Batch Extraction ----
