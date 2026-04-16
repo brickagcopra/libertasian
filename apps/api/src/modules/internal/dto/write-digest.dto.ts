@@ -26,6 +26,10 @@ export class WriteDigestDto {
 
   @IsOptional()
   @IsString()
+  digestType?: string;
+
+  @IsOptional()
+  @IsString()
   facts?: string;
 
   @IsOptional()

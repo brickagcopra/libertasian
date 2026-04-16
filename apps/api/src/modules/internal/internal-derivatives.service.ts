@@ -95,14 +95,22 @@ export class InternalDerivativesService {
       throw new BadRequestException('At least one provenance record is required');
     }
 
+    const digestType = dto.digestType ?? 'case_digest';
+
     const result = await this.prisma.$transaction(async (tx) => {
-      // 1. Create Digest row
-      const digest = await tx.digest.create({
-        data: {
+      // 1. Upsert Digest row (prevents duplicates per legalDocumentId + digestType)
+      const digest = await tx.digest.upsert({
+        where: {
+          legalDocumentId_digestType: {
+            legalDocumentId: dto.legalDocumentId,
+            digestType,
+          },
+        },
+        create: {
           legalDocumentId: dto.legalDocumentId,
           title: dto.title,
           sourceOrigin: dto.sourceOrigin,
-          digestType: 'ai_case_digest',
+          digestType,
           facts: dto.facts,
           issues: dto.issues,
           ruling: dto.ruling,
@@ -115,6 +123,27 @@ export class InternalDerivativesService {
           confidenceScore: dto.confidenceScore,
           reviewStatus: dto.reviewStatus ?? 'draft',
           visibility: dto.visibility ?? 'private',
+          validatorVerdict: dto.validatorVerdict,
+          validatorReasonsJson: dto.validatorReasonsJson as Prisma.InputJsonValue | undefined,
+          modelRunId: dto.modelRunId,
+          promptTemplateVersion: dto.promptTemplateVersion,
+          contentDisclaimerId: dto.contentDisclaimerId,
+          derivativeGenerationJobId: dto.derivativeGenerationJobId,
+          sectionUsageJson: dto.sectionUsageJson as Prisma.InputJsonValue | undefined,
+        },
+        update: {
+          title: dto.title,
+          sourceOrigin: dto.sourceOrigin,
+          facts: dto.facts,
+          issues: dto.issues,
+          ruling: dto.ruling,
+          doctrine: dto.doctrine,
+          dispositive: dto.dispositive,
+          summary: dto.summary,
+          petitionerArguments: dto.petitionerArguments,
+          respondentArguments: dto.respondentArguments,
+          citedAuthoritiesJson: (dto.citedAuthoritiesJson ?? []) as Prisma.InputJsonValue,
+          confidenceScore: dto.confidenceScore,
           validatorVerdict: dto.validatorVerdict,
           validatorReasonsJson: dto.validatorReasonsJson as Prisma.InputJsonValue | undefined,
           modelRunId: dto.modelRunId,
