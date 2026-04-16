@@ -12,7 +12,7 @@ import {
   useEnqueueGeneration,
   useRetryDerivativeJob,
   useRegenerateArtifact,
-  useSoftDeleteArtifact,
+  useDeleteJobOutput,
   useJobDigest,
 } from '@/features/admin/hooks/use-derivatives-admin';
 import type { DerivativeTypeStats, DerivativeJob, AdminDigestDetail } from '@/features/admin/types';
@@ -53,7 +53,7 @@ export default function DerivativesAdminPage() {
   const enqueue = useEnqueueGeneration();
   const retryJob = useRetryDerivativeJob();
   const regenerate = useRegenerateArtifact();
-  const softDelete = useSoftDeleteArtifact();
+  const deleteOutput = useDeleteJobOutput();
 
   // Job list state
   const [jobFilterType, setJobFilterType] = useState<string>('');
@@ -513,9 +513,9 @@ export default function DerivativesAdminPage() {
       {deleteConfirmId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="mx-4 w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
-            <h3 className="text-lg font-semibold text-red-600">Delete Artifact</h3>
+            <h3 className="text-lg font-semibold text-red-600">Delete Job Output</h3>
             <p className="mt-2 text-sm text-gray-600">
-              Type &quot;delete&quot; to confirm soft-deletion of this artifact.
+              Type &quot;delete&quot; to confirm deletion of this job&apos;s output.
             </p>
             <input
               type="text"
@@ -533,7 +533,7 @@ export default function DerivativesAdminPage() {
               </button>
               <button
                 onClick={() => {
-                  softDelete.mutate(deleteConfirmId);
+                  deleteOutput.mutate(deleteConfirmId);
                   setDeleteConfirmId(null);
                 }}
                 disabled={deleteConfirmText !== 'delete'}

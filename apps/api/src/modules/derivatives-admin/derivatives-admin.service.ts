@@ -456,6 +456,58 @@ export class DerivativesAdminService {
     });
   }
 
+  async deleteJobOutput(jobId: string, userId: string): Promise<void> {
+    const job = await this.prisma.derivativeGenerationJob.findUnique({
+      where: { id: jobId },
+      select: { id: true, derivativeType: true, status: true },
+    });
+
+    if (!job) {
+      throw new NotFoundException(`DerivativeGenerationJob ${jobId} not found`);
+    }
+
+    if (job.derivativeType === 'case_digest') {
+      const digest = await this.prisma.digest.findFirst({
+        where: { derivativeGenerationJobId: jobId },
+      });
+
+      if (!digest) {
+        throw new NotFoundException('No output to delete for this job');
+      }
+
+      // Digest model has no deletedAt — hard delete (admin reviewer rejection;
+      // the source of truth is the legal_document).
+      await this.prisma.digest.delete({ where: { id: digest.id } });
+
+      await this.audit.log({
+        actorUserId: userId,
+        actorType: 'admin',
+        action: 'digest.admin_delete',
+        entityType: 'digest',
+        entityId: digest.id,
+        metadata: {
+          derivativeGenerationJobId: jobId,
+          derivativeType: job.derivativeType,
+        },
+      });
+      return;
+    }
+
+    // For other derivative types, fall through to existing artifact logic
+    const artifact = await this.prisma.derivativeArtifact.findFirst({
+      where: {
+        derivativeGenerationJobId: jobId,
+        deletedAt: null,
+      },
+    });
+
+    if (!artifact) {
+      throw new NotFoundException('No output to delete for this job');
+    }
+
+    await this.softDeleteArtifact(artifact.id, userId);
+  }
+
   // ─── Settings ─────────────────────────────────────────────
 
   async getDerivativeSettings(): Promise<{

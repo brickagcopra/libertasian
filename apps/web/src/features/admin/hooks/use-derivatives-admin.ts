@@ -174,3 +174,15 @@ export function useSoftDeleteArtifact() {
     },
   });
 }
+
+export function useDeleteJobOutput() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (jobId: string) => {
+      await apiClient.delete(`/admin/derivatives/jobs/${jobId}/output`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'derivatives'] });
+    },
+  });
+}
