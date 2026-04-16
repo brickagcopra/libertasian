@@ -832,7 +832,7 @@ export interface AdminDigestDetail {
     finishedAt: string | null;
     tokensIn: number;
     tokensOut: number;
-    estimatedCostUsd: number;
+    estimatedCostUsd: string | number;
   } | null;
   _count: {
     doctrineExtracts: number;
