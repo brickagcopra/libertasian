@@ -393,6 +393,11 @@ interface DocumentSection {
   pageEnd: number | null;
 }
 
+/** Strip inline footnote reference numbers that appear as standalone numbers on their own lines */
+function stripFootnoteNumbers(text: string): string {
+  return text.replace(/\n\s*\d{1,3}\s*\n/g, '\n');
+}
+
 function AnnotatedSection({
   section,
   documentId,
@@ -459,7 +464,7 @@ function AnnotatedSection({
     return () => globalThis.document.removeEventListener('mousedown', dismiss);
   }, []);
 
-  const plainText = section.plainText ?? 'No content available';
+  const plainText = stripFootnoteNumbers(section.plainText ?? 'No content available');
 
   // Build the rendered content with highlights
   const rendered = showAnnotations && annotations.length > 0

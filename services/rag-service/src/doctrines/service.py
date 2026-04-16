@@ -89,12 +89,12 @@ async def _fetch_document_text(document_id: str) -> str:
     conn: asyncpg.Connection = await asyncpg.connect(settings.database_url)
     try:
         rows = await conn.fetch(
-            """SELECT "plainText" FROM "LegalDocumentSection"
-               WHERE "legalDocumentId" = $1
+            """SELECT plain_text FROM legal_document_sections
+               WHERE legal_document_id = $1
                ORDER BY ordering ASC""",
             document_id,
         )
-        return "\n\n".join(row["plainText"] or "" for row in rows)
+        return "\n\n".join(row["plain_text"] or "" for row in rows)
     finally:
         await conn.close()
 
