@@ -773,6 +773,21 @@ export class DigestsService {
     // Map verdict to reviewStatus
     const newStatus = this.mapVerdictToStatus(dto.verdict);
 
+    // When approving an AI-generated digest with no user owner, promote to
+    // public_editorial so end users can see it via assertDigestAccess.
+    const shouldPromoteVisibility =
+      dto.verdict === 'approve' &&
+      digest.sourceOrigin === 'ai_generated' &&
+      digest.visibility === 'private' &&
+      digest.userId === null;
+
+    const updateData: { reviewStatus: string; visibility?: string } = {
+      reviewStatus: newStatus,
+    };
+    if (shouldPromoteVisibility) {
+      updateData.visibility = 'public_editorial';
+    }
+
     const [review, updatedDigest] = await this.prisma.$transaction([
       this.prisma.digestReview.create({
         data: {
@@ -787,7 +802,7 @@ export class DigestsService {
       }),
       this.prisma.digest.update({
         where: { id: digestId },
-        data: { reviewStatus: newStatus },
+        data: updateData,
       }),
     ]);
 
@@ -795,6 +810,7 @@ export class DigestsService {
       digestId,
       reviewId: review.id,
       newStatus: updatedDigest.reviewStatus,
+      newVisibility: updatedDigest.visibility,
       verdict: dto.verdict,
     };
   }
@@ -808,7 +824,7 @@ export class DigestsService {
   ) {
     const digests = await this.prisma.digest.findMany({
       where: { id: { in: dto.digestIds } },
-      select: { id: true },
+      select: { id: true, sourceOrigin: true, visibility: true, userId: true },
     });
 
     const foundIds = digests.map((d) => d.id);
@@ -816,7 +832,17 @@ export class DigestsService {
       throw new NotFoundException('No digests found for the provided IDs');
     }
 
-    await this.prisma.$transaction([
+    // Identify AI-generated digests that should be promoted to public_editorial
+    const promotableIds = digests
+      .filter(
+        (d) =>
+          d.sourceOrigin === 'ai_generated' &&
+          d.visibility === 'private' &&
+          d.userId === null,
+      )
+      .map((d) => d.id);
+
+    const txOps = [
       this.prisma.digestReview.createMany({
         data: foundIds.map((digestId) => ({
           digestId,
@@ -829,7 +855,18 @@ export class DigestsService {
         where: { id: { in: foundIds } },
         data: { reviewStatus: 'approved' },
       }),
-    ]);
+    ];
+
+    if (promotableIds.length > 0) {
+      txOps.push(
+        this.prisma.digest.updateMany({
+          where: { id: { in: promotableIds } },
+          data: { visibility: 'public_editorial' },
+        }),
+      );
+    }
+
+    await this.prisma.$transaction(txOps);
 
     return { processed: foundIds.length, digestIds: foundIds };
   }
