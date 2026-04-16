@@ -42,9 +42,9 @@ export default function AdminDigestDetailPage() {
   const [submittedVerdict, setSubmittedVerdict] = useState<string | null>(null);
 
   const verdictLabels: Record<string, { pending: string; done: string; message: string }> = {
-    approved: { pending: 'Approving...', done: 'Approved \u2713', message: 'Digest approved successfully. Redirecting...' },
-    revision_requested: { pending: 'Requesting Revision...', done: 'Revision Requested \u2713', message: 'Revision requested. Redirecting...' },
-    rejected: { pending: 'Rejecting...', done: 'Rejected \u2713', message: 'Digest rejected. Redirecting...' },
+    approve: { pending: 'Approving...', done: 'Approved \u2713', message: 'Digest approved successfully. Redirecting...' },
+    needs_revision: { pending: 'Requesting Revision...', done: 'Revision Requested \u2713', message: 'Revision requested. Redirecting...' },
+    reject: { pending: 'Rejecting...', done: 'Rejected \u2713', message: 'Digest rejected. Redirecting...' },
   };
 
   const handleReview = async (verdict: string) => {
@@ -54,9 +54,9 @@ export default function AdminDigestDetailPage() {
         id,
         verdict,
         notes: notes || undefined,
-        truthfulness: truthfulness / 100,
-        completeness: completeness / 100,
-        citationAccuracy: citationAccuracy / 100,
+        truthfulnessScore: truthfulness / 100,
+        completenessScore: completeness / 100,
+        citationAccuracyScore: citationAccuracy / 100,
       });
       setActionMsg({ type: 'success', text: verdictLabels[verdict]?.message ?? 'Review submitted. Redirecting...' });
       queryClient.invalidateQueries({ queryKey: ['admin', 'digest', id] });
@@ -385,35 +385,35 @@ export default function AdminDigestDetailPage() {
 
               <div className="flex flex-col gap-2">
                 <Button
-                  onClick={() => handleReview('approved')}
+                  onClick={() => handleReview('approve')}
                   disabled={submitReview.isPending || submittedVerdict !== null}
                   className="w-full bg-green-600 hover:bg-green-700"
                 >
                   <Check className="mr-1.5 h-4 w-4" />
-                  {submittedVerdict === 'approved'
-                    ? (submitReview.isPending ? verdictLabels.approved.pending : verdictLabels.approved.done)
+                  {submittedVerdict === 'approve'
+                    ? (submitReview.isPending ? verdictLabels.approve.pending : verdictLabels.approve.done)
                     : 'Approve'}
                 </Button>
                 <Button
                   variant="outline"
-                  onClick={() => handleReview('revision_requested')}
+                  onClick={() => handleReview('needs_revision')}
                   disabled={submitReview.isPending || submittedVerdict !== null}
                   className="w-full border-yellow-400 text-yellow-700 hover:bg-yellow-50"
                 >
                   <RotateCcw className="mr-1.5 h-4 w-4" />
-                  {submittedVerdict === 'revision_requested'
-                    ? (submitReview.isPending ? verdictLabels.revision_requested.pending : verdictLabels.revision_requested.done)
+                  {submittedVerdict === 'needs_revision'
+                    ? (submitReview.isPending ? verdictLabels.needs_revision.pending : verdictLabels.needs_revision.done)
                     : 'Request Revision'}
                 </Button>
                 <Button
                   variant="destructive"
-                  onClick={() => handleReview('rejected')}
+                  onClick={() => handleReview('reject')}
                   disabled={submitReview.isPending || submittedVerdict !== null}
                   className="w-full"
                 >
                   <X className="mr-1.5 h-4 w-4" />
-                  {submittedVerdict === 'rejected'
-                    ? (submitReview.isPending ? verdictLabels.rejected.pending : verdictLabels.rejected.done)
+                  {submittedVerdict === 'reject'
+                    ? (submitReview.isPending ? verdictLabels.reject.pending : verdictLabels.reject.done)
                     : 'Reject'}
                 </Button>
               </div>
