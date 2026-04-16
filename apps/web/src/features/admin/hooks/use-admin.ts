@@ -43,6 +43,7 @@ import type {
   IngestionJobHistoryItem,
   IngestionCandidateItem,
   EndpointStatusItem,
+  AdminDigestDetail,
 } from '../types';
 
 // ---- Corpus Health ----
@@ -541,6 +542,19 @@ export function useReviewQueueStats() {
       );
       return res.data;
     },
+  });
+}
+
+export function useAdminDigest(id: string) {
+  return useQuery({
+    queryKey: ['admin', 'digest', id],
+    queryFn: async () => {
+      const res = await apiClient.get<{ success: boolean; data: AdminDigestDetail }>(
+        `/admin/digests/${id}`,
+      );
+      return res.data;
+    },
+    enabled: !!id,
   });
 }
 
