@@ -382,6 +382,86 @@ async def generate_completion(
     )
 
 
+async def generate_completion_with_usage(
+    system_prompt: str,
+    user_prompt: str,
+    max_tokens: int | None = None,
+    temperature: float = 0.2,
+    response_format: str | None = None,
+) -> dict[str, Any]:
+    """Like generate_completion but also returns token usage and model name.
+
+    Returns:
+        Dict with keys: content (str), model_name (str),
+        tokens_in (int), tokens_out (int).
+    """
+    effective_max_tokens = max_tokens or settings.answer_max_tokens
+
+    if _use_openai():
+        await _check_budget()
+        client = _get_openai_client()
+        model = settings.openai_model
+
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": temperature,
+            "max_tokens": effective_max_tokens,
+        }
+        if response_format == "json_object":
+            kwargs["response_format"] = {"type": "json_object"}
+
+        resp = await client.chat.completions.create(**kwargs)
+        content: str = resp.choices[0].message.content or ""
+        tokens_in = resp.usage.prompt_tokens if resp.usage else 0
+        tokens_out = resp.usage.completion_tokens if resp.usage else 0
+
+        if resp.usage:
+            await _track_usage(tokens_in=tokens_in, tokens_out=tokens_out, model=model)
+
+        return {
+            "content": content,
+            "model_name": model,
+            "tokens_in": tokens_in,
+            "tokens_out": tokens_out,
+        }
+
+    # vLLM fallback
+    url = f"{settings.vllm_base_url}/chat/completions"
+    model = settings.vllm_model
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": temperature,
+        "max_tokens": effective_max_tokens,
+    }
+    if response_format == "json_object":
+        payload["response_format"] = {"type": "json_object"}
+
+    async with httpx.AsyncClient(timeout=settings.vllm_request_timeout) as client:
+        resp = await client.post(url, json=payload)
+        resp.raise_for_status()
+        data: dict[str, Any] = resp.json()
+
+    content = data["choices"][0]["message"]["content"]
+    usage = data.get("usage", {})
+    tokens_in = usage.get("prompt_tokens", 0)
+    tokens_out = usage.get("completion_tokens", 0)
+
+    return {
+        "content": content,
+        "model_name": model,
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+    }
+
+
 async def stream_completion(
     system_prompt: str,
     user_prompt: str,

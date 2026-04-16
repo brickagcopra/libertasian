@@ -486,3 +486,98 @@ class TestResearchWorkspacesRouter:
     async def test_query_rejects_empty_body(self, client: AsyncClient):
         resp = await client.post("/research_workspaces/query", json={})
         assert resp.status_code == 422
+
+
+# ---- /completions ----
+
+
+class TestCompletionsRouter:
+    @pytest.mark.asyncio
+    async def test_generate_rejects_empty_body(self, client: AsyncClient):
+        resp = await client.post("/completions/generate", json={})
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_generate_rejects_missing_system_prompt(self, client: AsyncClient):
+        resp = await client.post(
+            "/completions/generate",
+            json={"user_prompt": "Hello"},
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_generate_rejects_missing_user_prompt(self, client: AsyncClient):
+        resp = await client.post(
+            "/completions/generate",
+            json={"system_prompt": "You are helpful."},
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_generate_rejects_invalid_response_format(self, client: AsyncClient):
+        resp = await client.post(
+            "/completions/generate",
+            json={
+                "system_prompt": "You are helpful.",
+                "user_prompt": "Hello",
+                "response_format": "xml",
+            },
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    @patch("src.completions.service.generate_completion_with_usage")
+    async def test_generate_success_text_format(
+        self, mock_gen: AsyncMock, client: AsyncClient
+    ):
+        mock_gen.return_value = {
+            "content": "Generated text response.",
+            "model_name": "gpt-4o",
+            "tokens_in": 100,
+            "tokens_out": 50,
+        }
+
+        resp = await client.post(
+            "/completions/generate",
+            json={
+                "system_prompt": "You are a legal assistant.",
+                "user_prompt": "Summarize this case.",
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["content"] == "Generated text response."
+        assert data["model_name"] == "gpt-4o"
+        assert data["tokens_in"] == 100
+        assert data["tokens_out"] == 50
+        mock_gen.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("src.completions.service.generate_completion_with_usage")
+    async def test_generate_success_json_format(
+        self, mock_gen: AsyncMock, client: AsyncClient
+    ):
+        mock_gen.return_value = {
+            "content": '{"key": "value"}',
+            "model_name": "gpt-4o",
+            "tokens_in": 200,
+            "tokens_out": 30,
+        }
+
+        resp = await client.post(
+            "/completions/generate",
+            json={
+                "system_prompt": "Return JSON.",
+                "user_prompt": "Classify this.",
+                "response_format": "json",
+                "temperature": 0.0,
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["content"] == '{"key": "value"}'
+        assert data["tokens_in"] == 200
+        mock_gen.assert_called_once()
+        # Verify json format was mapped to json_object
+        call_kwargs = mock_gen.call_args.kwargs
+        assert call_kwargs["response_format"] == "json_object"
