@@ -49,7 +49,9 @@ const DOCTRINE_TYPES = [
 
 const REVIEW_STATUSES = [
   { value: '', label: 'All Statuses' },
-  { value: 'pending', label: 'Pending' },
+  { value: 'draft', label: 'Draft' },
+  { value: 'pending_review', label: 'Pending Review' },
+  { value: 'needs_human_review', label: 'Needs Human Review' },
   { value: 'approved', label: 'Approved' },
   { value: 'rejected', label: 'Rejected' },
 ];
@@ -66,9 +68,12 @@ const doctrineTypeVariants: Record<string, string> = {
 };
 
 const reviewStatusVariants: Record<string, string> = {
-  pending: 'bg-yellow-100 text-yellow-700',
+  draft: 'bg-gray-100 text-gray-700',
+  pending_review: 'bg-blue-100 text-blue-700',
+  needs_human_review: 'bg-yellow-100 text-yellow-700',
   approved: 'bg-green-100 text-green-700',
   rejected: 'bg-red-100 text-red-700',
+  failed: 'bg-red-100 text-red-700',
 };
 
 export default function DoctrinesPage() {
@@ -257,7 +262,7 @@ function DoctrineCard({ doctrine }: { doctrine: DoctrineListItem }) {
     );
   }
 
-  const isPending = doctrine.reviewStatus === 'pending';
+  const isReviewable = doctrine.reviewStatus !== 'approved' && doctrine.reviewStatus !== 'rejected';
 
   const confidenceColor =
     doctrine.confidence !== null
@@ -286,7 +291,7 @@ function DoctrineCard({ doctrine }: { doctrine: DoctrineListItem }) {
                 </Badge>
               )}
               <Badge className={reviewStatusVariants[doctrine.reviewStatus] ?? 'bg-muted text-muted-foreground'}>
-                {doctrine.reviewStatus}
+                {doctrine.reviewStatus.replace(/_/g, ' ')}
               </Badge>
               <span className="text-xs text-muted-foreground">
                 {new Date(doctrine.createdAt).toLocaleDateString()}
@@ -301,7 +306,7 @@ function DoctrineCard({ doctrine }: { doctrine: DoctrineListItem }) {
             )}
           </Link>
 
-          {isPending && (
+          {isReviewable && (
             <div className="flex shrink-0 gap-1">
               <Button
                 size="sm"
