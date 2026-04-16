@@ -788,7 +788,7 @@ export function useExtractDoctrines() {
     mutationFn: async (documentId: string) => {
       const res = await apiClient.post<{ success: boolean; data: DoctrineExtractionResult }>(
         `/admin/doctrines/extract`,
-        { documentId },
+        { legalDocumentId: documentId },
       );
       return res.data;
     },
