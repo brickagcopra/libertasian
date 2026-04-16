@@ -276,11 +276,11 @@ export default function AdminDigestDetailPage() {
                 )}
                 <p className="text-muted-foreground">
                   Tokens: <span className="text-foreground">
-                    {digest.derivativeGenerationJob.tokensIn.toLocaleString()} in / {digest.derivativeGenerationJob.tokensOut.toLocaleString()} out
+                    {(digest.derivativeGenerationJob.tokensIn ?? 0).toLocaleString()} in / {(digest.derivativeGenerationJob.tokensOut ?? 0).toLocaleString()} out
                   </span>
                 </p>
                 <p className="text-muted-foreground">
-                  Cost: <span className="text-foreground">${digest.derivativeGenerationJob.estimatedCostUsd.toFixed(4)}</span>
+                  Cost: <span className="text-foreground">${Number(digest.derivativeGenerationJob.estimatedCostUsd).toFixed(4)}</span>
                 </p>
                 {digest.derivativeGenerationJob.startedAt && (
                   <p className="text-xs text-muted-foreground">
