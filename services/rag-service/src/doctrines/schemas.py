@@ -29,7 +29,7 @@ class ExtractionStrategy(str, Enum):
 class DoctrineExtractionRequest(BaseModel):
     """Request body for doctrine extraction endpoint."""
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict()
 
     document_id: str
     strategy: ExtractionStrategy = ExtractionStrategy.AUTO
