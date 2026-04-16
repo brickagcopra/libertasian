@@ -691,6 +691,7 @@ model Digest {
   @@index([reviewStatus], map: "idx_digests_review")
   @@index([assignedReviewerUserId], map: "idx_digests_reviewer")
   @@index([visibility, avgRating(sort: Desc)], map: "idx_digests_marketplace")
+  @@unique([legalDocumentId, digestType], map: "uq_digest_document_type")
   @@index([visibility, voteScore(sort: Desc)], map: "idx_digests_vote_score")
   @@map("digests")
 }

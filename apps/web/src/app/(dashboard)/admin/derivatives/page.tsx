@@ -18,6 +18,7 @@ import {
 } from '@/features/admin/hooks/use-derivatives-admin';
 import type { DerivativeTypeStats, DerivativeJob, JobDoctrineItem } from '@/features/admin/types';
 import { DigestContentPanel } from '@/features/digests/components/digest-content-panel';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AdminCardSkeleton } from '@/components/ui/skeleton';
 
 const DERIVATIVE_TYPES = [
@@ -86,6 +87,7 @@ export default function DerivativesAdminPage() {
   const [confirmGenerate, setConfirmGenerate] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [actionMsg, setActionMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   if (statsLoading) {
     return (
@@ -145,6 +147,15 @@ export default function DerivativesAdminPage() {
           Manage derivative generation, per-type settings, and monitor jobs
         </p>
       </div>
+
+      {/* Action message */}
+      {actionMsg && (
+        <Alert variant={actionMsg.type === 'error' ? 'destructive' : 'default'}>
+          <AlertDescription className={actionMsg.type === 'success' ? 'text-green-700' : ''}>
+            {actionMsg.text}
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* Settings Card */}
       <div className="rounded-lg border bg-white p-6 shadow-sm">
@@ -535,13 +546,21 @@ export default function DerivativesAdminPage() {
               </button>
               <button
                 onClick={() => {
-                  deleteOutput.mutate(deleteConfirmId);
-                  setDeleteConfirmId(null);
+                  deleteOutput.mutate(deleteConfirmId, {
+                    onSuccess: () => {
+                      setDeleteConfirmId(null);
+                      setActionMsg({ type: 'success', text: 'Output deleted successfully.' });
+                    },
+                    onError: (err) => {
+                      setDeleteConfirmId(null);
+                      setActionMsg({ type: 'error', text: err instanceof Error ? err.message : 'Failed to delete' });
+                    },
+                  });
                 }}
-                disabled={deleteConfirmText !== 'delete'}
+                disabled={deleteConfirmText !== 'delete' || deleteOutput.isPending}
                 className="rounded bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
               >
-                Delete
+                {deleteOutput.isPending ? 'Deleting...' : 'Delete'}
               </button>
             </div>
           </div>
