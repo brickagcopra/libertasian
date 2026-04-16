@@ -183,7 +183,7 @@ export default function DoctrineDetailPage() {
     return <p className="py-8 text-center text-sm text-muted-foreground">Doctrine not found.</p>;
   }
 
-  const isReviewable = doctrine.reviewStatus !== 'approved' && doctrine.reviewStatus !== 'rejected';
+  const isReviewable = doctrine.reviewStatus !== 'approved' && doctrine.reviewStatus !== 'rejected' && doctrine.reviewStatus !== 'failed';
 
   const confidenceColor =
     doctrine.confidence !== null
