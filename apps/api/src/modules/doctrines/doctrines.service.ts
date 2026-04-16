@@ -25,6 +25,7 @@ export class DoctrinesService {
   private readonly logger = new Logger(DoctrinesService.name);
 
   private readonly ragServiceUrl: string;
+  private readonly internalApiKey: string;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -35,6 +36,7 @@ export class DoctrinesService {
       'RAG_SERVICE_URL',
       'http://localhost:8000',
     );
+    this.internalApiKey = this.config.get<string>('INTERNAL_API_KEY', '');
   }
 
   // ---- Doctrine CRUD ----
@@ -324,7 +326,10 @@ export class DoctrinesService {
       const url = `${this.ragServiceUrl}/doctrines/extract`;
       const response = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(this.internalApiKey && { 'X-Internal-Api-Key': this.internalApiKey }),
+        },
         body: JSON.stringify({
           document_id: document.id,
           strategy: dto.strategy ?? 'auto',

@@ -262,7 +262,7 @@ function DoctrineCard({ doctrine }: { doctrine: DoctrineListItem }) {
     );
   }
 
-  const isReviewable = doctrine.reviewStatus !== 'approved' && doctrine.reviewStatus !== 'rejected';
+  const isReviewable = doctrine.reviewStatus !== 'approved' && doctrine.reviewStatus !== 'rejected' && doctrine.reviewStatus !== 'failed';
 
   const confidenceColor =
     doctrine.confidence !== null
