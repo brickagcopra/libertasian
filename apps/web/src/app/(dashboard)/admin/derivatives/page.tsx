@@ -15,9 +15,11 @@ import {
   useDeleteJobOutput,
   useJobDigest,
   useJobDoctrines,
+  useJobEssay,
 } from '@/features/admin/hooks/use-derivatives-admin';
 import type { DerivativeTypeStats, DerivativeJob, JobDoctrineItem } from '@/features/admin/types';
 import { DigestContentPanel } from '@/features/digests/components/digest-content-panel';
+import { EssayContentPanel } from '@/features/admin/components/essay-content-panel';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AdminCardSkeleton } from '@/components/ui/skeleton';
 
@@ -635,6 +637,7 @@ function JobDetailPanel({
 }) {
   const shouldFetchDigest = !!job && job.status === 'completed' && job.derivativeType === 'case_digest';
   const shouldFetchDoctrines = !!job && job.status === 'completed' && job.derivativeType === 'doctrine_extract';
+  const shouldFetchEssay = !!job && job.status === 'completed' && job.derivativeType === 'essay_prompt';
   const { data: digestData, isLoading: digestLoading, error: digestError } = useJobDigest(
     job?.id ?? '',
     { enabled: shouldFetchDigest },
@@ -642,6 +645,10 @@ function JobDetailPanel({
   const { data: doctrinesData, isLoading: doctrinesLoading, error: doctrinesError } = useJobDoctrines(
     job?.id ?? '',
     { enabled: shouldFetchDoctrines },
+  );
+  const { data: essayData, isLoading: essayLoading, error: essayError } = useJobEssay(
+    job?.id ?? '',
+    { enabled: shouldFetchEssay },
   );
 
   if (!job) return <p className="mt-2 text-sm text-gray-400">Job not found in current page</p>;
@@ -743,6 +750,30 @@ function JobDetailPanel({
           )}
           {doctrinesData && doctrinesData.doctrines.length > 0 && (
             <DoctrineExtractsPanel doctrines={doctrinesData.doctrines} />
+          )}
+        </>
+      )}
+
+      {/* Essay prompt section */}
+      {shouldFetchEssay && (
+        <>
+          {essayLoading && (
+            <p className="text-sm text-gray-400">Loading essay...</p>
+          )}
+          {essayError && (
+            <p className="text-sm text-red-500">
+              Error loading essay: {essayError instanceof Error ? essayError.message : 'Unknown error'}
+            </p>
+          )}
+          {essayData && !essayData.essay && (
+            <p className="text-sm text-amber-600">
+              Generation completed but no essay artifact was written — investigate.
+            </p>
+          )}
+          {essayData?.essay && (
+            <div className="mt-4 border-t pt-4">
+              <EssayContentPanel essay={essayData.essay} />
+            </div>
           )}
         </>
       )}

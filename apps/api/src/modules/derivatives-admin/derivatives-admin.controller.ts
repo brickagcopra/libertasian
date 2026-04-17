@@ -90,6 +90,13 @@ export class DerivativesAdminController {
     return { success: true, data };
   }
 
+  @Get('jobs/:id/essay')
+  @ApiOperation({ summary: 'Get the essay prompt artifact produced by a derivative generation job' })
+  async getJobEssay(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.service.getJobEssay(id);
+    return { success: true, data };
+  }
+
   @Post('jobs/:id/retry')
   async retryJob(
     @Param('id', ParseUUIDPipe) id: string,

@@ -53,6 +53,7 @@ vi.mock('@/features/admin/hooks/use-derivatives-admin', () => ({
   useDeleteJobOutput: () => ({ mutate: vi.fn() }),
   useJobDigest: mockUseJobDigest,
   useJobDoctrines: () => ({ data: null, isLoading: false, error: null }),
+  useJobEssay: () => ({ data: null, isLoading: false, error: null }),
 }));
 
 import DerivativesAdminPage from './page';

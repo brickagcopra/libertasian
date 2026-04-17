@@ -858,3 +858,27 @@ export interface JobDoctrinesResponse {
   jobStatus: string;
   doctrines: JobDoctrineItem[];
 }
+
+export interface JobEssayResponse {
+  jobStatus: string;
+  essay: {
+    id: string;
+    title: string;
+    contentPlainText: string | null;
+    confidenceScore: number | null;
+    reviewStatus: string;
+    validatorVerdict: string | null;
+    visibility: string;
+    publishedAt: string | null;
+    createdAt: string;
+    contentDisclaimer: { id: string; bodyPlain: string } | null;
+    essayPrompt: {
+      promptText: string;
+      suggestedTimeMinutes: number | null;
+      modelAnswerJson: unknown;
+      rubricJson: unknown;
+      subjectTopicId: string | null;
+      barExamSittingId: string | null;
+    } | null;
+  } | null;
+}
