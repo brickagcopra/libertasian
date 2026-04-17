@@ -255,6 +255,45 @@ export class DerivativesAdminService {
     return { jobStatus: job.status, doctrines };
   }
 
+  async getJobEssay(jobId: string): Promise<{
+    jobStatus: string;
+    essay: unknown | null;
+  }> {
+    const job = await this.prisma.derivativeGenerationJob.findUnique({
+      where: { id: jobId },
+      select: { id: true, derivativeType: true, status: true },
+    });
+
+    if (!job) {
+      throw new NotFoundException(`DerivativeGenerationJob ${jobId} not found`);
+    }
+
+    if (job.derivativeType !== 'essay_prompt') {
+      throw new BadRequestException(
+        `Job type ${job.derivativeType} does not produce an essay prompt artifact`,
+      );
+    }
+
+    const artifact = await this.prisma.derivativeArtifact.findFirst({
+      where: {
+        derivativeGenerationJobId: jobId,
+        derivativeType: 'essay_prompt',
+        deletedAt: null,
+      },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        essayPrompt: true,
+        contentDisclaimer: { select: { id: true, bodyPlain: true } },
+      },
+    });
+
+    if (!artifact) {
+      return { jobStatus: job.status, essay: null };
+    }
+
+    return { jobStatus: job.status, essay: artifact };
+  }
+
   async getJob(id: string): Promise<unknown> {
     const job = await this.prisma.derivativeGenerationJob.findUnique({
       where: { id },

@@ -10,6 +10,7 @@ function makePrisma() {
     derivativeArtifact: {
       groupBy: jest.fn().mockResolvedValue([]),
       findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn().mockResolvedValue(null),
       findUnique: jest.fn().mockResolvedValue(null),
       update: jest.fn().mockResolvedValue({}),
     },
@@ -393,6 +394,80 @@ describe('DerivativesAdminService', () => {
       await expect(
         service.regenerateArtifact('art-1', 'user-1'),
       ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  // ─── getJobEssay ──────────────────────────────────────
+
+  describe('getJobEssay', () => {
+    it('returns essay with essayPrompt and contentDisclaimer', async () => {
+      prisma.derivativeGenerationJob.findUnique.mockResolvedValue({
+        id: 'job-1',
+        derivativeType: 'essay_prompt',
+        status: 'completed',
+      });
+      prisma.derivativeArtifact.findFirst.mockResolvedValue({
+        id: 'art-1',
+        derivativeType: 'essay_prompt',
+        title: 'Essay on Command Responsibility',
+        confidenceScore: 0.85,
+        reviewStatus: 'draft',
+        validatorVerdict: 'publish',
+        visibility: 'private',
+        publishedAt: null,
+        createdAt: '2026-04-17T00:00:00Z',
+        contentPlainText: null,
+        essayPrompt: {
+          promptText: 'Discuss the doctrine of command responsibility.',
+          suggestedTimeMinutes: 30,
+          modelAnswerJson: { outlineSections: [] },
+          rubricJson: { totalPoints: 100, criteria: [] },
+          subjectTopicId: null,
+          barExamSittingId: null,
+        },
+        contentDisclaimer: { id: 'disc-1', bodyPlain: 'AI-generated content.' },
+      });
+
+      const result = await service.getJobEssay('job-1');
+
+      expect(result.jobStatus).toBe('completed');
+      expect(result.essay).toBeDefined();
+      expect((result.essay as Record<string, unknown>)['essayPrompt']).toBeDefined();
+      expect((result.essay as Record<string, unknown>)['contentDisclaimer']).toBeDefined();
+    });
+
+    it('returns null essay when job completed but no artifact exists', async () => {
+      prisma.derivativeGenerationJob.findUnique.mockResolvedValue({
+        id: 'job-1',
+        derivativeType: 'essay_prompt',
+        status: 'completed',
+      });
+      prisma.derivativeArtifact.findFirst.mockResolvedValue(null);
+
+      const result = await service.getJobEssay('job-1');
+
+      expect(result.jobStatus).toBe('completed');
+      expect(result.essay).toBeNull();
+    });
+
+    it('throws NotFoundException for unknown jobId', async () => {
+      prisma.derivativeGenerationJob.findUnique.mockResolvedValue(null);
+
+      await expect(service.getJobEssay('nonexistent')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('throws BadRequestException for wrong derivative type', async () => {
+      prisma.derivativeGenerationJob.findUnique.mockResolvedValue({
+        id: 'job-1',
+        derivativeType: 'case_digest',
+        status: 'completed',
+      });
+
+      await expect(service.getJobEssay('job-1')).rejects.toThrow(
+        BadRequestException,
+      );
     });
   });
 
