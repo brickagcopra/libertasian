@@ -178,6 +178,10 @@ class TestEssayGenerationTask:
         assert result["essay_prompt_id"] == "essay-001"
         mock_nestjs.write_essay.assert_called_once()
 
+        # Confidence score must be computed, not hardcoded to 0
+        write_call = mock_nestjs.write_essay.call_args
+        assert write_call.args[0]["confidenceScore"] > 0.0
+
     @patch("src.tasks.essay_generation_tasks.nestjs_client")
     @patch("src.tasks.essay_generation_tasks.db")
     def test_2_eligibility_skip(
@@ -479,3 +483,4 @@ class TestModelRunRecording:
         assert call_kwargs.kwargs["model_name"] == "gpt-4o-mini"
         assert call_kwargs.kwargs["prompt_template_version"] == PROMPT_TEMPLATE_VERSION
         assert call_kwargs.kwargs["input_ref"] == "doc:doc-001"
+        assert call_kwargs.kwargs["confidence"] > 0.0  # computed, not hardcoded

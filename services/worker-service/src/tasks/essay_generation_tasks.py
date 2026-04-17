@@ -23,13 +23,13 @@ import httpx
 from celery import shared_task
 
 from ..clients import ingestion_db_client as db
-from ..clients import nestjs_client
-from ..clients import rag_client
+from ..clients import nestjs_client, rag_client
 from ..prompts.essay_generation_v1 import (
     ESSAY_GENERATION_SYSTEM_PROMPT,
     PROMPT_TEMPLATE_VERSION,
     build_user_prompt,
 )
+from ..scoring import compute_essay_confidence_score
 from ..validators.derivative_validators import (
     DerivativeVerdict,
     LegalDocumentSectionSnapshot,
@@ -233,6 +233,12 @@ def generate_essay_prompt(
         else:
             review_status = "draft"
 
+        # Compute confidence score from source coverage + citation mapping
+        confidence_score = compute_essay_confidence_score(
+            content=content,
+            source_sections=sections_with_text,
+        )
+
         # Step 9: Record model run
         model_run_id = db.create_model_run(
             run_type="essay_prompt_generation",
@@ -240,7 +246,7 @@ def generate_essay_prompt(
             prompt_template_version=PROMPT_TEMPLATE_VERSION,
             input_ref=f"doc:{document_id}",
             output_ref=f"job:{job_id}",
-            confidence=0.0,
+            confidence=confidence_score,
             tokens_in=tokens_in,
             tokens_out=tokens_out,
             latency_ms=latency_ms,
@@ -275,7 +281,7 @@ def generate_essay_prompt(
                     for c in validation_result.checks
                 ],
             },
-            "confidenceScore": 0.0,
+            "confidenceScore": confidence_score,
             "modelRunId": model_run_id,
             "derivativeGenerationJobId": job_id,
             "provenanceRecords": provenance_records,
@@ -398,4 +404,4 @@ def _build_provenance_records(
 
 def _current_period_year_month() -> str:
     """Return current year-month string for budget ledger."""
-    return datetime.datetime.now(tz=datetime.timezone.utc).strftime("%Y-%m")
+    return datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m")
