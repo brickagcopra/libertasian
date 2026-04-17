@@ -94,6 +94,9 @@ def generate_subject_outline(
         return {"job_id": job_id, "status": "already_claimed"}
 
     try:
+        # Resolve content disclaimer ID at task start
+        content_disclaimer_id = db.get_content_disclaimer_id("ai_digest")
+
         # Step 2: Load subject + topic info
         subject_name = subject_code.replace("_", " ").title()
         topic_name = topic_code.replace("_", " ").title() if topic_code else None
@@ -257,7 +260,7 @@ def generate_subject_outline(
             "contentJson": content,
             "contentHash": "",
             "contentRights": "ai_generated_derivative",
-            "contentDisclaimerId": "00000000-0000-0000-0000-000000000001",
+            "contentDisclaimerId": content_disclaimer_id,
             "reviewStatus": review_status,
             "validatorVerdict": validation_result.verdict.value,
             "validatorReasonsJson": {

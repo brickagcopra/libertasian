@@ -174,6 +174,9 @@ def generate_doctrine_extract(
         return {"job_id": job_id, "status": "already_claimed"}
 
     try:
+        # Resolve content disclaimer ID at task start
+        content_disclaimer_id = db.get_content_disclaimer_id("ai_digest")
+
         # Step 3: Load source document
         doc = db.get_legal_document(document_id)
         if not doc:
@@ -313,7 +316,7 @@ def generate_doctrine_extract(
             "sourceDocumentId": document_id,
             "contentJson": content,
             "contentRights": "ai_generated_derivative",
-            "contentDisclaimerId": "00000000-0000-0000-0000-000000000001",
+            "contentDisclaimerId": content_disclaimer_id,
             "reviewStatus": review_status,
             "validatorVerdict": validation_result.verdict.value,
             "validatorReasonsJson": {

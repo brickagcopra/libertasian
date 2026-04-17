@@ -115,3 +115,13 @@ def validate_derivative(
         source_document=source_document,
         source_sections=source_sections,
     )
+
+
+# Auto-register all validators when the package is imported.
+# Each module's module-level register_validator() call fires on import.
+from . import case_digest_validator as _cdv  # noqa: F401,E402
+from . import doctrine_extract_validator as _dev  # noqa: F401,E402
+from . import essay_prompt_validator as _epv  # noqa: F401,E402
+from . import flashcard_validator as _fv  # noqa: F401,E402
+from . import mcq_question_validator as _mqv  # noqa: F401,E402
+from . import subject_outline_validator as _sov  # noqa: F401,E402
