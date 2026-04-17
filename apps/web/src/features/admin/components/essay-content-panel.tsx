@@ -28,6 +28,28 @@ function renderStringOrJson(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
+/** Type guard for the { outlineSections: [...] } shape produced by the essay generator. */
+interface OutlineSection {
+  heading: string;
+  paragraphs: string[];
+  citedSectionIds?: string[];
+}
+
+function isOutlineSections(
+  value: unknown,
+): value is { outlineSections: OutlineSection[] } {
+  if (!isRecord(value) || !Array.isArray(value['outlineSections'])) return false;
+  const sections = value['outlineSections'] as unknown[];
+  if (sections.length === 0) return false;
+  return sections.every(
+    (s) =>
+      isRecord(s) &&
+      typeof s['heading'] === 'string' &&
+      Array.isArray(s['paragraphs']) &&
+      (s['paragraphs'] as unknown[]).every((p) => typeof p === 'string'),
+  );
+}
+
 // ─── Model Answer Renderer ───────────────────────────────
 
 function ModelAnswerContent({ data }: { data: unknown }) {
@@ -39,8 +61,46 @@ function ModelAnswerContent({ data }: { data: unknown }) {
     return <p className="text-sm text-gray-800" style={{ whiteSpace: 'pre-line' }}>{data}</p>;
   }
 
+  // outlineSections ALAC shape (from essay generator)
+  if (isOutlineSections(data)) {
+    return (
+      <div>
+        {data.outlineSections.map((section, i) => {
+          const citedCount =
+            Array.isArray(section.citedSectionIds) && section.citedSectionIds.length > 0
+              ? new Set(section.citedSectionIds).size
+              : 0;
+          return (
+            <div
+              key={section.heading}
+              className={i > 0 ? 'mt-4 border-t pt-4' : undefined}
+            >
+              <h5 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                {section.heading}
+              </h5>
+              {section.paragraphs.map((paragraph, j) => (
+                <p
+                  key={j}
+                  className="mt-2 text-sm leading-relaxed text-gray-800"
+                  style={{ whiteSpace: 'pre-line' }}
+                >
+                  {paragraph}
+                </p>
+              ))}
+              {citedCount > 0 && (
+                <p className="mt-3 text-xs text-gray-500">
+                  Cites {citedCount} source{citedCount !== 1 ? 's' : ''}
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
   if (isRecord(data)) {
-    // ALAC-shaped object
+    // ALAC-direct-keys object
     if (hasAlacShape(data)) {
       return (
         <div className="space-y-3">
