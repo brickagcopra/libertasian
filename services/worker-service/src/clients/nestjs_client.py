@@ -16,6 +16,20 @@ from ..config import settings
 
 logger = logging.getLogger(__name__)
 
+
+def _strip_none(obj: Any) -> Any:
+    """Recursively strip None values from dicts.
+
+    NestJS @IsOptional() accepts missing keys but rejects JSON null.
+    Python's None serializes to null, so we remove those keys entirely.
+    """
+    if isinstance(obj, dict):
+        return {k: _strip_none(v) for k, v in obj.items() if v is not None}
+    if isinstance(obj, list):
+        return [_strip_none(item) for item in obj]
+    return obj
+
+
 _INTERNAL_HEADERS = {
     "X-Internal-Auth": settings.internal_api_key,
     "Content-Type": "application/json",
@@ -90,6 +104,7 @@ def write_digest(payload: dict[str, Any]) -> dict[str, Any]:
     Raises httpx.HTTPStatusError on failure.
     """
     url = f"{settings.nestjs_api_url}/internal/derivatives/write-digest"
+    payload = _strip_none(payload)
 
     with httpx.Client(timeout=60) as client:
         response = client.post(url, json=payload, headers=_INTERNAL_HEADERS)
@@ -104,6 +119,7 @@ def write_doctrines(payload: dict[str, Any]) -> dict[str, Any]:
     Raises httpx.HTTPStatusError on failure.
     """
     url = f"{settings.nestjs_api_url}/internal/derivatives/write-doctrines"
+    payload = _strip_none(payload)
 
     with httpx.Client(timeout=60) as client:
         response = client.post(url, json=payload, headers=_INTERNAL_HEADERS)
@@ -118,6 +134,7 @@ def write_mcq_batch(payload: dict[str, Any]) -> dict[str, Any]:
     Raises httpx.HTTPStatusError on failure.
     """
     url = f"{settings.nestjs_api_url}/internal/derivatives/write-mcq-batch"
+    payload = _strip_none(payload)
 
     with httpx.Client(timeout=60) as client:
         response = client.post(url, json=payload, headers=_INTERNAL_HEADERS)
@@ -132,6 +149,7 @@ def write_essay(payload: dict[str, Any]) -> dict[str, Any]:
     Raises httpx.HTTPStatusError on failure.
     """
     url = f"{settings.nestjs_api_url}/internal/derivatives/write-essay"
+    payload = _strip_none(payload)
 
     with httpx.Client(timeout=60) as client:
         response = client.post(url, json=payload, headers=_INTERNAL_HEADERS)
@@ -146,6 +164,7 @@ def write_derivative(payload: dict[str, Any]) -> dict[str, Any]:
     Raises httpx.HTTPStatusError on failure.
     """
     url = f"{settings.nestjs_api_url}/internal/derivatives/write"
+    payload = _strip_none(payload)
 
     with httpx.Client(timeout=60) as client:
         response = client.post(url, json=payload, headers=_INTERNAL_HEADERS)
@@ -160,6 +179,7 @@ def write_flashcards(payload: dict[str, Any]) -> dict[str, Any]:
     Raises httpx.HTTPStatusError on failure.
     """
     url = f"{settings.nestjs_api_url}/internal/derivatives/write-flashcards"
+    payload = _strip_none(payload)
 
     with httpx.Client(timeout=60) as client:
         response = client.post(url, json=payload, headers=_INTERNAL_HEADERS)
@@ -174,6 +194,7 @@ def write_classification(payload: dict[str, Any]) -> dict[str, Any]:
     Raises httpx.HTTPStatusError on failure.
     """
     url = f"{settings.nestjs_api_url}/internal/derivatives/write-classification"
+    payload = _strip_none(payload)
 
     with httpx.Client(timeout=60) as client:
         response = client.post(url, json=payload, headers=_INTERNAL_HEADERS)
