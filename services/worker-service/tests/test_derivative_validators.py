@@ -448,3 +448,21 @@ class TestDispatchRegistry:
 
         assert result.verdict == DerivativeVerdict.HUMAN_REVIEW
         assert any("No validator registered" in r for r in result.reasons)
+
+    def test_all_derivative_validators_registered(self) -> None:
+        """22. All six validator types are registered after package import."""
+        from src.validators.derivative_validators import _VALIDATOR_REGISTRY
+
+        expected_types = {
+            "case_digest",
+            "doctrine_extract",
+            "essay_prompt",
+            "flashcard",
+            "mcq_question",
+            "subject_outline",
+        }
+        registered_types = set(_VALIDATOR_REGISTRY.keys())
+
+        assert expected_types.issubset(registered_types), (
+            f"Missing validators: {expected_types - registered_types}"
+        )

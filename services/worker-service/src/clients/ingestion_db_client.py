@@ -729,6 +729,52 @@ def complete_ingestion_job_with_dedup(
     )
 
 
+# ─── Content Disclaimer Lookup ─────────────────────────────────────────
+
+# Module-scope cache: (content_class, version) -> disclaimer UUID
+_disclaimer_id_cache: dict[tuple[str, int], str] = {}
+
+
+def get_content_disclaimer_id(content_class: str, version: int = 1) -> str:
+    """Look up a content_disclaimers row by content_class + version.
+
+    Caches results module-scope so the DB is hit at most once per
+    (content_class, version) pair per worker process lifetime.
+
+    Raises ValueError if no matching row exists — callers must NOT
+    fall back to a placeholder UUID (see PR #28).
+    """
+    cache_key = (content_class, version)
+    cached = _disclaimer_id_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    with get_connection() as conn, \
+            conn.cursor() as cur:
+        cur.execute(
+            """SELECT id FROM content_disclaimers
+               WHERE content_class = %s AND version = %s AND is_active = true
+               LIMIT 1""",
+            (content_class, version),
+        )
+        row = cur.fetchone()
+
+    if not row:
+        raise ValueError(
+            f"No active content_disclaimers row for "
+            f"content_class={content_class!r} version={version}. "
+            f"Run the disclaimer seed before dispatching derivative jobs."
+        )
+
+    disclaimer_id: str = row[0]
+    _disclaimer_id_cache[cache_key] = disclaimer_id
+    logger.info(
+        "Resolved content_disclaimer: class=%s version=%d -> %s",
+        content_class, version, disclaimer_id,
+    )
+    return disclaimer_id
+
+
 # ─── Derivative Job Claim ──────────────────────────────────────────────
 
 
