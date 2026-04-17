@@ -347,7 +347,7 @@ export default function ReaderPage() {
             )}
 
             {sections && sections.length > 0 ? (
-              <div className="space-y-6">
+              <div className="space-y-8">
                 {sections.map((section) => (
                   <AnnotatedSection
                     key={section.id}
@@ -393,9 +393,19 @@ interface DocumentSection {
   pageEnd: number | null;
 }
 
-/** Strip inline footnote reference numbers that appear as standalone numbers on their own lines */
-function stripFootnoteNumbers(text: string): string {
-  return text.replace(/\n\s*\d{1,3}\s*\n/g, '\n');
+/** Clean up LawPhil-scraped text for readable display */
+function cleanLegalText(text: string): string {
+  let cleaned = text;
+  // Remove standalone footnote reference numbers (e.g., "\n46\n")
+  cleaned = cleaned.replace(/\n\s*\d{1,3}\s*\n/g, '\n');
+  // Collapse runs of single line breaks into spaces (paragraph reflow)
+  // But preserve double line breaks (actual paragraph breaks)
+  cleaned = cleaned.replace(/([^\n])\n([^\n])/g, '$1 $2');
+  // Normalize multiple spaces into single space
+  cleaned = cleaned.replace(/ {2,}/g, ' ');
+  // Ensure paragraph breaks are clean double newlines
+  cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
+  return cleaned.trim();
 }
 
 function AnnotatedSection({
@@ -464,7 +474,7 @@ function AnnotatedSection({
     return () => globalThis.document.removeEventListener('mousedown', dismiss);
   }, []);
 
-  const plainText = stripFootnoteNumbers(section.plainText ?? 'No content available');
+  const plainText = cleanLegalText(section.plainText ?? 'No content available');
 
   // Build the rendered content with highlights
   const rendered = showAnnotations && annotations.length > 0
@@ -477,16 +487,16 @@ function AnnotatedSection({
   return (
     <div
       id={`section-${section.id}`}
-      className="scroll-mt-6"
+      className="scroll-mt-6 border-b border-gray-100 pb-8 last:border-0"
     >
       {section.sectionLabel && (
-        <h2 className="mb-2 text-sm font-semibold uppercase text-muted-foreground">
+        <h2 className="mb-3 border-b border-gray-200 pb-2 text-base font-bold capitalize text-foreground">
           {section.sectionLabel}
         </h2>
       )}
       <div
         ref={sectionRef}
-        className="relative whitespace-pre-wrap text-sm leading-relaxed"
+        className="relative whitespace-pre-wrap text-base leading-7 text-gray-800"
         onMouseUp={handleMouseUp}
       >
         {rendered}
