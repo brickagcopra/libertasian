@@ -4,18 +4,22 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
 
 import { useSubscription, meetsMinimumTier } from './use-subscription';
-import { apiClient } from '@/lib/api-client';
+import { apiClient, ApiClientError } from '@/lib/api-client';
 
-vi.mock('@/lib/api-client', () => ({
-  apiClient: {
-    get: vi.fn(),
-    post: vi.fn(),
-    patch: vi.fn(),
-    put: vi.fn(),
-    delete: vi.fn(),
-    download: vi.fn(),
-  },
-}));
+vi.mock('@/lib/api-client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api-client')>();
+  return {
+    ...actual,
+    apiClient: {
+      get: vi.fn(),
+      post: vi.fn(),
+      patch: vi.fn(),
+      put: vi.fn(),
+      delete: vi.fn(),
+      download: vi.fn(),
+    },
+  };
+});
 
 const createWrapper = () => {
   const queryClient = new QueryClient({
@@ -64,6 +68,32 @@ describe('use-subscription hooks', () => {
       });
 
       await waitFor(() => expect(result.current.isError).toBe(true));
+    });
+
+    it('should return null on 404 (no subscription)', async () => {
+      vi.mocked(apiClient.get).mockRejectedValue(
+        new ApiClientError('Not found', 404),
+      );
+
+      const { result } = renderHook(() => useSubscription(), {
+        wrapper: createWrapper(),
+      });
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(result.current.data).toBeNull();
+    });
+
+    it('should throw on non-404 errors (e.g. 500)', async () => {
+      vi.mocked(apiClient.get).mockRejectedValue(
+        new ApiClientError('Internal server error', 500),
+      );
+
+      const { result } = renderHook(() => useSubscription(), {
+        wrapper: createWrapper(),
+      });
+
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(result.current.data).toBeUndefined();
     });
   });
 

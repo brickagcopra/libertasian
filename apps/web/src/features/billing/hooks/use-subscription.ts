@@ -2,20 +2,28 @@
 
 import { useQuery } from '@tanstack/react-query';
 
-import { apiClient } from '@/lib/api-client';
+import { apiClient, ApiClientError } from '@/lib/api-client';
 import type { SubscriptionDetail, SubscriptionResponse } from '../types';
 import { TIER_ORDER } from '../types';
 
 export type { SubscriptionDetail };
 
 export function useSubscription() {
-  return useQuery({
+  return useQuery<SubscriptionDetail | null>({
     queryKey: ['billing', 'subscription'],
     queryFn: async () => {
-      const res = await apiClient.get<SubscriptionResponse>('/billing/subscription');
-      return res.data;
+      try {
+        const res = await apiClient.get<SubscriptionResponse>('/billing/subscription');
+        return res.data;
+      } catch (err) {
+        if (err instanceof ApiClientError && err.statusCode === 404) {
+          return null;
+        }
+        throw err;
+      }
     },
     staleTime: 5 * 60 * 1000, // 5 minutes
+    retry: false, // 404 is a valid empty state; no point retrying
   });
 }
 
