@@ -123,6 +123,10 @@ const updatePlanSchema = z.object({
   trialDurationDays: z.coerce.number().min(1).max(365).optional(),
   maxSeats: z.coerce.number().min(1).optional().or(z.literal('')),
   internalNotes: z.string().optional(),
+  isFeatured: z.boolean().optional(),
+  featuredLabel: z.string().max(50).optional().or(z.literal('')),
+  ctaText: z.string().max(50).optional().or(z.literal('')),
+  highlightColor: z.string().max(20).optional().or(z.literal('')),
 });
 
 const addPriceSchema = z.object({
@@ -203,6 +207,10 @@ export default function AdminPlanDetailPage() {
           trialDurationDays: plan.trialDurationDays || undefined,
           maxSeats: plan.maxSeats ?? ('' as const),
           internalNotes: plan.internalNotes ?? '',
+          isFeatured: plan.isFeatured ?? false,
+          featuredLabel: plan.featuredLabel ?? '',
+          ctaText: plan.ctaText ?? '',
+          highlightColor: plan.highlightColor ?? '',
         }
       : undefined,
   });
@@ -580,6 +588,52 @@ export default function AdminPlanDetailPage() {
                     <Label>Internal Notes</Label>
                     <Textarea rows={2} {...planForm.register('internalNotes')} />
                   </div>
+                  <Separator />
+                  <p className="text-sm font-medium text-muted-foreground">Pricing Page Display</p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Controller
+                          name="isFeatured"
+                          control={planForm.control}
+                          render={({ field }) => (
+                            <Switch checked={field.value} onCheckedChange={field.onChange} />
+                          )}
+                        />
+                        <Label>Featured on Pricing Page</Label>
+                      </div>
+                    </div>
+                    {planForm.watch('isFeatured') && (
+                      <div className="space-y-2">
+                        <Label>Featured Badge Label</Label>
+                        <Input placeholder="Most Popular" {...planForm.register('featuredLabel')} />
+                      </div>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>CTA Button Text</Label>
+                      <Input placeholder="Start Now" {...planForm.register('ctaText')} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Highlight Color</Label>
+                      <Controller
+                        name="highlightColor"
+                        control={planForm.control}
+                        render={({ field }) => (
+                          <Select value={field.value ?? ''} onValueChange={field.onChange}>
+                            <SelectTrigger><SelectValue placeholder="Default" /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="">Default</SelectItem>
+                              <SelectItem value="primary">Primary (dark)</SelectItem>
+                              <SelectItem value="emerald">Emerald</SelectItem>
+                              <SelectItem value="amber">Amber</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        )}
+                      />
+                    </div>
+                  </div>
                 </div>
               ) : (
                 <div className="grid gap-4 sm:grid-cols-2">
@@ -596,6 +650,9 @@ export default function AdminPlanDetailPage() {
                   <InfoRow label="Auto Renew" value={plan.autoRenewRequired ? 'Yes' : 'No'} />
                   <InfoRow label="Admin Only" value={plan.adminOnlyAssignment ? 'Yes' : 'No'} />
                   <InfoRow label="Invite Only" value={plan.inviteOnly ? 'Yes' : 'No'} />
+                  <InfoRow label="Featured" value={plan.isFeatured ? (plan.featuredLabel ?? 'Yes') : 'No'} />
+                  <InfoRow label="CTA Text" value={plan.ctaText ?? '—'} />
+                  <InfoRow label="Highlight Color" value={plan.highlightColor ?? 'default'} />
                   {plan.internalNotes && (
                     <InfoRow label="Internal Notes" value={plan.internalNotes} className="sm:col-span-2" />
                   )}

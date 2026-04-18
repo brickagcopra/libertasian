@@ -331,11 +331,16 @@ export class PlansService {
         eligibleSegments: dto.eligibleSegments ?? [],
         maxSeats: dto.maxSeats,
         internalNotes: dto.internalNotes,
+        isFeatured: dto.isFeatured ?? false,
+        featuredLabel: dto.featuredLabel,
+        ctaText: dto.ctaText,
+        highlightColor: dto.highlightColor,
       },
       include: { prices: true, entitlements: true },
     }) as PlanWithDetails;
 
     await this.invalidateCache();
+    this.triggerWebRevalidation();
     this.logger.log(`Plan created: ${plan.code} (${plan.id})`);
     return plan;
   }
@@ -380,6 +385,10 @@ export class PlansService {
         ...(dto.eligibleSegments !== undefined && { eligibleSegments: dto.eligibleSegments }),
         ...(dto.maxSeats !== undefined && { maxSeats: dto.maxSeats }),
         ...(dto.internalNotes !== undefined && { internalNotes: dto.internalNotes }),
+        ...(dto.isFeatured !== undefined && { isFeatured: dto.isFeatured }),
+        ...(dto.featuredLabel !== undefined && { featuredLabel: dto.featuredLabel }),
+        ...(dto.ctaText !== undefined && { ctaText: dto.ctaText }),
+        ...(dto.highlightColor !== undefined && { highlightColor: dto.highlightColor }),
       },
       include: { prices: true, entitlements: true },
     }) as PlanWithDetails;
@@ -388,6 +397,7 @@ export class PlansService {
     if (dto.code && dto.code !== existing.code) {
       await this.invalidateCache(dto.code);
     }
+    this.triggerWebRevalidation();
     this.logger.log(`Plan updated: ${plan.code} (${plan.id})`);
     return plan;
   }
@@ -418,6 +428,7 @@ export class PlansService {
     }) as PlanWithDetails;
 
     await this.invalidateCache(existing.code);
+    this.triggerWebRevalidation();
     this.logger.log(`Plan archived: ${plan.code} (${plan.id})`);
     return plan;
   }
@@ -461,6 +472,7 @@ export class PlansService {
     });
 
     await this.invalidateCache(plan.code);
+    this.triggerWebRevalidation();
     this.logger.log(`Plan price created: ${plan.code} ${dto.billingInterval} ${dto.amount}`);
     return price;
   }
@@ -486,6 +498,7 @@ export class PlansService {
     });
 
     await this.invalidateCache(price.plan.code);
+    this.triggerWebRevalidation();
     this.logger.log(`Plan price updated: ${priceId}`);
     return updated;
   }
@@ -533,6 +546,7 @@ export class PlansService {
     });
 
     await this.invalidateCache(plan.code);
+    this.triggerWebRevalidation();
     this.logger.log(`Plan entitlement created: ${plan.code} → ${dto.key}`);
     return entitlement;
   }
@@ -583,6 +597,7 @@ export class PlansService {
     if (plan) {
       await this.invalidateCache(plan.code);
     }
+    this.triggerWebRevalidation();
     this.logger.log(`Plan entitlement updated: ${entitlementId}`);
     return updated;
   }
@@ -608,6 +623,7 @@ export class PlansService {
     if (plan) {
       await this.invalidateCache(plan.code);
     }
+    this.triggerWebRevalidation();
     this.logger.log(`Plan entitlement deleted: ${entitlementId}`);
   }
 
@@ -648,5 +664,22 @@ export class PlansService {
       team: 'firm',
     };
     return mapping[orgType] ?? orgType;
+  }
+
+  /**
+   * Fire-and-forget: notify Next.js to revalidate the /pricing page.
+   * Uses native fetch to avoid adding HttpModule dependency.
+   */
+  private triggerWebRevalidation(): void {
+    const baseUrl = process.env['WEB_BASE_URL'];
+    const secret = process.env['REVALIDATION_SECRET'];
+    if (!baseUrl || !secret) return;
+
+    fetch(`${baseUrl}/api/internal/revalidate-pricing`, {
+      method: 'POST',
+      headers: { 'x-revalidation-secret': secret },
+    }).catch((err) => {
+      this.logger.warn(`Failed to trigger web revalidation: ${err.message}`);
+    });
   }
 }

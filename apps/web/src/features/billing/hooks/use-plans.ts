@@ -27,13 +27,14 @@ export const planKeys = {
  * Returns DB-driven plans with prices and entitlements.
  * Falls back to hardcoded PLANS if the API is unavailable.
  */
-export function usePlans() {
+export function usePlans(initialData?: PlanDetail[]) {
   return useQuery({
     queryKey: planKeys.visible,
     queryFn: async (): Promise<PlanDetail[]> => {
       const res = await apiClient.get<PlansListResponse>('/plans');
       return res.data;
     },
+    initialData,
     staleTime: 5 * 60 * 1000, // 5 minutes — matches backend Redis cache
     gcTime: 10 * 60 * 1000,
     retry: 2,

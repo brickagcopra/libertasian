@@ -333,6 +333,52 @@ describe('PlansService', () => {
     });
   });
 
+  // ---- Display flag fields ----
+
+  describe('display flag fields', () => {
+    const featuredPlan = {
+      ...mockPlan,
+      isFeatured: true,
+      featuredLabel: 'Best Value',
+      ctaText: 'Subscribe Now',
+      highlightColor: 'emerald',
+    };
+
+    it('findVisible() should return plans with display flag fields', async () => {
+      redis.get.mockResolvedValue(null);
+      (prisma.plan.findMany as jest.Mock).mockResolvedValue([featuredPlan]);
+
+      const plans = await service.findVisible();
+      expect(plans).toHaveLength(1);
+      const plan = plans[0]!;
+      expect(plan.isFeatured).toBe(true);
+      expect(plan.featuredLabel).toBe('Best Value');
+      expect(plan.ctaText).toBe('Subscribe Now');
+      expect(plan.highlightColor).toBe('emerald');
+    });
+
+    it('findVisible() caches plans with display flag fields', async () => {
+      redis.get.mockResolvedValue(null);
+      (prisma.plan.findMany as jest.Mock).mockResolvedValue([featuredPlan]);
+
+      await service.findVisible();
+      expect(redis.set).toHaveBeenCalledWith(
+        'cache:plans:visible',
+        expect.stringContaining('"isFeatured":true'),
+        300,
+      );
+    });
+
+    it('findVisible() returns cached plans with display flag fields', async () => {
+      redis.get.mockResolvedValue(JSON.stringify([featuredPlan]));
+
+      const plans = await service.findVisible();
+      const plan = plans[0]!;
+      expect(plan.isFeatured).toBe(true);
+      expect(plan.featuredLabel).toBe('Best Value');
+    });
+  });
+
   // ---- invalidateCache ----
 
   describe('invalidateCache', () => {

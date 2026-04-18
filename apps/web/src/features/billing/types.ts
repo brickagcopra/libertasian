@@ -252,6 +252,10 @@ export interface PlanDetail {
   trialDurationDays: number;
   defaultSeats: number;
   maxSeats: number | null;
+  isFeatured: boolean;
+  featuredLabel: string | null;
+  ctaText: string | null;
+  highlightColor: string | null;
   prices: PlanPriceDetail[];
   entitlements: PlanEntitlementDetail[];
 }
@@ -319,7 +323,7 @@ export function planDetailToPlanInfo(plan: PlanDetail): PlanInfo {
     features: plan.entitlements
       .filter((e) => e.description)
       .map((e) => e.description as string),
-    highlight: plan.code === 'pro',
+    highlight: plan.isFeatured,
   };
 }
 
@@ -576,6 +580,10 @@ export interface CreatePlanInput {
   eligibleSegments?: string[];
   maxSeats?: number;
   internalNotes?: string;
+  isFeatured?: boolean;
+  featuredLabel?: string;
+  ctaText?: string;
+  highlightColor?: string;
 }
 
 export type UpdatePlanInput = Partial<CreatePlanInput>;

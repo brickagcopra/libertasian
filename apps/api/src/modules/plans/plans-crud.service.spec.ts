@@ -171,6 +171,47 @@ describe('PlansService — CRUD Operations', () => {
         }),
       );
     });
+
+    it('should persist display flag fields when provided', async () => {
+      const createWithFlags = {
+        ...createDto,
+        isFeatured: true,
+        featuredLabel: 'Best Value',
+        ctaText: 'Subscribe Now',
+        highlightColor: 'emerald',
+      };
+      (prisma.plan.findUnique as jest.Mock).mockResolvedValue(null);
+      (prisma.plan.create as jest.Mock).mockResolvedValue({
+        ...mockPlan,
+        ...createWithFlags,
+      });
+
+      await service.create(createWithFlags);
+      expect(prisma.plan.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            isFeatured: true,
+            featuredLabel: 'Best Value',
+            ctaText: 'Subscribe Now',
+            highlightColor: 'emerald',
+          }),
+        }),
+      );
+    });
+
+    it('should default isFeatured to false when not provided', async () => {
+      (prisma.plan.findUnique as jest.Mock).mockResolvedValue(null);
+      (prisma.plan.create as jest.Mock).mockResolvedValue(mockPlan);
+
+      await service.create(createDto);
+      expect(prisma.plan.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            isFeatured: false,
+          }),
+        }),
+      );
+    });
   });
 
   // ---- update ----
@@ -209,6 +250,38 @@ describe('PlansService — CRUD Operations', () => {
 
       const plan = await service.update('plan-1', { code: 'pro' });
       expect(plan.code).toBe('pro');
+    });
+
+    it('should persist display flag fields', async () => {
+      (prisma.plan.findUnique as jest.Mock).mockResolvedValue(mockPlan);
+      (prisma.plan.update as jest.Mock).mockResolvedValue({
+        ...mockPlan,
+        isFeatured: true,
+        featuredLabel: 'Top Pick',
+        ctaText: 'Upgrade Now',
+        highlightColor: 'amber',
+      });
+
+      const plan = await service.update('plan-1', {
+        isFeatured: true,
+        featuredLabel: 'Top Pick',
+        ctaText: 'Upgrade Now',
+        highlightColor: 'amber',
+      });
+      expect(plan.isFeatured).toBe(true);
+      expect(plan.featuredLabel).toBe('Top Pick');
+      expect(plan.ctaText).toBe('Upgrade Now');
+      expect(plan.highlightColor).toBe('amber');
+      expect(prisma.plan.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            isFeatured: true,
+            featuredLabel: 'Top Pick',
+            ctaText: 'Upgrade Now',
+            highlightColor: 'amber',
+          }),
+        }),
+      );
     });
 
     it('should invalidate both old and new code caches on code change', async () => {
@@ -452,6 +525,76 @@ describe('PlansService — CRUD Operations', () => {
       await expect(
         service.updateEntitlement('plan-1', 'ent-1', { key: 'searchQueries' }),
       ).rejects.toThrow(ConflictException);
+    });
+  });
+
+  // ---- triggerWebRevalidation ----
+
+  describe('triggerWebRevalidation', () => {
+    let originalFetch: typeof globalThis.fetch;
+
+    beforeEach(() => {
+      originalFetch = globalThis.fetch;
+      globalThis.fetch = jest.fn().mockResolvedValue({ ok: true });
+      process.env['WEB_BASE_URL'] = 'http://localhost:3000';
+      process.env['REVALIDATION_SECRET'] = 'test-secret';
+    });
+
+    afterEach(() => {
+      globalThis.fetch = originalFetch;
+      delete process.env['WEB_BASE_URL'];
+      delete process.env['REVALIDATION_SECRET'];
+    });
+
+    it('should call revalidation endpoint after create', async () => {
+      (prisma.plan.findUnique as jest.Mock).mockResolvedValue(null);
+      (prisma.plan.create as jest.Mock).mockResolvedValue(mockPlan);
+
+      await service.create({ code: 'test', name: 'Test', type: 'standard' });
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        'http://localhost:3000/api/internal/revalidate-pricing',
+        expect.objectContaining({
+          method: 'POST',
+          headers: { 'x-revalidation-secret': 'test-secret' },
+        }),
+      );
+    });
+
+    it('should call revalidation endpoint after update', async () => {
+      (prisma.plan.findUnique as jest.Mock).mockResolvedValue(mockPlan);
+      (prisma.plan.update as jest.Mock).mockResolvedValue(mockPlan);
+
+      await service.update('plan-1', { name: 'Updated' });
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        'http://localhost:3000/api/internal/revalidate-pricing',
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+
+    it('should not call revalidation when env vars are missing', async () => {
+      delete process.env['WEB_BASE_URL'];
+      delete process.env['REVALIDATION_SECRET'];
+
+      (prisma.plan.findUnique as jest.Mock).mockResolvedValue(null);
+      (prisma.plan.create as jest.Mock).mockResolvedValue(mockPlan);
+
+      await service.create({ code: 'test', name: 'Test', type: 'standard' });
+
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+
+    it('should not throw when revalidation fetch fails', async () => {
+      (globalThis.fetch as jest.Mock).mockRejectedValue(new Error('Network error'));
+
+      (prisma.plan.findUnique as jest.Mock).mockResolvedValue(null);
+      (prisma.plan.create as jest.Mock).mockResolvedValue(mockPlan);
+
+      // Should not throw — fire-and-forget
+      await expect(
+        service.create({ code: 'test', name: 'Test', type: 'standard' }),
+      ).resolves.toBeDefined();
     });
   });
 
