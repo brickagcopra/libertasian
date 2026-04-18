@@ -96,6 +96,17 @@ export function PricingPageClient({
   );
   const { data: promotions } = useActivePromotions();
 
+  // Resolve plans: API-driven or fallback (must be called unconditionally — Rules of Hooks)
+  const { plans, isFromApi } = useMemo(() => {
+    if (apiPlans && apiPlans.length > 0) {
+      const sorted = [...apiPlans].sort((a, b) => a.displayOrder - b.displayOrder);
+      return { plans: sorted, isFromApi: true };
+    }
+    return { plans: null, isFromApi: false };
+  }, [apiPlans]);
+
+  const activePromotions = promotions ?? [];
+
   // Kill switch: force static fallback
   if (!dynamicEnabled) {
     return (
@@ -116,17 +127,6 @@ export function PricingPageClient({
       </PricingShell>
     );
   }
-
-  // Resolve plans: API-driven or fallback
-  const { plans, isFromApi } = useMemo(() => {
-    if (apiPlans && apiPlans.length > 0) {
-      const sorted = [...apiPlans].sort((a, b) => a.displayOrder - b.displayOrder);
-      return { plans: sorted, isFromApi: true };
-    }
-    return { plans: null, isFromApi: false };
-  }, [apiPlans]);
-
-  const activePromotions = promotions ?? [];
 
   // Error fallback: if API failed at build time and no data available
   if (fetchError && !plans) {

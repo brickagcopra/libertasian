@@ -27,6 +27,10 @@ describe('PlansAdminController', () => {
     code: 'pro',
     name: 'Pro',
     displayName: 'Professional',
+    isFeatured: true,
+    featuredLabel: 'Most Popular',
+    ctaText: 'Start Now',
+    highlightColor: 'emerald',
     prices: [],
     entitlements: [],
   };
@@ -111,6 +115,18 @@ describe('PlansAdminController', () => {
       expect(result.success).toBe(true);
       expect(result.data).toEqual(mockPlan);
     });
+
+    it('should include display flag fields in response', async () => {
+      const result = await controller.getPlan('plan-1');
+      expect(result.data).toEqual(
+        expect.objectContaining({
+          isFeatured: true,
+          featuredLabel: 'Most Popular',
+          ctaText: 'Start Now',
+          highlightColor: 'emerald',
+        }),
+      );
+    });
   });
 
   describe('createPlan', () => {
@@ -139,6 +155,18 @@ describe('PlansAdminController', () => {
           action: 'plan.update',
         }),
       );
+    });
+
+    it('should pass display flag fields through to service', async () => {
+      const dto = {
+        isFeatured: true,
+        featuredLabel: 'Best Value',
+        ctaText: 'Get Started',
+        highlightColor: 'amber',
+      };
+      const result = await controller.updatePlan('plan-1', dto, mockUser as never, '127.0.0.1');
+      expect(result.success).toBe(true);
+      expect(plansService.update).toHaveBeenCalledWith('plan-1', dto);
     });
   });
 
