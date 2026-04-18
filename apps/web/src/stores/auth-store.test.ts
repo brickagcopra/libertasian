@@ -8,6 +8,7 @@ describe('useAuthStore', () => {
       accessToken: null,
       user: null,
       isAuthenticated: false,
+      isAuthReady: false,
     });
   });
 
@@ -71,6 +72,42 @@ describe('useAuthStore', () => {
     expect(state.accessToken).toBeNull();
     expect(state.user).toBeNull();
     expect(state.isAuthenticated).toBe(false);
+  });
+
+  it('isAuthReady defaults to false', () => {
+    expect(useAuthStore.getState().isAuthReady).toBe(false);
+  });
+
+  it('setAuthReady flips isAuthReady flag', () => {
+    useAuthStore.getState().setAuthReady(true);
+    expect(useAuthStore.getState().isAuthReady).toBe(true);
+
+    useAuthStore.getState().setAuthReady(false);
+    expect(useAuthStore.getState().isAuthReady).toBe(false);
+  });
+
+  it('isAuthReady is NOT included in persisted state', () => {
+    // The partialize function only includes user and isAuthenticated.
+    // Verify by checking the store's persist options.
+    const persistOptions = useAuthStore.persist.getOptions();
+    const partialize = persistOptions.partialize!;
+
+    const fakeState = {
+      accessToken: 'tok',
+      user: null,
+      isAuthenticated: true,
+      isAuthReady: true,
+      setAccessToken: () => {},
+      setUser: () => {},
+      setAuthReady: () => {},
+      logout: () => {},
+    };
+
+    const persisted = partialize(fakeState);
+    expect(persisted).not.toHaveProperty('isAuthReady');
+    expect(persisted).not.toHaveProperty('accessToken');
+    expect(persisted).toHaveProperty('user');
+    expect(persisted).toHaveProperty('isAuthenticated');
   });
 
   it('setAccessToken does not affect user', () => {

@@ -31,9 +31,11 @@ interface AuthState {
   accessToken: string | null;
   user: User | null;
   isAuthenticated: boolean;
+  isAuthReady: boolean;
 
   setAccessToken: (accessToken: string) => void;
   setUser: (user: User) => void;
+  setAuthReady: (ready: boolean) => void;
   logout: () => void;
 }
 
@@ -43,6 +45,7 @@ export const useAuthStore = create<AuthState>()(
       accessToken: null,
       user: null,
       isAuthenticated: false,
+      isAuthReady: false,
 
       setAccessToken: (accessToken: string) => {
         setSessionCookie();
@@ -50,6 +53,8 @@ export const useAuthStore = create<AuthState>()(
       },
 
       setUser: (user: User) => set({ user }),
+
+      setAuthReady: (ready: boolean) => set({ isAuthReady: ready }),
 
       logout: () => {
         clearSessionCookie();
