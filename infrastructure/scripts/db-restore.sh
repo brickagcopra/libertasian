@@ -126,7 +126,7 @@ fi
 
 # ── Run Prisma migrations ──
 echo "[$(date -Iseconds)] Running Prisma migrate deploy to ensure schema is current..."
-docker exec libertasian-api npx prisma migrate deploy 2>&1 || true
+docker exec libertasian-api npx prisma@6 migrate deploy 2>&1 || true
 
 # ── Restart application services ──
 echo "[$(date -Iseconds)] Restarting application services..."
