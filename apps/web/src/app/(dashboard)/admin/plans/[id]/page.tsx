@@ -621,10 +621,13 @@ export default function AdminPlanDetailPage() {
                         name="highlightColor"
                         control={planForm.control}
                         render={({ field }) => (
-                          <Select value={field.value ?? ''} onValueChange={field.onChange}>
+                          <Select
+                            value={field.value || 'default'}
+                            onValueChange={(v) => field.onChange(v === 'default' ? '' : v)}
+                          >
                             <SelectTrigger><SelectValue placeholder="Default" /></SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="">Default</SelectItem>
+                              <SelectItem value="default">Default</SelectItem>
                               <SelectItem value="primary">Primary (dark)</SelectItem>
                               <SelectItem value="emerald">Emerald</SelectItem>
                               <SelectItem value="amber">Amber</SelectItem>

@@ -210,24 +210,36 @@ export default function IngestionDashboardPage() {
       <div>
         <h2 className="mb-3 text-lg font-semibold">Job History</h2>
         <div className="mb-4 flex items-center gap-4">
-          <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setJobCursor(undefined); }}>
+          <Select
+            value={statusFilter || 'all'}
+            onValueChange={(v) => {
+              setStatusFilter(v === 'all' ? '' : v);
+              setJobCursor(undefined);
+            }}
+          >
             <SelectTrigger className="w-[160px]">
               <SelectValue placeholder="All Statuses" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">All Statuses</SelectItem>
+              <SelectItem value="all">All Statuses</SelectItem>
               <SelectItem value="completed">Completed</SelectItem>
               <SelectItem value="running">Running</SelectItem>
               <SelectItem value="pending">Pending</SelectItem>
               <SelectItem value="failed">Failed</SelectItem>
             </SelectContent>
           </Select>
-          <Select value={triggerFilter} onValueChange={(v) => { setTriggerFilter(v); setJobCursor(undefined); }}>
+          <Select
+            value={triggerFilter || 'all'}
+            onValueChange={(v) => {
+              setTriggerFilter(v === 'all' ? '' : v);
+              setJobCursor(undefined);
+            }}
+          >
             <SelectTrigger className="w-[160px]">
               <SelectValue placeholder="All Triggers" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">All Triggers</SelectItem>
+              <SelectItem value="all">All Triggers</SelectItem>
               <SelectItem value="scheduled">Scheduled</SelectItem>
               <SelectItem value="manual">Manual</SelectItem>
             </SelectContent>
