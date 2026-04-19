@@ -121,6 +121,10 @@ const createPlanSchema = z.object({
   trialDurationDays: z.coerce.number().min(1).max(365).optional(),
   maxSeats: z.coerce.number().min(1).optional().or(z.literal('')),
   internalNotes: z.string().optional(),
+  isFeatured: z.boolean().optional(),
+  featuredLabel: z.string().max(50).optional().or(z.literal('')),
+  ctaText: z.string().max(50).optional().or(z.literal('')),
+  highlightColor: z.string().max(20).optional().or(z.literal('')),
 });
 
 type CreatePlanForm = z.infer<typeof createPlanSchema>;

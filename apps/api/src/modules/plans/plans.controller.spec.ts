@@ -13,6 +13,10 @@ describe('PlansController', () => {
       code: 'free',
       name: 'Free',
       isVisible: true,
+      isFeatured: false,
+      featuredLabel: null,
+      ctaText: null,
+      highlightColor: null,
       prices: [],
       entitlements: [],
     },
@@ -21,6 +25,10 @@ describe('PlansController', () => {
       code: 'pro',
       name: 'Pro',
       isVisible: true,
+      isFeatured: true,
+      featuredLabel: 'Most Popular',
+      ctaText: 'Start Now',
+      highlightColor: 'emerald',
       prices: [
         { id: 'price-1', billingInterval: 'monthly', amount: 99900, currency: 'PHP', isActive: true },
       ],
@@ -61,6 +69,28 @@ describe('PlansController', () => {
       const result = await controller.listVisiblePlans();
       expect(result.success).toBe(true);
       expect(result.data).toHaveLength(0);
+    });
+
+    it('should include display flag fields in plan responses', async () => {
+      const result = await controller.listVisiblePlans();
+      const proPlan = result.data.find((p: { code: string }) => p.code === 'pro');
+      expect(proPlan).toEqual(
+        expect.objectContaining({
+          isFeatured: true,
+          featuredLabel: 'Most Popular',
+          ctaText: 'Start Now',
+          highlightColor: 'emerald',
+        }),
+      );
+      const freePlan = result.data.find((p: { code: string }) => p.code === 'free');
+      expect(freePlan).toEqual(
+        expect.objectContaining({
+          isFeatured: false,
+          featuredLabel: null,
+          ctaText: null,
+          highlightColor: null,
+        }),
+      );
     });
   });
 });

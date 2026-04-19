@@ -2000,6 +2000,10 @@ model Plan {
   maxSeats            Int?     @map("max_seats")
   internalNotes       String?  @map("internal_notes")
   isArchived          Boolean  @default(false) @map("is_archived")
+  isFeatured          Boolean  @default(false) @map("is_featured")
+  featuredLabel       String?  @map("featured_label") @db.VarChar(50)
+  ctaText             String?  @map("cta_text") @db.VarChar(50)
+  highlightColor      String?  @map("highlight_color") @db.VarChar(20)
   isLegacy            Boolean  @default(false) @map("is_legacy")
   legacyMappingCode   String?  @map("legacy_mapping_code") @db.VarChar(50)
   createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz

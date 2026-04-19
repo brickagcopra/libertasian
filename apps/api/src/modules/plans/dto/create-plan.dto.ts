@@ -126,4 +126,27 @@ export class CreatePlanDto {
   @IsString()
   @IsOptional()
   internalNotes?: string;
+
+  @ApiPropertyOptional({ description: 'Whether this plan is featured on the pricing page', default: false })
+  @IsBoolean()
+  @IsOptional()
+  isFeatured?: boolean;
+
+  @ApiPropertyOptional({ description: 'Badge label when featured (e.g. "Most Popular")', example: 'Most Popular' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(50)
+  featuredLabel?: string;
+
+  @ApiPropertyOptional({ description: 'Custom CTA button text (e.g. "Start Now")', example: 'Start Now' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(50)
+  ctaText?: string;
+
+  @ApiPropertyOptional({ description: 'Highlight color theme for the plan card', example: 'primary' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(20)
+  highlightColor?: string;
 }
