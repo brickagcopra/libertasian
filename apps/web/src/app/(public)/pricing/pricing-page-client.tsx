@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { Fragment, useState, useMemo } from 'react';
 import Link from 'next/link';
 import { TagIcon, ClockIcon } from 'lucide-react';
 
@@ -98,7 +98,7 @@ export function PricingPageClient({
 
   // Resolve plans: API-driven or fallback (must be called unconditionally — Rules of Hooks)
   const { plans, isFromApi } = useMemo(() => {
-    if (apiPlans && apiPlans.length > 0) {
+    if (apiPlans) {
       const sorted = [...apiPlans].sort((a, b) => a.displayOrder - b.displayOrder);
       return { plans: sorted, isFromApi: true };
     }
@@ -685,8 +685,8 @@ function DynamicFeatureComparison({ plans }: { plans: PlanDetail[] }) {
           </thead>
           <tbody>
             {comparison.map((category) => (
-              <>
-                <tr key={category.category}>
+              <Fragment key={category.category}>
+                <tr>
                   <td
                     colSpan={plans.length + 1}
                     className="pt-6 pb-2 text-xs font-semibold uppercase tracking-wider text-gray-400"
@@ -714,7 +714,7 @@ function DynamicFeatureComparison({ plans }: { plans: PlanDetail[] }) {
                     })}
                   </tr>
                 ))}
-              </>
+              </Fragment>
             ))}
           </tbody>
         </table>
@@ -846,8 +846,8 @@ function StaticFeatureComparison() {
           </thead>
           <tbody>
             {STATIC_COMPARISON_FEATURES.map((category) => (
-              <>
-                <tr key={category.category}>
+              <Fragment key={category.category}>
+                <tr>
                   <td
                     colSpan={6}
                     className="pt-6 pb-2 text-xs font-semibold uppercase tracking-wider text-gray-400"
@@ -884,7 +884,7 @@ function StaticFeatureComparison() {
                     })}
                   </tr>
                 ))}
-              </>
+              </Fragment>
             ))}
           </tbody>
         </table>
