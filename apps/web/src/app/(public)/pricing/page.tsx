@@ -11,8 +11,8 @@ export default async function PricingPage() {
 
   if (dynamicEnabled) {
     try {
-      const apiUrl = process.env['API_URL'] ?? 'http://localhost:3001';
-      const res = await fetch(`${apiUrl}/api/v1/plans`, {
+      const apiUrl = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001/api/v1';
+      const res = await fetch(`${apiUrl}/plans`, {
         next: { revalidate: 60 },
       });
       if (res.ok) {
