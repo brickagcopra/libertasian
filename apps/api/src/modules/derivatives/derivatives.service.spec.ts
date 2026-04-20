@@ -100,9 +100,11 @@ describe('DerivativesService', () => {
       prisma.derivativeArtifact.findMany.mockResolvedValue([makeRow()]);
 
       const { items } = await service.list('user-1', 'org-1', {});
+      const [first] = items;
+      expect(first).toBeDefined();
 
-      expect(items[0].isGated).toBe(true);
-      expect(items[0].upgradeTier).toBe('edu');
+      expect(first!.isGated).toBe(true);
+      expect(first!.upgradeTier).toBe('edu');
     });
 
     it('does NOT gate for edu-tier and above', async () => {
@@ -110,9 +112,11 @@ describe('DerivativesService', () => {
       prisma.derivativeArtifact.findMany.mockResolvedValue([makeRow()]);
 
       const { items } = await service.list('user-1', 'org-1', {});
+      const [first] = items;
+      expect(first).toBeDefined();
 
-      expect(items[0].isGated).toBe(false);
-      expect(items[0].upgradeTier).toBeNull();
+      expect(first!.isGated).toBe(false);
+      expect(first!.upgradeTier).toBeNull();
     });
 
     it('does NOT gate non-MCQ/essay types regardless of tier', async () => {
@@ -122,8 +126,10 @@ describe('DerivativesService', () => {
       ]);
 
       const { items } = await service.list('user-1', 'org-1', {});
+      const [first] = items;
+      expect(first).toBeDefined();
 
-      expect(items[0].isGated).toBe(false);
+      expect(first!.isGated).toBe(false);
     });
   });
 
