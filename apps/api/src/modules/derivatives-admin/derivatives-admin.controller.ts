@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Ip,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -11,6 +12,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import type { JwtPayload } from '@libertasian/types';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -19,10 +21,13 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { MfaGuard } from '../../common/guards/mfa.guard';
 import { TenantGuard } from '../../common/guards/tenant.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { AuditService } from '../audit/audit.service';
 import { DerivativesAdminService } from './derivatives-admin.service';
+import { DerivativesReviewService } from './derivatives-review.service';
 import {
   EnqueueGenerationDto,
   ListDerivativeJobsDto,
+  SubmitDerivativeReviewDto,
   UpdateDerivativeSettingsDto,
 } from './dto';
 
@@ -32,7 +37,11 @@ import {
 @RequiredPermissions('admin:settings')
 @ApiBearerAuth()
 export class DerivativesAdminController {
-  constructor(private readonly service: DerivativesAdminService) {}
+  constructor(
+    private readonly service: DerivativesAdminService,
+    private readonly reviewService: DerivativesReviewService,
+    private readonly auditService: AuditService,
+  ) {}
 
   @Get('stats')
   async getStats() {
@@ -113,6 +122,54 @@ export class DerivativesAdminController {
   ) {
     const data = await this.service.regenerateArtifact(id, user.sub);
     return { success: true, data };
+  }
+
+  @Post('artifacts/:id/review')
+  @ApiOperation({ summary: 'Submit a review verdict for a derivative artifact' })
+  @Throttle({ default: { ttl: 60_000, limit: 100 } })
+  async submitArtifactReview(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SubmitDerivativeReviewDto,
+    @CurrentUser() user: JwtPayload,
+    @Ip() ip: string,
+  ) {
+    const result = await this.reviewService.submitReview(id, user.sub, dto);
+    await this.auditService.log({
+      actorUserId: user.sub,
+      actorType: 'admin',
+      action: 'derivative.review.submit',
+      entityType: 'derivative_artifact',
+      entityId: id,
+      metadata: {
+        ip,
+        verdict: dto.verdict,
+        newStatus: result.newStatus,
+        newVisibility: result.newVisibility,
+        reviewId: result.reviewId,
+        subjectsCopiedFromParent: result.subjectsCopiedFromParent,
+      },
+    });
+    if (result.newVisibility === 'public_editorial') {
+      await this.auditService.log({
+        actorUserId: user.sub,
+        actorType: 'admin',
+        action: 'derivative.publish_editorial',
+        entityType: 'derivative_artifact',
+        entityId: id,
+        metadata: { ip, reviewId: result.reviewId },
+      });
+    }
+    if (result.subjectsCopiedFromParent > 0) {
+      await this.auditService.log({
+        actorUserId: user.sub,
+        actorType: 'admin',
+        action: 'derivative.subjects.fallback_copied',
+        entityType: 'derivative_artifact',
+        entityId: id,
+        metadata: { ip, count: result.subjectsCopiedFromParent },
+      });
+    }
+    return { success: true, data: result };
   }
 
   @Delete('jobs/:id/output')

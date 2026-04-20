@@ -50,6 +50,16 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="library"
+        options={{
+          title: 'Library',
+          headerShown: false,
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="library-outline" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="study"
         options={{
           title: 'Study',
