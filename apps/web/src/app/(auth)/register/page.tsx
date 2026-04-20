@@ -35,7 +35,7 @@ export default function RegisterPage() {
         password: data.password,
         fullName: data.fullName,
       });
-      router.push(`/auth/verify-email?email=${encodeURIComponent(data.email)}`);
+      router.push(`${ROUTES.VERIFY_EMAIL}?email=${encodeURIComponent(data.email)}`);
     } catch (error) {
       if (error instanceof ApiClientError) {
         if (error.statusCode === 409) {
