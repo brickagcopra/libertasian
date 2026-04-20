@@ -62,6 +62,7 @@ import { AiSettingsModule } from './modules/ai-settings/ai-settings.module';
 import { BackfillModule } from './modules/backfill/backfill.module';
 import { GoldenSetsModule } from './modules/golden-sets/golden-sets.module';
 import { DerivativesAdminModule } from './modules/derivatives-admin/derivatives-admin.module';
+import { DerivativesModule } from './modules/derivatives/derivatives.module';
 import { InternalModule } from './modules/internal/internal.module';
 import { ReportingModule } from './modules/reporting/reporting.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -117,6 +118,10 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
         CLAMAV_ENABLED: Joi.string().valid('true', 'false').default('true'),
         // Internal service-to-service API key (worker-service → NestJS)
         INTERNAL_API_KEY: Joi.string().default(''),
+        // Feature flag — controls the /derivatives public (student-facing)
+        // endpoints. Disabled by default; flip to 'true' in staging/prod once
+        // editorial has approved a baseline batch of derivatives.
+        FEATURE_DERIVATIVES_PUBLIC: Joi.string().valid('true', 'false').default('false'),
       }),
     }),
 
@@ -216,6 +221,7 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
     BackfillModule,
     GoldenSetsModule,
     DerivativesAdminModule,
+    DerivativesModule,
     InternalModule,
   ],
   providers: [

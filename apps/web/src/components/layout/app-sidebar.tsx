@@ -57,6 +57,7 @@ import {
   AwardIcon,
   TagsIcon,
   SparklesIcon,
+  LibraryBigIcon,
 } from 'lucide-react';
 
 interface NavItem {
@@ -70,6 +71,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { href: '/search', label: 'Search', icon: SearchIcon },
   { href: '/digests', label: 'Digests', icon: FileTextIcon },
+  { href: '/library', label: 'Library', icon: LibraryBigIcon },
   { href: '/scans', label: 'Scans', icon: ScanLineIcon },
   { href: '/study', label: 'Study', icon: GraduationCapIcon },
   { href: '/community', label: 'Community', icon: UsersIcon },

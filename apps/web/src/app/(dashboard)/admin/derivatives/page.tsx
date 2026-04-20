@@ -20,6 +20,7 @@ import {
 import type { DerivativeTypeStats, DerivativeJob, JobDoctrineItem } from '@/features/admin/types';
 import { DigestContentPanel } from '@/features/digests/components/digest-content-panel';
 import { EssayContentPanel } from '@/features/admin/components/essay-content-panel';
+import { ArtifactReviewActions } from '@/features/admin/components/artifact-review-actions';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AdminCardSkeleton } from '@/components/ui/skeleton';
 
@@ -771,8 +772,14 @@ function JobDetailPanel({
             </p>
           )}
           {essayData?.essay && (
-            <div className="mt-4 border-t pt-4">
+            <div className="mt-4 space-y-3 border-t pt-4">
               <EssayContentPanel essay={essayData.essay} />
+              <ArtifactReviewActions
+                artifactId={essayData.essay.id}
+                reviewStatus={essayData.essay.reviewStatus}
+                visibility={essayData.essay.visibility}
+                hasDisclaimer={!!essayData.essay.contentDisclaimer}
+              />
             </div>
           )}
         </>

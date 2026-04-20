@@ -46,6 +46,7 @@ model User {
   annotations                Annotation[]
   uploads                    UserUpload[]
   digestReviews              DigestReview[]
+  derivativeReviews          DerivativeReview[]
   matters                    Matter[]
   auditLogs                  AuditLog[]
   flashcardSets              FlashcardSet[]
@@ -712,6 +713,26 @@ model DigestReview {
   reviewer User   @relation(fields: [reviewerUserId], references: [id])
 
   @@map("digest_reviews")
+}
+
+model DerivativeReview {
+  id                    String   @id @default(uuid()) @db.Uuid
+  derivativeArtifactId  String   @map("derivative_artifact_id") @db.Uuid
+  reviewerUserId        String   @map("reviewer_user_id") @db.Uuid
+  verdict               String   @db.VarChar(20)
+  notes                 String?
+  truthfulnessScore     Float?   @map("truthfulness_score") @db.Real
+  completenessScore     Float?   @map("completeness_score") @db.Real
+  citationAccuracyScore Float?   @map("citation_accuracy_score") @db.Real
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  derivativeArtifact DerivativeArtifact @relation(fields: [derivativeArtifactId], references: [id], onDelete: Cascade)
+  reviewer           User               @relation(fields: [reviewerUserId], references: [id])
+
+  @@index([derivativeArtifactId])
+  @@index([reviewerUserId, createdAt(sort: Desc)])
+  @@map("derivative_reviews")
 }
 
 model DoctrineExtract {
@@ -3615,6 +3636,9 @@ model DerivativeArtifact {
 
   // Subject taxonomy assignments (§5.8c)
   subjectAssignments DocumentSubjectAssignment[]
+
+  // Admin review history (mirrors Digest.reviews)
+  reviews DerivativeReview[]
 
   // Deferred relations — child tables land with their own PRs:
   //   - Digest.derivativeArtifactId dual-write: case_digest dual-write PR

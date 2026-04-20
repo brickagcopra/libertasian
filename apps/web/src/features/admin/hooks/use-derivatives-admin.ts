@@ -214,3 +214,37 @@ export function useDeleteJobOutput() {
     },
   });
 }
+
+export interface ArtifactReviewResult {
+  artifactId: string;
+  reviewId: string;
+  newStatus: string;
+  newVisibility: string;
+  verdict: string;
+  subjectsCopiedFromParent: number;
+}
+
+export function useReviewArtifact() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: {
+      id: string;
+      verdict: 'approve' | 'reject' | 'needs_revision';
+      notes?: string;
+      truthfulnessScore?: number;
+      completenessScore?: number;
+      citationAccuracyScore?: number;
+    }) => {
+      const { id, ...body } = args;
+      const res = await apiClient.post<ApiEnvelope<ArtifactReviewResult>>(
+        `/admin/derivatives/artifacts/${id}/review`,
+        body,
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'derivatives'] });
+      queryClient.invalidateQueries({ queryKey: ['derivatives'] });
+    },
+  });
+}
