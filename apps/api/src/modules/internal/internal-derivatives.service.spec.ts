@@ -76,7 +76,7 @@ describe('InternalDerivativesService', () => {
   // Transaction mock helpers — simulates Prisma interactive transaction
   let txMocks: {
     derivativeArtifact: { create: jest.Mock };
-    digest: { create: jest.Mock; upsert: jest.Mock };
+    digest: { upsert: jest.Mock };
     essayPrompt: { create: jest.Mock };
     doctrineExtract: { create: jest.Mock };
     doctrineLink: { create: jest.Mock };
@@ -102,7 +102,6 @@ describe('InternalDerivativesService', () => {
         }),
       },
       digest: {
-        create: jest.fn().mockResolvedValue({ id: 'digest-001' }),
         upsert: jest.fn().mockResolvedValue({ id: 'digest-001' }),
       },
       essayPrompt: {

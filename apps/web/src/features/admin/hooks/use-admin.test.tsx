@@ -478,13 +478,20 @@ describe('Enhanced Review Queue', () => {
     mockPost.mockResolvedValueOnce({ success: true, data: { digestId: 'd1', reviewId: 'r1', newStatus: 'approved', verdict: 'approve' } });
     const { result } = renderHook(() => useSubmitReview(), { wrapper: createWrapper() });
     await act(async () => {
-      await result.current.mutateAsync({ id: 'd1', verdict: 'approve', truthfulness: 5, completeness: 4, citationAccuracy: 5 });
+      await result.current.mutateAsync({
+        id: 'd1',
+        verdict: 'approve',
+        truthfulnessScore: 5,
+        completenessScore: 4,
+        citationAccuracyScore: 5,
+      });
     });
     expect(mockPost).toHaveBeenCalledWith('/admin/digests/d1/review', {
       verdict: 'approve',
-      truthfulness: 5,
-      completeness: 4,
-      citationAccuracy: 5,
+      notes: undefined,
+      truthfulnessScore: 5,
+      completenessScore: 4,
+      citationAccuracyScore: 5,
     });
   });
 
@@ -623,7 +630,7 @@ describe('Doctrines', () => {
     await act(async () => {
       await result.current.mutateAsync('ld1');
     });
-    expect(mockPost).toHaveBeenCalledWith('/admin/doctrines/extract', { documentId: 'ld1' });
+    expect(mockPost).toHaveBeenCalledWith('/admin/doctrines/extract', { legalDocumentId: 'ld1' });
   });
 
   it('useCreateDoctrineLink creates link via POST', async () => {
