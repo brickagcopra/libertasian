@@ -145,6 +145,15 @@ def _adapt_flat_shape(output: dict[str, Any]) -> dict[str, Any]:
       - `subject`         — observed in prod gpt-4o-mini output on 2026-04-21
       - `primarySubject`  — defensive mirror of the top-level primary-shape
 
+    Secondary-subject `confidence` inheritance: gpt-4o-mini stakes a single
+    top-level `confidence` on the whole classification, not per assignment.
+    So for dict secondaries the adapter resolves confidence as:
+      - explicit `secondary["confidence"]` wins if present and not None
+      - otherwise inherit top-level `output["confidence"]`
+      - if both are absent/None, emit None (no hardcoded default — a
+        malformed LLM response should surface as a NestJS 400, per PRD
+        §9.4 abstention-over-fabrication).
+
     Pass-through rules:
     - Already-assignments shape (has "assignments" list): return unchanged.
     - abstain=True: return unchanged (validator short-circuits on abstain upstream).
@@ -178,12 +187,15 @@ def _adapt_flat_shape(output: dict[str, Any]) -> dict[str, Any]:
                 or secondary.get("subject")
                 or secondary.get("primarySubject")
             )
+            confidence = secondary.get("confidence")
+            if confidence is None:
+                confidence = output.get("confidence")
             assignments.append(
                 {
                     "subjectCode": subject_code,
                     "subjectTopicCode": secondary.get("subjectTopicCode"),
                     "isPrimary": False,
-                    "confidence": secondary.get("confidence"),
+                    "confidence": confidence,
                 }
             )
         else:
