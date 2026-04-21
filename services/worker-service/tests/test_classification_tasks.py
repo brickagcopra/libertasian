@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.tasks.classification_generation_tasks import (
+    _adapt_flat_shape,
     build_subject_registry,
     classify_document_subjects,
     classify_unclassified_batch,
@@ -495,3 +496,124 @@ class TestClassifyUnclassifiedBatch:
         assert result["dispatched"] == 5
         assert mock_classify_task.delay.call_count == 5
         mock_class_db.get_unclassified_document_ids.assert_called_once_with(limit=50)
+
+
+# ─── _adapt_flat_shape ───────────────────────────────────────────────────
+
+
+class TestAdaptFlatShape:
+    def test_adapt_flat_shape_primary_only(self) -> None:
+        llm_output = {
+            "isPrimary": True,
+            "primarySubject": "criminal_law",
+            "subjectTopicCode": "criminal_law.rpc_book_1",
+            "secondarySubjects": [],
+            "confidence": 0.9,
+        }
+
+        adapted = _adapt_flat_shape(llm_output)
+
+        assert adapted["assignments"] == [
+            {
+                "subjectCode": "criminal_law",
+                "subjectTopicCode": "criminal_law.rpc_book_1",
+                "isPrimary": True,
+                "confidence": 0.9,
+            }
+        ]
+        # Preserves other keys (forward-compat)
+        assert adapted["primarySubject"] == "criminal_law"
+
+    def test_adapt_flat_shape_with_dict_secondaries(self) -> None:
+        llm_output = {
+            "primarySubject": "civil_law",
+            "subjectTopicCode": "civil_law.persons_family",
+            "secondarySubjects": [
+                {"subjectCode": "political_law", "subjectTopicCode": None, "confidence": 0.6},
+                {"subjectCode": "remedial_law", "subjectTopicCode": "remedial_law.civ_pro", "confidence": 0.55},
+            ],
+            "confidence": 0.85,
+        }
+
+        adapted = _adapt_flat_shape(llm_output)
+
+        assignments = adapted["assignments"]
+        assert len(assignments) == 3
+        primaries = [a for a in assignments if a["isPrimary"]]
+        assert len(primaries) == 1
+        assert primaries[0]["subjectCode"] == "civil_law"
+        assert primaries[0]["confidence"] == 0.85
+        secondaries = [a for a in assignments if not a["isPrimary"]]
+        assert {s["subjectCode"] for s in secondaries} == {"political_law", "remedial_law"}
+        remedial = next(s for s in secondaries if s["subjectCode"] == "remedial_law")
+        assert remedial["subjectTopicCode"] == "remedial_law.civ_pro"
+        assert remedial["confidence"] == 0.55
+
+    def test_adapt_flat_shape_with_string_secondaries(self) -> None:
+        llm_output = {
+            "primarySubject": "tax_law",
+            "subjectTopicCode": None,
+            "secondarySubjects": ["commercial_law", "remedial_law"],
+            "confidence": 0.75,
+        }
+
+        adapted = _adapt_flat_shape(llm_output)
+
+        assignments = adapted["assignments"]
+        assert len(assignments) == 3
+        secondaries = [a for a in assignments if not a["isPrimary"]]
+        assert all(s["subjectTopicCode"] is None for s in secondaries)
+        assert all(s["confidence"] == 0.75 for s in secondaries)
+        assert {s["subjectCode"] for s in secondaries} == {"commercial_law", "remedial_law"}
+
+    def test_adapt_flat_shape_already_normalized_passthrough(self) -> None:
+        already = {
+            "assignments": [
+                {
+                    "subjectCode": "criminal_law",
+                    "subjectTopicCode": "criminal_law.rpc_book_1",
+                    "isPrimary": True,
+                    "confidence": 0.9,
+                }
+            ]
+        }
+
+        adapted = _adapt_flat_shape(already)
+
+        assert adapted is already
+        assert adapted == already
+
+    def test_adapt_flat_shape_abstain_passthrough(self) -> None:
+        abstain_output = {"abstain": True, "abstainReason": "low_confidence"}
+
+        adapted = _adapt_flat_shape(abstain_output)
+
+        assert adapted is abstain_output
+        assert "assignments" not in adapted
+
+    def test_adapt_flat_shape_unknown_shape_passthrough(self) -> None:
+        unknown = {"classification": "criminal", "score": 0.8}
+
+        adapted = _adapt_flat_shape(unknown)
+
+        assert adapted is unknown
+        assert "assignments" not in adapted
+
+    def test_adapt_flat_shape_then_validator_accepts(self) -> None:
+        llm_output = {
+            "isPrimary": True,
+            "primarySubject": "criminal_law",
+            "subjectTopicCode": "criminal_law.rpc_book_1",
+            "secondarySubjects": [],
+            "confidence": 0.9,
+        }
+        valid_subject_codes = {"criminal_law"}
+        valid_topic_codes = {"criminal_law": {"criminal_law.rpc_book_1"}}
+
+        adapted = _adapt_flat_shape(llm_output)
+        is_valid, errors = validate_classification_output(
+            adapted, valid_subject_codes, valid_topic_codes,
+        )
+
+        assert is_valid is True
+        assert errors == []
