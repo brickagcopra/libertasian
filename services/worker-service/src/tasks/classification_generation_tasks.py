@@ -139,6 +139,12 @@ def _adapt_flat_shape(output: dict[str, Any]) -> dict[str, Any]:
       {"isPrimary": bool, "primarySubject": str, "subjectTopicCode": str | None,
        "secondarySubjects": [str | dict, ...], "confidence": float}
 
+    Secondary-subject dicts may spell the subject-name key three ways. We
+    accept all three (in priority order):
+      - `subjectCode`     — forward-compat with the prompt's canonical schema
+      - `subject`         — observed in prod gpt-4o-mini output on 2026-04-21
+      - `primarySubject`  — defensive mirror of the top-level primary-shape
+
     Pass-through rules:
     - Already-assignments shape (has "assignments" list): return unchanged.
     - abstain=True: return unchanged (validator short-circuits on abstain upstream).
@@ -167,9 +173,14 @@ def _adapt_flat_shape(output: dict[str, Any]) -> dict[str, Any]:
 
     for secondary in output.get("secondarySubjects", []) or []:
         if isinstance(secondary, dict):
+            subject_code = (
+                secondary.get("subjectCode")
+                or secondary.get("subject")
+                or secondary.get("primarySubject")
+            )
             assignments.append(
                 {
-                    "subjectCode": secondary.get("subjectCode"),
+                    "subjectCode": subject_code,
                     "subjectTopicCode": secondary.get("subjectTopicCode"),
                     "isPrimary": False,
                     "confidence": secondary.get("confidence"),
