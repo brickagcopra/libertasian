@@ -50,6 +50,15 @@ app.conf.update(
             "schedule": crontab(hour=3, minute=0),  # 3 AM Manila time
             "kwargs": {"limit": 100},
         },
+        # Catches any document that slipped past the inline classify hook
+        # in ingestion_tasks.chain_post_ingestion (e.g. backfill imports,
+        # failed first run, or the inline task died). Small limit keeps
+        # this a cleanup sweep rather than a replacement for inline.
+        "classify-unclassified-15min": {
+            "task": "classification.classify_unclassified_batch",
+            "schedule": 900.0,  # 15 minutes
+            "kwargs": {"limit": 10},
+        },
         "poll-pending-derivative-jobs": {
             "task": "derivatives.poll_pending_jobs",
             "schedule": 30.0,  # Every 30 seconds

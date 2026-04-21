@@ -25,10 +25,21 @@ import psycopg2.extras
 
 logger = logging.getLogger(__name__)
 
-# Mapping from derivative_type DB value -> Celery task name
+# Mapping from derivative_type DB value -> Celery task name.
+#
+# Keys MUST match the derivative_type enum used by the API side. The
+# source of truth for the enum is the admin enqueue DTO:
+#   apps/api/src/modules/derivatives-admin/derivatives-admin.service.ts
+# (and the student-side DTO
+#   apps/api/src/modules/derivatives/dto/list-derivatives.query.dto.ts
+#  is a superset that includes read-only types without generator tasks).
+#
+# If a new derivative_type is added on the API side, it must also get an
+# entry here — otherwise the poller will mark it failed with
+# `{"message": "<type>"}` (see _fail_unknown_type below).
 _TASK_ROUTING: dict[str, str] = {
     "case_digest": "derivatives.generate_case_digest",
-    "mcq": "derivatives.generate_mcq",
+    "mcq_question": "derivatives.generate_mcq",
     "essay_prompt": "derivatives.generate_essay_prompt",
     "flashcard": "derivatives.generate_flashcards",
     "subject_outline": "derivatives.generate_subject_outline",

@@ -159,6 +159,44 @@ describe('DerivativesReviewService', () => {
       expect(prisma.documentSubjectAssignment.findMany).not.toHaveBeenCalled();
       expect(prisma.documentSubjectAssignment.createMany).not.toHaveBeenCalled();
     });
+
+    it('approves cleanly without chip when both artifact and parent have no subjects', async () => {
+      prisma.derivativeArtifact.findFirst.mockResolvedValue(makeArtifact());
+      prisma.derivativeArtifact.update.mockResolvedValue({
+        id: 'artifact-1',
+        reviewStatus: 'approved',
+        visibility: 'public_editorial',
+      });
+      // Parent doc has not been classified yet — findMany returns [].
+      prisma.documentSubjectAssignment.findMany.mockResolvedValue([]);
+
+      const result = await service.submitReview('artifact-1', 'reviewer-1', {
+        verdict: 'approve',
+      });
+
+      // Query happens (we can't know parent is empty until we ask) but
+      // no insert is attempted, and the approval succeeds.
+      expect(prisma.documentSubjectAssignment.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.documentSubjectAssignment.createMany).not.toHaveBeenCalled();
+      expect(result.newStatus).toBe('approved');
+      expect(result.subjectsCopiedFromParent).toBe(0);
+    });
+
+    it('does not attempt subject fallback when artifact has no source document', async () => {
+      prisma.derivativeArtifact.findFirst.mockResolvedValue(
+        makeArtifact({ sourceDocumentId: null }),
+      );
+      prisma.derivativeArtifact.update.mockResolvedValue({
+        id: 'artifact-1',
+        reviewStatus: 'approved',
+        visibility: 'public_editorial',
+      });
+
+      await service.submitReview('artifact-1', 'reviewer-1', { verdict: 'approve' });
+
+      expect(prisma.documentSubjectAssignment.findMany).not.toHaveBeenCalled();
+      expect(prisma.documentSubjectAssignment.createMany).not.toHaveBeenCalled();
+    });
   });
 
   describe('submitReview — reject', () => {

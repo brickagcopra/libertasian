@@ -266,6 +266,21 @@ def classify_document_subjects(
 
         # Step 5: Parse JSON
         raw_content = llm_response.get("content", "")
+
+        # Diagnostic: log first 1 KB of raw output so that when validation
+        # fails we can reconstruct the LLM's actual response shape without
+        # re-running the prompt. Truncated to avoid leaking document text
+        # at scale. No PII risk — this is LLM output about taxonomy codes,
+        # not user data.
+        raw_preview = raw_content if isinstance(raw_content, str) else json.dumps(raw_content)
+        logger.info(
+            "classify_document_subjects doc=%s model=%s raw_output_len=%d raw_output_preview=%.1024s",
+            document_id,
+            model_name,
+            len(raw_preview),
+            raw_preview,
+        )
+
         if isinstance(raw_content, str):
             try:
                 content = json.loads(raw_content)
@@ -278,6 +293,26 @@ def classify_document_subjects(
                 return {"status": "failed", "reason": "invalid_json"}
         else:
             content = raw_content
+
+        # Diagnostic: log the parsed JSON shape so mismatches between what
+        # the prompt asks for and what the LLM returns become obvious in
+        # the logs (e.g. "assignments is None" vs "assignments is list[0]"
+        # vs "top-level keys = ['classification']").
+        if isinstance(content, dict):
+            logger.info(
+                "classify_document_subjects doc=%s parsed_keys=%s assignments_type=%s assignments_len=%s abstain=%s",
+                document_id,
+                sorted(content.keys()),
+                type(content.get("assignments")).__name__,
+                len(content["assignments"]) if isinstance(content.get("assignments"), list) else None,
+                content.get("abstain"),
+            )
+        else:
+            logger.warning(
+                "classify_document_subjects doc=%s parsed_type=%s (expected dict)",
+                document_id,
+                type(content).__name__,
+            )
 
         # Step 6: Validate
         is_valid, validation_errors = validate_classification_output(
