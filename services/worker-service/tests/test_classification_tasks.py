@@ -718,3 +718,108 @@ class TestAdaptFlatShape:
 
         assert is_valid is True
         assert errors == []
+
+    def test_adapt_flat_shape_dict_secondary_inherits_top_level_confidence(self) -> None:
+        llm_output = {
+            "isPrimary": True,
+            "primarySubject": "remedial_law",
+            "subjectTopicCode": "remedial_law.civil_procedure",
+            "secondarySubjects": [
+                {
+                    "isPrimary": False,
+                    "subject": "political_law",
+                    "subjectTopicCode": "political_law.administrative_law",
+                }
+            ],
+            "confidence": 0.9,
+        }
+
+        adapted = _adapt_flat_shape(llm_output)
+
+        secondaries = [a for a in adapted["assignments"] if not a["isPrimary"]]
+        assert len(secondaries) == 1
+        assert secondaries[0]["confidence"] == 0.9
+
+    def test_adapt_flat_shape_dict_secondary_explicit_confidence_wins(self) -> None:
+        llm_output = {
+            "primarySubject": "civil_law",
+            "subjectTopicCode": None,
+            "secondarySubjects": [
+                {"subjectCode": "criminal_law", "subjectTopicCode": None, "confidence": 0.7},
+            ],
+            "confidence": 0.9,
+        }
+
+        adapted = _adapt_flat_shape(llm_output)
+
+        secondaries = [a for a in adapted["assignments"] if not a["isPrimary"]]
+        assert len(secondaries) == 1
+        assert secondaries[0]["confidence"] == 0.7
+
+    def test_adapt_flat_shape_dict_secondary_no_confidence_anywhere_stays_none(self) -> None:
+        llm_output = {
+            "primarySubject": "civil_law",
+            "subjectTopicCode": None,
+            "secondarySubjects": [
+                {"subject": "political_law", "subjectTopicCode": None},
+            ],
+        }
+
+        adapted = _adapt_flat_shape(llm_output)
+
+        secondaries = [a for a in adapted["assignments"] if not a["isPrimary"]]
+        assert len(secondaries) == 1
+        assert secondaries[0]["confidence"] is None
+
+    def test_adapt_flat_shape_dict_secondary_explicit_none_confidence_inherits(self) -> None:
+        llm_output = {
+            "primarySubject": "civil_law",
+            "subjectTopicCode": None,
+            "secondarySubjects": [
+                {"subject": "political_law", "subjectTopicCode": None, "confidence": None},
+            ],
+            "confidence": 0.8,
+        }
+
+        adapted = _adapt_flat_shape(llm_output)
+
+        secondaries = [a for a in adapted["assignments"] if not a["isPrimary"]]
+        assert len(secondaries) == 1
+        assert secondaries[0]["confidence"] == 0.8
+
+    def test_adapt_flat_shape_prod_e2e_both_assignments_confidence_after_validator(self) -> None:
+        llm_output = {
+            "isPrimary": True,
+            "primarySubject": "remedial_law",
+            "subjectTopicCode": "remedial_law.civil_procedure",
+            "secondarySubjects": [
+                {
+                    "isPrimary": False,
+                    "subject": "political_law",
+                    "subjectTopicCode": "political_law.administrative_law",
+                }
+            ],
+            "confidence": 0.9,
+        }
+        valid_subject_codes = {"remedial_law", "political_law"}
+        valid_topic_codes = {
+            "remedial_law": {"remedial_law.civil_procedure"},
+            "political_law": {"political_law.administrative_law"},
+        }
+
+        adapted = _adapt_flat_shape(llm_output)
+        is_valid, errors = validate_classification_output(
+            adapted, valid_subject_codes, valid_topic_codes,
+        )
+
+        assert is_valid is True
+        assert errors == []
+
+        assignments = adapted["assignments"]
+        assert len(assignments) == 2
+        primary = next(a for a in assignments if a["isPrimary"])
+        secondary = next(a for a in assignments if not a["isPrimary"])
+        assert primary["subjectCode"] == "remedial_law"
+        assert secondary["subjectCode"] == "political_law"
+        assert primary["confidence"] == 0.9
+        assert secondary["confidence"] == 0.9
