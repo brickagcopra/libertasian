@@ -129,6 +129,65 @@ def _build_sections_text(sections: list[dict[str, Any]]) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _adapt_flat_shape(output: dict[str, Any]) -> dict[str, Any]:
+    """Normalize flat-shape classifier output to the assignments schema.
+
+    Shape contract:
+    - Expected (validator input): {"assignments": [{"subjectCode", "subjectTopicCode",
+      "isPrimary", "confidence"}, ...], "abstain"?: bool}
+    - Observed from gpt-4o-mini via rag-service /completions/generate:
+      {"isPrimary": bool, "primarySubject": str, "subjectTopicCode": str | None,
+       "secondarySubjects": [str | dict, ...], "confidence": float}
+
+    Pass-through rules:
+    - Already-assignments shape (has "assignments" list): return unchanged.
+    - abstain=True: return unchanged (validator short-circuits on abstain upstream).
+    - Unknown shape (neither "assignments" nor "primarySubject"): return unchanged
+      so the validator surfaces the error as today.
+
+    Does not raise. Does not mutate the input.
+    """
+    if isinstance(output.get("assignments"), list):
+        return output
+    if output.get("abstain") is True:
+        return output
+    if "primarySubject" not in output:
+        return output
+
+    primary_subject = output.get("primarySubject")
+    top_confidence = output.get("confidence")
+    assignments: list[dict[str, Any]] = [
+        {
+            "subjectCode": primary_subject,
+            "subjectTopicCode": output.get("subjectTopicCode"),
+            "isPrimary": True,
+            "confidence": top_confidence,
+        }
+    ]
+
+    for secondary in output.get("secondarySubjects", []) or []:
+        if isinstance(secondary, dict):
+            assignments.append(
+                {
+                    "subjectCode": secondary.get("subjectCode"),
+                    "subjectTopicCode": secondary.get("subjectTopicCode"),
+                    "isPrimary": False,
+                    "confidence": secondary.get("confidence"),
+                }
+            )
+        else:
+            assignments.append(
+                {
+                    "subjectCode": secondary,
+                    "subjectTopicCode": None,
+                    "isPrimary": False,
+                    "confidence": top_confidence,
+                }
+            )
+
+    return {**output, "assignments": assignments}
+
+
 def validate_classification_output(
     output: dict[str, Any],
     valid_subject_codes: set[str],
@@ -313,6 +372,16 @@ def classify_document_subjects(
                 document_id,
                 type(content).__name__,
             )
+
+        if isinstance(content, dict):
+            adapted = _adapt_flat_shape(content)
+            shape_adapter_applied = adapted is not content
+            logger.info(
+                "classify_document_subjects doc=%s shape_adapter applied=%s",
+                document_id,
+                shape_adapter_applied,
+            )
+            content = adapted
 
         # Step 6: Validate
         is_valid, validation_errors = validate_classification_output(
