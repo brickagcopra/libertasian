@@ -791,6 +791,7 @@ def chain_post_ingestion(self: Any, document_id: str) -> dict[str, Any]:
     try:
         from .categorization_tasks import categorize_document_task
         from .citation_tasks import resolve_citations_task
+        from .classification_generation_tasks import classify_document_subjects
         from .digest_tasks import generate_ingestion_digest
         from .doctrine_tasks import extract_doctrines_task
         from .embedding_tasks import generate_document_embeddings_task
@@ -806,6 +807,11 @@ def chain_post_ingestion(self: Any, document_id: str) -> dict[str, Any]:
 
         # Fire bar subject categorization (non-blocking)
         categorize_document_task.delay(document_id=document_id)
+
+        # Fire subject classification (non-blocking). Without this, new
+        # documents wait up to 24 hours for the nightly beat batch —
+        # derivatives generated in that window ship with no subject chip.
+        classify_document_subjects.delay(document_id=document_id)
 
         # Fire embedding generation for kNN vector search (non-blocking)
         generate_document_embeddings_task.delay(document_id=document_id)

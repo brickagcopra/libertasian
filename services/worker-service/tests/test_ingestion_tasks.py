@@ -508,12 +508,14 @@ class TestChainPostIngestion:
              patch("src.tasks.doctrine_tasks.extract_doctrines_task") as mock_doc, \
              patch("src.tasks.digest_tasks.generate_ingestion_digest") as mock_digest, \
              patch("src.tasks.categorization_tasks.categorize_document_task") as mock_cat, \
+             patch("src.tasks.classification_generation_tasks.classify_document_subjects") as mock_classify, \
              patch("src.tasks.embedding_tasks.generate_document_embeddings_task") as mock_embed:
             mock_val.apply_async = MagicMock()
             mock_cit.delay = MagicMock()
             mock_doc.delay = MagicMock()
             mock_digest.delay = MagicMock()
             mock_cat.delay = MagicMock()
+            mock_classify.delay = MagicMock()
             mock_embed.delay = MagicMock()
 
             result = chain_post_ingestion(document_id=document_id)
@@ -523,6 +525,7 @@ class TestChainPostIngestion:
         mock_cit.delay.assert_called_once()
         mock_digest.delay.assert_called_once()
         mock_cat.delay.assert_called_once()
+        mock_classify.delay.assert_called_once_with(document_id=document_id)
         mock_embed.delay.assert_called_once()
         mock_val.apply_async.assert_called_once()
 
