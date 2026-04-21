@@ -9,16 +9,14 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AiSettingsService } from '../ai-settings/ai-settings.service';
-import { EnqueueGenerationDto, ListDerivativeJobsDto, UpdateDerivativeSettingsDto } from './dto';
+import {
+  ENQUEUEABLE_DERIVATIVE_TYPES,
+  EnqueueGenerationDto,
+  ListDerivativeJobsDto,
+  UpdateDerivativeSettingsDto,
+} from './dto';
 
-const DERIVATIVE_TYPES = [
-  'case_digest',
-  'doctrine_extract',
-  'mcq_question',
-  'essay_prompt',
-  'flashcard',
-  'subject_outline',
-] as const;
+const DERIVATIVE_TYPES = ENQUEUEABLE_DERIVATIVE_TYPES;
 
 /** Hard-coded average cost per derivative type (USD) for estimation. */
 const DEFAULT_COST_PER_TYPE: Record<string, number> = {

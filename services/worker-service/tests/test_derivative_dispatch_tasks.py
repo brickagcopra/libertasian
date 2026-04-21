@@ -18,7 +18,37 @@ from unittest.mock import MagicMock, patch, call
 
 import pytest
 
-from src.tasks.derivative_dispatch_tasks import poll_pending_derivative_jobs
+from src.tasks.derivative_dispatch_tasks import _TASK_ROUTING, poll_pending_derivative_jobs
+
+
+# ─── API ↔ worker contract ─────────────────────────────────────────────
+#
+# Source of truth for the set of admin-enqueueable derivative types:
+#   apps/api/src/modules/derivatives-admin/derivatives-admin.service.ts
+# Keep this list in sync manually (no shared enum across TS/Python yet).
+# The student-side read DTO (list-derivatives.query.dto.ts) is a SUPERSET
+# that advertises read-only types without generator tasks; those are not
+# admin-enqueueable and intentionally absent here.
+_ADMIN_ENQUEUEABLE_TYPES = {
+    "case_digest",
+    "doctrine_extract",
+    "mcq_question",
+    "essay_prompt",
+    "flashcard",
+    "subject_outline",
+}
+
+
+@pytest.mark.parametrize("derivative_type", sorted(_ADMIN_ENQUEUEABLE_TYPES))
+def test_every_admin_enqueueable_type_is_routable(derivative_type: str) -> None:
+    """Every admin-enqueueable derivative_type must have a routing entry,
+    otherwise the poller silently fails jobs with {'message': '<type>'}.
+    """
+    assert derivative_type in _TASK_ROUTING, (
+        f"Derivative type '{derivative_type}' is admin-enqueueable but not "
+        f"mapped in _TASK_ROUTING. Add a routing entry in "
+        f"derivative_dispatch_tasks.py, or remove it from the admin DTO."
+    )
 
 
 def make_uuid() -> str:
@@ -84,7 +114,7 @@ class TestPollPendingDerivativeJobs:
         """Each derivative_type routes to the correct Celery task name."""
         types_to_tasks = {
             "case_digest": "derivatives.generate_case_digest",
-            "mcq": "derivatives.generate_mcq",
+            "mcq_question": "derivatives.generate_mcq",
             "essay_prompt": "derivatives.generate_essay_prompt",
             "flashcard": "derivatives.generate_flashcards",
             "subject_outline": "derivatives.generate_subject_outline",
