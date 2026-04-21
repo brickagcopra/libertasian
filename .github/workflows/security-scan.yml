@@ -87,6 +87,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # embedding-service and worker-service bundle large ML deps
+      # (torch, sentence-transformers) and the resulting image plus
+      # Trivy's layer export exceeds the default runner disk. Free up
+      # the pre-installed tooling we don't need before building.
+      - name: Free disk space on runner
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: true
+
       - name: Build image for scanning
         run: |
           docker build \
