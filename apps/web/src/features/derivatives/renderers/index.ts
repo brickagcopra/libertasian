@@ -1,4 +1,4 @@
-import type { ComponentType } from 'react';
+import type { ReactElement } from 'react';
 
 import type { DerivativeDetail, DerivativeType } from '../types';
 import { DigestRenderer } from './digest-renderer';
@@ -17,10 +17,9 @@ export { GenericRenderer } from './generic-renderer';
 export { MCQRenderer } from './mcq-renderer';
 export { OutlineRenderer } from './outline-renderer';
 
-export const RENDERER_BY_TYPE: Record<
-  DerivativeType,
-  ComponentType<{ data: DerivativeDetail }>
-> = {
+export type DerivativeRenderer = (props: { data: DerivativeDetail }) => ReactElement;
+
+export const RENDERER_BY_TYPE: Record<DerivativeType, DerivativeRenderer> = {
   case_digest: DigestRenderer,
   doctrine_extract: DoctrineRenderer,
   mcq_question: MCQRenderer,

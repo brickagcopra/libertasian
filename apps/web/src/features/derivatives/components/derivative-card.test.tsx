@@ -74,7 +74,7 @@ describe('DerivativeCard', () => {
       <DerivativeCard
         item={{
           ...baseItem,
-          derivativeType: 'unknown_type',
+          derivativeType: 'unknown_type' as unknown as typeof baseItem.derivativeType,
           subjects: [],
         }}
       />,

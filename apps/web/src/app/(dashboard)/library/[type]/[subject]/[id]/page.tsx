@@ -8,9 +8,36 @@ import { AlertCircleIcon, LockIcon, SparklesIcon } from 'lucide-react';
 
 import { LibraryBreadcrumb } from '@/features/derivatives/components/library-breadcrumb';
 import { useDerivative } from '@/features/derivatives/hooks/use-derivatives';
-import { RENDERER_BY_TYPE } from '@/features/derivatives/renderers';
+import {
+  DigestRenderer,
+  DoctrineRenderer,
+  EssayRenderer,
+  FlashcardRenderer,
+  GenericRenderer,
+  MCQRenderer,
+  OutlineRenderer,
+} from '@/features/derivatives/renderers';
 import { subjectFromSlug, typeFromSlug } from '@/features/derivatives/taxonomy';
-import type { DerivativeType } from '@/features/derivatives/types';
+import type { DerivativeDetail } from '@/features/derivatives/types';
+
+function renderByType(data: DerivativeDetail) {
+  switch (data.derivativeType) {
+    case 'case_digest':
+      return <DigestRenderer data={data} />;
+    case 'doctrine_extract':
+      return <DoctrineRenderer data={data} />;
+    case 'mcq_question':
+      return <MCQRenderer data={data} />;
+    case 'essay_prompt':
+      return <EssayRenderer data={data} />;
+    case 'subject_outline':
+      return <OutlineRenderer data={data} />;
+    case 'flashcard':
+      return <FlashcardRenderer data={data} />;
+    default:
+      return <GenericRenderer data={data} />;
+  }
+}
 
 export default function LibraryDetailPage() {
   const params = useParams<{ type: string; subject: string; id: string }>();
@@ -63,10 +90,6 @@ export default function LibraryDetailPage() {
     );
   }
 
-  const Renderer =
-    RENDERER_BY_TYPE[data.derivativeType as DerivativeType] ??
-    RENDERER_BY_TYPE['case_digest'];
-
   return (
     <div className="space-y-6">
       <LibraryBreadcrumb
@@ -113,7 +136,7 @@ export default function LibraryDetailPage() {
         )}
       </div>
 
-      <Renderer data={data} />
+      {renderByType(data)}
 
       {data.disclaimerBody && (
         <Alert>
