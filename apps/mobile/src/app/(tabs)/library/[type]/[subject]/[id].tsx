@@ -1,20 +1,32 @@
 import {
   ActivityIndicator,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
-import { useDerivative } from '../../../features/derivatives/hooks/use-derivatives';
-import { DERIVATIVE_TYPE_LABELS } from '../../../features/derivatives/types';
+import { useDerivative } from '../../../../../features/derivatives/hooks/use-derivatives';
+import { RENDERER_BY_TYPE } from '../../../../../features/derivatives/renderers';
+import {
+  subjectFromSlug,
+  typeFromSlug,
+} from '../../../../../features/derivatives/taxonomy';
+import { DERIVATIVE_TYPE_LABELS } from '../../../../../features/derivatives/types';
 
 export default function LibraryDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, type, subject } = useLocalSearchParams<{
+    id: string;
+    type: string;
+    subject: string;
+  }>();
   const { data, isLoading, error } = useDerivative(id ?? '', !!id);
+
+  const typeMeta = type ? typeFromSlug(type) : undefined;
+  const subjectMeta = subject ? subjectFromSlug(subject) : undefined;
 
   if (isLoading) {
     return (
@@ -31,18 +43,40 @@ export default function LibraryDetailScreen() {
         <Text style={styles.errorText}>
           {error instanceof Error ? error.message : 'Content not found.'}
         </Text>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+        <Pressable
+          style={styles.backButton}
+          onPress={() => router.back()}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
           <Text style={styles.backButtonText}>Back</Text>
-        </TouchableOpacity>
+        </Pressable>
       </View>
     );
   }
 
   const typeLabel = DERIVATIVE_TYPE_LABELS[data.derivativeType] ?? data.derivativeType;
   const primarySubject = data.subjects.find((s) => s.isPrimary) ?? data.subjects[0];
+  const Renderer = RENDERER_BY_TYPE[data.derivativeType] ?? RENDERER_BY_TYPE.case_digest;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      {typeMeta && subjectMeta ? (
+        <Pressable
+          style={styles.breadcrumb}
+          onPress={() =>
+            router.push(`/library/${typeMeta.slug}/${subjectMeta.slug}`)
+          }
+          accessibilityRole="button"
+          accessibilityLabel={`Back to ${typeMeta.label} — ${subjectMeta.name}`}
+        >
+          <Ionicons name="chevron-back" size={14} color="#6b7280" />
+          <Text style={styles.breadcrumbText}>
+            {typeMeta.label} — {subjectMeta.name}
+          </Text>
+        </Pressable>
+      ) : null}
+
       <View style={styles.badgeRow}>
         <View style={styles.typeBadge}>
           <Text style={styles.typeBadgeText}>{typeLabel}</Text>
@@ -55,12 +89,16 @@ export default function LibraryDetailScreen() {
         {data.isGated ? (
           <View style={styles.gatedBadge}>
             <Ionicons name="lock-closed-outline" size={11} color="#92400e" />
-            <Text style={styles.gatedBadgeText}>{data.upgradeTier ?? 'upgrade'}-tier</Text>
+            <Text style={styles.gatedBadgeText}>
+              {data.upgradeTier ?? 'upgrade'}-tier
+            </Text>
           </View>
         ) : null}
       </View>
 
-      <Text style={styles.title}>{data.title}</Text>
+      <Text style={styles.title} accessibilityRole="header">
+        {data.title}
+      </Text>
 
       {data.sourceDocument ? (
         <Text style={styles.source}>
@@ -78,32 +116,8 @@ export default function LibraryDetailScreen() {
         </View>
       ) : null}
 
-      {data.isGated ? (
-        <View style={styles.paywall}>
-          <View style={styles.paywallHeader}>
-            <Ionicons name="lock-closed" size={16} color="#92400e" />
-            <Text style={styles.paywallTitle}>Unlock full content</Text>
-          </View>
-          <Text style={styles.paywallBody}>
-            {typeLabel} answers and explanations are available on the{' '}
-            <Text style={{ fontWeight: '700' }}>{data.upgradeTier ?? 'edu'}</Text> plan and above.
-          </Text>
-          <TouchableOpacity
-            style={styles.upgradeButton}
-            onPress={() => router.push('/subscription')}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.upgradeButtonText}>Upgrade</Text>
-          </TouchableOpacity>
-        </View>
-      ) : null}
-
-      <View style={styles.contentBox}>
-        {data.contentPlainText ? (
-          <Text style={styles.bodyText}>{data.contentPlainText}</Text>
-        ) : (
-          <Text style={styles.jsonText}>{JSON.stringify(data.contentJson, null, 2)}</Text>
-        )}
+      <View style={styles.rendererBox}>
+        <Renderer data={data} />
       </View>
     </ScrollView>
   );
@@ -122,10 +136,29 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   backButtonText: { color: '#fff', fontWeight: '600' },
+  breadcrumb: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    alignSelf: 'flex-start',
+  },
+  breadcrumbText: { fontSize: 12, color: '#6b7280' },
   badgeRow: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
-  typeBadge: { backgroundColor: '#eff6ff', borderRadius: 4, paddingHorizontal: 8, paddingVertical: 4 },
+  typeBadge: {
+    backgroundColor: '#eff6ff',
+    borderRadius: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
   typeBadgeText: { fontSize: 11, fontWeight: '700', color: '#1d4ed8' },
-  subjectBadge: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 4, paddingHorizontal: 8, paddingVertical: 4 },
+  subjectBadge: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
   subjectBadgeText: { fontSize: 11, fontWeight: '500', color: '#374151' },
   gatedBadge: {
     flexDirection: 'row',
@@ -147,31 +180,9 @@ const styles = StyleSheet.create({
     padding: 10,
   },
   disclaimerText: { flex: 1, fontSize: 12, color: '#4b5563', lineHeight: 17 },
-  paywall: {
-    backgroundColor: '#fef3c7',
-    borderRadius: 12,
-    padding: 14,
-    gap: 10,
-    borderWidth: 1,
-    borderColor: '#fde68a',
-  },
-  paywallHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  paywallTitle: { fontSize: 14, fontWeight: '700', color: '#92400e' },
-  paywallBody: { fontSize: 13, color: '#78350f', lineHeight: 19 },
-  upgradeButton: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#92400e',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  upgradeButtonText: { color: '#fff', fontWeight: '600' },
-  contentBox: {
+  rendererBox: {
     backgroundColor: '#fff',
     borderRadius: 12,
     padding: 16,
-    gap: 8,
   },
-  bodyText: { fontSize: 14, color: '#1f2937', lineHeight: 21 },
-  jsonText: { fontSize: 12, color: '#6b7280', fontFamily: 'Menlo' },
 });
