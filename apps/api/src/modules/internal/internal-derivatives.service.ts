@@ -218,7 +218,7 @@ export class InternalDerivativesService {
       });
 
       // 2. Create ProvenanceRecords
-      for (const prov of dto.provenanceRecords) {
+      for (const prov of dto.provenanceRecords ?? []) {
         await tx.provenanceRecord.create({
           data: {
             entityType: 'derivative_artifact',
