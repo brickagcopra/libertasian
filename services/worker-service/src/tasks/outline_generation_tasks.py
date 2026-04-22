@@ -30,6 +30,7 @@ from ..prompts.subject_outline_generation_v1 import (
     SUBJECT_OUTLINE_GENERATION_SYSTEM_PROMPT,
     build_user_prompt,
 )
+from ..scoring import compute_outline_confidence_score
 from ..validators.derivative_validators import (
     DerivativeVerdict,
     LegalDocumentSectionSnapshot,
@@ -232,6 +233,17 @@ def generate_subject_outline(
         else:
             review_status = "draft"
 
+        # Compute confidence score from source coverage + citation mapping.
+        # Flatten (doc, sections) tuples into a single list of section dicts
+        # the scorer expects (each with an ``id`` key).
+        flattened_sections: list[dict[str, Any]] = []
+        for _doc, _secs in documents_with_sections:
+            flattened_sections.extend(_secs)
+        confidence_score = compute_outline_confidence_score(
+            content=content,
+            source_sections=flattened_sections,
+        )
+
         # Step 9: Record model run
         primary_doc_id = first_doc.get("id", "")
         model_run_id = db.create_model_run(
@@ -240,7 +252,7 @@ def generate_subject_outline(
             prompt_template_version=PROMPT_TEMPLATE_VERSION,
             input_ref=f"subject:{subject_code}",
             output_ref=f"job:{job_id}",
-            confidence=0.0,
+            confidence=confidence_score,
             tokens_in=tokens_in,
             tokens_out=tokens_out,
             latency_ms=latency_ms,
@@ -274,7 +286,7 @@ def generate_subject_outline(
                     for c in validation_result.checks
                 ],
             },
-            "confidenceScore": 0.0,
+            "confidenceScore": confidence_score,
             "modelRunId": model_run_id,
             "provenanceRecords": provenance_records,
             "budgetLedgerEntry": {

@@ -24,6 +24,7 @@ from celery import shared_task
 from ..clients import ingestion_db_client as db
 from ..clients import nestjs_client
 from ..clients import rag_client
+from ..scoring import compute_doctrine_confidence_score
 from ..validators.derivative_validators import (
     DerivativeVerdict,
     LegalDocumentSectionSnapshot,
@@ -289,6 +290,12 @@ def generate_doctrine_extract(
         else:
             review_status = "draft"
 
+        # Compute confidence score from source coverage + citation mapping
+        confidence_score = compute_doctrine_confidence_score(
+            content=content,
+            source_sections=sections_with_text,
+        )
+
         # Step 9: Record model run
         model_run_id = db.create_model_run(
             run_type="doctrine_extract_generation",
@@ -296,7 +303,7 @@ def generate_doctrine_extract(
             prompt_template_version=PROMPT_TEMPLATE_VERSION,
             input_ref=f"doc:{document_id}",
             output_ref=f"job:{job_id}",
-            confidence=0.0,
+            confidence=confidence_score,
             tokens_in=tokens_in,
             tokens_out=tokens_out,
             latency_ms=latency_ms,
@@ -325,7 +332,7 @@ def generate_doctrine_extract(
                     for c in validation_result.checks
                 ],
             },
-            "confidenceScore": 0.0,
+            "confidenceScore": confidence_score,
             "modelRunId": model_run_id,
             "derivativeGenerationJobId": job_id,
             "doctrines": doctrine_entries,
