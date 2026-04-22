@@ -28,15 +28,19 @@ export class DoctrineEntryDto {
   @IsString()
   normalizedText?: string;
 
+  // Optional — RAG doctrine endpoint does not return verbatim source text.
+  @IsOptional()
   @IsString()
-  verbatimSourceText!: string;
+  verbatimSourceText?: string;
 
   @IsString()
   doctrineType!: string; // rule | test | definition | exception | procedural
 
+  // Field name aligned with worker output (_build_doctrine_entries) and
+  // Prisma storage (DoctrineExtract.sourceSectionId).
   @IsOptional()
   @IsUUID()
-  sectionId?: string;
+  sourceSectionId?: string;
 
   @IsOptional()
   @IsNumber()
@@ -86,16 +90,18 @@ export class WriteDoctrinesDto {
   @IsUUID()
   derivativeGenerationJobId?: string;
 
+  @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => DoctrineEntryDto)
-  doctrines!: DoctrineEntryDto[];
+  doctrines?: DoctrineEntryDto[];
 
   // Provenance records (at least one required — enforced at service level)
+  @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => ProvenanceRecordDto)
-  provenanceRecords!: ProvenanceRecordDto[];
+  provenanceRecords?: ProvenanceRecordDto[];
 
   // Optional budget ledger entry (written in same transaction)
   @IsOptional()

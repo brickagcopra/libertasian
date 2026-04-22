@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import uuid
 from typing import Any
 
 import httpx
@@ -266,8 +267,9 @@ def generate_mcq_questions(
         )
         questions = content.get("questions", [])
 
+        source_section_id_set = {s["id"] for s in sections_with_text}
         passing_questions = _build_passing_question_entries(
-            questions, per_question_results,
+            questions, per_question_results, source_section_id_set,
         )
         failed_questions = _build_failed_question_entries(
             questions, per_question_results,
@@ -404,8 +406,16 @@ def _fail_job(
 def _build_passing_question_entries(
     questions: list[dict[str, Any]],
     per_question_results: list[McqQuestionValidationResult],
+    source_section_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Build question entries for questions that passed validation."""
+    """Build question entries for questions that passed validation.
+
+    If ``source_section_ids`` is provided, ``supportingSectionIds`` on
+    each question is filtered to only keep strings that (a) parse as
+    UUIDs and (b) exist in the source section set. This guards NestJS
+    from LLM stubs like ``"1"`` / ``"bogus"`` that would otherwise
+    trigger a 400 on the write endpoint.
+    """
     entries: list[dict[str, Any]] = []
     for pqr in per_question_results:
         if not pqr.passed:
@@ -422,13 +432,25 @@ def _build_passing_question_entries(
                 "isCorrect": o.get("isCorrect", False),
                 "rationale": o.get("rationale", ""),
             })
+        raw_sids = q.get("supportingSectionIds", []) or []
+        filtered_sids: list[str] = []
+        for sid in raw_sids:
+            if not isinstance(sid, str):
+                continue
+            try:
+                uuid.UUID(sid)
+            except (ValueError, AttributeError, TypeError):
+                continue
+            if source_section_ids is not None and sid not in source_section_ids:
+                continue
+            filtered_sids.append(sid)
         entries.append({
             "questionStem": q.get("questionStem", ""),
             "explanation": q.get("explanation", ""),
             "difficulty": q.get("difficultySelfReport", "medium"),
             "questionFormat": "single_best",
             "options": options,
-            "supportingSectionIds": q.get("supportingSectionIds", []),
+            "supportingSectionIds": filtered_sids,
         })
     return entries
 

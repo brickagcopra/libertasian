@@ -513,3 +513,64 @@ class TestGenerateMcqQuestions:
             tokens_out=1500,
             latency_ms=pytest.approx(0, abs=5000),  # timing varies
         )
+
+
+class TestBuildPassingQuestionEntriesUuidFilter:
+    """Guards NestJS from LLM stubs like "1"/"bogus" in supportingSectionIds."""
+
+    _VALID_UUID = "00000000-0000-0000-0000-000000000030"
+
+    def _make_per_question_result(self) -> McqQuestionValidationResult:
+        return McqQuestionValidationResult(
+            index=0, passed=True, verdict="publish", checks=[], reasons=[],
+        )
+
+    def test_mixed_ids_only_valid_uuid_survives(self) -> None:
+        questions = [
+            {
+                "questionStem": VALID_STEM,
+                "options": [dict(o) for o in VALID_OPTIONS],
+                "explanation": VALID_EXPLANATION,
+                "difficultySelfReport": "medium",
+                "supportingSectionIds": ["1", self._VALID_UUID, "bogus"],
+            },
+        ]
+        source_section_ids = {self._VALID_UUID}
+        entries = _build_passing_question_entries(
+            questions, [self._make_per_question_result()], source_section_ids,
+        )
+        assert len(entries) == 1
+        assert entries[0]["supportingSectionIds"] == [self._VALID_UUID]
+
+    def test_uuid_not_in_source_sections_dropped(self) -> None:
+        other_uuid = "00000000-0000-0000-0000-0000000000ff"
+        questions = [
+            {
+                "questionStem": VALID_STEM,
+                "options": [dict(o) for o in VALID_OPTIONS],
+                "explanation": VALID_EXPLANATION,
+                "difficultySelfReport": "medium",
+                "supportingSectionIds": [other_uuid, self._VALID_UUID],
+            },
+        ]
+        source_section_ids = {self._VALID_UUID}
+        entries = _build_passing_question_entries(
+            questions, [self._make_per_question_result()], source_section_ids,
+        )
+        assert entries[0]["supportingSectionIds"] == [self._VALID_UUID]
+
+    def test_non_string_entries_are_dropped(self) -> None:
+        questions = [
+            {
+                "questionStem": VALID_STEM,
+                "options": [dict(o) for o in VALID_OPTIONS],
+                "explanation": VALID_EXPLANATION,
+                "difficultySelfReport": "medium",
+                "supportingSectionIds": [None, 42, self._VALID_UUID],
+            },
+        ]
+        source_section_ids = {self._VALID_UUID}
+        entries = _build_passing_question_entries(
+            questions, [self._make_per_question_result()], source_section_ids,
+        )
+        assert entries[0]["supportingSectionIds"] == [self._VALID_UUID]
