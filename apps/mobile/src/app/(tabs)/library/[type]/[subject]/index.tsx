@@ -129,7 +129,7 @@ export default function LibrarySubjectScreen() {
           <Ionicons name="library-outline" size={48} color="#d1d5db" />
           <Text style={styles.emptyTitle}>No content yet</Text>
           <Text style={styles.emptyText}>
-            No approved {typeMeta.label.toLowerCase()} for {subjectMeta.name} yet.
+            No {typeMeta.label.toLowerCase()} available for {subjectMeta.name} yet.
           </Text>
         </View>
       ) : (

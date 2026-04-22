@@ -62,29 +62,15 @@ export default function LibraryTypePage() {
                     </div>
                     <h3 className="line-clamp-2 text-sm font-semibold">{s.name}</h3>
                   </div>
-                  <div className="text-xs text-muted-foreground">
+                  <div className="mt-auto text-xs text-muted-foreground">
                     {isLoading ? (
                       <span className="inline-block h-3 w-16 animate-pulse rounded bg-muted" />
                     ) : (
                       <span>
                         <span className="font-semibold text-foreground">{total}</span>{' '}
-                        {typeMeta.label.toLowerCase()}
+                        {(total === 1 ? typeMeta.singularLabel : typeMeta.label).toLowerCase()}
                       </span>
                     )}
-                  </div>
-                  <div className="mt-auto grid grid-cols-3 gap-2 text-xs text-muted-foreground">
-                    <div className="rounded-md bg-muted/50 px-2 py-1 text-center">
-                      <div className="font-semibold text-foreground">0</div>
-                      <div>Correct</div>
-                    </div>
-                    <div className="rounded-md bg-muted/50 px-2 py-1 text-center">
-                      <div className="font-semibold text-foreground">0</div>
-                      <div>Incorrect</div>
-                    </div>
-                    <div className="rounded-md bg-muted/50 px-2 py-1 text-center">
-                      <div className="font-semibold text-foreground">{total}</div>
-                      <div>Unseen</div>
-                    </div>
                   </div>
                 </CardContent>
               </Card>
