@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const mockUseJobDigest = vi.hoisted(() => vi.fn());
 const mockUseDerivativeJobs = vi.hoisted(() => vi.fn());
+const mockUseJobMcqs = vi.hoisted(() => vi.fn());
 
 vi.mock('@/lib/api-client', () => ({
   apiClient: {
@@ -54,6 +55,8 @@ vi.mock('@/features/admin/hooks/use-derivatives-admin', () => ({
   useJobDigest: mockUseJobDigest,
   useJobDoctrines: () => ({ data: null, isLoading: false, error: null }),
   useJobEssay: () => ({ data: null, isLoading: false, error: null }),
+  useJobMcqs: mockUseJobMcqs,
+  useReviewArtifact: () => ({ mutate: vi.fn(), isPending: false, error: null, variables: null }),
 }));
 
 import DerivativesAdminPage from './page';
@@ -144,6 +147,11 @@ describe('Derivatives Admin — JobDetailPanel with Digest', () => {
     mockUseDerivativeJobs.mockReturnValue({
       data: { data: [], total: 0 },
     });
+    mockUseJobMcqs.mockReturnValue({
+      data: null,
+      isLoading: false,
+      error: null,
+    });
   });
 
   it('renders the page without crashing', () => {
@@ -189,5 +197,78 @@ describe('Derivatives Admin — JobDetailPanel with Digest', () => {
     // Check the "View full digest" link
     const fullDigestLink = container.querySelector('a[href="/admin/digests/digest-1"]');
     expect(fullDigestLink).toBeTruthy();
+  });
+});
+
+const mcqJob = {
+  id: 'job-mcq-1',
+  derivativeType: 'mcq_question',
+  status: 'completed',
+  sourceDocument: { id: 'doc-1', title: 'People v. Santos' },
+  tokensIn: 1000,
+  tokensOut: 500,
+  estimatedCostUsd: 0.05,
+  modelName: 'gpt-4o',
+  promptTemplateVersion: 'v1.0',
+  startedAt: '2026-04-20T00:00:00Z',
+  finishedAt: '2026-04-20T00:01:00Z',
+  createdAt: '2026-04-20T00:00:00Z',
+};
+
+const mcqArtifact = {
+  id: 'mcq-1',
+  title: 'MCQ on command responsibility',
+  reviewStatus: 'needs_human_review',
+  visibility: 'private',
+  confidenceScore: 0.82,
+  validatorVerdict: 'publish',
+  publishedAt: null,
+  createdAt: '2026-04-20T00:00:00Z',
+  contentDisclaimer: { id: 'disc-1', bodyPlain: 'AI-generated.' },
+  mcqQuestion: {
+    questionStem: 'Which statement best describes command responsibility?',
+    explanation: 'Command responsibility requires effective control.',
+    difficulty: 'medium',
+    questionFormat: 'single_best',
+    options: [
+      { optionLetter: 'A', text: 'Option A text', isCorrect: false, rationale: 'Wrong because X' },
+      { optionLetter: 'B', text: 'Option B text', isCorrect: true, rationale: 'Correct because Y' },
+      { optionLetter: 'C', text: 'Option C text', isCorrect: false, rationale: null },
+      { optionLetter: 'D', text: 'Option D text', isCorrect: false, rationale: null },
+    ],
+  },
+};
+
+describe('Derivatives Admin — JobDetailPanel with MCQs', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseJobDigest.mockReturnValue({ data: null, isLoading: false, error: null });
+  });
+
+  it('renders MCQ cards with review buttons and marks correct answer', () => {
+    mockUseDerivativeJobs.mockReturnValue({
+      data: { data: [mcqJob], total: 1 },
+    });
+    mockUseJobMcqs.mockReturnValue({
+      data: { jobStatus: 'completed', mcqs: [mcqArtifact] },
+      isLoading: false,
+      error: null,
+    });
+
+    renderWithProviders(<DerivativesAdminPage />);
+
+    fireEvent.click(screen.getByText('Detail'));
+
+    expect(screen.getByText('MCQ Questions (1)')).toBeDefined();
+    expect(
+      screen.getByText('Which statement best describes command responsibility?'),
+    ).toBeDefined();
+    expect(screen.getByText('Option B text')).toBeDefined();
+    expect(screen.getByText(/Correct answer/)).toBeDefined();
+
+    // ArtifactReviewActions renders three verdict buttons
+    expect(screen.getByRole('button', { name: /^Approve$/ })).toBeDefined();
+    expect(screen.getByRole('button', { name: /Needs revision/ })).toBeDefined();
+    expect(screen.getByRole('button', { name: /^Reject$/ })).toBeDefined();
   });
 });

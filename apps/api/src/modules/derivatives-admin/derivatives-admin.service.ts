@@ -292,6 +292,91 @@ export class DerivativesAdminService {
     return { jobStatus: job.status, essay: artifact };
   }
 
+  async getJobMcqs(jobId: string): Promise<{
+    jobStatus: string;
+    mcqs: unknown[];
+  }> {
+    const job = await this.prisma.derivativeGenerationJob.findUnique({
+      where: { id: jobId },
+      select: { id: true, derivativeType: true, status: true },
+    });
+
+    if (!job) {
+      throw new NotFoundException(`DerivativeGenerationJob ${jobId} not found`);
+    }
+
+    if (job.derivativeType !== 'mcq_question') {
+      throw new BadRequestException(
+        `Job type ${job.derivativeType} does not produce an MCQ artifact`,
+      );
+    }
+
+    const artifacts = await this.prisma.derivativeArtifact.findMany({
+      where: {
+        derivativeGenerationJobId: jobId,
+        derivativeType: 'mcq_question',
+        deletedAt: null,
+      },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        title: true,
+        reviewStatus: true,
+        visibility: true,
+        confidenceScore: true,
+        validatorVerdict: true,
+        publishedAt: true,
+        createdAt: true,
+        contentDisclaimer: { select: { id: true, bodyPlain: true } },
+        mcqQuestion: {
+          select: {
+            questionStem: true,
+            explanation: true,
+            difficulty: true,
+            questionFormat: true,
+            options: {
+              orderBy: { optionLabel: 'asc' },
+              select: {
+                optionLabel: true,
+                optionText: true,
+                isCorrect: true,
+                rationale: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const mcqs = artifacts.map((a) => ({
+      id: a.id,
+      title: a.title,
+      reviewStatus: a.reviewStatus,
+      visibility: a.visibility,
+      confidenceScore: a.confidenceScore,
+      validatorVerdict: a.validatorVerdict,
+      publishedAt: a.publishedAt,
+      createdAt: a.createdAt,
+      contentDisclaimer: a.contentDisclaimer,
+      mcqQuestion: a.mcqQuestion
+        ? {
+            questionStem: a.mcqQuestion.questionStem,
+            explanation: a.mcqQuestion.explanation,
+            difficulty: a.mcqQuestion.difficulty,
+            questionFormat: a.mcqQuestion.questionFormat,
+            options: a.mcqQuestion.options.map((o) => ({
+              optionLetter: o.optionLabel,
+              text: o.optionText,
+              isCorrect: o.isCorrect,
+              rationale: o.rationale,
+            })),
+          }
+        : null,
+    }));
+
+    return { jobStatus: job.status, mcqs };
+  }
+
   async getJob(id: string): Promise<unknown> {
     const job = await this.prisma.derivativeGenerationJob.findUnique({
       where: { id },
