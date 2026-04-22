@@ -243,4 +243,101 @@ describe('DerivativesService', () => {
       ]);
     });
   });
+
+  describe('subjectsSummaryByType', () => {
+    const fullTaxonomy = [
+      { id: 's1', code: 'political_law', name: 'Political Law', taxonomyVersion: 'study_8' },
+      { id: 's2', code: 'civil_law', name: 'Civil Law', taxonomyVersion: 'study_8' },
+      { id: 's3', code: 'criminal_law', name: 'Criminal Law', taxonomyVersion: 'study_8' },
+      { id: 's4', code: 'labor_law', name: 'Labor Law and Social Legislation', taxonomyVersion: 'study_8' },
+      { id: 's5', code: 'mercantile_law', name: 'Mercantile (Commercial) Law', taxonomyVersion: 'study_8' },
+      { id: 's6', code: 'taxation', name: 'Taxation', taxonomyVersion: 'study_8' },
+      { id: 's7', code: 'remedial_law', name: 'Remedial Law', taxonomyVersion: 'study_8' },
+      { id: 's8', code: 'legal_ethics', name: 'Legal and Judicial Ethics', taxonomyVersion: 'study_8' },
+    ];
+
+    it('returns all 8 taxonomy subjects even when counts are zero', async () => {
+      prisma.subject.findMany.mockResolvedValue(fullTaxonomy);
+      prisma.documentSubjectAssignment.groupBy.mockResolvedValue([]);
+
+      const result = await service.subjectsSummaryByType(
+        'mcq_question',
+        'user-1',
+        'org-1',
+        'study_8',
+      );
+
+      expect(result).toHaveLength(8);
+      expect(result.map((r) => r.subjectCode)).toEqual([
+        'political_law',
+        'civil_law',
+        'criminal_law',
+        'labor_law',
+        'mercantile_law',
+        'taxation',
+        'remedial_law',
+        'legal_ethics',
+      ]);
+      expect(result.every((r) => r.totalCount === 0 && r.approvedCount === 0)).toBe(true);
+    });
+
+    it('includes zero-count subjects alongside populated ones', async () => {
+      prisma.subject.findMany.mockResolvedValue(fullTaxonomy);
+      prisma.documentSubjectAssignment.groupBy
+        .mockResolvedValueOnce([{ subjectId: 's3', _count: { _all: 5 } }])
+        .mockResolvedValueOnce([{ subjectId: 's3', _count: { _all: 3 } }]);
+
+      const result = await service.subjectsSummaryByType(
+        'mcq_question',
+        'user-1',
+        'org-1',
+        'study_8',
+      );
+
+      const criminal = result.find((r) => r.subjectCode === 'criminal_law');
+      expect(criminal).toEqual({
+        subjectCode: 'criminal_law',
+        subjectName: 'Criminal Law',
+        taxonomyVersion: 'study_8',
+        totalCount: 5,
+        approvedCount: 3,
+      });
+
+      const civil = result.find((r) => r.subjectCode === 'civil_law');
+      expect(civil?.totalCount).toBe(0);
+      expect(civil?.approvedCount).toBe(0);
+    });
+
+    it('applies tenant-visibility OR (own / org non-private / public_editorial+approved) to totalCount', async () => {
+      prisma.subject.findMany.mockResolvedValue(fullTaxonomy);
+      prisma.documentSubjectAssignment.groupBy.mockResolvedValue([]);
+
+      await service.subjectsSummaryByType('mcq_question', 'user-1', 'org-1', 'study_8');
+
+      const totalCall = prisma.documentSubjectAssignment.groupBy.mock.calls[0][0];
+      const where = totalCall.where;
+      expect(where.derivativeArtifact.deletedAt).toBeNull();
+      expect(where.derivativeArtifact.derivativeType).toBe('mcq_question');
+      expect(where.derivativeArtifact.OR).toEqual(
+        expect.arrayContaining([
+          { createdByUserId: 'user-1' },
+          { organizationId: 'org-1', visibility: { not: 'private' } },
+          { visibility: 'public_editorial', reviewStatus: 'approved' },
+        ]),
+      );
+    });
+
+    it('restricts approvedCount to public_editorial + approved regardless of tenancy', async () => {
+      prisma.subject.findMany.mockResolvedValue(fullTaxonomy);
+      prisma.documentSubjectAssignment.groupBy.mockResolvedValue([]);
+
+      await service.subjectsSummaryByType('mcq_question', 'user-1', 'org-1', 'study_8');
+
+      const approvedCall = prisma.documentSubjectAssignment.groupBy.mock.calls[1][0];
+      const where = approvedCall.where;
+      expect(where.derivativeArtifact.visibility).toBe('public_editorial');
+      expect(where.derivativeArtifact.reviewStatus).toBe('approved');
+      expect(where.derivativeArtifact.OR).toBeUndefined();
+    });
+  });
 });
