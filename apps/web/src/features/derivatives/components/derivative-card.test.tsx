@@ -63,8 +63,22 @@ describe('DerivativeCard', () => {
     expect(screen.getByText(/edu/i)).toBeInTheDocument();
   });
 
-  it('links to the library detail page', () => {
+  it('links to the type+subject scoped detail page when both are resolvable', () => {
     render(<DerivativeCard item={baseItem} />);
+    const link = screen.getByRole('link');
+    expect(link.getAttribute('href')).toBe('/library/digests/criminal-law/a-1');
+  });
+
+  it('falls back to the legacy /library/<id> path when type or subject is unresolvable', () => {
+    render(
+      <DerivativeCard
+        item={{
+          ...baseItem,
+          derivativeType: 'unknown_type' as unknown as typeof baseItem.derivativeType,
+          subjects: [],
+        }}
+      />,
+    );
     const link = screen.getByRole('link');
     expect(link.getAttribute('href')).toBe('/library/a-1');
   });

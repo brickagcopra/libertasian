@@ -6,10 +6,21 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { LockIcon, SparklesIcon } from 'lucide-react';
 
+import { subjectFromCode, typeFromEnum } from '../taxonomy';
 import { DERIVATIVE_TYPE_LABELS, type DerivativeListItem } from '../types';
 
 interface DerivativeCardProps {
   item: DerivativeListItem;
+}
+
+function buildDetailHref(item: DerivativeListItem): string {
+  const typeMeta = typeFromEnum(item.derivativeType);
+  const primarySubject = item.subjects.find((s) => s.isPrimary) ?? item.subjects[0];
+  const subjectMeta = primarySubject ? subjectFromCode(primarySubject.code) : undefined;
+  if (typeMeta && subjectMeta) {
+    return `/library/${typeMeta.slug}/${subjectMeta.slug}/${item.id}`;
+  }
+  return `/library/${item.id}`;
 }
 
 export function DerivativeCard({ item }: DerivativeCardProps) {
@@ -17,7 +28,7 @@ export function DerivativeCard({ item }: DerivativeCardProps) {
   const typeLabel = DERIVATIVE_TYPE_LABELS[item.derivativeType] ?? item.derivativeType;
 
   return (
-    <Link href={`/library/${item.id}`} className="block">
+    <Link href={buildDetailHref(item)} className="block">
       <Card className="h-full transition hover:shadow-md">
         <CardContent className="flex flex-col gap-3 p-4">
           <div className="flex flex-wrap items-center gap-2">

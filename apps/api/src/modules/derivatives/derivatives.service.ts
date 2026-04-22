@@ -301,6 +301,78 @@ export class DerivativesService {
     };
   }
 
+  /**
+   * Per-type subjects summary for the Library subject-tile grid. Returns one
+   * row per subject in the taxonomy (always the full 8 for study_8, even when
+   * count=0), with counts restricted to a single derivative_type that honor
+   * the same visibility rules as the public list endpoint.
+   */
+  async subjectsSummaryByType(
+    type: string,
+    userId: string,
+    organizationId: string,
+    taxonomyVersion = 'study_8',
+  ): Promise<
+    Array<{
+      subjectCode: string;
+      subjectName: string;
+      taxonomyVersion: string;
+      totalCount: number;
+      approvedCount: number;
+    }>
+  > {
+    const subjects = await this.prisma.subject.findMany({
+      where: { taxonomyVersion },
+      orderBy: [{ displayOrder: 'asc' }, { name: 'asc' }],
+      select: { id: true, code: true, name: true, taxonomyVersion: true },
+    });
+
+    const visibilityOr: Prisma.DerivativeArtifactWhereInput[] = [
+      { createdByUserId: userId },
+      { organizationId, visibility: { not: 'private' } },
+      { visibility: 'public_editorial', reviewStatus: 'approved' },
+    ];
+
+    const [totalCounts, approvedCounts] = await Promise.all([
+      this.prisma.documentSubjectAssignment.groupBy({
+        by: ['subjectId'],
+        where: {
+          subjectId: { in: subjects.map((s) => s.id) },
+          derivativeArtifact: {
+            deletedAt: null,
+            derivativeType: type,
+            OR: visibilityOr,
+          },
+        },
+        _count: { _all: true },
+      }),
+      this.prisma.documentSubjectAssignment.groupBy({
+        by: ['subjectId'],
+        where: {
+          subjectId: { in: subjects.map((s) => s.id) },
+          derivativeArtifact: {
+            deletedAt: null,
+            derivativeType: type,
+            visibility: 'public_editorial',
+            reviewStatus: 'approved',
+          },
+        },
+        _count: { _all: true },
+      }),
+    ]);
+
+    const totalMap = new Map(totalCounts.map((c) => [c.subjectId, c._count._all]));
+    const approvedMap = new Map(approvedCounts.map((c) => [c.subjectId, c._count._all]));
+
+    return subjects.map((s) => ({
+      subjectCode: s.code,
+      subjectName: s.name,
+      taxonomyVersion: s.taxonomyVersion,
+      totalCount: totalMap.get(s.id) ?? 0,
+      approvedCount: approvedMap.get(s.id) ?? 0,
+    }));
+  }
+
   async subjectsSummary(
     taxonomyVersion = 'study_8',
   ): Promise<Array<{ code: string; name: string; taxonomyVersion: string; count: number }>> {

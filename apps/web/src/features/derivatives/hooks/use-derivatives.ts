@@ -9,6 +9,7 @@ import type {
   DerivativeListItem,
   DerivativeListMeta,
   DerivativeSubjectSummary,
+  DerivativeTypeSubjectSummary,
 } from '../types';
 
 interface UseDerivativesParams {
@@ -69,6 +70,26 @@ export function useDerivativeSubjects(taxonomyVersion = 'study_8') {
       });
       return res.data;
     },
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useDerivativeSubjectsByType(
+  type: string | undefined,
+  taxonomyVersion = 'study_8',
+) {
+  return useQuery({
+    queryKey: ['derivatives', 'subjects-by-type', type, taxonomyVersion],
+    queryFn: async () => {
+      const res = await apiClient.get<{
+        success: boolean;
+        data: DerivativeTypeSubjectSummary[];
+      }>(`/derivatives/types/${type}/subjects/summary`, {
+        params: { taxonomyVersion },
+      });
+      return res.data;
+    },
+    enabled: !!type,
     staleTime: 5 * 60_000,
   });
 }

@@ -17,7 +17,11 @@ import type { JwtPayload } from '@libertasian/types';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { DerivativesService } from './derivatives.service';
-import { ListDerivativesQueryDto } from './dto';
+import {
+  ListDerivativesQueryDto,
+  SubjectsSummaryByTypeParamDto,
+  SubjectsSummaryByTypeQueryDto,
+} from './dto';
 
 /**
  * Feature-flag guard. Returns 404 (not 403) when the public derivatives surface
@@ -63,6 +67,25 @@ export class DerivativesController {
     @Query('taxonomyVersion') taxonomyVersion?: string,
   ) {
     const data = await this.service.subjectsSummary(taxonomyVersion);
+    return { success: true, data };
+  }
+
+  @Get('types/:type/subjects/summary')
+  @ApiOperation({
+    summary: 'Per-type subject-tile counts for the Library type page',
+  })
+  @Throttle({ default: { ttl: 60_000, limit: 60 } })
+  async subjectsSummaryByType(
+    @Param() params: SubjectsSummaryByTypeParamDto,
+    @Query() query: SubjectsSummaryByTypeQueryDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const data = await this.service.subjectsSummaryByType(
+      params.type,
+      user.sub,
+      user.organizationId,
+      query.taxonomyVersion,
+    );
     return { success: true, data };
   }
 
