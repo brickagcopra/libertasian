@@ -56,21 +56,31 @@ MAX_SECTIONS_PER_DOC = 3
 def generate_subject_outline(
     self: Any,
     job_id: str,
-    subject_code: str,
+    document_id: str | None = None,
+    subject_code: str | None = None,
     topic_code: str | None = None,
     document_ids: list[str] | None = None,
     max_documents: int = 10,
 ) -> dict[str, Any]:
-    """Generate a subject outline from multiple source documents.
+    """Generate a subject outline from source documents.
 
-    This task is different from single-document derivatives:
-    - Takes a subject/topic, not a single document
-    - Loads MULTIPLE source documents (up to max_documents)
-    - If document_ids not provided, queries documents classified under the subject
+    Callers may dispatch this in one of two modes:
+    - **Per-document (default for bulk-gen)**: pass ``document_id``. The task
+      resolves the document's *primary* subject from
+      ``document_subject_assignments`` and generates an outline from that
+      single document.
+    - **Cross-subject**: pass ``subject_code`` (optionally ``topic_code``)
+      and/or an explicit ``document_ids`` list. The task synthesises an
+      outline across up to ``max_documents`` documents classified under
+      the subject/topic.
+
+    If neither ``document_id`` nor ``subject_code``/``document_ids`` is
+    supplied the job is failed early.
 
     Steps:
     1. Update job status -> running
-    2. Load subject + topic info
+    2. Resolve subject + topic info (from arg or from the single doc's
+       primary subject assignment)
     3. Load source documents (from document_ids or by subject classification)
     4. Load sections for each document (first 3 sections, truncated)
     5. Build prompt with all documents' sections
@@ -82,8 +92,9 @@ def generate_subject_outline(
     11. Update job status
     """
     logger.info(
-        "generate_subject_outline: job_id=%s subject=%s topic=%s doc_ids=%s",
+        "generate_subject_outline: job_id=%s doc_id=%s subject=%s topic=%s doc_ids=%s",
         job_id,
+        document_id,
         subject_code,
         topic_code,
         document_ids,
@@ -95,11 +106,35 @@ def generate_subject_outline(
         return {"job_id": job_id, "status": "already_claimed"}
 
     try:
+        # Per-doc dispatch: fold document_id into document_ids + resolve
+        # subject_code from the document's primary subject assignment.
+        if document_id and not document_ids:
+            document_ids = [document_id]
+            if not subject_code:
+                resolved = _resolve_primary_subject(document_id)
+                if not resolved:
+                    _fail_job(
+                        job_id,
+                        f"Document {document_id} has no primary subject assignment",
+                    )
+                    return {
+                        "status": "failed",
+                        "reason": "no_primary_subject_assignment",
+                    }
+                subject_code, topic_code = resolved
+
+        if not subject_code and not document_ids:
+            _fail_job(
+                job_id,
+                "generate_subject_outline requires document_id or subject_code/document_ids",
+            )
+            return {"status": "failed", "reason": "missing_dispatch_args"}
+
         # Resolve content disclaimer ID at task start
         content_disclaimer_id = db.get_content_disclaimer_id("ai_digest")
 
         # Step 2: Load subject + topic info
-        subject_name = subject_code.replace("_", " ").title()
+        subject_name = (subject_code or "").replace("_", " ").title()
         topic_name = topic_code.replace("_", " ").title() if topic_code else None
 
         # Step 3: Load source documents
@@ -354,6 +389,36 @@ def generate_subject_outline(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _resolve_primary_subject(
+    document_id: str,
+) -> tuple[str, str | None] | None:
+    """Return the (subject_code, topic_code | None) for the document's
+    primary subject assignment in taxonomy ``study_8``, or ``None`` if
+    the document has no primary assignment.
+    """
+    from ..clients.db_client import get_connection
+
+    import psycopg2.extras
+
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """SELECT s.code AS subject_code, st.code AS topic_code
+               FROM document_subject_assignments dsa
+               JOIN subjects s ON s.id = dsa.subject_id
+               LEFT JOIN subject_topics st ON st.id = dsa.subject_topic_id
+               WHERE dsa.legal_document_id = %s
+                 AND dsa.is_primary = true
+                 AND s.taxonomy_version = 'study_8'
+               LIMIT 1""",
+            (document_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return row["subject_code"], row["topic_code"]
 
 
 def _get_document_ids_by_subject(

@@ -334,7 +334,7 @@ describe('InternalDerivativesService', () => {
             text: 'The doctrine of command responsibility applies to civilian officials.',
             verbatimSourceText: 'command responsibility applies',
             doctrineType: 'rule',
-            sectionId: '00000000-0000-0000-0000-000000000030',
+            sourceSectionId: '00000000-0000-0000-0000-000000000030',
           },
         ],
         provenanceRecords: [
@@ -420,6 +420,44 @@ describe('InternalDerivativesService', () => {
           periodYearMonth: '2026-04',
           scope: 'doctrine_extraction',
           amountUsd: 0.004,
+        }),
+      });
+    });
+
+    it('W6. accepts full worker-shape payload (modelRunId + jobId + doctrines + provenance, no verbatimSourceText)', async () => {
+      // Mirrors the payload generate_doctrine_extract builds today:
+      // optional modelRunId/derivativeGenerationJobId are present,
+      // doctrine entries omit verbatimSourceText (RAG endpoint does not
+      // return it), and the cited section uses the sourceSectionId field
+      // (aligned with worker output and Prisma storage).
+      const dto = makeWriteDoctrinesDto({
+        modelRunId: '00000000-0000-0000-0000-0000000000a1',
+        derivativeGenerationJobId: '00000000-0000-0000-0000-0000000000b1',
+        doctrines: [
+          {
+            text: 'Officials with effective control may be held liable for subordinate acts.',
+            doctrineType: 'rule',
+            sourceSectionId: '00000000-0000-0000-0000-000000000030',
+            confidence: 0.82,
+          },
+        ],
+      });
+
+      const result = await service.writeDoctrines(dto);
+
+      expect(result.artifactId).toBe('artifact-001');
+      expect(result.doctrineIds).toHaveLength(1);
+      expect(txMocks.derivativeArtifact.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          derivativeType: 'doctrine_extract',
+          derivativeGenerationJobId: '00000000-0000-0000-0000-0000000000b1',
+          modelRunId: '00000000-0000-0000-0000-0000000000a1',
+        }),
+      });
+      expect(txMocks.doctrineExtract.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          sourceSectionId: '00000000-0000-0000-0000-000000000030',
+          confidence: 0.82,
         }),
       });
     });

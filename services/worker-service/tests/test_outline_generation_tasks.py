@@ -121,7 +121,7 @@ FAKE_RAG_RESPONSE: dict[str, Any] = {
 
 def _run_task(job_id: str, subject_code: str, **kwargs: Any) -> dict[str, Any]:
     """Run the Celery task synchronously, bypassing Celery dispatch."""
-    return generate_subject_outline.run(job_id, subject_code, **kwargs)
+    return generate_subject_outline.run(job_id, subject_code=subject_code, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -412,3 +412,85 @@ class TestOutlineGenerationTask:
         assert call_kwargs.kwargs["model_name"] == "gpt-4o-mini"
         assert call_kwargs.kwargs["prompt_template_version"] == PROMPT_TEMPLATE_VERSION
         assert call_kwargs.kwargs["input_ref"] == "subject:criminal_law"
+
+    # ----- document_id dispatch (matches derivative_dispatch_tasks) -----
+
+    @patch("src.tasks.outline_generation_tasks.nestjs_client")
+    @patch("src.tasks.outline_generation_tasks.rag_client")
+    @patch("src.tasks.outline_generation_tasks.db")
+    @patch("src.tasks.outline_generation_tasks.validate_derivative")
+    @patch("src.tasks.outline_generation_tasks._resolve_primary_subject")
+    def test_9_document_id_resolves_primary_subject(
+        self,
+        mock_resolve: MagicMock,
+        mock_validate: MagicMock,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        mock_nestjs: MagicMock,
+    ) -> None:
+        """Dispatcher-style call: document_id only → task resolves the
+        document's primary (subject_code, topic_code) and generates an
+        outline from that single doc."""
+        from src.validators.derivative_validators import (
+            DerivativeValidationResult,
+            DerivativeVerdict,
+        )
+
+        mock_resolve.return_value = ("criminal_law", None)
+        mock_db.claim_derivative_job.return_value = True
+        mock_db.get_content_disclaimer_id.return_value = "disc-001"
+        mock_db.get_legal_document.return_value = FAKE_DOC_1
+        mock_db.get_document_sections_for_digest.return_value = FAKE_SECTIONS_1
+        mock_db.create_model_run.return_value = "model-run-001"
+        mock_rag.generate_completion.return_value = FAKE_RAG_RESPONSE
+        mock_validate.return_value = DerivativeValidationResult(
+            verdict=DerivativeVerdict.PUBLISH, checks=[], reasons=[],
+        )
+        mock_nestjs.write_derivative.return_value = {"artifactId": "art-001"}
+        mock_nestjs.update_job_status.return_value = True
+
+        result = generate_subject_outline.run("job-001", document_id="doc-001")
+
+        assert result["status"] == "completed"
+        mock_resolve.assert_called_once_with("doc-001")
+        mock_db.get_legal_document.assert_called_once_with("doc-001")
+        # Confirm input_ref was tagged with the resolved subject.
+        call_kwargs = mock_db.create_model_run.call_args
+        assert call_kwargs.kwargs["input_ref"] == "subject:criminal_law"
+
+    @patch("src.tasks.outline_generation_tasks.nestjs_client")
+    @patch("src.tasks.outline_generation_tasks.db")
+    @patch("src.tasks.outline_generation_tasks._resolve_primary_subject")
+    def test_10_document_id_no_primary_subject_fails(
+        self,
+        mock_resolve: MagicMock,
+        mock_db: MagicMock,
+        mock_nestjs: MagicMock,
+    ) -> None:
+        """document_id resolves to no primary subject → job fails."""
+        mock_resolve.return_value = None
+        mock_db.claim_derivative_job.return_value = True
+        mock_db.get_content_disclaimer_id.return_value = "disc-001"
+        mock_nestjs.update_job_status.return_value = True
+
+        result = generate_subject_outline.run("job-001", document_id="doc-001")
+
+        assert result["status"] == "failed"
+        assert result["reason"] == "no_primary_subject_assignment"
+
+    @patch("src.tasks.outline_generation_tasks.nestjs_client")
+    @patch("src.tasks.outline_generation_tasks.db")
+    def test_11_missing_dispatch_args_fails_early(
+        self,
+        mock_db: MagicMock,
+        mock_nestjs: MagicMock,
+    ) -> None:
+        """Neither document_id nor subject_code/document_ids → fail early."""
+        mock_db.claim_derivative_job.return_value = True
+        mock_db.get_content_disclaimer_id.return_value = "disc-001"
+        mock_nestjs.update_job_status.return_value = True
+
+        result = generate_subject_outline.run("job-001")
+
+        assert result["status"] == "failed"
+        assert result["reason"] == "missing_dispatch_args"

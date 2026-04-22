@@ -232,14 +232,14 @@ export class InternalDerivativesService {
 
       // 3. Create DoctrineExtract rows
       const doctrineIds: string[] = [];
-      for (const d of dto.doctrines) {
+      for (const d of dto.doctrines ?? []) {
         const extract = await tx.doctrineExtract.create({
           data: {
             legalDocumentId: dto.sourceDocumentId,
             text: d.text,
             normalizedText: d.normalizedText,
             doctrineType: d.doctrineType,
-            sourceSectionId: d.sectionId,
+            sourceSectionId: d.sourceSectionId,
             confidence: d.confidence,
             reviewStatus: dto.reviewStatus ?? 'draft',
           },

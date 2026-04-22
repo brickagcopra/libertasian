@@ -57,7 +57,7 @@ export class McqQuestionEntryDto {
   options!: McqOptionEntryDto[];
 
   @IsArray()
-  @IsString({ each: true })
+  @IsUUID('all', { each: true })
   supportingSectionIds!: string[];
 }
 
