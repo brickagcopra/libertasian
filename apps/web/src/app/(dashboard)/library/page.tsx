@@ -69,7 +69,7 @@ export default function LibraryHubPage() {
                         <span className="font-semibold text-foreground">
                           {approvedTotal}
                         </span>{' '}
-                        approved
+                        {approvedTotal === 1 ? 'item' : 'items'}
                       </span>
                     )}
                   </div>

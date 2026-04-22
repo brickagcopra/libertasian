@@ -23,6 +23,7 @@ import type { DerivativeType } from './types';
 export interface DerivativeTypeMeta {
   enum: DerivativeType;
   label: string;
+  singularLabel: string;
   slug: string;
   description: string;
   icon: LucideIcon;
@@ -32,6 +33,7 @@ export const DERIVATIVE_TYPES: readonly DerivativeTypeMeta[] = [
   {
     enum: 'case_digest',
     label: 'Case Digests',
+    singularLabel: 'Case Digest',
     slug: 'digests',
     description: 'Condensed Supreme Court rulings with facts, issues, ruling, and doctrine.',
     icon: ScrollTextIcon,
@@ -39,6 +41,7 @@ export const DERIVATIVE_TYPES: readonly DerivativeTypeMeta[] = [
   {
     enum: 'doctrine_extract',
     label: 'Doctrine Extracts',
+    singularLabel: 'Doctrine Extract',
     slug: 'doctrines',
     description: 'Distilled legal doctrines pulled from authoritative decisions.',
     icon: BookOpenIcon,
@@ -46,6 +49,7 @@ export const DERIVATIVE_TYPES: readonly DerivativeTypeMeta[] = [
   {
     enum: 'mcq_question',
     label: 'MCQs',
+    singularLabel: 'MCQ',
     slug: 'mcqs',
     description: 'Multiple-choice bar-style questions with rationales.',
     icon: HelpCircleIcon,
@@ -53,6 +57,7 @@ export const DERIVATIVE_TYPES: readonly DerivativeTypeMeta[] = [
   {
     enum: 'essay_prompt',
     label: 'Essay Prompts',
+    singularLabel: 'Essay Prompt',
     slug: 'essays',
     description: 'Bar-style essay questions with model answers and rubrics.',
     icon: FilePenIcon,
@@ -60,6 +65,7 @@ export const DERIVATIVE_TYPES: readonly DerivativeTypeMeta[] = [
   {
     enum: 'subject_outline',
     label: 'Subject Outlines',
+    singularLabel: 'Subject Outline',
     slug: 'outlines',
     description: 'Study outlines organised by bar subject and topic.',
     icon: ListTreeIcon,
@@ -67,6 +73,7 @@ export const DERIVATIVE_TYPES: readonly DerivativeTypeMeta[] = [
   {
     enum: 'flashcard',
     label: 'Flashcards',
+    singularLabel: 'Flashcard',
     slug: 'flashcards',
     description: 'Front-back cards for spaced-repetition bar review.',
     icon: SquareStackIcon,
@@ -74,6 +81,7 @@ export const DERIVATIVE_TYPES: readonly DerivativeTypeMeta[] = [
   {
     enum: 'essay_model_answer',
     label: 'Essay Model Answers',
+    singularLabel: 'Essay Model Answer',
     slug: 'essay-answers',
     description: 'Worked model answers for practice essays.',
     icon: FileTextIcon,
@@ -81,6 +89,7 @@ export const DERIVATIVE_TYPES: readonly DerivativeTypeMeta[] = [
   {
     enum: 'suggested_bar_answer',
     label: 'Suggested Bar Answers',
+    singularLabel: 'Suggested Bar Answer',
     slug: 'bar-answers',
     description: 'Suggested answers to past bar questions.',
     icon: BadgeCheckIcon,
@@ -88,6 +97,7 @@ export const DERIVATIVE_TYPES: readonly DerivativeTypeMeta[] = [
   {
     enum: 'sample_pleading',
     label: 'Sample Pleadings',
+    singularLabel: 'Sample Pleading',
     slug: 'pleadings',
     description: 'Example pleadings and motion forms.',
     icon: GavelIcon,
@@ -95,6 +105,7 @@ export const DERIVATIVE_TYPES: readonly DerivativeTypeMeta[] = [
   {
     enum: 'sample_contract',
     label: 'Sample Contracts',
+    singularLabel: 'Sample Contract',
     slug: 'contracts',
     description: 'Example contracts and drafting templates.',
     icon: FileCheckIcon,
@@ -102,6 +113,7 @@ export const DERIVATIVE_TYPES: readonly DerivativeTypeMeta[] = [
   {
     enum: 'one_page_summary',
     label: 'One-Page Summaries',
+    singularLabel: 'One-Page Summary',
     slug: 'summaries',
     description: 'Condensed one-page briefs of key materials.',
     icon: LayersIcon,

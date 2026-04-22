@@ -70,6 +70,9 @@ export default function LibraryTypeScreen() {
           const total = countByCode.get(s.code) ?? 0;
           const subject = subjectFromCode(s.code);
           const subjectSlug = subject?.slug ?? s.slug;
+          const countLabel = (
+            total === 1 ? typeMeta.singularLabel : typeMeta.label
+          ).toLowerCase();
           return (
             <Pressable
               key={s.code}
@@ -78,7 +81,7 @@ export default function LibraryTypeScreen() {
                 router.push(`/library/${typeMeta.slug}/${subjectSlug}`)
               }
               accessibilityRole="button"
-              accessibilityLabel={`${s.name}, ${total} ${typeMeta.label.toLowerCase()}`}
+              accessibilityLabel={`${s.name}, ${total} ${countLabel}`}
             >
               <View style={styles.tileHeader}>
                 <View style={styles.iconBox}>
@@ -94,9 +97,7 @@ export default function LibraryTypeScreen() {
                 ) : (
                   <>
                     <Text style={styles.countNumber}>{total}</Text>
-                    <Text style={styles.countLabel}>
-                      {typeMeta.label.toLowerCase()}
-                    </Text>
+                    <Text style={styles.countLabel}>{countLabel}</Text>
                   </>
                 )}
               </View>

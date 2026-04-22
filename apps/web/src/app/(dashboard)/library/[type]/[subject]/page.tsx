@@ -104,7 +104,7 @@ export default function LibrarySubjectPage() {
       {!isLoading && items.length === 0 && !error && (
         <div className="rounded-lg border border-dashed py-12 text-center">
           <p className="text-sm text-muted-foreground">
-            No approved {typeMeta.label.toLowerCase()} for {subjectMeta.name} yet.
+            No {typeMeta.label.toLowerCase()} available for {subjectMeta.name} yet.
           </p>
         </div>
       )}
