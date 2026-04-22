@@ -122,3 +122,99 @@ export const FLASHCARD_CONTENT = {
     { front: 'Fruit of the poisonous tree?', back: 'Derivative evidence is also excluded.' },
   ],
 };
+
+export const ESSAY_MODEL_ANSWER_CONTENT = {
+  promptRef: 'See essay prompt: Discuss the exclusionary rule under the 1987 Constitution.',
+  format: 'alac',
+  answer: {
+    outlineSections: [
+      { paragraphs: ['The warrantless search was invalid.'], citedSectionIds: ['sec-a'] },
+      { paragraphs: ['Art. III, Sec. 2 of the 1987 Constitution.'], citedSectionIds: ['sec-b'] },
+      { paragraphs: ['Applying these rules to the facts above...'] },
+      { paragraphs: ['Therefore, the evidence must be excluded.'] },
+    ],
+  },
+  writingTips: ['Lead with the answer.', 'Cite the exact provision.'],
+  commonPitfalls: ['Conflating plain view with stop-and-frisk.'],
+};
+
+export const SUGGESTED_BAR_ANSWER_CONTENT = {
+  barYear: 2019,
+  examSubject: 'Political Law',
+  questionText: 'When may a warrantless arrest be validly made?',
+  suggestedAnswer:
+    'A warrantless arrest may be made in the three instances under Rule 113, Section 5...',
+  annotations: [
+    {
+      quote: 'Rule 113, Section 5 of the Rules of Court',
+      commentary: 'Enumerates the three instances of valid warrantless arrest.',
+    },
+  ],
+  sourceAttribution: 'UP Law Center Bar Q&A compilation',
+};
+
+export const SAMPLE_PLEADING_CONTENT = {
+  pleadingType: 'Petition for Review on Certiorari',
+  caption: {
+    court: 'SUPREME COURT OF THE PHILIPPINES',
+    caseTitle: 'Juan Dela Cruz vs. People of the Philippines',
+    caseNumber: 'G.R. No. 123456',
+  },
+  parties: {
+    plaintiff: 'Juan Dela Cruz',
+    defendant: 'People of the Philippines',
+    counsel: 'Atty. Maria Santos',
+  },
+  preamble: 'Petitioner, by counsel, respectfully states:',
+  sections: [
+    { heading: 'Statement of Facts', paragraphs: ['On January 1, 2024...'] },
+    { heading: 'Assignment of Errors', paragraphs: ['The Court of Appeals gravely erred...'] },
+  ],
+  prayer: 'WHEREFORE, petitioner prays that the petition be granted.',
+  verification: 'I, Juan Dela Cruz, under oath, state...',
+  proofOfService: 'Copy served on respondent by registered mail.',
+};
+
+export const SAMPLE_CONTRACT_CONTENT = {
+  contractType: 'Lease Agreement',
+  parties: [
+    { role: 'Lessor', name: 'ABC Realty Corp.', address: '123 Makati Ave., Makati City' },
+    { role: 'Lessee', name: 'XYZ Trading Inc.', address: '456 Ortigas Ave., Pasig City' },
+  ],
+  recitals: [
+    'Lessor owns the property described in Schedule A.',
+    'Lessee wishes to lease the property under the terms below.',
+  ],
+  clauses: [
+    {
+      heading: 'Term',
+      text: 'The lease shall be for a period of two (2) years.',
+      subclauses: [{ heading: 'Renewal', text: 'Renewable by mutual written agreement.' }],
+    },
+    { heading: 'Rent', text: 'Monthly rent is PHP 100,000.' },
+  ],
+  schedules: [{ heading: 'Schedule A — Property', text: 'Unit 10A, 123 Makati Ave.' }],
+  signatureBlocks: [
+    { role: 'Lessor', name: 'ABC Realty Corp.' },
+    { role: 'Lessee', name: 'XYZ Trading Inc.' },
+  ],
+};
+
+export const ONE_PAGE_SUMMARY_CONTENT = {
+  topic: 'Warrantless Arrests under Rule 113',
+  bottomLine:
+    'A warrantless arrest is valid only in the three narrow exceptions enumerated in Rule 113, Section 5.',
+  keyPoints: [
+    'In flagrante delicto',
+    'Hot pursuit',
+    'Escapee from lawful custody',
+  ],
+  highlights: [
+    { term: 'In flagrante delicto', definition: 'Arrest during commission of an offense.' },
+    { term: 'Hot pursuit', definition: 'Immediate pursuit after commission of an offense.' },
+  ],
+  quickReference: [
+    { label: 'Rule', value: 'Rule 113, Sec. 5' },
+    { label: 'Source', value: 'Rules of Court' },
+  ],
+};
