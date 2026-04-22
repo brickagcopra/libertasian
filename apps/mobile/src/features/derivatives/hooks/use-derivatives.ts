@@ -3,6 +3,7 @@ import { apiClient } from '../../../lib/api-client';
 import type {
   DerivativeDetail,
   DerivativeSubjectSummary,
+  DerivativeTypeSubjectSummary,
   DerivativesListResponse,
 } from '../types';
 
@@ -56,6 +57,26 @@ export function useDerivativeSubjects(taxonomyVersion = 'study_8') {
       }>('/derivatives/subjects/summary', { params: { taxonomyVersion } });
       return res.data;
     },
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useDerivativeSubjectsByType(
+  type: string | undefined,
+  taxonomyVersion = 'study_8',
+) {
+  return useQuery({
+    queryKey: ['derivatives', 'subjects-by-type', type, taxonomyVersion],
+    queryFn: async () => {
+      const res = await apiClient.get<{
+        success: boolean;
+        data: DerivativeTypeSubjectSummary[];
+      }>(`/derivatives/types/${type}/subjects/summary`, {
+        params: { taxonomyVersion },
+      });
+      return res.data;
+    },
+    enabled: !!type,
     staleTime: 5 * 60 * 1000,
   });
 }

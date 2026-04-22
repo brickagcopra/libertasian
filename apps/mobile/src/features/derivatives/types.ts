@@ -63,6 +63,14 @@ export interface DerivativesListResponse {
   meta: { hasNext: boolean; nextCursor?: string; limit: number };
 }
 
+export interface DerivativeTypeSubjectSummary {
+  subjectCode: string;
+  subjectName: string;
+  taxonomyVersion: string;
+  totalCount: number;
+  approvedCount: number;
+}
+
 export const DERIVATIVE_TYPE_LABELS: Record<DerivativeType, string> = {
   case_digest: 'Case Digest',
   doctrine_extract: 'Doctrine',
