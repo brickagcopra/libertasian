@@ -65,6 +65,14 @@ export interface DerivativeSubjectSummary {
   count: number;
 }
 
+export interface DerivativeTypeSubjectSummary {
+  subjectCode: string;
+  subjectName: string;
+  taxonomyVersion: string;
+  totalCount: number;
+  approvedCount: number;
+}
+
 export interface DerivativeListMeta {
   hasNext: boolean;
   nextCursor?: string;
