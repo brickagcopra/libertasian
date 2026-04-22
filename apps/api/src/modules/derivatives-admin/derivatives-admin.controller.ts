@@ -106,6 +106,13 @@ export class DerivativesAdminController {
     return { success: true, data };
   }
 
+  @Get('jobs/:id/mcqs')
+  @ApiOperation({ summary: 'Get the MCQ artifacts produced by a derivative generation job' })
+  async getJobMcqs(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.service.getJobMcqs(id);
+    return { success: true, data };
+  }
+
   @Post('jobs/:id/retry')
   async retryJob(
     @Param('id', ParseUUIDPipe) id: string,

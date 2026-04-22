@@ -859,6 +859,35 @@ export interface JobDoctrinesResponse {
   doctrines: JobDoctrineItem[];
 }
 
+export interface JobMcqItem {
+  id: string;
+  title: string;
+  reviewStatus: string;
+  visibility: string;
+  confidenceScore: number | null;
+  validatorVerdict: string | null;
+  publishedAt: string | null;
+  createdAt: string;
+  contentDisclaimer: { id: string; bodyPlain: string } | null;
+  mcqQuestion: {
+    questionStem: string;
+    explanation: string | null;
+    difficulty: string;
+    questionFormat: string;
+    options: Array<{
+      optionLetter: string;
+      text: string;
+      isCorrect: boolean;
+      rationale: string | null;
+    }>;
+  } | null;
+}
+
+export interface JobMcqsResponse {
+  jobStatus: string;
+  mcqs: JobMcqItem[];
+}
+
 export interface JobEssayResponse {
   jobStatus: string;
   essay: {

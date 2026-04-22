@@ -16,8 +16,9 @@ import {
   useJobDigest,
   useJobDoctrines,
   useJobEssay,
+  useJobMcqs,
 } from '@/features/admin/hooks/use-derivatives-admin';
-import type { DerivativeTypeStats, DerivativeJob, JobDoctrineItem } from '@/features/admin/types';
+import type { DerivativeTypeStats, DerivativeJob, JobDoctrineItem, JobMcqItem } from '@/features/admin/types';
 import { DigestContentPanel } from '@/features/digests/components/digest-content-panel';
 import { EssayContentPanel } from '@/features/admin/components/essay-content-panel';
 import { ArtifactReviewActions } from '@/features/admin/components/artifact-review-actions';
@@ -639,6 +640,7 @@ function JobDetailPanel({
   const shouldFetchDigest = !!job && job.status === 'completed' && job.derivativeType === 'case_digest';
   const shouldFetchDoctrines = !!job && job.status === 'completed' && job.derivativeType === 'doctrine_extract';
   const shouldFetchEssay = !!job && job.status === 'completed' && job.derivativeType === 'essay_prompt';
+  const shouldFetchMcqs = !!job && job.status === 'completed' && job.derivativeType === 'mcq_question';
   const { data: digestData, isLoading: digestLoading, error: digestError } = useJobDigest(
     job?.id ?? '',
     { enabled: shouldFetchDigest },
@@ -650,6 +652,10 @@ function JobDetailPanel({
   const { data: essayData, isLoading: essayLoading, error: essayError } = useJobEssay(
     job?.id ?? '',
     { enabled: shouldFetchEssay },
+  );
+  const { data: mcqsData, isLoading: mcqsLoading, error: mcqsError } = useJobMcqs(
+    job?.id ?? '',
+    { enabled: shouldFetchMcqs },
   );
 
   if (!job) return <p className="mt-2 text-sm text-gray-400">Job not found in current page</p>;
@@ -784,6 +790,152 @@ function JobDetailPanel({
           )}
         </>
       )}
+
+      {/* MCQ questions section */}
+      {shouldFetchMcqs && (
+        <>
+          {mcqsLoading && (
+            <p className="text-sm text-gray-400">Loading MCQs...</p>
+          )}
+          {mcqsError && (
+            <p className="text-sm text-red-500">
+              Error loading MCQs: {mcqsError instanceof Error ? mcqsError.message : 'Unknown error'}
+            </p>
+          )}
+          {mcqsData && mcqsData.mcqs.length === 0 && (
+            <p className="text-sm text-amber-600">
+              Generation completed but no MCQ artifacts were written — investigate.
+            </p>
+          )}
+          {mcqsData && mcqsData.mcqs.length > 0 && (
+            <div className="mt-4 space-y-4 border-t pt-4">
+              <h4 className="text-base font-semibold text-gray-900">
+                MCQ Questions ({mcqsData.mcqs.length})
+              </h4>
+              {mcqsData.mcqs.map((m, idx) => (
+                <McqReviewCard key={m.id} mcq={m} index={idx} />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function McqReviewCard({ mcq, index }: { mcq: JobMcqItem; index: number }) {
+  if (!mcq.mcqQuestion) {
+    return (
+      <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-amber-800">
+            MCQ #{index + 1} — child row missing
+          </span>
+          <span className="font-mono text-xs text-amber-700">{mcq.id.slice(0, 8)}</span>
+        </div>
+        <p className="mt-1 text-xs text-amber-700">
+          Artifact has no mcq_questions row. Cannot render stem or options — investigate data integrity.
+        </p>
+        <ArtifactReviewActions
+          artifactId={mcq.id}
+          reviewStatus={mcq.reviewStatus}
+          visibility={mcq.visibility}
+          hasDisclaimer={!!mcq.contentDisclaimer}
+        />
+      </div>
+    );
+  }
+
+  const q = mcq.mcqQuestion;
+  return (
+    <div className="rounded-md border bg-white p-4 shadow-sm">
+      <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-gray-500">
+        <span className="font-semibold text-gray-700">MCQ #{index + 1}</span>
+        <span className="font-mono">{mcq.id.slice(0, 8)}</span>
+        <span className="rounded bg-gray-100 px-2 py-0.5 font-medium text-gray-700">
+          {q.difficulty}
+        </span>
+        <span className="rounded bg-gray-100 px-2 py-0.5 font-medium text-gray-700">
+          {q.questionFormat}
+        </span>
+        {mcq.confidenceScore !== null && (
+          <span>confidence: {(mcq.confidenceScore * 100).toFixed(0)}%</span>
+        )}
+      </div>
+
+      <p className="text-sm font-medium text-gray-900" style={{ whiteSpace: 'pre-line' }}>
+        {q.questionStem}
+      </p>
+
+      <ul className="mt-3 space-y-2">
+        {q.options.map((opt) => (
+          <li
+            key={opt.optionLetter}
+            className={`flex items-start gap-3 rounded border p-2 ${
+              opt.isCorrect ? 'border-green-400 bg-green-50' : 'border-gray-200'
+            }`}
+          >
+            <span
+              className={`mt-0.5 inline-flex h-7 w-7 flex-none items-center justify-center rounded-full text-sm font-semibold ${
+                opt.isCorrect ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-700'
+              }`}
+            >
+              {opt.optionLetter}
+            </span>
+            <div className="flex-1">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <p className="text-sm text-gray-800">{opt.text}</p>
+                {opt.isCorrect && (
+                  <span className="rounded-full bg-green-600 px-2 py-0.5 text-xs font-semibold text-white">
+                    ✓ Correct answer
+                  </span>
+                )}
+              </div>
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      {(q.explanation || q.options.some((o) => o.rationale)) && (
+        <details className="mt-3">
+          <summary className="cursor-pointer text-xs font-medium text-blue-600 hover:text-blue-800">
+            Show explanation & rationales
+          </summary>
+          <div className="mt-2 space-y-2 rounded bg-gray-50 p-3 text-xs">
+            {q.explanation && (
+              <div>
+                <p className="font-semibold text-gray-700">Explanation</p>
+                <p className="mt-1 text-gray-700" style={{ whiteSpace: 'pre-line' }}>
+                  {q.explanation}
+                </p>
+              </div>
+            )}
+            {q.options.filter((o) => o.rationale).length > 0 && (
+              <div>
+                <p className="font-semibold text-gray-700">Rationales</p>
+                <ul className="mt-1 space-y-1">
+                  {q.options
+                    .filter((o) => o.rationale)
+                    .map((o) => (
+                      <li key={o.optionLetter} className="text-gray-700">
+                        <span className="font-semibold">{o.optionLetter}:</span> {o.rationale}
+                      </li>
+                    ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </details>
+      )}
+
+      <div className="mt-3">
+        <ArtifactReviewActions
+          artifactId={mcq.id}
+          reviewStatus={mcq.reviewStatus}
+          visibility={mcq.visibility}
+          hasDisclaimer={!!mcq.contentDisclaimer}
+        />
+      </div>
     </div>
   );
 }

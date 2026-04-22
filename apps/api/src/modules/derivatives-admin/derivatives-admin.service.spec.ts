@@ -471,6 +471,126 @@ describe('DerivativesAdminService', () => {
     });
   });
 
+  // ─── getJobMcqs ───────────────────────────────────────
+
+  describe('getJobMcqs', () => {
+    it('returns mcqs sorted by createdAt ASC with options mapped', async () => {
+      prisma.derivativeGenerationJob.findUnique.mockResolvedValue({
+        id: 'job-1',
+        derivativeType: 'mcq_question',
+        status: 'completed',
+      });
+      prisma.derivativeArtifact.findMany.mockResolvedValue([
+        {
+          id: 'art-1',
+          title: 'MCQ on command responsibility',
+          reviewStatus: 'needs_human_review',
+          visibility: 'private',
+          confidenceScore: 0.82,
+          validatorVerdict: 'publish',
+          publishedAt: null,
+          createdAt: '2026-04-10T00:00:00Z',
+          contentDisclaimer: { id: 'disc-1', bodyPlain: 'AI-generated.' },
+          mcqQuestion: {
+            questionStem: 'Which statement best describes command responsibility?',
+            explanation: 'Command responsibility requires...',
+            difficulty: 'medium',
+            questionFormat: 'single_best',
+            options: [
+              { optionLabel: 'A', optionText: 'Option A text', isCorrect: false, rationale: 'Wrong because X' },
+              { optionLabel: 'B', optionText: 'Option B text', isCorrect: true, rationale: 'Correct because Y' },
+              { optionLabel: 'C', optionText: 'Option C text', isCorrect: false, rationale: null },
+              { optionLabel: 'D', optionText: 'Option D text', isCorrect: false, rationale: null },
+            ],
+          },
+        },
+        {
+          id: 'art-2',
+          title: 'MCQ on Art. 3(1)',
+          reviewStatus: 'needs_human_review',
+          visibility: 'private',
+          confidenceScore: null,
+          validatorVerdict: null,
+          publishedAt: null,
+          createdAt: '2026-04-11T00:00:00Z',
+          contentDisclaimer: { id: 'disc-1', bodyPlain: 'AI-generated.' },
+          mcqQuestion: {
+            questionStem: 'Second stem',
+            explanation: null,
+            difficulty: 'hard',
+            questionFormat: 'single_best',
+            options: [],
+          },
+        },
+      ]);
+
+      const result = await service.getJobMcqs('job-1');
+
+      expect(result.jobStatus).toBe('completed');
+      expect(result.mcqs).toHaveLength(2);
+
+      expect(prisma.derivativeArtifact.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            derivativeGenerationJobId: 'job-1',
+            derivativeType: 'mcq_question',
+            deletedAt: null,
+          }),
+          orderBy: { createdAt: 'asc' },
+        }),
+      );
+
+      const first = result.mcqs[0] as Record<string, unknown>;
+      expect(first['id']).toBe('art-1');
+      const mcqQuestion = first['mcqQuestion'] as Record<string, unknown>;
+      expect(mcqQuestion['questionStem']).toContain('command responsibility');
+      const options = mcqQuestion['options'] as Array<Record<string, unknown>>;
+      expect(options).toHaveLength(4);
+      expect(options[0]).toEqual({
+        optionLetter: 'A',
+        text: 'Option A text',
+        isCorrect: false,
+        rationale: 'Wrong because X',
+      });
+      expect(options[1]?.['isCorrect']).toBe(true);
+      expect(first['contentDisclaimer']).toEqual({ id: 'disc-1', bodyPlain: 'AI-generated.' });
+    });
+
+    it('returns empty mcqs list when job completed but no artifacts exist', async () => {
+      prisma.derivativeGenerationJob.findUnique.mockResolvedValue({
+        id: 'job-1',
+        derivativeType: 'mcq_question',
+        status: 'completed',
+      });
+      prisma.derivativeArtifact.findMany.mockResolvedValue([]);
+
+      const result = await service.getJobMcqs('job-1');
+
+      expect(result.jobStatus).toBe('completed');
+      expect(result.mcqs).toEqual([]);
+    });
+
+    it('throws NotFoundException for unknown jobId', async () => {
+      prisma.derivativeGenerationJob.findUnique.mockResolvedValue(null);
+
+      await expect(service.getJobMcqs('nonexistent')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('throws BadRequestException for wrong derivative type', async () => {
+      prisma.derivativeGenerationJob.findUnique.mockResolvedValue({
+        id: 'job-1',
+        derivativeType: 'case_digest',
+        status: 'completed',
+      });
+
+      await expect(service.getJobMcqs('job-1')).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+  });
+
   // ─── softDeleteArtifact ────────────────────────────────
 
   describe('softDeleteArtifact', () => {

@@ -11,6 +11,7 @@ import type {
   JobDigestResponse,
   JobDoctrinesResponse,
   JobEssayResponse,
+  JobMcqsResponse,
 } from '../types';
 
 /** Standard API response envelope from NestJS controllers */
@@ -111,6 +112,19 @@ export function useJobEssay(jobId: string, opts?: { enabled?: boolean }) {
     queryFn: async () => {
       const res = await apiClient.get<ApiEnvelope<JobEssayResponse>>(
         `/admin/derivatives/jobs/${jobId}/essay`,
+      );
+      return res.data;
+    },
+    enabled: opts?.enabled !== false && !!jobId,
+  });
+}
+
+export function useJobMcqs(jobId: string, opts?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['admin', 'derivatives', 'jobs', jobId, 'mcqs'],
+    queryFn: async () => {
+      const res = await apiClient.get<ApiEnvelope<JobMcqsResponse>>(
+        `/admin/derivatives/jobs/${jobId}/mcqs`,
       );
       return res.data;
     },
