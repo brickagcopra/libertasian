@@ -25,6 +25,7 @@ import { AuditService } from '../audit/audit.service';
 import { DerivativesAdminService } from './derivatives-admin.service';
 import { DerivativesReviewService } from './derivatives-review.service';
 import {
+  BulkApproveByConfidenceDto,
   EnqueueGenerationDto,
   ListDerivativeJobsDto,
   SubmitDerivativeReviewDto,
@@ -177,6 +178,40 @@ export class DerivativesAdminController {
       });
     }
     return { success: true, data: result };
+  }
+
+  @Post('bulk-approve-by-confidence')
+  @ApiOperation({
+    summary:
+      'Batch approve private artifacts + digests whose confidence_score >= threshold',
+  })
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
+  async bulkApproveByConfidence(
+    @Body() dto: BulkApproveByConfidenceDto,
+    @CurrentUser() user: JwtPayload,
+    @Ip() ip: string,
+  ) {
+    const data = await this.reviewService.bulkApproveByConfidence(dto, user.sub);
+    await this.auditService.log({
+      actorUserId: user.sub,
+      actorType: 'admin',
+      action: data.dryRun
+        ? 'derivative.bulk_approve.preview'
+        : 'derivative.bulk_approve.execute',
+      entityType: 'derivative_artifact',
+      entityId: 'bulk',
+      metadata: {
+        ip,
+        threshold: dto.threshold,
+        derivativeTypes: dto.derivativeTypes ?? null,
+        includeDigests: dto.includeDigests ?? true,
+        artifactsPromoted: data.artifactsPromoted,
+        digestsPromoted: data.digestsPromoted,
+        subjectsInherited: data.subjectsInherited,
+        errorCount: data.errors.length,
+      },
+    });
+    return { success: true, data };
   }
 
   @Delete('jobs/:id/output')

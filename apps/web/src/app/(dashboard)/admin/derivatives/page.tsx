@@ -22,6 +22,7 @@ import type { DerivativeTypeStats, DerivativeJob, JobDoctrineItem, JobMcqItem } 
 import { DigestContentPanel } from '@/features/digests/components/digest-content-panel';
 import { EssayContentPanel } from '@/features/admin/components/essay-content-panel';
 import { ArtifactReviewActions } from '@/features/admin/components/artifact-review-actions';
+import { BulkApproveByConfidencePanel } from '@/features/admin/components/bulk-approve-by-confidence-panel';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AdminCardSkeleton } from '@/components/ui/skeleton';
 
@@ -375,6 +376,9 @@ export default function DerivativesAdminPage() {
           </div>
         </div>
       )}
+
+      {/* Batch approve by confidence */}
+      <BulkApproveByConfidencePanel />
 
       {/* Job History Table */}
       <div className="rounded-lg border bg-white shadow-sm">

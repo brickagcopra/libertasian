@@ -4,6 +4,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { apiClient } from '@/lib/api-client';
 import type {
+  BulkApproveByConfidenceInput,
+  BulkApproveByConfidenceResult,
   DerivativeStatsResponse,
   DerivativeSettings,
   DerivativeJob,
@@ -236,6 +238,28 @@ export interface ArtifactReviewResult {
   newVisibility: string;
   verdict: string;
   subjectsCopiedFromParent: number;
+}
+
+export function useBulkApproveByConfidence() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (
+      dto: BulkApproveByConfidenceInput,
+    ): Promise<BulkApproveByConfidenceResult> => {
+      const res = await apiClient.post<ApiEnvelope<BulkApproveByConfidenceResult>>(
+        '/admin/derivatives/bulk-approve-by-confidence',
+        dto,
+      );
+      return res.data;
+    },
+    onSuccess: (data) => {
+      // Preview runs don't write, so there's no cache to invalidate.
+      if (!data.dryRun) {
+        queryClient.invalidateQueries({ queryKey: ['admin', 'derivatives'] });
+        queryClient.invalidateQueries({ queryKey: ['derivatives'] });
+      }
+    },
+  });
 }
 
 export function useReviewArtifact() {
