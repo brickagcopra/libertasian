@@ -3,6 +3,7 @@
 import { FileTextIcon } from 'lucide-react';
 
 import { useDigests, useGenerateDigest } from '@/features/digests/hooks/use-digests';
+import { sanitizeRulingText } from '@/features/digests/lib/sanitize-ruling';
 import { ApiClientError } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -102,7 +103,7 @@ export function AiSummaryTab({ documentId }: AiSummaryTabProps) {
           {firstDigest.ruling && (
             <div>
               <h3 className="mb-1 text-sm font-semibold text-muted-foreground">Ruling</h3>
-              <p className="whitespace-pre-wrap text-sm leading-relaxed">{firstDigest.ruling}</p>
+              <p className="whitespace-pre-wrap text-sm leading-relaxed">{sanitizeRulingText(firstDigest.ruling)}</p>
             </div>
           )}
         </CardContent>
