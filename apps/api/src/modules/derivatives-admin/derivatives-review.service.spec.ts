@@ -21,6 +21,7 @@ function makePrisma() {
   const prisma: any = {
     derivativeArtifact: {
       findFirst: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
       update: jest.fn(),
     },
     derivativeReview: {
@@ -33,18 +34,32 @@ function makePrisma() {
       findMany: jest.fn().mockResolvedValue([]),
       createMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
+    digest: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     $transaction: jest.fn(async (cb: (tx: unknown) => Promise<unknown>) => cb(prisma)),
   };
   return prisma;
 }
 
+function makeDigests() {
+  return {
+    batchApprove: jest.fn(async ({ digestIds }: { digestIds: string[] }) => ({
+      processed: digestIds.length,
+      digestIds,
+    })),
+  };
+}
+
 describe('DerivativesReviewService', () => {
   let service: DerivativesReviewService;
   let prisma: ReturnType<typeof makePrisma>;
+  let digests: ReturnType<typeof makeDigests>;
 
   beforeEach(() => {
     prisma = makePrisma();
-    service = new DerivativesReviewService(prisma as any);
+    digests = makeDigests();
+    service = new DerivativesReviewService(prisma as any, digests as any);
   });
 
   describe('submitReview — approve', () => {
@@ -257,6 +272,163 @@ describe('DerivativesReviewService', () => {
 
       // update should never be called because review.create threw first inside $transaction
       expect(prisma.derivativeArtifact.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('bulkApproveByConfidence', () => {
+    it('dryRun returns counts without calling submitReview or batchApprove', async () => {
+      prisma.derivativeArtifact.findMany.mockResolvedValue([
+        { id: 'a1', derivativeType: 'case_digest' },
+        { id: 'a2', derivativeType: 'case_digest' },
+        { id: 'a3', derivativeType: 'mcq_question' },
+      ]);
+      prisma.digest.findMany.mockResolvedValue([{ id: 'd1' }, { id: 'd2' }]);
+
+      const result = await service.bulkApproveByConfidence(
+        { threshold: 0.7, dryRun: true },
+        'reviewer-1',
+      );
+
+      expect(result.dryRun).toBe(true);
+      expect(result.artifactsPromoted).toBe(3);
+      expect(result.digestsPromoted).toBe(2);
+      expect(result.perTypeBreakdown).toEqual(
+        expect.arrayContaining([
+          { derivativeType: 'case_digest', count: 2 },
+          { derivativeType: 'mcq_question', count: 1 },
+        ]),
+      );
+      expect(prisma.derivativeReview.create).not.toHaveBeenCalled();
+      expect(prisma.derivativeArtifact.update).not.toHaveBeenCalled();
+      expect(digests.batchApprove).not.toHaveBeenCalled();
+    });
+
+    it('real run approves every candidate and dispatches digests via batchApprove', async () => {
+      prisma.derivativeArtifact.findMany.mockResolvedValue([
+        { id: 'a1', derivativeType: 'case_digest' },
+        { id: 'a2', derivativeType: 'mcq_question' },
+      ]);
+      prisma.digest.findMany.mockResolvedValue([{ id: 'd1' }]);
+
+      // Each submitReview call will re-find the artifact + update it.
+      prisma.derivativeArtifact.findFirst.mockImplementation(async ({ where }: any) =>
+        makeArtifact({ id: where.id }),
+      );
+      prisma.derivativeArtifact.update.mockImplementation(async ({ data }: any) => ({
+        id: 'stub',
+        reviewStatus: data.reviewStatus,
+        visibility: data.visibility ?? 'private',
+      }));
+
+      const result = await service.bulkApproveByConfidence(
+        { threshold: 0.75 },
+        'reviewer-1',
+      );
+
+      expect(result.dryRun).toBe(false);
+      expect(result.artifactsPromoted).toBe(2);
+      expect(result.digestsPromoted).toBe(1);
+      expect(result.errors).toEqual([]);
+      expect(prisma.derivativeReview.create).toHaveBeenCalledTimes(2);
+      expect(digests.batchApprove).toHaveBeenCalledWith(
+        { digestIds: ['d1'], notes: expect.stringContaining('0.75') },
+        'reviewer-1',
+      );
+    });
+
+    it('applies the threshold filter to the Prisma query', async () => {
+      prisma.derivativeArtifact.findMany.mockResolvedValue([]);
+      prisma.digest.findMany.mockResolvedValue([]);
+
+      await service.bulkApproveByConfidence(
+        { threshold: 0.9, dryRun: true },
+        'reviewer-1',
+      );
+
+      expect(prisma.derivativeArtifact.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            confidenceScore: { gte: 0.9 },
+            visibility: 'private',
+            deletedAt: null,
+            reviewStatus: { in: ['draft', 'needs_human_review'] },
+          }),
+        }),
+      );
+      expect(prisma.digest.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            confidenceScore: { gte: 0.9 },
+            reviewStatus: 'needs_human_review',
+          }),
+        }),
+      );
+    });
+
+    it('applies the derivativeTypes filter when supplied', async () => {
+      prisma.derivativeArtifact.findMany.mockResolvedValue([]);
+      prisma.digest.findMany.mockResolvedValue([]);
+
+      await service.bulkApproveByConfidence(
+        {
+          threshold: 0.7,
+          derivativeTypes: ['case_digest', 'doctrine_extract'],
+          dryRun: true,
+        },
+        'reviewer-1',
+      );
+
+      expect(prisma.derivativeArtifact.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            derivativeType: { in: ['case_digest', 'doctrine_extract'] },
+          }),
+        }),
+      );
+    });
+
+    it('skips the digest sweep when includeDigests=false', async () => {
+      prisma.derivativeArtifact.findMany.mockResolvedValue([]);
+
+      const result = await service.bulkApproveByConfidence(
+        { threshold: 0.7, includeDigests: false, dryRun: true },
+        'reviewer-1',
+      );
+
+      expect(prisma.digest.findMany).not.toHaveBeenCalled();
+      expect(result.digestsPromoted).toBe(0);
+    });
+
+    it('continues past a single-artifact failure and reports it in errors[]', async () => {
+      prisma.derivativeArtifact.findMany.mockResolvedValue([
+        { id: 'a1', derivativeType: 'case_digest' },
+        { id: 'a2', derivativeType: 'mcq_question' },
+      ]);
+      prisma.digest.findMany.mockResolvedValue([]);
+
+      let call = 0;
+      prisma.derivativeArtifact.findFirst.mockImplementation(async ({ where }: any) => {
+        call += 1;
+        if (call === 1) return null; // simulate 404 on a1
+        return makeArtifact({ id: where.id });
+      });
+      prisma.derivativeArtifact.update.mockImplementation(async ({ data }: any) => ({
+        id: 'stub',
+        reviewStatus: data.reviewStatus,
+        visibility: data.visibility ?? 'private',
+      }));
+
+      const result = await service.bulkApproveByConfidence(
+        { threshold: 0.7, includeDigests: false },
+        'reviewer-1',
+      );
+
+      expect(result.artifactsPromoted).toBe(1);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]).toMatchObject({
+        entityType: 'derivative_artifact',
+        entityId: 'a1',
+      });
     });
   });
 });

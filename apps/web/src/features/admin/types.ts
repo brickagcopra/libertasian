@@ -911,3 +911,21 @@ export interface JobEssayResponse {
     } | null;
   } | null;
 }
+
+// ---- Bulk approve by confidence ----
+
+export interface BulkApproveByConfidenceInput {
+  threshold: number;
+  derivativeTypes?: string[];
+  includeDigests?: boolean;
+  dryRun?: boolean;
+}
+
+export interface BulkApproveByConfidenceResult {
+  dryRun: boolean;
+  artifactsPromoted: number;
+  digestsPromoted: number;
+  subjectsInherited: number;
+  perTypeBreakdown: Array<{ derivativeType: string; count: number }>;
+  errors: Array<{ entityType: string; entityId: string; reason: string }>;
+}
