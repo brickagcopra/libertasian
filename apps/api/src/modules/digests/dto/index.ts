@@ -8,3 +8,5 @@ export { AssignReviewerDto } from './assign-reviewer.dto';
 export { SubmitReviewDto } from './submit-review.dto';
 export { BatchApproveDto, BatchRejectDto, BatchAssignDto } from './batch-review.dto';
 export { BatchDigestsQueryDto } from './batch-digests-query.dto';
+export { SearchDigestsQueryDto } from './search-digests-query.dto';
+export { GenerateOnDemandDto } from './generate-on-demand.dto';

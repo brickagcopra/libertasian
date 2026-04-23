@@ -1095,4 +1095,156 @@ export class DigestsService {
     }
     throw new ForbiddenException('You do not have access to this digest');
   }
+
+  /**
+   * Public editorial digest search. Restricted to
+   * ``visibility = 'public_editorial' AND reviewStatus = 'approved'`` so no
+   * private or in-review content can leak through this surface regardless of
+   * caller identity.
+   *
+   * Empty-result case returns a ``matchedDocuments`` array of legal_documents
+   * whose title / GR number matches the query, so the client can surface a
+   * "Generate this digest" CTA without a second round-trip.
+   */
+  async search(query: {
+    q?: string;
+    cursor?: string;
+    limit?: number;
+  }) {
+    const limit = query.limit ?? 20;
+    const needle = (query.q ?? '').trim();
+
+    const where: Prisma.DigestWhereInput = {
+      visibility: 'public_editorial',
+      reviewStatus: 'approved',
+    };
+
+    if (needle.length > 0) {
+      where.OR = [
+        { title: { contains: needle, mode: 'insensitive' } },
+        { legalDocument: { title: { contains: needle, mode: 'insensitive' } } },
+        { legalDocument: { grNo: { contains: needle, mode: 'insensitive' } } },
+        { legalDocument: { citationText: { contains: needle, mode: 'insensitive' } } },
+      ];
+    }
+
+    const digests = await this.prisma.digest.findMany({
+      where,
+      take: limit + 1,
+      ...(query.cursor && { skip: 1, cursor: { id: query.cursor } }),
+      orderBy: { createdAt: 'desc' },
+      include: {
+        legalDocument: {
+          select: {
+            id: true,
+            title: true,
+            shortTitle: true,
+            citationText: true,
+            grNo: true,
+            court: true,
+            decisionDate: true,
+            documentType: true,
+          },
+        },
+      },
+    });
+
+    const hasMore = digests.length > limit;
+    const results = hasMore ? digests.slice(0, limit) : digests;
+    const lastItem = results[results.length - 1];
+    const cursor = hasMore && lastItem ? lastItem.id : null;
+
+    // When the digest search turns up nothing, look for matching
+    // legal_documents so the caller can offer on-demand generation.
+    let matchedDocuments: Array<{
+      id: string;
+      title: string;
+      grNo: string | null;
+      citationText: string | null;
+    }> = [];
+    if (results.length === 0 && needle.length > 0) {
+      matchedDocuments = await this.prisma.legalDocument.findMany({
+        where: {
+          OR: [
+            { title: { contains: needle, mode: 'insensitive' } },
+            { grNo: { contains: needle, mode: 'insensitive' } },
+            { citationText: { contains: needle, mode: 'insensitive' } },
+          ],
+        },
+        select: {
+          id: true,
+          title: true,
+          grNo: true,
+          citationText: true,
+        },
+        take: 5,
+        orderBy: { createdAt: 'desc' },
+      });
+    }
+
+    return {
+      results,
+      hasMore,
+      cursor,
+      matchedDocuments,
+    };
+  }
+
+  /**
+   * On-demand digest generation: user wants a digest for a specific
+   * legal_document that doesn't have one yet. Creates a
+   * ``derivative_generation_jobs`` row with
+   * ``trigger_type='on_demand'``; the existing Celery Beat poller picks it
+   * up within 30s via the same pipeline bulk-gen uses. No duplicate worker
+   * code path.
+   *
+   * Callers (the controller) are responsible for the subscription +
+   * quota + rate-limit gates. This method just validates the target
+   * document exists and writes the job row.
+   */
+  async generateOnDemand(
+    legalDocumentId: string,
+    userId: string,
+  ): Promise<{ jobId: string; status: string }> {
+    const document = await this.prisma.legalDocument.findUnique({
+      where: { id: legalDocumentId },
+      select: { id: true },
+    });
+    if (!document) {
+      throw new NotFoundException('Legal document not found');
+    }
+
+    // Reject if a pending/running on-demand job already exists for this
+    // doc+user so users can't queue five duplicate jobs in 5 minutes by
+    // hammering the button.
+    const inflight = await this.prisma.derivativeGenerationJob.findFirst({
+      where: {
+        derivativeType: 'case_digest',
+        sourceDocumentId: legalDocumentId,
+        triggeredByUserId: userId,
+        status: { in: ['pending', 'running', 'validating'] },
+      },
+      select: { id: true, status: true },
+    });
+    if (inflight) {
+      return { jobId: inflight.id, status: inflight.status };
+    }
+
+    const job = await this.prisma.derivativeGenerationJob.create({
+      data: {
+        derivativeType: 'case_digest',
+        triggerType: 'on_demand',
+        sourceDocumentId: legalDocumentId,
+        triggeredByUserId: userId,
+        status: 'pending',
+      },
+      select: { id: true, status: true },
+    });
+
+    this.logger.log(
+      `Queued on-demand digest job ${job.id} for doc ${legalDocumentId} (user ${userId})`,
+    );
+
+    return { jobId: job.id, status: job.status };
+  }
 }
