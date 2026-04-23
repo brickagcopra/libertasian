@@ -467,6 +467,13 @@ class TestFlashcardGenerationTask:
         assert derivative_payload["visibility"] == "private"
         assert derivative_payload["modelRunId"] == "model-run-001"
 
+        # NestJS WriteDerivativeDto marks contentHash @IsNotEmpty(). Empty
+        # strings triggered a 1-27ms 400 on every bulk-gen run prior to
+        # 2026-04-23 — make sure we now send a real sha256 digest.
+        content_hash = derivative_payload["contentHash"]
+        assert content_hash.startswith("sha256:")
+        assert len(content_hash) > len("sha256:")
+
         # contentJson shape matches FlashcardRenderer contract
         content_json = derivative_payload["contentJson"]
         assert content_json["style"] == "rule_recall"

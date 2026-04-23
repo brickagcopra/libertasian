@@ -169,6 +169,13 @@ class TestOutlineGenerationTask:
         assert result["document_count"] == 2
         mock_nestjs.write_derivative.assert_called_once()
 
+        # NestJS WriteDerivativeDto marks contentHash @IsNotEmpty(). Empty
+        # strings triggered a 1-27ms 400 on every bulk-gen run prior to
+        # 2026-04-23 — make sure we now send a real sha256 digest.
+        payload = mock_nestjs.write_derivative.call_args.args[0]
+        assert payload["contentHash"].startswith("sha256:")
+        assert len(payload["contentHash"]) > len("sha256:")
+
     @patch("src.tasks.outline_generation_tasks.nestjs_client")
     @patch("src.tasks.outline_generation_tasks.db")
     @patch("src.tasks.outline_generation_tasks._get_document_ids_by_subject")
