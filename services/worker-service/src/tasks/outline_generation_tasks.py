@@ -106,9 +106,17 @@ def generate_subject_outline(
         return {"job_id": job_id, "status": "already_claimed"}
 
     try:
-        # Per-doc dispatch: fold document_id into document_ids + resolve
-        # subject_code from the document's primary subject assignment.
+        # Per-doc dispatch is DEPRECATED as of 2026-04-22. Outline is
+        # designed for multi-document subject rollups; calling it with a
+        # single document fails the validator's ≥3 sections + ≥2 cited
+        # docs invariant. New callers MUST pass subject_code. Per-doc is
+        # retained only for manual re-triggers of historical rows.
         if document_id and not document_ids:
+            logger.warning(
+                "Per-doc outline dispatch is deprecated — prefer subject_code. "
+                "job=%s document=%s",
+                job_id, document_id,
+            )
             document_ids = [document_id]
             if not subject_code:
                 resolved = _resolve_primary_subject(document_id)

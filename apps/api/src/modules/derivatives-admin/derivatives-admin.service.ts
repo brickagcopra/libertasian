@@ -417,6 +417,15 @@ export class DerivativesAdminService {
       );
     }
 
+    // Subject-outline dispatches per subject, not per document. Each job
+    // synthesises across multiple docs classified under the subject, so
+    // the per-doc fan-out below would create jobs that fail the
+    // ≥3 sections + ≥2 cited docs invariant (190/206 outline jobs
+    // failed in the 2026-04-22 bulk-gen because of this).
+    if (dto.derivativeType === 'subject_outline') {
+      return this.enqueueSubjectOutlineGeneration(dto, userId);
+    }
+
     // 2. Query matching documents
     const docWhere: Prisma.LegalDocumentWhereInput = {};
     if (dto.sourceId) docWhere.sourceId = dto.sourceId;
@@ -493,6 +502,80 @@ export class DerivativesAdminService {
 
     return {
       enqueuedCount: documents.length,
+      estimatedCostUsd,
+      jobIds,
+    };
+  }
+
+  private async enqueueSubjectOutlineGeneration(
+    dto: EnqueueGenerationDto,
+    userId: string,
+  ): Promise<{
+    enqueuedCount: number;
+    estimatedCostUsd: number;
+    jobIds: string[];
+  }> {
+    // One outline job per distinct primary subject. When
+    // `dto.subjectCode` is provided, dispatch only for that subject.
+    // Taxonomy is pinned to `study_8` to match the worker's
+    // _resolve_primary_subject / _get_document_ids_by_subject queries.
+    const subjectWhere: Prisma.SubjectWhereInput = {
+      taxonomyVersion: 'study_8',
+      documentAssignments: { some: { isPrimary: true } },
+    };
+    if (dto.subjectCode) {
+      subjectWhere.code = dto.subjectCode;
+    }
+
+    const subjects = await this.prisma.subject.findMany({
+      where: subjectWhere,
+      select: { code: true },
+      orderBy: { code: 'asc' },
+    });
+
+    if (subjects.length === 0) {
+      return { enqueuedCount: 0, estimatedCostUsd: 0, jobIds: [] };
+    }
+
+    const maxCount = dto.maxCount ?? 50;
+    const selected = subjects.slice(0, maxCount);
+
+    const jobIds: string[] = [];
+    const costPerUnit = DEFAULT_COST_PER_TYPE['subject_outline'] ?? 0.07;
+
+    for (const subj of selected) {
+      const job = await this.prisma.derivativeGenerationJob.create({
+        data: {
+          derivativeType: 'subject_outline',
+          triggerType: 'manual',
+          sourceDocumentId: null,
+          subjectCode: subj.code,
+          status: 'pending',
+          triggeredByUserId: userId,
+        },
+      });
+      jobIds.push(job.id);
+    }
+
+    const estimatedCostUsd = selected.length * costPerUnit;
+
+    await this.audit.log({
+      actorUserId: userId,
+      actorType: 'admin',
+      action: 'derivatives_admin.enqueue_generation',
+      entityType: 'derivative_generation_job',
+      entityId: jobIds[0],
+      metadata: {
+        derivativeType: 'subject_outline',
+        dispatchMode: 'per_subject',
+        enqueuedCount: selected.length,
+        subjectCodes: selected.map((s) => s.code),
+        estimatedCostUsd,
+      },
+    });
+
+    return {
+      enqueuedCount: selected.length,
       estimatedCostUsd,
       jobIds,
     };

@@ -494,3 +494,122 @@ class TestOutlineGenerationTask:
 
         assert result["status"] == "failed"
         assert result["reason"] == "missing_dispatch_args"
+
+    # ----- subject-level dispatch (post-2026-04-22 primary path) -----
+
+    @patch("src.tasks.outline_generation_tasks.nestjs_client")
+    @patch("src.tasks.outline_generation_tasks.rag_client")
+    @patch("src.tasks.outline_generation_tasks.db")
+    @patch("src.tasks.outline_generation_tasks.validate_derivative")
+    @patch("src.tasks.outline_generation_tasks._get_document_ids_by_subject")
+    def test_outline_subject_level_dispatch_loads_all_docs_under_subject(
+        self,
+        mock_get_ids: MagicMock,
+        mock_validate: MagicMock,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        mock_nestjs: MagicMock,
+    ) -> None:
+        """Subject-level dispatch loads every doc classified under the subject."""
+        from src.validators.derivative_validators import (
+            DerivativeValidationResult,
+            DerivativeVerdict,
+        )
+
+        # Subject-level call: 4 docs classified under criminal_law
+        mock_get_ids.return_value = ["doc-001", "doc-002", "doc-003", "doc-004"]
+        mock_db.claim_derivative_job.return_value = True
+        mock_db.get_content_disclaimer_id.return_value = "disc-001"
+        mock_db.get_legal_document.side_effect = [
+            FAKE_DOC_1, FAKE_DOC_2, FAKE_DOC_1, FAKE_DOC_2,
+        ]
+        mock_db.get_document_sections_for_digest.side_effect = [
+            FAKE_SECTIONS_1, FAKE_SECTIONS_2, FAKE_SECTIONS_1, FAKE_SECTIONS_2,
+        ]
+        mock_db.create_model_run.return_value = "model-run-001"
+        mock_rag.generate_completion.return_value = FAKE_RAG_RESPONSE
+        mock_validate.return_value = DerivativeValidationResult(
+            verdict=DerivativeVerdict.PUBLISH, checks=[], reasons=[],
+        )
+        mock_nestjs.write_derivative.return_value = {"artifactId": "art-001"}
+        mock_nestjs.update_job_status.return_value = True
+
+        result = generate_subject_outline.run(
+            "job-001", subject_code="criminal_law",
+        )
+
+        assert result["status"] == "completed"
+        assert result["document_count"] == 4
+        # Every doc under the subject was loaded — the per-doc resolver
+        # must NOT be invoked for the subject-level path.
+        mock_get_ids.assert_called_once_with("criminal_law", None, 10)
+        assert mock_db.get_legal_document.call_count == 4
+
+    @patch("src.tasks.outline_generation_tasks.nestjs_client")
+    @patch("src.tasks.outline_generation_tasks.rag_client")
+    @patch("src.tasks.outline_generation_tasks.db")
+    @patch("src.tasks.outline_generation_tasks.validate_derivative")
+    @patch("src.tasks.outline_generation_tasks._get_document_ids_by_subject")
+    def test_outline_subject_code_resolves_subject_id(
+        self,
+        mock_get_ids: MagicMock,
+        mock_validate: MagicMock,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        mock_nestjs: MagicMock,
+    ) -> None:
+        """The subject_code string is forwarded to the subject→docs resolver.
+
+        This guards the DB join: the resolver reads `subjects.code` to look
+        up the `subjects.id` used on `document_subject_assignments`.
+        """
+        from src.validators.derivative_validators import (
+            DerivativeValidationResult,
+            DerivativeVerdict,
+        )
+
+        mock_get_ids.return_value = ["doc-001", "doc-002"]
+        mock_db.claim_derivative_job.return_value = True
+        mock_db.get_content_disclaimer_id.return_value = "disc-001"
+        mock_db.get_legal_document.side_effect = [FAKE_DOC_1, FAKE_DOC_2]
+        mock_db.get_document_sections_for_digest.side_effect = [
+            FAKE_SECTIONS_1, FAKE_SECTIONS_2,
+        ]
+        mock_db.create_model_run.return_value = "model-run-001"
+        mock_rag.generate_completion.return_value = FAKE_RAG_RESPONSE
+        mock_validate.return_value = DerivativeValidationResult(
+            verdict=DerivativeVerdict.PUBLISH, checks=[], reasons=[],
+        )
+        mock_nestjs.write_derivative.return_value = {"artifactId": "art-001"}
+        mock_nestjs.update_job_status.return_value = True
+
+        generate_subject_outline.run("job-001", subject_code="civil_law")
+
+        # Forwards subject_code verbatim; topic defaults to None; max 10.
+        mock_get_ids.assert_called_once_with("civil_law", None, 10)
+        # input_ref on the model_run captures the subject code for audit.
+        call_kwargs = mock_db.create_model_run.call_args
+        assert call_kwargs.kwargs["input_ref"] == "subject:civil_law"
+
+    @patch("src.tasks.outline_generation_tasks.nestjs_client")
+    @patch("src.tasks.outline_generation_tasks.db")
+    @patch("src.tasks.outline_generation_tasks._get_document_ids_by_subject")
+    def test_outline_rejects_unknown_subject_code(
+        self,
+        mock_get_ids: MagicMock,
+        mock_db: MagicMock,
+        mock_nestjs: MagicMock,
+    ) -> None:
+        """An unknown subject_code (no docs classified) fails the job."""
+        mock_get_ids.return_value = []
+        mock_db.claim_derivative_job.return_value = True
+        mock_db.get_content_disclaimer_id.return_value = "disc-001"
+        mock_nestjs.update_job_status.return_value = True
+
+        result = generate_subject_outline.run(
+            "job-001", subject_code="not_a_real_subject",
+        )
+
+        assert result["status"] == "failed"
+        assert result["reason"] == "no_documents"
+        mock_nestjs.write_derivative.assert_not_called()
