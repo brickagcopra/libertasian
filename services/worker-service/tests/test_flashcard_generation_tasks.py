@@ -375,3 +375,224 @@ class TestFlashcardGenerationTask:
         assert ledger["tokensOut"] == 600
         assert ledger["modelName"] == "gpt-4o-mini"
         assert ledger["modelRunId"] == "model-run-001"
+
+    @patch("src.tasks.flashcard_generation_tasks.nestjs_client")
+    @patch("src.tasks.flashcard_generation_tasks.rag_client")
+    @patch("src.tasks.flashcard_generation_tasks.db")
+    @patch("src.tasks.flashcard_generation_tasks.validate_derivative")
+    def test_9_writes_derivative_artifact_for_library(
+        self,
+        mock_validate: MagicMock,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        mock_nestjs: MagicMock,
+    ) -> None:
+        """Happy path: both FlashcardSet AND DerivativeArtifact are written."""
+        from src.validators.derivative_validators import (
+            DerivativeValidationResult,
+            DerivativeVerdict,
+        )
+
+        # Use real UUIDs for section IDs so the UUID filter keeps them.
+        sec_uuid_1 = "11111111-1111-4111-8111-111111111111"
+        sec_uuid_2 = "22222222-2222-4222-8222-222222222222"
+        sections = [
+            {**FAKE_SECTIONS[0], "id": sec_uuid_1},
+            {**FAKE_SECTIONS[1], "id": sec_uuid_2},
+        ]
+        llm_content = {
+            "cards": [
+                {
+                    "front": "Q1",
+                    "back": "A1",
+                    "mnemonicHint": None,
+                    "tags": ["command-responsibility"],
+                    "supportingSectionIds": [sec_uuid_1],
+                },
+                {
+                    "front": "Q2",
+                    "back": "A2",
+                    "mnemonicHint": "MNE",
+                    "supportingSectionIds": [sec_uuid_1, sec_uuid_2],
+                },
+            ],
+            "abstain": False,
+            "abstainReason": None,
+        }
+
+        mock_db.get_legal_document.return_value = FAKE_DOC
+        mock_db.get_document_sections_for_digest.return_value = sections
+        mock_db.create_model_run.return_value = "model-run-001"
+        mock_db.get_content_disclaimer_id.return_value = "disc-001"
+        mock_rag.generate_completion.return_value = {
+            **FAKE_RAG_RESPONSE,
+            "content": llm_content,
+        }
+        mock_validate.return_value = DerivativeValidationResult(
+            verdict=DerivativeVerdict.PUBLISH, checks=[], reasons=[],
+        )
+        mock_nestjs.write_flashcards.return_value = {
+            "setId": "set-001",
+            "cardIds": ["card-001", "card-002"],
+        }
+        mock_nestjs.write_derivative.return_value = {"artifactId": "artifact-001"}
+        mock_nestjs.update_job_status.return_value = True
+
+        result = _run_task("job-001", "doc-001", card_style="rule_recall")
+
+        # Both writes happened
+        mock_nestjs.write_flashcards.assert_called_once()
+        mock_nestjs.write_derivative.assert_called_once()
+
+        derivative_payload = mock_nestjs.write_derivative.call_args.args[0]
+        assert derivative_payload["derivativeType"] == "flashcard"
+        assert derivative_payload["sourceDocumentId"] == "doc-001"
+        assert derivative_payload["derivativeGenerationJobId"] == "job-001"
+        assert derivative_payload["contentRights"] == "ai_generated_derivative"
+        assert derivative_payload["contentDisclaimerId"] == "disc-001"
+        assert derivative_payload["visibility"] == "private"
+        assert derivative_payload["modelRunId"] == "model-run-001"
+
+        # contentJson shape matches FlashcardRenderer contract
+        content_json = derivative_payload["contentJson"]
+        assert content_json["style"] == "rule_recall"
+        assert content_json["cardCount"] == 2
+        assert "generatedAt" in content_json
+        assert len(content_json["cards"]) == 2
+        first_card = content_json["cards"][0]
+        assert first_card["front"] == "Q1"
+        assert first_card["back"] == "A1"
+        assert first_card["tags"] == ["command-responsibility"]
+        assert first_card["supportingSectionIds"] == [sec_uuid_1]
+
+        # Confidence score populated from real scoring (not 0.0)
+        assert derivative_payload["confidenceScore"] > 0
+
+        # Provenance records built from cited UUID section ids
+        prov = derivative_payload["provenanceRecords"]
+        assert len(prov) >= 1
+        prov_section_ids = {p["sourceSectionId"] for p in prov}
+        assert prov_section_ids <= {sec_uuid_1, sec_uuid_2}
+        for p in prov:
+            assert p["sourceDocumentId"] == "doc-001"
+            assert p["provenanceType"] == "source_passage"
+
+        # Task result surfaces the artifact id
+        assert result["status"] == "completed"
+        assert result["artifact_id"] == "artifact-001"
+        assert result["set_id"] == "set-001"
+
+    @patch("src.tasks.flashcard_generation_tasks.nestjs_client")
+    @patch("src.tasks.flashcard_generation_tasks.rag_client")
+    @patch("src.tasks.flashcard_generation_tasks.db")
+    @patch("src.tasks.flashcard_generation_tasks.validate_derivative")
+    def test_10_uuid_filter_drops_bogus_section_ids(
+        self,
+        mock_validate: MagicMock,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        mock_nestjs: MagicMock,
+    ) -> None:
+        """Bogus / non-UUID supportingSectionIds must be dropped before write.
+
+        Mirrors the MCQ UUID-filter guard (PR #63) so NestJS @IsUUID()
+        validation on provenance records doesn't 400 the write.
+        """
+        from src.validators.derivative_validators import (
+            DerivativeValidationResult,
+            DerivativeVerdict,
+        )
+
+        sec_uuid = "11111111-1111-4111-8111-111111111111"
+        sections = [{**FAKE_SECTIONS[0], "id": sec_uuid}]
+        llm_content = {
+            "cards": [
+                {
+                    "front": "Q1",
+                    "back": "A1",
+                    # Mix: one real UUID, several bogus values the filter must drop
+                    "supportingSectionIds": [
+                        sec_uuid,
+                        "sec-001",  # non-UUID stub
+                        "not-a-uuid",
+                        "",
+                        None,  # wrong type
+                        42,  # wrong type
+                        "99999999-9999-4999-8999-999999999999",  # UUID but unknown
+                    ],
+                },
+            ],
+            "abstain": False,
+        }
+
+        mock_db.get_legal_document.return_value = FAKE_DOC
+        mock_db.get_document_sections_for_digest.return_value = sections
+        mock_db.create_model_run.return_value = "model-run-001"
+        mock_db.get_content_disclaimer_id.return_value = "disc-001"
+        mock_rag.generate_completion.return_value = {
+            **FAKE_RAG_RESPONSE,
+            "content": llm_content,
+        }
+        mock_validate.return_value = DerivativeValidationResult(
+            verdict=DerivativeVerdict.PUBLISH, checks=[], reasons=[],
+        )
+        mock_nestjs.write_flashcards.return_value = {
+            "setId": "set-001",
+            "cardIds": ["card-001"],
+        }
+        mock_nestjs.write_derivative.return_value = {"artifactId": "artifact-001"}
+        mock_nestjs.update_job_status.return_value = True
+
+        _run_task("job-001", "doc-001")
+
+        payload = mock_nestjs.write_derivative.call_args.args[0]
+        cards = payload["contentJson"]["cards"]
+        # Only the real, known UUID survives the filter
+        assert cards[0]["supportingSectionIds"] == [sec_uuid]
+        # Provenance also contains only the one valid UUID
+        prov = payload["provenanceRecords"]
+        assert len(prov) == 1
+        assert prov[0]["sourceSectionId"] == sec_uuid
+
+    @patch("src.tasks.flashcard_generation_tasks.nestjs_client")
+    @patch("src.tasks.flashcard_generation_tasks.rag_client")
+    @patch("src.tasks.flashcard_generation_tasks.db")
+    @patch("src.tasks.flashcard_generation_tasks.validate_derivative")
+    def test_11_derivative_write_failure_fails_job(
+        self,
+        mock_validate: MagicMock,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        mock_nestjs: MagicMock,
+    ) -> None:
+        """If the derivative_artifact write raises, the whole job fails."""
+        import httpx
+        from src.validators.derivative_validators import (
+            DerivativeValidationResult,
+            DerivativeVerdict,
+        )
+
+        mock_db.get_legal_document.return_value = FAKE_DOC
+        mock_db.get_document_sections_for_digest.return_value = FAKE_SECTIONS
+        mock_db.create_model_run.return_value = "model-run-001"
+        mock_db.get_content_disclaimer_id.return_value = "disc-001"
+        mock_rag.generate_completion.return_value = FAKE_RAG_RESPONSE
+        mock_validate.return_value = DerivativeValidationResult(
+            verdict=DerivativeVerdict.PUBLISH, checks=[], reasons=[],
+        )
+        mock_nestjs.write_flashcards.return_value = {
+            "setId": "set-001",
+            "cardIds": ["card-001", "card-002"],
+        }
+        # Build a 400 response so the 5xx retry guard doesn't re-raise.
+        req = httpx.Request("POST", "http://nest/internal/derivatives/write")
+        resp = httpx.Response(400, request=req, text="bad")
+        mock_nestjs.write_derivative.side_effect = httpx.HTTPStatusError(
+            "bad request", request=req, response=resp,
+        )
+        mock_nestjs.update_job_status.return_value = True
+
+        result = _run_task("job-001", "doc-001")
+
+        assert result["status"] == "failed"
+        assert result["reason"] == "http_error_400"

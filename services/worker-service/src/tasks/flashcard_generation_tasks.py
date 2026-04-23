@@ -1,9 +1,12 @@
 """Flashcard generation — LLM-based flashcard generation from legal documents.
 
 PR 5.3: Celery task that generates spaced-repetition flashcards from
-Philippine legal documents. Unlike other derivative types, flashcards
-write to the EXISTING Flashcard + FlashcardSet tables (NOT DerivativeArtifact)
-via a dedicated NestJS internal endpoint (POST /internal/derivatives/write-flashcards).
+Philippine legal documents. Flashcards write to BOTH:
+  1. The existing Flashcard + FlashcardSet tables via NestJS
+     POST /internal/derivatives/write-flashcards (user-authored study path).
+  2. A DerivativeArtifact row via NestJS POST /internal/derivatives/write
+     so the Quimbee Library (which reads from derivative_artifacts) can
+     surface bulk-generated flashcards.
 
 Per CLAUDE.md:
 - Celery tasks must be idempotent (acks_late + reject_on_worker_lost)
@@ -16,6 +19,7 @@ import datetime
 import json
 import logging
 import time
+import uuid
 from typing import Any
 
 import httpx
@@ -29,6 +33,7 @@ from ..prompts.flashcard_generation_v1 import (
     PROMPT_TEMPLATE_VERSION,
     build_user_prompt,
 )
+from ..scoring import compute_flashcard_confidence_score
 from ..validators.derivative_validators import (
     DerivativeVerdict,
     LegalDocumentSectionSnapshot,
@@ -60,8 +65,9 @@ def generate_flashcards(
 ) -> dict[str, Any]:
     """Generate flashcards from a legal document.
 
-    Unlike other derivative types, flashcards write to the EXISTING
-    Flashcard + FlashcardSet tables, NOT DerivativeArtifact.
+    Writes to BOTH FlashcardSet/Flashcard (study path) and
+    DerivativeArtifact (Library path). Both writes must succeed or the
+    job fails.
 
     Steps:
     1. Update job status -> running
@@ -72,8 +78,11 @@ def generate_flashcards(
     6. Parse JSON
     7. Run FlashcardValidator
     8. Record model run
-    9. Write via NestJS internal endpoint (creates FlashcardSet + Flashcards)
-    10. Update job status
+    9. Write via NestJS POST /internal/derivatives/write-flashcards
+       (creates FlashcardSet + Flashcards)
+    10. Write via NestJS POST /internal/derivatives/write
+        (creates DerivativeArtifact for Library visibility)
+    11. Update job status
     """
     logger.info(
         "generate_flashcards: job_id=%s document_id=%s card_count=%d card_style=%s",
@@ -218,6 +227,18 @@ def generate_flashcards(
                 ],
             }
 
+        # Determine review status from validator verdict
+        if validation_result.verdict == DerivativeVerdict.HUMAN_REVIEW:
+            review_status = "needs_human_review"
+        else:
+            review_status = "draft"
+
+        # Compute confidence score from source coverage + citation mapping
+        confidence_score = compute_flashcard_confidence_score(
+            content=content,
+            source_sections=sections_with_text,
+        )
+
         # Step 8: Record model run
         model_run_id = db.create_model_run(
             run_type="flashcard_generation",
@@ -225,13 +246,13 @@ def generate_flashcards(
             prompt_template_version=PROMPT_TEMPLATE_VERSION,
             input_ref=f"doc:{document_id}",
             output_ref=f"job:{job_id}",
-            confidence=0.0,
+            confidence=confidence_score,
             tokens_in=tokens_in,
             tokens_out=tokens_out,
             latency_ms=latency_ms,
         )
 
-        # Step 9: Write via NestJS internal endpoint
+        # Step 9: Write to FlashcardSet + Flashcard (user-authored study path)
         cards = content.get("cards", [])
         write_payload: dict[str, Any] = {
             "title": f"Flashcards: {doc.get('title', document_id)[:80]}",
@@ -268,7 +289,58 @@ def generate_flashcards(
         set_id = result.get("setId")
         card_ids = result.get("cardIds", [])
 
-        # Step 10: Update job -> completed
+        # Step 10: Write DerivativeArtifact so the Library surfaces this
+        # bulk-generated set. Failure here fails the whole job — the
+        # FlashcardSet write above already succeeded but the Library
+        # expects a matching derivative_artifact row.
+        content_disclaimer_id = db.get_content_disclaimer_id("ai_digest")
+        source_section_id_set = {s["id"] for s in sections_with_text}
+        derivative_cards, cited_section_ids = _build_derivative_cards(
+            cards, source_section_id_set,
+        )
+        derivative_content_json: dict[str, Any] = {
+            "cards": derivative_cards,
+            "style": card_style,
+            "cardCount": len(derivative_cards),
+            "generatedAt": datetime.datetime.now(
+                tz=datetime.timezone.utc,
+            ).isoformat(),
+        }
+        provenance_records = _build_provenance_records(
+            document_id, cited_section_ids, sections_with_text,
+        )
+        derivative_payload: dict[str, Any] = {
+            "derivativeType": "flashcard",
+            "sourceDocumentId": document_id,
+            "derivativeGenerationJobId": job_id,
+            "organizationId": organization_id,
+            "title": f"Flashcards: {doc.get('title', document_id)[:80]}",
+            "contentJson": derivative_content_json,
+            "contentHash": "",
+            "contentRights": "ai_generated_derivative",
+            "contentDisclaimerId": content_disclaimer_id,
+            "visibility": "private",
+            "reviewStatus": review_status,
+            "validatorVerdict": validation_result.verdict.value,
+            "validatorReasonsJson": {
+                "checks": [
+                    {
+                        "name": c.name,
+                        "passed": c.passed,
+                        "reason": c.reason,
+                        "severity": c.severity,
+                    }
+                    for c in validation_result.checks
+                ],
+            },
+            "confidenceScore": confidence_score,
+            "modelRunId": model_run_id,
+            "provenanceRecords": provenance_records,
+        }
+        derivative_result = nestjs_client.write_derivative(derivative_payload)
+        artifact_id = derivative_result.get("artifactId")
+
+        # Step 11: Update job -> completed
         nestjs_client.update_job_status(
             job_id, "completed",
             promptTemplateVersion=PROMPT_TEMPLATE_VERSION,
@@ -278,10 +350,11 @@ def generate_flashcards(
         )
 
         logger.info(
-            "Completed flashcard generation: job=%s set=%s cards=%d",
+            "Completed flashcard generation: job=%s set=%s cards=%d artifact=%s",
             job_id,
             set_id,
             len(card_ids),
+            artifact_id,
         )
 
         return {
@@ -289,6 +362,7 @@ def generate_flashcards(
             "set_id": set_id,
             "card_ids": card_ids,
             "card_count": len(card_ids),
+            "artifact_id": artifact_id,
             "validator_verdict": validation_result.verdict.value,
         }
 
@@ -337,3 +411,71 @@ def _fail_job(
 def _current_period_year_month() -> str:
     """Return current year-month string for budget ledger."""
     return datetime.datetime.now(tz=datetime.timezone.utc).strftime("%Y-%m")
+
+
+def _build_derivative_cards(
+    cards: list[dict[str, Any]],
+    source_section_ids: set[str],
+) -> tuple[list[dict[str, Any]], set[str]]:
+    """Shape LLM cards for the derivative_artifact contentJson.
+
+    Mirrors PR #63 MCQ pattern: drop non-UUID / unknown
+    ``supportingSectionIds`` so the provenance records we build from
+    them pass the NestJS @IsUUID() check.
+
+    Returns (card_entries, unique_cited_section_ids).
+    """
+    entries: list[dict[str, Any]] = []
+    cited: set[str] = set()
+    for c in cards:
+        if not isinstance(c, dict):
+            continue
+        raw_sids = c.get("supportingSectionIds", []) or []
+        filtered_sids: list[str] = []
+        for sid in raw_sids:
+            if not isinstance(sid, str):
+                continue
+            try:
+                uuid.UUID(sid)
+            except (ValueError, AttributeError, TypeError):
+                continue
+            if sid not in source_section_ids:
+                continue
+            filtered_sids.append(sid)
+            cited.add(sid)
+        entries.append({
+            "front": c.get("front", ""),
+            "back": c.get("back", ""),
+            "mnemonicHint": c.get("mnemonicHint"),
+            "tags": c.get("tags", []) or [],
+            "supportingSectionIds": filtered_sids,
+        })
+    return entries, cited
+
+
+def _build_provenance_records(
+    document_id: str,
+    cited_section_ids: set[str],
+    source_sections: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Build provenance records for the derivative_artifact write.
+
+    NestJS requires ≥1 provenance record. If the LLM didn't cite any
+    valid section, fall back to the first source section so the write
+    still satisfies the invariant (mirrors outline's fallback).
+    """
+    provenance: list[dict[str, Any]] = [
+        {
+            "sourceDocumentId": document_id,
+            "sourceSectionId": sid,
+            "provenanceType": "source_passage",
+        }
+        for sid in cited_section_ids
+    ]
+    if not provenance and source_sections:
+        provenance.append({
+            "sourceDocumentId": document_id,
+            "sourceSectionId": source_sections[0]["id"],
+            "provenanceType": "source_passage",
+        })
+    return provenance

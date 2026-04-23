@@ -257,6 +257,74 @@ def compute_doctrine_confidence_score(
     )
 
 
+def compute_flashcard_confidence_score(
+    *,
+    content: dict[str, Any],
+    source_sections: list[dict[str, Any]],
+    ocr_quality: float = 1.0,
+) -> float:
+    """Compute confidence score for a flashcard derivative.
+
+    Extracts flashcard-specific signals from the LLM output:
+    - Source passage coverage: unique valid cited section IDs across all
+      cards / total source sections.
+    - Citation mapping completeness: cards with at least one valid
+      supportingSectionId / total cards.
+
+    The flashcard prompt emits ``supportingSectionIds`` on each card —
+    see prompts/flashcard_generation_v1.py. Mirrors the MCQ pattern.
+
+    Args:
+        content: Parsed LLM output with a ``cards`` list.
+        source_sections: Source document sections (each must have an "id" key).
+        ocr_quality: OCR quality of the source document. Defaults to 1.0
+            for non-scan sources.
+
+    Returns:
+        Confidence score clamped to [0, 1].
+    """
+    source_section_ids = {s["id"] for s in source_sections}
+    source_section_count = len(source_section_ids)
+
+    cited_section_ids: set[str] = set()
+    cards = content.get("cards", [])
+    if not isinstance(cards, list):
+        cards = []
+
+    for card in cards:
+        if not isinstance(card, dict):
+            continue
+        for sid in card.get("supportingSectionIds", []) or []:
+            if sid in source_section_ids:
+                cited_section_ids.add(sid)
+
+    if source_section_count > 0:
+        source_passage_coverage = len(cited_section_ids) / source_section_count
+    else:
+        source_passage_coverage = 0.0
+
+    card_count = len(cards)
+    if card_count > 0:
+        cards_with_citations = sum(
+            1
+            for c in cards
+            if isinstance(c, dict)
+            and any(
+                sid in source_section_ids
+                for sid in (c.get("supportingSectionIds", []) or [])
+            )
+        )
+        citation_mapping_completeness = cards_with_citations / card_count
+    else:
+        citation_mapping_completeness = 0.0
+
+    return compute_derivative_confidence_score(
+        source_passage_coverage=source_passage_coverage,
+        citation_mapping_completeness=citation_mapping_completeness,
+        ocr_quality=ocr_quality,
+    )
+
+
 def compute_outline_confidence_score(
     *,
     content: dict[str, Any],
