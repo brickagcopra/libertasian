@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 
 import { useDigest } from '@/features/digests/hooks/use-digests';
+import { sanitizeRulingText } from '@/features/digests/lib/sanitize-ruling';
 import { ROUTES } from '@/lib/constants';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -13,15 +14,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ArrowLeftIcon, AlertCircleIcon, ExternalLinkIcon } from 'lucide-react';
 import { ExportButton } from '@/features/exports/components/export-button';
-
-const REVIEW_STATUS_STYLES: Record<string, { variant: 'default' | 'secondary' | 'destructive' | 'outline'; className?: string }> = {
-  draft: { variant: 'secondary' },
-  ai_generated: { variant: 'outline', className: 'border-blue-200 bg-blue-50 text-blue-700' },
-  needs_human_review: { variant: 'outline', className: 'border-yellow-200 bg-yellow-50 text-yellow-700' },
-  approved: { variant: 'outline', className: 'border-green-200 bg-green-50 text-green-700' },
-  published: { variant: 'outline', className: 'border-green-300 bg-green-100 text-green-800' },
-  rejected: { variant: 'destructive' },
-};
 
 const VISIBILITY_STYLES: Record<string, { variant: 'default' | 'secondary' | 'outline'; className?: string }> = {
   private: { variant: 'secondary' },
@@ -74,7 +66,6 @@ export default function DigestDetailPage() {
   }
 
   const displayType = digest.digestType.replace(/_/g, ' ');
-  const reviewStyle = REVIEW_STATUS_STYLES[digest.reviewStatus] ?? { variant: 'secondary' as const };
   const visibilityStyle = VISIBILITY_STYLES[digest.visibility] ?? { variant: 'secondary' as const };
 
   return (
@@ -95,9 +86,6 @@ export default function DigestDetailPage() {
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           <Badge variant="secondary" className="capitalize">
             {displayType}
-          </Badge>
-          <Badge variant={reviewStyle.variant} className={reviewStyle.className}>
-            {digest.reviewStatus.replace(/_/g, ' ')}
           </Badge>
           <Badge variant={visibilityStyle.variant} className={visibilityStyle.className}>
             {digest.visibility.replace(/_/g, ' ')}
@@ -130,7 +118,7 @@ export default function DigestDetailPage() {
         <DigestSection title="Petitioner's Arguments" content={digest.petitionerArguments} />
         <DigestSection title="Respondent's Arguments" content={digest.respondentArguments} />
         <DigestSection title="Issues" content={digest.issues} />
-        <DigestSection title="Ruling" content={digest.ruling} />
+        <DigestSection title="Ruling" content={sanitizeRulingText(digest.ruling) || null} />
         <DigestSection title="Dispositive Portion" content={digest.dispositive} />
       </div>
 
@@ -145,8 +133,6 @@ export default function DigestDetailPage() {
           <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
             <dt className="text-muted-foreground">Source Origin</dt>
             <dd className="font-medium capitalize">{digest.sourceOrigin.replace(/_/g, ' ')}</dd>
-            <dt className="text-muted-foreground">Review Status</dt>
-            <dd className="font-medium capitalize">{digest.reviewStatus.replace(/_/g, ' ')}</dd>
             <dt className="text-muted-foreground">Visibility</dt>
             <dd className="font-medium capitalize">{digest.visibility}</dd>
             {digest.confidenceScore != null && (

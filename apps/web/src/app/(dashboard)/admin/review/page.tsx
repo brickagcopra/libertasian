@@ -3,6 +3,7 @@
 import { useState, useCallback } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Check, X, RotateCcw, ArrowUpDown, UserPlus } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
 
 import {
   useEnhancedReviewQueue,
@@ -488,6 +489,7 @@ function EnhancedDigestCard({
   onToggleSelect: () => void;
 }) {
   const submitReview = useSubmitReview();
+  const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState(false);
   const [notes, setNotes] = useState('');
   const [truthfulness, setTruthfulness] = useState(80);
@@ -496,8 +498,24 @@ function EnhancedDigestCard({
   const [actionMsg, setActionMsg] = useState('');
 
   const handleReview = async (verdict: string) => {
+    if (submitReview.isPending) return;
+
+    // Snapshot so we can restore on failure.
+    const snapshots = queryClient.getQueriesData<{ items: ReviewQueueItem[]; meta: unknown }>({
+      queryKey: ['admin', 'enhanced-review-queue'],
+    });
+
+    // Optimistically drop this row from every matching review-queue cache.
+    snapshots.forEach(([key, value]) => {
+      if (!value?.items) return;
+      queryClient.setQueryData(key, {
+        ...value,
+        items: value.items.filter((i) => i.id !== item.id),
+      });
+    });
+
     try {
-      const result = await submitReview.mutateAsync({
+      await submitReview.mutateAsync({
         id: item.id,
         verdict,
         notes: notes || undefined,
@@ -505,8 +523,10 @@ function EnhancedDigestCard({
         completeness: completeness / 100,
         citationAccuracy: citationAccuracy / 100,
       });
-      setActionMsg(`${result.verdict} — new status: ${result.newStatus}`);
+      // onSuccess invalidation refetches the authoritative list.
     } catch {
+      // Roll back the optimistic removal so the user can retry.
+      snapshots.forEach(([key, value]) => queryClient.setQueryData(key, value));
       setActionMsg(`Failed to ${verdict}.`);
     }
   };
