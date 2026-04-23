@@ -3,6 +3,9 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
+  HttpException,
+  HttpStatus,
   Ip,
   Param,
   ParseUUIDPipe,
@@ -11,6 +14,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { JwtPayload } from '@libertasian/types';
 
@@ -18,13 +22,16 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { TrackEvent } from '../analytics';
 import { AuditService } from '../audit/audit.service';
+import { UsageQuotaService } from '../subscriptions/usage-quota.service';
 import { DigestsService } from './digests.service';
 import {
   BatchDigestsQueryDto,
   CreateDigestDto,
   CreateProvenanceDto,
   GenerateDigestDto,
+  GenerateOnDemandDto,
   ListDigestsQueryDto,
+  SearchDigestsQueryDto,
   UpdateDigestDto,
 } from './dto';
 
@@ -42,6 +49,7 @@ export class DigestsController {
   constructor(
     private readonly digestsService: DigestsService,
     private readonly auditService: AuditService,
+    private readonly usageQuota: UsageQuotaService,
   ) {}
 
   @Post('by-documents')
@@ -146,6 +154,96 @@ export class DigestsController {
       query,
     );
     return { success: true, data: result.items, meta: result.meta };
+  }
+
+  @Get('search')
+  @ApiOperation({
+    summary:
+      'Search approved public-editorial digests; returns matchedDocuments for on-demand generation when empty',
+  })
+  async search(@Query() query: SearchDigestsQueryDto) {
+    const { results, hasMore, cursor, matchedDocuments } =
+      await this.digestsService.search(query);
+    return {
+      success: true,
+      data: { results, hasMore, cursor, matchedDocuments },
+    };
+  }
+
+  @Post('generate-on-demand')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @Throttle({ default: { limit: 5, ttl: 3_600_000 } })
+  @ApiOperation({
+    summary:
+      'On-demand case digest generation — gated on active subscription, monthly quota, and a 5/hour/user rate limit',
+  })
+  @TrackEvent('digest_generate_on_demand', (req) => ({
+    legal_document_id: (req.body?.legalDocumentId as string) ?? 'unknown',
+  }))
+  async generateOnDemand(
+    @Body() dto: GenerateOnDemandDto,
+    @CurrentUser() user: JwtPayload,
+    @Ip() ip: string,
+  ) {
+    // Subscription + quota gate. We call checkAndIncrement up-front: its
+    // allowed=false branch handles both "no active subscription" (limit=0)
+    // and "active subscription but quota exceeded" (used>=limit). We
+    // disambiguate for the caller via the response body so the web can
+    // route to /pricing vs. "comes back on <date>".
+    const quota = await this.usageQuota.checkAndIncrement(
+      user.organizationId,
+      user.sub,
+      'digestsPerMonth',
+    );
+
+    if (!quota.allowed) {
+      if (quota.limit === 0) {
+        throw new HttpException(
+          {
+            success: false,
+            error: 'subscription_required',
+            upgradeUrl: '/pricing',
+            message: 'An active subscription is required to generate digests on demand.',
+          },
+          HttpStatus.PAYMENT_REQUIRED,
+        );
+      }
+
+      throw new HttpException(
+        {
+          success: false,
+          error: 'quota_exceeded',
+          resetAt: quota.resetsAt,
+          currentUsage: quota.used,
+          limit: quota.limit,
+          message: 'Monthly digest generation quota exceeded.',
+        },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    const job = await this.digestsService.generateOnDemand(
+      dto.legalDocumentId,
+      user.sub,
+    );
+
+    await this.auditService.log({
+      organizationId: user.organizationId,
+      actorUserId: user.sub,
+      actorType: 'user',
+      action: 'digest.generate_on_demand',
+      entityType: 'derivative_generation_job',
+      entityId: job.jobId,
+      metadata: { ip, legalDocumentId: dto.legalDocumentId },
+    });
+
+    return {
+      success: true,
+      data: job,
+      meta: {
+        quota: { used: quota.used, limit: quota.limit, remaining: quota.remaining },
+      },
+    };
   }
 
   @Get(':id')

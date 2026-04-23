@@ -83,3 +83,50 @@ export function useGenerateDigest() {
     },
   });
 }
+
+export interface MatchedDocument {
+  id: string;
+  title: string;
+  grNo: string | null;
+  citationText: string | null;
+}
+
+export interface DigestSearchResponse {
+  results: Digest[];
+  hasMore: boolean;
+  cursor: string | null;
+  matchedDocuments: MatchedDocument[];
+}
+
+export function useSearchDigests(query: string, enabled: boolean = true) {
+  return useQuery({
+    queryKey: ['digests', 'search', query],
+    queryFn: async () => {
+      const params: Record<string, string> = { limit: '20' };
+      if (query) params['q'] = query;
+      const res = await apiClient.get<{
+        success: boolean;
+        data: DigestSearchResponse;
+      }>('/digests/search', { params });
+      return res.data;
+    },
+    enabled: enabled && query.trim().length > 0,
+  });
+}
+
+export function useGenerateOnDemand() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (legalDocumentId: string) => {
+      const res = await apiClient.post<{
+        success: boolean;
+        data: { jobId: string; status: string };
+      }>('/digests/generate-on-demand', { legalDocumentId });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['digests'] });
+    },
+  });
+}

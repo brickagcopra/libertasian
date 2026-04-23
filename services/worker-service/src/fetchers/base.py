@@ -228,3 +228,63 @@ class BaseFetcher(ABC):
             FetchedContent with raw HTML and metadata.
         """
         ...
+
+    def fetch_since(
+        self,
+        endpoint_url: str,
+        cursor: str | None,
+    ) -> tuple[list[CandidateDoc], str | None]:
+        """Fetch only decisions newer than ``cursor``.
+
+        The cursor is the URL of the most-recent candidate captured on the
+        previous successful crawl. The fetcher re-discovers the current
+        listing and returns everything that appears *above* the cursor URL —
+        i.e. every decision the site has published since last run.
+
+        Behavioral rules:
+
+        1. ``cursor is None`` → first-ever run. Return the full listing and
+           set the new cursor to the newest candidate's URL.
+        2. ``cursor`` found in the current listing → return only the
+           candidates that come before it, and set new cursor to the newest.
+        3. ``cursor`` NOT found (got pushed off the listing by a large batch,
+           or the decision was removed) → conservative fallback: return the
+           full listing so nothing is missed, and advance the cursor to the
+           newest entry.
+        4. Listing is empty → return ``([], cursor)``. Cursor must not
+           advance; callers treat this as a no-op that does NOT move
+           ``crawl_state`` forward, so a transient source outage can't skip
+           future decisions.
+
+        Args:
+            endpoint_url: Source listing URL to crawl.
+            cursor: URL of the newest decision captured last run, or None.
+
+        Returns:
+            (new_candidates, new_cursor). ``new_cursor`` is ``None`` only if
+            ``discover`` returned zero candidates AND the input cursor was
+            also ``None``.
+        """
+        candidates = self.discover(endpoint_url)
+        if not candidates:
+            return [], cursor
+
+        # Listings are assumed to be reverse-chronological (newest first).
+        newest_url = candidates[0].url
+
+        if cursor is None:
+            return list(candidates), newest_url
+
+        new_candidates: list[CandidateDoc] = []
+        cursor_found = False
+        for c in candidates:
+            if c.url == cursor:
+                cursor_found = True
+                break
+            new_candidates.append(c)
+
+        if not cursor_found:
+            # Cursor fell off the listing — play it safe and return all.
+            return list(candidates), newest_url
+
+        return new_candidates, newest_url if new_candidates else cursor

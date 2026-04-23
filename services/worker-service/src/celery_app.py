@@ -66,6 +66,22 @@ app.conf.update(
     },
 )
 
+# Daily incremental crawls (SCEL + LawPhil). Additive to beat_schedule and
+# gated on WORKER_CRAWL_DAILY_ENABLED — both tasks register unconditionally
+# but short-circuit to a no-op when the flag is false, so toggling the env
+# var is the single switch that enables the schedule in prod.
+if settings.crawl_daily_enabled:
+    app.conf.beat_schedule.update({
+        "crawl.scel_incremental": {
+            "task": "ingestion.crawl_scel_since_last",
+            "schedule": crontab(hour=2, minute=0),   # 02:00 Asia/Manila
+        },
+        "crawl.lawphil_incremental": {
+            "task": "ingestion.crawl_lawphil_since_last",
+            "schedule": crontab(hour=2, minute=30),  # 02:30 Asia/Manila
+        },
+    })
+
 # Explicit task module registration — autodiscover_tasks looks for a
 # `tasks.py` file inside each package, not `*_tasks.py` files, so we
 # register every module explicitly.
@@ -87,4 +103,5 @@ app.conf.include = [
     "src.tasks.flashcard_generation_tasks",
     "src.tasks.outline_generation_tasks",
     "src.tasks.derivative_dispatch_tasks",
+    "src.tasks.daily_crawl_tasks",
 ]

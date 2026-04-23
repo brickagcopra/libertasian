@@ -445,6 +445,17 @@ model SourceEndpoint {
   @@map("source_endpoints")
 }
 
+/// Per-source incremental-crawl cursor. Advanced only on successful completion
+/// of a daily crawl task so transient fetch failures don't skip decisions.
+model CrawlState {
+  sourceId      String   @id @map("source_id") @db.Uuid
+  lastCrawledAt DateTime? @map("last_crawled_at") @db.Timestamptz
+  lastCursor    String?  @map("last_cursor")
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("crawl_state")
+}
+
 model LegalDocument {
   id                 String    @id @default(uuid()) @db.Uuid
   sourceId           String?   @map("source_id") @db.Uuid
