@@ -1,13 +1,20 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 
-import { useDigests } from '@/features/digests/hooks/use-digests';
+import {
+  useDigests,
+  useGenerateOnDemand,
+  useSearchDigests,
+  type MatchedDocument,
+} from '@/features/digests/hooks/use-digests';
+import { ApiClientError } from '@/lib/api-client';
 import { DigestListSkeleton } from '@/components/ui/skeleton';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -16,7 +23,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { AlertCircleIcon, SearchIcon } from 'lucide-react';
+import {
+  AlertCircleIcon,
+  FileTextIcon,
+  Loader2Icon,
+  SearchIcon,
+  SparklesIcon,
+} from 'lucide-react';
 
 const REVIEW_STATUS_STYLES: Record<string, { variant: 'default' | 'secondary' | 'destructive' | 'outline'; className?: string }> = {
   draft: { variant: 'secondary' },
@@ -36,46 +49,101 @@ function ReviewStatusBadge({ status }: { status: string }) {
   );
 }
 
+function formatResetAt(resetAt: string | undefined): string {
+  if (!resetAt) return 'soon';
+  const d = new Date(resetAt);
+  if (Number.isNaN(d.getTime())) return 'soon';
+  return d.toLocaleDateString();
+}
+
 export default function DigestsPage() {
   const [digestType, setDigestType] = useState('all');
   const [reviewStatus, setReviewStatus] = useState('all');
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [toast, setToast] = useState<
+    | { tone: 'error' | 'success'; message: string; href?: string }
+    | null
+  >(null);
 
   useEffect(() => {
     const timer = setTimeout(() => setSearchQuery(searchInput.trim()), 300);
     return () => clearTimeout(timer);
   }, [searchInput]);
 
-  const { data, isLoading, error } = useDigests({
+  // Default browsing path — no query typed yet.
+  const { data: browseData, isLoading: browseLoading, error: browseError } = useDigests({
     digestType: digestType !== 'all' ? digestType : undefined,
     reviewStatus: reviewStatus !== 'all' ? reviewStatus : undefined,
   });
 
-  const allDigests = data?.data ?? [];
+  // Server-side search path — activated once the user types.
+  const {
+    data: searchData,
+    isLoading: searchLoading,
+    error: searchError,
+  } = useSearchDigests(searchQuery, searchQuery.length > 0);
 
-  const digests = useMemo(() => {
-    if (!searchQuery) return allDigests;
-    const needle = searchQuery.toLowerCase();
-    return allDigests.filter((d) => {
-      const haystack = [
-        d.title,
-        d.legalDocument?.title,
-        d.legalDocument?.grNo,
-      ]
-        .filter((v): v is string => typeof v === 'string' && v.length > 0)
-        .join(' ')
-        .toLowerCase();
-      return haystack.includes(needle);
-    });
-  }, [allDigests, searchQuery]);
+  const generateOnDemand = useGenerateOnDemand();
+
+  const isSearching = searchQuery.length > 0;
+  const isLoading = isSearching ? searchLoading : browseLoading;
+  const error = isSearching ? searchError : browseError;
+
+  const digests = isSearching
+    ? (searchData?.results ?? [])
+    : (browseData?.data ?? []);
+  const matchedDocuments: MatchedDocument[] = isSearching
+    ? (searchData?.matchedDocuments ?? [])
+    : [];
+
+  const handleGenerate = async (doc: MatchedDocument) => {
+    setToast(null);
+    try {
+      const job = await generateOnDemand.mutateAsync(doc.id);
+      setToast({
+        tone: 'success',
+        message: `Queued digest generation for "${doc.title}". Job ${job.jobId.slice(0, 8)}… will surface here once complete.`,
+      });
+    } catch (err) {
+      if (err instanceof ApiClientError) {
+        const body = (err.body ?? {}) as Record<string, unknown>;
+        if (err.statusCode === 402) {
+          setToast({
+            tone: 'error',
+            message:
+              (body['message'] as string) ??
+              'An active subscription is required to generate digests on demand.',
+            href: (body['upgradeUrl'] as string) ?? '/pricing',
+          });
+          return;
+        }
+        if (err.statusCode === 429) {
+          const resetAt = body['resetAt'] as string | undefined;
+          const limit = body['limit'] as number | undefined;
+          setToast({
+            tone: 'error',
+            message: limit
+              ? `Monthly digest quota exhausted (${limit}). Comes back ${formatResetAt(resetAt)}.`
+              : `Rate limit hit — try again later.`,
+          });
+          return;
+        }
+      }
+      setToast({
+        tone: 'error',
+        message:
+          err instanceof Error ? err.message : 'Failed to queue digest generation.',
+      });
+    }
+  };
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold">Case Digests</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          AI-generated and manually created case digests
+          Search approved case digests, or generate a new one from a legal document.
         </p>
       </div>
 
@@ -92,33 +160,57 @@ export default function DigestsPage() {
         />
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-3">
-        <Select value={digestType} onValueChange={setDigestType}>
-          <SelectTrigger className="w-[180px]">
-            <SelectValue placeholder="All types" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All types</SelectItem>
-            <SelectItem value="case_digest">Case Digest</SelectItem>
-            <SelectItem value="legal_opinion">Legal Opinion</SelectItem>
-            <SelectItem value="legal_memo">Legal Memo</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={reviewStatus} onValueChange={setReviewStatus}>
-          <SelectTrigger className="w-[180px]">
-            <SelectValue placeholder="All statuses" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All statuses</SelectItem>
-            <SelectItem value="draft">Draft</SelectItem>
-            <SelectItem value="ai_generated">AI Generated</SelectItem>
-            <SelectItem value="needs_human_review">Needs Review</SelectItem>
-            <SelectItem value="approved">Approved</SelectItem>
-            <SelectItem value="published">Published</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
+      {/* Filters — only meaningful when browsing, not while actively searching */}
+      {!isSearching && (
+        <div className="flex flex-wrap gap-3">
+          <Select value={digestType} onValueChange={setDigestType}>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="All types" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All types</SelectItem>
+              <SelectItem value="case_digest">Case Digest</SelectItem>
+              <SelectItem value="legal_opinion">Legal Opinion</SelectItem>
+              <SelectItem value="legal_memo">Legal Memo</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={reviewStatus} onValueChange={setReviewStatus}>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="All statuses" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All statuses</SelectItem>
+              <SelectItem value="draft">Draft</SelectItem>
+              <SelectItem value="ai_generated">AI Generated</SelectItem>
+              <SelectItem value="needs_human_review">Needs Review</SelectItem>
+              <SelectItem value="approved">Approved</SelectItem>
+              <SelectItem value="published">Published</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
+      {toast && (
+        <Alert variant={toast.tone === 'error' ? 'destructive' : 'default'}>
+          {toast.tone === 'error' ? (
+            <AlertCircleIcon className="size-4" />
+          ) : (
+            <SparklesIcon className="size-4" />
+          )}
+          <AlertDescription>
+            {toast.message}
+            {toast.href && (
+              <>
+                {' '}
+                <Link href={toast.href} className="underline">
+                  Upgrade your plan
+                </Link>
+                .
+              </>
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
 
       {isLoading && <DigestListSkeleton />}
 
@@ -132,11 +224,13 @@ export default function DigestsPage() {
       )}
 
       {!isLoading && digests.length === 0 && (
-        <p className="py-12 text-center text-sm text-muted-foreground">
-          {searchQuery
-            ? `No digests found matching "${searchQuery}".`
-            : 'No digests found.'}
-        </p>
+        <EmptyState
+          isSearching={isSearching}
+          searchQuery={searchQuery}
+          matchedDocuments={matchedDocuments}
+          onGenerate={handleGenerate}
+          generating={generateOnDemand.isPending}
+        />
       )}
 
       <div className="space-y-3">
@@ -181,6 +275,78 @@ export default function DigestsPage() {
           </Card>
         ))}
       </div>
+    </div>
+  );
+}
+
+function EmptyState({
+  isSearching,
+  searchQuery,
+  matchedDocuments,
+  onGenerate,
+  generating,
+}: {
+  isSearching: boolean;
+  searchQuery: string;
+  matchedDocuments: MatchedDocument[];
+  onGenerate: (doc: MatchedDocument) => void;
+  generating: boolean;
+}) {
+  if (!isSearching) {
+    return (
+      <p className="py-12 text-center text-sm text-muted-foreground">
+        No digests found.
+      </p>
+    );
+  }
+
+  if (matchedDocuments.length === 0) {
+    return (
+      <p className="py-12 text-center text-sm text-muted-foreground">
+        No digests found matching &quot;{searchQuery}&quot;. Try a different search
+        term, or browse the full corpus in the reader.
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-muted-foreground">
+        No digests found matching &quot;{searchQuery}&quot; — but we found{' '}
+        {matchedDocuments.length} legal{' '}
+        {matchedDocuments.length === 1 ? 'document' : 'documents'} you can generate
+        a digest from:
+      </p>
+      {matchedDocuments.map((doc) => (
+        <Card key={doc.id}>
+          <CardContent className="flex items-start justify-between gap-4 p-4">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold">{doc.title}</p>
+              <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                {doc.grNo && <span>{doc.grNo}</span>}
+                {doc.citationText && <span>&middot; {doc.citationText}</span>}
+              </div>
+            </div>
+            <Button
+              size="sm"
+              onClick={() => onGenerate(doc)}
+              disabled={generating}
+            >
+              {generating ? (
+                <>
+                  <Loader2Icon className="mr-1.5 size-3.5 animate-spin" />
+                  Queuing…
+                </>
+              ) : (
+                <>
+                  <FileTextIcon className="mr-1.5 size-3.5" />
+                  Generate digest
+                </>
+              )}
+            </Button>
+          </CardContent>
+        </Card>
+      ))}
     </div>
   );
 }

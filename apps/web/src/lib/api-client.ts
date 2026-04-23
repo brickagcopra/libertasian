@@ -95,6 +95,7 @@ class ApiClient {
       throw new ApiClientError(
         errorBody.message || `HTTP ${response.status}`,
         response.status,
+        errorBody,
       );
     }
 
@@ -250,6 +251,7 @@ export class ApiClientError extends Error {
   constructor(
     message: string,
     public statusCode: number,
+    public body?: unknown,
   ) {
     super(message);
     this.name = 'ApiClientError';
