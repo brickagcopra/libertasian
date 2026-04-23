@@ -76,7 +76,7 @@ def poll_pending_derivative_jobs(self: Any) -> dict[str, Any]:
                        LIMIT %s
                        FOR UPDATE SKIP LOCKED
                    )
-                   RETURNING id, derivative_type, source_document_id""",
+                   RETURNING id, derivative_type, source_document_id, subject_code""",
                 (batch_size,),
             )
             jobs = [dict(row) for row in cur.fetchall()]
@@ -92,6 +92,7 @@ def poll_pending_derivative_jobs(self: Any) -> dict[str, Any]:
         job_id = str(job["id"])
         derivative_type = job["derivative_type"]
         document_id = str(job["source_document_id"]) if job["source_document_id"] else None
+        subject_code = job.get("subject_code")
 
         task_name = _TASK_ROUTING.get(derivative_type)
         if not task_name:
@@ -105,27 +106,42 @@ def poll_pending_derivative_jobs(self: Any) -> dict[str, Any]:
             skipped += 1
             continue
 
-        if not document_id and derivative_type != "subject_outline":
-            logger.warning(
-                "Job %s (%s) has no source_document_id — skipping",
-                job_id,
-                derivative_type,
-            )
-            _fail_unknown_type(job_id, f"missing source_document_id for {derivative_type}")
-            skipped += 1
-            continue
-
-        logger.info(
-            "Dispatching %s for job %s (document=%s)",
-            task_name,
-            job_id,
-            document_id,
-        )
-
-        # Build kwargs based on task signature
+        # subject_outline is a subject-level rollup. It MUST dispatch with
+        # subject_code, not document_id — per-doc outline fails the
+        # validator's ≥3 sections + ≥2 cited docs invariant. Other types
+        # remain per-document.
         kwargs: dict[str, Any] = {"job_id": job_id}
-        if document_id:
+        if derivative_type == "subject_outline":
+            if not subject_code:
+                logger.warning(
+                    "Outline job %s has no subject_code — skipping",
+                    job_id,
+                )
+                _fail_unknown_type(job_id, "missing subject_code for subject_outline")
+                skipped += 1
+                continue
+            kwargs["subject_code"] = subject_code
+            logger.info(
+                "Dispatching %s for job %s (subject=%s)",
+                task_name, job_id, subject_code,
+            )
+        else:
+            if not document_id:
+                logger.warning(
+                    "Job %s (%s) has no source_document_id — skipping",
+                    job_id,
+                    derivative_type,
+                )
+                _fail_unknown_type(
+                    job_id, f"missing source_document_id for {derivative_type}",
+                )
+                skipped += 1
+                continue
             kwargs["document_id"] = document_id
+            logger.info(
+                "Dispatching %s for job %s (document=%s)",
+                task_name, job_id, document_id,
+            )
 
         self.app.send_task(task_name, kwargs=kwargs)
         dispatched += 1

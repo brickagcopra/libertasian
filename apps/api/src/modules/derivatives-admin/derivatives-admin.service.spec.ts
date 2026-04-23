@@ -28,6 +28,9 @@ function makePrisma() {
     legalDocument: {
       findMany: jest.fn().mockResolvedValue([]),
     },
+    subject: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
   };
 }
 
@@ -293,6 +296,94 @@ describe('DerivativesAdminService', () => {
           'user-1',
         ),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    // ----- subject_outline dispatches per subject, not per document -----
+
+    it('subject_outline fans out one job per distinct primary subject', async () => {
+      prisma.subject.findMany.mockResolvedValue([
+        { code: 'criminal_law' },
+        { code: 'civil_law' },
+        { code: 'constitutional_law' },
+      ]);
+      prisma.derivativeGenerationJob.create
+        .mockResolvedValueOnce({ id: 'job-1' })
+        .mockResolvedValueOnce({ id: 'job-2' })
+        .mockResolvedValueOnce({ id: 'job-3' });
+
+      const result = await service.enqueueGeneration(
+        { derivativeType: 'subject_outline' },
+        'user-1',
+      );
+
+      expect(result.enqueuedCount).toBe(3);
+      expect(result.jobIds).toEqual(['job-1', 'job-2', 'job-3']);
+      // Per-doc document lookup must NOT happen for outline
+      expect(prisma.legalDocument.findMany).not.toHaveBeenCalled();
+      // subjects table must be filtered to taxonomy study_8 + has-primary-assignment
+      expect(prisma.subject.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            taxonomyVersion: 'study_8',
+            documentAssignments: { some: { isPrimary: true } },
+          }),
+        }),
+      );
+      // Each job carries subjectCode + sourceDocumentId=null
+      const createCalls = prisma.derivativeGenerationJob.create.mock.calls;
+      expect(createCalls).toHaveLength(3);
+      expect(createCalls[0][0].data).toMatchObject({
+        derivativeType: 'subject_outline',
+        sourceDocumentId: null,
+        subjectCode: 'criminal_law',
+        status: 'pending',
+      });
+      expect(createCalls[1][0].data.subjectCode).toBe('civil_law');
+      expect(createCalls[2][0].data.subjectCode).toBe('constitutional_law');
+    });
+
+    it('subject_outline with subjectCode filter dispatches for that subject only', async () => {
+      prisma.subject.findMany.mockResolvedValue([{ code: 'criminal_law' }]);
+      prisma.derivativeGenerationJob.create.mockResolvedValueOnce({
+        id: 'job-1',
+      });
+
+      const result = await service.enqueueGeneration(
+        { derivativeType: 'subject_outline', subjectCode: 'criminal_law' },
+        'user-1',
+      );
+
+      expect(result.enqueuedCount).toBe(1);
+      expect(prisma.subject.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            code: 'criminal_law',
+            taxonomyVersion: 'study_8',
+          }),
+        }),
+      );
+      expect(prisma.derivativeGenerationJob.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            derivativeType: 'subject_outline',
+            subjectCode: 'criminal_law',
+            sourceDocumentId: null,
+          }),
+        }),
+      );
+    });
+
+    it('subject_outline with no matching subjects returns zero enqueued', async () => {
+      prisma.subject.findMany.mockResolvedValue([]);
+
+      const result = await service.enqueueGeneration(
+        { derivativeType: 'subject_outline', subjectCode: 'unknown_subject' },
+        'user-1',
+      );
+
+      expect(result.enqueuedCount).toBe(0);
+      expect(result.jobIds).toEqual([]);
+      expect(prisma.derivativeGenerationJob.create).not.toHaveBeenCalled();
     });
   });
 

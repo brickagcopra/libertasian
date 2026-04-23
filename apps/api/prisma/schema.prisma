@@ -3662,6 +3662,12 @@ model DerivativeGenerationJob {
   triggerType           String    @map("trigger_type") @db.VarChar(20)
   //   scheduled | manual | backfill_followup
   sourceDocumentId      String?   @map("source_document_id") @db.Uuid
+  // Subject-level dispatch key for `subject_outline` jobs. Outline generation
+  // synthesises across multiple documents classified under the same primary
+  // subject, so these rows carry `sourceDocumentId = NULL` and
+  // `subjectCode = <subjects.code>` instead. All other derivative types
+  // continue to use `sourceDocumentId`.
+  subjectCode           String?   @map("subject_code") @db.VarChar(50)
   backfillBatchId       String?   @map("backfill_batch_id") @db.Uuid
   // ^ No `backfillBatch` relation yet — the BackfillBatch model lands with
   //   the backfill-engine PR. The column is added here so that PR can
@@ -3688,6 +3694,7 @@ model DerivativeGenerationJob {
   @@index([derivativeType, status])
   @@index([backfillBatchId])
   @@index([sourceDocumentId, derivativeType])
+  @@index([derivativeType, subjectCode])
   @@map("derivative_generation_jobs")
 }
 

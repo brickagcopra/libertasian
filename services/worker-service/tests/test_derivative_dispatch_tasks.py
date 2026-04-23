@@ -123,11 +123,22 @@ class TestPollPendingDerivativeJobs:
 
         rows = []
         for dtype in types_to_tasks:
-            rows.append({
-                "id": make_uuid(),
-                "derivative_type": dtype,
-                "source_document_id": make_uuid(),
-            })
+            # subject_outline dispatches via subject_code (not document_id)
+            # since 2026-04-22; all other types dispatch via document_id.
+            if dtype == "subject_outline":
+                rows.append({
+                    "id": make_uuid(),
+                    "derivative_type": dtype,
+                    "source_document_id": None,
+                    "subject_code": "criminal_law",
+                })
+            else:
+                rows.append({
+                    "id": make_uuid(),
+                    "derivative_type": dtype,
+                    "source_document_id": make_uuid(),
+                    "subject_code": None,
+                })
 
         mock_get_conn.return_value = _make_mock_conn(rows)
 
@@ -179,6 +190,88 @@ class TestPollPendingDerivativeJobs:
         assert result["dispatched"] == 0
         assert result["skipped"] == 1
         mock_app.send_task.assert_not_called()
+
+    # ----- subject-level outline dispatch (2026-04-22) -----
+
+    @patch("src.tasks.derivative_dispatch_tasks.get_connection")
+    def test_outline_dispatches_with_subject_code_kwarg(
+        self,
+        mock_get_conn: MagicMock,
+    ) -> None:
+        """Outline rows dispatch via subject_code, not document_id.
+
+        Per-doc outline violates the validator's ≥3 sections + ≥2 cited
+        docs invariant (190/206 failures on 2026-04-22). Outline rows
+        carry source_document_id=NULL + subject_code=<code> and must be
+        dispatched with subject_code=... kwarg.
+        """
+        job_id = make_uuid()
+        mock_get_conn.return_value = _make_mock_conn([
+            {
+                "id": job_id,
+                "derivative_type": "subject_outline",
+                "source_document_id": None,
+                "subject_code": "criminal_law",
+            },
+        ])
+
+        with patch.object(poll_pending_derivative_jobs, "app") as mock_app:
+            result = poll_pending_derivative_jobs.run()
+
+        assert result["dispatched"] == 1
+        assert result["skipped"] == 0
+        mock_app.send_task.assert_called_once_with(
+            "derivatives.generate_subject_outline",
+            kwargs={"job_id": job_id, "subject_code": "criminal_law"},
+        )
+
+    @patch("src.tasks.derivative_dispatch_tasks._fail_unknown_type")
+    @patch("src.tasks.derivative_dispatch_tasks.get_connection")
+    def test_outline_without_subject_code_fails_fast(
+        self,
+        mock_get_conn: MagicMock,
+        mock_fail: MagicMock,
+    ) -> None:
+        """Outline row missing subject_code is marked failed — not dispatched."""
+        job_id = make_uuid()
+        mock_get_conn.return_value = _make_mock_conn([
+            {
+                "id": job_id,
+                "derivative_type": "subject_outline",
+                "source_document_id": None,
+                "subject_code": None,
+            },
+        ])
+
+        with patch.object(poll_pending_derivative_jobs, "app") as mock_app:
+            result = poll_pending_derivative_jobs.run()
+
+        assert result["dispatched"] == 0
+        assert result["skipped"] == 1
+        mock_app.send_task.assert_not_called()
+        mock_fail.assert_called_once()
+        # Error reason names the missing field for operator debugging
+        assert "subject_code" in mock_fail.call_args.args[1]
+
+    @patch("src.tasks.derivative_dispatch_tasks.get_connection")
+    def test_select_query_returns_subject_code(
+        self,
+        mock_get_conn: MagicMock,
+    ) -> None:
+        """The SELECT RETURNING clause must include subject_code.
+
+        Guards against regressing the schema wiring — without this column
+        in the SELECT, outline jobs would silently dispatch without a
+        subject and fail downstream.
+        """
+        mock_conn = _make_mock_conn([])
+        mock_get_conn.return_value = mock_conn
+
+        poll_pending_derivative_jobs.run()
+
+        mock_cursor = mock_conn.cursor.return_value.__enter__.return_value
+        executed_sql = mock_cursor.execute.call_args[0][0]
+        assert "subject_code" in executed_sql
 
     @patch("src.tasks.derivative_dispatch_tasks.get_connection")
     def test_sql_uses_for_update_skip_locked(
