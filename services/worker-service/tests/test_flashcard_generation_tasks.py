@@ -95,8 +95,22 @@ FAKE_RAG_RESPONSE: dict[str, Any] = {
 }
 
 
+# UUIDs for the "real user" path: tests that expect both the FlashcardSet
+# AND DerivativeArtifact writes must pass a non-admin user + org so the
+# task doesn't take the admin-bulk skip path (2026-04-23 follow-up).
+_REAL_USER_ID = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1"
+_REAL_ORG_ID = "b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2"
+
+
 def _run_task(job_id: str, document_id: str, **kwargs: Any) -> dict[str, Any]:
-    """Run the Celery task synchronously, bypassing Celery dispatch."""
+    """Run the Celery task synchronously, bypassing Celery dispatch.
+
+    Defaults to the user-triggered path (real user + org). Admin-bulk
+    tests pass ``user_id=_ADMIN_SYSTEM_USER_ID`` or omit user_id via a
+    custom caller.
+    """
+    kwargs.setdefault("user_id", _REAL_USER_ID)
+    kwargs.setdefault("organization_id", _REAL_ORG_ID)
     return generate_flashcards.run(job_id, document_id, **kwargs)
 
 
@@ -596,3 +610,200 @@ class TestFlashcardGenerationTask:
 
         assert result["status"] == "failed"
         assert result["reason"] == "http_error_400"
+
+
+# ---------------------------------------------------------------------------
+# Admin-bulk path — skip FlashcardSet write, keep derivative_artifact write
+# ---------------------------------------------------------------------------
+#
+# Added after 2026-04-22 bulk-gen: 103 flashcard jobs failed because
+# writeFlashcards hit a Prisma NOT NULL on organization_id/user_id when
+# admin bulk-gen didn't carry a triggering user. The fix routes admin-bulk
+# through derivative_artifact only and leaves FlashcardSet for real users.
+
+
+class TestFlashcardAdminBulkPath:
+    """Admin bulk-gen skips FlashcardSet; real users still dual-write."""
+
+    @patch("src.tasks.flashcard_generation_tasks.nestjs_client")
+    @patch("src.tasks.flashcard_generation_tasks.rag_client")
+    @patch("src.tasks.flashcard_generation_tasks.db")
+    @patch("src.tasks.flashcard_generation_tasks.validate_derivative")
+    def test_admin_system_user_skips_flashcard_set_write(
+        self,
+        mock_validate: MagicMock,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        mock_nestjs: MagicMock,
+    ) -> None:
+        """user_id == admin system UUID → skip FlashcardSet, write only artifact."""
+        from src.tasks.flashcard_generation_tasks import (
+            _ADMIN_SYSTEM_USER_ID,
+            generate_flashcards,
+        )
+        from src.validators.derivative_validators import (
+            DerivativeValidationResult,
+            DerivativeVerdict,
+        )
+
+        mock_db.get_legal_document.return_value = FAKE_DOC
+        mock_db.get_document_sections_for_digest.return_value = FAKE_SECTIONS
+        mock_db.create_model_run.return_value = "model-run-001"
+        mock_db.get_content_disclaimer_id.return_value = "disc-001"
+        mock_rag.generate_completion.return_value = FAKE_RAG_RESPONSE
+        mock_validate.return_value = DerivativeValidationResult(
+            verdict=DerivativeVerdict.PUBLISH, checks=[], reasons=[],
+        )
+        mock_nestjs.write_derivative.return_value = {"artifactId": "artifact-001"}
+        mock_nestjs.update_job_status.return_value = True
+
+        # Call through the Celery task directly so we can override the
+        # _run_task default user_id with the admin UUID.
+        result = generate_flashcards.run(
+            "job-001", "doc-001", user_id=_ADMIN_SYSTEM_USER_ID,
+        )
+
+        assert result["status"] == "completed"
+        assert result["set_id"] is None
+        assert result["card_ids"] == []
+        mock_nestjs.write_flashcards.assert_not_called()
+        mock_nestjs.write_derivative.assert_called_once()
+
+    @patch("src.tasks.flashcard_generation_tasks.nestjs_client")
+    @patch("src.tasks.flashcard_generation_tasks.rag_client")
+    @patch("src.tasks.flashcard_generation_tasks.db")
+    @patch("src.tasks.flashcard_generation_tasks.validate_derivative")
+    def test_missing_user_id_skips_flashcard_set_write(
+        self,
+        mock_validate: MagicMock,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        mock_nestjs: MagicMock,
+    ) -> None:
+        """user_id=None (scheduled backfill) → skip FlashcardSet, write only artifact.
+
+        Guards the empty-string-write regression: if the task forwarded an
+        empty user_id to writeFlashcards, Prisma would reject on the
+        FlashcardSet NOT NULL. Skipping the call avoids the failure entirely.
+        """
+        from src.tasks.flashcard_generation_tasks import generate_flashcards
+        from src.validators.derivative_validators import (
+            DerivativeValidationResult,
+            DerivativeVerdict,
+        )
+
+        mock_db.get_legal_document.return_value = FAKE_DOC
+        mock_db.get_document_sections_for_digest.return_value = FAKE_SECTIONS
+        mock_db.create_model_run.return_value = "model-run-001"
+        mock_db.get_content_disclaimer_id.return_value = "disc-001"
+        mock_rag.generate_completion.return_value = FAKE_RAG_RESPONSE
+        mock_validate.return_value = DerivativeValidationResult(
+            verdict=DerivativeVerdict.PUBLISH, checks=[], reasons=[],
+        )
+        mock_nestjs.write_derivative.return_value = {"artifactId": "artifact-001"}
+        mock_nestjs.update_job_status.return_value = True
+
+        # Call the task directly so we don't inherit _run_task's default user_id.
+        result = generate_flashcards.run("job-001", "doc-001")
+
+        assert result["status"] == "completed"
+        mock_nestjs.write_flashcards.assert_not_called()
+        mock_nestjs.write_derivative.assert_called_once()
+
+    @patch(
+        "src.tasks.flashcard_generation_tasks._resolve_primary_organization_id",
+    )
+    @patch("src.tasks.flashcard_generation_tasks.nestjs_client")
+    @patch("src.tasks.flashcard_generation_tasks.rag_client")
+    @patch("src.tasks.flashcard_generation_tasks.db")
+    @patch("src.tasks.flashcard_generation_tasks.validate_derivative")
+    def test_real_user_triggers_dual_write_with_derived_org(
+        self,
+        mock_validate: MagicMock,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        mock_nestjs: MagicMock,
+        mock_resolve_org: MagicMock,
+    ) -> None:
+        """Real user_id (no org passed) → derive org, write both tables."""
+        from src.tasks.flashcard_generation_tasks import generate_flashcards
+        from src.validators.derivative_validators import (
+            DerivativeValidationResult,
+            DerivativeVerdict,
+        )
+
+        real_user = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        derived_org = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+        mock_resolve_org.return_value = derived_org
+
+        mock_db.get_legal_document.return_value = FAKE_DOC
+        mock_db.get_document_sections_for_digest.return_value = FAKE_SECTIONS
+        mock_db.create_model_run.return_value = "model-run-001"
+        mock_db.get_content_disclaimer_id.return_value = "disc-001"
+        mock_rag.generate_completion.return_value = FAKE_RAG_RESPONSE
+        mock_validate.return_value = DerivativeValidationResult(
+            verdict=DerivativeVerdict.PUBLISH, checks=[], reasons=[],
+        )
+        mock_nestjs.write_flashcards.return_value = {
+            "setId": "set-001",
+            "cardIds": ["card-001", "card-002"],
+        }
+        mock_nestjs.write_derivative.return_value = {"artifactId": "artifact-001"}
+        mock_nestjs.update_job_status.return_value = True
+
+        # No organization_id passed → resolver runs and derives one.
+        result = generate_flashcards.run(
+            "job-001", "doc-001", user_id=real_user,
+        )
+
+        assert result["status"] == "completed"
+        mock_resolve_org.assert_called_once_with(real_user)
+        mock_nestjs.write_flashcards.assert_called_once()
+        mock_nestjs.write_derivative.assert_called_once()
+
+        write_payload = mock_nestjs.write_flashcards.call_args.args[0]
+        assert write_payload["userId"] == real_user
+        assert write_payload["organizationId"] == derived_org
+
+    @patch(
+        "src.tasks.flashcard_generation_tasks._resolve_primary_organization_id",
+    )
+    @patch("src.tasks.flashcard_generation_tasks.nestjs_client")
+    @patch("src.tasks.flashcard_generation_tasks.rag_client")
+    @patch("src.tasks.flashcard_generation_tasks.db")
+    @patch("src.tasks.flashcard_generation_tasks.validate_derivative")
+    def test_real_user_without_org_fails_early(
+        self,
+        mock_validate: MagicMock,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        mock_nestjs: MagicMock,
+        mock_resolve_org: MagicMock,
+    ) -> None:
+        """Real user_id but no org membership → fail fast, no write attempt."""
+        from src.tasks.flashcard_generation_tasks import generate_flashcards
+        from src.validators.derivative_validators import (
+            DerivativeValidationResult,
+            DerivativeVerdict,
+        )
+
+        real_user = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        mock_resolve_org.return_value = None
+
+        mock_db.get_legal_document.return_value = FAKE_DOC
+        mock_db.get_document_sections_for_digest.return_value = FAKE_SECTIONS
+        mock_db.create_model_run.return_value = "model-run-001"
+        mock_db.get_content_disclaimer_id.return_value = "disc-001"
+        mock_rag.generate_completion.return_value = FAKE_RAG_RESPONSE
+        mock_validate.return_value = DerivativeValidationResult(
+            verdict=DerivativeVerdict.PUBLISH, checks=[], reasons=[],
+        )
+        mock_nestjs.update_job_status.return_value = True
+
+        result = generate_flashcards.run(
+            "job-001", "doc-001", user_id=real_user,
+        )
+
+        assert result["status"] == "failed"
+        assert result["reason"] == "no_organization_for_user"
+        mock_nestjs.write_flashcards.assert_not_called()

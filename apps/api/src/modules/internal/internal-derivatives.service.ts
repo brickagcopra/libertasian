@@ -465,11 +465,14 @@ export class InternalDerivativesService {
 
   async writeFlashcards(dto: WriteFlashcardsDto): Promise<{ setId: string; cardIds: string[] }> {
     const result = await this.prisma.$transaction(async (tx) => {
-      // 1. Create FlashcardSet
+      // 1. Create FlashcardSet. The DTO marks organizationId + userId
+      // required, so this never receives an empty string for the tenant
+      // scope — callers without a user/org (admin bulk-gen) write a
+      // derivative_artifact via POST /internal/derivatives/write instead.
       const set = await tx.flashcardSet.create({
         data: {
-          organizationId: dto.organizationId ?? '',
-          userId: dto.userId ?? '',
+          organizationId: dto.organizationId,
+          userId: dto.userId,
           title: dto.title,
           description: dto.description,
           barSubject: dto.barSubject,
