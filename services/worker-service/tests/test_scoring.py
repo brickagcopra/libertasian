@@ -12,6 +12,7 @@ from typing import Any
 from src.scoring import (
     OCR_QUALITY_WEIGHT,
     compute_doctrine_confidence_score,
+    compute_flashcard_confidence_score,
     compute_mcq_confidence_score,
     compute_outline_confidence_score,
 )
@@ -269,3 +270,67 @@ class TestComputeOutlineConfidenceScore:
         citation = 2 / 4
         expected = round(coverage * 0.5 + citation * 0.3 + 0.95 * 0.2, 4)
         assert score == expected
+
+
+# ---------------------------------------------------------------------------
+# compute_flashcard_confidence_score
+# ---------------------------------------------------------------------------
+
+
+class TestComputeFlashcardConfidenceScore:
+    """Tests for flashcard-specific signal extraction + scoring (mirrors MCQ)."""
+
+    def test_perfect_coverage_and_citations(self) -> None:
+        """All source sections cited, every card has valid citations -> 1.0."""
+        content: dict[str, Any] = {
+            "cards": [
+                {"front": "Q1", "back": "A1", "supportingSectionIds": ["sec-001"]},
+                {"front": "Q2", "back": "A2", "supportingSectionIds": ["sec-002"]},
+                {"front": "Q3", "back": "A3", "supportingSectionIds": ["sec-003"]},
+            ],
+        }
+        score = compute_flashcard_confidence_score(
+            content=content,
+            source_sections=FAKE_SECTIONS,
+        )
+        # coverage: 3/3=1.0, citation: 3/3=1.0, ocr: 1.0 -> 1.0
+        assert score == 1.0
+
+    def test_zero_citations_ocr_only(self) -> None:
+        """Cards present but none with valid citations -> ocr weight only."""
+        content: dict[str, Any] = {
+            "cards": [
+                {"front": "Q1", "back": "A1", "supportingSectionIds": []},
+                {"front": "Q2", "back": "A2", "supportingSectionIds": ["INVALID"]},
+            ],
+        }
+        score = compute_flashcard_confidence_score(
+            content=content,
+            source_sections=FAKE_SECTIONS,
+        )
+        # coverage: 0/3=0, citation: 0/2=0, ocr: 1.0 -> 0.2
+        assert score == OCR_QUALITY_WEIGHT
+
+    def test_no_source_sections_ocr_only(self) -> None:
+        """Empty source sections + empty content -> ocr weight only."""
+        score = compute_flashcard_confidence_score(
+            content={},
+            source_sections=[],
+        )
+        assert score == OCR_QUALITY_WEIGHT
+
+    def test_malformed_content_graceful(self) -> None:
+        """Non-dict / non-list shapes are handled gracefully without crashing."""
+        score = compute_flashcard_confidence_score(
+            content={"cards": "not-a-list"},  # type: ignore[dict-item]
+            source_sections=FAKE_SECTIONS,
+        )
+        assert score == OCR_QUALITY_WEIGHT
+
+        score2 = compute_flashcard_confidence_score(
+            content={"cards": [None, "str", 42, {"supportingSectionIds": None}]},
+            source_sections=FAKE_SECTIONS,
+        )
+        # non-dict cards are skipped; the 1 dict has no valid citations.
+        # coverage: 0/3=0, citation: 0/4=0, ocr: 1.0 -> 0.2
+        assert score2 == OCR_QUALITY_WEIGHT
