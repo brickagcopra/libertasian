@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     ingestion_request_delay: float = 2.0
     ingestion_user_agent: str = "LIBERTASIAN-Ingestion/0.1"
 
+    # Daily incremental crawl (PR2). Default off so the code ships disabled
+    # and we turn it on deliberately after observing one manual run.
+    crawl_daily_enabled: bool = False
+
     # Embedding service
     embedding_service_url: str = "http://localhost:8001"
     embedding_request_timeout: int = 120
