@@ -970,7 +970,12 @@ describe('writeClassification', () => {
     derivativeGenerationJob: { update: jest.Mock };
     subject: { findUnique: jest.Mock };
     subjectTopic: { findUnique: jest.Mock };
-    documentSubjectAssignment: { findFirst: jest.Mock; upsert: jest.Mock };
+    documentSubjectAssignment: {
+      findFirst: jest.Mock;
+      upsert: jest.Mock;
+      create: jest.Mock;
+      update: jest.Mock;
+    };
     legalDocument: { count: jest.Mock };
   };
 
