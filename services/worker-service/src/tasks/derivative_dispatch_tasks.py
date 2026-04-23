@@ -76,7 +76,8 @@ def poll_pending_derivative_jobs(self: Any) -> dict[str, Any]:
                        LIMIT %s
                        FOR UPDATE SKIP LOCKED
                    )
-                   RETURNING id, derivative_type, source_document_id, subject_code""",
+                   RETURNING id, derivative_type, source_document_id,
+                             subject_code, triggered_by_user_id""",
                 (batch_size,),
             )
             jobs = [dict(row) for row in cur.fetchall()]
@@ -93,6 +94,9 @@ def poll_pending_derivative_jobs(self: Any) -> dict[str, Any]:
         derivative_type = job["derivative_type"]
         document_id = str(job["source_document_id"]) if job["source_document_id"] else None
         subject_code = job.get("subject_code")
+        triggered_by_user_id = (
+            str(job["triggered_by_user_id"]) if job.get("triggered_by_user_id") else None
+        )
 
         task_name = _TASK_ROUTING.get(derivative_type)
         if not task_name:
@@ -142,6 +146,13 @@ def poll_pending_derivative_jobs(self: Any) -> dict[str, Any]:
                 "Dispatching %s for job %s (document=%s)",
                 task_name, job_id, document_id,
             )
+
+        # Flashcard writes to FlashcardSet (NOT NULL user_id + organization_id),
+        # so carry the job's triggering user forward. When the trigger is the
+        # admin system user (or NULL for scheduled jobs), the flashcard task
+        # skips the FlashcardSet write and writes only a derivative_artifact.
+        if derivative_type == "flashcard" and triggered_by_user_id:
+            kwargs["user_id"] = triggered_by_user_id
 
         self.app.send_task(task_name, kwargs=kwargs)
         dispatched += 1

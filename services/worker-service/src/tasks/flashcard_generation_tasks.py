@@ -44,6 +44,14 @@ from ..validators.derivative_validators.eligibility import check_eligibility
 
 logger = logging.getLogger(__name__)
 
+# The seeded admin system user owns the admin organization. Flashcard jobs
+# triggered by this user (admin bulk-gen) are meant to surface in the
+# Library via a DerivativeArtifact row only — the FlashcardSet/Flashcard
+# tables are for user-authored study decks. Writing a set on behalf of the
+# admin user pollutes those tables and requires an organization_id the
+# admin path doesn't carry.
+_ADMIN_SYSTEM_USER_ID = "00000000-0000-0000-0000-000000000002"
+
 
 @shared_task(
     bind=True,
@@ -253,41 +261,76 @@ def generate_flashcards(
         )
 
         # Step 9: Write to FlashcardSet + Flashcard (user-authored study path)
+        #
+        # The admin bulk-gen path (user_id is missing or is the admin system
+        # user) has no study deck target — FlashcardSet is tenant-scoped
+        # (NOT NULL user_id + organization_id) and is meant for decks users
+        # author themselves. For admin bulk-gen, skip the FlashcardSet write
+        # and let step 10's derivative_artifact write carry the Library row.
         cards = content.get("cards", [])
-        write_payload: dict[str, Any] = {
-            "title": f"Flashcards: {doc.get('title', document_id)[:80]}",
-            "description": f"AI-generated flashcards from {doc.get('citation_text', document_id)}",
-            "barSubject": doc.get("subject"),
-            "visibility": "private",
-            "organizationId": organization_id,
-            "userId": user_id,
-            "sourceDocumentId": document_id,
-            "cards": [
-                {
-                    "front": c.get("front", ""),
-                    "back": c.get("back", ""),
-                    "mnemonicHint": c.get("mnemonicHint"),
-                    "legalDocumentId": document_id,
-                    "sectionId": c.get("supportingSectionIds", [None])[0] if c.get("supportingSectionIds") else None,
-                }
-                for c in cards
-            ],
-            "derivativeGenerationJobId": job_id,
-            "modelRunId": model_run_id,
-            "budgetLedgerEntry": {
-                "periodYearMonth": _current_period_year_month(),
-                "scope": "flashcard_generation",
-                "amountUsd": 0.0,
-                "tokensIn": tokens_in,
-                "tokensOut": tokens_out,
-                "modelName": model_name,
-                "modelRunId": model_run_id,
-            },
-        }
+        set_id: str | None = None
+        card_ids: list[str] = []
+        is_admin_bulk = (
+            not user_id or user_id == _ADMIN_SYSTEM_USER_ID
+        )
 
-        result = nestjs_client.write_flashcards(write_payload)
-        set_id = result.get("setId")
-        card_ids = result.get("cardIds", [])
+        if is_admin_bulk:
+            logger.info(
+                "Skipping FlashcardSet write for admin-bulk flashcard job %s "
+                "(user_id=%s) — derivative_artifact row covers Library visibility",
+                job_id, user_id,
+            )
+        else:
+            # Real user-triggered path: both fields are required by the
+            # FlashcardSet schema. Derive organization_id from the user's
+            # membership when the dispatcher didn't pass one.
+            if not organization_id:
+                organization_id = _resolve_primary_organization_id(user_id)
+            if not organization_id:
+                _fail_job(
+                    job_id,
+                    f"user {user_id} has no organization membership; "
+                    f"cannot write FlashcardSet",
+                )
+                return {
+                    "status": "failed",
+                    "reason": "no_organization_for_user",
+                }
+
+            write_payload: dict[str, Any] = {
+                "title": f"Flashcards: {doc.get('title', document_id)[:80]}",
+                "description": f"AI-generated flashcards from {doc.get('citation_text', document_id)}",
+                "barSubject": doc.get("subject"),
+                "visibility": "private",
+                "organizationId": organization_id,
+                "userId": user_id,
+                "sourceDocumentId": document_id,
+                "cards": [
+                    {
+                        "front": c.get("front", ""),
+                        "back": c.get("back", ""),
+                        "mnemonicHint": c.get("mnemonicHint"),
+                        "legalDocumentId": document_id,
+                        "sectionId": c.get("supportingSectionIds", [None])[0] if c.get("supportingSectionIds") else None,
+                    }
+                    for c in cards
+                ],
+                "derivativeGenerationJobId": job_id,
+                "modelRunId": model_run_id,
+                "budgetLedgerEntry": {
+                    "periodYearMonth": _current_period_year_month(),
+                    "scope": "flashcard_generation",
+                    "amountUsd": 0.0,
+                    "tokensIn": tokens_in,
+                    "tokensOut": tokens_out,
+                    "modelName": model_name,
+                    "modelRunId": model_run_id,
+                },
+            }
+
+            result = nestjs_client.write_flashcards(write_payload)
+            set_id = result.get("setId")
+            card_ids = result.get("cardIds", [])
 
         # Step 10: Write DerivativeArtifact so the Library surfaces this
         # bulk-generated set. Failure here fails the whole job — the
@@ -406,6 +449,30 @@ def _fail_job(
     if model_name:
         kwargs["modelName"] = model_name
     nestjs_client.update_job_status(job_id, "failed", **kwargs)
+
+
+def _resolve_primary_organization_id(user_id: str) -> str | None:
+    """Return any organization_id the user belongs to, or None.
+
+    Used only on the user-triggered path where FlashcardSet needs the
+    tenant scope. Admin-bulk jobs skip the FlashcardSet write entirely
+    and never reach this helper.
+    """
+    from ..clients.db_client import get_connection
+
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT organization_id
+               FROM organization_members
+               WHERE user_id = %s AND status = 'active'
+               ORDER BY created_at ASC
+               LIMIT 1""",
+            (user_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return str(row[0])
 
 
 def _current_period_year_month() -> str:

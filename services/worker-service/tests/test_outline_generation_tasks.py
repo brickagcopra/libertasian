@@ -613,3 +613,118 @@ class TestOutlineGenerationTask:
         assert result["status"] == "failed"
         assert result["reason"] == "no_documents"
         mock_nestjs.write_derivative.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Subject → document resolver — polymorphic assignment filter
+# ---------------------------------------------------------------------------
+#
+# Added after 2026-04-22 bulk-gen: `document_subject_assignments` joins both
+# legal_documents AND derivative_artifacts. Outline previously pulled every
+# row with a matching subject_code and then tried to load a legal_document
+# for a NULL id — logging "Document None not found, skipping" ×3 per job
+# and producing 0-section outlines that the validator quarantined.
+#
+# These tests pin the SQL-level filter so a future refactor can't regress
+# the resolver back to returning NULL ids or non-primary assignments.
+
+
+def _make_sql_capture_conn(rows: list[dict[str, Any]]) -> MagicMock:
+    """Mock psycopg2 conn/cursor that captures executed SQL + returns rows."""
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = rows
+    mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
+    mock_cursor.__exit__ = MagicMock(return_value=False)
+    mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+    mock_conn.__exit__ = MagicMock(return_value=False)
+    mock_conn.cursor.return_value = mock_cursor
+    return mock_conn
+
+
+class TestGetDocumentIdsBySubject:
+    """Pins the SQL filter on _get_document_ids_by_subject."""
+
+    @patch("src.clients.db_client.get_connection")
+    def test_subject_resolver_excludes_derivative_artifact_assignment_rows(
+        self,
+        mock_get_conn: MagicMock,
+    ) -> None:
+        """Rows where legal_document_id IS NULL (derivative_artifact tags)
+        must be filtered at the SQL level, not in Python.
+
+        Setup: subject 'criminal_law' has 3 legal_document assignments and
+        5 derivative_artifact assignments. The query-level filter means the
+        resolver returns exactly 3 — we assert the SQL contains
+        ``legal_document_id IS NOT NULL`` and that only the non-null rows
+        are returned by the mock.
+        """
+        from src.tasks.outline_generation_tasks import _get_document_ids_by_subject
+
+        real_doc_ids = ["doc-001", "doc-002", "doc-003"]
+        mock_conn = _make_sql_capture_conn(
+            [{"legal_document_id": d} for d in real_doc_ids],
+        )
+        mock_get_conn.return_value = mock_conn
+
+        result = _get_document_ids_by_subject("criminal_law", None, 10)
+
+        assert result == real_doc_ids
+
+        mock_cursor = mock_conn.cursor.return_value.__enter__.return_value
+        executed_sql = mock_cursor.execute.call_args[0][0]
+        assert "legal_document_id IS NOT NULL" in executed_sql, (
+            "SQL must filter out derivative_artifact_id-only assignment rows; "
+            "without this, the resolver returns NULL ids that then log "
+            "'Document None not found, skipping' downstream."
+        )
+
+    @patch("src.clients.db_client.get_connection")
+    def test_subject_resolver_filters_non_primary(
+        self,
+        mock_get_conn: MagicMock,
+    ) -> None:
+        """Non-primary subject assignments must be filtered out.
+
+        The outline enqueue fan-out (PR #67 API side) only schedules jobs
+        per primary subject; the resolver must match that invariant or an
+        outline re-run would re-pull documents under their secondary tags.
+        """
+        from src.tasks.outline_generation_tasks import _get_document_ids_by_subject
+
+        primary_ids = ["doc-001", "doc-002"]
+        mock_conn = _make_sql_capture_conn(
+            [{"legal_document_id": d} for d in primary_ids],
+        )
+        mock_get_conn.return_value = mock_conn
+
+        result = _get_document_ids_by_subject("civil_law", None, 10)
+
+        assert result == primary_ids
+
+        mock_cursor = mock_conn.cursor.return_value.__enter__.return_value
+        executed_sql = mock_cursor.execute.call_args[0][0]
+        assert "is_primary = true" in executed_sql, (
+            "SQL must filter is_primary = true to match the API-side "
+            "enqueue fan-out (one outline job per primary subject)."
+        )
+
+    @patch("src.clients.db_client.get_connection")
+    def test_subject_resolver_with_topic_also_applies_filters(
+        self,
+        mock_get_conn: MagicMock,
+    ) -> None:
+        """Topic-narrowed query carries the same filters as the subject-only query."""
+        from src.tasks.outline_generation_tasks import _get_document_ids_by_subject
+
+        mock_conn = _make_sql_capture_conn(
+            [{"legal_document_id": "doc-001"}],
+        )
+        mock_get_conn.return_value = mock_conn
+
+        _get_document_ids_by_subject("civil_law", "obligations_and_contracts", 10)
+
+        mock_cursor = mock_conn.cursor.return_value.__enter__.return_value
+        executed_sql = mock_cursor.execute.call_args[0][0]
+        assert "legal_document_id IS NOT NULL" in executed_sql
+        assert "is_primary = true" in executed_sql

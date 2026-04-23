@@ -54,13 +54,16 @@ export class WriteFlashcardsDto {
   @IsNotEmpty()
   visibility!: string; // 'private' | 'public_editorial'
 
-  @IsOptional()
+  // Required: FlashcardSet.organization_id + user_id are NOT NULL in the
+  // schema. The worker used to pass undefined on admin bulk-gen, which
+  // slipped past @IsOptional and hit Prisma with an empty-string default;
+  // the admin path now skips this endpoint entirely and writes a
+  // derivative_artifact row instead, so enforcing these here is safe.
   @IsUUID()
-  organizationId?: string;
+  organizationId!: string;
 
-  @IsOptional()
   @IsUUID()
-  userId?: string;
+  userId!: string;
 
   // Source info
   @IsOptional()

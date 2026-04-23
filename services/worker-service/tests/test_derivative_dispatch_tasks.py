@@ -289,6 +289,123 @@ class TestPollPendingDerivativeJobs:
         executed_sql = mock_cursor.execute.call_args[0][0]
         assert "FOR UPDATE SKIP LOCKED" in executed_sql
 
+    # ----- triggered_by_user_id forwarding (2026-04-23 follow-up) -----
+
+    @patch("src.tasks.derivative_dispatch_tasks.get_connection")
+    def test_select_query_returns_triggered_by_user_id(
+        self,
+        mock_get_conn: MagicMock,
+    ) -> None:
+        """The SELECT RETURNING clause must include triggered_by_user_id.
+
+        Flashcard jobs need the triggering user forwarded to the task so
+        the FlashcardSet write can scope to a real tenant. Without this
+        column, every flashcard job would go down the admin-bulk path and
+        skip FlashcardSet — even for user-triggered generations.
+        """
+        mock_conn = _make_mock_conn([])
+        mock_get_conn.return_value = mock_conn
+
+        poll_pending_derivative_jobs.run()
+
+        mock_cursor = mock_conn.cursor.return_value.__enter__.return_value
+        executed_sql = mock_cursor.execute.call_args[0][0]
+        assert "triggered_by_user_id" in executed_sql
+
+    @patch("src.tasks.derivative_dispatch_tasks.get_connection")
+    def test_flashcard_dispatches_with_user_id_when_triggered_by_user(
+        self,
+        mock_get_conn: MagicMock,
+    ) -> None:
+        """Flashcard rows with triggered_by_user_id set forward it as user_id kwarg."""
+        job_id = make_uuid()
+        doc_id = make_uuid()
+        user_id = make_uuid()
+
+        mock_get_conn.return_value = _make_mock_conn([
+            {
+                "id": job_id,
+                "derivative_type": "flashcard",
+                "source_document_id": doc_id,
+                "subject_code": None,
+                "triggered_by_user_id": user_id,
+            },
+        ])
+
+        with patch.object(poll_pending_derivative_jobs, "app") as mock_app:
+            result = poll_pending_derivative_jobs.run()
+
+        assert result["dispatched"] == 1
+        mock_app.send_task.assert_called_once_with(
+            "derivatives.generate_flashcards",
+            kwargs={
+                "job_id": job_id,
+                "document_id": doc_id,
+                "user_id": user_id,
+            },
+        )
+
+    @patch("src.tasks.derivative_dispatch_tasks.get_connection")
+    def test_flashcard_without_triggered_by_user_omits_user_id_kwarg(
+        self,
+        mock_get_conn: MagicMock,
+    ) -> None:
+        """Scheduled flashcard jobs (triggered_by_user_id=NULL) dispatch
+        without user_id — the task then takes the admin-bulk path."""
+        job_id = make_uuid()
+        doc_id = make_uuid()
+
+        mock_get_conn.return_value = _make_mock_conn([
+            {
+                "id": job_id,
+                "derivative_type": "flashcard",
+                "source_document_id": doc_id,
+                "subject_code": None,
+                "triggered_by_user_id": None,
+            },
+        ])
+
+        with patch.object(poll_pending_derivative_jobs, "app") as mock_app:
+            result = poll_pending_derivative_jobs.run()
+
+        assert result["dispatched"] == 1
+        mock_app.send_task.assert_called_once_with(
+            "derivatives.generate_flashcards",
+            kwargs={"job_id": job_id, "document_id": doc_id},
+        )
+
+    @patch("src.tasks.derivative_dispatch_tasks.get_connection")
+    def test_non_flashcard_types_do_not_forward_user_id(
+        self,
+        mock_get_conn: MagicMock,
+    ) -> None:
+        """Only flashcard needs triggered_by_user_id forwarded — other
+        derivative types don't write to tenant-scoped tables, so leaking
+        the user_id to them would be dead weight and break their task
+        signatures."""
+        job_id = make_uuid()
+        doc_id = make_uuid()
+        user_id = make_uuid()
+
+        mock_get_conn.return_value = _make_mock_conn([
+            {
+                "id": job_id,
+                "derivative_type": "case_digest",
+                "source_document_id": doc_id,
+                "subject_code": None,
+                "triggered_by_user_id": user_id,
+            },
+        ])
+
+        with patch.object(poll_pending_derivative_jobs, "app") as mock_app:
+            result = poll_pending_derivative_jobs.run()
+
+        assert result["dispatched"] == 1
+        mock_app.send_task.assert_called_once_with(
+            "derivatives.generate_case_digest",
+            kwargs={"job_id": job_id, "document_id": doc_id},
+        )
+
 
 # ─── Idempotency Guard Tests ──────────────────────────────────────────
 

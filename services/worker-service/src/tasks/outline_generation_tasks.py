@@ -437,6 +437,17 @@ def _get_document_ids_by_subject(
     """Query published document IDs classified under the given subject/topic.
 
     Uses ingestion_db_client's connection to query document_subject_assignments.
+
+    Filters:
+    - ``legal_document_id IS NOT NULL`` — ``document_subject_assignments`` is
+      a polymorphic join that also carries inherited tags for
+      ``derivative_artifact_id`` rows (PR #56). Without this filter, the
+      outline task tries to load a legal_document for a NULL id and logs
+      ``Document None not found, skipping``.
+    - ``is_primary = true`` — match the API-side outline enqueue fan-out
+      (PR #67) which only enqueues per primary subject assignment. Without
+      this, an outline re-run can pull in secondary-subject docs the
+      primary-subject outline already covers.
     """
     from ..clients.db_client import get_connection
 
@@ -451,7 +462,9 @@ def _get_document_ids_by_subject(
                    JOIN subjects s ON s.id = dsa.subject_id
                    LEFT JOIN subject_topics st ON st.id = dsa.subject_topic_id
                    WHERE s.code = %s AND st.code = %s
-                   AND s.taxonomy_version = 'study_8'
+                     AND s.taxonomy_version = 'study_8'
+                     AND dsa.legal_document_id IS NOT NULL
+                     AND dsa.is_primary = true
                    ORDER BY dsa.confidence DESC
                    LIMIT %s""",
                 (subject_code, topic_code, limit),
@@ -462,7 +475,9 @@ def _get_document_ids_by_subject(
                    FROM document_subject_assignments dsa
                    JOIN subjects s ON s.id = dsa.subject_id
                    WHERE s.code = %s
-                   AND s.taxonomy_version = 'study_8'
+                     AND s.taxonomy_version = 'study_8'
+                     AND dsa.legal_document_id IS NOT NULL
+                     AND dsa.is_primary = true
                    ORDER BY dsa.confidence DESC
                    LIMIT %s""",
                 (subject_code, limit),
