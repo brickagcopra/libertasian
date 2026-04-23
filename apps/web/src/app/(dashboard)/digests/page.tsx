@@ -1,13 +1,14 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { useDigests } from '@/features/digests/hooks/use-digests';
 import { DigestListSkeleton } from '@/components/ui/skeleton';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -15,7 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { AlertCircleIcon } from 'lucide-react';
+import { AlertCircleIcon, SearchIcon } from 'lucide-react';
 
 const REVIEW_STATUS_STYLES: Record<string, { variant: 'default' | 'secondary' | 'destructive' | 'outline'; className?: string }> = {
   draft: { variant: 'secondary' },
@@ -38,13 +39,36 @@ function ReviewStatusBadge({ status }: { status: string }) {
 export default function DigestsPage() {
   const [digestType, setDigestType] = useState('all');
   const [reviewStatus, setReviewStatus] = useState('all');
+  const [searchInput, setSearchInput] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+
+  useEffect(() => {
+    const timer = setTimeout(() => setSearchQuery(searchInput.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
 
   const { data, isLoading, error } = useDigests({
     digestType: digestType !== 'all' ? digestType : undefined,
     reviewStatus: reviewStatus !== 'all' ? reviewStatus : undefined,
   });
 
-  const digests = data?.data ?? [];
+  const allDigests = data?.data ?? [];
+
+  const digests = useMemo(() => {
+    if (!searchQuery) return allDigests;
+    const needle = searchQuery.toLowerCase();
+    return allDigests.filter((d) => {
+      const haystack = [
+        d.title,
+        d.legalDocument?.title,
+        d.legalDocument?.grNo,
+      ]
+        .filter((v): v is string => typeof v === 'string' && v.length > 0)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(needle);
+    });
+  }, [allDigests, searchQuery]);
 
   return (
     <div className="space-y-6">
@@ -53,6 +77,19 @@ export default function DigestsPage() {
         <p className="mt-1 text-sm text-muted-foreground">
           AI-generated and manually created case digests
         </p>
+      </div>
+
+      {/* Search */}
+      <div className="relative max-w-md">
+        <SearchIcon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          type="search"
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          placeholder="Search by title, case name, or citation..."
+          className="pl-9"
+          aria-label="Search digests"
+        />
       </div>
 
       {/* Filters */}
@@ -96,7 +133,9 @@ export default function DigestsPage() {
 
       {!isLoading && digests.length === 0 && (
         <p className="py-12 text-center text-sm text-muted-foreground">
-          No digests found.
+          {searchQuery
+            ? `No digests found matching "${searchQuery}".`
+            : 'No digests found.'}
         </p>
       )}
 
