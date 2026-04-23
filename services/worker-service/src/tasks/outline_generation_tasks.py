@@ -14,6 +14,7 @@ Per CLAUDE.md:
 from __future__ import annotations
 
 import datetime
+import hashlib
 import json
 import logging
 import time
@@ -313,7 +314,7 @@ def generate_subject_outline(
             "derivativeGenerationJobId": job_id,
             "title": f"Subject Outline: {subject_name}" + (f" — {topic_name}" if topic_name else ""),
             "contentJson": content,
-            "contentHash": "",
+            "contentHash": _compute_content_hash(content),
             "contentRights": "ai_generated_derivative",
             "contentDisclaimerId": content_disclaimer_id,
             "reviewStatus": review_status,
@@ -553,3 +554,17 @@ def _fail_job(
 def _current_period_year_month() -> str:
     """Return current year-month string for budget ledger."""
     return datetime.datetime.now(tz=datetime.timezone.utc).strftime("%Y-%m")
+
+
+def _compute_content_hash(content_json: dict[str, Any]) -> str:
+    """Return a stable sha256 hash of the derivative contentJson.
+
+    WriteDerivativeDto on the API side marks contentHash @IsNotEmpty(),
+    so the worker must send a non-empty string. Canonical JSON (sorted
+    keys, compact separators) keeps the hash stable across retries.
+    """
+    canonical = json.dumps(
+        content_json, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    )
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return f"sha256:{digest}"

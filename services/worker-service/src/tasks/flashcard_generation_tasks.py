@@ -16,6 +16,7 @@ Per CLAUDE.md:
 from __future__ import annotations
 
 import datetime
+import hashlib
 import json
 import logging
 import time
@@ -359,7 +360,7 @@ def generate_flashcards(
             "organizationId": organization_id,
             "title": f"Flashcards: {doc.get('title', document_id)[:80]}",
             "contentJson": derivative_content_json,
-            "contentHash": "",
+            "contentHash": _compute_content_hash(derivative_content_json),
             "contentRights": "ai_generated_derivative",
             "contentDisclaimerId": content_disclaimer_id,
             "visibility": "private",
@@ -478,6 +479,21 @@ def _resolve_primary_organization_id(user_id: str) -> str | None:
 def _current_period_year_month() -> str:
     """Return current year-month string for budget ledger."""
     return datetime.datetime.now(tz=datetime.timezone.utc).strftime("%Y-%m")
+
+
+def _compute_content_hash(content_json: dict[str, Any]) -> str:
+    """Return a stable sha256 hash of the derivative contentJson.
+
+    WriteDerivativeDto on the API side marks contentHash @IsNotEmpty(),
+    so the worker must send a non-empty string. We canonicalise the JSON
+    (sorted keys, compact separators) so identical content produces the
+    same hash across retries — useful for dedupe + audit.
+    """
+    canonical = json.dumps(
+        content_json, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    )
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return f"sha256:{digest}"
 
 
 def _build_derivative_cards(
