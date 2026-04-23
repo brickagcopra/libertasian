@@ -63,14 +63,19 @@ describe('InternalDerivativesService', () => {
     derivativeGenerationJob: { update: jest.Mock };
     subject: { findUnique: jest.Mock };
     subjectTopic: { findUnique: jest.Mock };
-    documentSubjectAssignment: { findFirst: jest.Mock; upsert: jest.Mock };
+    documentSubjectAssignment: {
+      findFirst: jest.Mock;
+      upsert: jest.Mock;
+      create: jest.Mock;
+      update: jest.Mock;
+    };
     legalDocument: { count: jest.Mock };
   };
 
   // Transaction mock helpers — simulates Prisma interactive transaction
   let txMocks: {
     derivativeArtifact: { create: jest.Mock };
-    digest: { create: jest.Mock };
+    digest: { create: jest.Mock; upsert: jest.Mock };
     essayPrompt: { create: jest.Mock };
     doctrineExtract: { create: jest.Mock };
     doctrineLink: { create: jest.Mock };
@@ -95,6 +100,7 @@ describe('InternalDerivativesService', () => {
       },
       digest: {
         create: jest.fn().mockResolvedValue({ id: 'digest-001' }),
+        upsert: jest.fn().mockResolvedValue({ id: 'digest-001' }),
       },
       essayPrompt: {
         create: jest.fn().mockResolvedValue({ id: 'essay-001' }),
@@ -151,6 +157,12 @@ describe('InternalDerivativesService', () => {
         findFirst: jest.fn().mockResolvedValue(null),
         upsert: jest.fn().mockImplementation(async (args: { create: { subjectId: string } }) => ({
           id: `assign-${args.create.subjectId}`,
+        })),
+        create: jest.fn().mockImplementation(async (args: { data: { subjectId: string } }) => ({
+          id: `assign-${args.data.subjectId}`,
+        })),
+        update: jest.fn().mockImplementation(async (args: { where: { id: string } }) => ({
+          id: args.where.id,
         })),
       },
       legalDocument: {
@@ -257,7 +269,7 @@ describe('InternalDerivativesService', () => {
 
       expect(result).toEqual({ digestId: 'digest-001' });
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
-      expect(txMocks.digest.create).toHaveBeenCalledTimes(1);
+      expect(txMocks.digest.upsert).toHaveBeenCalledTimes(1);
       expect(txMocks.provenanceRecord.create).toHaveBeenCalledTimes(1);
       expect(txMocks.provenanceRecord.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
@@ -309,14 +321,16 @@ describe('InternalDerivativesService', () => {
 
       await service.writeDigest(dto);
 
-      expect(txMocks.digest.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          sourceOrigin: 'ai_generated',
-          digestType: 'ai_case_digest',
-          reviewStatus: 'draft',
-          visibility: 'private',
+      expect(txMocks.digest.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({
+            sourceOrigin: 'ai_generated',
+            digestType: 'case_digest',
+            reviewStatus: 'draft',
+            visibility: 'private',
+          }),
         }),
-      });
+      );
     });
   });
 
@@ -984,6 +998,12 @@ describe('writeClassification', () => {
         upsert: jest.fn().mockImplementation(async (args: { create: { subjectId: string } }) => ({
           id: `assign-${args.create.subjectId}`,
         })),
+        create: jest.fn().mockImplementation(async (args: { data: { subjectId: string } }) => ({
+          id: `assign-${args.data.subjectId}`,
+        })),
+        update: jest.fn().mockImplementation(async (args: { where: { id: string } }) => ({
+          id: args.where.id,
+        })),
       },
       legalDocument: { count: jest.fn() },
     };
@@ -1007,7 +1027,10 @@ describe('writeClassification', () => {
     expect(result.assignmentIds).toContain('assign-subj-civil');
     expect(result.assignmentIds).toContain('assign-subj-remedial');
     expect(classPrisma.subject.findUnique).toHaveBeenCalledTimes(2);
-    expect(classPrisma.documentSubjectAssignment.upsert).toHaveBeenCalledTimes(2);
+    // civil_law has no topic -> null-topic path (create).
+    // remedial_law has a topic -> upsert path on the composite unique.
+    expect(classPrisma.documentSubjectAssignment.upsert).toHaveBeenCalledTimes(1);
+    expect(classPrisma.documentSubjectAssignment.create).toHaveBeenCalledTimes(1);
   });
 
   it('12. rejects if no primary assignment', async () => {
@@ -1042,10 +1065,11 @@ describe('writeClassification', () => {
 
     await classService.writeClassification(dto);
 
-    // First upsert should have subj-civil with no topic
-    expect(classPrisma.documentSubjectAssignment.upsert).toHaveBeenCalledWith(
+    // civil_law has no subjectTopic -> null-topic branch uses `create`
+    // (not upsert) because Prisma composite uniques can't match NULL.
+    expect(classPrisma.documentSubjectAssignment.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        create: expect.objectContaining({
+        data: expect.objectContaining({
           subjectId: 'subj-civil',
           subjectTopicId: null,
           isPrimary: true,
@@ -1053,14 +1077,48 @@ describe('writeClassification', () => {
       }),
     );
 
-    // Second upsert should have subj-remedial with topic
+    // remedial_law has a topic -> upsert on composite unique works
     expect(classPrisma.documentSubjectAssignment.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
+        where: {
+          legalDocumentId_subjectId_subjectTopicId: {
+            legalDocumentId: expect.any(String),
+            subjectId: 'subj-remedial',
+            subjectTopicId: 'topic-civil-proc',
+          },
+        },
         create: expect.objectContaining({
           subjectId: 'subj-remedial',
           subjectTopicId: 'topic-civil-proc',
           isPrimary: false,
         }),
+      }),
+    );
+  });
+
+  it('14b. null-topic path re-uses the existing NULL row instead of creating a duplicate', async () => {
+    // Regression: the old code coerced null topic to '' in the upsert
+    // where-clause, which (a) blew up on Postgres uuid validation and
+    // (b) would have produced duplicate rows if it had worked (since
+    // NULL != NULL in Postgres composite unique lookups). The new path
+    // uses findFirst + update when a NULL-topic row already exists.
+    classPrisma.documentSubjectAssignment.findFirst
+      // manualOverride check for civil_law
+      .mockResolvedValueOnce(null)
+      // null-topic existence check for civil_law
+      .mockResolvedValueOnce({ id: 'existing-civil-null-topic' })
+      // manualOverride check for remedial_law
+      .mockResolvedValueOnce(null);
+
+    const dto = makeClassificationDto();
+
+    await classService.writeClassification(dto);
+
+    expect(classPrisma.documentSubjectAssignment.create).not.toHaveBeenCalled();
+    expect(classPrisma.documentSubjectAssignment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'existing-civil-null-topic' },
+        data: expect.objectContaining({ isPrimary: true }),
       }),
     );
   });

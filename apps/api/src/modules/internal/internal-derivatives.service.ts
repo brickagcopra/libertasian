@@ -586,31 +586,60 @@ export class InternalDerivativesService {
         continue;
       }
 
-      // 5. Upsert DocumentSubjectAssignment
-      const result = await this.prisma.documentSubjectAssignment.upsert({
-        where: {
-          legalDocumentId_subjectId_subjectTopicId: {
-            legalDocumentId: dto.legalDocumentId,
-            subjectId: subject.id,
-            subjectTopicId: subjectTopicId ?? '',
+      // 5. Upsert DocumentSubjectAssignment.
+      //
+      // subjectTopicId is a nullable @db.Uuid. The composite unique
+      // (legalDocumentId, subjectId, subjectTopicId) exists, but Prisma's
+      // upsert `where` cannot pass NULL through a composite unique key —
+      // and an earlier coercion to the empty string sent ""
+      // to Postgres, which rejected it with `invalid input syntax for
+      // type uuid: ""` (the error leaking into worker logs as of
+      // 2026-04-23). Split the path: when there's no topic, do a manual
+      // findFirst + update-or-create against the NULL partial row.
+      const updateData = {
+        isPrimary: assignment.isPrimary,
+        confidence: assignment.confidence,
+        classifiedBy: dto.classifiedBy ?? 'ai',
+        classifierModelRunId: dto.classifierModelRunId,
+      };
+      const createData = {
+        legalDocumentId: dto.legalDocumentId,
+        subjectId: subject.id,
+        subjectTopicId: subjectTopicId,
+        ...updateData,
+      };
+
+      let result: { id: string };
+      if (subjectTopicId !== null) {
+        result = await this.prisma.documentSubjectAssignment.upsert({
+          where: {
+            legalDocumentId_subjectId_subjectTopicId: {
+              legalDocumentId: dto.legalDocumentId,
+              subjectId: subject.id,
+              subjectTopicId,
+            },
           },
-        },
-        update: {
-          isPrimary: assignment.isPrimary,
-          confidence: assignment.confidence,
-          classifiedBy: dto.classifiedBy ?? 'ai',
-          classifierModelRunId: dto.classifierModelRunId,
-        },
-        create: {
-          legalDocumentId: dto.legalDocumentId,
-          subjectId: subject.id,
-          subjectTopicId: subjectTopicId,
-          isPrimary: assignment.isPrimary,
-          confidence: assignment.confidence,
-          classifiedBy: dto.classifiedBy ?? 'ai',
-          classifierModelRunId: dto.classifierModelRunId,
-        },
-      });
+          update: updateData,
+          create: createData,
+        });
+      } else {
+        const existingNullTopic =
+          await this.prisma.documentSubjectAssignment.findFirst({
+            where: {
+              legalDocumentId: dto.legalDocumentId,
+              subjectId: subject.id,
+              subjectTopicId: null,
+            },
+          });
+        result = existingNullTopic
+          ? await this.prisma.documentSubjectAssignment.update({
+              where: { id: existingNullTopic.id },
+              data: updateData,
+            })
+          : await this.prisma.documentSubjectAssignment.create({
+              data: createData,
+            });
+      }
 
       assignmentIds.push(result.id);
     }
