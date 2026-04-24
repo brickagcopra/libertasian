@@ -477,6 +477,52 @@ class TestEnumerateBackfillCandidates:
         update_kwargs = mock_backfill_db.update_batch_counters.call_args.kwargs
         assert update_kwargs["candidates_skipped"] == 1
 
+    def test_scel_batch_below_min_year_fails_fast(
+        self,
+        batch_id: str,
+        sample_batch: dict,
+        mock_backfill_db: MagicMock,
+        mock_ingestion_db_for_backfill: MagicMock,
+    ) -> None:
+        """SCEL batch with year_start < MIN_SUPPORTED_YEAR is rejected cleanly.
+
+        Without this guard a 1920 SCEL batch would enumerate ~1000 docmonth
+        URLs that all 404, waste rate-limit budget, and land with
+        candidates_discovered=0 — indistinguishable from a real source
+        outage. Fail fast with a clear admin_notes message instead.
+        """
+        from src.fetchers.supreme_court import SupremeCourtFetcher
+
+        sample_batch["year_start"] = 1920
+        sample_batch["year_end"] = 1920
+        scel_source = {
+            "id": sample_batch["source_id"],
+            "endpoints": [{"parser_type": "supreme_court_elibrary"}],
+        }
+        mock_backfill_db.get_batch.return_value = sample_batch
+        mock_ingestion_db_for_backfill.get_source_with_endpoints.return_value = (
+            scel_source
+        )
+
+        # Use a REAL SupremeCourtFetcher instance so _min_supported_year_for
+        # picks up the class attribute. The fetcher's discover() must not be
+        # called — we expect the guard to bail before any HTTP.
+        real_fetcher = SupremeCourtFetcher()
+        with patch.object(real_fetcher, "discover") as mock_discover:
+            with patch(
+                "src.tasks.backfill_tasks.get_fetcher",
+                return_value=real_fetcher,
+            ):
+                result = enumerate_backfill_candidates(batch_id)
+
+            assert result["status"] == "failed"
+            assert result["reason"] == "year_below_min_supported"
+            mock_discover.assert_not_called()
+
+        call_kwargs = mock_backfill_db.transition_batch.call_args.kwargs
+        assert "1920" in call_kwargs["admin_notes"]
+        assert str(SupremeCourtFetcher.MIN_SUPPORTED_YEAR) in call_kwargs["admin_notes"]
+
     def test_cloudflare_block_recorded_and_batch_continues(
         self,
         batch_id: str,
