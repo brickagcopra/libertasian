@@ -304,10 +304,9 @@ def create_backfill_ingestion_job(
         cur.execute(
             """INSERT INTO ingestion_jobs
                    (id, source_id, source_endpoint_id, job_type, status,
-                    trigger_type, backfill_batch_id, triggered_by_user_id,
-                    created_at, updated_at)
+                    trigger_type, backfill_batch_id, triggered_by_user_id)
                    VALUES (%s, %s, %s, 'crawl', 'pending', 'backfill',
-                           %s, %s, NOW(), NOW())""",
+                           %s, %s)""",
             (job_id, source_id, source_endpoint_id, backfill_batch_id,
              triggered_by_user_id),
         )
