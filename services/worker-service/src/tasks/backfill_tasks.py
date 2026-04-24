@@ -398,6 +398,24 @@ def enumerate_backfill_candidates(self, batch_id: str) -> dict[str, Any]:
         return {"batch_id": batch_id, "status": "failed", "reason": str(exc)[:200]}
 
 
+# ─── Rescue helper ────────────────────────────────────────────────────────
+
+
+def _try_dispatch_enumerate(batch_id: str, lock_ttl_sec: int = 1800) -> bool:
+    """SETNX-based lock to prevent double-dispatch of enumerate for a batch.
+
+    Returns True if dispatch was fired, False if a prior dispatch is
+    (presumably) still in flight.
+    """
+    r = _get_redis_client()
+    key = f"backfill:enum_lock:{batch_id}"
+    acquired = r.set(key, "1", nx=True, ex=lock_ttl_sec)
+    if not acquired:
+        return False
+    enumerate_backfill_candidates.delay(batch_id)
+    return True
+
+
 # ─── Task 2: Periodic Tick ───────────────────────────────────────────────
 
 
@@ -493,9 +511,32 @@ def run_backfill_batch_tick(self) -> dict[str, Any]:
     6. Persist checkpoint
     7. If cursor reached the end, transition to 'completed'
     """
+    # Rescue pass: batches stuck in 'enumerating' with last_tick_at NULL
+    # for >5 min are orphans (SQL-inserted batches whose enumerate was never
+    # dispatched, or worker crash before dispatch landed on the queue).
+    # Re-dispatch under a Redis SETNX lock to prevent double-dispatch if the
+    # previous tick already rescued the same batch.
+    stuck = backfill_db.get_stuck_enumerating_batches(
+        stale_after_minutes=5, limit=5,
+    )
+    rescued = 0
+    for batch in stuck:
+        if _try_dispatch_enumerate(str(batch["id"])):
+            logger.warning(
+                "Rescuing stuck enumerating batch %s (created_at=%s) — "
+                "re-dispatching enumerate",
+                batch["id"],
+                batch.get("created_at"),
+            )
+            rescued += 1
+
     running_batches = backfill_db.get_batches_by_status("running")
     if not running_batches:
-        return {"status": "idle", "batches_processed": 0}
+        return {
+            "status": "idle",
+            "batches_processed": 0,
+            "rescued_enumerating": rescued,
+        }
 
     results = []
     for batch in running_batches:
@@ -514,6 +555,7 @@ def run_backfill_batch_tick(self) -> dict[str, Any]:
         "status": "ok",
         "batches_processed": len(results),
         "results": results,
+        "rescued_enumerating": rescued,
     }
 
 

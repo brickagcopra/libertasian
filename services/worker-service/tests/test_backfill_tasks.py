@@ -12,7 +12,7 @@ Covers:
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -116,6 +116,7 @@ def mock_backfill_db() -> MagicMock:
         mock_db.create_backfill_ingestion_job.return_value = make_uuid()
         mock_db.get_inflight_jobs_count.return_value = 0
         mock_db.get_batch_budget_remaining.return_value = Decimal("100.00")
+        mock_db.get_stuck_enumerating_batches.return_value = []
         yield mock_db
 
 
@@ -768,6 +769,62 @@ class TestRunBackfillBatchTick:
 
         assert result["status"] == "idle"
         assert result["batches_processed"] == 0
+
+    def test_tick_rescues_stuck_enumerating_batch(
+        self,
+        mock_backfill_db: MagicMock,
+    ) -> None:
+        """A batch stuck in 'enumerating' with last_tick_at NULL > 5 min is rescued."""
+        stuck_batch = {
+            "id": "stuck-uuid",
+            "status": "enumerating",
+            "last_tick_at": None,
+            "created_at": datetime.now(UTC) - timedelta(minutes=10),
+        }
+        mock_backfill_db.get_stuck_enumerating_batches.return_value = [stuck_batch]
+        mock_backfill_db.get_batches_by_status.return_value = []
+
+        mock_redis = MagicMock()
+        mock_redis.set.return_value = True  # lock acquired
+
+        with patch(
+            "src.tasks.backfill_tasks._get_redis_client",
+            return_value=mock_redis,
+        ), patch(
+            "src.tasks.backfill_tasks.enumerate_backfill_candidates.delay",
+        ) as mock_enumerate_dispatch:
+            result = run_backfill_batch_tick()
+
+        mock_enumerate_dispatch.assert_called_once_with("stuck-uuid")
+        assert result["rescued_enumerating"] == 1
+
+    def test_tick_skips_rescue_when_lock_held(
+        self,
+        mock_backfill_db: MagicMock,
+    ) -> None:
+        """If Redis lock exists (prior rescue in flight), don't double-dispatch."""
+        stuck_batch = {
+            "id": "stuck-uuid",
+            "status": "enumerating",
+            "last_tick_at": None,
+            "created_at": datetime.now(UTC) - timedelta(minutes=10),
+        }
+        mock_backfill_db.get_stuck_enumerating_batches.return_value = [stuck_batch]
+        mock_backfill_db.get_batches_by_status.return_value = []
+
+        mock_redis = MagicMock()
+        mock_redis.set.return_value = False  # lock held
+
+        with patch(
+            "src.tasks.backfill_tasks._get_redis_client",
+            return_value=mock_redis,
+        ), patch(
+            "src.tasks.backfill_tasks.enumerate_backfill_candidates.delay",
+        ) as mock_enumerate_dispatch:
+            result = run_backfill_batch_tick()
+
+        mock_enumerate_dispatch.assert_not_called()
+        assert result["rescued_enumerating"] == 0
 
     def test_creates_fewer_jobs_when_near_end(
         self,
