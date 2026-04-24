@@ -19,8 +19,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from src.fetchers.base import CloudflareBlockedError
 from src.tasks.backfill_tasks import (
+    MONTHLY_URL_BUILDERS,
     _build_lawphil_monthly_urls,
+    _build_scel_monthly_urls,
     _tick_single_batch,
     check_backfill_budgets,
     enumerate_backfill_candidates,
@@ -181,6 +184,44 @@ class TestBuildLawphilMonthlyUrls:
         assert urls[-1]["month"] == 3
 
 
+class TestBuildScelMonthlyUrls:
+    def test_single_year_all_months(self) -> None:
+        """SCEL URLs use title-cased month code + /1 category suffix."""
+        urls = _build_scel_monthly_urls(2023, 2023)
+
+        assert len(urls) == 12
+        assert urls[0]["url"] == (
+            "https://elibrary.judiciary.gov.ph/thebookshelf/docmonth/Jan/2023/1"
+        )
+        assert urls[0]["year"] == 2023
+        assert urls[0]["month"] == 1
+        assert urls[11]["url"] == (
+            "https://elibrary.judiciary.gov.ph/thebookshelf/docmonth/Dec/2023/1"
+        )
+
+    def test_respects_month_boundaries(self) -> None:
+        urls = _build_scel_monthly_urls(2023, 2023, month_start=3, month_end=6)
+
+        assert len(urls) == 4
+        assert "/Mar/2023/" in urls[0]["url"]
+        assert "/Jun/2023/" in urls[-1]["url"]
+
+
+class TestMonthlyUrlBuilderRegistry:
+    def test_lawphil_and_scel_registered(self) -> None:
+        """Both active parser types have a URL builder wired up."""
+        assert "lawphil" in MONTHLY_URL_BUILDERS
+        assert "supreme_court_elibrary" in MONTHLY_URL_BUILDERS
+
+    def test_builders_are_callable_with_expected_signature(self) -> None:
+        for parser_type, builder in MONTHLY_URL_BUILDERS.items():
+            urls = builder(2023, 2023, 1, 1)
+            assert len(urls) == 1, f"{parser_type}: expected 1 URL, got {len(urls)}"
+            assert "url" in urls[0]
+            assert "year" in urls[0]
+            assert "month" in urls[0]
+
+
 # ─── Tests 1-5: enumerate_backfill_candidates ────────────────────────────
 
 
@@ -324,6 +365,164 @@ class TestEnumerateBackfillCandidates:
 
         assert result["status"] == "skipped"
         mock_backfill_db.transition_batch.assert_not_called()
+
+    def test_scel_parser_uses_scel_urls_not_lawphil(
+        self,
+        batch_id: str,
+        sample_batch: dict,
+        mock_backfill_db: MagicMock,
+        mock_ingestion_db_for_backfill: MagicMock,
+    ) -> None:
+        """SCEL batches enumerate elibrary docmonth URLs, not lawphil.net.
+
+        Before the parser_type dispatch fix, every batch — regardless of
+        source — was fed LawPhil monthly URLs. A SCEL batch would silently
+        produce zero candidates because SupremeCourtFetcher cannot parse
+        a LawPhil page.
+        """
+        scel_source = {
+            "id": sample_batch["source_id"],
+            "endpoints": [{"parser_type": "supreme_court_elibrary"}],
+        }
+        mock_backfill_db.get_batch.return_value = sample_batch
+        mock_ingestion_db_for_backfill.get_source_with_endpoints.return_value = (
+            scel_source
+        )
+
+        mock_fetcher = MagicMock()
+        mock_fetcher.discover.return_value = []
+
+        with patch("src.tasks.backfill_tasks.get_fetcher", return_value=mock_fetcher):
+            enumerate_backfill_candidates(batch_id)
+
+        # Every discover() call must have been handed an elibrary URL, never
+        # a lawphil.net URL.
+        for call in mock_fetcher.discover.call_args_list:
+            url = call[0][0]
+            assert "elibrary.judiciary.gov.ph" in url
+            assert "lawphil.net" not in url
+
+    def test_unknown_parser_type_fails_batch_cleanly(
+        self,
+        batch_id: str,
+        sample_batch: dict,
+        mock_backfill_db: MagicMock,
+        mock_ingestion_db_for_backfill: MagicMock,
+    ) -> None:
+        """Parser type with no registered URL builder fails the batch fast.
+
+        Prevents silent zero-yield when a new source is added to the registry
+        but its URL scheme isn't wired into MONTHLY_URL_BUILDERS yet.
+        """
+        exotic_source = {
+            "id": sample_batch["source_id"],
+            "endpoints": [{"parser_type": "official_gazette"}],
+        }
+        mock_backfill_db.get_batch.return_value = sample_batch
+        mock_ingestion_db_for_backfill.get_source_with_endpoints.return_value = (
+            exotic_source
+        )
+
+        mock_fetcher = MagicMock()
+        with patch("src.tasks.backfill_tasks.get_fetcher", return_value=mock_fetcher):
+            result = enumerate_backfill_candidates(batch_id)
+
+        assert result["status"] == "failed"
+        assert result["reason"] == "no_url_builder"
+        # Fetcher's discover() must not have been called — we bailed first.
+        mock_fetcher.discover.assert_not_called()
+        # And the batch must have been flipped to failed with a useful admin note.
+        mock_backfill_db.transition_batch.assert_called_once()
+        call_kwargs = mock_backfill_db.transition_batch.call_args.kwargs
+        assert "official_gazette" in call_kwargs["admin_notes"]
+        assert "MONTHLY_URL_BUILDERS" in call_kwargs["admin_notes"]
+
+    def test_empty_month_recorded_in_checkpoint(
+        self,
+        batch_id: str,
+        sample_batch: dict,
+        sample_source: dict,
+        mock_backfill_db: MagicMock,
+        mock_ingestion_db_for_backfill: MagicMock,
+    ) -> None:
+        """Months returning no candidates are counted and recorded as 'empty'.
+
+        Operators reviewing a completed 1941-1945 batch need to distinguish
+        "genuinely no decisions" (empty) from "URL 404'd" (error).
+        """
+        sample_batch["month_start"] = 1
+        sample_batch["month_end"] = 1  # one month only
+        mock_backfill_db.get_batch.return_value = sample_batch
+        mock_ingestion_db_for_backfill.get_source_with_endpoints.return_value = (
+            sample_source
+        )
+
+        mock_fetcher = MagicMock()
+        mock_fetcher.discover.return_value = []  # empty month
+
+        with patch("src.tasks.backfill_tasks.get_fetcher", return_value=mock_fetcher):
+            result = enumerate_backfill_candidates(batch_id)
+
+        assert result["skipped_months"] == 1
+        assert result["candidates_discovered"] == 0
+
+        # checkpoint_state holds the per-month breakdown.
+        checkpoint_state = mock_backfill_db.update_checkpoint.call_args[0][1]
+        assert checkpoint_state["skipped_months"] == 1
+        assert len(checkpoint_state["month_statuses"]) == 1
+        assert checkpoint_state["month_statuses"][0]["status"] == "empty"
+        assert checkpoint_state["month_statuses"][0]["candidates"] == 0
+
+        # And candidates_skipped counter advanced on the batch row.
+        update_kwargs = mock_backfill_db.update_batch_counters.call_args.kwargs
+        assert update_kwargs["candidates_skipped"] == 1
+
+    def test_cloudflare_block_recorded_and_batch_continues(
+        self,
+        batch_id: str,
+        sample_batch: dict,
+        sample_source: dict,
+        mock_backfill_db: MagicMock,
+        mock_ingestion_db_for_backfill: MagicMock,
+    ) -> None:
+        """CloudflareBlockedError on one month doesn't fail the batch.
+
+        It's a recoverable, source-side block — record it per-month and move
+        on to the next. The batch still transitions to 'running' so the tick
+        path can process whatever candidates other months surfaced.
+        """
+        sample_batch["month_start"] = 1
+        sample_batch["month_end"] = 2  # two months
+        mock_backfill_db.get_batch.return_value = sample_batch
+        mock_ingestion_db_for_backfill.get_source_with_endpoints.return_value = (
+            sample_source
+        )
+
+        good_candidate = MagicMock()
+        good_candidate.url = "https://lawphil.net/doc1.html"
+        good_candidate.title = "Case 1"
+        good_candidate.gr_no = "G.R. No. 111"
+
+        mock_fetcher = MagicMock()
+        mock_fetcher.discover.side_effect = [
+            [good_candidate],  # Jan: ok
+            CloudflareBlockedError(
+                endpoint_url="https://lawphil.net/judjuris/juri2023/feb2023/feb2023.html",
+                cf_type="managed_challenge",
+            ),  # Feb: blocked
+        ]
+
+        with patch("src.tasks.backfill_tasks.get_fetcher", return_value=mock_fetcher):
+            result = enumerate_backfill_candidates(batch_id)
+
+        assert result["status"] == "running"
+        assert result["candidates_discovered"] == 1
+        assert result["skipped_months"] == 1
+
+        checkpoint_state = mock_backfill_db.update_checkpoint.call_args[0][1]
+        statuses = {m["month"]: m["status"] for m in checkpoint_state["month_statuses"]}
+        assert statuses[1] == "ok"
+        assert statuses[2] == "cloudflare_blocked"
 
 
 # ─── Tests 9-13: run_backfill_batch_tick ─────────────────────────────────
