@@ -12,7 +12,7 @@ Covers:
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -116,6 +116,7 @@ def mock_backfill_db() -> MagicMock:
         mock_db.create_backfill_ingestion_job.return_value = make_uuid()
         mock_db.get_inflight_jobs_count.return_value = 0
         mock_db.get_batch_budget_remaining.return_value = Decimal("100.00")
+        mock_db.get_stuck_enumerating_batches.return_value = []
         yield mock_db
 
 
@@ -523,6 +524,87 @@ class TestEnumerateBackfillCandidates:
         assert "1920" in call_kwargs["admin_notes"]
         assert str(SupremeCourtFetcher.MIN_SUPPORTED_YEAR) in call_kwargs["admin_notes"]
 
+    def test_all_months_errored_transitions_batch_to_failed(
+        self,
+        batch_id: str,
+        sample_batch: dict,
+        sample_source: dict,
+        mock_backfill_db: MagicMock,
+        mock_ingestion_db_for_backfill: MagicMock,
+    ) -> None:
+        """If every monthly page errors, batch must transition to 'failed', not 'running'.
+
+        Regression test for prod incident 2026-04-24: LawPhil IP-blocked the VPS;
+        12/12 months returned 'No route to host'; batch silently reported success.
+        """
+        # Full year, 12 months, every one fails with CloudflareBlockedError
+        sample_batch["month_start"] = 1
+        sample_batch["month_end"] = 12
+        mock_backfill_db.get_batch.return_value = sample_batch
+        mock_ingestion_db_for_backfill.get_source_with_endpoints.return_value = (
+            sample_source
+        )
+
+        mock_fetcher = MagicMock()
+        mock_fetcher.discover.side_effect = CloudflareBlockedError(
+            endpoint_url="https://lawphil.net/judjuris/juri2023/jan2023/jan2023.html",
+            cf_type="challenge",
+        )
+
+        with patch("src.tasks.backfill_tasks.get_fetcher", return_value=mock_fetcher):
+            result = enumerate_backfill_candidates(batch_id)
+
+        assert result["status"] == "failed"
+        assert result["reason"] == "all_months_errored"
+        assert result["errored_months"] == 12
+        assert result["candidates_discovered"] == 0
+
+        # transition_batch called with "failed", not "running"
+        failed_calls = [
+            c for c in mock_backfill_db.transition_batch.call_args_list
+            if c.args[1] == "failed"
+        ]
+        assert len(failed_calls) == 1
+        assert "12/12 months errored" in failed_calls[0].kwargs["admin_notes"]
+
+        # running transition was NOT called
+        running_calls = [
+            c for c in mock_backfill_db.transition_batch.call_args_list
+            if c.args[1] == "running"
+        ]
+        assert len(running_calls) == 0
+
+        # Checkpoint was NOT written — leave it untouched so a retry starts fresh.
+        mock_backfill_db.update_checkpoint.assert_not_called()
+
+    def test_all_months_empty_still_transitions_to_running(
+        self,
+        batch_id: str,
+        sample_batch: dict,
+        sample_source: dict,
+        mock_backfill_db: MagicMock,
+        mock_ingestion_db_for_backfill: MagicMock,
+    ) -> None:
+        """A year with zero decisions (all months genuinely 'empty') stays on the
+        happy path — transition to 'running' and complete normally. Only errored
+        months (status 'error' / 'cloudflare_blocked') trigger the failure branch.
+        """
+        mock_backfill_db.get_batch.return_value = sample_batch
+        mock_ingestion_db_for_backfill.get_source_with_endpoints.return_value = (
+            sample_source
+        )
+
+        mock_fetcher = MagicMock()
+        mock_fetcher.discover.return_value = []  # every month genuinely empty
+
+        with patch("src.tasks.backfill_tasks.get_fetcher", return_value=mock_fetcher):
+            result = enumerate_backfill_candidates(batch_id)
+
+        assert result["status"] == "running"
+        assert result["candidates_discovered"] == 0
+        # Checkpoint written so the tick path can transition to completed.
+        mock_backfill_db.update_checkpoint.assert_called_once()
+
     def test_cloudflare_block_recorded_and_batch_continues(
         self,
         batch_id: str,
@@ -687,6 +769,62 @@ class TestRunBackfillBatchTick:
 
         assert result["status"] == "idle"
         assert result["batches_processed"] == 0
+
+    def test_tick_rescues_stuck_enumerating_batch(
+        self,
+        mock_backfill_db: MagicMock,
+    ) -> None:
+        """A batch stuck in 'enumerating' with last_tick_at NULL > 5 min is rescued."""
+        stuck_batch = {
+            "id": "stuck-uuid",
+            "status": "enumerating",
+            "last_tick_at": None,
+            "created_at": datetime.now(UTC) - timedelta(minutes=10),
+        }
+        mock_backfill_db.get_stuck_enumerating_batches.return_value = [stuck_batch]
+        mock_backfill_db.get_batches_by_status.return_value = []
+
+        mock_redis = MagicMock()
+        mock_redis.set.return_value = True  # lock acquired
+
+        with patch(
+            "src.tasks.backfill_tasks._get_redis_client",
+            return_value=mock_redis,
+        ), patch(
+            "src.tasks.backfill_tasks.enumerate_backfill_candidates.delay",
+        ) as mock_enumerate_dispatch:
+            result = run_backfill_batch_tick()
+
+        mock_enumerate_dispatch.assert_called_once_with("stuck-uuid")
+        assert result["rescued_enumerating"] == 1
+
+    def test_tick_skips_rescue_when_lock_held(
+        self,
+        mock_backfill_db: MagicMock,
+    ) -> None:
+        """If Redis lock exists (prior rescue in flight), don't double-dispatch."""
+        stuck_batch = {
+            "id": "stuck-uuid",
+            "status": "enumerating",
+            "last_tick_at": None,
+            "created_at": datetime.now(UTC) - timedelta(minutes=10),
+        }
+        mock_backfill_db.get_stuck_enumerating_batches.return_value = [stuck_batch]
+        mock_backfill_db.get_batches_by_status.return_value = []
+
+        mock_redis = MagicMock()
+        mock_redis.set.return_value = False  # lock held
+
+        with patch(
+            "src.tasks.backfill_tasks._get_redis_client",
+            return_value=mock_redis,
+        ), patch(
+            "src.tasks.backfill_tasks.enumerate_backfill_candidates.delay",
+        ) as mock_enumerate_dispatch:
+            result = run_backfill_batch_tick()
+
+        mock_enumerate_dispatch.assert_not_called()
+        assert result["rescued_enumerating"] == 0
 
     def test_creates_fewer_jobs_when_near_end(
         self,

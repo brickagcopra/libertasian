@@ -92,6 +92,42 @@ def get_inflight_jobs_count(batch_id: str) -> int:
         return int(row[0]) if row else 0
 
 
+def get_stuck_enumerating_batches(
+    stale_after_minutes: int = 5,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    """Batches stuck in 'enumerating' with no tick ever recorded.
+
+    Covers two failure modes:
+    1. SQL-inserted batches whose enumerate was never dispatched.
+    2. Worker crashed mid-enumerate before checkpoint write — acks_late should
+       requeue, but if the task is lost, the batch is orphaned.
+
+    ``last_tick_at IS NULL`` is safe because ``_tick_single_batch`` is the only
+    code that sets ``last_tick_at``; enumerate never touches it. A running
+    enumerate naturally has NULL and is indistinguishable from a stuck one, so
+    the ``stale_after_minutes`` gate avoids rescuing a genuinely in-flight
+    enumerate (prod enumerates complete in under 25 min; we default to 5 min
+    and rely on the Redis lock for idempotency).
+    """
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """SELECT id, source_id, source_endpoint_id, name,
+                      year_start, year_end, month_start, month_end,
+                      status, checkpoint_state, last_tick_at,
+                      created_at, updated_at
+               FROM backfill_batches
+               WHERE status = 'enumerating'
+                 AND last_tick_at IS NULL
+                 AND created_at < NOW() - make_interval(mins => %s)
+               ORDER BY created_at ASC
+               LIMIT %s""",
+            (stale_after_minutes, limit),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
 def get_batch_budget_remaining(batch_id: str) -> Decimal:
     """Return budget_ceiling_usd - budget_consumed_usd for a batch."""
     with get_connection() as conn, conn.cursor() as cur:

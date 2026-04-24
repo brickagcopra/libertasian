@@ -15,6 +15,7 @@ Per CLAUDE.md:
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -303,6 +304,52 @@ def enumerate_backfill_candidates(self, batch_id: str) -> dict[str, Any]:
                 "candidates": count,
             })
 
+        # If every monthly page errored and we discovered nothing, the run is
+        # a failure, not a legitimate zero-result enumeration. Fail the batch
+        # instead of letting it transition to running -> completed with 0
+        # documents (prod incident 2026-04-24: LawPhil IP-blocked the VPS,
+        # all 12 months returned "No route to host", batch silently completed
+        # as if the year had no decisions). An all-empty year stays on the
+        # happy path.
+        errored_months = [
+            m for m in month_statuses
+            if m["status"] in ("error", "cloudflare_blocked")
+        ]
+        if not all_candidates and errored_months:
+            reason_counts: Counter[str] = Counter()
+            for m in errored_months:
+                label = (
+                    "CloudflareBlockedError"
+                    if m["status"] == "cloudflare_blocked"
+                    else (m.get("reason") or "unknown")[:80]
+                )
+                reason_counts[label] += 1
+            reasons_text = ", ".join(
+                f"{k}={v}" for k, v in reason_counts.most_common()
+            )
+            admin_notes = (
+                f"Enumeration yielded 0 candidates across {len(monthly_urls)} "
+                f"monthly pages. {len(errored_months)}/{len(monthly_urls)} "
+                f"months errored. Top reasons: {reasons_text}."
+            )[:500]
+            logger.warning(
+                "Enumeration failed for batch %s — all %d months errored "
+                "with no candidates discovered",
+                batch_id,
+                len(errored_months),
+            )
+            backfill_db.transition_batch(
+                batch_id, "failed",
+                admin_notes=admin_notes,
+            )
+            return {
+                "batch_id": batch_id,
+                "status": "failed",
+                "reason": "all_months_errored",
+                "errored_months": len(errored_months),
+                "candidates_discovered": 0,
+            }
+
         # Store checkpoint with all candidate URLs + per-month diagnostics.
         checkpoint_state = {
             "candidate_urls": all_candidates,
@@ -349,6 +396,24 @@ def enumerate_backfill_candidates(self, batch_id: str) -> dict[str, Any]:
         if self.request.retries < self.max_retries:
             raise self.retry(exc=exc) from exc
         return {"batch_id": batch_id, "status": "failed", "reason": str(exc)[:200]}
+
+
+# ─── Rescue helper ────────────────────────────────────────────────────────
+
+
+def _try_dispatch_enumerate(batch_id: str, lock_ttl_sec: int = 1800) -> bool:
+    """SETNX-based lock to prevent double-dispatch of enumerate for a batch.
+
+    Returns True if dispatch was fired, False if a prior dispatch is
+    (presumably) still in flight.
+    """
+    r = _get_redis_client()
+    key = f"backfill:enum_lock:{batch_id}"
+    acquired = r.set(key, "1", nx=True, ex=lock_ttl_sec)
+    if not acquired:
+        return False
+    enumerate_backfill_candidates.delay(batch_id)
+    return True
 
 
 # ─── Task 2: Periodic Tick ───────────────────────────────────────────────
@@ -446,9 +511,32 @@ def run_backfill_batch_tick(self) -> dict[str, Any]:
     6. Persist checkpoint
     7. If cursor reached the end, transition to 'completed'
     """
+    # Rescue pass: batches stuck in 'enumerating' with last_tick_at NULL
+    # for >5 min are orphans (SQL-inserted batches whose enumerate was never
+    # dispatched, or worker crash before dispatch landed on the queue).
+    # Re-dispatch under a Redis SETNX lock to prevent double-dispatch if the
+    # previous tick already rescued the same batch.
+    stuck = backfill_db.get_stuck_enumerating_batches(
+        stale_after_minutes=5, limit=5,
+    )
+    rescued = 0
+    for batch in stuck:
+        if _try_dispatch_enumerate(str(batch["id"])):
+            logger.warning(
+                "Rescuing stuck enumerating batch %s (created_at=%s) — "
+                "re-dispatching enumerate",
+                batch["id"],
+                batch.get("created_at"),
+            )
+            rescued += 1
+
     running_batches = backfill_db.get_batches_by_status("running")
     if not running_batches:
-        return {"status": "idle", "batches_processed": 0}
+        return {
+            "status": "idle",
+            "batches_processed": 0,
+            "rescued_enumerating": rescued,
+        }
 
     results = []
     for batch in running_batches:
@@ -467,6 +555,7 @@ def run_backfill_batch_tick(self) -> dict[str, Any]:
         "status": "ok",
         "batches_processed": len(results),
         "results": results,
+        "rescued_enumerating": rescued,
     }
 
 
