@@ -10,6 +10,7 @@ Tests cover:
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -519,6 +520,79 @@ class TestOfficialGazetteCloudflareHandling:
                 "https://www.officialgazette.gov.ph/section/laws/executive-issuances/",
             )
 
+        assert candidates == []
+
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+class TestLawphilOldMonthlyFallback:
+    """LawPhil structural fallback for old monthly pages without s-menu."""
+
+    @staticmethod
+    def _mock_discover(
+        fetcher: LawphilFetcher,
+        body: str,
+        url: str,
+    ) -> list[CandidateDoc]:
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.content = body.encode("windows-1252")
+        mock_client = MagicMock()
+        with patch.object(fetcher, "_get_client") as get_client:
+            get_client.return_value.__enter__.return_value = mock_client
+            with patch.object(fetcher, "_fetch_with_retry", return_value=mock_response):
+                return fetcher.discover(url)
+
+    def test_parses_malformed_1920_fixture(self):
+        """Old HTML without ``table#s-menu`` still yields candidates.
+
+        The fixture is a hand-built approximation of pre-2000 LawPhil markup:
+        bare anchors, stray HTML entities, unclosed <p>. The flat-link
+        fallback must recover the three gr_*_1920.html cases.
+        """
+        html = (FIXTURES / "lawphil_jan1920.html").read_text(encoding="utf-8")
+        fetcher = LawphilFetcher()
+        candidates = self._mock_discover(
+            fetcher,
+            html,
+            "https://lawphil.net/judjuris/juri1920/jan1920/jan1920.html",
+        )
+
+        assert len(candidates) == 3
+        # The PDF index link must NOT be treated as a case.
+        for c in candidates:
+            assert c.url.endswith(".html")
+            assert "gr_1555" in c.url
+        # Case numbers should be normalised.
+        gr_nos = {c.gr_no for c in candidates}
+        assert any("15551" in (gr or "") for gr in gr_nos)
+        assert any("15552" in (gr or "") for gr in gr_nos)
+        assert any("15553" in (gr or "") for gr in gr_nos)
+        # At least one date should have been captured from the surrounding text.
+        assert any(c.decision_date and "1920" in c.decision_date for c in candidates)
+
+    def test_fallback_does_not_activate_on_year_index_url(self):
+        """Year-index URLs (no monthly pattern) skip the flat-link fallback.
+
+        Otherwise a year page's monthly links would be misread as case files.
+        """
+        html = """
+        <html><body>
+        <a href="jan1920/jan1920.html">January</a>
+        <a href="feb1920/feb1920.html">February</a>
+        </body></html>
+        """
+        fetcher = LawphilFetcher()
+        candidates = self._mock_discover(
+            fetcher,
+            html,
+            "https://lawphil.net/judjuris/juri1920/juri1920.html",
+        )
+        # Monthly URLs here don't match _CASE_FILE_PATTERN, so the fallback
+        # produces zero. The existing year-index path discovers the monthly
+        # URLs to follow; with no _fetch_with_retry queued for those, the
+        # year-index branch returns zero as well. Either way: no misreads.
         assert candidates == []
 
 
