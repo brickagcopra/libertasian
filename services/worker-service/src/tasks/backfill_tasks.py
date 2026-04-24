@@ -15,6 +15,7 @@ Per CLAUDE.md:
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -302,6 +303,52 @@ def enumerate_backfill_candidates(self, batch_id: str) -> dict[str, Any]:
                 "reason": reason,
                 "candidates": count,
             })
+
+        # If every monthly page errored and we discovered nothing, the run is
+        # a failure, not a legitimate zero-result enumeration. Fail the batch
+        # instead of letting it transition to running -> completed with 0
+        # documents (prod incident 2026-04-24: LawPhil IP-blocked the VPS,
+        # all 12 months returned "No route to host", batch silently completed
+        # as if the year had no decisions). An all-empty year stays on the
+        # happy path.
+        errored_months = [
+            m for m in month_statuses
+            if m["status"] in ("error", "cloudflare_blocked")
+        ]
+        if not all_candidates and errored_months:
+            reason_counts: Counter[str] = Counter()
+            for m in errored_months:
+                label = (
+                    "CloudflareBlockedError"
+                    if m["status"] == "cloudflare_blocked"
+                    else (m.get("reason") or "unknown")[:80]
+                )
+                reason_counts[label] += 1
+            reasons_text = ", ".join(
+                f"{k}={v}" for k, v in reason_counts.most_common()
+            )
+            admin_notes = (
+                f"Enumeration yielded 0 candidates across {len(monthly_urls)} "
+                f"monthly pages. {len(errored_months)}/{len(monthly_urls)} "
+                f"months errored. Top reasons: {reasons_text}."
+            )[:500]
+            logger.warning(
+                "Enumeration failed for batch %s — all %d months errored "
+                "with no candidates discovered",
+                batch_id,
+                len(errored_months),
+            )
+            backfill_db.transition_batch(
+                batch_id, "failed",
+                admin_notes=admin_notes,
+            )
+            return {
+                "batch_id": batch_id,
+                "status": "failed",
+                "reason": "all_months_errored",
+                "errored_months": len(errored_months),
+                "candidates_discovered": 0,
+            }
 
         # Store checkpoint with all candidate URLs + per-month diagnostics.
         checkpoint_state = {
