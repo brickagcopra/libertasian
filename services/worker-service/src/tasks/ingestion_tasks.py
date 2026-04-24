@@ -355,6 +355,61 @@ def _process_endpoint(
     return result
 
 
+# ─── Backfill Completion Hook ────────────────────────────────────────────
+
+
+def _fire_backfill_completion_hook(
+    candidate_metadata: dict[str, Any],
+    outcome_status: str,
+) -> None:
+    """Finalize a backfill-triggered candidate on terminal outcome.
+
+    Decrements the Redis ``backfill:inflight:{batch_id}`` counter so the
+    next tick can dispatch new work, and increments the appropriate
+    ``backfill_batches`` counter based on the outcome. Safe to call for
+    non-backfill triggers — returns immediately unless ``trigger`` is set
+    to ``"backfill"``.
+    """
+    if candidate_metadata.get("trigger") != "backfill":
+        return
+    batch_id = candidate_metadata.get("backfill_batch_id")
+    if not batch_id:
+        return
+
+    import redis as _redis
+
+    from ..clients import backfill_db_client as backfill_db
+
+    try:
+        redis_client = _redis.Redis.from_url(
+            settings.redis_url, decode_responses=True,
+        )
+        redis_client.decr(f"backfill:inflight:{batch_id}")
+
+        if outcome_status == "accepted":
+            backfill_db.update_batch_counters(
+                batch_id, documents_created=1, candidates_processed=1,
+            )
+        elif outcome_status == "version_update":
+            backfill_db.update_batch_counters(
+                batch_id, documents_updated=1, candidates_processed=1,
+            )
+        elif outcome_status == "duplicate":
+            backfill_db.update_batch_counters(
+                batch_id, candidates_skipped=1, candidates_processed=1,
+            )
+        else:
+            # "failed" and "dead_letter"
+            backfill_db.update_batch_counters(
+                batch_id, candidates_failed=1, candidates_processed=1,
+            )
+    except Exception:
+        logger.exception(
+            "Failed to update backfill batch %s counters (outcome=%s)",
+            batch_id, outcome_status,
+        )
+
+
 # ─── Task 3: Per-Document Processor ──────────────────────────────────────
 
 
@@ -390,15 +445,29 @@ def process_ingestion_candidate(
     5. Creates LegalDocument, LegalDocumentVersion, LegalDocumentSection rows
     6. Stores raw/normalized text in S3
     7. Fires post-ingestion chain
+
+    Backfill completion hook: when ``candidate_metadata["trigger"] ==
+    "backfill"``, the Redis inflight counter
+    ``backfill:inflight:{backfill_batch_id}`` is decremented and the
+    ``backfill_batches`` counters are bumped on any terminal outcome
+    (success, duplicate, failed, dead_letter). Retries do NOT fire the
+    hook — the counter is only decremented once the job leaves flight.
     """
     candidate_metadata = candidate_metadata or {}
     classifier = DedupClassifier()
+    # ``outcome_status`` remains None while the task is still in flight
+    # (including during a pending retry). It is set to the terminal
+    # outcome just before each return / dead-letter return so the
+    # ``finally`` block can fire the backfill completion hook exactly
+    # once per enqueue-to-terminal lifecycle.
+    outcome_status: str | None = None
 
     try:
         # Step 1: Download raw content
         fetcher = get_fetcher(parser_type)
         if not fetcher:
             db.update_candidate_status(candidate_id, "rejected")
+            outcome_status = "failed"
             return {
                 "candidate_id": candidate_id,
                 "status": "error",
@@ -513,6 +582,7 @@ def process_ingestion_candidate(
                 },
             )
 
+            outcome_status = "duplicate"
             return {
                 "candidate_id": candidate_id,
                 "status": "duplicate",
@@ -598,6 +668,7 @@ def process_ingestion_candidate(
 
                 chain_post_ingestion.delay(document_id=doc_id)
 
+                outcome_status = "version_update"
                 return {
                     "candidate_id": candidate_id,
                     "document_id": doc_id,
@@ -691,6 +762,7 @@ def process_ingestion_candidate(
             dedup_result.tier.value,
         )
 
+        outcome_status = "accepted"
         return {
             "candidate_id": candidate_id,
             "document_id": doc_id,
@@ -718,12 +790,19 @@ def process_ingestion_candidate(
                 error_message=str(exc),
                 retry_count=self.request.retries,
             )
+            outcome_status = "dead_letter"
             return {
                 "candidate_id": candidate_id,
                 "status": "dead_letter",
             }
 
+        # About to re-enqueue — leave outcome_status as None so the
+        # backfill hook does NOT fire (the job is still in flight).
         raise self.retry(exc=exc) from exc
+
+    finally:
+        if outcome_status is not None:
+            _fire_backfill_completion_hook(candidate_metadata, outcome_status)
 
 
 def _merge_metadata(

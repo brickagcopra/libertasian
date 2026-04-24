@@ -4,26 +4,15 @@ Covers:
 16. transition_batch — succeeds for valid transition
 17. transition_batch — returns False for invalid transition
 18. update_checkpoint — writes both checkpoint_state and checkpoint row
-19. create_backfill_ingestion_job — creates job with correct trigger_type
-20. get_inflight_jobs_count — counts pending + running jobs
 """
 
 from __future__ import annotations
 
-import json
-import uuid
 from decimal import Decimal
 from typing import Any
-from unittest.mock import MagicMock, call, patch
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from src.clients import backfill_db_client as backfill_db
-
-
-def make_uuid() -> str:
-    return str(uuid.uuid4())
-
 
 # ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -145,101 +134,6 @@ class TestUpdateCheckpoint:
         second_sql = cursor.execute.call_args_list[1][0][0]
         assert "INSERT INTO backfill_checkpoints" in second_sql
         assert "cursor_json" in second_sql
-
-
-# ─── Test 19: create_backfill_ingestion_job ──────────────────────────────
-
-
-class TestCreateBackfillIngestionJob:
-    @patch("src.clients.backfill_db_client.get_connection")
-    def test_creates_job_with_correct_trigger_type(
-        self, mock_get_conn: MagicMock,
-    ) -> None:
-        """create_backfill_ingestion_job creates a job with trigger_type='backfill'."""
-        mock_conn = _make_mock_conn()
-        mock_get_conn.return_value = mock_conn
-
-        batch_id = make_uuid()
-        source_id = make_uuid()
-        user_id = make_uuid()
-
-        job_id = backfill_db.create_backfill_ingestion_job(
-            source_id=source_id,
-            source_endpoint_id=None,
-            backfill_batch_id=batch_id,
-            triggered_by_user_id=user_id,
-        )
-
-        assert job_id  # non-empty UUID string
-        cursor = mock_conn.cursor.return_value.__enter__.return_value
-        sql, params = cursor.execute.call_args[0]
-        assert "INSERT INTO ingestion_jobs" in sql
-        assert "'backfill'" in sql
-        assert batch_id in params
-        assert user_id in params
-
-    @patch("src.clients.backfill_db_client.get_connection")
-    def test_does_not_reference_nonexistent_columns(
-        self, mock_get_conn: MagicMock,
-    ) -> None:
-        """Regression test for prod incident 2026-04-24 (main HEAD bfeac70).
-
-        The ingestion_jobs table has no created_at / updated_at columns
-        (Prisma IngestionJob only has started_at, finished_at). The INSERT
-        must not reference them or every backfill.tick fails with
-        'column "created_at" of relation "ingestion_jobs" does not exist'.
-        """
-        mock_conn = _make_mock_conn()
-        mock_get_conn.return_value = mock_conn
-
-        backfill_db.create_backfill_ingestion_job(
-            source_id="00000000-0000-0000-0000-000000000001",
-            source_endpoint_id=None,
-            backfill_batch_id="00000000-0000-0000-0000-000000000002",
-            triggered_by_user_id="00000000-0000-0000-0000-000000000003",
-        )
-
-        cursor = mock_conn.cursor.return_value.__enter__.return_value
-        sql = cursor.execute.call_args.args[0]
-        assert "created_at" not in sql
-        assert "updated_at" not in sql
-        assert "ingestion_jobs" in sql
-        assert "'pending'" in sql
-
-
-# ─── Test 20: get_inflight_jobs_count ────────────────────────────────────
-
-
-class TestGetInflightJobsCount:
-    @patch("src.clients.backfill_db_client.get_connection")
-    def test_counts_pending_and_running_jobs(
-        self, mock_get_conn: MagicMock,
-    ) -> None:
-        """get_inflight_jobs_count returns count of pending + running jobs."""
-        mock_conn = _make_mock_conn(fetchone_value=(3,))
-        mock_get_conn.return_value = mock_conn
-
-        count = backfill_db.get_inflight_jobs_count("batch-1")
-
-        assert count == 3
-        cursor = mock_conn.cursor.return_value.__enter__.return_value
-        sql, params = cursor.execute.call_args[0]
-        assert "COUNT(*)" in sql
-        assert "backfill_batch_id" in sql
-        assert "'pending'" in sql
-        assert "'running'" in sql
-
-    @patch("src.clients.backfill_db_client.get_connection")
-    def test_returns_zero_when_no_jobs(
-        self, mock_get_conn: MagicMock,
-    ) -> None:
-        """get_inflight_jobs_count returns 0 when fetchone returns (0,)."""
-        mock_conn = _make_mock_conn(fetchone_value=(0,))
-        mock_get_conn.return_value = mock_conn
-
-        count = backfill_db.get_inflight_jobs_count("batch-1")
-
-        assert count == 0
 
 
 # ─── Test: get_batch_budget_remaining ────────────────────────────────────
