@@ -10,7 +10,6 @@ schema migrations. All table/column names use snake_case via Prisma @@map/@map.
 import json
 import logging
 import uuid
-from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -76,20 +75,6 @@ def get_batches_by_status(status: str, limit: int = 10) -> list[dict[str, Any]]:
             (status, limit),
         )
         return [dict(row) for row in cur.fetchall()]
-
-
-def get_inflight_jobs_count(batch_id: str) -> int:
-    """Count IngestionJobs for this batch in status 'pending' or 'running'."""
-    with get_connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            """SELECT COUNT(*)
-               FROM ingestion_jobs
-               WHERE backfill_batch_id = %s
-               AND status IN ('pending', 'running')""",
-            (batch_id,),
-        )
-        row = cur.fetchone()
-        return int(row[0]) if row else 0
 
 
 def get_stuck_enumerating_batches(
@@ -289,30 +274,3 @@ def update_checkpoint(
     )
 
 
-def create_backfill_ingestion_job(
-    source_id: str,
-    source_endpoint_id: str | None,
-    backfill_batch_id: str,
-    triggered_by_user_id: str,
-) -> str:
-    """Create an IngestionJob with trigger_type='backfill' and backfill_batch_id set.
-
-    Returns the new job ID.
-    """
-    job_id = str(uuid.uuid4())
-    with get_connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            """INSERT INTO ingestion_jobs
-                   (id, source_id, source_endpoint_id, job_type, status,
-                    trigger_type, backfill_batch_id, triggered_by_user_id)
-                   VALUES (%s, %s, %s, 'crawl', 'pending', 'backfill',
-                           %s, %s)""",
-            (job_id, source_id, source_endpoint_id, backfill_batch_id,
-             triggered_by_user_id),
-        )
-    logger.info(
-        "Created backfill ingestion job %s for batch %s",
-        job_id,
-        backfill_batch_id,
-    )
-    return job_id

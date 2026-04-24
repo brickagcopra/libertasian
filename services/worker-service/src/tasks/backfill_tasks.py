@@ -29,6 +29,7 @@ from ..clients import ingestion_db_client as ingestion_db
 from ..config import settings
 from ..fetchers.base import CloudflareBlockedError
 from ..fetchers.registry import get_fetcher
+from ..normalizers.text_normalizer import compute_similarity_key
 
 logger = logging.getLogger(__name__)
 
@@ -419,8 +420,32 @@ def _try_dispatch_enumerate(batch_id: str, lock_ttl_sec: int = 1800) -> bool:
 # ─── Task 2: Periodic Tick ───────────────────────────────────────────────
 
 
+def _inflight_key(batch_id: str) -> str:
+    """Redis key for the per-batch in-flight dispatch counter."""
+    return f"backfill:inflight:{batch_id}"
+
+
+def _get_inflight_count(batch_id: str) -> int:
+    """Read the per-batch Redis in-flight counter (0 if unset)."""
+    raw = _get_redis_client().get(_inflight_key(batch_id))
+    if raw is None:
+        return 0
+    try:
+        return max(0, int(str(raw)))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _tick_single_batch(batch: dict[str, Any]) -> dict[str, Any]:
-    """Process one tick for a single batch."""
+    """Process one tick for a single batch.
+
+    Pulls the next N URLs from ``checkpoint_state.candidate_urls``, creates
+    an ``ingestion_candidate`` row per URL (deduped by similarity_key), and
+    dispatches ``process_ingestion_candidate`` — the same path daily-crawl
+    uses. The old pattern of creating generic ``ingestion_jobs`` re-ran the
+    source's default discovery endpoint and never processed the enumerated
+    URLs (prod incident 2026-04-24).
+    """
     batch_id = str(batch["id"])
     checkpoint = batch.get("checkpoint_state") or {}
     candidate_urls = checkpoint.get("candidate_urls", [])
@@ -433,6 +458,9 @@ def _tick_single_batch(batch: dict[str, Any]) -> dict[str, Any]:
             batch_id, "completed",
             finished_at=datetime.now(UTC),
         )
+        # Terminal transition: drop the inflight key so a re-creation of a
+        # batch with the same id doesn't inherit stale counts.
+        _get_redis_client().delete(_inflight_key(batch_id))
         return {"batch_id": batch_id, "status": "completed"}
 
     # Check batch budget
@@ -442,10 +470,13 @@ def _tick_single_batch(batch: dict[str, Any]) -> dict[str, Any]:
             batch_id, "halted_budget",
             admin_notes=f"Budget ceiling reached. Consumed: {batch.get('budget_consumed_usd')}",
         )
+        _get_redis_client().delete(_inflight_key(batch_id))
         return {"batch_id": batch_id, "status": "halted_budget"}
 
-    # Check in-flight jobs (max per batch)
-    inflight = backfill_db.get_inflight_jobs_count(batch_id)
+    # Redis-backed in-flight cap. Decrement happens in
+    # process_ingestion_candidate's completion hook when
+    # candidate_metadata["trigger"] == "backfill".
+    inflight = _get_inflight_count(batch_id)
     slots_available = max(0, MAX_INFLIGHT_JOBS_PER_BATCH - inflight)
     if slots_available == 0:
         return {
@@ -454,38 +485,113 @@ def _tick_single_batch(batch: dict[str, Any]) -> dict[str, Any]:
             "inflight": inflight,
         }
 
-    # Create child ingestion jobs for the next N candidates
-    jobs_created = 0
+    # Resolve parser_type once per tick (one DB roundtrip).
+    source_id_str = str(batch["source_id"])
+    source = ingestion_db.get_source_with_endpoints(source_id_str)
+    endpoints = source.get("endpoints", []) if source else []
+    parser_type = endpoints[0].get("parser_type") if endpoints else None
+    if not parser_type:
+        logger.error(
+            "Cannot tick batch %s — no parser_type on source %s",
+            batch_id, source_id_str,
+        )
+        return {
+            "batch_id": batch_id,
+            "status": "error",
+            "reason": "no_parser_type",
+        }
+
+    # Avoid circular import: process_ingestion_candidate lives in
+    # ingestion_tasks which imports daily_crawl_tasks which imports this
+    # module transitively via the Celery app registry.
+    from .ingestion_tasks import process_ingestion_candidate
+
+    candidates_dispatched = 0
+    candidates_skipped = 0
     new_index = current_index
     for i in range(slots_available):
         idx = current_index + i
         if idx >= total:
             break
-        # Create an IngestionJob that the existing pipeline will pick up
-        backfill_db.create_backfill_ingestion_job(
-            source_id=str(batch["source_id"]),
-            source_endpoint_id=(
-                str(batch["source_endpoint_id"])
-                if batch.get("source_endpoint_id")
-                else None
-            ),
-            backfill_batch_id=batch_id,
-            triggered_by_user_id=str(batch["created_by_user_id"]),
+        entry = candidate_urls[idx]
+        entry_url = entry.get("url")
+        if not entry_url:
+            # Malformed checkpoint entry — advance past it rather than
+            # wedge the batch.
+            logger.warning(
+                "Batch %s checkpoint entry at index %d has no url; skipping",
+                batch_id, idx,
+            )
+            candidates_skipped += 1
+            new_index = idx + 1
+            continue
+
+        year = entry.get("year")
+        month = entry.get("month")
+        decision_date = (
+            f"{year}-{int(month):02d}-01"
+            if year is not None and month is not None
+            else None
         )
-        jobs_created += 1
+
+        sim_key = compute_similarity_key(
+            title=entry.get("title"),
+            citation=entry.get("gr_no"),
+            date=decision_date,
+        )
+        existing = ingestion_db.find_candidate_by_similarity_key(
+            source_id=source_id_str,
+            similarity_key=sim_key,
+        )
+        if existing:
+            candidates_skipped += 1
+            new_index = idx + 1
+            continue
+
+        candidate_id = ingestion_db.create_ingestion_candidate(
+            source_id=source_id_str,
+            detected_url=entry_url,
+            detected_title=entry.get("title"),
+            detected_document_type=None,
+            similarity_key=sim_key,
+        )
+
+        process_ingestion_candidate.delay(
+            candidate_id=candidate_id,
+            source_id=source_id_str,
+            url=entry_url,
+            parser_type=parser_type,
+            candidate_metadata={
+                "title": entry.get("title"),
+                "gr_no": entry.get("gr_no"),
+                "document_type": "decision",
+                "decision_date": decision_date,
+                "trigger": "backfill",
+                "backfill_batch_id": batch_id,
+            },
+        )
+        candidates_dispatched += 1
         new_index = idx + 1
 
-    # Update checkpoint
+    # Update checkpoint + counters.
     checkpoint["current_index"] = new_index
     backfill_db.update_checkpoint(batch_id, checkpoint, new_index)
-    backfill_db.update_batch_counters(
-        batch_id, last_tick_at=datetime.now(UTC),
-    )
+    counter_updates: dict[str, Any] = {"last_tick_at": datetime.now(UTC)}
+    if candidates_skipped:
+        counter_updates["candidates_skipped"] = candidates_skipped
+    backfill_db.update_batch_counters(batch_id, **counter_updates)
+
+    # Bump the Redis inflight counter by the number dispatched. The
+    # completion hook in process_ingestion_candidate decrements it by 1
+    # per job regardless of success or failure.
+    if candidates_dispatched:
+        _get_redis_client().incrby(_inflight_key(batch_id), candidates_dispatched)
 
     return {
         "batch_id": batch_id,
         "status": "ticked",
-        "jobs_created": jobs_created,
+        "candidates_dispatched": candidates_dispatched,
+        "candidates_skipped": candidates_skipped,
         "progress": f"{new_index}/{total}",
     }
 
@@ -616,6 +722,7 @@ def check_backfill_budgets(self) -> dict[str, Any]:
                 batch_id, "halted_budget",
                 admin_notes="Global monthly LLM budget exceeded",
             )
+            _get_redis_client().delete(_inflight_key(batch_id))
             halted_count += 1
             continue
 
@@ -626,6 +733,7 @@ def check_backfill_budgets(self) -> dict[str, Any]:
                 batch_id, "halted_budget",
                 admin_notes=f"Batch budget ceiling reached. Consumed: {batch.get('budget_consumed_usd')}",
             )
+            _get_redis_client().delete(_inflight_key(batch_id))
             halted_count += 1
 
     return {

@@ -23,13 +23,21 @@ logger = logging.getLogger(__name__)
 
 
 def get_pending_ingestion_jobs(limit: int = 10) -> list[dict[str, Any]]:
-    """Fetch pending ingestion jobs ordered by creation (oldest first)."""
+    """Fetch pending ingestion jobs ordered by creation (oldest first).
+
+    Backfill-triggered jobs are excluded. Backfill work now flows through
+    ``process_ingestion_candidate`` dispatched directly by the tick
+    (see ``backfill_tasks._tick_single_batch``); any residual
+    ``trigger_type='backfill'`` rows are wedged leftovers from the pre-fix
+    run and must not be resurrected by the poller.
+    """
     with get_connection() as conn, \
             conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             """SELECT id, source_id, source_endpoint_id, job_type, status
                FROM ingestion_jobs
                WHERE status = 'pending'
+                 AND trigger_type != 'backfill'
                ORDER BY id ASC
                LIMIT %s""",
             (limit,),

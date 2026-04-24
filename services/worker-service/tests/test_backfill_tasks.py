@@ -24,7 +24,6 @@ from src.tasks.backfill_tasks import (
     MONTHLY_URL_BUILDERS,
     _build_lawphil_monthly_urls,
     _build_scel_monthly_urls,
-    _tick_single_batch,
     check_backfill_budgets,
     enumerate_backfill_candidates,
     run_backfill_batch_tick,
@@ -113,19 +112,43 @@ def mock_backfill_db() -> MagicMock:
         mock_db.transition_batch.return_value = True
         mock_db.update_batch_counters.return_value = None
         mock_db.update_checkpoint.return_value = None
-        mock_db.create_backfill_ingestion_job.return_value = make_uuid()
-        mock_db.get_inflight_jobs_count.return_value = 0
         mock_db.get_batch_budget_remaining.return_value = Decimal("100.00")
         mock_db.get_stuck_enumerating_batches.return_value = []
         yield mock_db
 
 
 @pytest.fixture()
-def mock_ingestion_db_for_backfill() -> MagicMock:
-    """Mock the ingestion DB client used by backfill tasks."""
+def mock_ingestion_db_for_backfill(source_id: str) -> MagicMock:
+    """Mock the ingestion DB client used by backfill tasks.
+
+    Tick now reads the source + endpoints to resolve parser_type and
+    dedups candidates via similarity_key. Defaults below cover both.
+    """
     with patch("src.tasks.backfill_tasks.ingestion_db") as mock_db:
-        mock_db.get_source_with_endpoints.return_value = None
+        mock_db.get_source_with_endpoints.return_value = {
+            "id": source_id,
+            "endpoints": [{"parser_type": "lawphil"}],
+        }
+        mock_db.find_candidate_by_similarity_key.return_value = None
+        mock_db.create_ingestion_candidate.side_effect = (
+            lambda **kwargs: make_uuid()
+        )
         yield mock_db
+
+
+@pytest.fixture()
+def mock_tick_redis() -> MagicMock:
+    """Mock the Redis client used by tick for inflight counter ops."""
+    mock_redis = MagicMock()
+    mock_redis.get.return_value = None  # inflight = 0 by default
+    mock_redis.incrby.return_value = 1
+    mock_redis.decr.return_value = 0
+    mock_redis.delete.return_value = 1
+    mock_redis.set.return_value = True
+    with patch(
+        "src.tasks.backfill_tasks._get_redis_client", return_value=mock_redis,
+    ):
+        yield mock_redis
 
 
 @pytest.fixture()
@@ -661,12 +684,21 @@ class TestRunBackfillBatchTick:
         self,
         sample_batch: dict,
         mock_backfill_db: MagicMock,
+        mock_ingestion_db_for_backfill: MagicMock,
+        mock_tick_redis: MagicMock,
     ) -> None:
-        """Test 9: creates child jobs and advances cursor."""
+        """Test 9: dispatches process_ingestion_candidate and advances cursor."""
         sample_batch["status"] = "running"
         sample_batch["checkpoint_state"] = {
             "candidate_urls": [
-                {"url": f"https://lawphil.net/doc{i}.html", "year": 2023, "month": 1, "index": i}
+                {
+                    "url": f"https://lawphil.net/doc{i}.html",
+                    "title": f"Case {i}",
+                    "gr_no": f"G.R. No. {1000 + i}",
+                    "year": 2023,
+                    "month": 1,
+                    "index": i,
+                }
                 for i in range(10)
             ],
             "current_index": 0,
@@ -674,23 +706,32 @@ class TestRunBackfillBatchTick:
         }
         mock_backfill_db.get_batches_by_status.return_value = [sample_batch]
         mock_backfill_db.get_batch_budget_remaining.return_value = Decimal("100.00")
-        mock_backfill_db.get_inflight_jobs_count.return_value = 0
 
-        result = run_backfill_batch_tick()
+        with patch(
+            "src.tasks.ingestion_tasks.process_ingestion_candidate.delay",
+        ) as mock_dispatch:
+            result = run_backfill_batch_tick()
 
         assert result["batches_processed"] == 1
         tick_result = result["results"][0]
         assert tick_result["status"] == "ticked"
-        assert tick_result["jobs_created"] == 5  # MAX_INFLIGHT_JOBS_PER_BATCH
+        assert tick_result["candidates_dispatched"] == 5
         assert tick_result["progress"] == "5/10"
 
-        # Verify child jobs were created
-        assert mock_backfill_db.create_backfill_ingestion_job.call_count == 5
+        # Verify process_ingestion_candidate.delay was called once per slot
+        assert mock_dispatch.call_count == 5
+        # And inflight counter was bumped by 5
+        mock_tick_redis.incrby.assert_called_once()
+        incrby_args = mock_tick_redis.incrby.call_args[0]
+        assert incrby_args[0].startswith("backfill:inflight:")
+        assert incrby_args[1] == 5
 
     def test_transitions_to_completed_when_cursor_reaches_end(
         self,
         sample_batch: dict,
         mock_backfill_db: MagicMock,
+        mock_ingestion_db_for_backfill: MagicMock,
+        mock_tick_redis: MagicMock,
     ) -> None:
         """Test 10: transitions to completed when all candidates processed."""
         sample_batch["status"] = "running"
@@ -715,6 +756,8 @@ class TestRunBackfillBatchTick:
         self,
         sample_batch: dict,
         mock_backfill_db: MagicMock,
+        mock_ingestion_db_for_backfill: MagicMock,
+        mock_tick_redis: MagicMock,
     ) -> None:
         """Test 11: transitions to halted_budget when budget exhausted."""
         sample_batch["status"] = "running"
@@ -733,30 +776,6 @@ class TestRunBackfillBatchTick:
         mock_backfill_db.transition_batch.assert_called_once()
         call_args = mock_backfill_db.transition_batch.call_args
         assert call_args[0][1] == "halted_budget"
-
-    def test_waits_when_max_inflight_reached(
-        self,
-        sample_batch: dict,
-        mock_backfill_db: MagicMock,
-    ) -> None:
-        """Test 12: waits when 5 jobs already in-flight."""
-        sample_batch["status"] = "running"
-        sample_batch["checkpoint_state"] = {
-            "candidate_urls": [{"url": "https://lawphil.net/doc1.html"}],
-            "current_index": 0,
-            "total_candidates": 1,
-        }
-        mock_backfill_db.get_batches_by_status.return_value = [sample_batch]
-        mock_backfill_db.get_batch_budget_remaining.return_value = Decimal("100.00")
-        mock_backfill_db.get_inflight_jobs_count.return_value = 5
-
-        result = run_backfill_batch_tick()
-
-        tick_result = result["results"][0]
-        assert tick_result["status"] == "waiting_inflight"
-        assert tick_result["inflight"] == 5
-        # No child jobs should have been created
-        mock_backfill_db.create_backfill_ingestion_job.assert_not_called()
 
     def test_idle_when_no_running_batches(
         self,
@@ -830,12 +849,21 @@ class TestRunBackfillBatchTick:
         self,
         sample_batch: dict,
         mock_backfill_db: MagicMock,
+        mock_ingestion_db_for_backfill: MagicMock,
+        mock_tick_redis: MagicMock,
     ) -> None:
-        """Creates only remaining candidates when fewer than max slots available."""
+        """Dispatches only remaining candidates when fewer than max slots available."""
         sample_batch["status"] = "running"
         sample_batch["checkpoint_state"] = {
             "candidate_urls": [
-                {"url": f"https://lawphil.net/doc{i}.html", "year": 2023, "month": 1, "index": i}
+                {
+                    "url": f"https://lawphil.net/doc{i}.html",
+                    "title": f"Case {i}",
+                    "gr_no": f"G.R. No. {1000 + i}",
+                    "year": 2023,
+                    "month": 1,
+                    "index": i,
+                }
                 for i in range(3)
             ],
             "current_index": 1,  # 2 remaining
@@ -843,13 +871,177 @@ class TestRunBackfillBatchTick:
         }
         mock_backfill_db.get_batches_by_status.return_value = [sample_batch]
         mock_backfill_db.get_batch_budget_remaining.return_value = Decimal("100.00")
-        mock_backfill_db.get_inflight_jobs_count.return_value = 0
 
-        result = run_backfill_batch_tick()
+        with patch(
+            "src.tasks.ingestion_tasks.process_ingestion_candidate.delay",
+        ):
+            result = run_backfill_batch_tick()
 
         tick_result = result["results"][0]
-        assert tick_result["jobs_created"] == 2
+        assert tick_result["candidates_dispatched"] == 2
         assert tick_result["progress"] == "3/3"
+
+    # ─── Tick dispatches real candidates (fix for prod incident 2026-04-24) ──
+
+    def test_tick_dispatches_process_ingestion_candidate_with_real_url(
+        self,
+        sample_batch: dict,
+        mock_backfill_db: MagicMock,
+        mock_ingestion_db_for_backfill: MagicMock,
+        mock_tick_redis: MagicMock,
+    ) -> None:
+        """Tick dispatches process_ingestion_candidate with the URL from
+        checkpoint_state.candidate_urls[idx], not a generic ingestion_job
+        that re-crawls the source's default endpoint.
+
+        Regression test for prod incident 2026-04-24 (batch b596d5f7): the
+        old tick called create_backfill_ingestion_job, so poll_pending_jobs
+        picked up the row and ran fetcher.discover() against the juri2025
+        landing page — 299 completed jobs, zero documents created.
+        """
+        candidate_url = (
+            "https://lawphil.net/judjuris/juri2020/jan2020/gr_223623_2020.html"
+        )
+        sample_batch["status"] = "running"
+        sample_batch["checkpoint_state"] = {
+            "candidate_urls": [
+                {
+                    "url": candidate_url,
+                    "title": "People v. Dela Cruz",
+                    "gr_no": "G.R. No. 223623",
+                    "year": 2020,
+                    "month": 1,
+                    "index": 0,
+                },
+            ],
+            "current_index": 0,
+            "total_candidates": 1,
+        }
+        mock_backfill_db.get_batches_by_status.return_value = [sample_batch]
+
+        fake_candidate_id = make_uuid()
+        mock_ingestion_db_for_backfill.create_ingestion_candidate.side_effect = None
+        mock_ingestion_db_for_backfill.create_ingestion_candidate.return_value = (
+            fake_candidate_id
+        )
+
+        with patch(
+            "src.tasks.ingestion_tasks.process_ingestion_candidate.delay",
+        ) as mock_dispatch:
+            run_backfill_batch_tick()
+
+        mock_dispatch.assert_called_once()
+        kwargs = mock_dispatch.call_args.kwargs
+        assert kwargs["url"] == candidate_url
+        assert kwargs["candidate_id"] == fake_candidate_id
+        assert kwargs["parser_type"] == "lawphil"
+        assert kwargs["candidate_metadata"]["trigger"] == "backfill"
+        assert kwargs["candidate_metadata"]["backfill_batch_id"] == str(
+            sample_batch["id"],
+        )
+        assert kwargs["candidate_metadata"]["gr_no"] == "G.R. No. 223623"
+
+        # create_ingestion_candidate was called with the real URL, not
+        # the source's default endpoint.
+        create_kwargs = (
+            mock_ingestion_db_for_backfill.create_ingestion_candidate
+            .call_args.kwargs
+        )
+        assert create_kwargs["detected_url"] == candidate_url
+
+    def test_tick_skips_duplicate_via_similarity_key(
+        self,
+        sample_batch: dict,
+        mock_backfill_db: MagicMock,
+        mock_ingestion_db_for_backfill: MagicMock,
+        mock_tick_redis: MagicMock,
+    ) -> None:
+        """If similarity_key already exists, skip dispatch and bump
+        candidates_skipped — matches daily_crawl's dedup behavior."""
+        sample_batch["status"] = "running"
+        sample_batch["checkpoint_state"] = {
+            "candidate_urls": [
+                {
+                    "url": "https://lawphil.net/doc1.html",
+                    "title": "People v. Dela Cruz",
+                    "gr_no": "G.R. No. 111",
+                    "year": 2020,
+                    "month": 1,
+                    "index": 0,
+                },
+            ],
+            "current_index": 0,
+            "total_candidates": 1,
+        }
+        mock_backfill_db.get_batches_by_status.return_value = [sample_batch]
+
+        # Simulate a pre-existing candidate matching the similarity key
+        mock_ingestion_db_for_backfill.find_candidate_by_similarity_key.return_value = {
+            "id": make_uuid(),
+            "status": "accepted",
+        }
+
+        with patch(
+            "src.tasks.ingestion_tasks.process_ingestion_candidate.delay",
+        ) as mock_dispatch:
+            result = run_backfill_batch_tick()
+
+        # No dispatch, no candidate creation
+        mock_dispatch.assert_not_called()
+        mock_ingestion_db_for_backfill.create_ingestion_candidate.assert_not_called()
+
+        # Cursor advanced, candidates_skipped incremented
+        tick_result = result["results"][0]
+        assert tick_result["progress"] == "1/1"
+        assert tick_result["candidates_skipped"] == 1
+        assert tick_result["candidates_dispatched"] == 0
+
+        update_kwargs = mock_backfill_db.update_batch_counters.call_args.kwargs
+        assert update_kwargs["candidates_skipped"] == 1
+
+    def test_tick_respects_redis_inflight_cap(
+        self,
+        sample_batch: dict,
+        mock_backfill_db: MagicMock,
+        mock_ingestion_db_for_backfill: MagicMock,
+        mock_tick_redis: MagicMock,
+    ) -> None:
+        """When the Redis inflight counter is at MAX_INFLIGHT_JOBS_PER_BATCH (5),
+        tick must not dispatch any more candidates or advance the cursor."""
+        from src.tasks.backfill_tasks import MAX_INFLIGHT_JOBS_PER_BATCH
+
+        sample_batch["status"] = "running"
+        sample_batch["checkpoint_state"] = {
+            "candidate_urls": [
+                {
+                    "url": f"https://lawphil.net/doc{i}.html",
+                    "title": f"Case {i}",
+                    "gr_no": f"G.R. No. {i}",
+                    "year": 2020,
+                    "month": 1,
+                    "index": i,
+                }
+                for i in range(10)
+            ],
+            "current_index": 0,
+            "total_candidates": 10,
+        }
+        mock_backfill_db.get_batches_by_status.return_value = [sample_batch]
+
+        # Pre-set Redis counter to the cap
+        mock_tick_redis.get.return_value = str(MAX_INFLIGHT_JOBS_PER_BATCH)
+
+        with patch(
+            "src.tasks.ingestion_tasks.process_ingestion_candidate.delay",
+        ) as mock_dispatch:
+            result = run_backfill_batch_tick()
+
+        tick_result = result["results"][0]
+        assert tick_result["status"] == "waiting_inflight"
+        assert tick_result["inflight"] == MAX_INFLIGHT_JOBS_PER_BATCH
+        mock_dispatch.assert_not_called()
+        mock_ingestion_db_for_backfill.create_ingestion_candidate.assert_not_called()
+        mock_tick_redis.incrby.assert_not_called()
 
 
 # ─── Tests 14-15: check_backfill_budgets ─────────────────────────────────
