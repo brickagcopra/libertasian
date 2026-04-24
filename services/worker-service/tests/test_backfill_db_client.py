@@ -178,6 +178,34 @@ class TestCreateBackfillIngestionJob:
         assert batch_id in params
         assert user_id in params
 
+    @patch("src.clients.backfill_db_client.get_connection")
+    def test_does_not_reference_nonexistent_columns(
+        self, mock_get_conn: MagicMock,
+    ) -> None:
+        """Regression test for prod incident 2026-04-24 (main HEAD bfeac70).
+
+        The ingestion_jobs table has no created_at / updated_at columns
+        (Prisma IngestionJob only has started_at, finished_at). The INSERT
+        must not reference them or every backfill.tick fails with
+        'column "created_at" of relation "ingestion_jobs" does not exist'.
+        """
+        mock_conn = _make_mock_conn()
+        mock_get_conn.return_value = mock_conn
+
+        backfill_db.create_backfill_ingestion_job(
+            source_id="00000000-0000-0000-0000-000000000001",
+            source_endpoint_id=None,
+            backfill_batch_id="00000000-0000-0000-0000-000000000002",
+            triggered_by_user_id="00000000-0000-0000-0000-000000000003",
+        )
+
+        cursor = mock_conn.cursor.return_value.__enter__.return_value
+        sql = cursor.execute.call_args.args[0]
+        assert "created_at" not in sql
+        assert "updated_at" not in sql
+        assert "ingestion_jobs" in sql
+        assert "'pending'" in sql
+
 
 # ─── Test 20: get_inflight_jobs_count ────────────────────────────────────
 
