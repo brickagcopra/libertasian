@@ -15,6 +15,7 @@ Per CLAUDE.md:
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -25,6 +26,7 @@ from celery import shared_task
 from ..clients import backfill_db_client as backfill_db
 from ..clients import ingestion_db_client as ingestion_db
 from ..config import settings
+from ..fetchers.base import CloudflareBlockedError
 from ..fetchers.registry import get_fetcher
 
 logger = logging.getLogger(__name__)
@@ -34,10 +36,13 @@ MONTH_CODES = [
     "jul", "aug", "sep", "oct", "nov", "dec",
 ]
 
+# Capitalised month codes used by the SC E-Library URL scheme.
+MONTH_CODES_TITLE = [c.title() for c in MONTH_CODES]
+
 MAX_INFLIGHT_JOBS_PER_BATCH = 5
 
 
-# ─── Helpers ─────────────────────────────────────────────────────────────
+# ─── Monthly URL builders ────────────────────────────────────────────────
 
 
 def _build_lawphil_monthly_urls(
@@ -59,6 +64,59 @@ def _build_lawphil_monthly_urls(
             )
             urls.append({"year": year, "month": month_idx, "url": url})
     return urls
+
+
+def _build_scel_monthly_urls(
+    year_start: int,
+    year_end: int,
+    month_start: int | None = None,
+    month_end: int | None = None,
+) -> list[dict[str, Any]]:
+    """Generate Supreme Court E-Library monthly docmonth URLs.
+
+    Pattern: ``/thebookshelf/docmonth/{Mon}/{YYYY}/1`` where ``Mon`` is the
+    title-cased three-letter month code (e.g. ``Jan``, ``Feb``). The trailing
+    ``/1`` is the category ID for Decisions & Signed Resolutions.
+    """
+    urls: list[dict[str, Any]] = []
+    for year in range(year_start, year_end + 1):
+        start_month = month_start if (month_start and year == year_start) else 1
+        end_month = month_end if (month_end and year == year_end) else 12
+        for month_idx in range(start_month, end_month + 1):
+            code = MONTH_CODES_TITLE[month_idx - 1]
+            url = (
+                "https://elibrary.judiciary.gov.ph"
+                f"/thebookshelf/docmonth/{code}/{year}/1"
+            )
+            urls.append({"year": year, "month": month_idx, "url": url})
+    return urls
+
+
+# Maps a SourceEndpoint.parser_type to the monthly-URL builder for that
+# source. Keep in sync with FETCHER_REGISTRY in fetchers/registry.py — if a
+# parser_type is absent here, batches for that source will fail fast instead
+# of silently enumerating the wrong site.
+MONTHLY_URL_BUILDERS: dict[
+    str,
+    Callable[[int, int, int | None, int | None], list[dict[str, Any]]],
+] = {
+    "lawphil": _build_lawphil_monthly_urls,
+    "supreme_court_elibrary": _build_scel_monthly_urls,
+}
+
+
+def _min_supported_year_for(parser_type: str) -> int | None:
+    """Return the fetcher's minimum-supported year floor, or None.
+
+    Reads the ``MIN_SUPPORTED_YEAR`` class attribute off the fetcher registered
+    for ``parser_type``. Used by enumerate to reject year_start values below
+    the floor with a clear admin message instead of silently producing zero
+    candidates.
+    """
+    fetcher = get_fetcher(parser_type)
+    if fetcher is None:
+        return None
+    return getattr(fetcher.__class__, "MIN_SUPPORTED_YEAR", None)
 
 
 def _get_redis_client() -> redis.Redis:
@@ -140,21 +198,72 @@ def enumerate_backfill_candidates(self, batch_id: str) -> dict[str, Any]:
         )
         return {"batch_id": batch_id, "status": "failed", "reason": "no_fetcher"}
 
+    # Each source has its own monthly listing URL scheme. Fail fast rather
+    # than silently enumerating the wrong site if the parser_type isn't
+    # wired up yet.
+    url_builder = MONTHLY_URL_BUILDERS.get(parser_type)
+    if url_builder is None:
+        backfill_db.transition_batch(
+            batch_id, "failed",
+            admin_notes=(
+                f"No monthly URL builder for parser_type={parser_type}. "
+                "Register one in backfill_tasks.MONTHLY_URL_BUILDERS."
+            ),
+        )
+        return {
+            "batch_id": batch_id,
+            "status": "failed",
+            "reason": "no_url_builder",
+        }
+
+    # Enforce the fetcher's minimum supported year. SCEL cannot serve pages
+    # for pre-JSP years; running a 1920 SCEL batch would silently yield 0.
+    min_year = _min_supported_year_for(parser_type)
+    if min_year is not None and batch["year_start"] < min_year:
+        backfill_db.transition_batch(
+            batch_id, "failed",
+            admin_notes=(
+                f"{parser_type} historical {batch['year_start']} not supported "
+                f"(min supported year: {min_year})"
+            ),
+        )
+        return {
+            "batch_id": batch_id,
+            "status": "failed",
+            "reason": "year_below_min_supported",
+        }
+
     try:
         # Build monthly page URLs for the batch range
-        monthly_urls = _build_lawphil_monthly_urls(
-            year_start=batch["year_start"],
-            year_end=batch["year_end"],
-            month_start=batch.get("month_start"),
-            month_end=batch.get("month_end"),
+        monthly_urls = url_builder(
+            batch["year_start"],
+            batch["year_end"],
+            batch.get("month_start"),
+            batch.get("month_end"),
         )
 
-        # Discover candidates from each monthly page
+        # Discover candidates from each monthly page. We record a per-month
+        # status in the checkpoint so admins reviewing a completed batch can
+        # tell "genuinely empty" apart from "URL 404'd" apart from "source
+        # errored." ``skip_empty_months`` is implicit: an empty or 404 month
+        # contributes nothing to ``candidate_urls`` and is counted under
+        # ``candidates_skipped``, leaving the batch's cursor to advance
+        # cleanly to the next month.
         all_candidates: list[dict[str, Any]] = []
+        month_statuses: list[dict[str, Any]] = []
+        skipped_months = 0
+
         for monthly in monthly_urls:
+            status = "ok"
+            reason: str | None = None
+            count = 0
             try:
                 candidates = fetcher.discover(monthly["url"])
-                for idx, candidate in enumerate(candidates):
+                count = len(candidates)
+                if count == 0:
+                    status = "empty"
+                    skipped_months += 1
+                for candidate in candidates:
                     all_candidates.append({
                         "url": candidate.url,
                         "title": candidate.title,
@@ -163,24 +272,51 @@ def enumerate_backfill_candidates(self, batch_id: str) -> dict[str, Any]:
                         "month": monthly["month"],
                         "index": len(all_candidates),
                     })
+            except CloudflareBlockedError as exc:
+                status = "cloudflare_blocked"
+                reason = exc.cf_type
+                skipped_months += 1
+                logger.warning(
+                    "Cloudflare blocked %s during enumeration: %s",
+                    monthly["url"],
+                    exc,
+                )
+                # Continue with other months — source is rate-limiting us,
+                # not a correctness problem with this batch.
             except Exception as exc:
+                status = "error"
+                reason = str(exc)[:200]
+                skipped_months += 1
                 logger.warning(
                     "Failed to discover candidates from %s: %s",
                     monthly["url"],
                     exc,
                 )
-                # Continue with other months — don't fail the whole batch
+                # Continue with other months — don't fail the whole batch.
 
-        # Store checkpoint with all candidate URLs
+            month_statuses.append({
+                "year": monthly["year"],
+                "month": monthly["month"],
+                "url": monthly["url"],
+                "status": status,
+                "reason": reason,
+                "candidates": count,
+            })
+
+        # Store checkpoint with all candidate URLs + per-month diagnostics.
         checkpoint_state = {
             "candidate_urls": all_candidates,
             "current_index": 0,
             "total_candidates": len(all_candidates),
+            "month_statuses": month_statuses,
+            "skipped_months": skipped_months,
         }
 
         backfill_db.update_checkpoint(batch_id, checkpoint_state, len(all_candidates))
         backfill_db.update_batch_counters(
-            batch_id, candidates_discovered=len(all_candidates),
+            batch_id,
+            candidates_discovered=len(all_candidates),
+            candidates_skipped=skipped_months,
         )
 
         # Transition to running
@@ -190,15 +326,18 @@ def enumerate_backfill_candidates(self, batch_id: str) -> dict[str, Any]:
         )
 
         logger.info(
-            "Enumeration complete for batch %s: %d candidates discovered",
+            "Enumeration complete for batch %s: %d candidates discovered, "
+            "%d months skipped (empty / 404 / error)",
             batch_id,
             len(all_candidates),
+            skipped_months,
         )
         return {
             "batch_id": batch_id,
             "status": "running",
             "candidates_discovered": len(all_candidates),
             "monthly_pages_scanned": len(monthly_urls),
+            "skipped_months": skipped_months,
         }
 
     except Exception as exc:

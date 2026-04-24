@@ -14,6 +14,7 @@ import {
   KillInflightDto,
   ExtendBudgetDto,
 } from './dto';
+import { BACKFILL_SLUG_TO_PARSER_TYPE } from './dto/create-backfill-batch.dto';
 
 @Injectable()
 export class BackfillService {
@@ -50,17 +51,29 @@ export class BackfillService {
       throw new BadRequestException('monthStart must be <= monthEnd');
     }
 
+    // Exactly one of sourceId / sourceSlug must be provided. class-validator
+    // already rejects the "neither" case via ValidateIf, but catches both-set.
+    if (dto.sourceId && dto.sourceSlug) {
+      throw new BadRequestException(
+        'Provide sourceId OR sourceSlug, not both',
+      );
+    }
+
+    const sourceId = dto.sourceId
+      ? dto.sourceId
+      : await this.resolveSourceIdFromSlug(dto.sourceSlug!);
+
     // Validate sourceId exists
     const source = await this.prisma.source.findUnique({
-      where: { id: dto.sourceId },
+      where: { id: sourceId },
     });
     if (!source) {
-      throw new NotFoundException(`Source ${dto.sourceId} not found`);
+      throw new NotFoundException(`Source ${sourceId} not found`);
     }
 
     const batch = await this.prisma.backfillBatch.create({
       data: {
-        sourceId: dto.sourceId,
+        sourceId,
         sourceEndpointId: dto.sourceEndpointId,
         name: dto.name,
         description: dto.description,
@@ -231,6 +244,31 @@ export class BackfillService {
   }
 
   // ---- Private helpers ----
+
+  /**
+   * Resolve a backfill source slug ('lawphil' | 'scel') to a live Source UUID
+   * by looking for a SourceEndpoint whose parserType matches the slug's
+   * mapping. Matches the lookup pattern used by IngestionScheduler —
+   * parserType is the canonical source key.
+   */
+  private async resolveSourceIdFromSlug(slug: string): Promise<string> {
+    const parserType = BACKFILL_SLUG_TO_PARSER_TYPE[slug];
+    if (!parserType) {
+      // class-validator's @IsIn should have caught this; double-guard.
+      throw new BadRequestException(`Unknown sourceSlug: '${slug}'`);
+    }
+    const endpoint = await this.prisma.sourceEndpoint.findFirst({
+      where: { parserType },
+      select: { sourceId: true },
+    });
+    if (!endpoint) {
+      throw new NotFoundException(
+        `No source endpoint found for slug='${slug}' (parserType='${parserType}'). ` +
+          `Seed the Source + SourceEndpoint first.`,
+      );
+    }
+    return endpoint.sourceId;
+  }
 
   private async findOneOrFail(id: string): Promise<BackfillBatch> {
     const batch = await this.prisma.backfillBatch.findUnique({

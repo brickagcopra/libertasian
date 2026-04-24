@@ -4,15 +4,44 @@ import {
   IsOptional,
   IsUUID,
   IsInt,
+  IsIn,
   Min,
   Max,
   IsNumber,
   IsBoolean,
+  ValidateIf,
 } from 'class-validator';
 
+/**
+ * Slug values accepted by {@link CreateBackfillBatchDto.sourceSlug}.
+ *
+ * The slug resolves to a ``Source`` by matching
+ * ``SourceEndpoint.parserType``. Only sources with a matching endpoint are
+ * routable through the backfill engine today — other sources should be
+ * added to both this map and to ``MONTHLY_URL_BUILDERS`` in the worker
+ * service (``services/worker-service/src/tasks/backfill_tasks.py``).
+ */
+export const BACKFILL_SLUG_TO_PARSER_TYPE: Record<string, string> = {
+  lawphil: 'lawphil',
+  scel: 'supreme_court_elibrary',
+};
+
+export const BACKFILL_SLUGS = Object.keys(BACKFILL_SLUG_TO_PARSER_TYPE);
+
 export class CreateBackfillBatchDto {
+  /** Direct source UUID. Mutually exclusive with {@link sourceSlug}. */
+  @ValidateIf((o: CreateBackfillBatchDto) => !o.sourceSlug)
   @IsUUID()
-  sourceId!: string;
+  sourceId?: string;
+
+  /**
+   * Quality-of-life shortcut: resolve a well-known source by slug instead
+   * of looking up its UUID. Mutually exclusive with {@link sourceId}.
+   */
+  @IsOptional()
+  @IsString()
+  @IsIn(BACKFILL_SLUGS)
+  sourceSlug?: string;
 
   @IsOptional()
   @IsUUID()

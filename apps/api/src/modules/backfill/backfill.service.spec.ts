@@ -53,6 +53,9 @@ describe('BackfillService', () => {
             source: {
               findUnique: jest.fn(),
             },
+            sourceEndpoint: {
+              findFirst: jest.fn(),
+            },
             backfillBatch: {
               create: jest.fn(),
               findUnique: jest.fn(),
@@ -135,6 +138,100 @@ describe('BackfillService', () => {
       await expect(
         service.create(
           { ...validDto, monthStart: 10, monthEnd: 3 },
+          'user-1',
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should resolve sourceSlug to sourceId via parser_type lookup', async () => {
+      (prisma.sourceEndpoint.findFirst as jest.Mock).mockResolvedValue({
+        sourceId: 'src-lawphil',
+      });
+      (prisma.source.findUnique as jest.Mock).mockResolvedValue({
+        id: 'src-lawphil',
+        name: 'LawPhil',
+      });
+      (prisma.backfillBatch.create as jest.Mock).mockResolvedValue({
+        ...baseBatch,
+        sourceId: 'src-lawphil',
+      });
+
+      const result = await service.create(
+        {
+          sourceSlug: 'lawphil',
+          name: 'LawPhil Pilot 2020',
+          yearStart: 2020,
+          yearEnd: 2020,
+          budgetCeilingUsd: 5,
+        },
+        'user-1',
+      );
+
+      expect(result.sourceId).toBe('src-lawphil');
+      expect(prisma.sourceEndpoint.findFirst).toHaveBeenCalledWith({
+        where: { parserType: 'lawphil' },
+        select: { sourceId: true },
+      });
+    });
+
+    it('should resolve scel slug to supreme_court_elibrary parser_type', async () => {
+      (prisma.sourceEndpoint.findFirst as jest.Mock).mockResolvedValue({
+        sourceId: 'src-scel',
+      });
+      (prisma.source.findUnique as jest.Mock).mockResolvedValue({
+        id: 'src-scel',
+        name: 'Supreme Court E-Library',
+      });
+      (prisma.backfillBatch.create as jest.Mock).mockResolvedValue({
+        ...baseBatch,
+        sourceId: 'src-scel',
+      });
+
+      await service.create(
+        {
+          sourceSlug: 'scel',
+          name: 'SCEL Pilot 2023',
+          yearStart: 2023,
+          yearEnd: 2023,
+          budgetCeilingUsd: 5,
+        },
+        'user-1',
+      );
+
+      expect(prisma.sourceEndpoint.findFirst).toHaveBeenCalledWith({
+        where: { parserType: 'supreme_court_elibrary' },
+        select: { sourceId: true },
+      });
+    });
+
+    it('should reject sourceSlug with no matching source endpoint', async () => {
+      (prisma.sourceEndpoint.findFirst as jest.Mock).mockResolvedValue(null);
+
+      await expect(
+        service.create(
+          {
+            sourceSlug: 'lawphil',
+            name: 'Orphan Batch',
+            yearStart: 2020,
+            yearEnd: 2020,
+            budgetCeilingUsd: 5,
+          },
+          'user-1',
+        ),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should reject when both sourceId and sourceSlug are provided', async () => {
+      await expect(
+        service.create(
+          {
+            sourceId: 'src-1',
+            sourceSlug: 'lawphil',
+            name: 'Ambiguous',
+            yearStart: 2020,
+            yearEnd: 2020,
+            budgetCeilingUsd: 5,
+          },
           'user-1',
         ),
       ).rejects.toThrow(BadRequestException);

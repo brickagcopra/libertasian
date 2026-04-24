@@ -44,6 +44,16 @@ _MAX_MONTHLY_PAGES = 3
 class SupremeCourtFetcher(BaseFetcher):
     """Fetcher for the Supreme Court E-Library."""
 
+    # Provisional floor. The E-Library's ``/docmonth/<Mon>/<YYYY>/1`` URL
+    # scheme only reliably yields results for decisions that were digitised
+    # into the JSP archive (roughly late-90s onward). Pre-JSP decisions live
+    # in PDF scans that the docmonth index does not surface, so a batch for
+    # 1950 would silently return zero candidates. The backfill enumerator
+    # reads this attribute to reject such batches with an explicit admin
+    # message — tighten or loosen here once we've confirmed coverage with
+    # the Court archivist.
+    MIN_SUPPORTED_YEAR: int = 1996
+
     def discover(
         self,
         endpoint_url: str,

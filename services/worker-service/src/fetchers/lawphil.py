@@ -28,7 +28,13 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup, Tag
 
-from .base import BaseFetcher, CandidateDoc, FetchedContent
+from .base import (
+    BaseFetcher,
+    CandidateDoc,
+    CloudflareBlockedError,
+    FetchedContent,
+    is_cloudflare_challenge,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +50,15 @@ _MONTHLY_PAGE_PATTERN = re.compile(
 # Pattern matching year index URLs:  .../juri2025/juri2025.html
 _YEAR_INDEX_PATTERN = re.compile(
     r"juri(\d{4})/juri\d{4}\.html$",
+    re.IGNORECASE,
+)
+
+# Pattern matching individual case-file URLs: gr_12345_1920.html, am_67_2001.html
+# Used as a structural fallback for old monthly pages that predate the
+# ``table#s-menu`` markup used on modern pages — pre-2000 jurisprudence
+# tends to be rendered as a flat list of <a href> links.
+_CASE_FILE_PATTERN = re.compile(
+    r"(?:gr|am|ac)_[\w\-]+_\d{4}\.html$",
     re.IGNORECASE,
 )
 
@@ -71,6 +86,24 @@ class LawphilFetcher(BaseFetcher):
         with self._get_client() as client:
             try:
                 response = self._fetch_with_retry(client, endpoint_url)
+                # LawPhil uses windows-1252; decode FIRST so we can inspect
+                # the body before branching on status code. Cloudflare can
+                # serve its Turnstile interstitial at either 200 OR 403, so
+                # we need to detect it from the HTML rather than the status.
+                html_text = response.content.decode(
+                    "windows-1252", errors="replace",
+                )
+                if is_cloudflare_challenge(html_text):
+                    logger.warning(
+                        "LawPhil returned Cloudflare challenge (HTTP %d): %s",
+                        response.status_code,
+                        endpoint_url,
+                    )
+                    raise CloudflareBlockedError(
+                        endpoint_url=endpoint_url,
+                        status_code=response.status_code,
+                        cf_type="managed_challenge",
+                    )
                 if response.status_code >= 400:
                     logger.warning(
                         "Lawphil listing returned HTTP %d: %s",
@@ -78,12 +111,15 @@ class LawphilFetcher(BaseFetcher):
                         endpoint_url,
                     )
                     return candidates
+            except CloudflareBlockedError:
+                # Let it propagate — the backfill enumerator records this as
+                # a per-month status so we can retry the month later without
+                # marking the whole batch failed.
+                raise
             except Exception:
                 logger.exception("Failed to fetch Lawphil listing: %s", endpoint_url)
                 return candidates
 
-            # Lawphil uses windows-1252 encoding
-            html_text = response.content.decode("windows-1252", errors="replace")
             soup = BeautifulSoup(html_text, "lxml")
 
             # Check if this is a monthly page with case table.
@@ -92,6 +128,10 @@ class LawphilFetcher(BaseFetcher):
                 candidates = self._parse_monthly_table(
                     table, endpoint_url,
                 )
+            elif self._is_monthly_page_url(endpoint_url):
+                # Old monthly pages (pre-2000) often don't use the s-menu
+                # table — fall back to scanning case-file anchors directly.
+                candidates = self._parse_monthly_links(soup, endpoint_url)
             else:
                 # This is a year index or main index — discover monthly URLs.
                 monthly_urls = self._discover_monthly_urls(soup, endpoint_url)
@@ -191,6 +231,105 @@ class LawphilFetcher(BaseFetcher):
                 continue
 
         return candidates
+
+    def _parse_monthly_links(
+        self,
+        soup: BeautifulSoup,
+        base_url: str,
+    ) -> list[CandidateDoc]:
+        """Fallback for old monthly pages without ``table#s-menu`` markup.
+
+        Old LawPhil jurisprudence (pre-2000) is served as loose HTML with a
+        flat series of ``<a href="gr_NNNN_YYYY.html">`` anchors. This parser
+        pulls those anchors straight off the page, uses the surrounding
+        text for the case title + date, and returns one ``CandidateDoc``
+        per anchor.
+        """
+        candidates: list[CandidateDoc] = []
+        seen_urls: set[str] = set()
+
+        for link in soup.find_all("a", href=True):
+            raw_href = str(link.get("href", ""))
+            if not _CASE_FILE_PATTERN.search(raw_href):
+                continue
+
+            href = (
+                raw_href
+                if raw_href.startswith("http")
+                else urljoin(base_url, raw_href)
+            )
+            if href in seen_urls:
+                continue
+            seen_urls.add(href)
+
+            case_number = link.get_text(strip=True)
+            gr_no = (
+                self._normalize_case_number(case_number)
+                or self._extract_gr_no(case_number)
+            )
+
+            # Title is whatever text follows the anchor up to the next
+            # structural tag. Fall back to the anchor text itself.
+            title = self._extract_trailing_title(link) or case_number
+            decision_date = self._extract_date(
+                self._extract_trailing_text(link, max_chars=200) or case_number,
+            )
+            document_type = self._detect_document_type_from_case(case_number)
+
+            candidates.append(CandidateDoc(
+                url=href,
+                title=title,
+                gr_no=gr_no,
+                document_type=document_type,
+                decision_date=decision_date,
+            ))
+
+        return candidates
+
+    @staticmethod
+    def _is_monthly_page_url(url: str) -> bool:
+        """Does ``url`` look like a LawPhil monthly listing page?"""
+        return bool(_MONTHLY_PAGE_PATTERN.search(url))
+
+    @staticmethod
+    def _extract_trailing_text(link: Tag, max_chars: int = 200) -> str:
+        """Collect plain-text that follows ``link`` up to the next case link.
+
+        Old LawPhil monthlies render a case as ``<a>G.R. …</a>`` followed by
+        a date and a party-name string, often separated by ``<br>`` or ``--``.
+        We accumulate siblings until we hit another anchor or exceed
+        ``max_chars``.
+        """
+        buf: list[str] = []
+        total = 0
+        for sib in link.next_siblings:
+            if getattr(sib, "name", None) == "a":
+                break
+            text = (
+                sib.get_text(" ", strip=True)
+                if hasattr(sib, "get_text")
+                else str(sib).strip()
+            )
+            if not text:
+                continue
+            buf.append(text)
+            total += len(text)
+            if total >= max_chars:
+                break
+        return " ".join(buf).strip()
+
+    def _extract_trailing_title(self, link: Tag) -> str | None:
+        """Extract the party-name string that follows a case-number anchor."""
+        trailing = self._extract_trailing_text(link, max_chars=300)
+        if not trailing:
+            return None
+        # Strip leading punctuation and the date, leaving the party names.
+        # Example: "January 5, 1920 — DOE v. ROE" → "DOE v. ROE".
+        # Split on common separators — em/en dash, double-hyphen, colon.
+        parts = re.split(r"\s+[\u2013\u2014]\s+|\s+--\s+|\s*:\s+", trailing, maxsplit=1)
+        if len(parts) == 2 and len(parts[1].strip()) >= 3:
+            return parts[1].strip()
+        return trailing
 
     @staticmethod
     def _discover_monthly_urls(
