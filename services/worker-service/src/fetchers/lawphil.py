@@ -28,7 +28,13 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup, Tag
 
-from .base import BaseFetcher, CandidateDoc, FetchedContent
+from .base import (
+    BaseFetcher,
+    CandidateDoc,
+    CloudflareBlockedError,
+    FetchedContent,
+    is_cloudflare_challenge,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +77,24 @@ class LawphilFetcher(BaseFetcher):
         with self._get_client() as client:
             try:
                 response = self._fetch_with_retry(client, endpoint_url)
+                # LawPhil uses windows-1252; decode FIRST so we can inspect
+                # the body before branching on status code. Cloudflare can
+                # serve its Turnstile interstitial at either 200 OR 403, so
+                # we need to detect it from the HTML rather than the status.
+                html_text = response.content.decode(
+                    "windows-1252", errors="replace",
+                )
+                if is_cloudflare_challenge(html_text):
+                    logger.warning(
+                        "LawPhil returned Cloudflare challenge (HTTP %d): %s",
+                        response.status_code,
+                        endpoint_url,
+                    )
+                    raise CloudflareBlockedError(
+                        endpoint_url=endpoint_url,
+                        status_code=response.status_code,
+                        cf_type="managed_challenge",
+                    )
                 if response.status_code >= 400:
                     logger.warning(
                         "Lawphil listing returned HTTP %d: %s",
@@ -78,12 +102,15 @@ class LawphilFetcher(BaseFetcher):
                         endpoint_url,
                     )
                     return candidates
+            except CloudflareBlockedError:
+                # Let it propagate — the backfill enumerator records this as
+                # a per-month status so we can retry the month later without
+                # marking the whole batch failed.
+                raise
             except Exception:
                 logger.exception("Failed to fetch Lawphil listing: %s", endpoint_url)
                 return candidates
 
-            # Lawphil uses windows-1252 encoding
-            html_text = response.content.decode("windows-1252", errors="replace")
             soup = BeautifulSoup(html_text, "lxml")
 
             # Check if this is a monthly page with case table.

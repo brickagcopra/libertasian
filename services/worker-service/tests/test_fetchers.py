@@ -22,6 +22,7 @@ from src.fetchers.base import (
     is_cloudflare_challenge,
 )
 from src.fetchers.congress import CongressFetcher
+from src.fetchers.lawphil import LawphilFetcher
 from src.fetchers.official_gazette import OfficialGazetteFetcher
 from src.fetchers.registry import FETCHER_REGISTRY, get_fetcher
 from src.fetchers.supreme_court import SupremeCourtFetcher
@@ -519,6 +520,83 @@ class TestOfficialGazetteCloudflareHandling:
             )
 
         assert candidates == []
+
+
+class TestLawphilCloudflareHandling:
+    """LawPhil fetcher raises CloudflareBlockedError on managed challenge."""
+
+    def _prepare(
+        self,
+        fetcher: LawphilFetcher,
+        status_code: int,
+        body: str,
+    ) -> MagicMock:
+        """Wire up a mocked _fetch_with_retry returning (status, body)."""
+        mock_response = MagicMock()
+        mock_response.status_code = status_code
+        mock_response.content = body.encode("windows-1252")
+
+        mock_client = MagicMock()
+        patcher_get = patch.object(fetcher, "_get_client")
+        patcher_retry = patch.object(
+            fetcher, "_fetch_with_retry", return_value=mock_response,
+        )
+        get_client = patcher_get.start()
+        patcher_retry.start()
+        get_client.return_value.__enter__.return_value = mock_client
+        return mock_response
+
+    def test_raises_on_200_challenge(self):
+        """CF serves Turnstile at 200 with challenge HTML — must raise."""
+        fetcher = LawphilFetcher()
+        self._prepare(fetcher, 200, CLOUDFLARE_CHALLENGE_HTML)
+        try:
+            with pytest.raises(CloudflareBlockedError) as exc_info:
+                fetcher.discover(
+                    "https://lawphil.net/judjuris/juri1920/jan1920/jan1920.html",
+                )
+            assert exc_info.value.cf_type == "managed_challenge"
+            assert exc_info.value.status_code == 200
+            assert "lawphil.net" in exc_info.value.endpoint_url
+        finally:
+            patch.stopall()
+
+    def test_raises_on_403_challenge(self):
+        """CF can also return 403 with challenge HTML — still must raise."""
+        fetcher = LawphilFetcher()
+        self._prepare(fetcher, 403, CLOUDFLARE_CHALLENGE_HTML)
+        try:
+            with pytest.raises(CloudflareBlockedError) as exc_info:
+                fetcher.discover(
+                    "https://lawphil.net/judjuris/juri1920/jan1920/jan1920.html",
+                )
+            assert exc_info.value.status_code == 403
+        finally:
+            patch.stopall()
+
+    def test_plain_404_returns_empty_not_raise(self):
+        """404 without CF markers is a legitimate empty-month signal."""
+        fetcher = LawphilFetcher()
+        self._prepare(fetcher, 404, "<html><body>Not Found</body></html>")
+        try:
+            candidates = fetcher.discover(
+                "https://lawphil.net/judjuris/juri1910/jan1910/jan1910.html",
+            )
+            assert candidates == []
+        finally:
+            patch.stopall()
+
+    def test_plain_403_returns_empty_not_raise(self):
+        """Non-CF 403 (generic bot block) returns empty, doesn't raise."""
+        fetcher = LawphilFetcher()
+        self._prepare(fetcher, 403, "<html><body>Forbidden</body></html>")
+        try:
+            candidates = fetcher.discover(
+                "https://lawphil.net/judjuris/juri2023/jan2023/jan2023.html",
+            )
+            assert candidates == []
+        finally:
+            patch.stopall()
 
 
 class TestCongressCloudflareHandling:
