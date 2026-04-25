@@ -377,6 +377,92 @@ export class DerivativesAdminService {
     return { jobStatus: job.status, mcqs };
   }
 
+  async getJobFlashcards(jobId: string): Promise<{
+    jobStatus: string;
+    flashcards: unknown[];
+  }> {
+    const job = await this.prisma.derivativeGenerationJob.findUnique({
+      where: { id: jobId },
+      select: { id: true, derivativeType: true, status: true },
+    });
+
+    if (!job) {
+      throw new NotFoundException(`DerivativeGenerationJob ${jobId} not found`);
+    }
+
+    if (job.derivativeType !== 'flashcard') {
+      throw new BadRequestException(
+        `Job type ${job.derivativeType} does not produce a flashcard artifact`,
+      );
+    }
+
+    const artifacts = await this.prisma.derivativeArtifact.findMany({
+      where: {
+        derivativeGenerationJobId: jobId,
+        derivativeType: 'flashcard',
+        deletedAt: null,
+      },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        title: true,
+        reviewStatus: true,
+        visibility: true,
+        confidenceScore: true,
+        validatorVerdict: true,
+        publishedAt: true,
+        createdAt: true,
+        contentJson: true,
+        contentDisclaimer: { select: { id: true, bodyPlain: true } },
+      },
+    });
+
+    return { jobStatus: job.status, flashcards: artifacts };
+  }
+
+  async getJobOutlines(jobId: string): Promise<{
+    jobStatus: string;
+    outlines: unknown[];
+  }> {
+    const job = await this.prisma.derivativeGenerationJob.findUnique({
+      where: { id: jobId },
+      select: { id: true, derivativeType: true, status: true },
+    });
+
+    if (!job) {
+      throw new NotFoundException(`DerivativeGenerationJob ${jobId} not found`);
+    }
+
+    if (job.derivativeType !== 'subject_outline') {
+      throw new BadRequestException(
+        `Job type ${job.derivativeType} does not produce a subject_outline artifact`,
+      );
+    }
+
+    const artifacts = await this.prisma.derivativeArtifact.findMany({
+      where: {
+        derivativeGenerationJobId: jobId,
+        derivativeType: 'subject_outline',
+        deletedAt: null,
+      },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        title: true,
+        reviewStatus: true,
+        visibility: true,
+        confidenceScore: true,
+        validatorVerdict: true,
+        publishedAt: true,
+        createdAt: true,
+        contentJson: true,
+        contentDisclaimer: { select: { id: true, bodyPlain: true } },
+      },
+    });
+
+    return { jobStatus: job.status, outlines: artifacts };
+  }
+
   async getJob(id: string): Promise<unknown> {
     const job = await this.prisma.derivativeGenerationJob.findUnique({
       where: { id },

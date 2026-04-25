@@ -888,6 +888,42 @@ export interface JobMcqsResponse {
   mcqs: JobMcqItem[];
 }
 
+export interface JobFlashcardItem {
+  id: string;
+  title: string;
+  reviewStatus: string;
+  visibility: string;
+  confidenceScore: number | null;
+  validatorVerdict: string | null;
+  publishedAt: string | null;
+  createdAt: string;
+  contentDisclaimer: { id: string; bodyPlain: string } | null;
+  contentJson: unknown;
+}
+
+export interface JobFlashcardsResponse {
+  jobStatus: string;
+  flashcards: JobFlashcardItem[];
+}
+
+export interface JobOutlineItem {
+  id: string;
+  title: string;
+  reviewStatus: string;
+  visibility: string;
+  confidenceScore: number | null;
+  validatorVerdict: string | null;
+  publishedAt: string | null;
+  createdAt: string;
+  contentDisclaimer: { id: string; bodyPlain: string } | null;
+  contentJson: unknown;
+}
+
+export interface JobOutlinesResponse {
+  jobStatus: string;
+  outlines: JobOutlineItem[];
+}
+
 export interface JobEssayResponse {
   jobStatus: string;
   essay: {
