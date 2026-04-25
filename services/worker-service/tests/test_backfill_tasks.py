@@ -1043,6 +1043,139 @@ class TestRunBackfillBatchTick:
         mock_ingestion_db_for_backfill.create_ingestion_candidate.assert_not_called()
         mock_tick_redis.incrby.assert_not_called()
 
+    # ─── Bug 5 — terminal-completion drain gate ────────────────────────
+
+    def test_tick_terminal_drain_waits_on_inflight(
+        self,
+        sample_batch: dict,
+        mock_backfill_db: MagicMock,
+        mock_ingestion_db_for_backfill: MagicMock,
+        mock_tick_redis: MagicMock,
+    ) -> None:
+        """Cursor at total + inflight>0 + recent last_tick → 'draining_inflight'.
+
+        The terminal-completion gate must wait for completion hooks to drain
+        the Redis inflight counter before transitioning. Otherwise the batch
+        flips to 'completed' while in-flight jobs are still mutating its
+        counters — which is exactly the drift seen in the LawPhil 2020 pilot
+        (cursor 933 vs processed 594 vs created 584).
+        """
+        sample_batch["status"] = "running"
+        sample_batch["checkpoint_state"] = {
+            "candidate_urls": [
+                {"url": f"https://lawphil.net/doc{i}.html"} for i in range(5)
+            ],
+            "current_index": 5,  # at the end
+            "total_candidates": 5,
+        }
+        sample_batch["last_tick_at"] = datetime.now(UTC) - timedelta(minutes=2)
+        mock_backfill_db.get_batches_by_status.return_value = [sample_batch]
+
+        # 2 jobs still in flight per Redis counter
+        mock_tick_redis.get.return_value = "2"
+
+        result = run_backfill_batch_tick()
+
+        tick_result = result["results"][0]
+        assert tick_result["status"] == "draining_inflight"
+        assert tick_result["inflight"] == 2
+        assert tick_result["progress"] == "5/5"
+
+        # Crucially: no transition to 'completed', no inflight key delete.
+        mock_backfill_db.transition_batch.assert_not_called()
+        mock_tick_redis.delete.assert_not_called()
+
+    def test_tick_terminal_reaper_clears_stale_inflight(
+        self,
+        sample_batch: dict,
+        mock_backfill_db: MagicMock,
+        mock_ingestion_db_for_backfill: MagicMock,
+        mock_tick_redis: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Cursor at total + inflight>0 + last_tick stale → reap and complete.
+
+        If the inflight counter never drains (lost completion hook, dropped
+        task, hard-error path that bypasses the try/finally outcome
+        assignment), don't wedge the batch forever. After
+        INFLIGHT_DRAIN_STALENESS the reaper logs WARN, zeroes the key, and
+        transitions to 'completed' on the same tick.
+        """
+        import logging
+
+        sample_batch["status"] = "running"
+        sample_batch["checkpoint_state"] = {
+            "candidate_urls": [
+                {"url": f"https://lawphil.net/doc{i}.html"} for i in range(5)
+            ],
+            "current_index": 5,
+            "total_candidates": 5,
+        }
+        sample_batch["last_tick_at"] = datetime.now(UTC) - timedelta(minutes=11)
+        mock_backfill_db.get_batches_by_status.return_value = [sample_batch]
+
+        mock_tick_redis.get.return_value = "2"
+
+        with caplog.at_level(logging.WARNING, logger="src.tasks.backfill_tasks"):
+            result = run_backfill_batch_tick()
+
+        tick_result = result["results"][0]
+        assert tick_result["status"] == "completed"
+        assert tick_result["reaped_inflight"] == 2
+
+        # Reaper logged the stale counter so operators can audit.
+        assert any(
+            "stale inflight counter" in record.message.lower()
+            for record in caplog.records
+        )
+
+        # Inflight key was deleted and the batch was transitioned to completed.
+        mock_tick_redis.delete.assert_called_once()
+        delete_args = mock_tick_redis.delete.call_args[0]
+        assert delete_args[0].startswith("backfill:inflight:")
+
+        mock_backfill_db.transition_batch.assert_called_once()
+        call_args = mock_backfill_db.transition_batch.call_args
+        assert call_args[0][1] == "completed"
+
+    def test_tick_terminal_clean_completion(
+        self,
+        sample_batch: dict,
+        mock_backfill_db: MagicMock,
+        mock_ingestion_db_for_backfill: MagicMock,
+        mock_tick_redis: MagicMock,
+    ) -> None:
+        """Cursor at total + inflight=0 → transition to 'completed' immediately.
+
+        This is the existing happy-path behavior. Preserved by the new gate
+        when nothing is in flight: no draining, no reaping, just complete.
+        """
+        sample_batch["status"] = "running"
+        sample_batch["checkpoint_state"] = {
+            "candidate_urls": [
+                {"url": f"https://lawphil.net/doc{i}.html"} for i in range(5)
+            ],
+            "current_index": 5,
+            "total_candidates": 5,
+        }
+        sample_batch["last_tick_at"] = datetime.now(UTC) - timedelta(minutes=2)
+        mock_backfill_db.get_batches_by_status.return_value = [sample_batch]
+
+        # Counter has fully drained.
+        mock_tick_redis.get.return_value = None
+
+        result = run_backfill_batch_tick()
+
+        tick_result = result["results"][0]
+        assert tick_result["status"] == "completed"
+        # No reaped_inflight key on the clean path.
+        assert "reaped_inflight" not in tick_result
+
+        mock_backfill_db.transition_batch.assert_called_once()
+        call_args = mock_backfill_db.transition_batch.call_args
+        assert call_args[0][1] == "completed"
+        mock_tick_redis.delete.assert_called_once()
+
 
 # ─── Tests 14-15: check_backfill_budgets ─────────────────────────────────
 

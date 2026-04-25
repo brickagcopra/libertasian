@@ -163,3 +163,63 @@ class TestGetBatchBudgetRemaining:
         remaining = backfill_db.get_batch_budget_remaining("nonexistent")
 
         assert remaining == Decimal("0")
+
+
+# ─── budget_consumed_usd telemetry ───────────────────────────────────────
+
+
+class TestUpdateBatchCountersBudgetConsumed:
+    @patch("src.clients.backfill_db_client.get_connection")
+    def test_increments_budget_consumed_usd(
+        self, mock_get_conn: MagicMock,
+    ) -> None:
+        """update_batch_counters with budget_consumed_usd increments NUMERIC.
+
+        The SQL must use COALESCE + Decimal-cast so per-call LLM costs
+        accumulate cleanly. Crucially, budget_consumed_usd must NOT touch
+        the int candidates_* / documents_* counters.
+        """
+        mock_conn = _make_mock_conn(rowcount=1)
+        mock_get_conn.return_value = mock_conn
+
+        backfill_db.update_batch_counters(
+            "batch-1", budget_consumed_usd=Decimal("0.0042"),
+        )
+
+        cursor = mock_conn.cursor.return_value.__enter__.return_value
+        cursor.execute.assert_called_once()
+        sql, params = cursor.execute.call_args[0]
+
+        # NUMERIC increment, parameterized — no string interpolation, no ::int.
+        assert (
+            "budget_consumed_usd = COALESCE(budget_consumed_usd, 0) + %s::numeric"
+            in sql
+        )
+        # Integer counter columns must not appear in the SET clause.
+        assert "candidates_processed" not in sql
+        assert "candidates_failed" not in sql
+        assert "documents_created" not in sql
+        # The Decimal value flows through as a parameter, not via interpolation.
+        assert Decimal("0.0042") in params
+        assert "batch-1" in params
+
+    @patch("src.clients.backfill_db_client.get_connection")
+    def test_accepts_float_and_str_inputs(
+        self, mock_get_conn: MagicMock,
+    ) -> None:
+        """Float/str inputs are cast to Decimal so callers can pass either.
+
+        ``cost_for`` returns Decimal, but defensively typed callers may pass
+        floats. The cast prevents binary float drift in the persisted total.
+        """
+        mock_conn = _make_mock_conn(rowcount=1)
+        mock_get_conn.return_value = mock_conn
+
+        backfill_db.update_batch_counters(
+            "batch-1", budget_consumed_usd=0.0042,
+        )
+
+        cursor = mock_conn.cursor.return_value.__enter__.return_value
+        _, params = cursor.execute.call_args[0]
+        # Cast happened — Decimal in params, not raw float.
+        assert any(isinstance(p, Decimal) for p in params)

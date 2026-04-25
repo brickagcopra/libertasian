@@ -282,6 +282,7 @@ def validate_classification_output(
 def classify_document_subjects(
     self: Any,
     document_id: str,
+    backfill_batch_id: str | None = None,
 ) -> dict[str, Any]:
     """Classify a legal document into study_8 subjects.
 
@@ -294,6 +295,11 @@ def classify_document_subjects(
     6. Validate: subject codes exist, exactly one primary, confidences in range
     7. POST to NestJS /internal/derivatives/write-classification
     8. Record model run
+
+    ``backfill_batch_id`` (optional): when set, the per-call LLM cost is
+    computed via ``pricing.cost_for`` and added to the batch's
+    ``budget_consumed_usd``. Daily-crawl / on-demand calls pass ``None``
+    and skip per-batch metering (the global Redis rail still applies).
     """
     logger.info("classify_document_subjects: document_id=%s", document_id)
 
@@ -438,6 +444,27 @@ def classify_document_subjects(
             tokens_out=tokens_out,
             latency_ms=latency_ms,
         )
+
+        # Per-batch cost telemetry. Wrap in try/except so a stale or deleted
+        # batch row never blocks the classification write — billing is
+        # advisory; the canonical record is the model_run row above.
+        if backfill_batch_id:
+            try:
+                from ..clients import backfill_db_client as backfill_db
+                from ..pricing import cost_for
+
+                cost = cost_for(model_name, tokens_in or 0, tokens_out or 0)
+                if cost > 0:
+                    backfill_db.update_batch_counters(
+                        backfill_batch_id,
+                        budget_consumed_usd=cost,
+                    )
+            except Exception:
+                logger.exception(
+                    "Failed to update backfill batch %s budget_consumed_usd "
+                    "(non-blocking)",
+                    backfill_batch_id,
+                )
 
         # Step 8: Write to NestJS
         payload = {
