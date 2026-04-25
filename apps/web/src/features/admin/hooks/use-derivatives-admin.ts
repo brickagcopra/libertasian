@@ -13,7 +13,9 @@ import type {
   JobDigestResponse,
   JobDoctrinesResponse,
   JobEssayResponse,
+  JobFlashcardsResponse,
   JobMcqsResponse,
+  JobOutlinesResponse,
 } from '../types';
 
 /** Standard API response envelope from NestJS controllers */
@@ -127,6 +129,32 @@ export function useJobMcqs(jobId: string, opts?: { enabled?: boolean }) {
     queryFn: async () => {
       const res = await apiClient.get<ApiEnvelope<JobMcqsResponse>>(
         `/admin/derivatives/jobs/${jobId}/mcqs`,
+      );
+      return res.data;
+    },
+    enabled: opts?.enabled !== false && !!jobId,
+  });
+}
+
+export function useJobFlashcards(jobId: string, opts?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['admin', 'derivatives', 'jobs', jobId, 'flashcards'],
+    queryFn: async () => {
+      const res = await apiClient.get<ApiEnvelope<JobFlashcardsResponse>>(
+        `/admin/derivatives/jobs/${jobId}/flashcards`,
+      );
+      return res.data;
+    },
+    enabled: opts?.enabled !== false && !!jobId,
+  });
+}
+
+export function useJobOutlines(jobId: string, opts?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['admin', 'derivatives', 'jobs', jobId, 'outlines'],
+    queryFn: async () => {
+      const res = await apiClient.get<ApiEnvelope<JobOutlinesResponse>>(
+        `/admin/derivatives/jobs/${jobId}/outlines`,
       );
       return res.data;
     },

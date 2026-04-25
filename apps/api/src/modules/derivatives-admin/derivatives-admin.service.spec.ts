@@ -682,6 +682,180 @@ describe('DerivativesAdminService', () => {
     });
   });
 
+  // ─── getJobFlashcards ─────────────────────────────────
+
+  describe('getJobFlashcards', () => {
+    it('returns flashcard artifacts sorted by createdAt ASC with contentJson', async () => {
+      prisma.derivativeGenerationJob.findUnique.mockResolvedValue({
+        id: 'job-1',
+        derivativeType: 'flashcard',
+        status: 'completed',
+      });
+      prisma.derivativeArtifact.findMany.mockResolvedValue([
+        {
+          id: 'art-1',
+          title: 'Flashcard set: Command responsibility',
+          reviewStatus: 'needs_human_review',
+          visibility: 'private',
+          confidenceScore: 0.78,
+          validatorVerdict: 'publish',
+          publishedAt: null,
+          createdAt: '2026-04-10T00:00:00Z',
+          contentJson: {
+            cards: [
+              { front: 'What is command responsibility?', back: 'Doctrine that...', mnemonicHint: 'C-R-K' },
+              { front: 'Elements?', back: 'Effective control + knowledge + failure to act' },
+            ],
+          },
+          contentDisclaimer: { id: 'disc-1', bodyPlain: 'AI-generated.' },
+        },
+      ]);
+
+      const result = await service.getJobFlashcards('job-1');
+
+      expect(result.jobStatus).toBe('completed');
+      expect(result.flashcards).toHaveLength(1);
+      expect(prisma.derivativeArtifact.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            derivativeGenerationJobId: 'job-1',
+            derivativeType: 'flashcard',
+            deletedAt: null,
+          }),
+          orderBy: { createdAt: 'asc' },
+        }),
+      );
+      const first = result.flashcards[0] as Record<string, unknown>;
+      expect(first['id']).toBe('art-1');
+      expect(first['contentJson']).toEqual({
+        cards: [
+          { front: 'What is command responsibility?', back: 'Doctrine that...', mnemonicHint: 'C-R-K' },
+          { front: 'Elements?', back: 'Effective control + knowledge + failure to act' },
+        ],
+      });
+      expect(first['contentDisclaimer']).toEqual({ id: 'disc-1', bodyPlain: 'AI-generated.' });
+    });
+
+    it('returns empty flashcards list when job completed but no artifacts exist', async () => {
+      prisma.derivativeGenerationJob.findUnique.mockResolvedValue({
+        id: 'job-1',
+        derivativeType: 'flashcard',
+        status: 'completed',
+      });
+      prisma.derivativeArtifact.findMany.mockResolvedValue([]);
+
+      const result = await service.getJobFlashcards('job-1');
+
+      expect(result.jobStatus).toBe('completed');
+      expect(result.flashcards).toEqual([]);
+    });
+
+    it('throws NotFoundException for unknown jobId', async () => {
+      prisma.derivativeGenerationJob.findUnique.mockResolvedValue(null);
+
+      await expect(service.getJobFlashcards('nonexistent')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('throws BadRequestException for wrong derivative type', async () => {
+      prisma.derivativeGenerationJob.findUnique.mockResolvedValue({
+        id: 'job-1',
+        derivativeType: 'mcq_question',
+        status: 'completed',
+      });
+
+      await expect(service.getJobFlashcards('job-1')).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+  });
+
+  // ─── getJobOutlines ───────────────────────────────────
+
+  describe('getJobOutlines', () => {
+    it('returns subject_outline artifacts sorted by createdAt ASC with contentJson', async () => {
+      prisma.derivativeGenerationJob.findUnique.mockResolvedValue({
+        id: 'job-1',
+        derivativeType: 'subject_outline',
+        status: 'completed',
+      });
+      prisma.derivativeArtifact.findMany.mockResolvedValue([
+        {
+          id: 'art-1',
+          title: 'Outline: Persons & Family Relations',
+          reviewStatus: 'needs_human_review',
+          visibility: 'private',
+          confidenceScore: 0.81,
+          validatorVerdict: 'publish',
+          publishedAt: null,
+          createdAt: '2026-04-12T00:00:00Z',
+          contentJson: {
+            topic: 'Persons',
+            sections: [
+              { heading: 'I. Civil Personality', paragraphs: ['Defined under Art. 37...'] },
+            ],
+          },
+          contentDisclaimer: { id: 'disc-1', bodyPlain: 'AI-generated.' },
+        },
+      ]);
+
+      const result = await service.getJobOutlines('job-1');
+
+      expect(result.jobStatus).toBe('completed');
+      expect(result.outlines).toHaveLength(1);
+      expect(prisma.derivativeArtifact.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            derivativeGenerationJobId: 'job-1',
+            derivativeType: 'subject_outline',
+            deletedAt: null,
+          }),
+          orderBy: { createdAt: 'asc' },
+        }),
+      );
+      const first = result.outlines[0] as Record<string, unknown>;
+      expect(first['id']).toBe('art-1');
+      const contentJson = first['contentJson'] as Record<string, unknown>;
+      expect(contentJson['topic']).toBe('Persons');
+      expect(contentJson['sections']).toBeInstanceOf(Array);
+    });
+
+    it('returns empty outlines list when job completed but no artifacts exist', async () => {
+      prisma.derivativeGenerationJob.findUnique.mockResolvedValue({
+        id: 'job-1',
+        derivativeType: 'subject_outline',
+        status: 'completed',
+      });
+      prisma.derivativeArtifact.findMany.mockResolvedValue([]);
+
+      const result = await service.getJobOutlines('job-1');
+
+      expect(result.jobStatus).toBe('completed');
+      expect(result.outlines).toEqual([]);
+    });
+
+    it('throws NotFoundException for unknown jobId', async () => {
+      prisma.derivativeGenerationJob.findUnique.mockResolvedValue(null);
+
+      await expect(service.getJobOutlines('nonexistent')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('throws BadRequestException for wrong derivative type', async () => {
+      prisma.derivativeGenerationJob.findUnique.mockResolvedValue({
+        id: 'job-1',
+        derivativeType: 'flashcard',
+        status: 'completed',
+      });
+
+      await expect(service.getJobOutlines('job-1')).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+  });
+
   // ─── softDeleteArtifact ────────────────────────────────
 
   describe('softDeleteArtifact', () => {

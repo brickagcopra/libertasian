@@ -16,12 +16,24 @@ import {
   useJobDigest,
   useJobDoctrines,
   useJobEssay,
+  useJobFlashcards,
   useJobMcqs,
+  useJobOutlines,
 } from '@/features/admin/hooks/use-derivatives-admin';
-import type { DerivativeTypeStats, DerivativeJob, JobDoctrineItem, JobMcqItem } from '@/features/admin/types';
+import type {
+  DerivativeTypeStats,
+  DerivativeJob,
+  JobDoctrineItem,
+  JobFlashcardItem,
+  JobMcqItem,
+  JobOutlineItem,
+} from '@/features/admin/types';
 import { DigestContentPanel } from '@/features/digests/components/digest-content-panel';
 import { EssayContentPanel } from '@/features/admin/components/essay-content-panel';
 import { ArtifactReviewActions } from '@/features/admin/components/artifact-review-actions';
+import { FlashcardRenderer } from '@/features/derivatives/renderers/flashcard-renderer';
+import { OutlineRenderer } from '@/features/derivatives/renderers/outline-renderer';
+import type { DerivativeDetail } from '@/features/derivatives/types';
 import { BulkApproveByConfidencePanel } from '@/features/admin/components/bulk-approve-by-confidence-panel';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AdminCardSkeleton } from '@/components/ui/skeleton';
@@ -645,6 +657,8 @@ function JobDetailPanel({
   const shouldFetchDoctrines = !!job && job.status === 'completed' && job.derivativeType === 'doctrine_extract';
   const shouldFetchEssay = !!job && job.status === 'completed' && job.derivativeType === 'essay_prompt';
   const shouldFetchMcqs = !!job && job.status === 'completed' && job.derivativeType === 'mcq_question';
+  const shouldFetchFlashcards = !!job && job.status === 'completed' && job.derivativeType === 'flashcard';
+  const shouldFetchOutlines = !!job && job.status === 'completed' && job.derivativeType === 'subject_outline';
   const { data: digestData, isLoading: digestLoading, error: digestError } = useJobDigest(
     job?.id ?? '',
     { enabled: shouldFetchDigest },
@@ -660,6 +674,14 @@ function JobDetailPanel({
   const { data: mcqsData, isLoading: mcqsLoading, error: mcqsError } = useJobMcqs(
     job?.id ?? '',
     { enabled: shouldFetchMcqs },
+  );
+  const { data: flashcardsData, isLoading: flashcardsLoading, error: flashcardsError } = useJobFlashcards(
+    job?.id ?? '',
+    { enabled: shouldFetchFlashcards },
+  );
+  const { data: outlinesData, isLoading: outlinesLoading, error: outlinesError } = useJobOutlines(
+    job?.id ?? '',
+    { enabled: shouldFetchOutlines },
   );
 
   if (!job) return <p className="mt-2 text-sm text-gray-400">Job not found in current page</p>;
@@ -823,6 +845,130 @@ function JobDetailPanel({
           )}
         </>
       )}
+
+      {/* Flashcard section */}
+      {shouldFetchFlashcards && (
+        <>
+          {flashcardsLoading && (
+            <p className="text-sm text-gray-400">Loading flashcards...</p>
+          )}
+          {flashcardsError && (
+            <p className="text-sm text-red-500">
+              Error loading flashcards: {flashcardsError instanceof Error ? flashcardsError.message : 'Unknown error'}
+            </p>
+          )}
+          {flashcardsData && flashcardsData.flashcards.length === 0 && (
+            <p className="text-sm text-amber-600">
+              Generation completed but no flashcard artifacts were written — investigate.
+            </p>
+          )}
+          {flashcardsData && flashcardsData.flashcards.length > 0 && (
+            <div className="mt-4 space-y-4 border-t pt-4">
+              <h4 className="text-base font-semibold text-gray-900">
+                Flashcard Sets ({flashcardsData.flashcards.length})
+              </h4>
+              {flashcardsData.flashcards.map((fc, idx) => (
+                <FlashcardReviewCard key={fc.id} artifact={fc} index={idx} />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Subject outline section */}
+      {shouldFetchOutlines && (
+        <>
+          {outlinesLoading && (
+            <p className="text-sm text-gray-400">Loading outlines...</p>
+          )}
+          {outlinesError && (
+            <p className="text-sm text-red-500">
+              Error loading outlines: {outlinesError instanceof Error ? outlinesError.message : 'Unknown error'}
+            </p>
+          )}
+          {outlinesData && outlinesData.outlines.length === 0 && (
+            <p className="text-sm text-amber-600">
+              Generation completed but no subject_outline artifacts were written — investigate.
+            </p>
+          )}
+          {outlinesData && outlinesData.outlines.length > 0 && (
+            <div className="mt-4 space-y-4 border-t pt-4">
+              <h4 className="text-base font-semibold text-gray-900">
+                Subject Outlines ({outlinesData.outlines.length})
+              </h4>
+              {outlinesData.outlines.map((ol, idx) => (
+                <OutlineReviewCard key={ol.id} artifact={ol} index={idx} />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function FlashcardReviewCard({
+  artifact,
+  index,
+}: {
+  artifact: JobFlashcardItem;
+  index: number;
+}) {
+  const detail = { contentJson: artifact.contentJson } as DerivativeDetail;
+  return (
+    <div className="rounded-md border bg-white p-4 shadow-sm">
+      <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-gray-500">
+        <span className="font-semibold text-gray-700">Flashcard set #{index + 1}</span>
+        <span className="font-mono">{artifact.id.slice(0, 8)}</span>
+        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${REVIEW_STATUS_COLORS[artifact.reviewStatus] ?? 'bg-gray-100 text-gray-700'}`}>
+          {artifact.reviewStatus}
+        </span>
+        {artifact.confidenceScore !== null && (
+          <span>confidence: {(artifact.confidenceScore * 100).toFixed(0)}%</span>
+        )}
+      </div>
+      <FlashcardRenderer data={detail} />
+      <div className="mt-3">
+        <ArtifactReviewActions
+          artifactId={artifact.id}
+          reviewStatus={artifact.reviewStatus}
+          visibility={artifact.visibility}
+          hasDisclaimer={!!artifact.contentDisclaimer}
+        />
+      </div>
+    </div>
+  );
+}
+
+function OutlineReviewCard({
+  artifact,
+  index,
+}: {
+  artifact: JobOutlineItem;
+  index: number;
+}) {
+  const detail = { contentJson: artifact.contentJson } as DerivativeDetail;
+  return (
+    <div className="rounded-md border bg-white p-4 shadow-sm">
+      <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-gray-500">
+        <span className="font-semibold text-gray-700">Outline #{index + 1}</span>
+        <span className="font-mono">{artifact.id.slice(0, 8)}</span>
+        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${REVIEW_STATUS_COLORS[artifact.reviewStatus] ?? 'bg-gray-100 text-gray-700'}`}>
+          {artifact.reviewStatus}
+        </span>
+        {artifact.confidenceScore !== null && (
+          <span>confidence: {(artifact.confidenceScore * 100).toFixed(0)}%</span>
+        )}
+      </div>
+      <OutlineRenderer data={detail} />
+      <div className="mt-3">
+        <ArtifactReviewActions
+          artifactId={artifact.id}
+          reviewStatus={artifact.reviewStatus}
+          visibility={artifact.visibility}
+          hasDisclaimer={!!artifact.contentDisclaimer}
+        />
+      </div>
     </div>
   );
 }

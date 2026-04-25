@@ -114,6 +114,20 @@ export class DerivativesAdminController {
     return { success: true, data };
   }
 
+  @Get('jobs/:id/flashcards')
+  @ApiOperation({ summary: 'Get the flashcard artifacts produced by a derivative generation job' })
+  async getJobFlashcards(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.service.getJobFlashcards(id);
+    return { success: true, data };
+  }
+
+  @Get('jobs/:id/outlines')
+  @ApiOperation({ summary: 'Get the subject_outline artifacts produced by a derivative generation job' })
+  async getJobOutlines(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.service.getJobOutlines(id);
+    return { success: true, data };
+  }
+
   @Post('jobs/:id/retry')
   async retryJob(
     @Param('id', ParseUUIDPipe) id: string,

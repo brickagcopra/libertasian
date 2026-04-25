@@ -5,6 +5,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 const mockUseJobDigest = vi.hoisted(() => vi.fn());
 const mockUseDerivativeJobs = vi.hoisted(() => vi.fn());
 const mockUseJobMcqs = vi.hoisted(() => vi.fn());
+const mockUseJobFlashcards = vi.hoisted(() => vi.fn());
+const mockUseJobOutlines = vi.hoisted(() => vi.fn());
 
 vi.mock('@/lib/api-client', () => ({
   apiClient: {
@@ -56,7 +58,17 @@ vi.mock('@/features/admin/hooks/use-derivatives-admin', () => ({
   useJobDoctrines: () => ({ data: null, isLoading: false, error: null }),
   useJobEssay: () => ({ data: null, isLoading: false, error: null }),
   useJobMcqs: mockUseJobMcqs,
+  useJobFlashcards: mockUseJobFlashcards,
+  useJobOutlines: mockUseJobOutlines,
   useReviewArtifact: () => ({ mutate: vi.fn(), isPending: false, error: null, variables: null }),
+  useBulkApproveByConfidence: () => ({
+    mutate: vi.fn(),
+    mutateAsync: vi.fn(),
+    isPending: false,
+    data: null,
+    error: null,
+    reset: vi.fn(),
+  }),
 }));
 
 import DerivativesAdminPage from './page';
@@ -152,6 +164,16 @@ describe('Derivatives Admin — JobDetailPanel with Digest', () => {
       isLoading: false,
       error: null,
     });
+    mockUseJobFlashcards.mockReturnValue({
+      data: null,
+      isLoading: false,
+      error: null,
+    });
+    mockUseJobOutlines.mockReturnValue({
+      data: null,
+      isLoading: false,
+      error: null,
+    });
   });
 
   it('renders the page without crashing', () => {
@@ -243,6 +265,8 @@ describe('Derivatives Admin — JobDetailPanel with MCQs', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockUseJobDigest.mockReturnValue({ data: null, isLoading: false, error: null });
+    mockUseJobFlashcards.mockReturnValue({ data: null, isLoading: false, error: null });
+    mockUseJobOutlines.mockReturnValue({ data: null, isLoading: false, error: null });
   });
 
   it('renders MCQ cards with review buttons and marks correct answer', () => {
@@ -270,5 +294,167 @@ describe('Derivatives Admin — JobDetailPanel with MCQs', () => {
     expect(screen.getByRole('button', { name: /^Approve$/ })).toBeDefined();
     expect(screen.getByRole('button', { name: /Needs revision/ })).toBeDefined();
     expect(screen.getByRole('button', { name: /^Reject$/ })).toBeDefined();
+  });
+});
+
+const flashcardJob = {
+  id: 'job-fc-1',
+  derivativeType: 'flashcard',
+  status: 'completed',
+  sourceDocument: { id: 'doc-1', title: 'People v. Santos' },
+  tokensIn: 800,
+  tokensOut: 400,
+  estimatedCostUsd: 0.03,
+  modelName: 'gpt-4o',
+  promptTemplateVersion: 'v1.0',
+  startedAt: '2026-04-22T00:00:00Z',
+  finishedAt: '2026-04-22T00:01:00Z',
+  createdAt: '2026-04-22T00:00:00Z',
+};
+
+const flashcardArtifact = {
+  id: 'fc-art-1',
+  title: 'Flashcards: Command responsibility',
+  reviewStatus: 'needs_human_review',
+  visibility: 'private',
+  confidenceScore: 0.78,
+  validatorVerdict: 'publish',
+  publishedAt: null,
+  createdAt: '2026-04-22T00:00:00Z',
+  contentDisclaimer: { id: 'disc-1', bodyPlain: 'AI-generated.' },
+  contentJson: {
+    cards: [
+      {
+        front: 'What is command responsibility?',
+        back: 'A doctrine holding superiors liable for subordinate acts.',
+        mnemonicHint: 'C-R-K',
+      },
+      {
+        front: 'Required elements?',
+        back: 'Effective control + knowledge + failure to prevent or punish.',
+      },
+    ],
+  },
+};
+
+describe('Derivatives Admin — JobDetailPanel with Flashcards', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseJobDigest.mockReturnValue({ data: null, isLoading: false, error: null });
+    mockUseJobMcqs.mockReturnValue({ data: null, isLoading: false, error: null });
+    mockUseJobOutlines.mockReturnValue({ data: null, isLoading: false, error: null });
+  });
+
+  it('renders flashcard front via FlashcardRenderer with review actions', () => {
+    mockUseDerivativeJobs.mockReturnValue({
+      data: { data: [flashcardJob], total: 1 },
+    });
+    mockUseJobFlashcards.mockReturnValue({
+      data: { jobStatus: 'completed', flashcards: [flashcardArtifact] },
+      isLoading: false,
+      error: null,
+    });
+
+    renderWithProviders(<DerivativesAdminPage />);
+
+    fireEvent.click(screen.getByText('Detail'));
+
+    expect(screen.getByText('Flashcard Sets (1)')).toBeDefined();
+    // FlashcardRenderer initially shows the front text of each card.
+    expect(screen.getByText('What is command responsibility?')).toBeDefined();
+    expect(screen.getByText('Required elements?')).toBeDefined();
+
+    // ArtifactReviewActions renders verdict buttons. The page also includes
+    // the BulkApproveByConfidencePanel, which has its own "Approve" button —
+    // so the per-artifact card adds an additional Approve/Reject pair.
+    expect(
+      screen.getAllByRole('button', { name: /^Approve$/ }).length,
+    ).toBeGreaterThanOrEqual(2);
+    expect(screen.getByRole('button', { name: /Needs revision/ })).toBeDefined();
+    expect(
+      screen.getAllByRole('button', { name: /^Reject$/ }).length,
+    ).toBeGreaterThanOrEqual(1);
+  });
+});
+
+const outlineJob = {
+  id: 'job-ol-1',
+  derivativeType: 'subject_outline',
+  status: 'completed',
+  sourceDocument: { id: 'doc-1', title: 'People v. Santos' },
+  tokensIn: 1500,
+  tokensOut: 1200,
+  estimatedCostUsd: 0.07,
+  modelName: 'gpt-4o',
+  promptTemplateVersion: 'v1.0',
+  startedAt: '2026-04-23T00:00:00Z',
+  finishedAt: '2026-04-23T00:01:00Z',
+  createdAt: '2026-04-23T00:00:00Z',
+};
+
+const outlineArtifact = {
+  id: 'ol-art-1',
+  title: 'Outline: Persons & Family Relations',
+  reviewStatus: 'needs_human_review',
+  visibility: 'private',
+  confidenceScore: 0.81,
+  validatorVerdict: 'publish',
+  publishedAt: null,
+  createdAt: '2026-04-23T00:00:00Z',
+  contentDisclaimer: { id: 'disc-1', bodyPlain: 'AI-generated.' },
+  contentJson: {
+    topic: 'Persons & Family Relations',
+    sections: [
+      {
+        heading: 'I. Civil Personality',
+        paragraphs: ['Defined under Articles 37-39 of the Civil Code.'],
+      },
+      {
+        heading: 'II. Capacity to Act',
+        paragraphs: ['Restricted by minority, insanity, or imbecility.'],
+      },
+    ],
+  },
+};
+
+describe('Derivatives Admin — JobDetailPanel with Outlines', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseJobDigest.mockReturnValue({ data: null, isLoading: false, error: null });
+    mockUseJobMcqs.mockReturnValue({ data: null, isLoading: false, error: null });
+    mockUseJobFlashcards.mockReturnValue({ data: null, isLoading: false, error: null });
+  });
+
+  it('renders outline body via OutlineRenderer with review actions', () => {
+    mockUseDerivativeJobs.mockReturnValue({
+      data: { data: [outlineJob], total: 1 },
+    });
+    mockUseJobOutlines.mockReturnValue({
+      data: { jobStatus: 'completed', outlines: [outlineArtifact] },
+      isLoading: false,
+      error: null,
+    });
+
+    renderWithProviders(<DerivativesAdminPage />);
+
+    fireEvent.click(screen.getByText('Detail'));
+
+    expect(screen.getByText('Subject Outlines (1)')).toBeDefined();
+    expect(screen.getByText('I. Civil Personality')).toBeDefined();
+    expect(screen.getByText('II. Capacity to Act')).toBeDefined();
+    expect(
+      screen.getByText('Defined under Articles 37-39 of the Civil Code.'),
+    ).toBeDefined();
+
+    // ArtifactReviewActions renders verdict buttons. The page also includes
+    // the BulkApproveByConfidencePanel, which has its own "Approve" button —
+    // so the per-artifact card adds an additional Approve/Reject pair.
+    expect(
+      screen.getAllByRole('button', { name: /^Approve$/ }).length,
+    ).toBeGreaterThanOrEqual(2);
+    expect(screen.getByRole('button', { name: /Needs revision/ })).toBeDefined();
+    expect(
+      screen.getAllByRole('button', { name: /^Reject$/ }).length,
+    ).toBeGreaterThanOrEqual(1);
   });
 });
