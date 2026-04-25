@@ -50,6 +50,7 @@ def _prepare_section_texts(
 def generate_document_embeddings_task(
     self: Any,
     document_id: str,
+    backfill_batch_id: str | None = None,
 ) -> dict[str, Any]:
     """Generate and store embeddings for all sections of a legal document.
 
@@ -63,6 +64,10 @@ def generate_document_embeddings_task(
 
     Args:
         document_id: UUID of the LegalDocument.
+        backfill_batch_id: When set, per-call cost is added to the batch's
+            ``budget_consumed_usd``. Local embedding models return
+            ``Decimal("0")`` from ``pricing.cost_for`` so this is a no-op
+            today, but it future-proofs the cost path for hosted models.
 
     Returns:
         dict with embedding generation results.
@@ -164,6 +169,30 @@ def generate_document_embeddings_task(
             output_ref=json.dumps({"embedding_ids": embedding_ids}),
             confidence=None,
         )
+
+        # Per-batch cost telemetry. Local embedding models return $0 from
+        # cost_for so this is a no-op today; it's wired up so a future
+        # switch to a hosted embedding endpoint starts billing the right
+        # batch automatically. Embedding service responses don't expose
+        # token counts, so we charge zero tokens — relevant once a hosted
+        # model with priced inputs is in play.
+        if backfill_batch_id:
+            try:
+                from ..clients import backfill_db_client as backfill_db
+                from ..pricing import cost_for
+
+                cost = cost_for(model_name, 0, 0)
+                if cost > 0:
+                    backfill_db.update_batch_counters(
+                        backfill_batch_id,
+                        budget_consumed_usd=cost,
+                    )
+            except Exception:
+                logger.exception(
+                    "Failed to update backfill batch %s budget_consumed_usd "
+                    "(non-blocking)",
+                    backfill_batch_id,
+                )
 
         logger.info(
             "generate_document_embeddings_task complete: document=%s "

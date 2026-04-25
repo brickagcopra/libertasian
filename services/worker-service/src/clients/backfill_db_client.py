@@ -199,6 +199,11 @@ def update_batch_counters(batch_id: str, **counters: Any) -> None:
     """Increment batch counters (candidates_discovered, candidates_processed, etc.).
 
     Also supports last_tick_at as a direct-set field.
+
+    ``budget_consumed_usd`` is incremented as a NUMERIC (Decimal-friendly)
+    increment so per-call LLM costs from downstream tasks accumulate on
+    the batch row. Per-call cost is computed by ``pricing.cost_for`` and
+    passed in as a Decimal / float / str — input is cast to Decimal.
     """
     if not counters:
         return
@@ -206,7 +211,7 @@ def update_batch_counters(batch_id: str, **counters: Any) -> None:
     set_parts = ["updated_at = NOW()"]
     params: list[Any] = []
 
-    # Counter fields that get incremented
+    # Counter fields that get incremented (integers)
     counter_fields = {
         "candidates_discovered",
         "candidates_processed",
@@ -220,6 +225,14 @@ def update_batch_counters(batch_id: str, **counters: Any) -> None:
         if field in counter_fields:
             set_parts.append(f"{field} = COALESCE({field}, 0) + %s")
             params.append(value)
+        elif field == "budget_consumed_usd":
+            # Cast input to Decimal so callers can pass float/str/int
+            # without us silently coercing to a binary float in SQL.
+            set_parts.append(
+                "budget_consumed_usd = "
+                "COALESCE(budget_consumed_usd, 0) + %s::numeric"
+            )
+            params.append(Decimal(str(value)) if value is not None else Decimal("0"))
         elif field == "last_tick_at":
             set_parts.append(f"{field} = %s")
             params.append(value)

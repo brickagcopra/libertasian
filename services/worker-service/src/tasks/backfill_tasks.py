@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from collections import Counter
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -42,6 +42,13 @@ MONTH_CODES = [
 MONTH_CODES_TITLE = [c.title() for c in MONTH_CODES]
 
 MAX_INFLIGHT_JOBS_PER_BATCH = 5
+
+# How long the terminal-completion gate waits for the Redis inflight counter
+# to drain before reaping it as stale. Longer than the longest realistic
+# process_ingestion_candidate run (with retries) so we don't reap healthy
+# in-flight jobs, but short enough that a wedged batch unblocks within one
+# extra tick window.
+INFLIGHT_DRAIN_STALENESS = timedelta(minutes=10)
 
 
 # ─── Monthly URL builders ────────────────────────────────────────────────
@@ -452,16 +459,54 @@ def _tick_single_batch(batch: dict[str, Any]) -> dict[str, Any]:
     current_index = checkpoint.get("current_index", 0)
     total = checkpoint.get("total_candidates", len(candidate_urls))
 
-    # Check if we've processed all candidates
+    # Check if we've processed all candidates. The cursor reaching `total`
+    # means every URL was dispatched, NOT that every dispatch finished —
+    # completion hooks decrement the Redis inflight counter as jobs land
+    # terminally. Don't transition to 'completed' until either the counter
+    # drains to zero or the last tick is old enough that the counter is
+    # almost certainly stale (lost completion hook, dropped task, etc.).
     if current_index >= total:
-        backfill_db.transition_batch(
-            batch_id, "completed",
-            finished_at=datetime.now(UTC),
+        inflight = _get_inflight_count(batch_id)
+        if inflight == 0:
+            backfill_db.transition_batch(
+                batch_id, "completed",
+                finished_at=datetime.now(UTC),
+            )
+            # Terminal transition: drop the inflight key so a re-creation
+            # of a batch with the same id doesn't inherit stale counts.
+            _get_redis_client().delete(_inflight_key(batch_id))
+            return {"batch_id": batch_id, "status": "completed"}
+
+        last_tick_at = batch.get("last_tick_at")
+        is_stale = (
+            last_tick_at is not None
+            and datetime.now(UTC) - last_tick_at > INFLIGHT_DRAIN_STALENESS
         )
-        # Terminal transition: drop the inflight key so a re-creation of a
-        # batch with the same id doesn't inherit stale counts.
-        _get_redis_client().delete(_inflight_key(batch_id))
-        return {"batch_id": batch_id, "status": "completed"}
+        if is_stale:
+            logger.warning(
+                "Reaping stale inflight counter for batch %s "
+                "(inflight=%d, last_tick_at=%s) — cursor at total but no "
+                "completion hooks fired in %s. Forcing transition to "
+                "'completed'.",
+                batch_id, inflight, last_tick_at, INFLIGHT_DRAIN_STALENESS,
+            )
+            _get_redis_client().delete(_inflight_key(batch_id))
+            backfill_db.transition_batch(
+                batch_id, "completed",
+                finished_at=datetime.now(UTC),
+            )
+            return {
+                "batch_id": batch_id,
+                "status": "completed",
+                "reaped_inflight": inflight,
+            }
+
+        return {
+            "batch_id": batch_id,
+            "status": "draining_inflight",
+            "inflight": inflight,
+            "progress": f"{total}/{total}",
+        }
 
     # Check batch budget
     remaining = backfill_db.get_batch_budget_remaining(batch_id)

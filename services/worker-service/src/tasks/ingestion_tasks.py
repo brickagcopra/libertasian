@@ -462,6 +462,14 @@ def process_ingestion_candidate(
     # once per enqueue-to-terminal lifecycle.
     outcome_status: str | None = None
 
+    # Forward-only on the backfill path. Daily-crawl / on-demand candidates
+    # carry a different (or no) trigger and don't bill against any batch.
+    chain_backfill_batch_id: str | None = (
+        candidate_metadata.get("backfill_batch_id")
+        if candidate_metadata.get("trigger") == "backfill"
+        else None
+    )
+
     try:
         # Step 1: Download raw content
         fetcher = get_fetcher(parser_type)
@@ -666,7 +674,10 @@ def process_ingestion_candidate(
                     },
                 )
 
-                chain_post_ingestion.delay(document_id=doc_id)
+                chain_post_ingestion.delay(
+                    document_id=doc_id,
+                    backfill_batch_id=chain_backfill_batch_id,
+                )
 
                 outcome_status = "version_update"
                 return {
@@ -752,7 +763,10 @@ def process_ingestion_candidate(
         db.update_candidate_status(candidate_id, "accepted")
 
         # Fire post-ingestion chain
-        chain_post_ingestion.delay(document_id=doc_id)
+        chain_post_ingestion.delay(
+            document_id=doc_id,
+            backfill_batch_id=chain_backfill_batch_id,
+        )
 
         logger.info(
             "Processed candidate %s -> document %s (%d sections, tier=%s)",
@@ -861,11 +875,21 @@ def _parse_date(date_str: str | None) -> str | None:
     max_retries=1,
     default_retry_delay=60,
 )
-def chain_post_ingestion(self: Any, document_id: str) -> dict[str, Any]:
+def chain_post_ingestion(
+    self: Any,
+    document_id: str,
+    backfill_batch_id: str | None = None,
+) -> dict[str, Any]:
     """Fire-and-forget follow-up tasks after document ingestion.
 
     Chains existing tasks for citation extraction and doctrine extraction.
     Non-blocking to the main ingestion pipeline.
+
+    ``backfill_batch_id`` is forwarded to LLM-incurring derivative tasks so
+    their per-call cost can be charged to the originating backfill batch's
+    ``budget_consumed_usd`` counter. ``None`` for daily-crawl / on-demand
+    paths skips the per-batch metering (the global Redis budget rail still
+    applies).
     """
     try:
         from .categorization_tasks import categorize_document_task
@@ -890,10 +914,16 @@ def chain_post_ingestion(self: Any, document_id: str) -> dict[str, Any]:
         # Fire subject classification (non-blocking). Without this, new
         # documents wait up to 24 hours for the nightly beat batch —
         # derivatives generated in that window ship with no subject chip.
-        classify_document_subjects.delay(document_id=document_id)
+        classify_document_subjects.delay(
+            document_id=document_id,
+            backfill_batch_id=backfill_batch_id,
+        )
 
         # Fire embedding generation for kNN vector search (non-blocking)
-        generate_document_embeddings_task.delay(document_id=document_id)
+        generate_document_embeddings_task.delay(
+            document_id=document_id,
+            backfill_batch_id=backfill_batch_id,
+        )
 
         # Fire validation with 60s delay to let extraction and digest tasks
         # start first. If validation runs before they complete, document

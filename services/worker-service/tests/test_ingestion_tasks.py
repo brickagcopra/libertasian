@@ -525,8 +525,14 @@ class TestChainPostIngestion:
         mock_cit.delay.assert_called_once()
         mock_digest.delay.assert_called_once()
         mock_cat.delay.assert_called_once()
-        mock_classify.delay.assert_called_once_with(document_id=document_id)
-        mock_embed.delay.assert_called_once()
+        mock_classify.delay.assert_called_once_with(
+            document_id=document_id,
+            backfill_batch_id=None,
+        )
+        mock_embed.delay.assert_called_once_with(
+            document_id=document_id,
+            backfill_batch_id=None,
+        )
         mock_val.apply_async.assert_called_once()
 
 
