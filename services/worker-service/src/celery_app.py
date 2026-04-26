@@ -104,4 +104,5 @@ app.conf.include = [
     "src.tasks.outline_generation_tasks",
     "src.tasks.derivative_dispatch_tasks",
     "src.tasks.daily_crawl_tasks",
+    "src.tasks.reprocess_tasks",
 ]

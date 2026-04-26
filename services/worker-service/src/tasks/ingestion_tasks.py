@@ -23,6 +23,7 @@ from celery import shared_task
 
 from ..clients import ingestion_db_client as db
 from ..clients import nestjs_client, s3_client
+from ..clients.db_client import SchemaIntegrityError
 from ..config import settings
 from ..fetchers.base import CloudflareBlockedError
 from ..fetchers.registry import get_fetcher
@@ -936,6 +937,16 @@ def chain_post_ingestion(
         logger.info("Dispatched post-ingestion tasks for document %s", document_id)
         return {"document_id": document_id, "status": "dispatched"}
 
+    except SchemaIntegrityError:
+        # Hard schema bug — surface it. Hiding this class of error is what
+        # let the PascalCase identifier regression silently degrade 1421
+        # documents in April 2026 before detection.
+        logger.exception(
+            "Post-ingestion chain hit SchemaIntegrityError for document %s — "
+            "failing loudly to DLQ",
+            document_id,
+        )
+        raise
     except Exception as exc:
         logger.warning(
             "Post-ingestion chain failed for document %s: %s (non-blocking)",

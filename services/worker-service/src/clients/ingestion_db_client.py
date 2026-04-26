@@ -811,6 +811,84 @@ def claim_derivative_job(job_id: str) -> bool:
 # ─── Digest Generation Operations ──────────────────────────────────────
 
 
+def get_legal_document_ids_in_window(
+    start_date: str,
+    end_date: str,
+) -> list[str]:
+    """Return ids of ``legal_documents`` rows with ``created_at`` in
+    ``[start_date, end_date)``.
+
+    ``start_date`` / ``end_date`` are ISO-8601 strings (``YYYY-MM-DD`` or
+    full timestamp). Used by the reprocessing job to find documents that
+    were ingested while the worker had a broken raw-SQL bug and therefore
+    have no embeddings / doctrines / citations attached.
+    """
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT id::text
+               FROM legal_documents
+               WHERE created_at >= %s::timestamptz
+                 AND created_at < %s::timestamptz
+               ORDER BY created_at ASC""",
+            (start_date, end_date),
+        )
+        return [row[0] for row in cur.fetchall()]
+
+
+def count_doctrine_extracts_for_document(document_id: str) -> int:
+    """Return the number of ``doctrine_extracts`` rows attached to a
+    document.
+
+    Used by the reprocess task to skip documents that already have
+    doctrines from a prior run.
+    """
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) FROM doctrine_extracts WHERE legal_document_id = %s",
+            (document_id,),
+        )
+        row = cur.fetchone()
+        return int(row[0]) if row else 0
+
+
+def count_section_embeddings_for_document(document_id: str) -> int:
+    """Return the number of section embeddings already stored for a
+    document.
+
+    Embeddings live in the ``embeddings`` table keyed by
+    ``(entity_type='section', entity_id=<section.id>)``. We join through
+    ``legal_document_sections`` to find which of this document's sections
+    already have embeddings.
+    """
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT COUNT(*)
+               FROM embeddings e
+               JOIN legal_document_sections s
+                 ON s.id = e.entity_id
+               WHERE e.entity_type = 'section'
+                 AND s.legal_document_id = %s""",
+            (document_id,),
+        )
+        row = cur.fetchone()
+        return int(row[0]) if row else 0
+
+
+def count_resolved_citations_for_document(document_id: str) -> int:
+    """Return the number of ``citations`` rows for the document that have
+    been resolved (``to_document_id IS NOT NULL``).
+    """
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT COUNT(*) FROM citations
+               WHERE from_document_id = %s
+                 AND to_document_id IS NOT NULL""",
+            (document_id,),
+        )
+        row = cur.fetchone()
+        return int(row[0]) if row else 0
+
+
 def get_legal_document(document_id: str) -> dict[str, Any] | None:
     """Fetch a legal document by ID with full metadata for digest generation."""
     with get_connection() as conn, \
@@ -875,7 +953,15 @@ def create_digest(
     review_status: str,
     visibility: str,
 ) -> str:
-    """Create a digest row directly in PostgreSQL. Returns the new digest ID."""
+    """Create a digest row, idempotent on ``(legal_document_id, digest_type)``.
+
+    The ``uq_digest_document_type`` unique index causes ``INSERT`` retries to
+    raise ``UniqueViolation`` and abort the whole task chain. ``ON CONFLICT
+    DO NOTHING`` + ``RETURNING id`` either returns the freshly-inserted id
+    or, on conflict, falls back to a plain ``SELECT`` for the existing row's
+    id. Either way the caller gets a valid digest id and downstream
+    provenance / model-run inserts continue.
+    """
     import uuid
 
     digest_id = str(uuid.uuid4())
@@ -888,7 +974,9 @@ def create_digest(
                     cited_authorities_json, confidence_score,
                     review_status, visibility, created_at, updated_at)
                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                           %s, %s, %s, %s::jsonb, %s, %s, %s, NOW(), NOW())""",
+                           %s, %s, %s, %s::jsonb, %s, %s, %s, NOW(), NOW())
+                   ON CONFLICT (legal_document_id, digest_type) DO NOTHING
+                   RETURNING id""",
             (
                 digest_id,
                 document_id,
@@ -909,8 +997,31 @@ def create_digest(
                 visibility,
             ),
         )
-    logger.info("Created digest %s for document %s", digest_id, document_id)
-    return digest_id
+        row = cur.fetchone()
+        if row is not None:
+            logger.info("Created digest %s for document %s", row[0], document_id)
+            return str(row[0])
+
+        # Pre-existing row from a prior run wins. Look up its id so the
+        # caller can attach provenance / model_runs to it.
+        cur.execute(
+            """SELECT id FROM digests
+               WHERE legal_document_id = %s AND digest_type = %s""",
+            (document_id, digest_type),
+        )
+        existing = cur.fetchone()
+        if existing is None:
+            # Should never happen — we just hit ON CONFLICT, the row exists.
+            raise RuntimeError(
+                f"Digest upsert returned no row for "
+                f"document_id={document_id} digest_type={digest_type}",
+            )
+        logger.info(
+            "Digest already exists for document %s (digest_type=%s) — "
+            "reusing %s",
+            document_id, digest_type, existing[0],
+        )
+        return str(existing[0])
 
 
 def create_provenance_records(records: list[dict[str, Any]]) -> int:
