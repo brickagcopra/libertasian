@@ -33,12 +33,21 @@ COPY --from=deps /usr/local/bin /usr/local/bin
 # Copy application source
 COPY services/embedding-service/src ./src
 
-# Non-root user
-RUN groupadd -g 1001 appgroup && useradd -u 1001 -g appgroup -s /bin/sh appuser
+# Non-root user. useradd here does not pass -m, so /home/appuser is not
+# created automatically. HuggingFace Hub writes to $HOME/.cache/huggingface
+# on every model download — without the directory, the first request fails
+# with PermissionError and the model never loads. Create the cache dir
+# explicitly and chown to appuser before dropping privileges.
+RUN groupadd -g 1001 appgroup && useradd -u 1001 -g appgroup -s /bin/sh appuser \
+    && mkdir -p /home/appuser/.cache/huggingface \
+    && chown -R appuser:appgroup /home/appuser
 USER appuser
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+# Pin HuggingFace cache location so any future tooling that overrides $HOME
+# still resolves the cache to the directory we just provisioned.
+ENV HF_HOME=/home/appuser/.cache/huggingface
 
 EXPOSE 8001
 

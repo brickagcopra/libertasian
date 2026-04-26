@@ -1,0 +1,21 @@
+-- Drop the foreign key on embeddings.entity_id.
+--
+-- The embeddings table is polymorphic: entity_id may reference
+-- legal_documents.id (when entity_type = 'document') OR
+-- legal_document_sections.id (when entity_type = 'section').
+-- The original schema modeled the FK against legal_documents only,
+-- which broke every section-level embedding insert with:
+--   insert or update on table "embeddings" violates foreign key
+--   constraint "embeddings_entity_id_fkey"
+--
+-- Postgres has no native polymorphic FK. The two viable substitutes
+-- (CHECK + per-entity-type triggers, or supertable inheritance) are
+-- fragile / overkill. We rely on application-layer validation in
+-- worker-service (db_client.create_embedding) to verify the target
+-- row exists before insert, plus the existing
+-- idx_embeddings_entity composite index for query performance.
+--
+-- Zero-data-risk: embeddings table has 0 rows corpus-wide at the
+-- time this migration is authored. No backfill, no cleanup needed.
+
+ALTER TABLE "embeddings" DROP CONSTRAINT "embeddings_entity_id_fkey";
