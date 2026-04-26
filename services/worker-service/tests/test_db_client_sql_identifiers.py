@@ -379,6 +379,38 @@ def test_get_existing_embedding_ids_uses_snake_case(
         assert any(col in s for s in statements), col
 
 
+def test_get_existing_embedding_ids_casts_array_to_uuid(
+    mock_psycopg2_connect: MagicMock,
+) -> None:
+    """``embeddings.entity_id`` is ``uuid``; psycopg2 binds a Python
+    ``list[str]`` as ``text[]``. Without ``::uuid[]`` PG raises
+    ``operator does not exist: uuid = text`` and embedding generation
+    fails on every document — exactly what halted the post-PR-#78
+    reprocess in prod.
+    """
+    from src.clients.db_client import get_existing_embedding_ids
+
+    get_existing_embedding_ids(
+        "section",
+        [
+            "11111111-1111-1111-1111-111111111111",
+            "22222222-2222-2222-2222-222222222222",
+        ],
+    )
+    statements = _executed_sql(mock_psycopg2_connect)
+    joined = "\n".join(statements)
+    assert "ANY(%s::uuid[])" in joined, (
+        "get_existing_embedding_ids must cast its array param to uuid[] — "
+        "naked ANY(%s) raises operator-does-not-exist against the uuid "
+        f"column in PostgreSQL. SQL was:\n{joined}"
+    )
+    # Defensive: make sure no naked ``ANY(%s)`` slipped back in alongside
+    # the cast variant. Allow ``ANY(%s::<type>[])`` only.
+    assert "ANY(%s)" not in joined.replace("ANY(%s::uuid[])", ""), (
+        f"Found naked ANY(%s) without a type cast. SQL was:\n{joined}"
+    )
+
+
 def test_create_embedding_uses_snake_case(
     mock_psycopg2_connect: MagicMock,
 ) -> None:

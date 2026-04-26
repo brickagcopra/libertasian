@@ -370,14 +370,19 @@ def get_existing_embedding_ids(
         return set()
 
     with get_connection() as conn, conn.cursor() as cur:
+        # ``embeddings.entity_id`` is ``uuid``; psycopg2 binds a Python
+        # ``list[str]`` as ``text[]``, so without an explicit cast PG sees
+        # ``uuid = ANY(text[])`` and refuses with
+        # ``operator does not exist: uuid = text``. Casting at the SQL
+        # layer keeps callers from having to know about pg's strict typing.
         cur.execute(
             """SELECT DISTINCT entity_id
                FROM embeddings
                WHERE entity_type = %s
-                 AND entity_id = ANY(%s)""",
+                 AND entity_id = ANY(%s::uuid[])""",
             (entity_type, entity_ids),
         )
-        return {row[0] for row in cur.fetchall()}
+        return {str(row[0]) for row in cur.fetchall()}
 
 
 def create_embedding(
