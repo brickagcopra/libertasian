@@ -12,6 +12,7 @@ import os
 from celery import shared_task
 
 from ..clients import db_client, ocr_client, s3_client
+from ..clients.db_client import SchemaIntegrityError
 
 logger = logging.getLogger(__name__)
 
@@ -271,6 +272,13 @@ def classify_document_task(
             "status": "completed",
         }
 
+    except SchemaIntegrityError:
+        logger.exception(
+            "classify_document_task hit SchemaIntegrityError for upload=%s — "
+            "failing loudly to DLQ",
+            upload_id,
+        )
+        raise
     except Exception as exc:
         logger.warning(
             "classify_document_task failed (non-blocking): upload=%s error=%s",
@@ -345,6 +353,13 @@ def extract_citations_task(
             "status": "completed",
         }
 
+    except SchemaIntegrityError:
+        logger.exception(
+            "extract_citations_task hit SchemaIntegrityError for upload=%s — "
+            "failing loudly to DLQ",
+            upload_id,
+        )
+        raise
     except Exception as exc:
         logger.warning(
             "extract_citations_task failed (non-blocking): upload=%s error=%s",

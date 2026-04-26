@@ -18,6 +18,7 @@ from celery import shared_task
 
 from ..clients import ingestion_db_client as db
 from ..clients import rag_client
+from ..clients.db_client import SchemaIntegrityError
 
 logger = logging.getLogger(__name__)
 
@@ -228,6 +229,17 @@ def generate_ingestion_digest(
             "status": "completed",
         }
 
+    except SchemaIntegrityError:
+        # Schema-level bugs (missing tables/columns from raw SQL) MUST surface
+        # to DLQ — swallowing them is what hid the PascalCase regression that
+        # silently degraded 1421 documents in April 2026. Re-raise without
+        # going through Celery retry; this is not a transient failure.
+        logger.exception(
+            "generate_ingestion_digest hit a SchemaIntegrityError on "
+            "document=%s — failing loudly to DLQ",
+            document_id,
+        )
+        raise
     except Exception as exc:
         logger.error(
             "generate_ingestion_digest failed: document=%s error=%s",
