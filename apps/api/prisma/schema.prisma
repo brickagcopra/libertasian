@@ -448,10 +448,10 @@ model SourceEndpoint {
 /// Per-source incremental-crawl cursor. Advanced only on successful completion
 /// of a daily crawl task so transient fetch failures don't skip decisions.
 model CrawlState {
-  sourceId      String   @id @map("source_id") @db.Uuid
+  sourceId      String    @id @map("source_id") @db.Uuid
   lastCrawledAt DateTime? @map("last_crawled_at") @db.Timestamptz
-  lastCursor    String?  @map("last_cursor")
-  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  lastCursor    String?   @map("last_cursor")
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   @@map("crawl_state")
 }
@@ -497,7 +497,6 @@ model LegalDocument {
   matterDocuments          MatterDocument[]
   editorialFlags           EditorialFlag[]             @relation("DocEditorialFlags")
   provenanceRecords        ProvenanceRecord[]
-  embeddings               Embedding[]                 @relation("DocEmbeddings")
   flashcards               Flashcard[]
   reviewerPackItems        ReviewerPackItem[]
   doctrineExtracts         DoctrineExtract[]
@@ -637,8 +636,11 @@ model Embedding {
   sparseVectorRef String?  @map("sparse_vector_ref")
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
 
-  // Optional relation to legal document (when entity_type = 'document')
-  legalDocument LegalDocument? @relation("DocEmbeddings", fields: [entityId], references: [id])
+  // Polymorphic: entityId references either legal_documents.id or
+  // legal_document_sections.id, discriminated by entityType. No FK —
+  // Postgres can't validate polymorphic refs without triggers/inheritance.
+  // Application layer (worker-service db_client.create_embedding) is
+  // responsible for verifying the target row exists before insert.
 
   @@index([entityType, entityId], map: "idx_embeddings_entity")
   @@map("embeddings")
@@ -698,12 +700,12 @@ model Digest {
   reviewerPackItems       ReviewerPackItem[]
   userUploads             UserUpload[]
 
+  @@unique([legalDocumentId, digestType], map: "uq_digest_document_type")
   @@index([legalDocumentId], map: "idx_digests_doc")
   @@index([userId], map: "idx_digests_user")
   @@index([reviewStatus], map: "idx_digests_review")
   @@index([assignedReviewerUserId], map: "idx_digests_reviewer")
   @@index([visibility, avgRating(sort: Desc)], map: "idx_digests_marketplace")
-  @@unique([legalDocumentId, digestType], map: "uq_digest_document_type")
   @@index([visibility, voteScore(sort: Desc)], map: "idx_digests_vote_score")
   @@map("digests")
 }
