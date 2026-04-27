@@ -70,6 +70,7 @@ def generate_mcq_questions(
     document_id: str,
     question_count: int = 5,
     difficulty: str = "medium",
+    backfill_batch_id: str | None = None,
 ) -> dict[str, Any]:
     """Generate MCQ questions for a legal document.
 
@@ -342,6 +343,23 @@ def generate_mcq_questions(
             update_kwargs["errorJson"] = error_json
 
         nestjs_client.update_job_status(job_id, "completed", **update_kwargs)
+
+        if backfill_batch_id:
+            try:
+                from ..clients import backfill_db_client as backfill_db
+
+                cost = cost_for(model_name, tokens_in, tokens_out)
+                if cost > 0:
+                    backfill_db.update_batch_counters(
+                        backfill_batch_id,
+                        budget_consumed_usd=cost,
+                    )
+            except Exception:
+                logger.exception(
+                    "Failed to update backfill batch %s budget_consumed_usd "
+                    "from mcq task (non-blocking)",
+                    backfill_batch_id,
+                )
 
         logger.info(
             "Completed MCQ generation: job=%s artifacts=%d questions=%d failed=%d status=%s",

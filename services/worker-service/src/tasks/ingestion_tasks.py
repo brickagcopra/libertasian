@@ -899,6 +899,9 @@ def chain_post_ingestion(
         from .digest_tasks import generate_ingestion_digest
         from .doctrine_tasks import extract_doctrines_task
         from .embedding_tasks import generate_document_embeddings_task
+        from .essay_generation_tasks import generate_essay_prompt
+        from .flashcard_generation_tasks import generate_flashcards
+        from .mcq_generation_tasks import generate_mcq_questions
 
         # Fire doctrine extraction (non-blocking). Forwards batch_id so
         # the LLM call's cost can be charged to the originating backfill
@@ -938,6 +941,43 @@ def chain_post_ingestion(
             document_id=document_id,
             backfill_batch_id=backfill_batch_id,
         )
+
+        # Auto-enqueue per-doc derivatives (essay_prompt, mcq_question,
+        # flashcard). subject_outline is per-subject (not per-doc) and is
+        # explicitly skipped — see project_bulk_gen_2026_04_22.md.
+        # Each block is independently try/except'd so a failure of one
+        # type does not block the other two or the rest of the chain.
+        per_doc_derivative_specs = (
+            ("essay_prompt", generate_essay_prompt),
+            ("mcq_question", generate_mcq_questions),
+            ("flashcard", generate_flashcards),
+        )
+        for derivative_type, task in per_doc_derivative_specs:
+            try:
+                new_job_id = db.enqueue_derivative_job_if_absent(
+                    document_id=document_id,
+                    derivative_type=derivative_type,
+                    trigger_type="auto_ingest",
+                    backfill_batch_id=backfill_batch_id,
+                )
+                if new_job_id is None:
+                    logger.info(
+                        "auto_ingest skip %s for document %s: live job or "
+                        "artifact already exists",
+                        derivative_type, document_id,
+                    )
+                    continue
+                task.delay(
+                    job_id=new_job_id,
+                    document_id=document_id,
+                    backfill_batch_id=backfill_batch_id,
+                )
+            except Exception:
+                logger.exception(
+                    "auto_ingest enqueue/dispatch failed for "
+                    "document=%s type=%s (non-blocking)",
+                    document_id, derivative_type,
+                )
 
         # Fire validation with 60s delay to let extraction and digest tasks
         # start first. If validation runs before they complete, document

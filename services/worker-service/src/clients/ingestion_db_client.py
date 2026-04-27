@@ -786,6 +786,67 @@ def get_content_disclaimer_id(content_class: str, version: int = 1) -> str:
 # ─── Derivative Job Claim ──────────────────────────────────────────────
 
 
+def enqueue_derivative_job_if_absent(
+    document_id: str,
+    derivative_type: str,
+    trigger_type: str,
+    backfill_batch_id: str | None = None,
+) -> str | None:
+    """Insert a ``derivative_generation_jobs`` row for (document, type) if
+    no live row already exists for that pair. Returns the new job id, or
+    ``None`` if skipped.
+
+    Skips when:
+    - A pending/running/dispatched job already targets the same
+      (source_document_id, derivative_type), OR
+    - A non-deleted ``derivative_artifacts`` row already exists for that
+      (source_document_id, derivative_type).
+
+    The read + insert run in a single connection (single transaction) so
+    a concurrent ingestion-tick can't produce two jobs for the same pair.
+    """
+    import uuid
+
+    job_id = str(uuid.uuid4())
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT 1 FROM derivative_generation_jobs
+               WHERE source_document_id = %s
+                 AND derivative_type = %s
+                 AND status IN ('pending', 'dispatched', 'running')
+               LIMIT 1""",
+            (document_id, derivative_type),
+        )
+        if cur.fetchone() is not None:
+            return None
+
+        cur.execute(
+            """SELECT 1 FROM derivative_artifacts
+               WHERE source_document_id = %s
+                 AND derivative_type = %s
+                 AND deleted_at IS NULL
+               LIMIT 1""",
+            (document_id, derivative_type),
+        )
+        if cur.fetchone() is not None:
+            return None
+
+        cur.execute(
+            """INSERT INTO derivative_generation_jobs
+                   (id, derivative_type, trigger_type, source_document_id,
+                    backfill_batch_id, status, created_at)
+                   VALUES (%s, %s, %s, %s, %s, 'pending', NOW())""",
+            (
+                job_id,
+                derivative_type,
+                trigger_type,
+                document_id,
+                backfill_batch_id,
+            ),
+        )
+    return job_id
+
+
 def claim_derivative_job(job_id: str) -> bool:
     """Atomically claim a dispatched derivative job by setting status to 'running'.
 
