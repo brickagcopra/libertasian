@@ -25,6 +25,7 @@ from typing import Any
 import psycopg2.extras
 from celery import shared_task
 
+from ..backfill.fetch_window import is_in_fetch_window
 from ..clients import ingestion_db_client as ingestion_db
 from ..clients.db_client import get_connection
 from ..config import settings
@@ -121,6 +122,10 @@ def _run_incremental_crawl(
     if not settings.crawl_daily_enabled:
         logger.info("%s skipped: WORKER_CRAWL_DAILY_ENABLED is false", task_label)
         return {"skipped": True, "reason": "disabled"}
+
+    if not is_in_fetch_window():
+        logger.info("%s skipped: outside fetch window", task_label)
+        return {"skipped": True, "reason": "outside_fetch_window"}
 
     source = _load_source_by_domain(domain)
     if not source or not source["endpoints"]:

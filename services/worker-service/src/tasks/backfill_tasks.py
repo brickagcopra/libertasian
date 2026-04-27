@@ -24,6 +24,7 @@ from typing import Any
 import redis
 from celery import shared_task
 
+from ..backfill.fetch_window import is_in_fetch_window
 from ..clients import backfill_db_client as backfill_db
 from ..clients import ingestion_db_client as ingestion_db
 from ..config import settings
@@ -463,6 +464,17 @@ def _tick_single_batch(batch: dict[str, Any]) -> dict[str, Any]:
     URLs (prod incident 2026-04-24).
     """
     batch_id = str(batch["id"])
+
+    # Gate fetches to the configured PH-off-peak window. Refresh
+    # last_tick_at so the inflight-drain watchdog doesn't reap the batch
+    # for inactivity while we're deliberately idle.
+    if not is_in_fetch_window():
+        backfill_db.update_batch_counters(
+            batch_id, last_tick_at=datetime.now(UTC),
+        )
+        logger.info("backfill_batch %s skipped: outside fetch window", batch_id)
+        return {"batch_id": batch_id, "status": "skipped_outside_fetch_window"}
+
     checkpoint = batch.get("checkpoint_state") or {}
     candidate_urls = checkpoint.get("candidate_urls", [])
     current_index = checkpoint.get("current_index", 0)
