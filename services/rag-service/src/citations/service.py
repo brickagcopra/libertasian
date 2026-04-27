@@ -6,7 +6,7 @@ from typing import Any
 
 import asyncpg
 
-from ..config import settings
+from ..shared.database import acquire_connection
 from .schemas import (
     CitationResolutionRequest,
     CitationResolutionResponse,
@@ -35,15 +35,17 @@ async def resolve_citations(
     results: list[ResolvedCitation] = []
     resolved_count = 0
 
-    conn = await asyncpg.connect(settings.database_url)
-    try:
+    # Route through ``acquire_connection`` (shared/database.py) so any
+    # ``UndefinedTableError`` / ``UndefinedColumnError`` from psycopg2 is
+    # re-raised as ``SchemaIntegrityError`` and surfaces to the FastAPI
+    # error handler instead of being swallowed by a downstream
+    # generic-Exception catch.
+    async with acquire_connection() as conn:
         for citation in request.citations:
             result = await _resolve_single_citation(conn, citation)
             results.append(result)
             if result.resolved:
                 resolved_count += 1
-    finally:
-        await conn.close()
 
     return CitationResolutionResponse(
         document_id=request.document_id,
@@ -136,8 +138,8 @@ async def _find_by_gr_no(
 ) -> asyncpg.Record | None:
     """Find a legal document by exact G.R. number."""
     return await conn.fetchrow(
-        """SELECT id FROM "LegalDocument"
-           WHERE "grNo" = $1
+        """SELECT id FROM legal_documents
+           WHERE gr_no = $1
            AND status = 'published'
            LIMIT 1""",
         gr_no,
@@ -150,8 +152,8 @@ async def _find_by_citation_text(
 ) -> asyncpg.Record | None:
     """Find a legal document by exact citation text match."""
     return await conn.fetchrow(
-        """SELECT id FROM "LegalDocument"
-           WHERE "citationText" = $1
+        """SELECT id FROM legal_documents
+           WHERE citation_text = $1
            AND status = 'published'
            LIMIT 1""",
         citation_text,
@@ -165,8 +167,8 @@ async def _find_by_citation_partial(
     """Find a legal document by partial citation match."""
     # Use ILIKE for case-insensitive partial matching
     return await conn.fetchrow(
-        """SELECT id FROM "LegalDocument"
-           WHERE "citationText" ILIKE $1
+        """SELECT id FROM legal_documents
+           WHERE citation_text ILIKE $1
            AND status = 'published'
            LIMIT 1""",
         f"%{normalized}%",
@@ -189,8 +191,8 @@ async def _find_by_statute_number(
             number = m.group(1).strip()
             search_text = f"{prefix} {number}"
             doc = await conn.fetchrow(
-                """SELECT id FROM "LegalDocument"
-                   WHERE "citationText" ILIKE $1
+                """SELECT id FROM legal_documents
+                   WHERE citation_text ILIKE $1
                    AND status = 'published'
                    LIMIT 1""",
                 f"%{search_text}%",
@@ -221,10 +223,10 @@ async def _find_by_title_match(
 
     # Search for both party names in title
     return await conn.fetchrow(
-        """SELECT id FROM "LegalDocument"
+        """SELECT id FROM legal_documents
            WHERE title ILIKE $1
            AND title ILIKE $2
-           AND "documentType" = 'case'
+           AND document_type = 'case'
            AND status = 'published'
            LIMIT 1""",
         f"%{party1}%",

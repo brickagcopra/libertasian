@@ -467,12 +467,24 @@ class TestGenerateDigest:
         self.mock_model_info = MagicMock(
             return_value={"model_name": "test-digest-model", "model_version": "1.0"}
         )
-        self.llm_response = json.dumps(_make_full_digest_data())
+        # PR #82 switched ``digests.service`` from ``generate_completion``
+        # to ``generate_completion_with_usage`` so token usage flows back
+        # for per-batch cost telemetry. Mirror the new return shape:
+        # ``{content, model_name, tokens_in, tokens_out}``.
+        self.llm_response = {
+            "content": json.dumps(_make_full_digest_data()),
+            "model_name": "test-digest-model",
+            "tokens_in": 0,
+            "tokens_out": 0,
+        }
         self.mock_generate = AsyncMock(return_value=self.llm_response)
 
         self.patches = [
             patch("src.digests.service.get_model_info", self.mock_model_info),
-            patch("src.digests.service.generate_completion", self.mock_generate),
+            patch(
+                "src.digests.service.generate_completion_with_usage",
+                self.mock_generate,
+            ),
         ]
         for p in self.patches:
             p.start()
@@ -538,7 +550,12 @@ class TestGenerateDigest:
     @pytest.mark.asyncio
     async def test_invalid_json_returns_null_fields(self) -> None:
         """When LLM returns invalid JSON, all digest fields should be None."""
-        self.mock_generate.return_value = "This is not valid JSON output"
+        self.mock_generate.return_value = {
+            "content": "This is not valid JSON output",
+            "model_name": "test-digest-model",
+            "tokens_in": 0,
+            "tokens_out": 0,
+        }
 
         request = DigestGenerationRequest(
             document_id="doc-0001",
@@ -574,7 +591,12 @@ class TestGenerateDigest:
             {"citation_text": "", "document_type": "case"},  # empty citation_text
             "not a dict",
         ]
-        self.mock_generate.return_value = json.dumps(data)
+        self.mock_generate.return_value = {
+            "content": json.dumps(data),
+            "model_name": "test-digest-model",
+            "tokens_in": 0,
+            "tokens_out": 0,
+        }
 
         request = DigestGenerationRequest(
             document_id="doc-0001",
@@ -607,7 +629,12 @@ class TestGenerateDigest:
             "Whether the evidence was sufficient to prove guilt beyond reasonable doubt of murder.",
         ]
         data["facts"] = ["Fact one.", "Fact two."]
-        self.mock_generate.return_value = json.dumps(data)
+        self.mock_generate.return_value = {
+            "content": json.dumps(data),
+            "model_name": "test-digest-model",
+            "tokens_in": 0,
+            "tokens_out": 0,
+        }
 
         request = DigestGenerationRequest(
             document_id="doc-0001",
@@ -628,7 +655,12 @@ class TestGenerateDigest:
         data = _make_full_digest_data()
         data["petitioner_arguments"] = ""
         data["respondent_arguments"] = None
-        self.mock_generate.return_value = json.dumps(data)
+        self.mock_generate.return_value = {
+            "content": json.dumps(data),
+            "model_name": "test-digest-model",
+            "tokens_in": 0,
+            "tokens_out": 0,
+        }
 
         request = DigestGenerationRequest(
             document_id="doc-0001",

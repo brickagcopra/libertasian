@@ -23,3 +23,21 @@ class AbstentionError(RagPipelineError):
 
 class BudgetExceededError(RagPipelineError):
     """Raised when the monthly LLM budget limit has been reached."""
+
+
+class SchemaIntegrityError(RuntimeError):
+    """Raised when raw SQL references a table or column that does not exist.
+
+    Mirrors the worker-service ``db_client.SchemaIntegrityError`` pattern
+    introduced in PR #78. Indicates a code/schema drift bug — typically a
+    PascalCase identifier left over from a pre-``@@map`` schema, or a
+    phantom column referenced from a SELECT list that never existed in
+    the Prisma model. Callers MUST NOT swallow this error: hiding it
+    behind a generic ``except Exception`` is exactly how the original
+    PascalCase regression silently degraded ingestion across 1421
+    documents in April 2026.
+
+    Intentionally NOT a subclass of ``RagPipelineError`` so that any
+    pipeline-level catch-all (``except RagPipelineError``) still lets
+    schema-integrity failures bubble up to the FastAPI error handler.
+    """

@@ -6,6 +6,7 @@ from .exceptions import (
     GenerationError,
     RagPipelineError,
     RetrievalError,
+    SchemaIntegrityError,
     ValidationError,
 )
 from .formatting import format_passages
@@ -18,6 +19,7 @@ __all__ = [
     "GenerationError",
     "RagPipelineError",
     "RetrievalError",
+    "SchemaIntegrityError",
     "ValidationError",
     "close_db_pool",
     "close_opensearch",

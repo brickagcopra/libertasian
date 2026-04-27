@@ -11,6 +11,7 @@ import re
 from typing import Any
 
 from ..shared.database import fetch_documents_by_ids
+from ..shared.exceptions import SchemaIntegrityError
 from .schemas import CitationRef, Passage, ValidationResult
 
 logger = logging.getLogger(__name__)
@@ -83,9 +84,23 @@ async def validate_citations(
                     valid.append(ref.model_copy(update={"valid": True}))
                 else:
                     invalid.append(ref.model_copy(update={"valid": False}))
+        except SchemaIntegrityError:
+            # Schema-level bugs (missing tables/columns from raw SQL) MUST
+            # surface — swallowing them is what hid the
+            # ``source_authority_level`` UndefinedColumn for an unknown
+            # number of /answer calls, silently marking every cited
+            # authority as invalid. Re-raise so the request returns 5xx
+            # and the bug becomes visible instead of degrading citations
+            # to false-negatives in the background.
+            logger.exception(
+                "Citation validation failed with SchemaIntegrityError — "
+                "failing loudly",
+            )
+            raise
         except Exception:
             logger.warning("Database check failed for citation validation", exc_info=True)
-            # On DB failure, mark unverified citations as invalid (safe default)
+            # On transient DB failure, mark unverified citations as
+            # invalid (safe default — pessimistic toward the citation).
             for ref in needs_db_check:
                 invalid.append(ref.model_copy(update={"valid": False}))
 

@@ -8,10 +8,9 @@ import json
 import logging
 from typing import Any
 
-import asyncpg
-
 from ..config import settings
 from ..core.generation import generate_completion, get_model_info
+from ..shared.database import acquire_connection
 from ..shared.opensearch import opensearch_search
 from .prompts_codal import PROMPT_VERSION, SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
 from .schemas import (
@@ -42,12 +41,21 @@ async def suggest_case_codal_links(
     """
     model_info = get_model_info()
 
-    # Step 1: Fetch case text
-    conn = await asyncpg.connect(settings.database_url)
-    try:
+    # Step 1: Fetch case text. The schema has no ``full_text`` column on
+    # ``legal_documents`` — case text lives in ``legal_document_sections``.
+    # The previous SELECT referenced a phantom ``"fullText"`` and so always
+    # failed, falling through to the section fetch (which itself was
+    # quoting non-existent PascalCase identifiers and so always returned 0
+    # rows). Net effect: every case-codal suggestion request received an
+    # empty ``case_text`` and short-circuited to a no-suggestion reply.
+    #
+    # Route through ``acquire_connection`` (shared/database.py) so any
+    # future schema regression surfaces as ``SchemaIntegrityError`` rather
+    # than being silently swallowed by a downstream catch-all.
+    async with acquire_connection() as conn:
         case_doc = await conn.fetchrow(
-            """SELECT id, title, "shortTitle", "citationText", "fullText"
-               FROM "LegalDocument"
+            """SELECT id, title, short_title, citation_text
+               FROM legal_documents
                WHERE id = $1 AND status = 'published'
                LIMIT 1""",
             request.document_id,
@@ -62,21 +70,22 @@ async def suggest_case_codal_links(
                 prompt_template_version=PROMPT_VERSION,
             )
 
-        case_text = case_doc["fullText"] or ""
         case_title = case_doc["title"] or "Untitled"
 
-        # If no full text, try fetching from source sections
-        if not case_text.strip():
-            sections = await conn.fetch(
-                """SELECT "textContent" FROM "SourceSection"
-                   WHERE "legalDocumentId" = $1
-                   ORDER BY "pageStart" ASC NULLS LAST, "orderIndex" ASC NULLS LAST
-                   LIMIT 50""",
-                request.document_id,
-            )
-            case_text = "\n\n".join(
-                row["textContent"] for row in sections if row["textContent"]
-            )
+        # Fetch the case text from sections — the canonical home for
+        # document body content. ``ordering`` is the section sequence
+        # column on ``legal_document_sections``; ``page_start`` is a
+        # secondary sort for OCR'd documents that paginate.
+        sections = await conn.fetch(
+            """SELECT plain_text FROM legal_document_sections
+               WHERE legal_document_id = $1
+               ORDER BY ordering ASC NULLS LAST, page_start ASC NULLS LAST
+               LIMIT 50""",
+            request.document_id,
+        )
+        case_text = "\n\n".join(
+            row["plain_text"] for row in sections if row["plain_text"]
+        )
 
         if len(case_text.strip()) < 100:
             return CaseCodalSuggestionResponse(
@@ -95,19 +104,16 @@ async def suggest_case_codal_links(
         if codal_candidates:
             codal_ids = [c["id"] for c in codal_candidates]
             codals = await conn.fetch(
-                """SELECT id, title, "citationText"
-                   FROM "LegalDocument"
+                """SELECT id, title, citation_text
+                   FROM legal_documents
                    WHERE id = ANY($1::uuid[])""",
                 codal_ids,
             )
             for row in codals:
                 codal_map[str(row["id"])] = {
                     "title": row["title"],
-                    "citation": row["citationText"],
+                    "citation": row["citation_text"],
                 }
-
-    finally:
-        await conn.close()
 
     if not codal_candidates:
         return CaseCodalSuggestionResponse(
