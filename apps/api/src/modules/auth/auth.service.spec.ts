@@ -464,22 +464,44 @@ describe('AuthService', () => {
     };
 
     it('should revoke entire family when token is already revoked (reuse detection)', async () => {
-      const revokedToken = { ...mockStoredToken, isRevoked: true };
-      prismaService.refreshToken.findFirst.mockResolvedValueOnce(revokedToken);
+      // Atomic-claim flow: the guarded UPDATE matches zero rows (token
+      // was already revoked by the legitimate rotator), service falls
+      // through to reuse-detection lookup, then revokes the family.
+      prismaService.refreshToken.updateMany
+        .mockResolvedValueOnce({ count: 0 })
+        .mockResolvedValueOnce({ count: 1 });
+      prismaService.refreshToken.findFirst.mockResolvedValueOnce({
+        ...mockStoredToken,
+        isRevoked: true,
+      });
 
       await expect(
         service.refreshTokens(rawRefreshToken, deviceFingerprint),
       ).rejects.toThrow(UnauthorizedException);
 
-      expect(prismaService.refreshToken.updateMany).toHaveBeenCalledWith({
+      expect(prismaService.refreshToken.updateMany).toHaveBeenNthCalledWith(1, {
+        where: { tokenHash, isRevoked: false },
+        data: { isRevoked: true },
+      });
+      expect(prismaService.refreshToken.updateMany).toHaveBeenNthCalledWith(2, {
         where: { familyId: 'family-abc' },
         data: { isRevoked: true },
       });
     });
 
+    it('should reject with Invalid when no row exists for the hash', async () => {
+      prismaService.refreshToken.updateMany.mockResolvedValueOnce({ count: 0 });
+      prismaService.refreshToken.findFirst.mockResolvedValueOnce(null);
+
+      await expect(
+        service.refreshTokens(rawRefreshToken, deviceFingerprint),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
     it('should successfully rotate a non-revoked token', async () => {
+      prismaService.refreshToken.updateMany.mockResolvedValueOnce({ count: 1 });
       prismaService.refreshToken.findFirst
-        .mockResolvedValueOnce(mockStoredToken) // lookup by tokenHash
+        .mockResolvedValueOnce(mockStoredToken) // post-claim load with user
         .mockResolvedValueOnce(null);           // replacedByTokenId lookup
 
       prismaService.organizationMember.findFirst.mockResolvedValue(mockMembership);
@@ -491,9 +513,10 @@ describe('AuthService', () => {
 
       expect(result.accessToken).toBe('fresh-access-token');
       expect(result.refreshToken).toEqual(expect.any(String));
-      // Old token should be revoked
-      expect(prismaService.refreshToken.update).toHaveBeenCalledWith({
-        where: { id: 'token-1' },
+      // The atomic-claim UPDATE is the row revocation; the legacy
+      // separate update() is no longer issued.
+      expect(prismaService.refreshToken.updateMany).toHaveBeenCalledWith({
+        where: { tokenHash, isRevoked: false },
         data: { isRevoked: true },
       });
     });
