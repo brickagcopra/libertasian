@@ -24,6 +24,7 @@ from celery import shared_task
 
 from ..clients import ingestion_db_client as db
 from ..clients import nestjs_client, rag_client
+from ..pricing import cost_for
 from ..prompts.essay_generation_v1 import (
     ESSAY_GENERATION_SYSTEM_PROMPT,
     PROMPT_TEMPLATE_VERSION,
@@ -288,7 +289,7 @@ def generate_essay_prompt(
             "budgetLedgerEntry": {
                 "periodYearMonth": _current_period_year_month(),
                 "scope": "essay_prompt_generation",
-                "amountUsd": 0.0,
+                "amountUsd": float(cost_for(model_name, tokens_in, tokens_out)),
                 "tokensIn": tokens_in,
                 "tokensOut": tokens_out,
                 "modelName": model_name,

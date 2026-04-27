@@ -18,13 +18,22 @@ from decimal import Decimal
 logger = logging.getLogger(__name__)
 
 
-# USD cost per 1M tokens, broken out by direction. Update when Anthropic
+# USD cost per 1M tokens, broken out by direction. Update when a provider
 # publishes new pricing or when we add a new model to the worker's call
-# graph.
+# graph. Numbers verified against the public pricing pages on 2026-04-27 —
+# confirm before adding new entries (silent zeros are worse than missing
+# entries because the warn-once gate hides them).
 _PRICE_PER_MTOK: dict[str, tuple[Decimal, Decimal]] = {
+    # Anthropic
     "claude-haiku-4-5": (Decimal("1.00"), Decimal("5.00")),
     "claude-sonnet-4-6": (Decimal("3.00"), Decimal("15.00")),
     "claude-opus-4-7": (Decimal("15.00"), Decimal("75.00")),
+    # OpenAI — derivative-generation tasks (essay/mcq/outline/flashcard)
+    # default to gpt-4o-mini. Without these entries every budget_ledger row
+    # for those scopes silently records amount_usd=0 (Bug 10 root cause —
+    # 2324 prod rows on Stage 3 batch ebb8780b through 2026-04-27).
+    "gpt-4o-mini": (Decimal("0.150"), Decimal("0.600")),
+    "gpt-4o": (Decimal("2.500"), Decimal("10.000")),
 }
 
 # Local-only embedding models. Free at the edge — no per-call cost. We

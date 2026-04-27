@@ -26,6 +26,7 @@ from celery import shared_task
 from ..clients import ingestion_db_client as db
 from ..clients import nestjs_client
 from ..clients import rag_client
+from ..pricing import cost_for
 from ..prompts.subject_outline_generation_v1 import (
     PROMPT_TEMPLATE_VERSION,
     SUBJECT_OUTLINE_GENERATION_SYSTEM_PROMPT,
@@ -336,7 +337,7 @@ def generate_subject_outline(
             "budgetLedgerEntry": {
                 "periodYearMonth": _current_period_year_month(),
                 "scope": "subject_outline_generation",
-                "amountUsd": 0.0,
+                "amountUsd": float(cost_for(model_name, tokens_in, tokens_out)),
                 "tokensIn": tokens_in,
                 "tokensOut": tokens_out,
                 "modelName": model_name,

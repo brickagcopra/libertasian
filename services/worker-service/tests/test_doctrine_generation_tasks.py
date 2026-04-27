@@ -108,6 +108,10 @@ FAKE_RAG_RESPONSE: dict[str, Any] = {
     "strategy_used": "sections_only",
     "model_name": "gpt-4o-mini",
     "prompt_template_version": "doctrine_extract.v1",
+    # PR #81 surfaced tokens through DoctrineExtractionResponse; the worker
+    # used to hardcode 0/0 even when these were present (Bug 7-residual).
+    "tokens_in": 1234,
+    "tokens_out": 567,
 }
 
 
@@ -162,6 +166,11 @@ class TestGenerateDoctrineExtract:
         calls = mock_nestjs.update_job_status.call_args_list
         assert calls[-1].args[0] == "job-001"
         assert calls[-1].args[1] == "completed"
+        # Bug 7-residual — token usage from rag-service /doctrines/extract
+        # (PR #81) MUST land in model_runs.tokens_in/tokens_out.
+        model_run_kwargs = mock_db.create_model_run.call_args.kwargs
+        assert model_run_kwargs["tokens_in"] == 1234
+        assert model_run_kwargs["tokens_out"] == 567
 
     @patch("src.tasks.doctrine_generation_tasks.nestjs_client")
     @patch("src.tasks.doctrine_generation_tasks.db")

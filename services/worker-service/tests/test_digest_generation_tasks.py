@@ -102,6 +102,10 @@ FAKE_RAG_RESPONSE: dict[str, Any] = {
     "confidence_score": 0.85,
     "model_name": "gpt-4o-mini",
     "prompt_template_version": PROMPT_TEMPLATE_VERSION,
+    # PR #76 surfaced tokens through DigestGenerationResponse; the worker
+    # used to hardcode 0/0 even when these were present (Bug 7-residual).
+    "tokens_in": 1500,
+    "tokens_out": 800,
 }
 
 
@@ -513,6 +517,11 @@ class TestModelRunRecording:
         assert call_kwargs.kwargs["model_name"] == "gpt-4o-mini"
         assert call_kwargs.kwargs["prompt_template_version"] == PROMPT_TEMPLATE_VERSION
         assert call_kwargs.kwargs["input_ref"] == "doc:doc-001"
+        # Bug 7-residual — token usage from rag-service /digests/generate
+        # (PR #76) MUST land in model_runs.tokens_in/tokens_out instead of
+        # the previous hardcoded 0/0.
+        assert call_kwargs.kwargs["tokens_in"] == 1500
+        assert call_kwargs.kwargs["tokens_out"] == 800
 
 
 class TestIntegrationDigestRAGShape:

@@ -191,7 +191,10 @@ def generate_ingestion_digest(
             ]
             db.create_provenance_records(provenance_records)
 
-        # Step 6: Create model run audit record per CLAUDE.md
+        # Step 6: Create model run audit record per CLAUDE.md.
+        # tokens_in/tokens_out come from the rag-service response (PR #76)
+        # — passing them here so model_runs is no longer NULL for
+        # digest_generation rows (Bug 7-residual).
         db.create_model_run(
             run_type="digest_generation",
             model_name=model_name,
@@ -199,6 +202,8 @@ def generate_ingestion_digest(
             input_ref=f"digest:{digest_id}:doc:{document_id}",
             output_ref=f"digest:{digest_id}:output",
             confidence=confidence,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
         )
 
         # Per-batch cost telemetry. Wrap in try/except so a stale or

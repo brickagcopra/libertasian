@@ -105,4 +105,5 @@ app.conf.include = [
     "src.tasks.derivative_dispatch_tasks",
     "src.tasks.daily_crawl_tasks",
     "src.tasks.reprocess_tasks",
+    "src.tasks.cost_tasks",
 ]

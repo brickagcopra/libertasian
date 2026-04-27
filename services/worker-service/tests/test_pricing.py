@@ -42,6 +42,26 @@ class TestCostForKnownModels:
         cost = pricing.cost_for("claude-haiku-4-5", 500, 1000)
         assert cost == Decimal("0.0055")
 
+    def test_gpt_4o_mini_price_arithmetic(self) -> None:
+        """1M in + 1M out on gpt-4o-mini → $0.150 + $0.600 = $0.750.
+
+        Bug 10 — derivative-generation tasks (essay/mcq/outline/flashcard)
+        default to gpt-4o-mini. Without this entry every budget_ledger row
+        for those scopes silently records amount_usd=0.
+        """
+        cost = pricing.cost_for("gpt-4o-mini", 1_000_000, 1_000_000)
+        assert cost == Decimal("0.750")
+
+    def test_gpt_4o_mini_realistic_essay_call(self) -> None:
+        """1500 in + 800 out on gpt-4o-mini → (225 + 480) / 1M = 0.000705."""
+        cost = pricing.cost_for("gpt-4o-mini", 1500, 800)
+        assert cost == Decimal("0.000705")
+
+    def test_gpt_4o_price_arithmetic(self) -> None:
+        """1M in + 1M out on gpt-4o → $2.50 + $10.00 = $12.50."""
+        cost = pricing.cost_for("gpt-4o", 1_000_000, 1_000_000)
+        assert cost == Decimal("12.500")
+
 
 # ─── Local embeddings ────────────────────────────────────────────────────
 
