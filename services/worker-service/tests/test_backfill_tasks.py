@@ -681,6 +681,16 @@ class TestEnumerateBackfillCandidates:
 
 
 class TestRunBackfillBatchTick:
+    @pytest.fixture(autouse=True)
+    def _force_fetch_window_open(self) -> Any:
+        """Tick tests in this class predate the fetch-window gate; pin
+        ``is_in_fetch_window`` True so the existing scenarios still
+        exercise the post-gate code path."""
+        with patch(
+            "src.tasks.backfill_tasks.is_in_fetch_window", return_value=True,
+        ):
+            yield
+
     def test_creates_child_jobs_and_advances_cursor(
         self,
         sample_batch: dict,

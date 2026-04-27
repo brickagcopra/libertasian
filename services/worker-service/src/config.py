@@ -1,5 +1,6 @@
 """LIBERTASIAN Worker Service — Configuration via Pydantic BaseSettings."""
 
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -42,6 +43,35 @@ class Settings(BaseSettings):
     # Daily incremental crawl (PR2). Default off so the code ships disabled
     # and we turn it on deliberately after observing one manual run.
     crawl_daily_enabled: bool = False
+
+    # Fetch window — gates both backfill ticks and daily crawls so we
+    # never hit upstream sources during their business hours. Default
+    # 13:00–18:00 America/New_York = 01:00–07:00 Asia/Manila (PH off-peak,
+    # when LawPhil is least likely to throttle us).
+    backfill_fetch_window_tz: str = "America/New_York"
+    backfill_fetch_window_hour_start: int = Field(default=13, ge=0, le=23)
+    backfill_fetch_window_hour_end: int = Field(default=18, ge=0, le=23)
+
+    @model_validator(mode="after")
+    def _validate_fetch_window(self) -> "Settings":
+        if self.backfill_fetch_window_hour_start >= self.backfill_fetch_window_hour_end:
+            raise ValueError(
+                "backfill_fetch_window_hour_start must be strictly less than "
+                "backfill_fetch_window_hour_end "
+                f"(got start={self.backfill_fetch_window_hour_start}, "
+                f"end={self.backfill_fetch_window_hour_end})"
+            )
+        # ZoneInfo will raise if the tz string is invalid; do it here so a
+        # bad config fails at startup, not on the first tick.
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        try:
+            ZoneInfo(self.backfill_fetch_window_tz)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(
+                f"backfill_fetch_window_tz invalid: {self.backfill_fetch_window_tz!r}"
+            ) from exc
+        return self
 
     # Embedding service
     embedding_service_url: str = "http://localhost:8001"
