@@ -59,6 +59,7 @@ import { PricingModule } from './modules/pricing/pricing.module';
 import { RbacModule } from './modules/rbac/rbac.module';
 import { AccountingModule } from './modules/accounting/accounting.module';
 import { AiSettingsModule } from './modules/ai-settings/ai-settings.module';
+import { AdminPipelineOpsModule } from './modules/admin-pipeline-ops/admin-pipeline-ops.module';
 import { BackfillModule } from './modules/backfill/backfill.module';
 import { GoldenSetsModule } from './modules/golden-sets/golden-sets.module';
 import { DerivativesAdminModule } from './modules/derivatives-admin/derivatives-admin.module';
@@ -219,6 +220,7 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
     AccountingModule,
     AiSettingsModule,
     BackfillModule,
+    AdminPipelineOpsModule,
     GoldenSetsModule,
     DerivativesAdminModule,
     DerivativesModule,

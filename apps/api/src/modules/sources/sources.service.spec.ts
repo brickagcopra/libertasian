@@ -84,6 +84,18 @@ describe('SourcesService', () => {
             digestReview: {
               create: jest.fn(),
             },
+            backfillBatch: {
+              findMany: jest.fn().mockResolvedValue([]),
+            },
+            auditLog: {
+              count: jest.fn().mockResolvedValue(0),
+            },
+            citation: {
+              count: jest.fn().mockResolvedValue(0),
+            },
+            derivativeArtifact: {
+              count: jest.fn().mockResolvedValue(0),
+            },
             $transaction: jest.fn(),
             $queryRawUnsafe: jest.fn(),
           },
@@ -301,6 +313,19 @@ describe('SourcesService', () => {
       (prisma.source.findMany as jest.Mock).mockResolvedValue([]);
       (prisma.digest.count as jest.Mock).mockResolvedValue(50);
       (prisma.editorialFlag.count as jest.Mock).mockResolvedValue(10);
+      (prisma.backfillBatch.findMany as jest.Mock).mockResolvedValue([
+        {
+          id: 'bf-1',
+          name: 'SC 2020',
+          status: 'running',
+          candidatesProcessed: 12,
+          candidatesDiscovered: 100,
+          lastTickAt: new Date('2026-04-27T10:00:00.000Z'),
+        },
+      ]);
+      (prisma.auditLog.count as jest.Mock).mockResolvedValue(7);
+      (prisma.citation.count as jest.Mock).mockResolvedValue(40123);
+      (prisma.derivativeArtifact.count as jest.Mock).mockResolvedValue(85);
 
       const result = await service.getCorpusHealth();
 
@@ -309,6 +334,17 @@ describe('SourcesService', () => {
       expect(result.documentsByType).toHaveLength(2);
       expect(result.reviewQueue.pendingDigests).toBe(50);
       expect(result.reviewQueue.openFlags).toBe(10);
+      expect(result.pipelineOps.activeBackfillBatches.count).toBe(1);
+      expect(result.pipelineOps.activeBackfillBatches.items[0]).toMatchObject({
+        id: 'bf-1',
+        name: 'SC 2020',
+        status: 'running',
+        candidatesProcessed: 12,
+        candidatesTotal: 100,
+      });
+      expect(result.pipelineOps.last24hAutoPromotions).toBe(7);
+      expect(result.pipelineOps.citationsTotal).toBe(40123);
+      expect(result.pipelineOps.pendingReviewQueue).toBe(85);
     });
   });
 

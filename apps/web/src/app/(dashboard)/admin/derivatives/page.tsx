@@ -20,6 +20,11 @@ import {
   useJobMcqs,
   useJobOutlines,
 } from '@/features/admin/hooks/use-derivatives-admin';
+import {
+  useAutoPromoteStatus,
+  useBackfillMissingDerivatives,
+  useTriggerAutoPromoteSweep,
+} from '@/features/admin/hooks/use-admin';
 import type {
   DerivativeTypeStats,
   DerivativeJob,
@@ -104,6 +109,70 @@ export default function DerivativesAdminPage() {
   const [confirmGenerate, setConfirmGenerate] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Pipeline ops
+  const [confirmFillMissing, setConfirmFillMissing] = useState(false);
+  const [confirmAutoPromote, setConfirmAutoPromote] = useState(false);
+  const [fillTypes, setFillTypes] = useState<Record<string, boolean>>({
+    essay_prompt: true,
+    mcq_question: true,
+    flashcard: true,
+  });
+  const [fillLimit, setFillLimit] = useState<number>(200);
+  const fillMissing = useBackfillMissingDerivatives();
+  const autoPromoteSweep = useTriggerAutoPromoteSweep();
+  const { data: autoPromoteStatus } = useAutoPromoteStatus();
+
+  const handleFillMissingConfirm = () => {
+    const selectedTypes = Object.entries(fillTypes)
+      .filter(([, on]) => on)
+      .map(([t]) => t);
+    if (selectedTypes.length === 0) {
+      setActionMsg({ type: 'error', text: 'Select at least one derivative type.' });
+      return;
+    }
+    fillMissing.mutate(
+      { types: selectedTypes, limit: fillLimit },
+      {
+        onSuccess: (data) => {
+          setConfirmFillMissing(false);
+          const breakdown = Object.entries(data.dispatchedByType)
+            .map(([t, n]) => `${t}: ${n}`)
+            .join(', ');
+          setActionMsg({
+            type: 'success',
+            text: `Enqueued ${data.totalDispatched} jobs (${breakdown}). Skipped ${data.totalSkipped}.`,
+          });
+        },
+        onError: (err) => {
+          setConfirmFillMissing(false);
+          setActionMsg({
+            type: 'error',
+            text: err instanceof Error ? err.message : 'Failed to fill missing derivatives',
+          });
+        },
+      },
+    );
+  };
+
+  const handleAutoPromoteConfirm = () => {
+    autoPromoteSweep.mutate(undefined, {
+      onSuccess: (data) => {
+        setConfirmAutoPromote(false);
+        setActionMsg({
+          type: 'success',
+          text: `Auto-promote sweep: ${data.promoted} promoted / ${data.scanned} scanned.`,
+        });
+      },
+      onError: (err) => {
+        setConfirmAutoPromote(false);
+        setActionMsg({
+          type: 'error',
+          text: err instanceof Error ? err.message : 'Sweep failed',
+        });
+      },
+    });
+  };
 
   if (statsLoading) {
     return (
@@ -223,6 +292,63 @@ export default function DerivativesAdminPage() {
               {updateSettings.isPending ? 'Saving...' : 'Save Settings'}
             </button>
           )}
+        </div>
+      </div>
+
+      {/* Pipeline Operations */}
+      <div className="rounded-lg border bg-white p-6 shadow-sm">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Pipeline Operations</h2>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setConfirmFillMissing(true)}
+              disabled={fillMissing.isPending}
+              className="rounded border border-blue-600 bg-white px-3 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+            >
+              {fillMissing.isPending ? 'Filling...' : 'Fill Missing Derivatives'}
+            </button>
+            <button
+              onClick={() => setConfirmAutoPromote(true)}
+              disabled={autoPromoteSweep.isPending}
+              className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {autoPromoteSweep.isPending ? 'Sweeping...' : 'Auto-Promote Sweep Now'}
+            </button>
+          </div>
+        </div>
+        <div className="grid gap-3 text-sm sm:grid-cols-4">
+          <div>
+            <p className="text-xs text-gray-500">Last Sweep At</p>
+            <p className="font-medium text-gray-900">
+              {autoPromoteStatus?.lastSweepAt
+                ? new Date(autoPromoteStatus.lastSweepAt).toLocaleString()
+                : 'Never'}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-500">Last 24h Promoted</p>
+            <p className="font-medium text-gray-900">
+              {autoPromoteStatus?.last24hPromoted ?? 0}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-500">Total Promoted</p>
+            <p className="font-medium text-gray-900">
+              {autoPromoteStatus?.totalPromoted ?? 0}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-500">Threshold</p>
+            <p className="font-medium text-gray-900">
+              {autoPromoteStatus?.configThreshold ?? 0.7}
+              {autoPromoteStatus?.configExcludedTypes &&
+                autoPromoteStatus.configExcludedTypes.length > 0 && (
+                  <span className="ml-2 text-xs text-gray-500">
+                    (excludes {autoPromoteStatus.configExcludedTypes.join(', ')})
+                  </span>
+                )}
+            </p>
+          </div>
         </div>
       </div>
 
@@ -383,6 +509,90 @@ export default function DerivativesAdminPage() {
                 className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
               >
                 {enqueue.isPending ? 'Enqueuing...' : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Fill Missing Derivatives Dialog */}
+      {confirmFillMissing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="mx-4 w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+            <h3 className="text-lg font-semibold">Fill Missing Derivatives</h3>
+            <p className="mt-2 text-sm text-gray-600">
+              For each selected type, scan the most recent legal documents and
+              enqueue jobs only for those without an existing artifact (or in-flight
+              job) of that type.
+            </p>
+            <div className="mt-4 space-y-2">
+              {(['essay_prompt', 'mcq_question', 'flashcard'] as const).map((t) => (
+                <label key={t} className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={fillTypes[t] ?? false}
+                    onChange={(e) =>
+                      setFillTypes({ ...fillTypes, [t]: e.target.checked })
+                    }
+                    className="h-4 w-4 rounded border-gray-300"
+                  />
+                  <span>{TYPE_LABELS[t] ?? t}</span>
+                </label>
+              ))}
+            </div>
+            <label className="mt-4 block text-sm">
+              <span className="font-medium text-gray-700">Limit per type</span>
+              <input
+                type="number"
+                value={fillLimit}
+                min={1}
+                max={5000}
+                onChange={(e) => setFillLimit(Number(e.target.value))}
+                className="mt-1 w-full rounded border-gray-300 text-sm"
+              />
+            </label>
+            <div className="mt-4 flex justify-end gap-3">
+              <button
+                onClick={() => setConfirmFillMissing(false)}
+                className="rounded border px-4 py-2 text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleFillMissingConfirm}
+                disabled={fillMissing.isPending}
+                className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {fillMissing.isPending ? 'Enqueuing...' : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Auto-Promote Sweep Dialog */}
+      {confirmAutoPromote && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="mx-4 w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+            <h3 className="text-lg font-semibold">Confirm Auto-Promote Sweep</h3>
+            <p className="mt-2 text-sm text-gray-600">
+              Run the auto-promote sweep now. Eligible private artifacts (confidence
+              ≥ threshold, excluded types skipped) will be promoted to
+              public_editorial / approved.
+            </p>
+            <div className="mt-4 flex justify-end gap-3">
+              <button
+                onClick={() => setConfirmAutoPromote(false)}
+                className="rounded border px-4 py-2 text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAutoPromoteConfirm}
+                disabled={autoPromoteSweep.isPending}
+                className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {autoPromoteSweep.isPending ? 'Running...' : 'Run Sweep'}
               </button>
             </div>
           </div>
