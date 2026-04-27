@@ -6,6 +6,7 @@ import {
 import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { AutoPromoteService } from './auto-promote.service';
 import { WriteDerivativeDto, WriteDigestDto, WriteClassificationDto, WriteDoctrinesDto, WriteMcqBatchDto, WriteEssayDto, WriteFlashcardsDto } from './dto';
 import { UpdateJobStatusDto } from './dto';
 
@@ -22,13 +23,23 @@ import { UpdateJobStatusDto } from './dto';
 export class InternalDerivativesService {
   private readonly logger = new Logger(InternalDerivativesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly autoPromote: AutoPromoteService,
+  ) {}
 
   async writeDerivative(dto: WriteDerivativeDto): Promise<{ artifactId: string }> {
     // Enforce provenance invariant (§4.5)
     if (!dto.provenanceRecords || dto.provenanceRecords.length === 0) {
       throw new BadRequestException('At least one provenance record is required');
     }
+
+    const decision = this.autoPromote.initialVisibilityAndStatus(
+      dto.derivativeType,
+      dto.confidenceScore,
+      dto.visibility,
+      dto.reviewStatus,
+    );
 
     const result = await this.prisma.$transaction(async (tx) => {
       // 1. Create DerivativeArtifact
@@ -44,15 +55,24 @@ export class InternalDerivativesService {
           contentHash: dto.contentHash,
           contentRights: dto.contentRights,
           contentDisclaimerId: dto.contentDisclaimerId,
-          visibility: dto.visibility ?? 'private',
+          visibility: decision.visibility,
           audience: dto.audience ?? 'both',
-          reviewStatus: dto.reviewStatus ?? 'draft',
+          reviewStatus: decision.reviewStatus,
           validatorVerdict: dto.validatorVerdict,
           validatorReasonsJson: dto.validatorReasonsJson as Prisma.InputJsonValue | undefined,
           confidenceScore: dto.confidenceScore,
           modelRunId: dto.modelRunId,
         },
       });
+
+      if (decision.promoted) {
+        await this.autoPromote.recordAutoPromotion(
+          tx,
+          artifact.id,
+          dto.derivativeType,
+          dto.confidenceScore ?? 0,
+        );
+      }
 
       // 2. Create ProvenanceRecords
       for (const prov of dto.provenanceRecords) {
@@ -197,6 +217,12 @@ export class InternalDerivativesService {
 
     const result = await this.prisma.$transaction(async (tx) => {
       // 1. Create DerivativeArtifact
+      const decision = this.autoPromote.initialVisibilityAndStatus(
+        'doctrine_extract',
+        dto.confidenceScore,
+        undefined,
+        dto.reviewStatus,
+      );
       const artifact = await tx.derivativeArtifact.create({
         data: {
           derivativeType: 'doctrine_extract',
@@ -207,15 +233,23 @@ export class InternalDerivativesService {
           contentHash: '',
           contentRights: dto.contentRights,
           contentDisclaimerId: dto.contentDisclaimerId,
-          visibility: 'private',
+          visibility: decision.visibility,
           audience: 'both',
-          reviewStatus: dto.reviewStatus ?? 'draft',
+          reviewStatus: decision.reviewStatus,
           validatorVerdict: dto.validatorVerdict,
           validatorReasonsJson: dto.validatorReasonsJson as Prisma.InputJsonValue | undefined,
           confidenceScore: dto.confidenceScore,
           modelRunId: dto.modelRunId,
         },
       });
+      if (decision.promoted) {
+        await this.autoPromote.recordAutoPromotion(
+          tx,
+          artifact.id,
+          'doctrine_extract',
+          dto.confidenceScore ?? 0,
+        );
+      }
 
       // 2. Create ProvenanceRecords
       for (const prov of dto.provenanceRecords ?? []) {
@@ -292,6 +326,16 @@ export class InternalDerivativesService {
       const questionIds: string[] = [];
 
       for (const q of dto.questions) {
+        // mcq_question is in the auto-promote excluded set by default —
+        // call the helper anyway so a future config change takes effect
+        // here without code edits. With mcq excluded, decision.promoted
+        // is always false, matching the policy.
+        const decision = this.autoPromote.initialVisibilityAndStatus(
+          'mcq_question',
+          dto.confidenceScore,
+          undefined,
+          dto.reviewStatus,
+        );
         // 1. Create DerivativeArtifact per question
         const artifact = await tx.derivativeArtifact.create({
           data: {
@@ -312,9 +356,9 @@ export class InternalDerivativesService {
             contentHash: '',
             contentRights: dto.contentRights,
             contentDisclaimerId: dto.contentDisclaimerId,
-            visibility: 'private',
+            visibility: decision.visibility,
             audience: 'both',
-            reviewStatus: dto.reviewStatus ?? 'draft',
+            reviewStatus: decision.reviewStatus,
             validatorVerdict: dto.validatorVerdict,
             validatorReasonsJson: dto.validatorReasonsJson as
               | Prisma.InputJsonValue
@@ -323,6 +367,14 @@ export class InternalDerivativesService {
             modelRunId: dto.modelRunId,
           },
         });
+        if (decision.promoted) {
+          await this.autoPromote.recordAutoPromotion(
+            tx,
+            artifact.id,
+            'mcq_question',
+            dto.confidenceScore ?? 0,
+          );
+        }
         artifactIds.push(artifact.id);
 
         // 2. Create McqQuestion
@@ -393,6 +445,12 @@ export class InternalDerivativesService {
       throw new BadRequestException('At least one provenance record is required');
     }
 
+    const decision = this.autoPromote.initialVisibilityAndStatus(
+      'essay_prompt',
+      dto.confidenceScore,
+      undefined,
+      dto.reviewStatus,
+    );
     const result = await this.prisma.$transaction(async (tx) => {
       // 1. Create DerivativeArtifact
       const artifact = await tx.derivativeArtifact.create({
@@ -405,15 +463,23 @@ export class InternalDerivativesService {
           contentHash: '',
           contentRights: dto.contentRights,
           contentDisclaimerId: dto.contentDisclaimerId,
-          visibility: 'private',
+          visibility: decision.visibility,
           audience: 'both',
-          reviewStatus: dto.reviewStatus ?? 'draft',
+          reviewStatus: decision.reviewStatus,
           validatorVerdict: dto.validatorVerdict,
           validatorReasonsJson: dto.validatorReasonsJson as Prisma.InputJsonValue | undefined,
           confidenceScore: dto.confidenceScore,
           modelRunId: dto.modelRunId,
         },
       });
+      if (decision.promoted) {
+        await this.autoPromote.recordAutoPromotion(
+          tx,
+          artifact.id,
+          'essay_prompt',
+          dto.confidenceScore ?? 0,
+        );
+      }
 
       // 2. Create EssayPrompt child
       const essay = await tx.essayPrompt.create({

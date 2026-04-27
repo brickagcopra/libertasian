@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { AutoPromoteService } from './auto-promote.service';
 import { InternalAuthGuard } from './internal-auth.guard';
 import { InternalDerivativesService } from './internal-derivatives.service';
 import { WriteClassificationDto, WriteDerivativeDto, WriteDigestDto, WriteDoctrinesDto, WriteEssayDto, WriteFlashcardsDto, WriteMcqBatchDto } from './dto';
@@ -85,6 +86,8 @@ describe('InternalDerivativesService', () => {
     flashcard: { create: jest.Mock };
     provenanceRecord: { create: jest.Mock };
     budgetLedger: { create: jest.Mock };
+    derivativeReview: { create: jest.Mock };
+    auditLog: { create: jest.Mock };
   };
 
   beforeEach(async () => {
@@ -138,6 +141,12 @@ describe('InternalDerivativesService', () => {
       budgetLedger: {
         create: jest.fn().mockResolvedValue({ id: 'ledger-001' }),
       },
+      derivativeReview: {
+        create: jest.fn().mockResolvedValue({ id: 'review-001' }),
+      },
+      auditLog: {
+        create: jest.fn().mockResolvedValue({ id: 'audit-001' }),
+      },
     };
 
     prisma = {
@@ -173,7 +182,14 @@ describe('InternalDerivativesService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         InternalDerivativesService,
+        AutoPromoteService,
         { provide: PrismaService, useValue: prisma },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: <T>(key: string, fallback: T): T => fallback,
+          },
+        },
       ],
     }).compile();
 
@@ -256,6 +272,74 @@ describe('InternalDerivativesService', () => {
           reviewStatus: 'draft',
         }),
       });
+    });
+
+    // ---- Auto-promote at confidence ≥ threshold ----
+
+    it('auto-promote: confidence 0.69 stays private, no review/audit row', async () => {
+      const dto = makeWriteDto({
+        derivativeType: 'doctrine_extract',
+        confidenceScore: 0.69,
+      });
+
+      await service.writeDerivative(dto);
+
+      expect(txMocks.derivativeArtifact.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          visibility: 'private',
+          reviewStatus: 'draft',
+        }),
+      });
+      expect(txMocks.derivativeReview.create).not.toHaveBeenCalled();
+      expect(txMocks.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('auto-promote: confidence 0.70 promotes + writes review + audit', async () => {
+      const dto = makeWriteDto({
+        derivativeType: 'doctrine_extract',
+        confidenceScore: 0.7,
+      });
+
+      await service.writeDerivative(dto);
+
+      expect(txMocks.derivativeArtifact.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          visibility: 'public_editorial',
+          reviewStatus: 'approved',
+        }),
+      });
+      expect(txMocks.derivativeReview.create).toHaveBeenCalledTimes(1);
+      expect(txMocks.derivativeReview.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          verdict: 'approve',
+          reviewerUserId: '00000000-0000-0000-0000-000000000002',
+        }),
+      });
+      expect(txMocks.auditLog.create).toHaveBeenCalledTimes(1);
+      expect(txMocks.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: 'derivative_auto_promoted',
+          actorType: 'system',
+        }),
+      });
+    });
+
+    it('auto-promote: mcq_question at 0.99 stays private (excluded type)', async () => {
+      const dto = makeWriteDto({
+        derivativeType: 'mcq_question',
+        confidenceScore: 0.99,
+      });
+
+      await service.writeDerivative(dto);
+
+      expect(txMocks.derivativeArtifact.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          visibility: 'private',
+          reviewStatus: 'draft',
+        }),
+      });
+      expect(txMocks.derivativeReview.create).not.toHaveBeenCalled();
+      expect(txMocks.auditLog.create).not.toHaveBeenCalled();
     });
   });
 
@@ -1016,7 +1100,14 @@ describe('writeClassification', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         InternalDerivativesService,
+        AutoPromoteService,
         { provide: PrismaService, useValue: classPrisma },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: <T>(key: string, fallback: T): T => fallback,
+          },
+        },
       ],
     }).compile();
 
