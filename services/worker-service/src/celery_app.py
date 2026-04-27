@@ -106,4 +106,5 @@ app.conf.include = [
     "src.tasks.daily_crawl_tasks",
     "src.tasks.reprocess_tasks",
     "src.tasks.cost_tasks",
+    "src.tasks.citations_backfill_tasks",
 ]

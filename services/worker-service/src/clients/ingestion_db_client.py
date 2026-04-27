@@ -432,6 +432,76 @@ def get_legal_document_sections_with_text(
         return [dict(row) for row in cur.fetchall()]
 
 
+def get_corpus_doc_ids_missing_citations_after(
+    after_cursor: str | None,
+    limit: int,
+) -> list[str]:
+    """Keyset page of legal_documents.id where the doc has zero citation
+    rows. Ordered by id ASC. ``after_cursor=None`` starts from the beginning.
+
+    The NOT EXISTS skip filter is what makes the backfill orchestrator's
+    re-runs no-op once a doc has any citation row.
+    """
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        if after_cursor is None:
+            cur.execute(
+                """SELECT id
+                   FROM legal_documents
+                   WHERE NOT EXISTS (
+                       SELECT 1 FROM citations
+                       WHERE from_document_id = legal_documents.id
+                   )
+                   ORDER BY id ASC
+                   LIMIT %s""",
+                (limit,),
+            )
+        else:
+            cur.execute(
+                """SELECT id
+                   FROM legal_documents
+                   WHERE id > %s
+                     AND NOT EXISTS (
+                         SELECT 1 FROM citations
+                         WHERE from_document_id = legal_documents.id
+                     )
+                   ORDER BY id ASC
+                   LIMIT %s""",
+                (after_cursor, limit),
+            )
+        return [str(row["id"]) for row in cur.fetchall()]
+
+
+def count_corpus_docs_with_citations_in_range(
+    after_cursor: str | None,
+    end_cursor_inclusive: str | None,
+) -> int:
+    """Count legal_documents in id-range (after_cursor, end_cursor_inclusive]
+    that already have at least one citation row. ``None`` cursors mean
+    open-ended on that side. Used by the backfill orchestrator to surface
+    its ``skipped_already_has_citations`` counter.
+    """
+    sql = (
+        "SELECT COUNT(*) AS c FROM legal_documents "
+        "WHERE EXISTS ("
+        "  SELECT 1 FROM citations WHERE from_document_id = legal_documents.id"
+        ")"
+    )
+    params: list[Any] = []
+    if after_cursor is not None:
+        sql += " AND id > %s"
+        params.append(after_cursor)
+    if end_cursor_inclusive is not None:
+        sql += " AND id <= %s"
+        params.append(end_cursor_inclusive)
+
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(sql, tuple(params))
+        row = cur.fetchone()
+        return int(row["c"]) if row else 0
+
+
 def insert_citations_ignore_dupes(
     rows: list[dict[str, Any]],
 ) -> int:
