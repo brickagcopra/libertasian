@@ -2,6 +2,7 @@
 
 import json
 import logging
+import uuid
 from typing import Any
 
 from ..config import settings
@@ -15,6 +16,10 @@ from .schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Placeholder strings the LLM sometimes echoes verbatim from prompt examples.
+# These are never valid UUIDs; drop them silently rather than logging at WARN.
+_PROVENANCE_PLACEHOLDERS = frozenset({"section-uuid", "doc-uuid"})
 
 
 def _coerce_text(value: Any) -> str | None:
@@ -148,25 +153,62 @@ def _parse_digest_response(raw: str) -> dict[str, Any]:
     return data
 
 
+def _clean_uuid_token(value: Any) -> str | None:
+    """Normalize a section/document id token to a bare UUID string.
+
+    Defenses against LLM output drift documented in prompts.py v2:
+    - Strips a leading ``§`` (the v1 prompt taught the model to emit
+      ``[§<uuid>]`` and some completions echo the prefix into the JSON).
+    - Drops the literal placeholders ``section-uuid`` / ``doc-uuid`` that
+      leak from the example block in the prompt.
+    - Validates with ``uuid.UUID`` and returns ``None`` on parse failure
+      so the worker's ``provenance_records.source_section_id::uuid`` cast
+      never sees a malformed value (which used to crash the digest task
+      and lock inflight slots for 9 minutes per retry cycle).
+    """
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip().lstrip("§").strip()
+    if not cleaned or cleaned in _PROVENANCE_PLACEHOLDERS:
+        return None
+    try:
+        return str(uuid.UUID(cleaned))
+    except (ValueError, AttributeError):
+        logger.debug(
+            "_extract_provenance: dropping malformed section/document id %r",
+            value,
+        )
+        return None
+
+
 def _extract_provenance(
     digest_data: dict[str, Any],
     document_id: str,
 ) -> list[ProvenanceEntry]:
-    """Extract and normalize provenance entries from the LLM response."""
+    """Extract and normalize provenance entries from the LLM response.
+
+    Returns only entries whose ``source_section_id`` parses as a UUID after
+    cleaning. Malformed entries are dropped (not raised) — digest write
+    proceeds without them; the worker's ``create_provenance_records`` would
+    otherwise reject the whole batch.
+    """
     raw_provenance = digest_data.get("provenance", [])
     entries: list[ProvenanceEntry] = []
     for p in raw_provenance:
         if not isinstance(p, dict):
             continue
         field = p.get("field")
-        section_id = p.get("source_section_id")
+        section_id = _clean_uuid_token(p.get("source_section_id"))
         if not field or not section_id:
             continue
+        # Document id has the same drift potential — fall back to the request
+        # document_id if the LLM emitted a placeholder or malformed token.
+        doc_id = _clean_uuid_token(p.get("source_document_id")) or document_id
         entries.append(
             ProvenanceEntry(
                 field=field,
                 source_section_id=section_id,
-                source_document_id=p.get("source_document_id", document_id),
+                source_document_id=doc_id,
             )
         )
     return entries

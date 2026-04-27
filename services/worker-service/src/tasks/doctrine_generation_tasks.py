@@ -233,9 +233,12 @@ def generate_doctrine_extract(
         latency_ms = int((time.monotonic() - start_time) * 1000)
 
         model_name = llm_response.get("model_name", "unknown")
-        # RAG doctrine endpoint does not return token usage counts
-        tokens_in = 0
-        tokens_out = 0
+        # rag-service /doctrines/extract started returning token counts in
+        # PR #81 (DoctrineExtractionResponse.tokens_in/tokens_out). Pull
+        # them so model_runs + the downstream job-status update populate
+        # correctly instead of recording 0 forever.
+        tokens_in = int(llm_response.get("tokens_in", 0) or 0)
+        tokens_out = int(llm_response.get("tokens_out", 0) or 0)
 
         # RAG returns flat DoctrineExtractionResponse — no content wrapper
         content = llm_response

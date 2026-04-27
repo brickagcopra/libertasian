@@ -105,7 +105,10 @@ def extract_doctrines_task(
             )
             doctrine_ids.append(doctrine_id)
 
-        # Log the model run for auditing (per CLAUDE.md: pin model versions)
+        # Log the model run for auditing (per CLAUDE.md: pin model versions).
+        # tokens_in/tokens_out come from the rag-service response (PR #81)
+        # — passing them here so model_runs is no longer NULL for
+        # doctrine_extract rows (Bug 7-residual).
         db_client.create_model_run(
             run_type="doctrine_extract",
             model_name=model_name,
@@ -113,6 +116,8 @@ def extract_doctrines_task(
             input_ref=f"document:{document_id}",
             output_ref=json.dumps({"doctrine_ids": doctrine_ids}),
             confidence=None,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
         )
 
         # Per-batch cost telemetry. Same atomic-increment pattern used

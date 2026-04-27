@@ -182,6 +182,16 @@ class TestEssayGenerationTask:
         write_call = mock_nestjs.write_essay.call_args
         assert write_call.args[0]["confidenceScore"] > 0.0
 
+        # Bug 10 — budget_ledger.amount_usd must be the computed USD cost
+        # for the model+tokens, not the hardcoded 0.0 the task used to ship.
+        # gpt-4o-mini @ 1500 in + 800 out → (1500*0.150 + 800*0.600) / 1M
+        # = 0.000705 USD.
+        ledger_entry = write_call.args[0]["budgetLedgerEntry"]
+        assert ledger_entry["amountUsd"] == pytest.approx(0.000705, rel=1e-6)
+        assert ledger_entry["modelName"] == "gpt-4o-mini"
+        assert ledger_entry["tokensIn"] == 1500
+        assert ledger_entry["tokensOut"] == 800
+
     @patch("src.tasks.essay_generation_tasks.nestjs_client")
     @patch("src.tasks.essay_generation_tasks.db")
     def test_2_eligibility_skip(

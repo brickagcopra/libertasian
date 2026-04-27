@@ -168,6 +168,33 @@ class TestExtractDoctrinesTask:
         assert call_args.kwargs["model_name"] == "llama-3.1-70b"
         assert call_args.kwargs["prompt_template_version"] == "doctrine-v2"
 
+    def test_model_run_includes_tokens_when_rag_returns_them(
+        self,
+        mock_db_client: MagicMock,
+        mock_rag_client: MagicMock,
+        document_id: str,
+    ) -> None:
+        """Bug 7-residual: when rag-service returns ``tokens_in`` /
+        ``tokens_out`` (PR #81), the worker MUST forward them into
+        ``model_runs`` so the row stops being NULL for doctrine_extract."""
+        from src.tasks.doctrine_tasks import extract_doctrines_task
+
+        mock_db_client.get_document_sections.return_value = []
+        mock_rag_client.extract_doctrines.return_value = {
+            "doctrines": [],
+            "model_name": "claude-haiku-4-5",
+            "prompt_template_version": "v1",
+            "strategy_used": "full_text",
+            "tokens_in": 1234,
+            "tokens_out": 567,
+        }
+
+        extract_doctrines_task(document_id=document_id)
+
+        call_kwargs = mock_db_client.create_model_run.call_args.kwargs
+        assert call_kwargs["tokens_in"] == 1234
+        assert call_kwargs["tokens_out"] == 567
+
     def test_multiple_doctrines_saved(
         self,
         mock_db_client: MagicMock,

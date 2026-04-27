@@ -19,6 +19,7 @@ from src.digests.schemas import (
     ProvenanceEntry,
 )
 from src.digests.service import (
+    _clean_uuid_token,
     _coerce_text,
     _compute_confidence,
     _extract_provenance,
@@ -27,10 +28,18 @@ from src.digests.service import (
     generate_digest,
 )
 
-
 # ---------------------------------------------------------------------------
 # Test helpers
 # ---------------------------------------------------------------------------
+
+# Section/document IDs in production are real UUIDs. The provenance helper
+# below uses these so the parser's uuid.UUID validation in _clean_uuid_token
+# accepts them. _make_section keeps the legacy "sec-001" default because the
+# format/coverage tests assert on those literal labels — _format_sections
+# never validates IDs as UUIDs (it just inlines them as in-context delimiters).
+SECTION_ID_1 = "11111111-1111-1111-1111-111111111111"
+SECTION_ID_2 = "22222222-2222-2222-2222-222222222222"
+DOCUMENT_ID = "00000000-0000-0000-0000-000000000001"
 
 
 def _make_section(**overrides: Any) -> DocumentSectionInput:
@@ -67,13 +76,13 @@ def _make_full_digest_data() -> dict[str, Any]:
         "provenance": [
             {
                 "field": "facts",
-                "source_section_id": "sec-001",
-                "source_document_id": "doc-0001",
+                "source_section_id": SECTION_ID_1,
+                "source_document_id": DOCUMENT_ID,
             },
             {
                 "field": "ruling",
-                "source_section_id": "sec-002",
-                "source_document_id": "doc-0001",
+                "source_section_id": SECTION_ID_2,
+                "source_document_id": DOCUMENT_ID,
             },
         ],
     }
@@ -246,60 +255,159 @@ class TestParseDigestResponse:
 class TestExtractProvenance:
     def test_valid_provenance_entries(self) -> None:
         data = _make_full_digest_data()
-        entries = _extract_provenance(data, "doc-main")
+        entries = _extract_provenance(data, DOCUMENT_ID)
 
         assert len(entries) == 2
         assert all(isinstance(e, ProvenanceEntry) for e in entries)
         assert entries[0].field == "facts"
-        assert entries[0].source_section_id == "sec-001"
+        assert entries[0].source_section_id == SECTION_ID_1
 
     def test_provenance_fills_in_document_id(self) -> None:
         data = {
             "provenance": [
-                {"field": "ruling", "source_section_id": "sec-xyz"},
+                {"field": "ruling", "source_section_id": SECTION_ID_1},
             ],
         }
-        entries = _extract_provenance(data, "doc-main")
+        entries = _extract_provenance(data, DOCUMENT_ID)
 
         assert len(entries) == 1
-        assert entries[0].source_document_id == "doc-main"
+        assert entries[0].source_document_id == DOCUMENT_ID
 
     def test_provenance_preserves_explicit_document_id(self) -> None:
+        other_doc = "99999999-9999-9999-9999-999999999999"
         data = {
             "provenance": [
                 {
                     "field": "ruling",
-                    "source_section_id": "sec-xyz",
-                    "source_document_id": "doc-other",
+                    "source_section_id": SECTION_ID_1,
+                    "source_document_id": other_doc,
                 },
             ],
         }
-        entries = _extract_provenance(data, "doc-main")
+        entries = _extract_provenance(data, DOCUMENT_ID)
 
-        assert entries[0].source_document_id == "doc-other"
+        assert entries[0].source_document_id == other_doc
 
     def test_invalid_provenance_entries_skipped(self) -> None:
         data = {
             "provenance": [
                 {"field": "facts"},  # missing section_id
-                {"source_section_id": "sec-001"},  # missing field
+                {"source_section_id": SECTION_ID_1},  # missing field
                 "not a dict",
                 None,
-                {"field": "ruling", "source_section_id": "sec-002"},  # valid
+                {"field": "ruling", "source_section_id": SECTION_ID_2},
             ],
         }
-        entries = _extract_provenance(data, "doc-main")
+        entries = _extract_provenance(data, DOCUMENT_ID)
 
         assert len(entries) == 1
         assert entries[0].field == "ruling"
 
     def test_no_provenance_key(self) -> None:
-        entries = _extract_provenance({}, "doc-main")
+        entries = _extract_provenance({}, DOCUMENT_ID)
         assert entries == []
 
     def test_empty_provenance_list(self) -> None:
-        entries = _extract_provenance({"provenance": []}, "doc-main")
+        entries = _extract_provenance({"provenance": []}, DOCUMENT_ID)
         assert entries == []
+
+    def test_section_uuid_with_section_prefix_is_stripped(self) -> None:
+        """LLM completions sometimes echo the v1 ``[§<uuid>]`` example marker
+        into the JSON output. The parser must strip the leading ``§`` so the
+        worker's ``provenance_records.source_section_id::uuid`` cast does
+        not crash and trigger 9-minute Celery retry loops (Bug 9, prod
+        2026-04-27 01:32:36 ``§3a73d4a6-...``)."""
+        data = {
+            "provenance": [
+                {"field": "facts", "source_section_id": f"§{SECTION_ID_1}"},
+                {"field": "ruling", "source_section_id": f"  §{SECTION_ID_2}  "},
+            ],
+        }
+        entries = _extract_provenance(data, DOCUMENT_ID)
+
+        assert len(entries) == 2
+        assert entries[0].source_section_id == SECTION_ID_1
+        assert entries[1].source_section_id == SECTION_ID_2
+
+    def test_literal_placeholder_section_uuid_is_dropped(self) -> None:
+        """v1 prompt's example used the literal placeholder ``"section-uuid"``
+        and some models echo it verbatim. Drop it silently — it is a
+        test-fixture leak from the prompt template, not a real reference."""
+        data = {
+            "provenance": [
+                {"field": "facts", "source_section_id": "section-uuid"},
+                {"field": "ruling", "source_section_id": SECTION_ID_1},
+            ],
+        }
+        entries = _extract_provenance(data, DOCUMENT_ID)
+
+        assert len(entries) == 1
+        assert entries[0].field == "ruling"
+
+    def test_malformed_section_id_is_dropped_not_raised(self) -> None:
+        """Garbage section IDs must be dropped (not raised) so the digest
+        write proceeds without the bad provenance row. Raising would route
+        the digest task to retry and lock the inflight slot for 9 minutes
+        per attempt — the throughput collapse from Stage 3 batch
+        ebb8780b-e610-4575-8052-81976c4e4240."""
+        data = {
+            "provenance": [
+                {"field": "facts", "source_section_id": "not-a-uuid"},
+                {"field": "ruling", "source_section_id": "12345"},
+                {"field": "doctrine", "source_section_id": SECTION_ID_1},
+            ],
+        }
+        entries = _extract_provenance(data, DOCUMENT_ID)
+
+        assert len(entries) == 1
+        assert entries[0].field == "doctrine"
+        assert entries[0].source_section_id == SECTION_ID_1
+
+    def test_malformed_document_id_falls_back_to_request_doc(self) -> None:
+        """A malformed source_document_id must fall back to the request's
+        document_id so digest provenance writes can still happen."""
+        data = {
+            "provenance": [
+                {
+                    "field": "facts",
+                    "source_section_id": SECTION_ID_1,
+                    "source_document_id": "doc-uuid",  # placeholder leak
+                },
+            ],
+        }
+        entries = _extract_provenance(data, DOCUMENT_ID)
+
+        assert len(entries) == 1
+        assert entries[0].source_document_id == DOCUMENT_ID
+
+
+class TestCleanUuidToken:
+    def test_strips_section_prefix(self) -> None:
+        assert _clean_uuid_token(f"§{SECTION_ID_1}") == SECTION_ID_1
+
+    def test_strips_surrounding_whitespace(self) -> None:
+        assert _clean_uuid_token(f"  §{SECTION_ID_1}  ") == SECTION_ID_1
+
+    def test_drops_literal_section_uuid_placeholder(self) -> None:
+        assert _clean_uuid_token("section-uuid") is None
+
+    def test_drops_literal_doc_uuid_placeholder(self) -> None:
+        assert _clean_uuid_token("doc-uuid") is None
+
+    def test_drops_malformed(self) -> None:
+        assert _clean_uuid_token("not-a-uuid") is None
+        assert _clean_uuid_token("") is None
+        assert _clean_uuid_token("12345") is None
+
+    def test_drops_non_string(self) -> None:
+        assert _clean_uuid_token(None) is None
+        assert _clean_uuid_token(123) is None
+        assert _clean_uuid_token({}) is None
+
+    def test_normalizes_uppercase_uuid(self) -> None:
+        upper = SECTION_ID_1.upper()
+        # uuid.UUID round-trips to the canonical lowercase form.
+        assert _clean_uuid_token(upper) == SECTION_ID_1
 
 
 # ---------------------------------------------------------------------------
@@ -512,7 +620,7 @@ class TestGenerateDigest:
         assert response.facts is not None
         assert response.ruling is not None
         assert response.model_name == "test-digest-model"
-        assert response.prompt_template_version == "digest_dfir_plus_v1"
+        assert response.prompt_template_version == "digest_dfir_plus_v2"
 
     @pytest.mark.asyncio
     async def test_confidence_score_in_range(self) -> None:
