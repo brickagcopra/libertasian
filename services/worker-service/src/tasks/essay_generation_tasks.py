@@ -66,6 +66,7 @@ def generate_essay_prompt(
     source_type: str = "decision",
     bar_exam_sitting_id: str | None = None,
     audience: str = "student",
+    backfill_batch_id: str | None = None,
 ) -> dict[str, Any]:
     """Generate an essay prompt with ALAC model answer.
 
@@ -310,6 +311,27 @@ def generate_essay_prompt(
             tokensIn=tokens_in,
             tokensOut=tokens_out,
         )
+
+        # Per-batch cost telemetry. Same atomic-increment pattern used by
+        # doctrine/digest tasks — see doctrine_tasks.extract_doctrines_task
+        # for the rationale (cost-attribution to backfill batch's
+        # budget_consumed_usd counter).
+        if backfill_batch_id:
+            try:
+                from ..clients import backfill_db_client as backfill_db
+
+                cost = cost_for(model_name, tokens_in, tokens_out)
+                if cost > 0:
+                    backfill_db.update_batch_counters(
+                        backfill_batch_id,
+                        budget_consumed_usd=cost,
+                    )
+            except Exception:
+                logger.exception(
+                    "Failed to update backfill batch %s budget_consumed_usd "
+                    "from essay task (non-blocking)",
+                    backfill_batch_id,
+                )
 
         logger.info(
             "Completed essay prompt generation: job=%s artifact=%s essay=%s status=%s",

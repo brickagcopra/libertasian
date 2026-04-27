@@ -72,6 +72,7 @@ def generate_flashcards(
     card_style: str = "rule_recall",
     organization_id: str | None = None,
     user_id: str | None = None,
+    backfill_batch_id: str | None = None,
 ) -> dict[str, Any]:
     """Generate flashcards from a legal document.
 
@@ -393,6 +394,23 @@ def generate_flashcards(
             tokensIn=tokens_in,
             tokensOut=tokens_out,
         )
+
+        if backfill_batch_id:
+            try:
+                from ..clients import backfill_db_client as backfill_db
+
+                cost = cost_for(model_name, tokens_in, tokens_out)
+                if cost > 0:
+                    backfill_db.update_batch_counters(
+                        backfill_batch_id,
+                        budget_consumed_usd=cost,
+                    )
+            except Exception:
+                logger.exception(
+                    "Failed to update backfill batch %s budget_consumed_usd "
+                    "from flashcard task (non-blocking)",
+                    backfill_batch_id,
+                )
 
         logger.info(
             "Completed flashcard generation: job=%s set=%s cards=%d artifact=%s",
