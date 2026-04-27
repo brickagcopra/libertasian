@@ -1,17 +1,81 @@
-"""LIBERTASIAN Worker Service — Citation resolution Celery tasks.
+"""LIBERTASIAN Worker Service — Citation extraction + resolution Celery tasks.
 
-Phase 5 Batch 7. Each task is idempotent (acks_late + reject_on_worker_lost).
-
-Pipeline: fetch_unresolved_citations -> call_rag_resolve -> update_citations_in_db
+Pipeline:
+  extract_for_document  (regex extractor → INSERT citations)
+  resolve_for_document  (rag-service link → UPDATE to_document_id)
 """
 
 import logging
 
 from celery import shared_task
 
-from ..clients import db_client, rag_client
+from ..citations import extract_citation_matches
+from ..clients import db_client, ingestion_db_client, rag_client
 
 logger = logging.getLogger(__name__)
+
+
+@shared_task(
+    name="citation.extract_for_document",
+    bind=True,
+    acks_late=True,
+    reject_on_worker_lost=True,
+    max_retries=2,
+    default_retry_delay=30,
+)
+def extract_citations_for_document(
+    self,  # noqa: ARG001
+    legal_document_id: str,
+) -> dict:  # type: ignore[type-arg]
+    """Extract citations from a corpus document's section text and persist
+    them as `citations` rows. Idempotent — re-runs hit the partial unique
+    index ``uq_citations_section_normalized`` and skip dupes.
+    """
+    sections = ingestion_db_client.get_legal_document_sections_with_text(
+        legal_document_id
+    )
+    if not sections:
+        logger.info(
+            "extract_citations_for_document: no sections for document=%s",
+            legal_document_id,
+        )
+        return {
+            "document_id": legal_document_id,
+            "sections_scanned": 0,
+            "rows_inserted": 0,
+            "status": "completed",
+        }
+
+    rows: list[dict] = []  # type: ignore[type-arg]
+    for sec in sections:
+        text = sec.get("plain_text") or ""
+        if not text:
+            continue
+        for match in extract_citation_matches(text):
+            rows.append(
+                {
+                    "from_document_id": legal_document_id,
+                    "from_section_id": sec["id"],
+                    "citation_text": match.raw,
+                    "citation_type": match.citation_type,
+                    "normalized_citation": match.normalized,
+                }
+            )
+
+    inserted = ingestion_db_client.insert_citations_ignore_dupes(rows)
+    logger.info(
+        "extract_citations_for_document: document=%s sections=%d candidates=%d inserted=%d",
+        legal_document_id,
+        len(sections),
+        len(rows),
+        inserted,
+    )
+    return {
+        "document_id": legal_document_id,
+        "sections_scanned": len(sections),
+        "rows_inserted": inserted,
+        "status": "completed",
+    }
 
 
 @shared_task(

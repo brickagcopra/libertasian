@@ -416,6 +416,55 @@ def get_document_sections_for_validation(doc_id: str) -> list[dict[str, Any]]:
         return [dict(row) for row in cur.fetchall()]
 
 
+def get_legal_document_sections_with_text(
+    legal_document_id: str,
+) -> list[dict[str, Any]]:
+    """Fetch all sections for a doc with their plain_text body, ordered."""
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """SELECT id, plain_text
+               FROM legal_document_sections
+               WHERE legal_document_id = %s
+               ORDER BY ordering ASC, created_at ASC""",
+            (legal_document_id,),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+def insert_citations_ignore_dupes(
+    rows: list[dict[str, Any]],
+) -> int:
+    """Bulk-insert Citation rows, skipping duplicates per the partial unique
+    index uq_citations_section_normalized. Returns inserted-row count.
+    """
+    if not rows:
+        return 0
+    inserted = 0
+    with get_connection() as conn, conn.cursor() as cur:
+        for r in rows:
+            cur.execute(
+                """INSERT INTO citations
+                       (id, from_document_id, from_section_id, to_document_id,
+                        citation_text, citation_type, normalized_citation,
+                        confidence, created_at)
+                       VALUES (gen_random_uuid(), %s, %s, NULL, %s, %s, %s, NULL, NOW())
+                       ON CONFLICT (from_section_id, normalized_citation)
+                       WHERE from_section_id IS NOT NULL
+                         AND normalized_citation IS NOT NULL
+                       DO NOTHING""",
+                (
+                    r["from_document_id"],
+                    r["from_section_id"],
+                    r["citation_text"],
+                    r["citation_type"],
+                    r["normalized_citation"],
+                ),
+            )
+            inserted += cur.rowcount
+    return inserted
+
+
 def get_editorial_flags_for_document(doc_id: str) -> list[dict[str, Any]]:
     """Fetch open editorial flags for a document."""
     with get_connection() as conn, \

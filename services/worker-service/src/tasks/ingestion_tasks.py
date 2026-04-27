@@ -894,7 +894,10 @@ def chain_post_ingestion(
     """
     try:
         from .categorization_tasks import categorize_document_task
-        from .citation_tasks import resolve_citations_task
+        from .citation_tasks import (
+            extract_citations_for_document,
+            resolve_citations_task,
+        )
         from .classification_generation_tasks import classify_document_subjects
         from .digest_tasks import generate_ingestion_digest
         from .doctrine_tasks import extract_doctrines_task
@@ -911,7 +914,9 @@ def chain_post_ingestion(
             backfill_batch_id=backfill_batch_id,
         )
 
-        # Fire citation resolution (non-blocking)
+        # Extract citations from section text into the citations table
+        # before resolution — resolution is a no-op without rows to resolve.
+        extract_citations_for_document.delay(legal_document_id=document_id)
         resolve_citations_task.delay(document_id=document_id)
 
         # Fire auto-digest generation (non-blocking, skips non-case docs).
