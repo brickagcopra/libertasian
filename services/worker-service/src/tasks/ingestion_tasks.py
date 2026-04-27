@@ -900,14 +900,27 @@ def chain_post_ingestion(
         from .doctrine_tasks import extract_doctrines_task
         from .embedding_tasks import generate_document_embeddings_task
 
-        # Fire doctrine extraction (non-blocking)
-        extract_doctrines_task.delay(document_id=document_id, strategy="auto")
+        # Fire doctrine extraction (non-blocking). Forwards batch_id so
+        # the LLM call's cost can be charged to the originating backfill
+        # batch — without this, doctrine extraction was uncharged on
+        # backfill paths and budget_consumed_usd showed $0 even on
+        # batches with hundreds of LLM-bearing candidates.
+        extract_doctrines_task.delay(
+            document_id=document_id,
+            strategy="auto",
+            backfill_batch_id=backfill_batch_id,
+        )
 
         # Fire citation resolution (non-blocking)
         resolve_citations_task.delay(document_id=document_id)
 
-        # Fire auto-digest generation (non-blocking, skips non-case docs)
-        generate_ingestion_digest.delay(document_id=document_id)
+        # Fire auto-digest generation (non-blocking, skips non-case docs).
+        # Forwards batch_id for the same cost-attribution reason as
+        # doctrine extraction above.
+        generate_ingestion_digest.delay(
+            document_id=document_id,
+            backfill_batch_id=backfill_batch_id,
+        )
 
         # Fire bar subject categorization (non-blocking)
         categorize_document_task.delay(document_id=document_id)

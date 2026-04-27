@@ -5,7 +5,7 @@ import logging
 from typing import Any
 
 from ..config import settings
-from ..core.generation import generate_completion, get_model_info
+from ..core.generation import generate_completion_with_usage, get_model_info
 from .prompts import PROMPT_VERSION, SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
 from .schemas import (
     CitedAuthority,
@@ -62,8 +62,11 @@ async def generate_digest(
         document_type=request.document_type,
     )
 
-    # Step 3: Call vLLM
-    raw_response = await generate_completion(
+    # Step 3: Call vLLM. Use the with_usage variant so we can surface
+    # tokens_in/tokens_out — the worker uses them to bill the originating
+    # backfill batch's budget_consumed_usd via pricing.cost_for. The plain
+    # generate_completion path is otherwise identical.
+    completion = await generate_completion_with_usage(
         system_prompt=SYSTEM_PROMPT,
         user_prompt=user_prompt,
         max_tokens=settings.digest_max_tokens,
@@ -72,7 +75,7 @@ async def generate_digest(
     )
 
     # Step 4: Parse response
-    digest_data = _parse_digest_response(raw_response)
+    digest_data = _parse_digest_response(completion["content"])
 
     # Step 5: Compute confidence
     confidence = _compute_confidence(digest_data, request.sections)
@@ -100,8 +103,10 @@ async def generate_digest(
         ],
         provenance=provenance,
         confidence_score=confidence,
-        model_name=model_info["model_name"],
+        model_name=completion.get("model_name", model_info["model_name"]),
         prompt_template_version=PROMPT_VERSION,
+        tokens_in=int(completion.get("tokens_in", 0) or 0),
+        tokens_out=int(completion.get("tokens_out", 0) or 0),
     )
 
 

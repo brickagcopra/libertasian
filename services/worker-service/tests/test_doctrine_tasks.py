@@ -192,3 +192,67 @@ class TestExtractDoctrinesTask:
 
         assert result["doctrines_extracted"] == 3
         assert mock_db_client.create_doctrine_extract.call_count == 3
+
+    def test_backfill_batch_id_increments_budget_consumed_usd(
+        self,
+        mock_db_client: MagicMock,
+        mock_rag_client: MagicMock,
+        document_id: str,
+    ) -> None:
+        """Bug 7 regression: when ``backfill_batch_id`` is forwarded, the
+        per-call LLM cost must accumulate on the batch row's
+        ``budget_consumed_usd`` counter via ``update_batch_counters``."""
+        from src.tasks.doctrine_tasks import extract_doctrines_task
+
+        batch_id = make_uuid()
+        mock_db_client.get_document_sections.return_value = []
+        mock_rag_client.extract_doctrines.return_value = {
+            "doctrines": [],
+            # claude-haiku-4-5 is in pricing._PRICE_PER_MTOK so cost > 0.
+            "model_name": "claude-haiku-4-5",
+            "prompt_template_version": "v1",
+            "strategy_used": "full_text",
+            "tokens_in": 1000,
+            "tokens_out": 200,
+        }
+
+        with patch(
+            "src.clients.backfill_db_client.update_batch_counters",
+        ) as mock_update:
+            extract_doctrines_task(
+                document_id=document_id,
+                backfill_batch_id=batch_id,
+            )
+
+        mock_update.assert_called_once()
+        call_kwargs = mock_update.call_args.kwargs
+        assert "budget_consumed_usd" in call_kwargs
+        # haiku price: $1/Mtok in + $5/Mtok out → 1000*1/1M + 200*5/1M = 0.002
+        assert float(call_kwargs["budget_consumed_usd"]) == pytest.approx(0.002)
+
+    def test_no_backfill_batch_id_skips_budget_increment(
+        self,
+        mock_db_client: MagicMock,
+        mock_rag_client: MagicMock,
+        document_id: str,
+    ) -> None:
+        """Daily-crawl / on-demand callers pass no ``backfill_batch_id``;
+        the cost-attribution path must short-circuit."""
+        from src.tasks.doctrine_tasks import extract_doctrines_task
+
+        mock_db_client.get_document_sections.return_value = []
+        mock_rag_client.extract_doctrines.return_value = {
+            "doctrines": [],
+            "model_name": "claude-haiku-4-5",
+            "prompt_template_version": "v1",
+            "strategy_used": "full_text",
+            "tokens_in": 1000,
+            "tokens_out": 200,
+        }
+
+        with patch(
+            "src.clients.backfill_db_client.update_batch_counters",
+        ) as mock_update:
+            extract_doctrines_task(document_id=document_id)
+
+        mock_update.assert_not_called()
