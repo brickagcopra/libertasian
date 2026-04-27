@@ -3958,6 +3958,13 @@ model BackfillBatch {
   candidatesFailed     Int       @default(0) @map("candidates_failed")
   documentsCreated     Int       @default(0) @map("documents_created")
   documentsUpdated     Int       @default(0) @map("documents_updated")
+  // Per-batch concurrency ceiling on dispatched ``process_ingestion_candidate``
+  // jobs. Default 25 = the napkin-math sweet spot for LawPhil at ~1 req/sec
+  // with ~12s median per-doc latency (parse + S3 + embed) — small enough to
+  // stay well under the source's rate-limit threshold but large enough to
+  // finish a 9930-candidate decade batch in a couple of days instead of
+  // ~60h. Operators can bump per batch via PATCH /admin/backfill/batches/:id/inflight.
+  inflightCap          Int       @default(25) @map("inflight_cap")
   checkpointState      Json      @default("{}") @map("checkpoint_state")
   startedAt            DateTime? @map("started_at") @db.Timestamptz
   finishedAt           DateTime? @map("finished_at") @db.Timestamptz

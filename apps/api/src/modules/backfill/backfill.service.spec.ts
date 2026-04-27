@@ -1,12 +1,14 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 
+import { CeleryDispatcherService } from '../../common/services/celery-dispatcher.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BackfillService } from './backfill.service';
 
 describe('BackfillService', () => {
   let service: BackfillService;
   let prisma: jest.Mocked<PrismaService>;
+  let celery: jest.Mocked<CeleryDispatcherService>;
 
   const mockSource = {
     id: 'src-1',
@@ -69,11 +71,18 @@ describe('BackfillService', () => {
             },
           },
         },
+        {
+          provide: CeleryDispatcherService,
+          useValue: {
+            sendTask: jest.fn().mockResolvedValue('task-id-mock'),
+          },
+        },
       ],
     }).compile();
 
     service = module.get<BackfillService>(BackfillService);
     prisma = module.get(PrismaService);
+    celery = module.get(CeleryDispatcherService);
   });
 
   // ---- create() ----
@@ -132,6 +141,80 @@ describe('BackfillService', () => {
       );
 
       expect(result.status).toBe('enumerating');
+    });
+
+    it('should dispatch backfill.enumerate_candidates when startImmediately is true', async () => {
+      (prisma.source.findUnique as jest.Mock).mockResolvedValue(mockSource);
+      (prisma.backfillBatch.create as jest.Mock).mockResolvedValue(baseBatch);
+      (prisma.backfillBatch.findUnique as jest.Mock).mockResolvedValue(baseBatch);
+      (prisma.backfillBatch.update as jest.Mock).mockResolvedValue({
+        ...baseBatch,
+        status: 'enumerating',
+      });
+
+      await service.create(
+        { ...validDto, startImmediately: true },
+        'user-1',
+      );
+
+      expect(celery.sendTask).toHaveBeenCalledTimes(1);
+      expect(celery.sendTask).toHaveBeenCalledWith(
+        'backfill.enumerate_candidates',
+        { args: [baseBatch.id] },
+      );
+    });
+
+    it('should NOT dispatch enumerate when startImmediately is omitted', async () => {
+      (prisma.source.findUnique as jest.Mock).mockResolvedValue(mockSource);
+      (prisma.backfillBatch.create as jest.Mock).mockResolvedValue(baseBatch);
+
+      await service.create(validDto, 'user-1');
+
+      expect(celery.sendTask).not.toHaveBeenCalled();
+    });
+
+    it('should swallow Celery dispatch errors and still return the transitioned batch', async () => {
+      (prisma.source.findUnique as jest.Mock).mockResolvedValue(mockSource);
+      (prisma.backfillBatch.create as jest.Mock).mockResolvedValue(baseBatch);
+      (prisma.backfillBatch.findUnique as jest.Mock).mockResolvedValue(baseBatch);
+      (prisma.backfillBatch.update as jest.Mock).mockResolvedValue({
+        ...baseBatch,
+        status: 'enumerating',
+      });
+      (celery.sendTask as jest.Mock).mockRejectedValueOnce(
+        new Error('redis connection refused'),
+      );
+
+      const result = await service.create(
+        { ...validDto, startImmediately: true },
+        'user-1',
+      );
+
+      expect(result.status).toBe('enumerating');
+    });
+
+    it('should pass inflightCap through to backfillBatch.create', async () => {
+      (prisma.source.findUnique as jest.Mock).mockResolvedValue(mockSource);
+      (prisma.backfillBatch.create as jest.Mock).mockResolvedValue({
+        ...baseBatch,
+        inflightCap: 50,
+      });
+
+      await service.create({ ...validDto, inflightCap: 50 }, 'user-1');
+
+      expect(prisma.backfillBatch.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ inflightCap: 50 }),
+      });
+    });
+
+    it('should omit inflightCap from create payload when not provided (defaults at column level)', async () => {
+      (prisma.source.findUnique as jest.Mock).mockResolvedValue(mockSource);
+      (prisma.backfillBatch.create as jest.Mock).mockResolvedValue(baseBatch);
+
+      await service.create(validDto, 'user-1');
+
+      const createCall = (prisma.backfillBatch.create as jest.Mock).mock.calls[0][0];
+      expect(createCall.data).not.toHaveProperty('inflightCap');
     });
 
     it('should reject if monthStart > monthEnd when both provided', async () => {
@@ -492,6 +575,34 @@ describe('BackfillService', () => {
       await expect(service.remove('batch-1')).rejects.toThrow(
         BadRequestException,
       );
+    });
+  });
+
+  // ---- updateInflight() ----
+
+  describe('updateInflight()', () => {
+    it('should update the inflightCap on the row', async () => {
+      (prisma.backfillBatch.findUnique as jest.Mock).mockResolvedValue(baseBatch);
+      (prisma.backfillBatch.update as jest.Mock).mockResolvedValue({
+        ...baseBatch,
+        inflightCap: 75,
+      });
+
+      const result = await service.updateInflight('batch-1', { inflightCap: 75 });
+
+      expect(prisma.backfillBatch.update).toHaveBeenCalledWith({
+        where: { id: 'batch-1' },
+        data: { inflightCap: 75 },
+      });
+      expect((result as unknown as { inflightCap: number }).inflightCap).toBe(75);
+    });
+
+    it('should throw NotFoundException for unknown batch', async () => {
+      (prisma.backfillBatch.findUnique as jest.Mock).mockResolvedValue(null);
+
+      await expect(
+        service.updateInflight('missing', { inflightCap: 10 }),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 

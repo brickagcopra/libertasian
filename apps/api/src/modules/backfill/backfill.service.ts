@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import type { BackfillBatch } from '@prisma/client';
 
+import { CeleryDispatcherService } from '../../common/services/celery-dispatcher.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CreateBackfillBatchDto,
@@ -13,6 +14,7 @@ import {
   HaltBackfillDto,
   KillInflightDto,
   ExtendBudgetDto,
+  UpdateInflightDto,
 } from './dto';
 import { BACKFILL_SLUG_TO_PARSER_TYPE } from './dto/create-backfill-batch.dto';
 
@@ -31,7 +33,10 @@ export class BackfillService {
     // completed and failed are terminal
   };
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly celery: CeleryDispatcherService,
+  ) {}
 
   async create(
     dto: CreateBackfillBatchDto,
@@ -82,15 +87,46 @@ export class BackfillService {
         monthStart: dto.monthStart,
         monthEnd: dto.monthEnd,
         budgetCeilingUsd: dto.budgetCeilingUsd,
+        // Defaults to 25 at the column level when omitted.
+        ...(dto.inflightCap !== undefined && { inflightCap: dto.inflightCap }),
         adminNotes: dto.adminNotes,
         createdByUserId: userId,
         status: 'pending',
       },
     });
 
-    // If startImmediately, transition to enumerating
+    // If startImmediately, transition to enumerating AND fire the
+    // Celery enumerate task synchronously. The transition alone is
+    // not enough — without an actual task on the broker, the batch
+    // sits idle until the worker's 5-min "rescue stuck enumerating"
+    // sweep picks it up. Production batches created through the admin
+    // UI consistently waited that full window before doing anything.
+    // The rescue sweep stays in place as a safety net for SQL-inserted
+    // batches and for the (unlikely) case where this dispatch fails
+    // after the transition succeeded.
     if (dto.startImmediately) {
-      return this.transition(batch.id, 'pending', 'enumerating');
+      const transitioned = await this.transition(
+        batch.id,
+        'pending',
+        'enumerating',
+      );
+
+      try {
+        await this.celery.sendTask('backfill.enumerate_candidates', {
+          args: [transitioned.id],
+        });
+      } catch (err) {
+        // Don't fail the create — the worker's rescue sweep will pick
+        // this up within ~5 min. Log loud so an ops Sentry catches a
+        // sustained Redis outage.
+        this.logger.error(
+          `startImmediately: dispatch of backfill.enumerate_candidates ` +
+            `failed for batch ${transitioned.id} — relying on rescue sweep`,
+          err instanceof Error ? err.stack : String(err),
+        );
+      }
+
+      return transitioned;
     }
 
     return batch;
@@ -196,6 +232,25 @@ export class BackfillService {
         budgetCeilingUsd: dto.newCeilingUsd,
         adminNotes: dto.reason,
       },
+    });
+  }
+
+  /**
+   * Update the per-batch in-flight concurrency cap mid-run.
+   *
+   * Effective on the next tick — the worker reads ``inflight_cap`` off the
+   * row each iteration. No restart, no halt-then-resume choreography.
+   * Bounds enforced by the DTO (1–200).
+   */
+  async updateInflight(
+    id: string,
+    dto: UpdateInflightDto,
+  ): Promise<BackfillBatch> {
+    await this.findOneOrFail(id);
+
+    return this.prisma.backfillBatch.update({
+      where: { id },
+      data: { inflightCap: dto.inflightCap },
     });
   }
 

@@ -81,6 +81,17 @@ export class CreateBackfillBatchDto {
   @Min(0.01)
   budgetCeilingUsd!: number;
 
+  /**
+   * Per-batch concurrency ceiling for in-flight ``process_ingestion_candidate``
+   * jobs. Defaults to 25 (set at the DB column level) when omitted. 200 is the
+   * hard ceiling so a runaway admin entry can't take down a source.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  inflightCap?: number;
+
   @IsOptional()
   @IsString()
   adminNotes?: string;
