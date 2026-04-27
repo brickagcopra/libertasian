@@ -42,6 +42,7 @@ CONFIDENCE_THRESHOLD = 0.7
 def generate_ingestion_digest(
     self: Any,
     document_id: str,
+    backfill_batch_id: str | None = None,
 ) -> dict[str, Any]:
     """Auto-generate a structured DFIR+ digest for a newly ingested document.
 
@@ -135,6 +136,8 @@ def generate_ingestion_digest(
         confidence = rag_response.get("confidence_score", 0.0)
         model_name = rag_response.get("model_name", "unknown")
         prompt_version = rag_response.get("prompt_template_version", "unknown")
+        tokens_in = int(rag_response.get("tokens_in", 0) or 0)
+        tokens_out = int(rag_response.get("tokens_out", 0) or 0)
 
         # Step 4: Determine review status per CLAUDE.md
         review_status = (
@@ -197,6 +200,31 @@ def generate_ingestion_digest(
             output_ref=f"digest:{digest_id}:output",
             confidence=confidence,
         )
+
+        # Per-batch cost telemetry. Wrap in try/except so a stale or
+        # deleted batch row never blocks the digest write — billing is
+        # advisory; the canonical record is the model_run row above. Uses
+        # an atomic ``UPDATE ... SET col = COALESCE(col, 0) + ?::numeric``
+        # in update_batch_counters, which Postgres serializes per row, so
+        # concurrent completion hooks from the same batch don't lose
+        # increments under contention.
+        if backfill_batch_id:
+            try:
+                from ..clients import backfill_db_client as backfill_db
+                from ..pricing import cost_for
+
+                cost = cost_for(model_name, tokens_in, tokens_out)
+                if cost > 0:
+                    backfill_db.update_batch_counters(
+                        backfill_batch_id,
+                        budget_consumed_usd=cost,
+                    )
+            except Exception:
+                logger.exception(
+                    "Failed to update backfill batch %s budget_consumed_usd "
+                    "from digest task (non-blocking)",
+                    backfill_batch_id,
+                )
 
         # Step 7: Audit log
         db.create_audit_log(

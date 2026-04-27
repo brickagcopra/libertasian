@@ -26,6 +26,7 @@ import {
   HaltBackfillDto,
   KillInflightDto,
   ExtendBudgetDto,
+  UpdateInflightDto,
 } from './dto';
 
 @Controller('admin/backfill/batches')
@@ -174,6 +175,27 @@ export class BackfillController {
       entityType: 'backfill_batch',
       entityId: batch.id,
       metadata: { reason: dto.reason },
+    });
+
+    return { success: true, data: batch };
+  }
+
+  @Patch(':id/inflight')
+  async updateInflight(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateInflightDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const batch = await this.backfillService.updateInflight(id, dto);
+
+    await this.auditService.log({
+      organizationId: user.organizationId,
+      actorUserId: user.sub,
+      actorType: 'user',
+      action: 'backfill.update_inflight',
+      entityType: 'backfill_batch',
+      entityId: batch.id,
+      metadata: { inflightCap: dto.inflightCap },
     });
 
     return { success: true, data: batch };

@@ -7,7 +7,7 @@ from typing import Any
 import asyncpg
 
 from ..config import settings
-from ..core.generation import generate_completion, get_model_info
+from ..core.generation import generate_completion_with_usage, get_model_info
 from .prompts import PROMPT_VERSION, SYSTEM_PROMPT, USER_PROMPT_FULL_TEXT, USER_PROMPT_SECTIONS
 from .schemas import (
     DoctrineExtractionRequest,
@@ -36,8 +36,11 @@ async def extract_doctrines(request: DoctrineExtractionRequest) -> DoctrineExtra
             document_text=text[: settings.doctrine_max_tokens * 4]
         )
 
-    # Call vLLM via core generation
-    raw_response = await generate_completion(
+    # Call vLLM via core generation. Use the with_usage variant so we
+    # can surface tokens_in/tokens_out — the worker uses them to bill
+    # the originating backfill batch's budget_consumed_usd via
+    # pricing.cost_for.
+    completion = await generate_completion_with_usage(
         system_prompt=SYSTEM_PROMPT,
         user_prompt=user_prompt,
         max_tokens=settings.doctrine_max_tokens,
@@ -46,14 +49,16 @@ async def extract_doctrines(request: DoctrineExtractionRequest) -> DoctrineExtra
     )
 
     # Parse the LLM output
-    doctrines = _parse_extraction_response(raw_response, request)
+    doctrines = _parse_extraction_response(completion["content"], request)
 
     return DoctrineExtractionResponse(
         document_id=request.document_id,
         doctrines=doctrines,
         strategy_used=strategy.value,
-        model_name=model_info["model_name"],
+        model_name=completion.get("model_name", model_info["model_name"]),
         prompt_template_version=PROMPT_VERSION,
+        tokens_in=int(completion.get("tokens_in", 0) or 0),
+        tokens_out=int(completion.get("tokens_out", 0) or 0),
     )
 
 

@@ -56,3 +56,8 @@ class DigestGenerationResponse(BaseModel):
     confidence_score: float = Field(ge=0.0, le=1.0)
     model_name: str
     prompt_template_version: str
+    # Token usage surfaced so the worker can charge the per-batch
+    # ``budget_consumed_usd`` counter. ``0`` for backends that don't expose
+    # usage metadata (vLLM with usage-disabled, mock backends in tests).
+    tokens_in: int = 0
+    tokens_out: int = 0

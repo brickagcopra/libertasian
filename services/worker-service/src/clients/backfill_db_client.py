@@ -43,6 +43,7 @@ def get_batch(batch_id: str) -> dict[str, Any] | None:
                       candidates_discovered, candidates_processed,
                       candidates_skipped, candidates_failed,
                       documents_created, documents_updated,
+                      inflight_cap,
                       checkpoint_state, started_at, finished_at,
                       last_tick_at, created_by_user_id,
                       created_at, updated_at
@@ -65,6 +66,7 @@ def get_batches_by_status(status: str, limit: int = 10) -> list[dict[str, Any]]:
                       candidates_discovered, candidates_processed,
                       candidates_skipped, candidates_failed,
                       documents_created, documents_updated,
+                      inflight_cap,
                       checkpoint_state, started_at, finished_at,
                       last_tick_at, created_by_user_id,
                       created_at, updated_at

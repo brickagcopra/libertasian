@@ -72,6 +72,7 @@ def sample_batch(batch_id: str, source_id: str, user_id: str) -> dict[str, Any]:
         "candidates_failed": 0,
         "documents_created": 0,
         "documents_updated": 0,
+        "inflight_cap": 5,
         "checkpoint_state": None,
         "started_at": None,
         "finished_at": None,
@@ -1006,11 +1007,10 @@ class TestRunBackfillBatchTick:
         mock_ingestion_db_for_backfill: MagicMock,
         mock_tick_redis: MagicMock,
     ) -> None:
-        """When the Redis inflight counter is at MAX_INFLIGHT_JOBS_PER_BATCH (5),
+        """When the Redis inflight counter is at the per-batch ``inflight_cap``,
         tick must not dispatch any more candidates or advance the cursor."""
-        from src.tasks.backfill_tasks import MAX_INFLIGHT_JOBS_PER_BATCH
-
         sample_batch["status"] = "running"
+        sample_batch["inflight_cap"] = 5
         sample_batch["checkpoint_state"] = {
             "candidate_urls": [
                 {
@@ -1029,7 +1029,7 @@ class TestRunBackfillBatchTick:
         mock_backfill_db.get_batches_by_status.return_value = [sample_batch]
 
         # Pre-set Redis counter to the cap
-        mock_tick_redis.get.return_value = str(MAX_INFLIGHT_JOBS_PER_BATCH)
+        mock_tick_redis.get.return_value = "5"
 
         with patch(
             "src.tasks.ingestion_tasks.process_ingestion_candidate.delay",
@@ -1038,10 +1038,106 @@ class TestRunBackfillBatchTick:
 
         tick_result = result["results"][0]
         assert tick_result["status"] == "waiting_inflight"
-        assert tick_result["inflight"] == MAX_INFLIGHT_JOBS_PER_BATCH
+        assert tick_result["inflight"] == 5
         mock_dispatch.assert_not_called()
         mock_ingestion_db_for_backfill.create_ingestion_candidate.assert_not_called()
         mock_tick_redis.incrby.assert_not_called()
+
+    def test_tick_uses_per_batch_inflight_cap_from_row(
+        self,
+        sample_batch: dict,
+        mock_backfill_db: MagicMock,
+        mock_ingestion_db_for_backfill: MagicMock,
+        mock_tick_redis: MagicMock,
+    ) -> None:
+        """A batch row with ``inflight_cap=20`` must dispatch up to 20
+        candidates per tick — proves the constant fallback is no longer the
+        ceiling for per-batch behaviour. Counter starts at 0 → 20 slots."""
+        sample_batch["status"] = "running"
+        sample_batch["inflight_cap"] = 20
+        sample_batch["checkpoint_state"] = {
+            "candidate_urls": [
+                {
+                    "url": f"https://lawphil.net/doc{i}.html",
+                    "title": f"Case {i}",
+                    "gr_no": f"G.R. No. {i}",
+                    "year": 2020,
+                    "month": 1,
+                    "index": i,
+                }
+                for i in range(50)
+            ],
+            "current_index": 0,
+            "total_candidates": 50,
+        }
+        mock_backfill_db.get_batches_by_status.return_value = [sample_batch]
+
+        # Empty inflight counter, so the full cap is available
+        mock_tick_redis.get.return_value = None
+
+        # No prior candidate is in the dedup table — every URL becomes a fresh
+        # ingestion_candidate row + dispatch.
+        mock_ingestion_db_for_backfill.find_candidate_by_similarity_key.return_value = None
+        mock_ingestion_db_for_backfill.create_ingestion_candidate.side_effect = (
+            lambda **_: make_uuid()
+        )
+
+        with patch(
+            "src.tasks.ingestion_tasks.process_ingestion_candidate.delay",
+        ) as mock_dispatch:
+            result = run_backfill_batch_tick()
+
+        tick_result = result["results"][0]
+        assert tick_result["status"] == "ticked"
+        assert tick_result["candidates_dispatched"] == 20
+        assert mock_dispatch.call_count == 20
+        mock_tick_redis.incrby.assert_called_once()
+        # incrby called with (key, 20) — the per-batch cap value, not 5.
+        assert mock_tick_redis.incrby.call_args.args[1] == 20
+
+    def test_tick_falls_back_to_default_when_inflight_cap_missing(
+        self,
+        sample_batch: dict,
+        mock_backfill_db: MagicMock,
+        mock_ingestion_db_for_backfill: MagicMock,
+        mock_tick_redis: MagicMock,
+    ) -> None:
+        """If the row was fetched without the ``inflight_cap`` column (pre-
+        migration worker hitting a freshly-migrated DB or vice-versa), tick
+        must use ``DEFAULT_INFLIGHT_CAP`` rather than dispatching unbounded."""
+        from src.tasks.backfill_tasks import DEFAULT_INFLIGHT_CAP
+
+        sample_batch["status"] = "running"
+        sample_batch.pop("inflight_cap", None)  # simulate missing column
+        sample_batch["checkpoint_state"] = {
+            "candidate_urls": [
+                {
+                    "url": f"https://lawphil.net/doc{i}.html",
+                    "title": f"Case {i}",
+                    "gr_no": f"G.R. No. {i}",
+                    "year": 2020,
+                    "month": 1,
+                    "index": i,
+                }
+                for i in range(50)
+            ],
+            "current_index": 0,
+            "total_candidates": 50,
+        }
+        mock_backfill_db.get_batches_by_status.return_value = [sample_batch]
+        mock_tick_redis.get.return_value = None
+        mock_ingestion_db_for_backfill.find_candidate_by_similarity_key.return_value = None
+        mock_ingestion_db_for_backfill.create_ingestion_candidate.side_effect = (
+            lambda **_: make_uuid()
+        )
+
+        with patch(
+            "src.tasks.ingestion_tasks.process_ingestion_candidate.delay",
+        ):
+            result = run_backfill_batch_tick()
+
+        tick_result = result["results"][0]
+        assert tick_result["candidates_dispatched"] == DEFAULT_INFLIGHT_CAP
 
     # ─── Bug 5 — terminal-completion drain gate ────────────────────────
 

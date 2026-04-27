@@ -41,7 +41,16 @@ MONTH_CODES = [
 # Capitalised month codes used by the SC E-Library URL scheme.
 MONTH_CODES_TITLE = [c.title() for c in MONTH_CODES]
 
-MAX_INFLIGHT_JOBS_PER_BATCH = 5
+# Fallback inflight cap when the row lacks an ``inflight_cap`` column (e.g.
+# when running the worker against a Postgres that has not received the
+# ``add_backfill_inflight_cap`` migration yet, or when the ORM returns the
+# row without the column for any other reason). Production batches read
+# ``backfill_batches.inflight_cap`` per row instead of this constant — see
+# ``_tick_single_batch``. The value lives near the column default (25) so
+# both stay in sync, but is intentionally lower so a forgotten migration
+# manifests as a slow batch (visible) rather than an unbounded one
+# (silent foot-gun).
+DEFAULT_INFLIGHT_CAP = 5
 
 # How long the terminal-completion gate waits for the Redis inflight counter
 # to drain before reaping it as stale. Longer than the longest realistic
@@ -520,9 +529,12 @@ def _tick_single_batch(batch: dict[str, Any]) -> dict[str, Any]:
 
     # Redis-backed in-flight cap. Decrement happens in
     # process_ingestion_candidate's completion hook when
-    # candidate_metadata["trigger"] == "backfill".
+    # candidate_metadata["trigger"] == "backfill". The cap is read from
+    # the row each tick so admins can dial it up/down mid-run without
+    # bouncing the worker (PATCH /admin/backfill/batches/:id/inflight).
+    inflight_cap = batch.get("inflight_cap") or DEFAULT_INFLIGHT_CAP
     inflight = _get_inflight_count(batch_id)
-    slots_available = max(0, MAX_INFLIGHT_JOBS_PER_BATCH - inflight)
+    slots_available = max(0, int(inflight_cap) - inflight)
     if slots_available == 0:
         return {
             "batch_id": batch_id,

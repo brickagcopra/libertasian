@@ -27,6 +27,7 @@ def extract_doctrines_task(
     self,  # type: ignore[no-untyped-def]
     document_id: str,
     strategy: str = "auto",
+    backfill_batch_id: str | None = None,
 ) -> dict:  # type: ignore[type-arg]
     """Extract doctrines from a legal document via RAG service.
 
@@ -81,6 +82,8 @@ def extract_doctrines_task(
         doctrines = result.get("doctrines", [])
         model_name = result.get("model_name", "unknown")
         prompt_version = result.get("prompt_template_version", "unknown")
+        tokens_in = int(result.get("tokens_in", 0) or 0)
+        tokens_out = int(result.get("tokens_out", 0) or 0)
 
         # Save each extracted doctrine to the database
         doctrine_ids = []
@@ -111,6 +114,27 @@ def extract_doctrines_task(
             output_ref=json.dumps({"doctrine_ids": doctrine_ids}),
             confidence=None,
         )
+
+        # Per-batch cost telemetry. Same atomic-increment pattern used
+        # by classify_document_subjects + generate_document_embeddings_task
+        # — see digest_tasks.generate_ingestion_digest for the rationale.
+        if backfill_batch_id:
+            try:
+                from ..clients import backfill_db_client as backfill_db
+                from ..pricing import cost_for
+
+                cost = cost_for(model_name, tokens_in, tokens_out)
+                if cost > 0:
+                    backfill_db.update_batch_counters(
+                        backfill_batch_id,
+                        budget_consumed_usd=cost,
+                    )
+            except Exception:
+                logger.exception(
+                    "Failed to update backfill batch %s budget_consumed_usd "
+                    "from doctrine task (non-blocking)",
+                    backfill_batch_id,
+                )
 
         logger.info(
             "extract_doctrines_task complete: document=%s doctrines=%d",
