@@ -44,6 +44,10 @@ import type {
   IngestionCandidateItem,
   EndpointStatusItem,
   AdminDigestDetail,
+  AutoPromoteStatusResponse,
+  AutoPromoteSweepResponse,
+  BackfillCitationsResponse,
+  BackfillMissingDerivativesResponse,
 } from '../types';
 
 // ---- Corpus Health ----
@@ -1283,6 +1287,67 @@ export function useEndpointStatus() {
       const res = await apiClient.get<{ success: boolean; data: EndpointStatusItem[] }>(
         '/admin/ingestion/endpoints',
       );
+      return res.data;
+    },
+  });
+}
+
+// ---- Pipeline Operations Console ----
+
+export function useDispatchCitationsBackfill() {
+  return useMutation({
+    mutationFn: async (input: { limit?: number }) => {
+      const res = await apiClient.post<{
+        success: boolean;
+        data: BackfillCitationsResponse;
+      }>('/admin/citations/backfill', input);
+      return res.data;
+    },
+  });
+}
+
+export function useBackfillMissingDerivatives() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { types?: string[]; limit?: number }) => {
+      const res = await apiClient.post<{
+        success: boolean;
+        data: BackfillMissingDerivativesResponse;
+      }>('/admin/derivatives/backfill-missing', input);
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'corpus-health'] });
+      queryClient.invalidateQueries({ queryKey: ['admin', 'derivative-stats'] });
+    },
+  });
+}
+
+export function useTriggerAutoPromoteSweep() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const res = await apiClient.post<{
+        success: boolean;
+        data: AutoPromoteSweepResponse;
+      }>('/admin/auto-promote/sweep');
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'auto-promote-status'] });
+      queryClient.invalidateQueries({ queryKey: ['admin', 'corpus-health'] });
+    },
+  });
+}
+
+export function useAutoPromoteStatus() {
+  return useQuery({
+    queryKey: ['admin', 'auto-promote-status'],
+    queryFn: async () => {
+      const res = await apiClient.get<{
+        success: boolean;
+        data: AutoPromoteStatusResponse;
+      }>('/admin/auto-promote/status');
       return res.data;
     },
   });

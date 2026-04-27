@@ -21,6 +21,7 @@ import {
   useIngestionJobHistory,
   useIngestionCandidates,
   useEndpointStatus,
+  useDispatchCitationsBackfill,
 } from '@/features/admin/hooks/use-admin';
 import { AdminCardSkeleton, AdminListSkeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
@@ -57,6 +58,14 @@ export default function IngestionDashboardPage() {
   const [jobCursor, setJobCursor] = useState<string | undefined>(undefined);
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
 
+  // Citations backfill controls
+  const [confirmCitationsBackfill, setConfirmCitationsBackfill] = useState(false);
+  const [citationsLimit, setCitationsLimit] = useState<string>('');
+  const [citationsMsg, setCitationsMsg] = useState<{
+    type: 'success' | 'error';
+    text: string;
+  } | null>(null);
+
   const { data: stats, isLoading: statsLoading } = useIngestionPipelineStats(period);
   const { data: jobsData, isLoading: jobsLoading } = useIngestionJobHistory({
     status: statusFilter || undefined,
@@ -64,6 +73,34 @@ export default function IngestionDashboardPage() {
     cursor: jobCursor,
   });
   const { data: endpoints, isLoading: endpointsLoading } = useEndpointStatus();
+  const citationsBackfill = useDispatchCitationsBackfill();
+
+  const handleCitationsBackfillConfirm = () => {
+    const parsed = citationsLimit.trim() === '' ? undefined : Number(citationsLimit);
+    if (parsed !== undefined && (!Number.isFinite(parsed) || parsed < 1)) {
+      setCitationsMsg({ type: 'error', text: 'Limit must be a positive integer.' });
+      return;
+    }
+    citationsBackfill.mutate(
+      { limit: parsed },
+      {
+        onSuccess: (data) => {
+          setConfirmCitationsBackfill(false);
+          setCitationsMsg({
+            type: 'success',
+            text: `Citations backfill dispatched (task ${data.taskId.slice(0, 8)}…).`,
+          });
+        },
+        onError: (err) => {
+          setConfirmCitationsBackfill(false);
+          setCitationsMsg({
+            type: 'error',
+            text: err instanceof Error ? err.message : 'Failed to dispatch backfill',
+          });
+        },
+      },
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -82,21 +119,81 @@ export default function IngestionDashboardPage() {
         </p>
       </div>
 
-      {/* Period Selector */}
-      <div className="flex items-center gap-2">
-        <span className="text-sm text-muted-foreground">Period:</span>
-        <Select value={period} onValueChange={setPeriod}>
-          <SelectTrigger className="w-[140px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="today">Today</SelectItem>
-            <SelectItem value="week">Last 7 days</SelectItem>
-            <SelectItem value="month">Last 30 days</SelectItem>
-            <SelectItem value="all">All time</SelectItem>
-          </SelectContent>
-        </Select>
+      {/* Period Selector + Citations Backfill */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted-foreground">Period:</span>
+          <Select value={period} onValueChange={setPeriod}>
+            <SelectTrigger className="w-[140px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="today">Today</SelectItem>
+              <SelectItem value="week">Last 7 days</SelectItem>
+              <SelectItem value="month">Last 30 days</SelectItem>
+              <SelectItem value="all">All time</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <Button
+          variant="outline"
+          onClick={() => {
+            setCitationsLimit('');
+            setConfirmCitationsBackfill(true);
+          }}
+          disabled={citationsBackfill.isPending}
+        >
+          {citationsBackfill.isPending ? 'Dispatching...' : 'Backfill Citations'}
+        </Button>
       </div>
+
+      {citationsMsg && (
+        <div
+          className={`rounded-md px-3 py-2 text-sm ${citationsMsg.type === 'error' ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}
+        >
+          {citationsMsg.text}
+        </div>
+      )}
+
+      {confirmCitationsBackfill && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="mx-4 w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+            <h3 className="text-lg font-semibold">Confirm Citations Backfill</h3>
+            <p className="mt-2 text-sm text-gray-600">
+              Dispatch the citation extraction task across the corpus. Existing
+              citations are not duplicated. The task runs asynchronously on the
+              worker pool.
+            </p>
+            <label className="mt-4 block text-sm font-medium text-gray-700">
+              Limit (optional)
+              <input
+                type="number"
+                value={citationsLimit}
+                onChange={(e) => setCitationsLimit(e.target.value)}
+                placeholder="No limit"
+                min={1}
+                max={10000}
+                className="mt-1 w-full rounded border-gray-300 text-sm"
+              />
+            </label>
+            <div className="mt-4 flex justify-end gap-3">
+              <button
+                onClick={() => setConfirmCitationsBackfill(false)}
+                className="rounded border px-4 py-2 text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCitationsBackfillConfirm}
+                disabled={citationsBackfill.isPending}
+                className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {citationsBackfill.isPending ? 'Dispatching...' : 'Dispatch'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Stats Cards */}
       {statsLoading ? (

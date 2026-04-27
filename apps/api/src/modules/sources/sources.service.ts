@@ -195,6 +195,8 @@ export class SourcesService {
       where: { status: 'open' },
     });
 
+    const pipelineOps = await this.getPipelineOpsStats();
+
     return {
       corpus: {
         total: totalDocuments,
@@ -219,6 +221,68 @@ export class SourcesService {
         pendingDigests: pendingReviewDigests,
         openFlags,
       },
+      pipelineOps,
+    };
+  }
+
+  /**
+   * Aggregate metrics for the admin landing-page Pipeline Operations tile.
+   * Kept inside SourcesService so the existing /admin/corpus-health hook
+   * picks it up without adding a second round-trip.
+   */
+  async getPipelineOpsStats() {
+    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const [
+      activeBatches,
+      last24hAutoPromotions,
+      citationsTotal,
+      pendingReviewQueue,
+    ] = await Promise.all([
+      this.prisma.backfillBatch.findMany({
+        where: { status: 'running' },
+        select: {
+          id: true,
+          name: true,
+          status: true,
+          candidatesProcessed: true,
+          candidatesDiscovered: true,
+          lastTickAt: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+      }),
+      this.prisma.auditLog.count({
+        where: {
+          action: 'derivative_auto_promoted',
+          createdAt: { gte: since24h },
+        },
+      }),
+      this.prisma.citation.count(),
+      this.prisma.derivativeArtifact.count({
+        where: {
+          reviewStatus: { in: ['draft', 'needs_human_review'] },
+          visibility: 'private',
+          deletedAt: null,
+        },
+      }),
+    ]);
+
+    return {
+      activeBackfillBatches: {
+        count: activeBatches.length,
+        items: activeBatches.map((b) => ({
+          id: b.id,
+          name: b.name,
+          status: b.status,
+          candidatesProcessed: b.candidatesProcessed,
+          candidatesTotal: b.candidatesDiscovered,
+          lastTickAt: b.lastTickAt ? b.lastTickAt.toISOString() : null,
+        })),
+      },
+      last24hAutoPromotions,
+      citationsTotal,
+      pendingReviewQueue,
     };
   }
 

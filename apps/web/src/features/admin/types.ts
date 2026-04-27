@@ -169,6 +169,52 @@ export interface CorpusHealth {
     pendingDigests: number;
     openFlags: number;
   };
+  pipelineOps: PipelineOpsStats;
+}
+
+export interface PipelineOpsBatch {
+  id: string;
+  name: string;
+  status: string;
+  candidatesProcessed: number;
+  candidatesTotal: number;
+  lastTickAt: string | null;
+}
+
+export interface PipelineOpsStats {
+  activeBackfillBatches: {
+    count: number;
+    items: PipelineOpsBatch[];
+  };
+  last24hAutoPromotions: number;
+  citationsTotal: number;
+  pendingReviewQueue: number;
+}
+
+export interface BackfillCitationsResponse {
+  taskId: string;
+  dispatchedAt: string;
+  limit: number | null;
+}
+
+export interface BackfillMissingDerivativesResponse {
+  dispatchedByType: Record<string, number>;
+  totalDispatched: number;
+  totalSkipped: number;
+}
+
+export interface AutoPromoteSweepResponse {
+  promoted: number;
+  scanned: number;
+}
+
+export interface AutoPromoteStatusResponse {
+  lastSweepAt: string | null;
+  lastPromoted: number | null;
+  last24hPromoted: number;
+  totalPromoted: number;
+  configThreshold: number;
+  configExcludedTypes: string[];
 }
 
 // ---- Source Health (Phase 5) ----

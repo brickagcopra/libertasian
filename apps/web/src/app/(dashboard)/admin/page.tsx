@@ -43,6 +43,64 @@ export default function AdminDashboardPage() {
             </div>
           </div>
 
+          {/* Pipeline Operations */}
+          <div>
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-gray-700">Pipeline Operations</h2>
+              <div className="flex gap-2 text-xs">
+                <Link href="/admin/ingestion" className="text-blue-600 hover:text-blue-800">
+                  Ingestion →
+                </Link>
+                <Link href="/admin/derivatives" className="text-blue-600 hover:text-blue-800">
+                  Derivatives →
+                </Link>
+              </div>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <StatCard
+                label="Active Backfill Batches"
+                value={health.pipelineOps.activeBackfillBatches.count}
+              />
+              <StatCard
+                label="Auto-Promotions (24h)"
+                value={health.pipelineOps.last24hAutoPromotions}
+              />
+              <StatCard
+                label="Citations Indexed"
+                value={health.pipelineOps.citationsTotal}
+              />
+              <StatCard
+                label="Pending Review Queue"
+                value={health.pipelineOps.pendingReviewQueue}
+                accent={
+                  health.pipelineOps.pendingReviewQueue > 0 ? 'yellow' : undefined
+                }
+              />
+            </div>
+            {health.pipelineOps.activeBackfillBatches.items.length > 0 && (
+              <div className="mt-3 divide-y rounded-md border border-gray-200 bg-white">
+                {health.pipelineOps.activeBackfillBatches.items.map((batch) => (
+                  <div
+                    key={batch.id}
+                    className="flex items-center justify-between px-4 py-2 text-sm"
+                  >
+                    <div>
+                      <p className="font-medium text-gray-900">{batch.name}</p>
+                      <p className="text-xs text-gray-500">
+                        {batch.candidatesProcessed} / {batch.candidatesTotal} processed
+                        {batch.lastTickAt &&
+                          ` · last tick ${new Date(batch.lastTickAt).toLocaleString()}`}
+                      </p>
+                    </div>
+                    <span className="rounded bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
+                      {batch.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Documents by Type */}
           {health.documentsByType.length > 0 && (
             <div>
