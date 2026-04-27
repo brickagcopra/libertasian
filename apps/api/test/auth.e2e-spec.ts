@@ -199,6 +199,41 @@ describe('Auth (E2E)', () => {
         .set('Cookie', 'libertasian-refresh=invalid-token')
         .expect(401);
     });
+
+    it('two concurrent refreshes with the same cookie: exactly one wins, family revoked', async () => {
+      // Mobile + web tab both detect access-token expiry at the same
+      // instant and POST /auth/refresh with the same refresh cookie.
+      // Server must treat this as a reuse-detection event: at most one
+      // request rotates the token, and the entire refresh-token family
+      // is revoked. Anything else lets two valid token families coexist.
+      const { refreshCookie } = await createAuthenticatedUser(app);
+
+      const fire = () =>
+        request(app.getHttpServer())
+          .post('/api/v1/auth/refresh')
+          .set('Cookie', refreshCookie);
+
+      const [a, b] = await Promise.all([fire(), fire()]);
+
+      const statuses = [a.status, b.status].sort();
+      expect(statuses).toEqual([201, 401]);
+
+      const winner = a.status === 201 ? a : b;
+      expect(winner.body.success).toBe(true);
+      expect(winner.body.data.accessToken).toBeDefined();
+      const rotated = extractRefreshCookie(winner.headers['set-cookie']);
+      expect(rotated.refreshToken).toBeTruthy();
+
+      // The "winner's" rotated token should also be dead — the loser's
+      // 401 must have triggered family-wide revocation. If both families
+      // are alive, this is the bug.
+      if (rotated.refreshCookie) {
+        await request(app.getHttpServer())
+          .post('/api/v1/auth/refresh')
+          .set('Cookie', rotated.refreshCookie)
+          .expect(401);
+      }
+    });
   });
 
   // ---- Logout ----

@@ -304,34 +304,57 @@ export class AuthService {
   ): Promise<TokenPair> {
     const tokenHash = this.hashToken(refreshToken);
 
+    // Atomic claim: a single guarded UPDATE collapses the prior
+    // read-then-update sequence (three round-trips with no row lock) into
+    // one write that exactly one concurrent caller can win. The WHERE
+    // clause filters on isRevoked=false so a second caller sees count=0
+    // and falls into the reuse-detection branch below.
+    const claim = await this.prisma.refreshToken.updateMany({
+      where: { tokenHash, isRevoked: false },
+      data: { isRevoked: true },
+    });
+
+    if (claim.count === 0) {
+      // Either the token never existed, or it was already revoked — the
+      // latter is the reuse-detection signal (the legitimate rotator
+      // already flipped it, and this is the second concurrent caller or
+      // a delayed replay).
+      const revokedRow = await this.prisma.refreshToken.findFirst({
+        where: { tokenHash, isRevoked: true },
+        select: { id: true, familyId: true, userId: true },
+      });
+      if (revokedRow) {
+        this.logger.warn(
+          `Refresh token reuse detected for family ${revokedRow.familyId}`,
+        );
+        await this.prisma.refreshToken.updateMany({
+          where: { familyId: revokedRow.familyId },
+          data: { isRevoked: true },
+        });
+        throw new UnauthorizedException(
+          'Token reuse detected. All sessions revoked.',
+        );
+      }
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+
+    // We won the atomic claim; load the row we just revoked for the rest
+    // of the rotation flow. The unique-by-hash invariant holds because
+    // tokenHash is a SHA-256 of a 256-bit-random refresh token.
     const storedToken = await this.prisma.refreshToken.findFirst({
       where: { tokenHash },
       include: { user: true },
     });
 
     if (!storedToken) {
+      // Should not happen — we just updated this row. Treat as invalid.
       throw new UnauthorizedException('Invalid refresh token');
     }
 
-    // Reuse detection: if the token was already rotated, revoke the entire family.
-    // Concurrent browser refreshes (startup rehydration + 401 interceptor) are
-    // prevented client-side by a single-flight guard on the refresh promise.
-    // The server enforces strict reuse detection as defense-in-depth.
-    if (storedToken.isRevoked) {
-      this.logger.warn(`Refresh token reuse detected for family ${storedToken.familyId}`);
-      await this.prisma.refreshToken.updateMany({
-        where: { familyId: storedToken.familyId },
-        data: { isRevoked: true },
-      });
-      throw new UnauthorizedException('Token reuse detected. All sessions revoked.');
-    }
-
-    // Check expiry
     if (storedToken.expiresAt < new Date()) {
       throw new UnauthorizedException('Refresh token expired');
     }
 
-    // Check device fingerprint
     if (storedToken.deviceFingerprint && storedToken.deviceFingerprint !== deviceFingerprint) {
       this.logger.warn(`Device fingerprint mismatch for user ${storedToken.userId}`);
       await this.prisma.refreshToken.updateMany({
@@ -341,13 +364,6 @@ export class AuthService {
       throw new UnauthorizedException('Device mismatch. All sessions revoked.');
     }
 
-    // Revoke the old token
-    await this.prisma.refreshToken.update({
-      where: { id: storedToken.id },
-      data: { isRevoked: true },
-    });
-
-    // Get active membership
     const membership = await this.prisma.organizationMember.findFirst({
       where: { userId: storedToken.userId, status: 'active' },
       orderBy: { createdAt: 'asc' },
