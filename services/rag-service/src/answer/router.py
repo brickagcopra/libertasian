@@ -13,7 +13,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
 from ..shared.auth import verify_internal_key
-from ..shared.exceptions import BudgetExceededError, RagPipelineError
+from ..shared.exceptions import (
+    BudgetExceededError,
+    RagPipelineError,
+    SchemaIntegrityError,
+)
 from .schemas import AnswerRequest, AnswerResponse
 from .service import generate_answer, stream_answer
 
@@ -37,6 +41,16 @@ async def post_answer(request: AnswerRequest) -> AnswerResponse:
         return await generate_answer(request)
     except BudgetExceededError:
         raise  # Let global exception handler return 503
+    except SchemaIntegrityError as exc:
+        # Hard schema bug (missing table/column from raw SQL). Surface
+        # explicitly with a distinct log line + 500 so ops dashboards
+        # can alert on the class. Distinct path means a schema drift
+        # never gets buried under the generic "unexpected error" bucket.
+        logger.exception("SchemaIntegrityError in /answer")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Schema integrity error: {exc}",
+        ) from exc
     except RagPipelineError as exc:
         logger.warning("RAG pipeline error: %s", exc)
         raise HTTPException(status_code=422, detail=str(exc)) from exc

@@ -287,12 +287,24 @@ class TestExtractDoctrines:
         self.mock_model_info = MagicMock(
             return_value={"model_name": "test-doctrine-model", "model_version": "1.0"}
         )
-        self.llm_response = json.dumps(_make_full_doctrine_data())
+        # PR #82 switched ``doctrines.service`` from ``generate_completion``
+        # to ``generate_completion_with_usage`` so token usage flows back
+        # for per-batch cost telemetry. Mirror the new return shape:
+        # ``{content, model_name, tokens_in, tokens_out}``.
+        self.llm_response = {
+            "content": json.dumps(_make_full_doctrine_data()),
+            "model_name": "test-doctrine-model",
+            "tokens_in": 0,
+            "tokens_out": 0,
+        }
         self.mock_generate = AsyncMock(return_value=self.llm_response)
 
         self.patches = [
             patch("src.doctrines.service.get_model_info", self.mock_model_info),
-            patch("src.doctrines.service.generate_completion", self.mock_generate),
+            patch(
+                "src.doctrines.service.generate_completion_with_usage",
+                self.mock_generate,
+            ),
         ]
         for p in self.patches:
             p.start()
@@ -343,7 +355,12 @@ class TestExtractDoctrines:
 
     @pytest.mark.asyncio
     async def test_invalid_llm_response_returns_empty(self) -> None:
-        self.mock_generate.return_value = "not json"
+        self.mock_generate.return_value = {
+            "content": "not json",
+            "model_name": "test-doctrine-model",
+            "tokens_in": 0,
+            "tokens_out": 0,
+        }
 
         request = _make_request()
         response = await extract_doctrines(request)

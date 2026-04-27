@@ -274,16 +274,29 @@ class TestResolveSingleCitation:
 
 
 class TestResolveCitations:
-    """Test the full resolve_citations function with mocked asyncpg."""
+    """Test the full resolve_citations function with mocked DB.
+
+    ``resolve_citations`` now goes through the shared
+    ``acquire_connection`` async context manager (PR #82) so the connection
+    yields ``SchemaIntegrityError`` on raw-SQL drift instead of leaking
+    ``UndefinedTableError`` into a generic catch-all. The tests patch
+    that helper rather than ``asyncpg.connect`` directly.
+    """
 
     @pytest.fixture(autouse=True)
     def _setup_mocks(self) -> None:
         self.mock_conn = AsyncMock()
-        self.mock_connect = AsyncMock(return_value=self.mock_conn)
-        self.mock_conn.close = AsyncMock()
+        # acquire_connection is an @asynccontextmanager — return an
+        # object whose __aenter__/__aexit__ yield our mock connection.
+        self.mock_cm = MagicMock()
+        self.mock_cm.__aenter__ = AsyncMock(return_value=self.mock_conn)
+        self.mock_cm.__aexit__ = AsyncMock(return_value=None)
 
         self.patches = [
-            patch("src.citations.service.asyncpg.connect", self.mock_connect),
+            patch(
+                "src.citations.service.acquire_connection",
+                return_value=self.mock_cm,
+            ),
         ]
         for p in self.patches:
             p.start()
@@ -345,24 +358,29 @@ class TestResolveCitations:
         assert response.results == []
 
     @pytest.mark.asyncio
-    async def test_connection_closed_on_success(self) -> None:
+    async def test_connection_released_on_success(self) -> None:
+        """The async context manager must release the pooled connection
+        after a successful run — verified via the patched
+        ``acquire_connection`` mock's ``__aexit__``."""
         self.mock_conn.fetchrow = AsyncMock(return_value=_make_doc_record())
 
         request = _make_request()
         await resolve_citations(request)
 
-        self.mock_conn.close.assert_called_once()
+        self.mock_cm.__aexit__.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_connection_closed_on_error(self) -> None:
+    async def test_connection_released_on_error(self) -> None:
+        """Exceptions from inside the ``async with`` block must still
+        unwind through ``__aexit__`` (i.e. context manager guarantees
+        release just like the prior try/finally did)."""
         self.mock_conn.fetchrow = AsyncMock(side_effect=RuntimeError("DB error"))
 
         request = _make_request()
         with pytest.raises(RuntimeError):
             await resolve_citations(request)
 
-        # Connection should still be closed via finally block
-        self.mock_conn.close.assert_called_once()
+        self.mock_cm.__aexit__.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_results_order_matches_input(self) -> None:
