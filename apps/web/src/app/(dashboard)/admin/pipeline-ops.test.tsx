@@ -105,6 +105,49 @@ vi.mock('@/features/admin/hooks/use-admin', async () => {
         configExcludedTypes: ['mcq_question'],
       },
     }),
+    useMissingDerivativesPlan: () => ({
+      data: {
+        perType: [
+          {
+            type: 'essay_prompt',
+            missingCount: 12,
+            costPerCallUsd: 0.0003,
+            estimatedCostUsd: 12 * 0.0003,
+            estimatedMinutes: 1,
+          },
+          {
+            type: 'mcq_question',
+            missingCount: 9,
+            costPerCallUsd: 0.0003,
+            estimatedCostUsd: 9 * 0.0003,
+            estimatedMinutes: 1,
+          },
+          {
+            type: 'flashcard',
+            missingCount: 7,
+            costPerCallUsd: 0.0003,
+            estimatedCostUsd: 7 * 0.0003,
+            estimatedMinutes: 1,
+          },
+        ],
+        totals: {
+          totalMissing: 28,
+          totalEstimatedCostUsd: 28 * 0.0003,
+          totalEstimatedMinutes: 1,
+          lastBackfillAt: null,
+          lastBackfillDispatchedBy: null,
+        },
+      },
+      isLoading: false,
+      isFetching: false,
+      error: null,
+    }),
+    useCitationsBackfillPlan: () => ({
+      data: null,
+      isLoading: false,
+      isFetching: false,
+      error: null,
+    }),
   };
 });
 
@@ -179,22 +222,31 @@ describe('Derivatives admin — pipeline ops buttons', () => {
     vi.clearAllMocks();
   });
 
-  it('opens the Fill Missing dialog and fires the mutation on confirm', () => {
+  it('opens the Fill Missing plan dialog and fires the per-type mutation on dispatch', () => {
     renderPage(<DerivativesAdminPage />);
 
     fireEvent.click(screen.getByRole('button', { name: /fill missing derivatives/i }));
-    // Confirm dialog visible
+    // Plan dialog visible with title heading
     expect(
       screen.getByRole('heading', { name: /fill missing derivatives/i }),
     ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /^confirm$/i }));
+    // Primary action label includes the live total (28 missing in our mock).
+    fireEvent.click(screen.getByRole('button', { name: /^Dispatch 28 jobs/i }));
     expect(fillMissing).toHaveBeenCalledTimes(1);
     const firstCall = fillMissing.mock.calls[0];
     if (!firstCall) throw new Error('expected mutate to be called once');
-    const call = firstCall[0] as { types: string[]; limit: number };
-    expect(call.types.sort()).toEqual(['essay_prompt', 'flashcard', 'mcq_question']);
-    expect(call.limit).toBe(200);
+    const call = firstCall[0] as {
+      perTypeLimits: { type: string; limit: number }[];
+    };
+    expect(call.perTypeLimits.map((p) => p.type).sort()).toEqual([
+      'essay_prompt',
+      'flashcard',
+      'mcq_question',
+    ]);
+    // Limits seeded from missingCount when below 200.
+    const essay = call.perTypeLimits.find((p) => p.type === 'essay_prompt');
+    expect(essay?.limit).toBe(12);
   });
 
   it('opens the Auto-Promote sweep dialog and fires the mutation on confirm', () => {

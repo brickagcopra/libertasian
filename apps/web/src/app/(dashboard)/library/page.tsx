@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useQueries } from '@tanstack/react-query';
 
 import { Card, CardContent } from '@/components/ui/card';
+import { StaggerGrid } from '@/components/ui/stagger-grid';
 import { LibraryBigIcon } from 'lucide-react';
 import { apiClient } from '@/lib/api-client';
 
@@ -39,7 +40,7 @@ export default function LibraryHubPage() {
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <StaggerGrid className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {DERIVATIVE_TYPES.map((t, i) => {
           const result = results[i];
           const approvedTotal = (result?.data ?? []).reduce(
@@ -78,7 +79,7 @@ export default function LibraryHubPage() {
             </Link>
           );
         })}
-      </div>
+      </StaggerGrid>
     </div>
   );
 }

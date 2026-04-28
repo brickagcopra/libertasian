@@ -2,6 +2,12 @@
 
 import { useEffect, useMemo, useState } from 'react';
 
+import {
+  PlanPreviewDialog,
+  type PlanItemizedColumn,
+  type PlanItemizedRow,
+} from '@/components/admin/plan-preview-dialog';
+
 interface BackfillPlanSitting {
   year: number;
   subjectSlug: string;
@@ -50,6 +56,14 @@ export interface BackfillDialogProps {
   ) => void;
 }
 
+const BAR_EXAM_COLUMNS: PlanItemizedColumn[] = [
+  { key: 'select', header: 'Include' },
+  { key: 'label', header: 'Subject' },
+  { key: 'meta', header: 'Part' },
+  { key: 'status', header: 'Status' },
+  { key: 'source', header: 'Source' },
+];
+
 function rowKey(s: BackfillPlanSitting): string {
   return `${s.year}|${s.subjectSlug}`;
 }
@@ -87,8 +101,6 @@ export function BackfillDialog({
     setSelectedKeys(initial);
   }, [plan, planSignature]);
 
-  const dispatchableCount = selectedKeys.size;
-
   const dispatchPayload = useMemo(() => {
     if (!plan) return [];
     return plan.sittings
@@ -96,198 +108,101 @@ export function BackfillDialog({
       .map((s) => ({ year: s.year, subjectSlug: s.subjectSlug }));
   }, [plan, selectedKeys]);
 
-  if (!open) return null;
+  const dispatchableCount = dispatchPayload.length;
 
-  return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="backfill-dialog-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-    >
-      <div className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-lg bg-white shadow-xl">
-        <div className="border-b px-6 py-4">
-          <h3 id="backfill-dialog-title" className="text-lg font-semibold">
-            Confirm LawPhil Archive Backfill
-          </h3>
-        </div>
+  const headline = plan ? (
+    <>
+      Will fetch {plan.totals.pending} new sitting
+      {plan.totals.pending === 1 ? '' : 's'} ({plan.totals.alreadyIngested}{' '}
+      already present). Est. {plan.totals.estimatedQuestionsLow}–
+      {plan.totals.estimatedQuestionsHigh} questions. Est.{' '}
+      {plan.totals.estimatedFetchMinutes} minute
+      {plan.totals.estimatedFetchMinutes === 1 ? '' : 's'} spread across{' '}
+      {plan.totals.estimatedFetchWindowsNeeded} fetch window
+      {plan.totals.estimatedFetchWindowsNeeded === 1 ? '' : 's'}.
+    </>
+  ) : null;
 
-        <div className="flex-1 overflow-y-auto px-6 py-4">
-          {isLoadingPlan ? (
-            <div className="py-12 text-center text-sm text-gray-500">
-              Loading plan…
-            </div>
-          ) : planError ? (
-            <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
-              Failed to load plan: {planError}
-            </div>
-          ) : plan ? (
-            <PlanBody
-              plan={plan}
-              selectedKeys={selectedKeys}
-              setSelectedKeys={setSelectedKeys}
-            />
-          ) : null}
-        </div>
+  const summaryExtra = plan ? (
+    <>
+      <p>
+        Window: {formatHour(plan.configuredFetchWindow.startHour)}–
+        {formatHour(plan.configuredFetchWindow.endHour)}{' '}
+        {plan.configuredFetchWindow.tz} (PH off-peak).
+      </p>
+      <p className="mt-1">
+        Years available: {plan.coverage.yearsAvailable.join(', ')}.
+      </p>
+      {plan.coverage.yearsAbsentOnLawphil.length > 0 && (
+        <p className="mt-1">
+          Years absent ({plan.coverage.yearsAbsentOnLawphil.join(', ')}):{' '}
+          {plan.coverage.absenceReason}
+        </p>
+      )}
+    </>
+  ) : null;
 
-        <div className="flex items-center justify-between gap-3 border-t bg-gray-50 px-6 py-3">
-          <div className="text-xs text-gray-600">
-            {plan && (
-              <>
-                Window: {formatHour(plan.configuredFetchWindow.startHour)}–
-                {formatHour(plan.configuredFetchWindow.endHour)}{' '}
-                {plan.configuredFetchWindow.tz} (PH off-peak)
-              </>
-            )}
-          </div>
-          <div className="flex gap-3">
-            <button
-              type="button"
-              onClick={onCancel}
-              className="rounded border px-4 py-2 text-sm"
-              disabled={isDispatching}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => onDispatch(dispatchPayload)}
-              disabled={
-                isDispatching ||
-                dispatchableCount === 0 ||
-                isLoadingPlan ||
-                !plan
-              }
-              className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-            >
-              {isDispatching
-                ? 'Dispatching…'
-                : `Dispatch ${dispatchableCount} sitting${
-                    dispatchableCount === 1 ? '' : 's'
-                  }`}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
+  const tableRows: PlanItemizedRow[] = useMemo(() => {
+    if (!plan) return [];
+    return plan.sittings.map((s) => {
+      const k = rowKey(s);
+      const isIngested = s.status === 'already_ingested';
+      const ariaLabel = `Include ${s.year} ${s.label}${s.part ? ` Part ${s.part}` : ''}`;
+      return {
+        key: k,
+        label: (
+          <>
+            <span className="mr-2 font-medium text-gray-900">{s.year}</span>
+            <span className="text-gray-700">{s.label}</span>
+          </>
+        ),
+        status: isIngested ? 'done' : 'pending',
+        statusLabel: isIngested ? 'Ingested' : 'Pending',
+        count: isIngested ? s.existingQuestionCount ?? undefined : undefined,
+        sourceUrl: s.sourceUrl,
+        selected: selectedKeys.has(k),
+        selectable: !isIngested,
+        ariaLabel,
+        meta: s.part ?? '—',
+      };
+    });
+  }, [plan, selectedKeys]);
 
-function PlanBody({
-  plan,
-  selectedKeys,
-  setSelectedKeys,
-}: {
-  plan: BackfillPlan;
-  selectedKeys: Set<string>;
-  setSelectedKeys: (next: Set<string>) => void;
-}) {
+  const footer = plan ? (
+    <>
+      Window: {formatHour(plan.configuredFetchWindow.startHour)}–
+      {formatHour(plan.configuredFetchWindow.endHour)}{' '}
+      {plan.configuredFetchWindow.tz} (PH off-peak)
+    </>
+  ) : null;
+
   const toggleRow = (key: string) => {
-    const next = new Set(selectedKeys);
-    if (next.has(key)) next.delete(key);
-    else next.add(key);
-    setSelectedKeys(next);
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   };
 
-  const { totals, sittings, coverage, configuredFetchWindow } = plan;
-
   return (
-    <div className="space-y-4">
-      <div className="rounded-md border bg-blue-50 p-4 text-sm">
-        <p className="font-medium text-blue-900">
-          Will fetch {totals.pending} new sitting
-          {totals.pending === 1 ? '' : 's'} ({totals.alreadyIngested} already
-          present). Est. {totals.estimatedQuestionsLow}–
-          {totals.estimatedQuestionsHigh} questions. Est.{' '}
-          {totals.estimatedFetchMinutes} minute
-          {totals.estimatedFetchMinutes === 1 ? '' : 's'} spread across{' '}
-          {totals.estimatedFetchWindowsNeeded} fetch window
-          {totals.estimatedFetchWindowsNeeded === 1 ? '' : 's'}.
-        </p>
-        <p className="mt-1 text-xs text-blue-800">
-          Window: {formatHour(configuredFetchWindow.startHour)}–
-          {formatHour(configuredFetchWindow.endHour)}{' '}
-          {configuredFetchWindow.tz} (PH off-peak).
-        </p>
-        <p className="mt-2 text-xs text-blue-800">
-          Years available: {coverage.yearsAvailable.join(', ')}.
-        </p>
-        {coverage.yearsAbsentOnLawphil.length > 0 && (
-          <p className="mt-1 text-xs text-blue-800">
-            Years absent ({coverage.yearsAbsentOnLawphil.join(', ')}):{' '}
-            {coverage.absenceReason}
-          </p>
-        )}
-      </div>
-
-      <div className="overflow-hidden rounded-md border border-gray-200">
-        <table className="min-w-full divide-y divide-gray-200 text-sm">
-          <thead className="bg-gray-50 text-xs uppercase text-gray-500">
-            <tr>
-              <th className="px-3 py-2 text-left">Include</th>
-              <th className="px-3 py-2 text-left">Year</th>
-              <th className="px-3 py-2 text-left">Subject</th>
-              <th className="px-3 py-2 text-left">Part</th>
-              <th className="px-3 py-2 text-left">Status</th>
-              <th className="px-3 py-2 text-left">Source</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-200">
-            {sittings.map((s) => {
-              const key = rowKey(s);
-              const isIngested = s.status === 'already_ingested';
-              const checked = selectedKeys.has(key);
-              return (
-                <tr
-                  key={key}
-                  className={isIngested ? 'bg-gray-50 text-gray-500' : ''}
-                >
-                  <td className="px-3 py-2">
-                    <input
-                      type="checkbox"
-                      aria-label={`Include ${s.year} ${s.label}${
-                        s.part ? ` Part ${s.part}` : ''
-                      }`}
-                      checked={checked}
-                      disabled={isIngested}
-                      onChange={() => toggleRow(key)}
-                    />
-                  </td>
-                  <td className="px-3 py-2 font-medium text-gray-900">
-                    {s.year}
-                  </td>
-                  <td className="px-3 py-2">{s.label}</td>
-                  <td className="px-3 py-2">{s.part ?? '—'}</td>
-                  <td className="px-3 py-2">
-                    {isIngested ? (
-                      <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800">
-                        Ingested
-                        {s.existingQuestionCount != null
-                          ? ` (${s.existingQuestionCount} Q)`
-                          : ''}
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-800">
-                        Pending
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2">
-                    <a
-                      href={s.sourceUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-blue-600 hover:underline"
-                    >
-                      LawPhil
-                    </a>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    <PlanPreviewDialog
+      open={open}
+      title="Confirm LawPhil Archive Backfill"
+      isLoadingPlan={isLoadingPlan}
+      planError={planError}
+      isDispatching={isDispatching}
+      summaryHeadline={headline}
+      summarySlots={[]}
+      summaryExtraContent={summaryExtra}
+      itemizedRows={tableRows}
+      itemizedColumns={BAR_EXAM_COLUMNS}
+      onToggleRow={toggleRow}
+      footerLeft={footer}
+      primaryActionLabel={`Dispatch ${dispatchableCount} sitting${dispatchableCount === 1 ? '' : 's'}`}
+      primaryActionDisabled={dispatchableCount === 0 || !plan}
+      onCancel={onCancel}
+      onPrimaryAction={() => onDispatch(dispatchPayload)}
+    />
   );
 }

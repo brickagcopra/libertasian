@@ -21,13 +21,17 @@ import {
   useIngestionJobHistory,
   useIngestionCandidates,
   useEndpointStatus,
-  useDispatchCitationsBackfill,
 } from '@/features/admin/hooks/use-admin';
+import { CitationsBackfillDialog } from './citations-backfill-dialog';
 import { AdminCardSkeleton, AdminListSkeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
+import { EmptyState } from '@/components/empty-states/empty-state';
+import { AnimatedAlert } from '@/components/ui/animated-alert';
+import { motion, useReducedMotion } from 'framer-motion';
+import { motionTokens } from '@/lib/motion';
 import {
   Select,
   SelectContent,
@@ -59,8 +63,7 @@ export default function IngestionDashboardPage() {
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
 
   // Citations backfill controls
-  const [confirmCitationsBackfill, setConfirmCitationsBackfill] = useState(false);
-  const [citationsLimit, setCitationsLimit] = useState<string>('');
+  const [showCitationsDialog, setShowCitationsDialog] = useState(false);
   const [citationsMsg, setCitationsMsg] = useState<{
     type: 'success' | 'error';
     text: string;
@@ -73,34 +76,8 @@ export default function IngestionDashboardPage() {
     cursor: jobCursor,
   });
   const { data: endpoints, isLoading: endpointsLoading } = useEndpointStatus();
-  const citationsBackfill = useDispatchCitationsBackfill();
 
-  const handleCitationsBackfillConfirm = () => {
-    const parsed = citationsLimit.trim() === '' ? undefined : Number(citationsLimit);
-    if (parsed !== undefined && (!Number.isFinite(parsed) || parsed < 1)) {
-      setCitationsMsg({ type: 'error', text: 'Limit must be a positive integer.' });
-      return;
-    }
-    citationsBackfill.mutate(
-      { limit: parsed },
-      {
-        onSuccess: (data) => {
-          setConfirmCitationsBackfill(false);
-          setCitationsMsg({
-            type: 'success',
-            text: `Citations backfill dispatched (task ${data.taskId.slice(0, 8)}…).`,
-          });
-        },
-        onError: (err) => {
-          setConfirmCitationsBackfill(false);
-          setCitationsMsg({
-            type: 'error',
-            text: err instanceof Error ? err.message : 'Failed to dispatch backfill',
-          });
-        },
-      },
-    );
-  };
+  const reduce = useReducedMotion();
 
   return (
     <div className="space-y-6">
@@ -135,65 +112,37 @@ export default function IngestionDashboardPage() {
             </SelectContent>
           </Select>
         </div>
-        <Button
-          variant="outline"
-          onClick={() => {
-            setCitationsLimit('');
-            setConfirmCitationsBackfill(true);
-          }}
-          disabled={citationsBackfill.isPending}
+        <motion.div
+          whileTap={reduce ? undefined : { scale: 0.97 }}
+          transition={motionTokens.easing.spring}
+          className="inline-flex"
         >
-          {citationsBackfill.isPending ? 'Dispatching...' : 'Backfill Citations'}
-        </Button>
+          <Button
+            variant="outline"
+            onClick={() => setShowCitationsDialog(true)}
+          >
+            Backfill Citations
+          </Button>
+        </motion.div>
       </div>
 
-      {citationsMsg && (
-        <div
-          className={`rounded-md px-3 py-2 text-sm ${citationsMsg.type === 'error' ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}
-        >
-          {citationsMsg.text}
-        </div>
-      )}
+      <AnimatedAlert message={citationsMsg} />
 
-      {confirmCitationsBackfill && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="mx-4 w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
-            <h3 className="text-lg font-semibold">Confirm Citations Backfill</h3>
-            <p className="mt-2 text-sm text-gray-600">
-              Dispatch the citation extraction task across the corpus. Existing
-              citations are not duplicated. The task runs asynchronously on the
-              worker pool.
-            </p>
-            <label className="mt-4 block text-sm font-medium text-gray-700">
-              Limit (optional)
-              <input
-                type="number"
-                value={citationsLimit}
-                onChange={(e) => setCitationsLimit(e.target.value)}
-                placeholder="No limit"
-                min={1}
-                max={10000}
-                className="mt-1 w-full rounded border-gray-300 text-sm"
-              />
-            </label>
-            <div className="mt-4 flex justify-end gap-3">
-              <button
-                onClick={() => setConfirmCitationsBackfill(false)}
-                className="rounded border px-4 py-2 text-sm"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCitationsBackfillConfirm}
-                disabled={citationsBackfill.isPending}
-                className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-              >
-                {citationsBackfill.isPending ? 'Dispatching...' : 'Dispatch'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <CitationsBackfillDialog
+        open={showCitationsDialog}
+        onCancel={() => setShowCitationsDialog(false)}
+        onSuccess={(data) => {
+          setShowCitationsDialog(false);
+          setCitationsMsg({
+            type: 'success',
+            text: `Citations backfill dispatched (task ${data.taskId.slice(0, 8)}…).`,
+          });
+        }}
+        onError={(text) => {
+          setCitationsMsg({ type: 'error', text });
+        }}
+      />
+
 
       {/* Stats Cards */}
       {statsLoading ? (
@@ -368,11 +317,11 @@ export default function IngestionDashboardPage() {
             )}
           </div>
         ) : (
-          <Card>
-            <CardContent className="py-8 text-center text-muted-foreground">
-              No ingestion jobs found matching the current filters.
-            </CardContent>
-          </Card>
+          <EmptyState
+            illustration="ingest-pending"
+            title="No ingestion jobs match these filters"
+            message="Adjust the status or trigger filters above, or wait for the next scheduled fetch window."
+          />
         )}
       </div>
 

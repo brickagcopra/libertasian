@@ -9,6 +9,10 @@ import { apiClient } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
+import { EmptyState } from '@/components/empty-states/empty-state';
+import { AnimatedAlert } from '@/components/ui/animated-alert';
+import { motion, useReducedMotion } from 'framer-motion';
+import { motionTokens } from '@/lib/motion';
 
 import { BackfillDialog, type BackfillPlan } from './backfill-dialog';
 
@@ -147,6 +151,7 @@ export default function AdminBarExamsPage() {
   });
 
   const sittings = sittingsQuery.data ?? [];
+  const reduce = useReducedMotion();
 
   return (
     <div className="space-y-6">
@@ -165,28 +170,33 @@ export default function AdminBarExamsPage() {
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
-        <Button
-          variant="default"
-          onClick={() => setShowBackfillDialog(true)}
-          disabled={ingestMutation.isPending}
+        <motion.div
+          whileTap={reduce ? undefined : { scale: 0.97 }}
+          transition={motionTokens.easing.spring}
+          className="inline-flex"
         >
-          {ingestMutation.isPending
-            ? 'Dispatching…'
-            : 'Backfill LawPhil Archive'}
-        </Button>
+          <Button
+            variant="default"
+            onClick={() => setShowBackfillDialog(true)}
+            disabled={ingestMutation.isPending}
+          >
+            {ingestMutation.isPending
+              ? 'Dispatching…'
+              : 'Backfill LawPhil Archive'}
+          </Button>
+        </motion.div>
       </div>
 
-      {statusMsg && (
-        <div
-          className={`rounded-md px-3 py-2 text-sm ${
-            statusMsg.kind === 'error'
-              ? 'bg-red-50 text-red-700'
-              : 'bg-green-50 text-green-700'
-          }`}
-        >
-          {statusMsg.text}
-        </div>
-      )}
+      <AnimatedAlert
+        message={
+          statusMsg
+            ? {
+                type: statusMsg.kind === 'error' ? 'error' : 'success',
+                text: statusMsg.text,
+              }
+            : null
+        }
+      />
 
       <BackfillDialog
         open={showBackfillDialog}
@@ -210,12 +220,11 @@ export default function AdminBarExamsPage() {
           </CardContent>
         </Card>
       ) : sittings.length === 0 ? (
-        <Card>
-          <CardContent className="py-8 text-center text-muted-foreground">
-            No bar exam sittings on record. Click &ldquo;Backfill LawPhil
-            Archive&rdquo; to populate.
-          </CardContent>
-        </Card>
+        <EmptyState
+          illustration="scales"
+          title="No bar exam sittings on record"
+          message="Click “Backfill LawPhil Archive” above to populate the registry from LawPhil during the next fetch window."
+        />
       ) : (
         <div className="overflow-hidden rounded-md border border-gray-200 bg-white">
           <table className="min-w-full divide-y divide-gray-200 text-sm">

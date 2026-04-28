@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import { CeleryDispatcherService } from '../../common/services/celery-dispatcher.service';
+import { RedisService } from '../../common/services/redis.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AutoPromoteService } from '../internal/auto-promote.service';
 import {
@@ -19,10 +20,67 @@ const DERIVATIVE_POLL_TASK = 'derivatives.poll_pending_jobs';
 
 const DEFAULT_BACKFILL_LIMIT = 200;
 
+const CITATIONS_PLAN_CACHE_KEY = 'cache:admin:citations-backfill-plan';
+const DERIVATIVES_PLAN_CACHE_KEY = 'cache:admin:missing-derivatives-plan';
+const PLAN_CACHE_TTL_SECONDS = 60;
+
+// Citations-per-doc estimates derived from the LawPhil corpus where the
+// extractor's average yield clusters around 10–25 unique citations per
+// case. Used only for the operator preview range.
+const CITATIONS_PER_DOC_LOW = 10;
+const CITATIONS_PER_DOC_HIGH = 25;
+
+// Citation extraction is mostly DB write — the LLM-free pipeline averages
+// well under half a second per doc on the dev cluster. 0.4s is the
+// conservative end of that range.
+const SECONDS_PER_CITATION_DOC = 0.4;
+
+// Per-call cost for the cheapest derivative-generation model in the mix.
+// The plan endpoint multiplies this by missingCount as a worst-case;
+// actual spend depends on which model the per-type policy resolves to.
+const DERIVATIVE_COST_PER_CALL_USD = 0.0003;
+const SECONDS_PER_DERIVATIVE_DOC = 0.4;
+
+const IN_FLIGHT_DERIVATIVE_STATUSES = [
+  'pending',
+  'dispatched',
+  'running',
+  'validating',
+] as const;
+
 export interface BackfillCitationsResult {
   taskId: string;
   dispatchedAt: string;
   limit: number | null;
+}
+
+export interface CitationsBackfillPlan {
+  totalCorpusDocs: number;
+  docsAlreadyHaveCitations: number;
+  docsPending: number;
+  estimatedNewCitationsRange: { low: number; high: number };
+  estimatedMinutes: number;
+  lastBackfillAt: string | null;
+  lastBackfillDispatchedBy: string | null;
+}
+
+export interface MissingDerivativesPlanType {
+  type: BackfillMissingDerivativeType;
+  missingCount: number;
+  costPerCallUsd: number;
+  estimatedCostUsd: number;
+  estimatedMinutes: number;
+}
+
+export interface MissingDerivativesPlan {
+  perType: MissingDerivativesPlanType[];
+  totals: {
+    totalMissing: number;
+    totalEstimatedCostUsd: number;
+    totalEstimatedMinutes: number;
+    lastBackfillAt: string | null;
+    lastBackfillDispatchedBy: string | null;
+  };
 }
 
 export interface BackfillMissingDerivativesResult {
@@ -55,6 +113,7 @@ export class AdminPipelineOpsService {
     private readonly prisma: PrismaService,
     private readonly celery: CeleryDispatcherService,
     private readonly autoPromote: AutoPromoteService,
+    private readonly redis: RedisService,
     config: ConfigService,
   ) {
     this.configThreshold = config.get<number>(
@@ -89,16 +148,131 @@ export class AdminPipelineOpsService {
   }
 
   /**
-   * For each requested derivative type, find legal_documents that have no
+   * Read-only operator preview for citations backfill. Counts total corpus
+   * docs, distinct fromDocumentId in `citations` (≈ docs that have already
+   * been extracted), and the resulting pending count. 60s Redis cache so
+   * a dialog open doesn't hammer the DB on every refresh.
+   */
+  async getCitationsBackfillPlan(): Promise<CitationsBackfillPlan> {
+    const cached = await this.tryReadCache<CitationsBackfillPlan>(
+      CITATIONS_PLAN_CACHE_KEY,
+    );
+    if (cached) return cached;
+
+    const [totalCorpusDocs, alreadyExtracted, lastAudit] = await Promise.all([
+      this.prisma.legalDocument.count(),
+      // groupBy on a single column gives one row per distinct value; .length
+      // is the distinct-count we want without pulling every citation row.
+      this.prisma.citation.groupBy({ by: ['fromDocumentId'] }),
+      this.prisma.auditLog.findFirst({
+        where: { action: 'admin_dispatched_citation_backfill' },
+        orderBy: { createdAt: 'desc' },
+        select: { createdAt: true, actorUserId: true },
+      }),
+    ]);
+
+    const docsAlreadyHaveCitations = alreadyExtracted.length;
+    const docsPending = Math.max(
+      0,
+      totalCorpusDocs - docsAlreadyHaveCitations,
+    );
+    const estimatedMinutes = Math.ceil(
+      (docsPending * SECONDS_PER_CITATION_DOC) / 60,
+    );
+
+    const plan: CitationsBackfillPlan = {
+      totalCorpusDocs,
+      docsAlreadyHaveCitations,
+      docsPending,
+      estimatedNewCitationsRange: {
+        low: docsPending * CITATIONS_PER_DOC_LOW,
+        high: docsPending * CITATIONS_PER_DOC_HIGH,
+      },
+      estimatedMinutes,
+      lastBackfillAt: lastAudit?.createdAt
+        ? lastAudit.createdAt.toISOString()
+        : null,
+      lastBackfillDispatchedBy: lastAudit?.actorUserId ?? null,
+    };
+
+    await this.writeCache(CITATIONS_PLAN_CACHE_KEY, plan);
+    return plan;
+  }
+
+  /**
+   * Read-only operator preview for missing-derivatives backfill. Counts,
+   * per type, legal_documents with no live artifact and no in-flight job
+   * — i.e. docs the dispatcher would actually pick up. 60s Redis cache.
+   */
+  async getMissingDerivativesPlan(): Promise<MissingDerivativesPlan> {
+    const cached = await this.tryReadCache<MissingDerivativesPlan>(
+      DERIVATIVES_PLAN_CACHE_KEY,
+    );
+    if (cached) return cached;
+
+    const totalCorpusDocs = await this.prisma.legalDocument.count();
+
+    const perType: MissingDerivativesPlanType[] = [];
+    for (const type of BACKFILL_MISSING_DERIVATIVE_TYPES) {
+      const missingCount = await this.countDocsMissingDerivativeAcrossCorpus(
+        type,
+        totalCorpusDocs,
+      );
+      perType.push({
+        type,
+        missingCount,
+        costPerCallUsd: DERIVATIVE_COST_PER_CALL_USD,
+        estimatedCostUsd: missingCount * DERIVATIVE_COST_PER_CALL_USD,
+        estimatedMinutes: Math.ceil(
+          (missingCount * SECONDS_PER_DERIVATIVE_DOC) / 60,
+        ),
+      });
+    }
+
+    const totalMissing = perType.reduce((s, r) => s + r.missingCount, 0);
+    const totalEstimatedCostUsd = perType.reduce(
+      (s, r) => s + r.estimatedCostUsd,
+      0,
+    );
+    const totalEstimatedMinutes = Math.ceil(
+      (totalMissing * SECONDS_PER_DERIVATIVE_DOC) / 60,
+    );
+
+    const lastAudit = await this.prisma.auditLog.findFirst({
+      where: { action: 'admin_dispatched_missing_derivatives_backfill' },
+      orderBy: { createdAt: 'desc' },
+      select: { createdAt: true, actorUserId: true },
+    });
+
+    const plan: MissingDerivativesPlan = {
+      perType,
+      totals: {
+        totalMissing,
+        totalEstimatedCostUsd,
+        totalEstimatedMinutes,
+        lastBackfillAt: lastAudit?.createdAt
+          ? lastAudit.createdAt.toISOString()
+          : null,
+        lastBackfillDispatchedBy: lastAudit?.actorUserId ?? null,
+      },
+    };
+
+    await this.writeCache(DERIVATIVES_PLAN_CACHE_KEY, plan);
+    return plan;
+  }
+
+  /**
+   * For each entry in perTypeLimits, find legal_documents that have no
    * derivative_artifact for that type (deletedAt IS NULL) and INSERT a
-   * pending derivative_generation_jobs row per doc. The existing
-   * `derivatives.poll_pending_jobs` beat task atomically claims and
-   * dispatches the matching generator. Skip count tracks docs that
-   * already had an artifact and were not enqueued.
+   * pending derivative_generation_jobs row per doc. Per-type limits let
+   * the operator prioritize (e.g. essays 500, mcqs 100). Skip count
+   * tracks docs that already had an artifact and were not enqueued.
    */
   async backfillMissingDerivatives(
-    types: BackfillMissingDerivativeType[],
-    limit: number,
+    perTypeLimits: ReadonlyArray<{
+      type: BackfillMissingDerivativeType;
+      limit: number;
+    }>,
     triggeredByUserId: string,
   ): Promise<BackfillMissingDerivativesResult> {
     const dispatchedByType = Object.fromEntries(
@@ -108,7 +282,7 @@ export class AdminPipelineOpsService {
     let totalDispatched = 0;
     let totalSkipped = 0;
 
-    for (const derivativeType of types) {
+    for (const { type: derivativeType, limit } of perTypeLimits) {
       const candidates = await this.findDocsMissingDerivative(
         derivativeType,
         limit,
@@ -205,6 +379,49 @@ export class AdminPipelineOpsService {
     };
   }
 
+  /**
+   * Total docs in the corpus that have neither a live artifact of this
+   * type nor an in-flight job for it. Two cheap lookups + a Set diff
+   * keeps this Prisma-DSL only (no raw SQL).
+   */
+  private async countDocsMissingDerivativeAcrossCorpus(
+    derivativeType: BackfillMissingDerivativeType,
+    totalCorpusDocs: number,
+  ): Promise<number> {
+    if (totalCorpusDocs === 0) return 0;
+
+    const [withArtifact, inFlight] = await Promise.all([
+      this.prisma.derivativeArtifact.findMany({
+        where: {
+          derivativeType,
+          deletedAt: null,
+          sourceDocumentId: { not: null },
+        },
+        select: { sourceDocumentId: true },
+        distinct: ['sourceDocumentId'],
+      }),
+      this.prisma.derivativeGenerationJob.findMany({
+        where: {
+          derivativeType,
+          status: { in: [...IN_FLIGHT_DERIVATIVE_STATUSES] },
+          sourceDocumentId: { not: null },
+        },
+        select: { sourceDocumentId: true },
+        distinct: ['sourceDocumentId'],
+      }),
+    ]);
+
+    const taken = new Set<string>();
+    for (const row of withArtifact) {
+      if (row.sourceDocumentId) taken.add(row.sourceDocumentId);
+    }
+    for (const row of inFlight) {
+      if (row.sourceDocumentId) taken.add(row.sourceDocumentId);
+    }
+
+    return Math.max(0, totalCorpusDocs - taken.size);
+  }
+
   private async findDocsMissingDerivative(
     derivativeType: BackfillMissingDerivativeType,
     limit: number,
@@ -242,7 +459,7 @@ export class AdminPipelineOpsService {
       where: {
         derivativeType,
         sourceDocumentId: { in: ids },
-        status: { in: ['pending', 'dispatched', 'running', 'validating'] },
+        status: { in: [...IN_FLIGHT_DERIVATIVE_STATUSES] },
       },
       select: { sourceDocumentId: true },
     });
@@ -252,6 +469,29 @@ export class AdminPipelineOpsService {
 
     const docs = recent.filter((d) => !taken.has(d.id));
     return { docs, scanned: recent.length };
+  }
+
+  private async tryReadCache<T>(key: string): Promise<T | null> {
+    const cached = await this.redis.get(key);
+    if (!cached) return null;
+    try {
+      return JSON.parse(cached) as T;
+    } catch (err) {
+      this.logger.warn(
+        `Discarding malformed cache entry at ${key}: ${(err as Error).message}`,
+      );
+      return null;
+    }
+  }
+
+  private async writeCache(key: string, value: unknown): Promise<void> {
+    try {
+      await this.redis.set(key, JSON.stringify(value), PLAN_CACHE_TTL_SECONDS);
+    } catch (err) {
+      this.logger.warn(
+        `Failed to write plan cache at ${key}: ${(err as Error).message}`,
+      );
+    }
   }
 }
 
@@ -272,3 +512,5 @@ function readLastPromoted(metadata: unknown): number | null {
   }
   return null;
 }
+
+export { DEFAULT_BACKFILL_LIMIT };
