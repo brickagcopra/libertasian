@@ -13,6 +13,12 @@ export default function PublicLayout({
 
           <nav className="flex items-center gap-6">
             <Link
+              href="/bar-exams"
+              className="text-sm font-medium text-gray-600 hover:text-gray-900"
+            >
+              Bar Exams
+            </Link>
+            <Link
               href="/blog"
               className="text-sm font-medium text-gray-600 hover:text-gray-900"
             >

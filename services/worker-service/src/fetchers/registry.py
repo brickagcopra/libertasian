@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from .congress import CongressFetcher
 from .lawphil import LawphilFetcher
+from .lawphil_bar import LawphilBarFetcher
 from .official_gazette import OfficialGazetteFetcher
 from .supreme_court import SupremeCourtFetcher
 
@@ -21,6 +22,7 @@ logger = logging.getLogger(__name__)
 FETCHER_REGISTRY: dict[str, type[BaseFetcher]] = {
     "supreme_court_elibrary": SupremeCourtFetcher,
     "lawphil": LawphilFetcher,
+    "lawphil_bar": LawphilBarFetcher,
     "official_gazette": OfficialGazetteFetcher,
     "congress": CongressFetcher,
 }

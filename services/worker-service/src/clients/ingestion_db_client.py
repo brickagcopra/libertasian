@@ -1271,3 +1271,206 @@ def create_model_run(
         )
     logger.info("Created model run %s: type=%s model=%s", run_id, run_type, model_name)
     return run_id
+
+
+# ─── Bar Exam Sittings + Questions Operations ──────────────────────────
+
+
+def find_source_by_domain(domain: str) -> dict[str, Any] | None:
+    """Look up a sources row by its ``domain`` column.
+
+    The bar-exam ingest task reuses the existing LawPhil source row to
+    keep all LawPhil-derived rows under a single trust-tier entry rather
+    than creating a parallel source registry.
+    """
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """SELECT id, name, type, trust_level, enabled
+               FROM sources
+               WHERE domain = %s
+               LIMIT 1""",
+            (domain,),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def find_bar_exam_sitting(
+    year: int,
+    part: str | None,
+    subject_study_code: str,
+) -> dict[str, Any] | None:
+    """Look up an existing bar exam sitting by its unique key.
+
+    Returns ``{id, source_document_id, ...}`` or ``None``. The unique
+    constraint ``(year, part, subjectStudyCode)`` makes this an exact
+    match; ``part IS NULL`` is matched explicitly so the legacy single-
+    paper subjects (no morning/afternoon split) resolve correctly.
+    """
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        if part is None:
+            cur.execute(
+                """SELECT id, year, part, subject_study_code,
+                          subject_bar_admin_code, source_document_id,
+                          source_url, chairperson, taxonomy_version
+                   FROM bar_exam_sittings
+                   WHERE year = %s AND part IS NULL
+                     AND subject_study_code = %s
+                   LIMIT 1""",
+                (year, subject_study_code),
+            )
+        else:
+            cur.execute(
+                """SELECT id, year, part, subject_study_code,
+                          subject_bar_admin_code, source_document_id,
+                          source_url, chairperson, taxonomy_version
+                   FROM bar_exam_sittings
+                   WHERE year = %s AND part = %s
+                     AND subject_study_code = %s
+                   LIMIT 1""",
+                (year, part, subject_study_code),
+            )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def create_bar_exam_sitting(
+    year: int,
+    part: str | None,
+    subject_study_code: str,
+    subject_bar_admin_code: str | None,
+    source_document_id: str | None,
+    source_url: str,
+    taxonomy_version: str,
+    chairperson: str | None = None,
+) -> str:
+    """Insert a new bar_exam_sittings row and return its id.
+
+    Caller is expected to have already checked ``find_bar_exam_sitting``
+    for an existing match — re-INSERTing the same key violates the
+    unique index ``(year, part, subjectStudyCode)``.
+    """
+    import uuid
+
+    sitting_id = str(uuid.uuid4())
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO bar_exam_sittings
+                   (id, year, part, subject_study_code, subject_bar_admin_code,
+                    chairperson, source_document_id, source_url, taxonomy_version)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+            (
+                sitting_id,
+                year,
+                part,
+                subject_study_code,
+                subject_bar_admin_code,
+                chairperson,
+                source_document_id,
+                source_url,
+                taxonomy_version,
+            ),
+        )
+    logger.info(
+        "Created bar exam sitting %s: year=%d part=%s subject=%s",
+        sitting_id, year, part, subject_study_code,
+    )
+    return sitting_id
+
+
+def update_bar_exam_sitting_source_doc(
+    sitting_id: str,
+    source_document_id: str,
+    source_url: str,
+    chairperson: str | None,
+) -> None:
+    """Refresh the source_document_id and metadata on an existing sitting.
+
+    Re-running ingestion creates a fresh legal_document version chain;
+    the sitting row points to the most recent canonical document.
+    """
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """UPDATE bar_exam_sittings
+                   SET source_document_id = %s,
+                       source_url = %s,
+                       chairperson = COALESCE(%s, chairperson)
+                   WHERE id = %s""",
+            (source_document_id, source_url, chairperson, sitting_id),
+        )
+
+
+def upsert_bar_exam_questions(
+    sitting_id: str,
+    questions: list[dict[str, Any]],
+    source_url: str,
+) -> int:
+    """UPSERT questions for a sitting; returns count inserted-or-updated.
+
+    Each question dict must carry ``question_number``, ``question_text``,
+    and ``sub_parts_count``; ``source_section_anchor`` is optional. The
+    ``ON CONFLICT … DO UPDATE`` clause refreshes the question_text and
+    sub_parts_count so re-runs pick up LawPhil typo fixes without
+    duplicating rows.
+    """
+    if not questions:
+        return 0
+    written = 0
+    with get_connection() as conn, conn.cursor() as cur:
+        for q in questions:
+            cur.execute(
+                """INSERT INTO bar_exam_questions
+                       (id, bar_exam_sitting_id, question_number, question_text,
+                        sub_parts_count, source_url, source_section_anchor,
+                        parsed_at, created_at, updated_at)
+                       VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, %s,
+                               NOW(), NOW(), NOW())
+                       ON CONFLICT (bar_exam_sitting_id, question_number)
+                       DO UPDATE SET question_text = EXCLUDED.question_text,
+                                     sub_parts_count = EXCLUDED.sub_parts_count,
+                                     source_url = EXCLUDED.source_url,
+                                     source_section_anchor =
+                                         EXCLUDED.source_section_anchor,
+                                     parsed_at = EXCLUDED.parsed_at,
+                                     updated_at = NOW()""",
+                (
+                    sitting_id,
+                    q["question_number"],
+                    q["question_text"],
+                    q.get("sub_parts_count", 0),
+                    source_url,
+                    q.get("source_section_anchor"),
+                ),
+            )
+            written += cur.rowcount
+    logger.info(
+        "Upserted %d questions for bar exam sitting %s (input=%d)",
+        written, sitting_id, len(questions),
+    )
+    return written
+
+
+def publish_legal_document_immediately(document_id: str) -> None:
+    """Mark a freshly-ingested official-source document as published.
+
+    Used by the bar exam ingest task: LawPhil bar Q pages are static
+    official content, so the truthfulness validator's "needs review"
+    holding pattern adds no signal. We mark the document published +
+    verified at ingest time so it surfaces in the public Library
+    immediately, bypassing the auto-publish chain that targets
+    case decisions.
+    """
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """UPDATE legal_documents
+                   SET status = 'published',
+                       truthfulness_status = 'verified',
+                       is_published = true,
+                       is_official = true,
+                       updated_at = NOW()
+                   WHERE id = %s""",
+            (document_id,),
+        )
+    logger.info("Published bar exam document %s immediately", document_id)
