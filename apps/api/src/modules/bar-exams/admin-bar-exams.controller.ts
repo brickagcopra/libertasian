@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -21,8 +22,17 @@ import { MfaGuard } from '../../common/guards/mfa.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { TenantGuard } from '../../common/guards/tenant.guard';
 import { AuditService } from '../audit/audit.service';
-import { AdminBarExamsService, DispatchedTask } from './admin-bar-exams.service';
+import {
+  AdminBarExamsService,
+  BackfillPlan,
+  DispatchResult,
+  DispatchedTask,
+} from './admin-bar-exams.service';
 import { IngestBarExamDto } from './dto';
+
+type DispatchResponse =
+  | { mode: 'single_sitting' | 'single_year' | 'backfill_all'; task: DispatchedTask }
+  | { mode: 'sittings_list'; result: DispatchResult };
 
 @ApiTags('Admin — Bar Exams')
 @Controller('admin/bar-exams')
@@ -45,42 +55,116 @@ export class AdminBarExamsController {
     return { success: true, data };
   }
 
+  @Get('backfill/plan')
+  @ApiOperation({
+    summary:
+      'Preview the LawPhil backfill plan: which sittings would be ' +
+      'fetched, which are already ingested, time-cost estimate. ' +
+      'Read-only; cached 60s.',
+  })
+  async getBackfillPlan(): Promise<{ success: true; data: BackfillPlan }> {
+    const data = await this.service.getBackfillPlan();
+    return { success: true, data };
+  }
+
   @Post('ingest')
   @HttpCode(HttpStatus.ACCEPTED)
   @Throttle({ default: { ttl: 60_000, limit: 10 } })
   @ApiOperation({
     summary:
-      'Dispatch bar_exam.ingest_sitting (single sitting) OR ' +
-      'bar_exam.backfill_lawphil_archive (year window or full archive).',
+      'Dispatch bar exam ingest tasks. Accepts three shapes: single ' +
+      'sitting/year ({year, subjectSlug?}), explicit list ({sittings: ' +
+      '[...]}), or full archive ({backfillAll: true}).',
   })
   async dispatchIngest(
     @Body() dto: IngestBarExamDto,
     @CurrentUser() user: JwtPayload,
     @Ip() ip: string,
-  ): Promise<{ success: true; data: DispatchedTask }> {
-    const data = await this.service.dispatchIngest({
-      year: dto.year,
-      subjectSlug: dto.subjectSlug,
-      limit: dto.limit,
-    });
+  ): Promise<{ success: true; data: DispatchResponse }> {
+    const shape = pickShape(dto);
 
+    if (shape === 'sittings_list') {
+      const result = await this.service.dispatchSittingList(dto.sittings!);
+      await this.auditService.log({
+        organizationId: user.organizationId,
+        actorUserId: user.sub,
+        actorType: 'admin',
+        action: 'admin_dispatched_bar_exam_ingest',
+        entityType: 'celery_task_batch',
+        metadata: {
+          ip,
+          mode: 'sittings_list',
+          requested: dto.sittings!.length,
+          dispatched: result.totalDispatched,
+          skipped: result.totalSkipped,
+          taskIds: result.dispatched.map((d) => d.taskId),
+        },
+      });
+      return { success: true, data: { mode: 'sittings_list', result } };
+    }
+
+    if (shape === 'backfill_all') {
+      const task = await this.service.dispatchBackfillAll();
+      await this.auditService.log({
+        organizationId: user.organizationId,
+        actorUserId: user.sub,
+        actorType: 'admin',
+        action: 'admin_dispatched_bar_exam_ingest',
+        entityType: 'celery_task',
+        entityId: task.taskId,
+        metadata: {
+          ip,
+          mode: 'backfill_all',
+          taskName: task.taskName,
+        },
+      });
+      return { success: true, data: { mode: 'backfill_all', task } };
+    }
+
+    if (shape === 'single_sitting') {
+      const task = await this.service.dispatchSitting(
+        dto.year!,
+        dto.subjectSlug!,
+      );
+      await this.auditService.log({
+        organizationId: user.organizationId,
+        actorUserId: user.sub,
+        actorType: 'admin',
+        action: 'admin_dispatched_bar_exam_ingest',
+        entityType: 'celery_task',
+        entityId: task.taskId,
+        metadata: {
+          ip,
+          mode: 'single_sitting',
+          taskName: task.taskName,
+          year: dto.year ?? null,
+          subjectSlug: dto.subjectSlug ?? null,
+        },
+      });
+      return { success: true, data: { mode: 'single_sitting', task } };
+    }
+
+    // single_year backfill
+    const task = await this.service.dispatchSingleYearBackfill(
+      dto.year!,
+      dto.limit,
+    );
     await this.auditService.log({
       organizationId: user.organizationId,
       actorUserId: user.sub,
       actorType: 'admin',
       action: 'admin_dispatched_bar_exam_ingest',
       entityType: 'celery_task',
-      entityId: data.taskId,
+      entityId: task.taskId,
       metadata: {
         ip,
-        taskName: data.taskName,
+        mode: 'single_year',
+        taskName: task.taskName,
         year: dto.year ?? null,
-        subjectSlug: dto.subjectSlug ?? null,
         limit: dto.limit ?? null,
       },
     });
-
-    return { success: true, data };
+    return { success: true, data: { mode: 'single_year', task } };
   }
 
   @Post('reparse/:sittingId')
@@ -113,4 +197,44 @@ export class AdminBarExamsController {
 
     return { success: true, data };
   }
+}
+
+type Shape =
+  | 'single_sitting'
+  | 'single_year'
+  | 'sittings_list'
+  | 'backfill_all';
+
+function pickShape(dto: IngestBarExamDto): Shape {
+  const hasSittings = !!dto.sittings && dto.sittings.length > 0;
+  const hasBackfillAll = dto.backfillAll === true;
+  const hasYear = dto.year !== undefined;
+  const hasSubjectSlug = !!dto.subjectSlug;
+
+  // backfillAll is only meaningful when set to true and nothing else
+  // is set; the single-shape contract forbids combining it with the
+  // year/sittings shapes.
+  const flags = [hasSittings, hasBackfillAll, hasYear || hasSubjectSlug];
+  const setCount = flags.filter(Boolean).length;
+  if (setCount > 1) {
+    throw new BadRequestException(
+      'Provide exactly one of: {year, subjectSlug?}, {sittings}, ' +
+        '{backfillAll: true}',
+    );
+  }
+
+  if (hasSittings) return 'sittings_list';
+  if (hasBackfillAll) return 'backfill_all';
+  if (hasSubjectSlug && !hasYear) {
+    throw new BadRequestException(
+      '`year` is required when `subjectSlug` is provided',
+    );
+  }
+  if (hasSubjectSlug && hasYear) return 'single_sitting';
+  if (hasYear) return 'single_year';
+
+  throw new BadRequestException(
+    'Empty body — provide one of: {year, subjectSlug?}, ' +
+      '{sittings}, {backfillAll: true}',
+  );
 }
