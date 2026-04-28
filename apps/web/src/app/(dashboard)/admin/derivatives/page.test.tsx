@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const mockUseJobDigest = vi.hoisted(() => vi.fn());
@@ -283,17 +283,20 @@ describe('Derivatives Admin — JobDetailPanel with MCQs', () => {
 
     fireEvent.click(screen.getByText('Detail'));
 
-    expect(screen.getByText('MCQ Questions (1)')).toBeDefined();
-    expect(
-      screen.getByText('Which statement best describes command responsibility?'),
-    ).toBeDefined();
-    expect(screen.getByText('Option B text')).toBeDefined();
-    expect(screen.getByText(/Correct answer/)).toBeDefined();
+    const mcqHeading = screen.getByText('MCQ Questions (1)');
+    const mcqSection = mcqHeading.closest('div');
+    if (!mcqSection) throw new Error('MCQ section container not found');
+    const mcq = within(mcqSection);
 
-    // ArtifactReviewActions renders three verdict buttons
-    expect(screen.getByRole('button', { name: /^Approve$/ })).toBeDefined();
-    expect(screen.getByRole('button', { name: /Needs revision/ })).toBeDefined();
-    expect(screen.getByRole('button', { name: /^Reject$/ })).toBeDefined();
+    expect(mcq.getByText('Which statement best describes command responsibility?')).toBeDefined();
+    expect(mcq.getByText('Option B text')).toBeDefined();
+    expect(mcq.getByText(/Correct answer/)).toBeDefined();
+
+    // ArtifactReviewActions renders three verdict buttons (scoped to MCQ
+    // section to avoid colliding with BulkApproveByConfidencePanel's Approve).
+    expect(mcq.getByRole('button', { name: /^Approve$/ })).toBeDefined();
+    expect(mcq.getByRole('button', { name: /Needs revision/ })).toBeDefined();
+    expect(mcq.getByRole('button', { name: /^Reject$/ })).toBeDefined();
   });
 });
 
