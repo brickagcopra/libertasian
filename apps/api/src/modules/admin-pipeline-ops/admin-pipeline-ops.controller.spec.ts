@@ -356,7 +356,7 @@ describe('AdminPipelineOpsController', () => {
       expect(findManyCalls[1][0].take).toBe(2);
 
       // Audit metadata reflects the per-type shape.
-      const auditCall = auditService.log.mock.calls[0][0];
+      const auditCall = auditService.log.mock.calls[0]![0];
       expect(auditCall.metadata).toEqual(
         expect.objectContaining({
           types: ['essay_prompt', 'mcq_question'],
