@@ -10,6 +10,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 
+import { BackfillDialog, type BackfillPlan } from './backfill-dialog';
+
 interface BarExamSittingRow {
   id: string;
   year: number;
@@ -29,11 +31,23 @@ interface DispatchedTaskResp {
   kwargs: Record<string, unknown>;
 }
 
+interface DispatchListResult {
+  dispatched: { year: number; subjectSlug: string; taskId: string }[];
+  skipped: { year: number; subjectSlug: string; reason: string }[];
+  totalDispatched: number;
+  totalSkipped: number;
+}
+
+type DispatchResponse =
+  | { mode: 'single_sitting' | 'single_year' | 'backfill_all'; task: DispatchedTaskResp }
+  | { mode: 'sittings_list'; result: DispatchListResult };
+
 const SITTINGS_QUERY_KEY = ['admin', 'bar-exams', 'sittings'];
+const PLAN_QUERY_KEY = ['admin', 'bar-exams', 'backfill-plan'];
 
 export default function AdminBarExamsPage() {
   const qc = useQueryClient();
-  const [showBackfillConfirm, setShowBackfillConfirm] = useState(false);
+  const [showBackfillDialog, setShowBackfillDialog] = useState(false);
   const [statusMsg, setStatusMsg] = useState<{
     kind: 'success' | 'error';
     text: string;
@@ -50,24 +64,56 @@ export default function AdminBarExamsPage() {
     },
   });
 
+  const planQuery = useQuery({
+    queryKey: PLAN_QUERY_KEY,
+    queryFn: async () => {
+      const res = await apiClient.get<{
+        success: boolean;
+        data: BackfillPlan;
+      }>('/admin/bar-exams/backfill/plan');
+      return res.data;
+    },
+    enabled: showBackfillDialog,
+    staleTime: 30_000,
+  });
+
   const ingestMutation = useMutation({
     mutationFn: async (body: {
+      sittings?: { year: number; subjectSlug: string }[];
+      backfillAll?: true;
       year?: number;
       subjectSlug?: string;
       limit?: number;
     }) => {
       const res = await apiClient.post<{
         success: boolean;
-        data: DispatchedTaskResp;
+        data: DispatchResponse;
       }>('/admin/bar-exams/ingest', body);
       return res.data;
     },
     onSuccess: (data) => {
-      setStatusMsg({
-        kind: 'success',
-        text: `Dispatched ${data.taskName} (task ${data.taskId.slice(0, 8)}…).`,
-      });
+      if (data.mode === 'sittings_list') {
+        setStatusMsg({
+          kind: 'success',
+          text:
+            `Dispatched ${data.result.totalDispatched} sitting` +
+            `${data.result.totalDispatched === 1 ? '' : 's'}; ` +
+            `skipped ${data.result.totalSkipped}. ` +
+            'Backfill will run during fetch window (1–6PM ET).',
+        });
+      } else {
+        setStatusMsg({
+          kind: 'success',
+          text:
+            `Dispatched ${data.task.taskName} (task ${data.task.taskId.slice(
+              0,
+              8,
+            )}…). Backfill will run during fetch window (1–6PM ET).`,
+        });
+      }
       qc.invalidateQueries({ queryKey: SITTINGS_QUERY_KEY });
+      qc.invalidateQueries({ queryKey: PLAN_QUERY_KEY });
+      setShowBackfillDialog(false);
     },
     onError: (err) => {
       setStatusMsg({
@@ -121,7 +167,7 @@ export default function AdminBarExamsPage() {
       <div className="flex flex-wrap items-center gap-3">
         <Button
           variant="default"
-          onClick={() => setShowBackfillConfirm(true)}
+          onClick={() => setShowBackfillDialog(true)}
           disabled={ingestMutation.isPending}
         >
           {ingestMutation.isPending
@@ -142,40 +188,20 @@ export default function AdminBarExamsPage() {
         </div>
       )}
 
-      {showBackfillConfirm && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-        >
-          <div className="mx-4 w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
-            <h3 className="text-lg font-semibold">Confirm Archive Backfill</h3>
-            <p className="mt-2 text-sm text-gray-600">
-              This will fetch ~108 LawPhil bar exam pages over the next several
-              fetch windows (PH off-peak only). Existing sittings are skipped;
-              the task is idempotent. Continue?
-            </p>
-            <div className="mt-4 flex justify-end gap-3">
-              <button
-                onClick={() => setShowBackfillConfirm(false)}
-                className="rounded border px-4 py-2 text-sm"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  ingestMutation.mutate({});
-                  setShowBackfillConfirm(false);
-                }}
-                disabled={ingestMutation.isPending}
-                className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-              >
-                Dispatch Backfill
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <BackfillDialog
+        open={showBackfillDialog}
+        plan={planQuery.data ?? null}
+        isLoadingPlan={planQuery.isLoading || planQuery.isFetching}
+        planError={
+          planQuery.error instanceof Error ? planQuery.error.message : null
+        }
+        isDispatching={ingestMutation.isPending}
+        onCancel={() => setShowBackfillDialog(false)}
+        onDispatch={(picked) => {
+          if (picked.length === 0) return;
+          ingestMutation.mutate({ sittings: picked });
+        }}
+      />
 
       {sittingsQuery.isLoading ? (
         <Card>
