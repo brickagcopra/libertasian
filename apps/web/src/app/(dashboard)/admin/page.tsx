@@ -147,6 +147,7 @@ export default function AdminDashboardPage() {
               <QuickLink href="/admin/health" label="Source Health" />
               <QuickLink href="/admin/duplicates" label="Duplicates" />
               <QuickLink href="/admin/categorize" label="Categorize Bar Subjects" />
+              <QuickLink href="/admin/bar-exams" label="Past Bar Exams" />
             </div>
           </div>
         </>

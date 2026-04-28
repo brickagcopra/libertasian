@@ -61,6 +61,7 @@ import { AccountingModule } from './modules/accounting/accounting.module';
 import { AiSettingsModule } from './modules/ai-settings/ai-settings.module';
 import { AdminPipelineOpsModule } from './modules/admin-pipeline-ops/admin-pipeline-ops.module';
 import { BackfillModule } from './modules/backfill/backfill.module';
+import { BarExamsModule } from './modules/bar-exams/bar-exams.module';
 import { GoldenSetsModule } from './modules/golden-sets/golden-sets.module';
 import { DerivativesAdminModule } from './modules/derivatives-admin/derivatives-admin.module';
 import { DerivativesModule } from './modules/derivatives/derivatives.module';
@@ -221,6 +222,7 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
     AiSettingsModule,
     BackfillModule,
     AdminPipelineOpsModule,
+    BarExamsModule,
     GoldenSetsModule,
     DerivativesAdminModule,
     DerivativesModule,

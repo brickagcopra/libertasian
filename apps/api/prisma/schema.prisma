@@ -3793,12 +3793,43 @@ model BarExamSitting {
   sourceUrl           String? @map("source_url") @db.Text
   taxonomyVersion     String  @map("taxonomy_version") @db.VarChar(20)
 
-  sourceDocument LegalDocument? @relation(fields: [sourceDocumentId], references: [id])
+  sourceDocument LegalDocument?    @relation(fields: [sourceDocumentId], references: [id])
   essayPrompts   EssayPrompt[]
+  questions      BarExamQuestion[]
 
   @@unique([year, part, subjectStudyCode])
   @@index([year])
   @@map("bar_exam_sittings")
+}
+
+// ---------------------------------------------------------------------------
+// BarExamQuestion — verbatim past bar exam question texts from official
+// archives (currently LawPhil 2006-2022).
+//
+// Read-only display content. Sub-parts (a)/(b)/(c) within a question stay
+// inline in `question_text` (verbatim) and are counted in `sub_parts_count`.
+// One row per primary numbered question; sittings own their question set
+// via `bar_exam_sitting_id` with cascade delete.
+// ---------------------------------------------------------------------------
+
+model BarExamQuestion {
+  id                  String   @id @default(uuid()) @db.Uuid
+  barExamSittingId    String   @map("bar_exam_sitting_id") @db.Uuid
+  questionNumber      Int      @map("question_number") @db.SmallInt
+  questionText        String   @map("question_text") @db.Text
+  subPartsCount       Int      @default(0) @map("sub_parts_count") @db.SmallInt
+  sourceUrl           String?  @map("source_url") @db.Text
+  sourceSectionAnchor String?  @map("source_section_anchor") @db.Text
+  parsedAt            DateTime @map("parsed_at") @db.Timestamptz
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  barExamSitting BarExamSitting @relation(fields: [barExamSittingId], references: [id], onDelete: Cascade)
+
+  @@unique([barExamSittingId, questionNumber])
+  @@index([barExamSittingId])
+  @@index([questionNumber])
+  @@map("bar_exam_questions")
 }
 
 // ---------------------------------------------------------------------------
