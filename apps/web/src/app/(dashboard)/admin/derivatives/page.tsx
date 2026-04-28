@@ -22,9 +22,9 @@ import {
 } from '@/features/admin/hooks/use-derivatives-admin';
 import {
   useAutoPromoteStatus,
-  useBackfillMissingDerivatives,
   useTriggerAutoPromoteSweep,
 } from '@/features/admin/hooks/use-admin';
+import { MissingDerivativesDialog } from './missing-derivatives-dialog';
 import type {
   DerivativeTypeStats,
   DerivativeJob,
@@ -40,8 +40,10 @@ import { FlashcardRenderer } from '@/features/derivatives/renderers/flashcard-re
 import { OutlineRenderer } from '@/features/derivatives/renderers/outline-renderer';
 import type { DerivativeDetail } from '@/features/derivatives/types';
 import { BulkApproveByConfidencePanel } from '@/features/admin/components/bulk-approve-by-confidence-panel';
-import { Alert, AlertDescription } from '@/components/ui/alert';
+import { AnimatedAlert } from '@/components/ui/animated-alert';
 import { AdminCardSkeleton } from '@/components/ui/skeleton';
+import { motion, useReducedMotion } from 'framer-motion';
+import { motionTokens } from '@/lib/motion';
 
 const DERIVATIVE_TYPES = [
   'case_digest',
@@ -111,49 +113,13 @@ export default function DerivativesAdminPage() {
   const [actionMsg, setActionMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Pipeline ops
-  const [confirmFillMissing, setConfirmFillMissing] = useState(false);
+  const [showMissingDialog, setShowMissingDialog] = useState(false);
   const [confirmAutoPromote, setConfirmAutoPromote] = useState(false);
-  const [fillTypes, setFillTypes] = useState<Record<string, boolean>>({
-    essay_prompt: true,
-    mcq_question: true,
-    flashcard: true,
-  });
-  const [fillLimit, setFillLimit] = useState<number>(200);
-  const fillMissing = useBackfillMissingDerivatives();
   const autoPromoteSweep = useTriggerAutoPromoteSweep();
   const { data: autoPromoteStatus } = useAutoPromoteStatus();
 
-  const handleFillMissingConfirm = () => {
-    const selectedTypes = Object.entries(fillTypes)
-      .filter(([, on]) => on)
-      .map(([t]) => t);
-    if (selectedTypes.length === 0) {
-      setActionMsg({ type: 'error', text: 'Select at least one derivative type.' });
-      return;
-    }
-    fillMissing.mutate(
-      { types: selectedTypes, limit: fillLimit },
-      {
-        onSuccess: (data) => {
-          setConfirmFillMissing(false);
-          const breakdown = Object.entries(data.dispatchedByType)
-            .map(([t, n]) => `${t}: ${n}`)
-            .join(', ');
-          setActionMsg({
-            type: 'success',
-            text: `Enqueued ${data.totalDispatched} jobs (${breakdown}). Skipped ${data.totalSkipped}.`,
-          });
-        },
-        onError: (err) => {
-          setConfirmFillMissing(false);
-          setActionMsg({
-            type: 'error',
-            text: err instanceof Error ? err.message : 'Failed to fill missing derivatives',
-          });
-        },
-      },
-    );
-  };
+  const reduce = useReducedMotion();
+  const tapProps = reduce ? {} : { whileTap: { scale: 0.97 } };
 
   const handleAutoPromoteConfirm = () => {
     autoPromoteSweep.mutate(undefined, {
@@ -234,13 +200,7 @@ export default function DerivativesAdminPage() {
       </div>
 
       {/* Action message */}
-      {actionMsg && (
-        <Alert variant={actionMsg.type === 'error' ? 'destructive' : 'default'}>
-          <AlertDescription className={actionMsg.type === 'success' ? 'text-green-700' : ''}>
-            {actionMsg.text}
-          </AlertDescription>
-        </Alert>
-      )}
+      <AnimatedAlert message={actionMsg} />
 
       {/* Settings Card */}
       <div className="rounded-lg border bg-white p-6 shadow-sm">
@@ -300,20 +260,23 @@ export default function DerivativesAdminPage() {
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold">Pipeline Operations</h2>
           <div className="flex gap-2">
-            <button
-              onClick={() => setConfirmFillMissing(true)}
-              disabled={fillMissing.isPending}
+            <motion.button
+              {...tapProps}
+              transition={motionTokens.easing.spring}
+              onClick={() => setShowMissingDialog(true)}
               className="rounded border border-blue-600 bg-white px-3 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50"
             >
-              {fillMissing.isPending ? 'Filling...' : 'Fill Missing Derivatives'}
-            </button>
-            <button
+              Fill Missing Derivatives
+            </motion.button>
+            <motion.button
+              {...tapProps}
+              transition={motionTokens.easing.spring}
               onClick={() => setConfirmAutoPromote(true)}
               disabled={autoPromoteSweep.isPending}
               className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             >
               {autoPromoteSweep.isPending ? 'Sweeping...' : 'Auto-Promote Sweep Now'}
-            </button>
+            </motion.button>
           </div>
         </div>
         <div className="grid gap-3 text-sm sm:grid-cols-4">
@@ -516,59 +479,24 @@ export default function DerivativesAdminPage() {
       )}
 
       {/* Fill Missing Derivatives Dialog */}
-      {confirmFillMissing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="mx-4 w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
-            <h3 className="text-lg font-semibold">Fill Missing Derivatives</h3>
-            <p className="mt-2 text-sm text-gray-600">
-              For each selected type, scan the most recent legal documents and
-              enqueue jobs only for those without an existing artifact (or in-flight
-              job) of that type.
-            </p>
-            <div className="mt-4 space-y-2">
-              {(['essay_prompt', 'mcq_question', 'flashcard'] as const).map((t) => (
-                <label key={t} className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={fillTypes[t] ?? false}
-                    onChange={(e) =>
-                      setFillTypes({ ...fillTypes, [t]: e.target.checked })
-                    }
-                    className="h-4 w-4 rounded border-gray-300"
-                  />
-                  <span>{TYPE_LABELS[t] ?? t}</span>
-                </label>
-              ))}
-            </div>
-            <label className="mt-4 block text-sm">
-              <span className="font-medium text-gray-700">Limit per type</span>
-              <input
-                type="number"
-                value={fillLimit}
-                min={1}
-                max={5000}
-                onChange={(e) => setFillLimit(Number(e.target.value))}
-                className="mt-1 w-full rounded border-gray-300 text-sm"
-              />
-            </label>
-            <div className="mt-4 flex justify-end gap-3">
-              <button
-                onClick={() => setConfirmFillMissing(false)}
-                className="rounded border px-4 py-2 text-sm"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleFillMissingConfirm}
-                disabled={fillMissing.isPending}
-                className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-              >
-                {fillMissing.isPending ? 'Enqueuing...' : 'Confirm'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <MissingDerivativesDialog
+        open={showMissingDialog}
+        onCancel={() => setShowMissingDialog(false)}
+        onSuccess={(data) => {
+          setShowMissingDialog(false);
+          const breakdown = Object.entries(data.dispatchedByType)
+            .map(([t, n]) => `${t}: ${n}`)
+            .join(', ');
+          setActionMsg({
+            type: 'success',
+            text: `Enqueued ${data.totalDispatched} jobs (${breakdown}). Skipped ${data.totalSkipped}.`,
+          });
+        }}
+        onError={(text) => {
+          setActionMsg({ type: 'error', text });
+        }}
+      />
+
 
       {/* Auto-Promote Sweep Dialog */}
       {confirmAutoPromote && (

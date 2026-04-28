@@ -4,6 +4,7 @@ import Link from 'next/link';
 
 import { useCorpusHealth } from '@/features/admin/hooks/use-admin';
 import { AdminCardSkeleton } from '@/components/ui/skeleton';
+import { AnimatedCounter } from '@/components/ui/animated-counter';
 
 export default function AdminDashboardPage() {
   const { data: health, isLoading, error } = useCorpusHealth();
@@ -177,7 +178,10 @@ function StatCard({
   return (
     <div className="rounded-md border border-gray-200 bg-white p-4">
       <p className="text-xs font-medium text-gray-500">{label}</p>
-      <p className={`mt-1 text-2xl font-bold ${valueColor}`}>{value.toLocaleString()}</p>
+      <AnimatedCounter
+        value={value}
+        className={`mt-1 block text-2xl font-bold ${valueColor}`}
+      />
     </div>
   );
 }

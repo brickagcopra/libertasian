@@ -203,6 +203,40 @@ export interface BackfillMissingDerivativesResponse {
   totalSkipped: number;
 }
 
+export interface CitationsBackfillPlanResponse {
+  totalCorpusDocs: number;
+  docsAlreadyHaveCitations: number;
+  docsPending: number;
+  estimatedNewCitationsRange: { low: number; high: number };
+  estimatedMinutes: number;
+  lastBackfillAt: string | null;
+  lastBackfillDispatchedBy: string | null;
+}
+
+export type MissingDerivativeType =
+  | 'essay_prompt'
+  | 'mcq_question'
+  | 'flashcard';
+
+export interface MissingDerivativesPlanTypeResponse {
+  type: MissingDerivativeType;
+  missingCount: number;
+  costPerCallUsd: number;
+  estimatedCostUsd: number;
+  estimatedMinutes: number;
+}
+
+export interface MissingDerivativesPlanResponse {
+  perType: MissingDerivativesPlanTypeResponse[];
+  totals: {
+    totalMissing: number;
+    totalEstimatedCostUsd: number;
+    totalEstimatedMinutes: number;
+    lastBackfillAt: string | null;
+    lastBackfillDispatchedBy: string | null;
+  };
+}
+
 export interface AutoPromoteSweepResponse {
   promoted: number;
   scanned: number;

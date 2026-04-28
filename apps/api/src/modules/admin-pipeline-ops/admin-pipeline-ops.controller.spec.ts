@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
+import { BadRequestException } from '@nestjs/common';
 import type { JwtPayload } from '@libertasian/types';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -7,6 +8,7 @@ import { MfaGuard } from '../../common/guards/mfa.guard';
 import { TenantGuard } from '../../common/guards/tenant.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { CeleryDispatcherService } from '../../common/services/celery-dispatcher.service';
+import { RedisService } from '../../common/services/redis.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AutoPromoteService } from '../internal/auto-promote.service';
@@ -20,6 +22,7 @@ describe('AdminPipelineOpsController', () => {
   let celery: jest.Mocked<CeleryDispatcherService>;
   let auditService: jest.Mocked<AuditService>;
   let autoPromote: jest.Mocked<AutoPromoteService>;
+  let redis: jest.Mocked<RedisService>;
   let prisma: {
     derivativeArtifact: {
       findMany: jest.Mock;
@@ -29,7 +32,8 @@ describe('AdminPipelineOpsController', () => {
       findMany: jest.Mock;
       create: jest.Mock;
     };
-    legalDocument: { findMany: jest.Mock };
+    legalDocument: { findMany: jest.Mock; count: jest.Mock };
+    citation: { groupBy: jest.Mock };
     auditLog: { findFirst: jest.Mock; count: jest.Mock };
   };
 
@@ -53,6 +57,12 @@ describe('AdminPipelineOpsController', () => {
       sweepBacklog: jest.fn().mockResolvedValue({ promoted: 3, scanned: 12 }),
     } as unknown as jest.Mocked<AutoPromoteService>;
 
+    redis = {
+      get: jest.fn().mockResolvedValue(null),
+      set: jest.fn().mockResolvedValue(undefined),
+      del: jest.fn().mockResolvedValue(0),
+    } as unknown as jest.Mocked<RedisService>;
+
     prisma = {
       derivativeArtifact: {
         findMany: jest.fn().mockResolvedValue([]),
@@ -66,6 +76,10 @@ describe('AdminPipelineOpsController', () => {
       },
       legalDocument: {
         findMany: jest.fn().mockResolvedValue([]),
+        count: jest.fn().mockResolvedValue(0),
+      },
+      citation: {
+        groupBy: jest.fn().mockResolvedValue([]),
       },
       auditLog: {
         findFirst: jest.fn().mockResolvedValue(null),
@@ -89,6 +103,7 @@ describe('AdminPipelineOpsController', () => {
         { provide: CeleryDispatcherService, useValue: celery },
         { provide: AuditService, useValue: auditService },
         { provide: AutoPromoteService, useValue: autoPromote },
+        { provide: RedisService, useValue: redis },
         { provide: ConfigService, useValue: config },
       ],
     })
@@ -122,13 +137,17 @@ describe('AdminPipelineOpsController', () => {
         { kwargs: { limit: 250 } },
       );
       expect(result.success).toBe(true);
-      expect(result.data).toEqual(
-        expect.objectContaining({
-          taskId: 'task-id-mock',
-          dispatchedAt: expect.any(String),
-          limit: 250,
-        }),
-      );
+      // Narrow off the dryRun union before asserting on .data.taskId.
+      expect('dryRun' in result).toBe(false);
+      if (!('dryRun' in result)) {
+        expect(result.data).toEqual(
+          expect.objectContaining({
+            taskId: 'task-id-mock',
+            dispatchedAt: expect.any(String),
+            limit: 250,
+          }),
+        );
+      }
       expect(auditService.log).toHaveBeenCalledWith(
         expect.objectContaining({
           actorUserId: adminUser.sub,
@@ -148,6 +167,85 @@ describe('AdminPipelineOpsController', () => {
         'citations.backfill_corpus_documents',
         { kwargs: {} },
       );
+    });
+
+    it('returns the plan shape and writes no audit / dispatches no task on dryRun', async () => {
+      prisma.legalDocument.count.mockResolvedValue(120);
+      prisma.citation.groupBy.mockResolvedValue(
+        Array.from({ length: 30 }, (_, i) => ({ fromDocumentId: `d${i}` })),
+      );
+
+      const result = await controller.dispatchCitationsBackfill(
+        { dryRun: true },
+        adminUser,
+        ip,
+      );
+
+      expect(result.success).toBe(true);
+      expect('dryRun' in result && result.dryRun).toBe(true);
+      if ('dryRun' in result) {
+        expect(result.data.totalCorpusDocs).toBe(120);
+        expect(result.data.docsAlreadyHaveCitations).toBe(30);
+        expect(result.data.docsPending).toBe(90);
+        expect(result.data.estimatedNewCitationsRange.low).toBe(900);
+        expect(result.data.estimatedNewCitationsRange.high).toBe(2250);
+      }
+
+      expect(celery.sendTask).not.toHaveBeenCalled();
+      expect(auditService.log).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('GET /admin/citations/backfill/plan', () => {
+    it('returns corpus + citation aggregates and last-dispatch metadata', async () => {
+      prisma.legalDocument.count.mockResolvedValue(50);
+      prisma.citation.groupBy.mockResolvedValue([
+        { fromDocumentId: 'd1' },
+        { fromDocumentId: 'd2' },
+      ]);
+      prisma.auditLog.findFirst.mockResolvedValue({
+        createdAt: new Date('2026-04-25T08:00:00.000Z'),
+        actorUserId: 'user-xyz',
+      });
+
+      const result = await controller.getCitationsBackfillPlan();
+
+      expect(result.success).toBe(true);
+      expect(result.data).toEqual(
+        expect.objectContaining({
+          totalCorpusDocs: 50,
+          docsAlreadyHaveCitations: 2,
+          docsPending: 48,
+          estimatedNewCitationsRange: { low: 480, high: 1200 },
+          lastBackfillAt: '2026-04-25T08:00:00.000Z',
+          lastBackfillDispatchedBy: 'user-xyz',
+        }),
+      );
+      // 60s cache write.
+      expect(redis.set).toHaveBeenCalledWith(
+        'cache:admin:citations-backfill-plan',
+        expect.any(String),
+        60,
+      );
+    });
+
+    it('returns the cached plan without hitting the DB on a warm cache', async () => {
+      const cachedPayload = {
+        totalCorpusDocs: 9,
+        docsAlreadyHaveCitations: 3,
+        docsPending: 6,
+        estimatedNewCitationsRange: { low: 60, high: 150 },
+        estimatedMinutes: 1,
+        lastBackfillAt: null,
+        lastBackfillDispatchedBy: null,
+      };
+      redis.get.mockResolvedValue(JSON.stringify(cachedPayload));
+
+      const result = await controller.getCitationsBackfillPlan();
+
+      expect(result.data).toEqual(cachedPayload);
+      expect(prisma.legalDocument.count).not.toHaveBeenCalled();
+      expect(prisma.citation.groupBy).not.toHaveBeenCalled();
     });
   });
 
@@ -176,9 +274,12 @@ describe('AdminPipelineOpsController', () => {
         ip,
       );
 
-      expect(result.data.totalDispatched).toBe(2);
-      expect(result.data.totalSkipped).toBe(2);
-      expect(result.data.dispatchedByType['essay_prompt']).toBe(2);
+      expect('dryRun' in result).toBe(false);
+      if (!('dryRun' in result)) {
+        expect(result.data.totalDispatched).toBe(2);
+        expect(result.data.totalSkipped).toBe(2);
+        expect(result.data.dispatchedByType['essay_prompt']).toBe(2);
+      }
 
       // create called only for the two missing docs
       expect(prisma.derivativeGenerationJob.create).toHaveBeenCalledTimes(2);
@@ -217,13 +318,146 @@ describe('AdminPipelineOpsController', () => {
 
       // No documents in the test fixture → totalDispatched 0, but dispatchedByType
       // initialised for all three default types.
-      expect(Object.keys(result.data.dispatchedByType).sort()).toEqual([
-        'essay_prompt',
-        'flashcard',
-        'mcq_question',
-      ]);
+      if (!('dryRun' in result)) {
+        expect(Object.keys(result.data.dispatchedByType).sort()).toEqual([
+          'essay_prompt',
+          'flashcard',
+          'mcq_question',
+        ]);
+      }
       // Poll task NOT kicked when nothing was enqueued.
       expect(celery.sendTask).not.toHaveBeenCalled();
+    });
+
+    it('accepts perTypeLimits with explicit per-type caps', async () => {
+      prisma.legalDocument.findMany.mockImplementation(({ take }) =>
+        Promise.resolve(
+          Array.from({ length: take as number }, (_, i) => ({
+            id: `doc-${i}`,
+          })),
+        ),
+      );
+
+      await controller.backfillMissingDerivatives(
+        {
+          perTypeLimits: [
+            { type: 'essay_prompt', limit: 5 },
+            { type: 'mcq_question', limit: 2 },
+          ],
+        },
+        adminUser,
+        ip,
+      );
+
+      // Each per-type entry should hit findMany once with its own take.
+      const findManyCalls = prisma.legalDocument.findMany.mock.calls;
+      expect(findManyCalls.length).toBe(2);
+      expect(findManyCalls[0][0].take).toBe(5);
+      expect(findManyCalls[1][0].take).toBe(2);
+
+      // Audit metadata reflects the per-type shape.
+      const auditCall = auditService.log.mock.calls[0][0];
+      expect(auditCall.metadata).toEqual(
+        expect.objectContaining({
+          types: ['essay_prompt', 'mcq_question'],
+          perTypeLimits: [
+            { type: 'essay_prompt', limit: 5 },
+            { type: 'mcq_question', limit: 2 },
+          ],
+        }),
+      );
+    });
+
+    it('rejects mixing perTypeLimits with types/limit', async () => {
+      await expect(
+        controller.backfillMissingDerivatives(
+          {
+            types: ['essay_prompt'],
+            perTypeLimits: [{ type: 'mcq_question' }],
+          },
+          adminUser,
+          ip,
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(prisma.legalDocument.findMany).not.toHaveBeenCalled();
+      expect(auditService.log).not.toHaveBeenCalled();
+    });
+
+    it('rejects duplicate types inside perTypeLimits', async () => {
+      await expect(
+        controller.backfillMissingDerivatives(
+          {
+            perTypeLimits: [
+              { type: 'essay_prompt', limit: 10 },
+              { type: 'essay_prompt', limit: 20 },
+            ],
+          },
+          adminUser,
+          ip,
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('returns the plan shape and writes no audit / no rows on dryRun', async () => {
+      prisma.legalDocument.count.mockResolvedValue(40);
+      // No artifacts and no in-flight jobs → all 40 docs are missing for
+      // every type.
+      prisma.derivativeArtifact.findMany.mockResolvedValue([]);
+      prisma.derivativeGenerationJob.findMany.mockResolvedValue([]);
+
+      const result = await controller.backfillMissingDerivatives(
+        { dryRun: true },
+        adminUser,
+        ip,
+      );
+
+      expect('dryRun' in result && result.dryRun).toBe(true);
+      if ('dryRun' in result) {
+        expect(result.data.totals.totalMissing).toBe(120); // 40 × 3 types
+        expect(result.data.perType).toHaveLength(3);
+        for (const row of result.data.perType) {
+          expect(row.missingCount).toBe(40);
+          expect(row.costPerCallUsd).toBeCloseTo(0.0003, 6);
+          expect(row.estimatedCostUsd).toBeCloseTo(40 * 0.0003, 6);
+        }
+      }
+
+      expect(prisma.derivativeGenerationJob.create).not.toHaveBeenCalled();
+      expect(celery.sendTask).not.toHaveBeenCalled();
+      expect(auditService.log).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('GET /admin/derivatives/backfill-missing/plan', () => {
+    it('returns per-type missing counts and totals', async () => {
+      prisma.legalDocument.count.mockResolvedValue(20);
+      prisma.derivativeArtifact.findMany.mockImplementation(({ where }) => {
+        if (where.derivativeType === 'essay_prompt') {
+          // 5 docs already have essay_prompt artifacts.
+          return Promise.resolve(
+            Array.from({ length: 5 }, (_, i) => ({
+              sourceDocumentId: `doc-${i}`,
+            })),
+          );
+        }
+        return Promise.resolve([]);
+      });
+      prisma.auditLog.findFirst.mockResolvedValue({
+        createdAt: new Date('2026-04-26T11:00:00.000Z'),
+        actorUserId: 'user-abc',
+      });
+
+      const result = await controller.getMissingDerivativesPlan();
+
+      expect(result.success).toBe(true);
+      const essay = result.data.perType.find((r) => r.type === 'essay_prompt');
+      const mcq = result.data.perType.find((r) => r.type === 'mcq_question');
+      expect(essay?.missingCount).toBe(15); // 20 - 5
+      expect(mcq?.missingCount).toBe(20); // none extracted yet
+      expect(result.data.totals.totalMissing).toBe(15 + 20 + 20);
+      expect(result.data.totals.lastBackfillAt).toBe('2026-04-26T11:00:00.000Z');
+      expect(result.data.totals.lastBackfillDispatchedBy).toBe('user-abc');
     });
   });
 

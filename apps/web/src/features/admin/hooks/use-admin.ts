@@ -48,6 +48,9 @@ import type {
   AutoPromoteSweepResponse,
   BackfillCitationsResponse,
   BackfillMissingDerivativesResponse,
+  CitationsBackfillPlanResponse,
+  MissingDerivativesPlanResponse,
+  MissingDerivativeType,
 } from '../types';
 
 // ---- Corpus Health ----
@@ -1306,10 +1309,39 @@ export function useDispatchCitationsBackfill() {
   });
 }
 
+export const CITATIONS_BACKFILL_PLAN_QUERY_KEY = [
+  'admin',
+  'citations-backfill-plan',
+] as const;
+
+export function useCitationsBackfillPlan(opts?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: CITATIONS_BACKFILL_PLAN_QUERY_KEY,
+    queryFn: async () => {
+      const res = await apiClient.get<{
+        success: boolean;
+        data: CitationsBackfillPlanResponse;
+      }>('/admin/citations/backfill/plan');
+      return res.data;
+    },
+    enabled: opts?.enabled ?? true,
+    staleTime: 30_000,
+  });
+}
+
+export interface PerTypeLimit {
+  type: MissingDerivativeType;
+  limit?: number;
+}
+
 export function useBackfillMissingDerivatives() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { types?: string[]; limit?: number }) => {
+    mutationFn: async (input: {
+      types?: string[];
+      limit?: number;
+      perTypeLimits?: PerTypeLimit[];
+    }) => {
       const res = await apiClient.post<{
         success: boolean;
         data: BackfillMissingDerivativesResponse;
@@ -1319,7 +1351,30 @@ export function useBackfillMissingDerivatives() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'corpus-health'] });
       queryClient.invalidateQueries({ queryKey: ['admin', 'derivative-stats'] });
+      queryClient.invalidateQueries({
+        queryKey: MISSING_DERIVATIVES_PLAN_QUERY_KEY,
+      });
     },
+  });
+}
+
+export const MISSING_DERIVATIVES_PLAN_QUERY_KEY = [
+  'admin',
+  'missing-derivatives-plan',
+] as const;
+
+export function useMissingDerivativesPlan(opts?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: MISSING_DERIVATIVES_PLAN_QUERY_KEY,
+    queryFn: async () => {
+      const res = await apiClient.get<{
+        success: boolean;
+        data: MissingDerivativesPlanResponse;
+      }>('/admin/derivatives/backfill-missing/plan');
+      return res.data;
+    },
+    enabled: opts?.enabled ?? true,
+    staleTime: 30_000,
   });
 }
 

@@ -1,7 +1,34 @@
+'use client';
+
+import { motion, useReducedMotion } from 'framer-motion';
+
 import { cn } from '@/lib/utils';
 
 export function Skeleton({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return <div className={cn('bg-muted animate-pulse rounded-md', className)} {...props} />;
+}
+
+/**
+ * Framer-motion variant of Skeleton for admin tile/card surfaces. Soft
+ * 1.6s opacity pulse instead of Tailwind's harder `animate-pulse` step.
+ * Reduced-motion users get the static block.
+ */
+function MotionSkeleton({
+  className,
+}: {
+  className?: string;
+}) {
+  const reduce = useReducedMotion();
+  if (reduce) {
+    return <div className={cn('bg-muted rounded-md opacity-70', className)} />;
+  }
+  return (
+    <motion.div
+      className={cn('bg-muted rounded-md', className)}
+      animate={{ opacity: [0.5, 1, 0.5] }}
+      transition={{ duration: 1.6, ease: 'easeInOut', repeat: Infinity }}
+    />
+  );
 }
 
 export function SearchResultSkeleton() {
@@ -70,9 +97,9 @@ export function BookmarkListSkeleton({ count = 4 }: { count?: number }) {
 export function AdminCardSkeleton() {
   return (
     <div className="rounded-md border border bg-card p-5">
-      <Skeleton className="h-3 w-24" />
-      <Skeleton className="mt-2 h-7 w-16" />
-      <Skeleton className="mt-2 h-3 w-32" />
+      <MotionSkeleton className="h-3 w-24" />
+      <MotionSkeleton className="mt-2 h-7 w-16" />
+      <MotionSkeleton className="mt-2 h-3 w-32" />
     </div>
   );
 }

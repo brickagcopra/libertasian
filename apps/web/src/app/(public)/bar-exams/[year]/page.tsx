@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 
+import { StaggerGrid } from '@/components/ui/stagger-grid';
 import {
   fetchYear,
   subjectLabelWithPart,
@@ -53,11 +54,11 @@ export default async function BarExamsYearPage({ params }: PageProps) {
         </p>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <StaggerGrid className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {detail.subjects.map((s) => (
           <SubjectCard key={s.sittingId} year={year} subject={s} />
         ))}
-      </div>
+      </StaggerGrid>
     </div>
   );
 }

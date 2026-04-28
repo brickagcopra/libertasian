@@ -1,6 +1,8 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
 
+import { EmptyState } from '@/components/empty-states/empty-state';
+import { StaggerGrid } from '@/components/ui/stagger-grid';
 import { fetchAllYears, type YearGroup } from './lib';
 
 export const metadata: Metadata = {
@@ -34,15 +36,17 @@ export default async function BarExamsHubPage() {
       </div>
 
       {groups.length === 0 ? (
-        <div className="rounded-xl border border-gray-200 bg-white p-10 text-center text-gray-500">
-          No bar exam papers are loaded yet. Check back soon.
-        </div>
+        <EmptyState
+          illustration="archive"
+          title="No bar exam papers are loaded yet"
+          message="Check back soon — we're ingesting the LawPhil archive in batches."
+        />
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <StaggerGrid className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {groups.map((g) => (
             <YearCard key={g.year} group={g} />
           ))}
-        </div>
+        </StaggerGrid>
       )}
     </div>
   );
