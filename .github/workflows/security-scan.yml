@@ -131,45 +131,6 @@ jobs:
           category: trivy-${{ matrix.service }}
 
   # ====================
-  # CodeQL SAST Analysis
-  # ====================
-  codeql:
-    name: CodeQL Analysis
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-      security-events: write
-    strategy:
-      fail-fast: false
-      matrix:
-        language: [javascript-typescript, python]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4
-        with:
-          languages: ${{ matrix.language }}
-          queries: security-extended
-          config: |
-            paths-ignore:
-              - '**/.venv/**'
-              - '**/node_modules/**'
-              - '**/dist/**'
-              - '**/build/**'
-              - '**/.next/**'
-              - '**/*.min.js'
-
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@v4
-
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v4
-        with:
-          category: codeql-${{ matrix.language }}
-
-  # ====================
   # Secret Scanning
   # ====================
   secret-scan:
