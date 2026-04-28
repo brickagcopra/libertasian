@@ -69,6 +69,7 @@ jobs:
     name: Container Image Scan
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         include:
           - service: api
@@ -86,6 +87,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # embedding-service and worker-service bundle large ML deps
+      # (torch, sentence-transformers) and the resulting image plus
+      # Trivy's layer export exceeds the default runner disk. Free up
+      # the pre-installed tooling we don't need before building.
+      - name: Free disk space on runner
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: true
+
       - name: Build image for scanning
         run: |
           docker build \
@@ -94,7 +110,7 @@ jobs:
             .
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: libertasian-${{ matrix.service }}:scan
           format: sarif
@@ -102,9 +118,14 @@ jobs:
           severity: CRITICAL,HIGH
           exit-code: 0
 
+      # Upload requires repo-level Code Scanning to be enabled. Until then
+      # the step fails with "Resource not accessible by integration"; the
+      # scan itself has already completed by this point, so don't fail the
+      # job on upload. Once Code Scanning is enabled the upload succeeds.
       - name: Upload Trivy scan results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
+        continue-on-error: true
         with:
           sarif_file: trivy-${{ matrix.service }}.sarif
           category: trivy-${{ matrix.service }}
@@ -115,23 +136,36 @@ jobs:
   codeql:
     name: CodeQL Analysis
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
     strategy:
+      fail-fast: false
       matrix:
         language: [javascript-typescript, python]
     steps:
       - uses: actions/checkout@v4
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
           queries: security-extended
+          config: |
+            paths-ignore:
+              - '**/.venv/**'
+              - '**/node_modules/**'
+              - '**/dist/**'
+              - '**/build/**'
+              - '**/.next/**'
+              - '**/*.min.js'
 
       - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
+        uses: github/codeql-action/autobuild@v4
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: codeql-${{ matrix.language }}
 

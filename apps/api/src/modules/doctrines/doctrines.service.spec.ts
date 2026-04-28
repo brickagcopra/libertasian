@@ -45,6 +45,7 @@ describe('DoctrinesService', () => {
             doctrineExtract: {
               create: jest.fn(),
               createMany: jest.fn(),
+              findFirst: jest.fn(),
               findUnique: jest.fn(),
               findMany: jest.fn(),
               update: jest.fn(),
@@ -274,12 +275,8 @@ describe('DoctrinesService', () => {
   // ---- triggerExtraction ----
 
   describe('triggerExtraction', () => {
-    it('should create placeholder and call RAG service', async () => {
+    it('should create doctrines and record model run via RAG service', async () => {
       (prisma.legalDocument.findUnique as jest.Mock).mockResolvedValue(mockDocument);
-      (prisma.doctrineExtract.create as jest.Mock).mockResolvedValue({
-        ...mockDoctrine,
-        id: 'placeholder-1',
-      });
 
       const ragResponse = {
         document_id: 'ld-1',
@@ -301,11 +298,12 @@ describe('DoctrinesService', () => {
         json: jest.fn().mockResolvedValue(ragResponse),
       });
 
+      (prisma.doctrineExtract.createMany as jest.Mock).mockResolvedValue({ count: 1 });
       (prisma.modelRun.create as jest.Mock).mockResolvedValue({});
-      (prisma.doctrineExtract.update as jest.Mock).mockResolvedValue(mockDoctrine);
-      (prisma.doctrineExtract.findUnique as jest.Mock).mockResolvedValue(mockDoctrine);
+      (prisma.doctrineExtract.findFirst as jest.Mock).mockResolvedValue(mockDoctrine);
 
-      const result = await service.triggerExtraction({ legalDocumentId: 'ld-1' });
+      await service.triggerExtraction({ legalDocumentId: 'ld-1' });
+      expect(prisma.doctrineExtract.createMany).toHaveBeenCalled();
       expect(prisma.modelRun.create).toHaveBeenCalled();
     });
 
@@ -317,12 +315,8 @@ describe('DoctrinesService', () => {
       ).rejects.toThrow(NotFoundException);
     });
 
-    it('should handle RAG service failure gracefully', async () => {
+    it('should throw BadRequestException on RAG service failure', async () => {
       (prisma.legalDocument.findUnique as jest.Mock).mockResolvedValue(mockDocument);
-      (prisma.doctrineExtract.create as jest.Mock).mockResolvedValue({
-        ...mockDoctrine,
-        id: 'placeholder-1',
-      });
 
       global.fetch = jest.fn().mockResolvedValue({
         ok: false,
@@ -330,16 +324,9 @@ describe('DoctrinesService', () => {
         text: jest.fn().mockResolvedValue('Internal Server Error'),
       });
 
-      (prisma.doctrineExtract.update as jest.Mock).mockResolvedValue(mockDoctrine);
-      (prisma.doctrineExtract.findUnique as jest.Mock).mockResolvedValue(mockDoctrine);
-
-      // Should not throw — marks as failed instead
-      await expect(service.triggerExtraction({ legalDocumentId: 'ld-1' })).resolves.toBeDefined();
-      expect(prisma.doctrineExtract.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ reviewStatus: 'failed' }),
-        }),
-      );
+      await expect(
+        service.triggerExtraction({ legalDocumentId: 'ld-1' }),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 
