@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { Inter } from 'next/font/google';
 
 import '@/app/globals.css';
 import { AnalyticsProvider } from '@/providers/analytics-provider';
@@ -7,6 +8,13 @@ import { QueryProvider } from '@/providers/query-provider';
 import { ThemeProvider } from '@/providers/theme-provider';
 import { AdProvider } from '@/components/ads/AdProvider';
 import { AdRenderer } from '@/components/ads/AdRenderer';
+
+const inter = Inter({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700', '800'],
+  variable: '--font-inter',
+  display: 'swap',
+});
 
 // Skip static prerendering for all pages. This SPA-style app is fully
 // client-rendered and auth-gated. Static generation hits a known Next.js 15
@@ -22,7 +30,7 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" className={inter.variable} suppressHydrationWarning>
       <body>
         <ThemeProvider>
           <QueryProvider>
