@@ -457,12 +457,12 @@ describe('Enhanced Review Queue', () => {
   it('useEnhancedReviewQueue with filters', async () => {
     mockGet.mockResolvedValueOnce({ success: true, data: [], meta: { hasNext: false } });
     renderHook(
-      () => useEnhancedReviewQueue({ reviewStatus: 'pending', minConfidence: 0.5, sortBy: 'confidence' }),
+      () => useEnhancedReviewQueue({ reviewStatus: 'pending', confidenceMin: 0.5, sortBy: 'confidence' }),
       { wrapper: createWrapper() },
     );
     await waitFor(() =>
       expect(mockGet).toHaveBeenCalledWith('/admin/digests/review-queue', {
-        params: { reviewStatus: 'pending', minConfidence: '0.5', sortBy: 'confidence' },
+        params: { reviewStatus: 'pending', confidenceMin: '0.5', sortBy: 'confidence' },
       }),
     );
   });
