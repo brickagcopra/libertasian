@@ -42,10 +42,10 @@ export default function ReviewQueuePage() {
   const [statusFilter, setStatusFilter] = useState('needs_human_review');
   const [originFilter, setOriginFilter] = useState('');
   const [assignedToFilter, setAssignedToFilter] = useState('');
-  const [minConfidence, setMinConfidence] = useState('');
-  const [maxConfidence, setMaxConfidence] = useState('');
+  const [confidenceMin, setConfidenceMin] = useState('');
+  const [confidenceMax, setConfidenceMax] = useState('');
   const [sortBy, setSortBy] = useState('createdAt');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [batchNotesOpen, setBatchNotesOpen] = useState<'approve' | 'reject' | null>(null);
@@ -57,10 +57,10 @@ export default function ReviewQueuePage() {
     reviewStatus: statusFilter || undefined,
     sourceOrigin: originFilter || undefined,
     assignedTo: assignedToFilter || undefined,
-    minConfidence: minConfidence ? Number(minConfidence) / 100 : undefined,
-    maxConfidence: maxConfidence ? Number(maxConfidence) / 100 : undefined,
+    confidenceMin: confidenceMin ? Number(confidenceMin) / 100 : undefined,
+    confidenceMax: confidenceMax ? Number(confidenceMax) / 100 : undefined,
     sortBy,
-    sortDir,
+    sortOrder,
     cursor,
   });
 
@@ -210,8 +210,8 @@ export default function ReviewQueuePage() {
             type="number"
             min={0}
             max={100}
-            value={minConfidence}
-            onChange={(e) => { setMinConfidence(e.target.value); setCursor(undefined); }}
+            value={confidenceMin}
+            onChange={(e) => { setConfidenceMin(e.target.value); setCursor(undefined); }}
             placeholder="Min"
             className="h-8 w-[70px]"
           />
@@ -220,8 +220,8 @@ export default function ReviewQueuePage() {
             type="number"
             min={0}
             max={100}
-            value={maxConfidence}
-            onChange={(e) => { setMaxConfidence(e.target.value); setCursor(undefined); }}
+            value={confidenceMax}
+            onChange={(e) => { setConfidenceMax(e.target.value); setCursor(undefined); }}
             placeholder="Max"
             className="h-8 w-[70px]"
           />
@@ -246,10 +246,10 @@ export default function ReviewQueuePage() {
             variant="outline"
             size="sm"
             className="h-8 px-2"
-            onClick={() => setSortDir((prev) => prev === 'asc' ? 'desc' : 'asc')}
+            onClick={() => setSortOrder((prev) => prev === 'asc' ? 'desc' : 'asc')}
           >
             <ArrowUpDown className="mr-1 h-3 w-3" />
-            {sortDir === 'asc' ? 'Asc' : 'Desc'}
+            {sortOrder === 'asc' ? 'Asc' : 'Desc'}
           </Button>
         </div>
       </div>

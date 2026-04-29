@@ -508,11 +508,11 @@ export function useDismissDuplicate() {
 export function useEnhancedReviewQueue(params?: {
   reviewStatus?: string;
   sourceOrigin?: string;
-  minConfidence?: number;
-  maxConfidence?: number;
+  confidenceMin?: number;
+  confidenceMax?: number;
   assignedTo?: string;
   sortBy?: string;
-  sortDir?: string;
+  sortOrder?: string;
   cursor?: string;
   limit?: number;
 }) {
@@ -522,11 +522,11 @@ export function useEnhancedReviewQueue(params?: {
       const queryParams: Record<string, string> = {};
       if (params?.reviewStatus) queryParams['reviewStatus'] = params.reviewStatus;
       if (params?.sourceOrigin) queryParams['sourceOrigin'] = params.sourceOrigin;
-      if (params?.minConfidence !== undefined) queryParams['minConfidence'] = String(params.minConfidence);
-      if (params?.maxConfidence !== undefined) queryParams['maxConfidence'] = String(params.maxConfidence);
+      if (params?.confidenceMin !== undefined) queryParams['confidenceMin'] = String(params.confidenceMin);
+      if (params?.confidenceMax !== undefined) queryParams['confidenceMax'] = String(params.confidenceMax);
       if (params?.assignedTo) queryParams['assignedTo'] = params.assignedTo;
       if (params?.sortBy) queryParams['sortBy'] = params.sortBy;
-      if (params?.sortDir) queryParams['sortDir'] = params.sortDir;
+      if (params?.sortOrder) queryParams['sortOrder'] = params.sortOrder;
       if (params?.cursor) queryParams['cursor'] = params.cursor;
       if (params?.limit) queryParams['limit'] = String(params.limit);
 
