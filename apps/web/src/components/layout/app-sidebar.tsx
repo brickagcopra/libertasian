@@ -57,6 +57,9 @@ import {
   AwardIcon,
   TagsIcon,
   SparklesIcon,
+  DownloadCloudIcon,
+  FolderTreeIcon,
+  LayersIcon,
   LibraryBigIcon,
 } from 'lucide-react';
 
@@ -98,34 +101,52 @@ const WORKSPACE_ITEMS: NavItem[] = [
 
 const ADMIN_NAV_ITEMS: NavItem[] = [
   { href: '/admin', label: 'Dashboard', icon: LayoutDashboardIcon },
+
+  // 1 — Source setup
+  { href: '/admin/sources', label: 'Sources', icon: DatabaseIcon },
   { href: '/admin/ai-settings', label: 'AI Settings', icon: BrainCircuitIcon },
   { href: '/admin/budget', label: 'Budget', icon: WalletIcon },
-  { href: '/admin/homepage', label: 'Homepage', icon: HomeIcon },
-  { href: '/admin/sources', label: 'Sources', icon: DatabaseIcon },
+
+  // 2 — Crawl / ingestion
+  { href: '/admin/ingestion', label: 'Ingestion', icon: DownloadCloudIcon },
   { href: '/admin/backfill', label: 'Backfill', icon: ArchiveRestoreIcon },
+  { href: '/admin/bar-exams', label: 'Bar Exams', icon: ScrollTextIcon },
+
+  // 3 — Document review
   { href: '/admin/review', label: 'Review Queue', icon: ClipboardCheckIcon },
+  { href: '/admin/duplicates', label: 'Duplicates', icon: CopyIcon },
   { href: '/admin/flags', label: 'Flags', icon: FlagIcon },
+  { href: '/admin/health', label: 'Source Health', icon: HeartPulseIcon },
+
+  // 4 — AI study material
+  { href: '/admin/derivatives', label: 'Derivatives', icon: SparklesIcon },
   { href: '/admin/doctrines', label: 'Doctrines', icon: BookOpenIcon },
   { href: '/admin/knowledge-graph', label: 'Knowledge Graph', icon: NetworkIcon },
-  { href: '/admin/health', label: 'Source Health', icon: HeartPulseIcon },
-  { href: '/admin/duplicates', label: 'Duplicates', icon: CopyIcon },
-  { href: '/admin/plans', label: 'Plans', icon: CreditCardIcon },
-  { href: '/admin/subscriptions', label: 'Subscriptions', icon: CreditCardIcon },
-  { href: '/admin/lifecycle-events', label: 'Lifecycle Events', icon: TimerIcon },
-  { href: '/admin/coupons', label: 'Coupons', icon: TicketIcon },
-  { href: '/admin/promotions', label: 'Promotions', icon: MegaphoneIcon },
-  { href: '/admin/simulator', label: 'Simulator', icon: PlayCircleIcon },
-  { href: '/admin/blog', label: 'Blog', icon: BookOpenIcon },
-  { href: '/admin/ads', label: 'Advertising', icon: MegaphoneIcon },
+  { href: '/admin/categorize', label: 'Categorize', icon: LayersIcon },
+  { href: '/admin/classification', label: 'Classification', icon: FolderTreeIcon },
   { href: '/admin/subjects', label: 'Subjects', icon: TagsIcon },
   { href: '/admin/golden-sets', label: 'Golden Sets', icon: AwardIcon },
-  { href: '/admin/derivatives', label: 'Derivatives', icon: SparklesIcon },
+  { href: '/admin/simulator', label: 'Simulator', icon: PlayCircleIcon },
+
+  // 5 — Visibility telemetry
+  { href: '/admin/lifecycle-events', label: 'Lifecycle Events', icon: TimerIcon },
   { href: '/admin/reporting', label: 'Reporting', icon: BarChart3Icon },
+
+  // 6 — Analytics (read-only)
   { href: '/admin/analytics', label: 'Analytics', icon: ActivityIcon },
   { href: '/admin/analytics/mobile-scan', label: 'Mobile & Scan', icon: ScanLineIcon },
   { href: '/admin/analytics/study', label: 'Study Mode', icon: GraduationCapIcon },
   { href: '/admin/analytics/corpus', label: 'Corpus & Ingestion', icon: DatabaseIcon },
   { href: '/admin/analytics/realtime', label: 'Real-time', icon: ActivityIcon },
+
+  // 7 — Business surfaces
+  { href: '/admin/plans', label: 'Plans', icon: CreditCardIcon },
+  { href: '/admin/subscriptions', label: 'Subscriptions', icon: CreditCardIcon },
+  { href: '/admin/coupons', label: 'Coupons', icon: TicketIcon },
+  { href: '/admin/promotions', label: 'Promotions', icon: MegaphoneIcon },
+  { href: '/admin/homepage', label: 'Homepage', icon: HomeIcon },
+  { href: '/admin/blog', label: 'Blog', icon: BookOpenIcon },
+  { href: '/admin/ads', label: 'Advertising', icon: MegaphoneIcon },
 ];
 
 const ADMIN_ROLES = ['admin', 'editor', 'owner'];
