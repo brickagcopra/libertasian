@@ -61,6 +61,7 @@ import {
   FolderTreeIcon,
   LayersIcon,
   LibraryBigIcon,
+  FileStackIcon,
 } from 'lucide-react';
 
 interface NavItem {
@@ -113,6 +114,7 @@ const ADMIN_NAV_ITEMS: NavItem[] = [
   { href: '/admin/bar-exams', label: 'Bar Exams', icon: ScrollTextIcon },
 
   // 3 — Document review
+  { href: '/admin/documents', label: 'Documents', icon: FileStackIcon },
   { href: '/admin/review', label: 'Review Queue', icon: ClipboardCheckIcon },
   { href: '/admin/duplicates', label: 'Duplicates', icon: CopyIcon },
   { href: '/admin/flags', label: 'Flags', icon: FlagIcon },
