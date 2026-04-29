@@ -61,6 +61,7 @@ import {
   FolderTreeIcon,
   LayersIcon,
   LibraryBigIcon,
+  ZapIcon,
 } from 'lucide-react';
 
 interface NavItem {
@@ -111,8 +112,10 @@ const ADMIN_NAV_ITEMS: NavItem[] = [
   { href: '/admin/ingestion', label: 'Ingestion', icon: DownloadCloudIcon },
   { href: '/admin/backfill', label: 'Backfill', icon: ArchiveRestoreIcon },
   { href: '/admin/bar-exams', label: 'Bar Exams', icon: ScrollTextIcon },
+  { href: '/admin/pipeline-ops', label: 'Pipeline Ops', icon: ZapIcon },
 
   // 3 — Document review
+  { href: '/admin/digests', label: 'Digests', icon: FileTextIcon },
   { href: '/admin/review', label: 'Review Queue', icon: ClipboardCheckIcon },
   { href: '/admin/duplicates', label: 'Duplicates', icon: CopyIcon },
   { href: '/admin/flags', label: 'Flags', icon: FlagIcon },
