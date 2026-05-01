@@ -9,6 +9,10 @@ dist/
 out/
 *.tsbuildinfo
 
+# Expo prebuild output (generated, not source)
+apps/mobile/android/
+apps/mobile/ios/
+
 # Environment
 .env
 .env.local
