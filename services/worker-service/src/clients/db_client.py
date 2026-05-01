@@ -63,6 +63,31 @@ def get_connection() -> Generator[Any, None, None]:
         conn.close()
 
 
+@contextmanager
+def get_read_connection() -> Generator[Any, None, None]:
+    """Yield a read-only database connection routed at the replica DSN.
+
+    Falls back to ``settings.database_url`` when no replica is configured
+    so dev / single-node deployments still function. Read-heavy backfills
+    SHOULD use this rather than ``get_connection`` to avoid loading the
+    primary with long-running scans.
+    """
+    dsn = settings.database_read_replica_url or settings.database_url
+    conn = psycopg2.connect(dsn)
+    try:
+        conn.set_session(readonly=True)
+        yield conn
+    except (
+        psycopg2.errors.UndefinedTable,
+        psycopg2.errors.UndefinedColumn,
+    ) as exc:
+        raise SchemaIntegrityError(
+            f"Schema integrity error from raw SQL: {exc}",
+        ) from exc
+    finally:
+        conn.close()
+
+
 def update_upload_ocr_status(
     upload_id: str,
     ocr_status: str,

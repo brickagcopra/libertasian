@@ -285,6 +285,76 @@ class TestProcessIngestionCandidate:
         mock_ingestion_db.update_candidate_status.assert_called_with(
             candidate_id, "duplicate",
         )
+        # Self-pair similarity rows are vestigial — the audit log captures
+        # the dedup decision on its own.
+        mock_ingestion_db.create_document_similarity.assert_not_called()
+        skip_audit_calls = [
+            c for c in mock_ingestion_db.create_audit_log.call_args_list
+            if c.kwargs.get("action") == "document.dedup_skipped"
+        ]
+        assert len(skip_audit_calls) == 1
+
+    def test_version_update_does_not_create_self_pair_similarity(
+        self,
+        mock_ingestion_db: MagicMock,
+        mock_s3_client: MagicMock,
+        candidate_id: str,
+        source_id: str,
+    ) -> None:
+        """version_update path: legal_document_versions row + audit log
+        record the relationship; no document_similarities row is needed."""
+        from src.classifiers.dedup_classifier import DedupResult, DedupTier
+        from src.tasks.ingestion_tasks import process_ingestion_candidate
+
+        existing_doc_id = make_uuid()
+        new_version_id = make_uuid()
+        mock_ingestion_db.find_document_by_checksum.return_value = None
+        mock_ingestion_db.create_legal_document_version.return_value = new_version_id
+
+        version_result = DedupResult(
+            tier=DedupTier.VERSION_UPDATE,
+            confidence=0.85,
+            matched_document_id=existing_doc_id,
+            evidence={"matched_on": "gr_no_same_source"},
+        )
+
+        with patch("src.tasks.ingestion_tasks.get_fetcher") as mock_fetcher_fn, \
+             patch("src.tasks.ingestion_tasks.parse_legal_document") as mock_parse, \
+             patch("src.tasks.ingestion_tasks.extract_sections") as mock_sections, \
+             patch("src.tasks.ingestion_tasks.extract_metadata") as mock_meta, \
+             patch("src.tasks.ingestion_tasks.DedupClassifier") as mock_cls, \
+             patch("src.tasks.ingestion_tasks.chain_post_ingestion") as mock_chain:
+            mock_fetcher = MagicMock()
+            mock_fetcher.fetch_content.return_value = MagicMock(
+                html="<html><body>Updated text</body></html>",
+            )
+            mock_fetcher_fn.return_value = mock_fetcher
+            mock_parse.return_value = "Updated text"
+            mock_sections.return_value = []
+            mock_meta.return_value = {
+                "title": "Updated Decision",
+                "gr_no": "G.R. No. 999999",
+            }
+            mock_cls.return_value.classify.return_value = version_result
+            mock_chain.delay = MagicMock()
+
+            result = process_ingestion_candidate(
+                candidate_id=candidate_id,
+                source_id=source_id,
+                url="https://example.com/case/999",
+                parser_type="supreme_court_elibrary",
+            )
+
+        assert result["status"] == "version_update"
+        assert result["document_id"] == existing_doc_id
+        assert result["version_id"] == new_version_id
+        mock_ingestion_db.create_legal_document_version.assert_called_once()
+        mock_ingestion_db.create_document_similarity.assert_not_called()
+        version_audit_calls = [
+            c for c in mock_ingestion_db.create_audit_log.call_args_list
+            if c.kwargs.get("action") == "document.version_update_detected"
+        ]
+        assert len(version_audit_calls) == 1
 
     def test_no_fetcher_rejects_candidate(
         self,

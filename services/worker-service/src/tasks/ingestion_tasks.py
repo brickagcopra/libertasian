@@ -589,20 +589,6 @@ def process_ingestion_candidate(
             # exact_duplicate or mirror_duplicate: skip ingestion
             db.update_candidate_status(candidate_id, "duplicate")
 
-            # Create DocumentSimilarity record for tracking
-            if dedup_result.matched_document_id:
-                db.create_document_similarity(
-                    document_a_id=dedup_result.matched_document_id,
-                    document_b_id=dedup_result.matched_document_id,
-                    similarity_score=dedup_result.confidence,
-                    similarity_type=dedup_result.tier.value,
-                    status="auto_dismissed",
-                    classification_tier=dedup_result.tier.value,
-                    classification_confidence=dedup_result.confidence,
-                    classification_metadata=dedup_result.evidence,
-                    canonical_document_id=dedup_result.matched_document_id,
-                )
-
             # Audit log
             db.create_audit_log(
                 action="document.dedup_skipped",
@@ -670,19 +656,6 @@ def process_ingestion_candidate(
                     html_object_key=raw_object_key,
                     extracted_json=metadata,
                     parser_version=PARSER_VERSION,
-                )
-
-                # Create DocumentSimilarity for the version relationship
-                db.create_document_similarity(
-                    document_a_id=doc_id,
-                    document_b_id=doc_id,
-                    similarity_score=dedup_result.confidence,
-                    similarity_type="version_update",
-                    status="auto_dismissed",
-                    classification_tier=dedup_result.tier.value,
-                    classification_confidence=dedup_result.confidence,
-                    classification_metadata=dedup_result.evidence,
-                    canonical_document_id=doc_id,
                 )
 
                 db.update_candidate_status(candidate_id, "accepted")

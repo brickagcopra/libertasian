@@ -787,6 +787,83 @@ def create_document_similarity(
     return sim_id
 
 
+def create_document_similarity_if_absent(
+    document_a_id: str,
+    document_b_id: str,
+    similarity_score: float,
+    similarity_type: str,
+    status: str = "pending",
+    classification_tier: str | None = None,
+    classification_confidence: float | None = None,
+    classification_metadata: dict[str, Any] | None = None,
+    canonical_document_id: str | None = None,
+    cursor: Any | None = None,
+) -> str | None:
+    """Insert a DocumentSimilarity row only if no row exists for the same
+    ``(document_a_id, document_b_id)`` pair.
+
+    Returns the new id, or ``None`` when an existing row blocked the insert.
+    Used by the post-publish dedup backfill so re-runs are idempotent
+    without depending on a unique index. The existence check and the
+    insert share a single statement (``INSERT ... SELECT ... WHERE NOT
+    EXISTS``), so the inner gap is closed inside one query.
+
+    If ``cursor`` is provided, executes on the caller's cursor without
+    opening a new connection — this lets a backfill batch wrap many
+    inserts in a single transaction. When ``cursor`` is ``None`` the
+    helper opens and commits its own connection.
+    """
+    import uuid
+
+    sim_id = str(uuid.uuid4())
+    sql = """INSERT INTO document_similarities
+                 (id, document_a_id, document_b_id, similarity_score,
+                  similarity_type, status, classification_tier,
+                  classification_confidence, classification_metadata_json,
+                  canonical_document_id, created_at)
+                 SELECT %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, NOW()
+                 WHERE NOT EXISTS (
+                     SELECT 1 FROM document_similarities
+                     WHERE document_a_id = %s AND document_b_id = %s
+                 )"""
+    params = (
+        sim_id,
+        document_a_id,
+        document_b_id,
+        similarity_score,
+        similarity_type,
+        status,
+        classification_tier,
+        classification_confidence,
+        json.dumps(classification_metadata)
+        if classification_metadata
+        else None,
+        canonical_document_id,
+        document_a_id,
+        document_b_id,
+    )
+
+    if cursor is not None:
+        cursor.execute(sql, params)
+        if cursor.rowcount == 0:
+            return None
+    else:
+        with get_connection() as conn, conn.cursor() as cur:
+            cur.execute(sql, params)
+            if cur.rowcount == 0:
+                return None
+
+    logger.info(
+        "Created document similarity %s: %s <-> %s (tier=%s, score=%.2f)",
+        sim_id,
+        document_a_id,
+        document_b_id,
+        classification_tier,
+        similarity_score,
+    )
+    return sim_id
+
+
 def update_candidate_dedup_classification(
     candidate_id: str,
     dedup_classification: str,
