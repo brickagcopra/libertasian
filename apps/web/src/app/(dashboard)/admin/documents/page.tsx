@@ -79,9 +79,15 @@ export default function AdminDocumentsListPage() {
     return () => clearTimeout(t);
   }, [grNo]);
 
-  const status = tab === 'all' ? undefined : tab;
+  // Published is the canonical status flag (is_published=true). The
+  // legal_documents.status column lags publication for many docs, so
+  // bucket the Published tab on isPublished and leave the other tabs
+  // on the status column.
+  const status = tab === 'all' || tab === 'published' ? undefined : tab;
+  const publishedOnly = tab === 'published' ? true : undefined;
   const queryParams = {
     status,
+    publishedOnly,
     documentType: documentType === '__all__' ? undefined : documentType,
     court: debouncedCourt || undefined,
     grNo: debouncedGrNo || undefined,

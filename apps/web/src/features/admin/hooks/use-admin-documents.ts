@@ -89,6 +89,7 @@ export interface AdminDocumentSection {
 
 export interface AdminDocumentListParams {
   status?: string;
+  publishedOnly?: boolean;
   documentType?: string;
   court?: string;
   ponente?: string;
@@ -108,6 +109,7 @@ export function useAdminDocuments(params?: AdminDocumentListParams) {
     queryFn: async () => {
       const queryParams: Record<string, string> = {};
       if (params?.status) queryParams['status'] = params.status;
+      if (params?.publishedOnly) queryParams['publishedOnly'] = 'true';
       if (params?.documentType) queryParams['documentType'] = params.documentType;
       if (params?.court) queryParams['court'] = params.court;
       if (params?.ponente) queryParams['ponente'] = params.ponente;

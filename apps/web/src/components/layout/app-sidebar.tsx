@@ -101,7 +101,7 @@ const WORKSPACE_ITEMS: NavItem[] = [
 ];
 
 const ADMIN_NAV_ITEMS: NavItem[] = [
-  { href: '/admin', label: 'Dashboard', icon: LayoutDashboardIcon },
+  { href: '/admin', label: 'Dashboard', icon: LayoutDashboardIcon, exact: true },
 
   // 1 — Source setup
   { href: '/admin/sources', label: 'Sources', icon: DatabaseIcon },
@@ -169,9 +169,34 @@ export function SidebarContent() {
   const { data: subscription } = useSubscription();
   const currentPlan = subscription?.planCode;
 
+  // Compute the single most-specific nav href for the current pathname so
+  // that hierarchical entries (`/admin` → `/admin/blog`,
+  // `/admin/analytics` → `/admin/analytics/realtime`, …) only ever
+  // highlight one row at a time. Exact-only items still match strictly.
+  const SETTINGS_NAV: NavItem[] = [
+    { href: '/settings', label: 'Settings', icon: SettingsIcon, exact: true },
+    { href: '/settings/usage', label: 'Usage', icon: BarChart3Icon },
+    { href: '/settings/members', label: 'Members', icon: ShieldCheckIcon },
+    { href: '/settings/roles', label: 'Roles', icon: LockIcon },
+    { href: '/settings/audit-logs', label: 'Audit Logs', icon: ScrollTextIcon },
+    { href: '/settings/analytics', label: 'Org Analytics', icon: BarChart3Icon },
+  ];
+  const allItems: NavItem[] = [
+    ...NAV_ITEMS,
+    ...WORKSPACE_ITEMS,
+    ...ADMIN_NAV_ITEMS,
+    ...SETTINGS_NAV,
+  ];
+  const matchingHrefs = allItems
+    .filter((i) =>
+      i.exact ? pathname === i.href : pathname === i.href || pathname.startsWith(i.href + '/'),
+    )
+    .map((i) => i.href);
+  const activeHref = matchingHrefs.sort((a, b) => b.length - a.length)[0];
+
   const isActive = (href: string, exact?: boolean) => {
     if (exact) return pathname === href;
-    return pathname === href || pathname.startsWith(href + '/');
+    return href === activeHref;
   };
 
   const renderNavItem = (item: NavItem) => {

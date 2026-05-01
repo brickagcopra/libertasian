@@ -12,6 +12,12 @@ import { DERIVATIVE_TYPES } from '@/features/derivatives/taxonomy';
 import type { DerivativeTypeSubjectSummary } from '@/features/derivatives/types';
 
 export default function LibraryHubPage() {
+  // TODO(admin-ui-display-bugs): Case Digests live in the legacy `digests`
+  // table (~8k rows) while every other type has been migrated to
+  // `derivative_artifacts`. The summary endpoint only counts artifacts, so
+  // the case_digest card always reads 0. Fix is a backend change (count
+  // case_digest from `digests` or backfill the artifact table) — out of
+  // scope for this frontend-only PR.
   const results = useQueries({
     queries: DERIVATIVE_TYPES.map((t) => ({
       queryKey: ['derivatives', 'subjects-by-type', t.enum, 'study_8'],
@@ -22,7 +28,7 @@ export default function LibraryHubPage() {
         }>(`/derivatives/types/${t.enum}/subjects/summary`, {
           params: { taxonomyVersion: 'study_8' },
         });
-        return res.data;
+        return res.data ?? [];
       },
       staleTime: 5 * 60_000,
     })),

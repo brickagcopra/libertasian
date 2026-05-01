@@ -205,16 +205,6 @@ export default function AdminDocumentDetailPage() {
                 >
                   {doc.status}
                 </Badge>
-                <Badge
-                  className={
-                    doc.isPublished
-                      ? 'bg-green-100 text-green-700'
-                      : 'bg-muted text-muted-foreground'
-                  }
-                  aria-label={`Published: ${doc.isPublished ? 'yes' : 'no'}`}
-                >
-                  {doc.isPublished ? 'Published' : 'Not published'}
-                </Badge>
               </div>
             </div>
           </CardContent>
