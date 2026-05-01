@@ -14,6 +14,12 @@ class Settings(BaseSettings):
     # Database (sync, for Celery tasks)
     database_url: str = "postgresql://libertasian:libertasian@localhost:5432/libertasian"
 
+    # Read-replica DSN for read-heavy backfills. Falls back to ``database_url``
+    # when unset so dev / single-node deployments still work; in production
+    # this should point at the read-only Postgres replica described in
+    # CLAUDE.md (Python services use the read-only pool for SELECTs).
+    database_read_replica_url: str | None = None
+
     # OCR service
     ocr_service_url: str = "http://localhost:8002"
 
