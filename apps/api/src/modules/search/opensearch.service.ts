@@ -211,6 +211,12 @@ export interface SearchOptions {
     dateTo?: string;
     publishedOnly?: boolean;
   };
+  /**
+   * Document IDs to exclude from results (dedup suppression — non-canonical
+   * duplicates and stale versions identified by the dedup engine).
+   * Injected as a `must_not.terms` clause on `document_id`.
+   */
+  excludeDocumentIds?: string[];
   from?: number;
   size?: number;
 }
@@ -222,6 +228,11 @@ export interface VectorSearchOptions {
     court?: string;
     publishedOnly?: boolean;
   };
+  /**
+   * Document IDs to exclude from results (dedup suppression). Injected as
+   * a `must_not.terms` clause inside the kNN query's filter.
+   */
+  excludeDocumentIds?: string[];
   k?: number;
 }
 
@@ -345,11 +356,12 @@ export class OpenSearchService implements OnModuleInit {
   }
 
   async searchKeyword(options: SearchOptions) {
-    const { query, filters, from = 0, size = 20 } = options;
+    const { query, filters, excludeDocumentIds, from = 0, size = 20 } = options;
 
     // Build query DSL programmatically (per CLAUDE.md: never interpolate user input)
     const must: Record<string, unknown>[] = [];
     const filter: Record<string, unknown>[] = [];
+    const mustNot: Record<string, unknown>[] = [];
 
     must.push({
       multi_match: {
@@ -389,8 +401,19 @@ export class OpenSearchService implements OnModuleInit {
       filter.push({ terms: { status: ['published', 'indexed'] } });
     }
 
+    // Dedup suppression — exclude non-canonical duplicates / stale versions.
+    // Built programmatically (no user input). Empty array = no clause.
+    if (excludeDocumentIds && excludeDocumentIds.length > 0) {
+      mustNot.push({ terms: { document_id: excludeDocumentIds } });
+    }
+
+    const boolQuery: Record<string, unknown> = { must, filter };
+    if (mustNot.length > 0) {
+      boolQuery['must_not'] = mustNot;
+    }
+
     const body: Record<string, unknown> = {
-      query: { bool: { must, filter } },
+      query: { bool: boolQuery },
       highlight: {
         fields: {
           plain_text: { fragment_size: 200, number_of_fragments: 3 },
@@ -558,9 +581,10 @@ export class OpenSearchService implements OnModuleInit {
     items: SearchResultItem[];
     timedOut: boolean;
   }> {
-    const { vector, filters, k = 20 } = options;
+    const { vector, filters, excludeDocumentIds, k = 20 } = options;
 
     const filterClauses: Record<string, unknown>[] = [];
+    const mustNotClauses: Record<string, unknown>[] = [];
     if (filters?.documentType) {
       filterClauses.push({ term: { document_type: filters.documentType } });
     }
@@ -569,6 +593,9 @@ export class OpenSearchService implements OnModuleInit {
     }
     if (filters?.publishedOnly) {
       filterClauses.push({ term: { is_published: true } });
+    }
+    if (excludeDocumentIds && excludeDocumentIds.length > 0) {
+      mustNotClauses.push({ terms: { document_id: excludeDocumentIds } });
     }
 
     const knnQuery: Record<string, unknown> = {
@@ -579,8 +606,11 @@ export class OpenSearchService implements OnModuleInit {
     };
 
     // Apply pre-filters if any
-    if (filterClauses.length > 0) {
-      knnQuery['filter'] = { bool: { must: filterClauses } };
+    if (filterClauses.length > 0 || mustNotClauses.length > 0) {
+      const knnBool: Record<string, unknown> = {};
+      if (filterClauses.length > 0) knnBool['must'] = filterClauses;
+      if (mustNotClauses.length > 0) knnBool['must_not'] = mustNotClauses;
+      knnQuery['filter'] = { bool: knnBool };
     }
 
     const body: Record<string, unknown> = {

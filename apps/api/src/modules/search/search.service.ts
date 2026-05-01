@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
 import { RedisService } from '../../common/services/redis.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -11,6 +12,7 @@ import {
   type SearchResultItem,
   type VectorDocumentPayload,
 } from './opensearch.service';
+import { SuppressedDocsService } from './suppressed-docs.service';
 import { SearchQueryDto } from './dto';
 
 /** Per CLAUDE.md: cache:search:{hash}, 5-min TTL */
@@ -31,7 +33,18 @@ export class SearchService {
     private readonly openSearch: OpenSearchService,
     private readonly redis: RedisService,
     private readonly embeddingClient: EmbeddingClientService,
+    private readonly suppressedDocs: SuppressedDocsService,
+    private readonly config: ConfigService,
   ) {}
+
+  /**
+   * Whether the dedup post-filter is on. Default: true. Disable instantly
+   * by setting `SEARCH_DEDUP_FILTER_ENABLED=false` if it ever over-filters.
+   */
+  private isDedupFilterEnabled(): boolean {
+    const raw = this.config.get<string>('SEARCH_DEDUP_FILTER_ENABLED', 'true');
+    return raw !== 'false';
+  }
 
   async initializeIndexes() {
     await this.openSearch.ensureIndexes();
@@ -131,6 +144,13 @@ export class SearchService {
     timedOut: boolean;
     searchType: 'hybrid' | 'keyword_only';
   }> {
+    // Resolve the dedup suppression list before issuing OpenSearch calls.
+    // The service swallows its own errors and returns [] on miss/outage,
+    // so the search path NEVER 500s on a Redis hiccup.
+    const excludeDocumentIds = this.isDedupFilterEnabled()
+      ? await this.suppressedDocs.getSuppressedIds()
+      : [];
+
     // Always run BM25 keyword search
     const bm25Promise = this.openSearch.searchKeyword({
       query: dto.query,
@@ -144,6 +164,7 @@ export class SearchService {
         dateTo: dto.dateTo,
         publishedOnly: dto.publishedOnly,
       },
+      excludeDocumentIds,
       from: 0,
       // Fetch more for RRF merging (we re-paginate after fusion)
       size: Math.max(limit * 3, 60),
@@ -178,6 +199,7 @@ export class SearchService {
           court: dto.court,
           publishedOnly: dto.publishedOnly,
         },
+        excludeDocumentIds,
         k: Math.max(limit * 3, 60),
       }).catch((err) => {
         this.logger.warn(`kNN search failed, using BM25 only: ${(err as Error).message}`);

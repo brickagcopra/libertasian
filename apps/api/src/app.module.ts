@@ -124,6 +124,11 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
         // endpoints. Disabled by default; flip to 'true' in staging/prod once
         // editorial has approved a baseline batch of derivatives.
         FEATURE_DERIVATIVES_PUBLIC: Joi.string().valid('true', 'false').default('false'),
+        // Search dedup post-filter: when 'true' (default), excludes
+        // non-canonical duplicate documents from search results via a
+        // Redis-backed must_not.terms clause. Flip to 'false' to revert
+        // instantly if the filter ever over-suppresses in prod.
+        SEARCH_DEDUP_FILTER_ENABLED: Joi.string().valid('true', 'false').default('true'),
       }),
     }),
 

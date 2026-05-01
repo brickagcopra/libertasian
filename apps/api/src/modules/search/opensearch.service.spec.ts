@@ -333,6 +333,50 @@ describe('OpenSearchService', () => {
         service.searchKeyword({ query: 'test' }),
       ).rejects.toThrow('Search failed');
     });
+
+    it('should add must_not.terms when excludeDocumentIds is provided', async () => {
+      mockClient.search.mockResolvedValue({
+        body: {
+          hits: { total: { value: 0 }, max_score: null, hits: [] },
+          timed_out: false,
+        },
+      });
+
+      await service.searchKeyword({
+        query: 'test',
+        excludeDocumentIds: ['suppressed-1', 'suppressed-2'],
+      });
+
+      expect(mockClient.search).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.objectContaining({
+            query: expect.objectContaining({
+              bool: expect.objectContaining({
+                must_not: expect.arrayContaining([
+                  { terms: { document_id: ['suppressed-1', 'suppressed-2'] } },
+                ]),
+              }),
+            }),
+          }),
+        }),
+      );
+    });
+
+    it('should NOT add must_not when excludeDocumentIds is empty', async () => {
+      mockClient.search.mockResolvedValue({
+        body: {
+          hits: { total: { value: 0 }, max_score: null, hits: [] },
+          timed_out: false,
+        },
+      });
+
+      await service.searchKeyword({ query: 'test', excludeDocumentIds: [] });
+
+      const call = mockClient.search.mock.calls[0]![0] as {
+        body: { query: { bool: Record<string, unknown> } };
+      };
+      expect(call.body.query.bool['must_not']).toBeUndefined();
+    });
   });
 
   // ---- searchExactCitation ----
@@ -516,6 +560,35 @@ describe('OpenSearchService', () => {
       await expect(
         service.searchVector({ vector: [0.1] }),
       ).rejects.toThrow('Vector search failed');
+    });
+
+    it('should add must_not.terms when excludeDocumentIds is provided', async () => {
+      mockClient.search.mockResolvedValue({
+        body: { hits: { hits: [] }, timed_out: false },
+      });
+
+      await service.searchVector({
+        vector: [0.1],
+        excludeDocumentIds: ['suppressed-1'],
+      });
+
+      expect(mockClient.search).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.objectContaining({
+            query: expect.objectContaining({
+              knn: expect.objectContaining({
+                filter: expect.objectContaining({
+                  bool: expect.objectContaining({
+                    must_not: expect.arrayContaining([
+                      { terms: { document_id: ['suppressed-1'] } },
+                    ]),
+                  }),
+                }),
+              }),
+            }),
+          }),
+        }),
+      );
     });
   });
 

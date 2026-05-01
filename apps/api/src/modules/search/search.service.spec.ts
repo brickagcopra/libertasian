@@ -1,11 +1,13 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { Logger, ServiceUnavailableException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
 import { SearchService } from './search.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../common/services/redis.service';
 import { OpenSearchService, type SearchResultItem } from './opensearch.service';
 import { EmbeddingClientService } from './embedding-client.service';
+import { SuppressedDocsService } from './suppressed-docs.service';
 import { SearchQueryDto } from './dto';
 
 type MockPrismaService = {
@@ -37,12 +39,19 @@ type MockEmbeddingClientService = {
   embedBatch: jest.Mock;
 };
 
+type MockSuppressedDocsService = {
+  getSuppressedIds: jest.Mock;
+  refresh: jest.Mock;
+  getCount: jest.Mock;
+};
+
 describe('SearchService', () => {
   let service: SearchService;
   let prismaService: MockPrismaService;
   let redisService: MockRedisService;
   let openSearchService: MockOpenSearchService;
   let embeddingClientService: MockEmbeddingClientService;
+  let suppressedDocsService: MockSuppressedDocsService;
 
   const mockSearchResultItem: SearchResultItem = {
     id: 'doc-1',
@@ -123,6 +132,22 @@ describe('SearchService', () => {
             embedBatch: jest.fn(),
           },
         },
+        {
+          provide: SuppressedDocsService,
+          useValue: {
+            getSuppressedIds: jest.fn().mockResolvedValue([]),
+            refresh: jest.fn(),
+            getCount: jest.fn(),
+          },
+        },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: jest.fn(
+              (key: string, defaultValue?: string) => defaultValue,
+            ),
+          },
+        },
       ],
     }).compile();
 
@@ -131,6 +156,9 @@ describe('SearchService', () => {
     redisService = module.get(RedisService) as unknown as MockRedisService;
     openSearchService = module.get(OpenSearchService) as unknown as MockOpenSearchService;
     embeddingClientService = module.get(EmbeddingClientService) as unknown as MockEmbeddingClientService;
+    suppressedDocsService = module.get(
+      SuppressedDocsService,
+    ) as unknown as MockSuppressedDocsService;
 
     // Suppress logger output during tests
     jest.spyOn(Logger.prototype, 'log').mockImplementation();
@@ -199,6 +227,7 @@ describe('SearchService', () => {
           dateTo: undefined,
           publishedOnly: undefined,
         },
+        excludeDocumentIds: [],
         from: 0,
         size: 60,
       });
@@ -210,6 +239,7 @@ describe('SearchService', () => {
           court: undefined,
           publishedOnly: undefined,
         },
+        excludeDocumentIds: [],
         k: 60,
       });
       expect(redisService.set).toHaveBeenCalledWith(
@@ -315,6 +345,65 @@ describe('SearchService', () => {
 
       await expect(service.search(searchDto)).rejects.toThrow(ServiceUnavailableException);
       await expect(service.search(searchDto)).rejects.toThrow('Search temporarily unavailable');
+    });
+
+    // ── Dedup suppression filter ────────────────────────────────────────
+    describe('dedup filter', () => {
+      it('forwards suppressed doc IDs to keyword + vector queries when flag is on (default)', async () => {
+        const suppressed = ['dup-doc-2', 'dup-doc-3'];
+        suppressedDocsService.getSuppressedIds.mockResolvedValue(suppressed);
+        redisService.get.mockResolvedValue(null);
+        redisService.set.mockResolvedValue(undefined);
+        openSearchService.searchKeyword.mockResolvedValue(mockBm25Result);
+        embeddingClientService.embed.mockResolvedValue([0.1, 0.2, 0.3]);
+        openSearchService.searchVector.mockResolvedValue(mockKnnResult);
+
+        await service.search(searchDto);
+
+        expect(suppressedDocsService.getSuppressedIds).toHaveBeenCalledTimes(1);
+        expect(openSearchService.searchKeyword).toHaveBeenCalledWith(
+          expect.objectContaining({ excludeDocumentIds: suppressed }),
+        );
+        expect(openSearchService.searchVector).toHaveBeenCalledWith(
+          expect.objectContaining({ excludeDocumentIds: suppressed }),
+        );
+      });
+
+      it('skips suppression list when SEARCH_DEDUP_FILTER_ENABLED=false', async () => {
+        const config = service['config'] as unknown as { get: jest.Mock };
+        config.get.mockImplementation(
+          (key: string, defaultValue?: string) =>
+            key === 'SEARCH_DEDUP_FILTER_ENABLED' ? 'false' : defaultValue,
+        );
+        redisService.get.mockResolvedValue(null);
+        redisService.set.mockResolvedValue(undefined);
+        openSearchService.searchKeyword.mockResolvedValue(mockBm25Result);
+        embeddingClientService.embed.mockResolvedValue(null);
+
+        await service.search(searchDto);
+
+        expect(suppressedDocsService.getSuppressedIds).not.toHaveBeenCalled();
+        expect(openSearchService.searchKeyword).toHaveBeenCalledWith(
+          expect.objectContaining({ excludeDocumentIds: [] }),
+        );
+      });
+
+      it('falls back to no filter when the suppressed-docs service returns []', async () => {
+        // Simulates Redis cold cache / outage — service swallows error and
+        // returns []. Search MUST NOT 500.
+        suppressedDocsService.getSuppressedIds.mockResolvedValue([]);
+        redisService.get.mockResolvedValue(null);
+        redisService.set.mockResolvedValue(undefined);
+        openSearchService.searchKeyword.mockResolvedValue(mockBm25Result);
+        embeddingClientService.embed.mockResolvedValue(null);
+
+        const result = await service.search(searchDto);
+
+        expect(result.items).toEqual(mockBm25Result.items);
+        expect(openSearchService.searchKeyword).toHaveBeenCalledWith(
+          expect.objectContaining({ excludeDocumentIds: [] }),
+        );
+      });
     });
   });
 
