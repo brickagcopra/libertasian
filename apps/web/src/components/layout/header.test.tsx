@@ -16,6 +16,11 @@ vi.mock('@/features/auth/hooks/use-auth', () => ({
   useLogout: () => ({ mutate: mockMutate, isPending: false }),
 }));
 
+let mockPathname = '/admin';
+vi.mock('next/navigation', () => ({
+  usePathname: () => mockPathname,
+}));
+
 vi.mock('@/components/layout/notification-bell', () => ({
   NotificationBell: () => <div data-testid="notification-bell">Bell</div>,
 }));
@@ -35,11 +40,25 @@ import { Header } from './header';
 describe('Header', () => {
   beforeEach(() => {
     mockMutate.mockReset();
+    mockPathname = '/admin';
   });
 
-  it('renders Dashboard label', () => {
+  it('renders Dashboard label on the admin root', () => {
+    mockPathname = '/admin';
     render(<Header />);
     expect(screen.getByText('Dashboard')).toBeInTheDocument();
+  });
+
+  it('renders dynamic page title from the current pathname', () => {
+    mockPathname = '/admin/duplicates';
+    render(<Header />);
+    expect(screen.getByText('Duplicates')).toBeInTheDocument();
+  });
+
+  it('respects title overrides for hyphenated slugs', () => {
+    mockPathname = '/admin/analytics/realtime';
+    render(<Header />);
+    expect(screen.getByText('Real-time')).toBeInTheDocument();
   });
 
   it('renders user name and initials', () => {

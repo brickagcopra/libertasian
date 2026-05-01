@@ -49,8 +49,9 @@ export interface SubjectEquivalence {
   barAdminSubject?: SubjectItem;
 }
 
-/** Standard API response envelope from NestJS controllers */
-type ApiEnvelope<T> = { success: boolean; data: T };
+// The /subjects controller returns raw payloads (no { success, data } envelope),
+// unlike most admin endpoints — apiClient.get returns response.json() as-is, so
+// type and consume the response directly.
 
 // ---- Queries ----
 
@@ -60,8 +61,7 @@ export function useSubjects(taxonomy?: string) {
     queryFn: async () => {
       const qp: Record<string, string> = {};
       if (taxonomy) qp['taxonomy'] = taxonomy;
-      const res = await apiClient.get<ApiEnvelope<SubjectItem[]>>('/subjects', { params: qp });
-      return res.data;
+      return apiClient.get<SubjectItem[]>('/subjects', { params: qp });
     },
   });
 }
@@ -69,10 +69,7 @@ export function useSubjects(taxonomy?: string) {
 export function useSubjectTopics(subjectId: string) {
   return useQuery({
     queryKey: ['admin', 'subjects', subjectId, 'topics'],
-    queryFn: async () => {
-      const res = await apiClient.get<ApiEnvelope<SubjectTopic[]>>(`/subjects/${subjectId}/topics`);
-      return res.data;
-    },
+    queryFn: async () => apiClient.get<SubjectTopic[]>(`/subjects/${subjectId}/topics`),
     enabled: !!subjectId,
   });
 }
@@ -80,22 +77,15 @@ export function useSubjectTopics(subjectId: string) {
 export function useClassificationCoverage() {
   return useQuery({
     queryKey: ['admin', 'subjects', 'coverage'],
-    queryFn: async () => {
-      const res = await apiClient.get<ApiEnvelope<ClassificationCoverage>>('/subjects/coverage');
-      return res.data;
-    },
+    queryFn: async () => apiClient.get<ClassificationCoverage>('/subjects/coverage'),
   });
 }
 
 export function useSubjectEquivalences(studySubjectId: string) {
   return useQuery({
     queryKey: ['admin', 'subjects', 'equivalences', studySubjectId],
-    queryFn: async () => {
-      const res = await apiClient.get<ApiEnvelope<SubjectEquivalence[]>>(
-        `/subjects/equivalences/${studySubjectId}`,
-      );
-      return res.data;
-    },
+    queryFn: async () =>
+      apiClient.get<SubjectEquivalence[]>(`/subjects/equivalences/${studySubjectId}`),
     enabled: !!studySubjectId,
   });
 }
@@ -105,12 +95,8 @@ export function useSubjectEquivalences(studySubjectId: string) {
 export function useClassifyUnclassified() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async () => {
-      const res = await apiClient.post<ApiEnvelope<{ message: string }>>(
-        '/subjects/batch-classify',
-      );
-      return res.data;
-    },
+    mutationFn: async () =>
+      apiClient.post<{ message: string }>('/subjects/batch-classify'),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'subjects'] });
     },

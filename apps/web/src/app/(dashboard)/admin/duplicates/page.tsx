@@ -65,10 +65,13 @@ export default function DuplicatesPage() {
         </div>
       ) : stats ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-          <StatCard label="Total Pairs" value={stats.total} />
-          <StatCard label="Pending" value={stats.pending} accent="yellow" />
-          <StatCard label="Merged" value={stats.merged} accent="green" />
-          <StatCard label="Dismissed" value={stats.dismissed} />
+          <StatCard label="Total Pairs" value={stats.total ?? 0} />
+          <StatCard label="Pending" value={stats.pending ?? 0} accent="yellow" />
+          <StatCard label="Merged" value={stats.merged ?? 0} accent="green" />
+          <StatCard
+            label="Dismissed"
+            value={(stats.dismissed ?? 0) + (stats.autoDismissed ?? 0)}
+          />
           {stats.byType.map((t) => (
             <StatCard key={t.type} label={formatType(t.type)} value={t.count} />
           ))}

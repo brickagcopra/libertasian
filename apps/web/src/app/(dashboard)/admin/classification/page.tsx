@@ -34,6 +34,12 @@ export default function ClassificationPage() {
   const [statusFilter, setStatusFilter] = useState<string>('needs_review');
   const [cursor, setCursor] = useState<string | undefined>(undefined);
 
+  // TODO(admin-ui-display-bugs): The /admin/classification/stats endpoint
+  // counts `legal_document_tag_map.review_status`, but the live data is in
+  // `document_subject_assignments` (5,517 ai + 336 manual). Fix requires a
+  // backend change — out of scope for this frontend-only PR. Tracked
+  // separately; counters will read 0 until the BE bucket query is rewired
+  // to bucket by classified_by/manual_override.
   const { data: stats, isLoading: statsLoading } = useClassificationStats();
   const { data, isLoading } = useClassificationReviewQueue({
     reviewStatus: statusFilter || undefined,
@@ -72,7 +78,7 @@ export default function ClassificationPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-2xl font-bold text-yellow-600">{stats.needsReview}</p>
+              <p className="text-2xl font-bold text-yellow-600">{stats.needsReview ?? 0}</p>
             </CardContent>
           </Card>
           <Card>
@@ -82,7 +88,7 @@ export default function ClassificationPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-2xl font-bold text-blue-600">{stats.auto}</p>
+              <p className="text-2xl font-bold text-blue-600">{stats.auto ?? 0}</p>
             </CardContent>
           </Card>
           <Card>
@@ -92,7 +98,7 @@ export default function ClassificationPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-2xl font-bold text-green-600">{stats.confirmed}</p>
+              <p className="text-2xl font-bold text-green-600">{stats.confirmed ?? 0}</p>
             </CardContent>
           </Card>
           <Card>
@@ -102,7 +108,7 @@ export default function ClassificationPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-2xl font-bold text-red-600">{stats.rejected}</p>
+              <p className="text-2xl font-bold text-red-600">{stats.rejected ?? 0}</p>
             </CardContent>
           </Card>
         </div>
