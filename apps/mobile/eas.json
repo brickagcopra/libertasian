@@ -7,17 +7,23 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
+      "node": "22.11.0",
+      "pnpm": "10.30.3",
       "env": {
         "API_URL": "https://libertasian.com/api/v1"
       }
     },
     "preview": {
       "distribution": "internal",
+      "node": "22.11.0",
+      "pnpm": "10.30.3",
       "env": {
         "API_URL": "https://libertasian.com/api/v1"
       }
     },
     "production": {
+      "node": "22.11.0",
+      "pnpm": "10.30.3",
       "env": {
         "API_URL": "https://libertasian.com/api/v1"
       },
