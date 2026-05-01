@@ -23,6 +23,7 @@ from .base import (
     CandidateDoc,
     CloudflareBlockedError,
     FetchedContent,
+    StructuralChangeError,
     is_cloudflare_challenge,
 )
 
@@ -79,7 +80,13 @@ class OfficialGazetteFetcher(BaseFetcher):
         soup = BeautifulSoup(response.text, "lxml")
         seen_urls: set[str] = set()
 
-        for link in soup.find_all("a", href=True):
+        # Track how many anchors we considered. If the page returns 200 and
+        # contains zero anchors at all (or zero that look like the OG layout
+        # at all) the markup almost certainly changed — surface it loudly
+        # rather than logging records_found=0 silently.
+        all_anchors = soup.find_all("a", href=True)
+
+        for link in all_anchors:
             try:
                 candidate = self._parse_link(link, endpoint_url, seen_urls)
                 if candidate:
@@ -89,6 +96,21 @@ class OfficialGazetteFetcher(BaseFetcher):
                     "Failed to parse Official Gazette link", exc_info=True,
                 )
                 continue
+
+        # Don't raise just because *this page* has no decisions — it might
+        # be a deep-paginated archive. Only raise when the page ALSO has no
+        # recognisably OG-shaped anchors at all (configured URL is wrong,
+        # WordPress template revamped, etc.).
+        if not candidates and not self._has_recognisable_og_markup(all_anchors):
+            raise StructuralChangeError(
+                endpoint_url=endpoint_url,
+                parser_type="official_gazette",
+                reason=(
+                    "200 OK but no /executive-order/, /proclamation/, "
+                    "/republic-act/, /administrative-order/, "
+                    "/memorandum-*/, or dated /YYYY/MM/DD/ anchors found"
+                ),
+            )
 
         logger.info(
             "Discovered %d candidates from Official Gazette: %s",
@@ -146,8 +168,27 @@ class OfficialGazetteFetcher(BaseFetcher):
             decision_date=decision_date,
         )
 
-    @staticmethod
-    def _is_legal_document_link(href: str, title: str) -> bool:
+    # URL fragments that identify an Official Gazette legal-document permalink.
+    # Kept as a class attribute so the structural-change check can reuse the
+    # exact same set the per-link filter uses.
+    _LEGAL_PATH_HINTS: tuple[str, ...] = (
+        "/executive-order",
+        "/proclamation",
+        "/administrative-order",
+        "/republic-act",
+        "/memorandum-order",
+        "/memorandum-circular",
+        "/memorandum-from-the-executive-secretary",
+        "/letter-of-instruction",
+        "/general-order",
+        "/issuances/",
+        "/legal-issuances/",
+    )
+
+    _DATED_URL_RE: re.Pattern[str] = re.compile(r"/\d{4}/\d{2}/\d{2}/")
+
+    @classmethod
+    def _is_legal_document_link(cls, href: str, title: str) -> bool:
         """Filter for links that point to actual legal documents."""
         href_lower = href.lower()
 
@@ -161,23 +202,32 @@ class OfficialGazetteFetcher(BaseFetcher):
         ):
             return False
 
-        # Legal document URL patterns
-        legal_paths = (
-            "/executive-order",
-            "/proclamation",
-            "/administrative-order",
-            "/republic-act",
-            "/memorandum-order",
-            "/memorandum-circular",
-            "/letter-of-instruction",
-        )
-        if any(p in href_lower for p in legal_paths):
+        if any(p in href_lower for p in cls._LEGAL_PATH_HINTS):
             return True
 
         # Dated document URLs (e.g., /2024/01/15/document-title/)
-        if re.search(r"/\d{4}/\d{2}/\d{2}/", href_lower):
+        if cls._DATED_URL_RE.search(href_lower):
             return True
 
+        return False
+
+    @classmethod
+    def _has_recognisable_og_markup(cls, anchors: list[Tag]) -> bool:
+        """True if the page contains any anchor that looks like OG markup.
+
+        Used by ``discover`` to distinguish "we're on a real OG page that
+        happens to have no decisions today" (don't raise) from "we got a
+        200 OK but nothing on the page resembles OG at all" (raise so a
+        human looks at it).
+        """
+        for link in anchors:
+            href = str(link.get("href", "")).lower()
+            if "officialgazette.gov.ph" not in href:
+                continue
+            if any(p in href for p in cls._LEGAL_PATH_HINTS):
+                return True
+            if cls._DATED_URL_RE.search(href):
+                return True
         return False
 
     @staticmethod

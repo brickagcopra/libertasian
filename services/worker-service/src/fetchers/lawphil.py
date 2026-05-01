@@ -33,10 +33,18 @@ from .base import (
     CandidateDoc,
     CloudflareBlockedError,
     FetchedContent,
+    StructuralChangeError,
     is_cloudflare_challenge,
 )
 
 logger = logging.getLogger(__name__)
+
+# ``{YEAR}`` placeholder for source_endpoints.endpoint_url. Lets the seed
+# stay year-agnostic instead of hardcoding ``juri2025.html``; the fetcher
+# resolves the placeholder at fetch time using the current calendar year
+# and the year prior, so transitions across new-year boundaries don't
+# require a manual seed bump.
+YEAR_PLACEHOLDER = "{YEAR}"
 
 # Maximum number of monthly pages to follow from a year index.
 _MAX_MONTHLY_PAGES = 3
@@ -80,7 +88,20 @@ class LawphilFetcher(BaseFetcher):
            monthly pages and parse each.
         3. **Main index** (``judjuris.html``): follow the latest year link,
            then proceed as (2).
+
+        URL templates:
+
+        If ``endpoint_url`` contains the literal ``{YEAR}`` placeholder
+        (e.g. ``https://lawphil.net/judjuris/juri{YEAR}/juri{YEAR}.html``),
+        the fetcher resolves it for the current calendar year *and* the
+        previous year, then concatenates results. This keeps the daily
+        cron healthy across new-year boundaries without a config bump.
+        Backfill jobs that supply a concrete year URL pass through
+        unchanged.
         """
+        if YEAR_PLACEHOLDER in endpoint_url:
+            return self._discover_with_year_template(endpoint_url, last_fetched_at)
+
         candidates: list[CandidateDoc] = []
 
         with self._get_client() as client:
@@ -124,6 +145,7 @@ class LawphilFetcher(BaseFetcher):
 
             # Check if this is a monthly page with case table.
             table = soup.find("table", id="s-menu")
+            page_had_recognisable_markup = table is not None
             if table:
                 candidates = self._parse_monthly_table(
                     table, endpoint_url,
@@ -132,15 +154,20 @@ class LawphilFetcher(BaseFetcher):
                 # Old monthly pages (pre-2000) often don't use the s-menu
                 # table — fall back to scanning case-file anchors directly.
                 candidates = self._parse_monthly_links(soup, endpoint_url)
+                page_had_recognisable_markup = bool(
+                    soup.find("a", href=_CASE_FILE_PATTERN),
+                )
             else:
                 # This is a year index or main index — discover monthly URLs.
                 monthly_urls = self._discover_monthly_urls(soup, endpoint_url)
+                page_had_recognisable_markup = bool(monthly_urls)
 
                 # If this looks like the main index (judjuris.html) and no
                 # monthly URLs found, try following the latest year link.
                 if not monthly_urls:
                     year_url = self._discover_latest_year_url(soup, endpoint_url)
                     if year_url:
+                        page_had_recognisable_markup = True
                         try:
                             yr_resp = self._fetch_with_retry(client, year_url)
                             if yr_resp.status_code < 400:
@@ -182,12 +209,76 @@ class LawphilFetcher(BaseFetcher):
                         )
                         continue
 
+        if not candidates and not page_had_recognisable_markup:
+            # 200 OK with no s-menu, no case-file anchors, no monthly URLs,
+            # and no year-index link. Either lawphil.net redesigned or the
+            # configured URL is wrong (e.g. a year-template that resolved to
+            # a year that doesn't exist yet). Surface it so the orchestrator
+            # records a structural-change error instead of a silent zero.
+            raise StructuralChangeError(
+                endpoint_url=endpoint_url,
+                parser_type="lawphil",
+                reason=(
+                    "200 OK but no table#s-menu, no monthly anchors, "
+                    "no case-file anchors, and no year-index link found"
+                ),
+            )
+
         logger.info(
             "Discovered %d candidates from Lawphil: %s",
             len(candidates),
             endpoint_url,
         )
         return candidates
+
+    def _discover_with_year_template(
+        self,
+        endpoint_url: str,
+        last_fetched_at: str | None,
+    ) -> list[CandidateDoc]:
+        """Resolve ``{YEAR}`` to current year and current_year-1, crawl both.
+
+        Years are tried newest-first so callers that consume the list in
+        order (e.g. ``fetch_since`` using the head as the new cursor) still
+        get the most recent decision at index 0.
+
+        A *missing* prior year (HTTP 404 or empty) is non-fatal — it's
+        legitimate at the very start of January when the site hasn't yet
+        published a year-page for the new year. A failure on the *current*
+        year propagates so the operator sees it.
+        """
+        current_year = datetime.now(UTC).year
+        years_to_try = (current_year, current_year - 1)
+        all_candidates: list[CandidateDoc] = []
+        last_error: Exception | None = None
+
+        for year in years_to_try:
+            resolved = endpoint_url.replace(YEAR_PLACEHOLDER, str(year))
+            try:
+                year_candidates = self.discover(resolved, last_fetched_at)
+            except StructuralChangeError as exc:
+                # If the *current* year page legitimately doesn't exist yet,
+                # don't blow up the whole crawl — but do log it. We'll still
+                # raise if BOTH years fail (handled below).
+                last_error = exc
+                logger.warning(
+                    "Lawphil year-template year=%d resolved to %s "
+                    "but no candidates found: %s",
+                    year, resolved, exc,
+                )
+                continue
+            except CloudflareBlockedError:
+                raise
+            all_candidates.extend(year_candidates)
+
+        if not all_candidates and last_error is not None:
+            # Re-raise the most recent structural error so the orchestrator
+            # records it. Don't silently swallow when every templated year
+            # came back empty — that's the failure mode this code exists to
+            # prevent.
+            raise last_error
+
+        return all_candidates
 
     def fetch_content(self, url: str) -> FetchedContent:
         """Download an individual Lawphil document page."""

@@ -25,7 +25,7 @@ from ..clients import ingestion_db_client as db
 from ..clients import nestjs_client, s3_client
 from ..clients.db_client import SchemaIntegrityError
 from ..config import settings
-from ..fetchers.base import CloudflareBlockedError
+from ..fetchers.base import CloudflareBlockedError, StructuralChangeError
 from ..fetchers.registry import get_fetcher
 from ..classifiers.dedup_classifier import DedupClassifier, DedupTier
 from ..normalizers.text_normalizer import (
@@ -287,6 +287,31 @@ def _process_endpoint(
                 "cf_type": cf_exc.cf_type,
                 "detected_at": datetime.now(UTC).isoformat(),
                 "message": str(cf_exc),
+            }],
+        }
+    except StructuralChangeError as sc_exc:
+        # The remote site responded with real HTML but the parser found
+        # nothing. This is almost always a markup change on the source side
+        # — surface it loudly so we don't keep recording silent
+        # records_found=0 runs day after day.
+        logger.error(
+            "Structural change detected on endpoint %s (parser=%s): %s",
+            endpoint["id"],
+            parser_type,
+            sc_exc,
+        )
+        return {
+            "found": 0,
+            "created": 0,
+            "updated": 0,
+            "errors": [{
+                "type": "structural_change",
+                "endpoint_id": endpoint["id"],
+                "endpoint_url": sc_exc.endpoint_url,
+                "parser_type": parser_type,
+                "reason": sc_exc.reason,
+                "detected_at": datetime.now(UTC).isoformat(),
+                "message": str(sc_exc),
             }],
         }
 

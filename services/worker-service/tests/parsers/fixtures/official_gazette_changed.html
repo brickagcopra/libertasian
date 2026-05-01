@@ -1,0 +1,24 @@
+<!--
+Negative case: 200 OK page with no anchors that look like OG legal-issuance
+permalinks. Simulates the section page being replaced (e.g. WordPress
+template revamp) with a navigation-only landing page. Parser must raise
+StructuralChangeError.
+-->
+<!DOCTYPE html>
+<html>
+<head><title>Official Gazette</title></head>
+<body>
+<header>
+  <nav>
+    <a href="https://www.officialgazette.gov.ph/about/">About</a>
+    <a href="https://www.officialgazette.gov.ph/contact/">Contact</a>
+    <a href="https://www.officialgazette.gov.ph/feed/">RSS</a>
+  </nav>
+</header>
+<main>
+  <h1>Welcome</h1>
+  <p>The Official Gazette is the public journal of the Republic of the Philippines.</p>
+  <a href="https://example.com/external">External link</a>
+</main>
+</body>
+</html>

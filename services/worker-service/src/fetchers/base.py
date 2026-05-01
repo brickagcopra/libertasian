@@ -86,6 +86,36 @@ class CloudflareBlockedError(Exception):
         )
 
 
+class StructuralChangeError(Exception):
+    """Raised when a source returns 200 OK but the page no longer contains
+    any of the anchors / table rows the parser expects.
+
+    This makes silent breakage loud: a source whose markup changes (or whose
+    URL pattern goes stale and starts serving a redirect / placeholder) used
+    to result in ``records_found=0`` runs that look fine in the job log.
+    Now the parser raises this so the orchestrator can record a structured
+    error in ``ingestion_jobs.errors_json`` and operators can investigate.
+
+    Distinct from ``CloudflareBlockedError``: that one means the remote site
+    is gating us behind a JS challenge and we need a headless browser. This
+    one means the site served us real HTML but our selectors don't match it.
+    """
+
+    def __init__(
+        self,
+        endpoint_url: str,
+        parser_type: str,
+        reason: str,
+    ) -> None:
+        self.endpoint_url = endpoint_url
+        self.parser_type = parser_type
+        self.reason = reason
+        super().__init__(
+            f"Structural change detected for parser={parser_type} "
+            f"at {endpoint_url}: {reason}",
+        )
+
+
 def is_cloudflare_challenge(html: str) -> bool:
     """Detect Cloudflare Turnstile / managed challenge pages.
 
