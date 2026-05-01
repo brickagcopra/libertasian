@@ -28,6 +28,7 @@ from .base import (
     CandidateDoc,
     CloudflareBlockedError,
     FetchedContent,
+    StructuralChangeError,
     is_cloudflare_challenge,
 )
 
@@ -43,6 +44,13 @@ logger = logging.getLogger(__name__)
 # Cloudflare blocker — even if Cloudflare lifts, we'd still need to wire the
 # Congress-number lookup before we get full coverage from this source.
 CONGRESS_PDF_CDN = "https://docs.congress.hrep.online/legisdocs"
+
+# RA-pattern PDF link.  Both legacy ``/ra_NN/RANNNN.pdf`` (CDN) and modern
+# ``/legisdocs/.../RANNNN.pdf`` (main site) shapes are accepted. ``ra``/``RA``
+# may appear with or without an underscore separator. Used by the
+# tabular-row + bare-link fallbacks so layout changes don't silently zero
+# the listing again.
+_RA_PDF_HREF_PATTERN = re.compile(r"(?i)RA[_\-]?(\d{4,5})\.pdf")
 
 
 class CongressFetcher(BaseFetcher):
@@ -98,12 +106,25 @@ class CongressFetcher(BaseFetcher):
         soup = BeautifulSoup(response.text, "lxml")
         seen_urls: set[str] = set()
 
-        # Strategy 1: Bootstrap panel layout (congress.gov.ph/legisdocs/?v=ra)
+        # Strategy 1: Bootstrap panel layout (legacy congress.gov.ph/legisdocs/?v=ra)
         panels = soup.find_all("div", class_="panel-heading")
         if panels:
             candidates = self._parse_panel_layout(soup, endpoint_url, seen_urls)
-        else:
-            # Strategy 2: generic link-based discovery
+
+        # Strategy 2: tabular row layout (current legisdocs view).
+        if not candidates:
+            candidates = self._parse_table_layout(soup, endpoint_url, seen_urls)
+
+        # Strategy 3: bare RA-PDF anchors anywhere on the page. Catches
+        # layouts where the listing collapses into a flat <a href> list
+        # (search results, mobile templates).
+        if not candidates:
+            candidates = self._parse_ra_pdf_links(soup, endpoint_url, seen_urls)
+
+        # Strategy 4 (last resort): generic link-based discovery for older
+        # /republic-act/ permalinks. This is intentionally last because it's
+        # the loosest filter and produces the most false positives.
+        if not candidates:
             for link in soup.find_all("a", href=True):
                 try:
                     candidate = self._parse_link(link, endpoint_url, seen_urls)
@@ -114,6 +135,20 @@ class CongressFetcher(BaseFetcher):
                         "Failed to parse Congress link", exc_info=True,
                     )
                     continue
+
+        # Defensive: response was 200 OK but every selector strategy came
+        # back empty. That means the page exists but our parser doesn't
+        # know its markup. Raise so the orchestrator records it as a
+        # structural-change error instead of silently logging found=0.
+        if not candidates:
+            raise StructuralChangeError(
+                endpoint_url=endpoint_url,
+                parser_type="congress",
+                reason=(
+                    "no panel-heading, no RA table rows, no RA*.pdf anchors, "
+                    "and no /republic-act/ links found in 200 OK response"
+                ),
+            )
 
         logger.info(
             "Discovered %d candidates from Congress: %s",
@@ -234,6 +269,140 @@ class CongressFetcher(BaseFetcher):
                 continue
 
         return candidates
+
+    def _parse_table_layout(
+        self,
+        soup: BeautifulSoup,
+        base_url: str,
+        seen_urls: set[str],
+    ) -> list[CandidateDoc]:
+        """Parse table-row layouts used by the current legisdocs view.
+
+        Structure (varies but rows always contain an RA*.pdf anchor and a
+        title cell)::
+
+            <tr>
+              <td>RA No. 11934</td>
+              <td><a href="docs.congress.hrep.online/.../RA11934.pdf">PDF</a></td>
+              <td>AN ACT REQUIRING THE REGISTRATION OF …</td>
+              <td>October 10, 2022</td>
+            </tr>
+        """
+        candidates: list[CandidateDoc] = []
+
+        for row in soup.find_all("tr"):
+            try:
+                pdf_link = row.find(
+                    "a", href=lambda h: bool(h) and bool(_RA_PDF_HREF_PATTERN.search(h)),
+                )
+                if not pdf_link:
+                    continue
+
+                raw_href = str(pdf_link.get("href", ""))
+                href = (
+                    raw_href if raw_href.startswith("http")
+                    else urljoin(base_url, raw_href)
+                )
+                if href in seen_urls:
+                    continue
+                seen_urls.add(href)
+
+                row_text = row.get_text(" ", strip=True)
+                ra_no = self._extract_ra_no(row_text) or self._extract_ra_no(href)
+                if not ra_no:
+                    continue
+
+                title = self._extract_title_from_row(row, ra_no) or ra_no
+                decision_date = self._extract_date(row_text)
+
+                candidates.append(
+                    CandidateDoc(
+                        url=href,
+                        title=title,
+                        gr_no=ra_no,
+                        document_type="republic_act",
+                        decision_date=decision_date,
+                    )
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to parse Congress table row", exc_info=True,
+                )
+                continue
+
+        return candidates
+
+    def _parse_ra_pdf_links(
+        self,
+        soup: BeautifulSoup,
+        base_url: str,
+        seen_urls: set[str],
+    ) -> list[CandidateDoc]:
+        """Last-resort: pick up any RA*.pdf anchor anywhere on the page.
+
+        The PDF filename is enough to recover the RA number; surrounding
+        text (parent paragraph or list item) supplies the title when
+        present.
+        """
+        candidates: list[CandidateDoc] = []
+
+        for link in soup.find_all("a", href=True):
+            raw_href = str(link.get("href", ""))
+            if not _RA_PDF_HREF_PATTERN.search(raw_href):
+                continue
+
+            href = (
+                raw_href if raw_href.startswith("http")
+                else urljoin(base_url, raw_href)
+            )
+            if href in seen_urls:
+                continue
+            seen_urls.add(href)
+
+            ra_no = self._extract_ra_no(href)
+            if not ra_no:
+                continue
+
+            # Try to find a sensible title in the surrounding container.
+            container = link.find_parent(["li", "p", "tr", "div"])
+            title = ""
+            if container is not None:
+                title = self._extract_title_from_row(container, ra_no) or ""
+            title = title or link.get_text(strip=True) or ra_no
+
+            candidates.append(
+                CandidateDoc(
+                    url=href,
+                    title=title,
+                    gr_no=ra_no,
+                    document_type="republic_act",
+                    decision_date=self._extract_date(
+                        container.get_text(" ", strip=True) if container else "",
+                    ),
+                )
+            )
+
+        return candidates
+
+    @staticmethod
+    def _extract_title_from_row(container: Tag, ra_no: str) -> str | None:
+        """Pull the longest reasonable phrase out of a row/container.
+
+        Avoids returning the literal RA code or a short button label as the
+        title — which would be useless downstream for citation matching.
+        """
+        # Prefer a cell that doesn't just contain the RA code or PDF text.
+        for cell in container.find_all(["td", "p", "span", "div"]):
+            text = cell.get_text(" ", strip=True)
+            if not text or len(text) < 15:
+                continue
+            if text.lower() in {ra_no.lower(), "pdf"}:
+                continue
+            if text.upper().startswith("RA") and len(text) < 25:
+                continue
+            return text
+        full = container.get_text(" ", strip=True)
+        return full if len(full) >= 15 else None
 
     def _parse_link(
         self,

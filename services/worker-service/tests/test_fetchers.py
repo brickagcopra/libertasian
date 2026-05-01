@@ -402,8 +402,14 @@ class TestBaseFetcherRetry:
 class TestFetcherRegistry:
     """Test fetcher registry lookup."""
 
-    def test_registry_has_all_four_sources(self):
-        expected = {"supreme_court_elibrary", "lawphil", "official_gazette", "congress"}
+    def test_registry_has_all_sources(self):
+        expected = {
+            "supreme_court_elibrary",
+            "lawphil",
+            "lawphil_bar",
+            "official_gazette",
+            "congress",
+        }
         assert set(FETCHER_REGISTRY.keys()) == expected
 
     def test_get_fetcher_returns_instance(self):

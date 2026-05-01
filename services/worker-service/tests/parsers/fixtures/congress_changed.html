@@ -1,0 +1,22 @@
+<!--
+Negative case: 200 OK page with no panel-heading, no RA*.pdf anchors, and
+no /republic-act/ permalinks. Simulates a redesign of legisdocs (e.g. the
+listing got moved behind a SPA endpoint and this URL now returns the
+homepage). Parser must raise StructuralChangeError, not silently return
+zero candidates.
+-->
+<!DOCTYPE html>
+<html>
+<head><title>Congress of the Philippines</title></head>
+<body>
+<header>
+  <nav><a href="/about">About</a> | <a href="/contact">Contact</a></nav>
+</header>
+<main>
+  <h1>Welcome to Congress.gov.ph</h1>
+  <p>Use the search bar above to find legislation.</p>
+  <a href="/news/article-1">Latest news</a>
+  <a href="/about/leadership">Leadership</a>
+</main>
+</body>
+</html>

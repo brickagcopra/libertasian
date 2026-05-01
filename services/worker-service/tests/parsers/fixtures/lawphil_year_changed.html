@@ -1,0 +1,15 @@
+<!--
+Negative case: a 200 OK lawphil.net response with no s-menu table, no
+case-file anchors, no monthly URLs, and no year-index links. Simulates
+the year template resolving to a year that doesn't exist yet (e.g. the
+URL pattern silently changed or we're querying a future year before
+LawPhil publishes its index). Parser must raise StructuralChangeError.
+-->
+<HTML>
+<HEAD><TITLE>LawPhil</TITLE></HEAD>
+<BODY>
+<H1>Page not found</H1>
+<P>Try the home page.</P>
+<A HREF="/">Home</A>
+</BODY>
+</HTML>

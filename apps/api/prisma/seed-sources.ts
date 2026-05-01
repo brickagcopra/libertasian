@@ -49,7 +49,12 @@ const SOURCES: SourceSeed[] = [
     fetchStrategy: 'crawler',
     endpoints: [
       {
-        endpointUrl: 'https://lawphil.net/judjuris/juri2025/juri2025.html',
+        // {YEAR} is resolved at fetch time by LawphilFetcher to the current
+        // calendar year and current_year-1 (see services/worker-service/
+        // src/fetchers/lawphil.py::YEAR_PLACEHOLDER). Backfill jobs that
+        // pin a specific year supply a fully-qualified URL and bypass the
+        // template, so this only affects the daily cron path.
+        endpointUrl: 'https://lawphil.net/judjuris/juri{YEAR}/juri{YEAR}.html',
         contentTypeHint: 'text/html',
         parserType: 'lawphil',
         scheduleCron: '0 3 * * *', // daily at 3 AM
