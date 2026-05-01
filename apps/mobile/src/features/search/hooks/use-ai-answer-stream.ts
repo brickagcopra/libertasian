@@ -3,9 +3,18 @@ import Constants from 'expo-constants';
 import { authStorage } from '../../../storage/auth-storage';
 import type { AiAnswerChunk, AiAnswerSource } from '../types';
 
-const API_BASE_URL =
-  (Constants.expoConfig?.extra?.['apiUrl'] as string | undefined) ??
-  'http://localhost:3001/api/v1';
+function resolveApiBaseUrl(): string {
+  const override = process.env['EXPO_PUBLIC_API_URL'];
+  if (override) {
+    return override;
+  }
+  return (
+    (Constants.expoConfig?.extra?.['apiUrl'] as string | undefined) ??
+    'http://localhost:3001/api/v1'
+  );
+}
+
+const API_BASE_URL = resolveApiBaseUrl();
 
 const MAX_RETRIES = 3;
 const BASE_RETRY_DELAY_MS = 1000;

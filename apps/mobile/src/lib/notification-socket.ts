@@ -2,9 +2,18 @@ import { io, Socket } from 'socket.io-client';
 import Constants from 'expo-constants';
 import { authStorage } from '../storage/auth-storage';
 
-const API_BASE_URL =
-  (Constants.expoConfig?.extra?.['apiUrl'] as string | undefined) ??
-  'http://localhost:3001/api/v1';
+function resolveApiBaseUrl(): string {
+  const override = process.env['EXPO_PUBLIC_API_URL'];
+  if (override) {
+    return override;
+  }
+  return (
+    (Constants.expoConfig?.extra?.['apiUrl'] as string | undefined) ??
+    'http://localhost:3001/api/v1'
+  );
+}
+
+const API_BASE_URL = resolveApiBaseUrl();
 
 /** Strip /api/v1 suffix to get the Socket.IO server origin. */
 const SOCKET_URL = API_BASE_URL.replace(/\/api\/v\d+$/, '');
