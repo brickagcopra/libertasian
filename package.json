@@ -31,6 +31,7 @@
     "overrides": {
       "handlebars": ">=4.7.9",
       "tar": ">=7.5.11",
+      "@expo/cli>tar": "^6.2.1",
       "picomatch": ">=3.0.2",
       "node-forge": ">=1.4.0"
     }
