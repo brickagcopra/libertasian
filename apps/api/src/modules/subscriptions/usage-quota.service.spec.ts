@@ -9,6 +9,7 @@ import type { QuotaType } from './usage-quota.service';
 describe('UsageQuotaService', () => {
   let service: UsageQuotaService;
   let redis: jest.Mocked<RedisService>;
+  let redisClient: { set: jest.Mock };
   let entitlementService: jest.Mocked<EntitlementService>;
   let prisma: {
     subscription: {
@@ -45,6 +46,9 @@ describe('UsageQuotaService', () => {
             get: jest.fn(),
             incr: jest.fn(),
             expire: jest.fn(),
+            getClient: jest.fn().mockReturnValue({
+              set: jest.fn().mockResolvedValue('OK'),
+            }),
           },
         },
         {
@@ -64,6 +68,7 @@ describe('UsageQuotaService', () => {
 
     service = module.get<UsageQuotaService>(UsageQuotaService);
     redis = module.get(RedisService);
+    redisClient = redis.getClient() as unknown as { set: jest.Mock };
     entitlementService = module.get(EntitlementService);
   });
 
@@ -113,25 +118,58 @@ describe('UsageQuotaService', () => {
       expect(redis.incr).not.toHaveBeenCalled();
     });
 
-    it('should set TTL on first increment (newCount === 1)', async () => {
+    it('should atomically seed key with TTL via SET NX before INCR on first increment', async () => {
       redis.get.mockResolvedValue(null);
       redis.incr.mockResolvedValue(1);
 
       await service.checkAndIncrement('org-1', 'user-1', 'aiAnswers');
 
-      expect(redis.expire).toHaveBeenCalledWith(
+      expect(redisClient.set).toHaveBeenCalledWith(
         expect.stringContaining('quota:daily:org-1:user-1:aiAnswers'),
+        '0',
+        'EX',
         expect.any(Number),
+        'NX',
       );
+      // Call order: SET NX must precede INCR so a crash between them
+      // leaves a TTL'd key=0, never a TTL-less key=1.
+      const setOrder = redisClient.set.mock.invocationCallOrder[0]!;
+      const incrOrder = redis.incr.mock.invocationCallOrder[0]!;
+      expect(setOrder).toBeLessThan(incrOrder);
     });
 
-    it('should not set TTL on subsequent increments', async () => {
+    it('should still call SET NX on subsequent increments (no-op for existing key)', async () => {
       redis.get.mockResolvedValue('3');
       redis.incr.mockResolvedValue(4);
 
-      await service.checkAndIncrement('org-1', 'user-1', 'aiAnswers');
+      const result = await service.checkAndIncrement('org-1', 'user-1', 'aiAnswers');
 
+      expect(redisClient.set).toHaveBeenCalledWith(
+        expect.any(String),
+        '0',
+        'EX',
+        expect.any(Number),
+        'NX',
+      );
+      expect(redis.incr).toHaveBeenCalledTimes(1);
+      expect(result.used).toBe(4);
+      // Legacy expire() call should no longer be made anywhere.
       expect(redis.expire).not.toHaveBeenCalled();
+    });
+
+    it('should return identical QuotaCheckResult shape for fresh and existing keys', async () => {
+      redis.get.mockResolvedValueOnce(null);
+      redis.incr.mockResolvedValueOnce(1);
+      const fresh = await service.checkAndIncrement('org-1', 'user-1', 'aiAnswers');
+
+      redis.get.mockResolvedValueOnce('3');
+      redis.incr.mockResolvedValueOnce(4);
+      const existing = await service.checkAndIncrement('org-1', 'user-1', 'aiAnswers');
+
+      expect(Object.keys(fresh).sort()).toEqual(
+        ['allowed', 'limit', 'remaining', 'resetsAt', 'used'],
+      );
+      expect(Object.keys(existing).sort()).toEqual(Object.keys(fresh).sort());
     });
 
     it('should use daily key for aiAnswers (free user, no billing period)', async () => {
@@ -276,13 +314,16 @@ describe('UsageQuotaService', () => {
 
       await service.checkAndIncrement('org-1', 'user-1', 'digestsPerMonth');
 
-      // TTL should be approximately 10 days in seconds
+      // TTL should be approximately 10 days in seconds, passed via SET NX seed.
       const expectedTtl = Math.ceil((periodEnd.getTime() - Date.now()) / 1000);
-      expect(redis.expire).toHaveBeenCalledWith(
+      expect(redisClient.set).toHaveBeenCalledWith(
         expect.any(String),
+        '0',
+        'EX',
         expect.any(Number),
+        'NX',
       );
-      const actualTtl = redis.expire.mock.calls[0]![1] as number;
+      const actualTtl = redisClient.set.mock.calls[0]![3] as number;
       expect(actualTtl).toBeGreaterThan(expectedTtl - 5);
       expect(actualTtl).toBeLessThanOrEqual(expectedTtl + 5);
     });

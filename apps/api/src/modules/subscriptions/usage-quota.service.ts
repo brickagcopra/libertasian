@@ -101,11 +101,12 @@ export class UsageQuotaService {
       };
     }
 
+    // Atomically seed the counter with its TTL on creation. No-op if the
+    // key already exists (preserves existing TTL). Replaces the previous
+    // non-atomic incr+expire pair, which could orphan a TTL-less key under
+    // noeviction if the process crashed between the two commands.
+    await this.redis.getClient().set(key, '0', 'EX', ttl, 'NX');
     const newCount = await this.redis.incr(key);
-    // Set TTL on first increment (when key was just created)
-    if (newCount === 1) {
-      await this.redis.expire(key, ttl);
-    }
 
     return {
       allowed: true,
