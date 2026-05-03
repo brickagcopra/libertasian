@@ -11,33 +11,47 @@ import { PrismaService } from '../../prisma/prisma.service';
 export const SUPPRESSED_DOCS_KEY = 'cache:search:suppressed_doc_ids';
 
 /**
- * TTL on the Redis set (seconds). The set is regenerated on each refresh
- * call, but a TTL provides a safety net if a refresh ever fails to run.
+ * Sentinel key proving the set was populated from Postgres at some point in
+ * the last TTL window. We need this because an empty Redis set is a valid
+ * answer (no docs to suppress) and is indistinguishable from a cold cache
+ * via SMEMBERS alone. Sentinel present → trust the (possibly empty) set.
+ * Sentinel missing → treat as a cache miss and re-populate from Postgres.
  */
-const SUPPRESSED_DOCS_TTL = 24 * 60 * 60;
+export const SUPPRESSED_DOCS_POPULATED_KEY =
+  'cache:search:suppressed_doc_ids:populated';
+
+/** Read-through cache TTL (seconds). */
+const SUPPRESSED_DOCS_TTL = 60 * 60;
 
 /**
  * Cap on how many suppressed IDs we will inject into a single OpenSearch
  * `must_not.terms` clause. OpenSearch defaults `index.max_terms_count` to
  * 65_536, but huge `must_not` lists also degrade query plans. If the set
- * grows past this we should switch to approach (a) — a materialized
- * `is_canonical` flag on `legal_documents`. See TODO below.
+ * grows past this we should switch to a materialized `is_canonical` flag
+ * on `legal_documents`. See TODO below.
  */
 const MAX_TERMS_INLINE = 5_000;
 
 /**
- * Service that maintains a Redis set of "suppressed" document IDs (rows the
- * dedup engine identified as non-canonical duplicates or stale versions),
- * and exposes them to the search query layer for `must_not` filtering.
+ * Read-through cache for the "suppressed document IDs" set used by the
+ * search dedup post-filter. Postgres `document_similarities` is the system
+ * of record; Redis is a 1h cache.
  *
- * Approach (b): query-time filter via Redis set. Cheap to deploy, instantly
- * revertible. Once the corpus stabilises we should migrate to approach (a)
- * — store an `is_canonical` boolean on `legal_documents` that the indexer
- * writes at index time and the search query references as a single `term`
- * filter. That avoids the Redis hop and the `must_not.terms` size ceiling.
+ * Suppression rules (preserved from the original PR #103 implementation):
+ *   - exact_duplicate / mirror_duplicate (any status): suppress every
+ *     documentId in the cluster that is NOT canonical_document_id.
+ *   - version_update: suppress the document with the lower `version_no`.
+ *   - title (only): never suppressed.
+ *
+ * Public API:
+ *   - getSuppressedDocIds(): hot-path read, returns the cached Set or
+ *     populates from Postgres on miss.
+ *   - refresh(): forced-invalidate — DEL both keys then re-warm. Used by
+ *     the admin diagnostics endpoint.
+ *   - getCount(): cardinality for diagnostics.
  *
  * TODO(search-dedup): replace with `is_canonical` field on `legal_documents`
- * + reindex; remove this service and the Redis hop. Tracked in follow-up PR.
+ * + reindex; remove this service and the Redis hop.
  */
 @Injectable()
 export class SuppressedDocsService {
@@ -49,17 +63,121 @@ export class SuppressedDocsService {
   ) {}
 
   /**
-   * Recompute the suppressed-doc set from `document_similarities` and write
-   * it to Redis. Suppression rules:
-   *   - exact_duplicate / mirror_duplicate (any status): suppress every
-   *     documentId in the cluster that is NOT canonical_document_id.
-   *   - version_update: suppress the document with the lower `version_no`.
-   *   - title (only): do NOT suppress — these are sometimes legitimately
-   *     distinct documents.
-   *
-   * Returns the number of distinct doc IDs written to the set.
+   * Return the suppressed-doc set for query-time injection. Redis is read
+   * first; on miss (sentinel absent) the set is recomputed from Postgres
+   * and written back. Defensive on every failure path: search MUST NOT
+   * 500 because of this filter.
+   */
+  async getSuppressedDocIds(): Promise<Set<string>> {
+    const cached = await this.readFromCache();
+    if (cached) {
+      return cached;
+    }
+
+    let ids: Set<string>;
+    try {
+      ids = await this.loadFromPostgres();
+    } catch (err) {
+      this.logger.warn(
+        `Failed to load suppressed-docs from Postgres (${(err as Error).message}); ` +
+          'search will run without dedup filter',
+      );
+      return new Set();
+    }
+
+    await this.writeToCache(ids);
+    return ids;
+  }
+
+  /**
+   * Force-invalidate the cache and re-populate from Postgres. Returns the
+   * new cardinality. Safe to run any time; idempotent.
    */
   async refresh(): Promise<{ count: number }> {
+    try {
+      const client = this.redis.getClient();
+      await client.del(SUPPRESSED_DOCS_KEY, SUPPRESSED_DOCS_POPULATED_KEY);
+    } catch (err) {
+      this.logger.warn(
+        `Failed to clear suppressed-docs cache during refresh: ${(err as Error).message}`,
+      );
+    }
+    const ids = await this.getSuppressedDocIds();
+    this.logger.log(`Suppressed-docs cache refreshed: ${ids.size} document IDs`);
+    return { count: ids.size };
+  }
+
+  /**
+   * Diagnostics counter. Triggers a populate on miss so admins always see
+   * the live number. Returns 0 if both Redis and Postgres are unreachable.
+   */
+  async getCount(): Promise<number> {
+    const ids = await this.getSuppressedDocIds();
+    return ids.size;
+  }
+
+  /**
+   * Read-side cache lookup. Returns `null` on cache miss (no sentinel) or
+   * any Redis error — the caller falls through to Postgres.
+   */
+  private async readFromCache(): Promise<Set<string> | null> {
+    try {
+      const client = this.redis.getClient();
+      const populated = await client.get(SUPPRESSED_DOCS_POPULATED_KEY);
+      if (!populated) {
+        return null;
+      }
+      const cardinality = await client.scard(SUPPRESSED_DOCS_KEY);
+      if (cardinality > MAX_TERMS_INLINE) {
+        this.logger.warn(
+          `Suppressed-docs set has ${cardinality} entries, exceeding inline cap ${MAX_TERMS_INLINE}. ` +
+            'Skipping must_not.terms — switch to materialized is_canonical filter (TODO).',
+        );
+        return new Set();
+      }
+      if (cardinality === 0) {
+        return new Set();
+      }
+      const members = await client.smembers(SUPPRESSED_DOCS_KEY);
+      return new Set(members);
+    } catch (err) {
+      this.logger.warn(
+        `Failed to read suppressed-docs from Redis (${(err as Error).message}); ` +
+          'falling through to Postgres',
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Write the freshly-loaded set to Redis with a TTL on both the set and
+   * the sentinel. Failures are logged but never propagate — the caller
+   * already has the Postgres result.
+   */
+  private async writeToCache(ids: Set<string>): Promise<void> {
+    try {
+      const client = this.redis.getClient();
+      const pipeline = client.multi();
+      pipeline.del(SUPPRESSED_DOCS_KEY);
+      if (ids.size > 0) {
+        pipeline.sadd(SUPPRESSED_DOCS_KEY, ...Array.from(ids));
+        pipeline.expire(SUPPRESSED_DOCS_KEY, SUPPRESSED_DOCS_TTL);
+      }
+      pipeline.set(SUPPRESSED_DOCS_POPULATED_KEY, '1', 'EX', SUPPRESSED_DOCS_TTL);
+      await pipeline.exec();
+    } catch (err) {
+      this.logger.warn(
+        `Failed to write suppressed-docs to Redis (${(err as Error).message}); ` +
+          'returning Postgres result without caching',
+      );
+    }
+  }
+
+  /**
+   * Compute the suppressed-doc set from `document_similarities` using the
+   * three-rule policy. This is the system of record; Redis is just a cache.
+   */
+  private async loadFromPostgres(): Promise<Set<string>> {
     const ids = new Set<string>();
 
     const dupes = await this.prisma.documentSimilarity.findMany({
@@ -99,63 +217,6 @@ export class SuppressedDocsService {
       }
     }
 
-    const client = this.redis.getClient();
-    await client.del(SUPPRESSED_DOCS_KEY);
-    if (ids.size > 0) {
-      await client.sadd(SUPPRESSED_DOCS_KEY, ...Array.from(ids));
-      await client.expire(SUPPRESSED_DOCS_KEY, SUPPRESSED_DOCS_TTL);
-    }
-
-    this.logger.log(
-      `Suppressed-docs set refreshed: ${ids.size} document IDs`,
-    );
-    return { count: ids.size };
-  }
-
-  /**
-   * Return suppressed doc IDs for query-time injection. Defensive: if Redis
-   * is down, the set is missing, or the cap is exceeded, returns [] and
-   * logs a warning. Search MUST NOT 500 when this fails.
-   */
-  async getSuppressedIds(): Promise<string[]> {
-    try {
-      const client = this.redis.getClient();
-      const cardinality = await client.scard(SUPPRESSED_DOCS_KEY);
-      if (cardinality === 0) {
-        this.logger.debug(
-          'Suppressed-docs set is empty; search will run without dedup filter',
-        );
-        return [];
-      }
-      if (cardinality > MAX_TERMS_INLINE) {
-        this.logger.warn(
-          `Suppressed-docs set has ${cardinality} entries, exceeding inline cap ${MAX_TERMS_INLINE}. ` +
-            'Skipping must_not.terms — switch to materialized is_canonical filter (TODO).',
-        );
-        return [];
-      }
-      return await client.smembers(SUPPRESSED_DOCS_KEY);
-    } catch (err) {
-      this.logger.warn(
-        `Failed to read suppressed-docs set (${(err as Error).message}); falling back to no filter`,
-      );
-      return [];
-    }
-  }
-
-  /**
-   * Diagnostics counter — used by the admin diagnostics endpoint. Returns
-   * 0 if Redis is unreachable so the endpoint stays usable during outages.
-   */
-  async getCount(): Promise<number> {
-    try {
-      const client = this.redis.getClient();
-      return await client.scard(SUPPRESSED_DOCS_KEY);
-    } catch (err) {
-      this.logger.warn(
-        `Failed to read suppressed-docs count: ${(err as Error).message}`,
-      );
-      return 0;
-    }
+    return ids;
   }
 }

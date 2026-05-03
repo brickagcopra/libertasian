@@ -145,10 +145,10 @@ export class SearchService {
     searchType: 'hybrid' | 'keyword_only';
   }> {
     // Resolve the dedup suppression list before issuing OpenSearch calls.
-    // The service swallows its own errors and returns [] on miss/outage,
-    // so the search path NEVER 500s on a Redis hiccup.
+    // The service swallows its own errors and returns an empty Set on
+    // miss/outage, so the search path NEVER 500s on a Redis hiccup.
     const excludeDocumentIds = this.isDedupFilterEnabled()
-      ? await this.suppressedDocs.getSuppressedIds()
+      ? Array.from(await this.suppressedDocs.getSuppressedDocIds())
       : [];
 
     // Always run BM25 keyword search
