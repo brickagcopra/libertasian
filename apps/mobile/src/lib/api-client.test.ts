@@ -66,8 +66,8 @@ describe('apiClient.get', () => {
         }),
       }),
     );
-    // Envelope unwrapped: returns `data` field only.
-    expect(result).toEqual([]);
+    // Returns the JSON body verbatim — callers handle the envelope.
+    expect(result).toEqual({ success: true, data: [] });
   });
 
   it('appends query params to URL', async () => {
@@ -262,8 +262,8 @@ describe('apiClient - token refresh on 401', () => {
 
     const result = await apiClient.get('/protected');
 
-    // Envelope unwrapped: returns the `data` value.
-    expect(result).toEqual('retried');
+    // Returns the JSON body verbatim — callers handle the envelope.
+    expect(result).toEqual({ success: true, data: 'retried' });
     expect(mockSetAccessToken).toHaveBeenCalledWith('new-access-token');
     expect(mockSetRefreshToken).toHaveBeenCalledWith('new-refresh-token');
     expect(mockFetch).toHaveBeenCalledTimes(3);
@@ -389,10 +389,10 @@ describe('apiClient - concurrent 401 deduplication', () => {
       apiClient.get('/e'),
     ]);
 
-    // All 5 should resolve successfully — envelope unwrapped to data string.
+    // All 5 should resolve successfully — body returned verbatim (envelope intact).
     expect(results).toHaveLength(5);
     results.forEach((r, i) => {
-      expect(r).toEqual(`result-${i}`);
+      expect(r).toEqual({ success: true, data: `result-${i}` });
     });
 
     // Refresh endpoint should be called exactly once (deduplicated)
@@ -408,7 +408,7 @@ describe('apiClient - concurrent 401 deduplication', () => {
     expect(mockSetRefreshToken).toHaveBeenCalledWith('new-refresh-token');
   });
 
-  it('passes through non-envelope JSON responses unchanged', async () => {
+  it('returns whatever JSON the server responded with, unchanged', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -417,17 +417,6 @@ describe('apiClient - concurrent 401 deduplication', () => {
 
     const result = await apiClient.get('/raw-array');
     expect(result).toEqual([{ id: 1 }, { id: 2 }]);
-  });
-
-  it('throws ApiClientError when envelope success is false', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: () =>
-        Promise.resolve({ success: false, data: null, message: 'Bad envelope' }),
-    });
-
-    await expect(apiClient.get('/envelope-failure')).rejects.toThrow('Bad envelope');
   });
 });
 

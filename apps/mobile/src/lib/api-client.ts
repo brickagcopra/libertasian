@@ -49,33 +49,6 @@ const DEFAULT_HEADERS: Record<string, string> = {
   'X-Client': 'mobile',
 };
 
-/**
- * Defensively unwrap an API envelope of shape `{ success, data }`. NestJS
- * controllers return this shape on most endpoints; RN-side code historically
- * read fields off the top level, which silently produced undefined values
- * (the bug that broke mobile login). When the response is NOT this envelope
- * shape, pass it through unchanged so endpoints with other shapes keep working.
- */
-function unwrapEnvelope<T>(json: unknown): T {
-  if (
-    json !== null &&
-    typeof json === 'object' &&
-    'success' in json &&
-    'data' in json
-  ) {
-    const envelope = json as { success: unknown; data: unknown };
-    if (envelope.success === false) {
-      const errMessage =
-        (json as { message?: string; error?: string }).message ??
-        (json as { error?: string }).error ??
-        'Request failed';
-      throw new ApiClientError(400, errMessage);
-    }
-    return envelope.data as T;
-  }
-  return json as T;
-}
-
 export class ApiClientError extends Error {
   statusCode: number;
   serverMessage: string;
@@ -152,11 +125,13 @@ class ApiClient {
 
       if (!response.ok) return false;
 
-      const json = (await response.json()) as unknown;
-      const data = unwrapEnvelope<{ accessToken: string; refreshToken: string }>(json);
-      if (!data.accessToken || !data.refreshToken) return false;
-      await authStorage.setAccessToken(data.accessToken);
-      await authStorage.setRefreshToken(data.refreshToken);
+      const data = (await response.json()) as {
+        success: boolean;
+        data: { accessToken: string; refreshToken: string };
+      };
+      if (!data.data?.accessToken || !data.data?.refreshToken) return false;
+      await authStorage.setAccessToken(data.data.accessToken);
+      await authStorage.setRefreshToken(data.data.refreshToken);
       return true;
     } catch {
       return false;
@@ -195,8 +170,7 @@ class ApiClient {
 
         if (retryResponse.ok) {
           if (retryResponse.status === 204) return undefined as T;
-          const json = (await retryResponse.json()) as unknown;
-          return unwrapEnvelope<T>(json);
+          return retryResponse.json() as Promise<T>;
         }
 
         if (retryResponse.status === 401) {
@@ -225,8 +199,7 @@ class ApiClient {
       return undefined as T;
     }
 
-    const json = (await response.json()) as unknown;
-    return unwrapEnvelope<T>(json);
+    return response.json() as Promise<T>;
   }
 
   private async handleErrorResponse<T>(response: Response): Promise<T> {
