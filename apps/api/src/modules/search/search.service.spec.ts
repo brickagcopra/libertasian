@@ -40,7 +40,7 @@ type MockEmbeddingClientService = {
 };
 
 type MockSuppressedDocsService = {
-  getSuppressedIds: jest.Mock;
+  getSuppressedDocIds: jest.Mock;
   refresh: jest.Mock;
   getCount: jest.Mock;
 };
@@ -135,7 +135,7 @@ describe('SearchService', () => {
         {
           provide: SuppressedDocsService,
           useValue: {
-            getSuppressedIds: jest.fn().mockResolvedValue([]),
+            getSuppressedDocIds: jest.fn().mockResolvedValue(new Set<string>()),
             refresh: jest.fn(),
             getCount: jest.fn(),
           },
@@ -351,7 +351,9 @@ describe('SearchService', () => {
     describe('dedup filter', () => {
       it('forwards suppressed doc IDs to keyword + vector queries when flag is on (default)', async () => {
         const suppressed = ['dup-doc-2', 'dup-doc-3'];
-        suppressedDocsService.getSuppressedIds.mockResolvedValue(suppressed);
+        suppressedDocsService.getSuppressedDocIds.mockResolvedValue(
+          new Set(suppressed),
+        );
         redisService.get.mockResolvedValue(null);
         redisService.set.mockResolvedValue(undefined);
         openSearchService.searchKeyword.mockResolvedValue(mockBm25Result);
@@ -360,7 +362,7 @@ describe('SearchService', () => {
 
         await service.search(searchDto);
 
-        expect(suppressedDocsService.getSuppressedIds).toHaveBeenCalledTimes(1);
+        expect(suppressedDocsService.getSuppressedDocIds).toHaveBeenCalledTimes(1);
         expect(openSearchService.searchKeyword).toHaveBeenCalledWith(
           expect.objectContaining({ excludeDocumentIds: suppressed }),
         );
@@ -382,16 +384,18 @@ describe('SearchService', () => {
 
         await service.search(searchDto);
 
-        expect(suppressedDocsService.getSuppressedIds).not.toHaveBeenCalled();
+        expect(suppressedDocsService.getSuppressedDocIds).not.toHaveBeenCalled();
         expect(openSearchService.searchKeyword).toHaveBeenCalledWith(
           expect.objectContaining({ excludeDocumentIds: [] }),
         );
       });
 
-      it('falls back to no filter when the suppressed-docs service returns []', async () => {
+      it('falls back to no filter when the suppressed-docs service returns an empty Set', async () => {
         // Simulates Redis cold cache / outage — service swallows error and
-        // returns []. Search MUST NOT 500.
-        suppressedDocsService.getSuppressedIds.mockResolvedValue([]);
+        // returns empty Set. Search MUST NOT 500.
+        suppressedDocsService.getSuppressedDocIds.mockResolvedValue(
+          new Set<string>(),
+        );
         redisService.get.mockResolvedValue(null);
         redisService.set.mockResolvedValue(undefined);
         openSearchService.searchKeyword.mockResolvedValue(mockBm25Result);

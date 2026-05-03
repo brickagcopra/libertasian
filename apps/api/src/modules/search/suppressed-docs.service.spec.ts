@@ -5,6 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../common/services/redis.service';
 import {
   SUPPRESSED_DOCS_KEY,
+  SUPPRESSED_DOCS_POPULATED_KEY,
   SuppressedDocsService,
 } from './suppressed-docs.service';
 
@@ -13,25 +14,81 @@ describe('SuppressedDocsService', () => {
   let prisma: {
     documentSimilarity: { findMany: jest.Mock };
   };
-  let client: {
+  let pipeline: {
     del: jest.Mock;
     sadd: jest.Mock;
     expire: jest.Mock;
+    set: jest.Mock;
+    exec: jest.Mock;
+  };
+  let client: {
+    get: jest.Mock;
+    del: jest.Mock;
     smembers: jest.Mock;
     scard: jest.Mock;
+    multi: jest.Mock;
+  };
+
+  const stubDuplicate = (
+    aId: string,
+    bId: string,
+    canonicalId: string | null,
+  ) => ({ documentAId: aId, documentBId: bId, canonicalDocumentId: canonicalId });
+
+  const stubVersion = (
+    aId: string,
+    aVersion: number,
+    bId: string,
+    bVersion: number,
+  ) => ({
+    documentA: { id: aId, versionNo: aVersion },
+    documentB: { id: bId, versionNo: bVersion },
+  });
+
+  /**
+   * Wire prisma.documentSimilarity.findMany so that the duplicate-rule call
+   * (similarityType={in: [...]}) returns `dupes` and the version-rule call
+   * (similarityType='version_update') returns `versions`. Anything else → [].
+   */
+  const stubPrismaResults = (
+    dupes: ReturnType<typeof stubDuplicate>[],
+    versions: ReturnType<typeof stubVersion>[],
+  ) => {
+    prisma.documentSimilarity.findMany.mockImplementation(
+      ({
+        where,
+      }: {
+        where: { similarityType: string | { in?: string[] } };
+      }) => {
+        if (typeof where.similarityType === 'object' && where.similarityType.in) {
+          return Promise.resolve(dupes);
+        }
+        if (where.similarityType === 'version_update') {
+          return Promise.resolve(versions);
+        }
+        return Promise.resolve([]);
+      },
+    );
   };
 
   beforeEach(async () => {
+    pipeline = {
+      del: jest.fn().mockReturnThis(),
+      sadd: jest.fn().mockReturnThis(),
+      expire: jest.fn().mockReturnThis(),
+      set: jest.fn().mockReturnThis(),
+      exec: jest.fn().mockResolvedValue([]),
+    };
     client = {
+      get: jest.fn().mockResolvedValue(null),
       del: jest.fn().mockResolvedValue(1),
-      sadd: jest.fn().mockResolvedValue(0),
-      expire: jest.fn().mockResolvedValue(1),
       smembers: jest.fn().mockResolvedValue([]),
       scard: jest.fn().mockResolvedValue(0),
+      multi: jest.fn().mockReturnValue(pipeline),
     };
 
     prisma = {
-      documentSimilarity: { findMany: jest.fn() },
+      documentSimilarity: { findMany: jest.fn().mockResolvedValue([]) },
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -54,121 +111,195 @@ describe('SuppressedDocsService', () => {
 
   afterEach(() => jest.clearAllMocks());
 
-  describe('refresh', () => {
-    it('suppresses non-canonical docs from exact_duplicate / mirror_duplicate', async () => {
-      prisma.documentSimilarity.findMany.mockImplementation(
-        ({ where }: { where: { similarityType: { in?: string[] } } }) => {
-          if (where.similarityType.in) {
-            return Promise.resolve([
-              {
-                documentAId: 'doc-A',
-                documentBId: 'doc-B',
-                canonicalDocumentId: 'doc-A',
-              },
-              {
-                documentAId: 'doc-C',
-                documentBId: 'doc-D',
-                canonicalDocumentId: 'doc-D',
-              },
-            ]);
-          }
-          return Promise.resolve([]);
-        },
+  describe('getSuppressedDocIds — cache miss (sentinel absent)', () => {
+    beforeEach(() => {
+      client.get.mockResolvedValue(null); // sentinel missing → miss
+    });
+
+    it('queries Postgres, applies the three-rule policy, and caches the result', async () => {
+      stubPrismaResults(
+        [
+          stubDuplicate('doc-A', 'doc-B', 'doc-A'), // suppresses doc-B
+          stubDuplicate('doc-C', 'doc-D', 'doc-D'), // suppresses doc-C
+        ],
+        [
+          stubVersion('doc-old', 1, 'doc-new', 2), // suppresses doc-old
+          stubVersion('doc-x', 3, 'doc-y', 2), // suppresses doc-y
+        ],
       );
 
-      const result = await service.refresh();
+      const result = await service.getSuppressedDocIds();
 
-      expect(result.count).toBe(2);
-      expect(client.sadd).toHaveBeenCalledTimes(1);
-      const [key, ...ids] = client.sadd.mock.calls[0]! as [string, ...string[]];
-      expect(key).toBe(SUPPRESSED_DOCS_KEY);
-      expect(ids.sort()).toEqual(['doc-B', 'doc-C']);
-    });
+      expect(result).toBeInstanceOf(Set);
+      expect(Array.from(result).sort()).toEqual([
+        'doc-B',
+        'doc-C',
+        'doc-old',
+        'doc-y',
+      ]);
+      expect(prisma.documentSimilarity.findMany).toHaveBeenCalledTimes(2);
 
-    it('suppresses the older version on version_update', async () => {
-      prisma.documentSimilarity.findMany.mockImplementation(
-        ({ where }: { where: { similarityType: string | { in?: string[] } } }) => {
-          if (typeof where.similarityType === 'string' && where.similarityType === 'version_update') {
-            return Promise.resolve([
-              {
-                documentA: { id: 'doc-old', versionNo: 1 },
-                documentB: { id: 'doc-new', versionNo: 2 },
-              },
-              {
-                documentA: { id: 'doc-x', versionNo: 3 },
-                documentB: { id: 'doc-y', versionNo: 2 },
-              },
-            ]);
-          }
-          return Promise.resolve([]);
-        },
+      // Pipeline: DEL set → SADD members → EXPIRE set → SET sentinel
+      expect(pipeline.del).toHaveBeenCalledWith(SUPPRESSED_DOCS_KEY);
+      expect(pipeline.sadd).toHaveBeenCalledWith(
+        SUPPRESSED_DOCS_KEY,
+        ...Array.from(result),
       );
-
-      const result = await service.refresh();
-
-      // doc-old (lower v) and doc-y (lower v) get suppressed
-      expect(result.count).toBe(2);
-      const ids = client.sadd.mock.calls[0]!.slice(1) as string[];
-      expect(ids.sort()).toEqual(['doc-old', 'doc-y']);
+      expect(pipeline.expire).toHaveBeenCalledWith(SUPPRESSED_DOCS_KEY, 3600);
+      expect(pipeline.set).toHaveBeenCalledWith(
+        SUPPRESSED_DOCS_POPULATED_KEY,
+        '1',
+        'EX',
+        3600,
+      );
+      expect(pipeline.exec).toHaveBeenCalledTimes(1);
     });
 
-    it('does NOT suppress anything for similarity_type=title', async () => {
-      // findMany is only called with 'exact_duplicate'/'mirror_duplicate' or
-      // 'version_update'; title rows are excluded by the WHERE clause.
-      prisma.documentSimilarity.findMany.mockResolvedValue([]);
+    it('writes the sentinel even when the Postgres result is empty (no SADD)', async () => {
+      stubPrismaResults([], []);
 
-      const result = await service.refresh();
+      const result = await service.getSuppressedDocIds();
 
-      expect(result.count).toBe(0);
-      expect(client.sadd).not.toHaveBeenCalled();
+      expect(result.size).toBe(0);
+      expect(pipeline.sadd).not.toHaveBeenCalled();
+      expect(pipeline.set).toHaveBeenCalledWith(
+        SUPPRESSED_DOCS_POPULATED_KEY,
+        '1',
+        'EX',
+        3600,
+      );
     });
 
-    it('clears the existing set before writing the new one', async () => {
-      prisma.documentSimilarity.findMany.mockResolvedValue([]);
+    it('skips title-only similarities (the WHERE clause excludes them)', async () => {
+      // Prisma is only invoked with similarityType in (exact|mirror) or
+      // similarityType='version_update'. Title rows never reach the result.
+      stubPrismaResults([], []);
 
-      await service.refresh();
+      const result = await service.getSuppressedDocIds();
 
-      expect(client.del).toHaveBeenCalledWith(SUPPRESSED_DOCS_KEY);
+      expect(result.size).toBe(0);
     });
   });
 
-  describe('getSuppressedIds', () => {
-    it('returns the set members when the set is non-empty', async () => {
+  describe('getSuppressedDocIds — cache hit (sentinel present)', () => {
+    beforeEach(() => {
+      client.get.mockResolvedValue('1'); // sentinel present
+    });
+
+    it('returns the cached set without hitting Postgres', async () => {
       client.scard.mockResolvedValue(2);
       client.smembers.mockResolvedValue(['doc-1', 'doc-2']);
 
-      const ids = await service.getSuppressedIds();
+      const result = await service.getSuppressedDocIds();
 
-      expect(ids).toEqual(['doc-1', 'doc-2']);
+      expect(result).toEqual(new Set(['doc-1', 'doc-2']));
+      expect(prisma.documentSimilarity.findMany).not.toHaveBeenCalled();
+      expect(pipeline.exec).not.toHaveBeenCalled();
     });
 
-    it('returns [] (no filter) when the set is empty', async () => {
+    it('returns an empty Set without hitting Postgres when the cached set is empty', async () => {
       client.scard.mockResolvedValue(0);
 
-      const ids = await service.getSuppressedIds();
+      const result = await service.getSuppressedDocIds();
 
-      expect(ids).toEqual([]);
+      expect(result).toEqual(new Set());
       expect(client.smembers).not.toHaveBeenCalled();
+      expect(prisma.documentSimilarity.findMany).not.toHaveBeenCalled();
     });
 
-    it('returns [] (no filter) when Redis throws — search must NOT 500', async () => {
-      client.scard.mockRejectedValue(new Error('ECONNREFUSED'));
+    it('skips the must_not.terms inline cap and returns empty Set when oversized', async () => {
+      client.scard.mockResolvedValue(10_000);
 
-      const ids = await service.getSuppressedIds();
+      const result = await service.getSuppressedDocIds();
 
-      expect(ids).toEqual([]);
+      expect(result).toEqual(new Set());
+      expect(client.smembers).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getSuppressedDocIds — defensive paths', () => {
+    it('returns empty Set when Postgres throws (search must not 500)', async () => {
+      client.get.mockResolvedValue(null);
+      prisma.documentSimilarity.findMany.mockRejectedValue(
+        new Error('connection refused'),
+      );
+
+      const result = await service.getSuppressedDocIds();
+
+      expect(result).toEqual(new Set());
+      expect(pipeline.exec).not.toHaveBeenCalled();
+    });
+
+    it('falls through to Postgres when Redis read throws', async () => {
+      client.get.mockRejectedValue(new Error('ECONNREFUSED'));
+      stubPrismaResults([stubDuplicate('a', 'b', 'a')], []);
+
+      const result = await service.getSuppressedDocIds();
+
+      expect(result).toEqual(new Set(['b']));
+      expect(prisma.documentSimilarity.findMany).toHaveBeenCalledTimes(2);
+    });
+
+    it('returns the Postgres result when Redis write throws (degraded but correct)', async () => {
+      client.get.mockResolvedValue(null);
+      pipeline.exec.mockRejectedValue(new Error('Redis down'));
+      stubPrismaResults([stubDuplicate('a', 'b', 'a')], []);
+
+      const result = await service.getSuppressedDocIds();
+
+      expect(result).toEqual(new Set(['b']));
+    });
+  });
+
+  describe('refresh', () => {
+    it('deletes both keys then re-populates from Postgres', async () => {
+      // First sentinel read returns null because we just DEL'd.
+      client.get.mockResolvedValue(null);
+      stubPrismaResults([stubDuplicate('a', 'b', 'a')], []);
+
+      const result = await service.refresh();
+
+      expect(client.del).toHaveBeenCalledWith(
+        SUPPRESSED_DOCS_KEY,
+        SUPPRESSED_DOCS_POPULATED_KEY,
+      );
+      expect(prisma.documentSimilarity.findMany).toHaveBeenCalledTimes(2);
+      expect(pipeline.set).toHaveBeenCalledWith(
+        SUPPRESSED_DOCS_POPULATED_KEY,
+        '1',
+        'EX',
+        3600,
+      );
+      expect(result).toEqual({ count: 1 });
+    });
+
+    it('still re-populates from Postgres when DEL fails (Redis down)', async () => {
+      client.del.mockRejectedValue(new Error('Redis down'));
+      client.get.mockRejectedValue(new Error('Redis down'));
+      stubPrismaResults([stubDuplicate('a', 'b', 'a')], []);
+
+      const result = await service.refresh();
+
+      expect(result).toEqual({ count: 1 });
     });
   });
 
   describe('getCount', () => {
-    it('returns the cardinality of the set', async () => {
+    it('returns the cardinality of the populated set', async () => {
+      client.get.mockResolvedValue('1');
       client.scard.mockResolvedValue(42);
+      client.smembers.mockResolvedValue(
+        Array.from({ length: 42 }, (_, i) => `doc-${i}`),
+      );
 
       await expect(service.getCount()).resolves.toBe(42);
     });
 
-    it('returns 0 when Redis is unreachable', async () => {
-      client.scard.mockRejectedValue(new Error('ECONNREFUSED'));
+    it('returns 0 when both Redis and Postgres are unreachable', async () => {
+      client.get.mockRejectedValue(new Error('Redis down'));
+      prisma.documentSimilarity.findMany.mockRejectedValue(
+        new Error('Postgres down'),
+      );
 
       await expect(service.getCount()).resolves.toBe(0);
     });
