@@ -168,10 +168,16 @@ services:
     restart: always
     ports:
       - "127.0.0.1:6379:6379"
+    # noeviction: this Redis instance is shared by BullMQ (bull:*),
+    # Celery (celery:*), sessions, and application cache. allkeys-lru
+    # would silently evict queue state and cause job loss under memory
+    # pressure. Every cache write MUST set a TTL — see CLAUDE.md.
+    # When cache and queues are split into separate instances, the
+    # cache-only instance can switch back to allkeys-lru.
     command: >
       redis-server
       --maxmemory 512mb
-      --maxmemory-policy allkeys-lru
+      --maxmemory-policy noeviction
       --appendonly yes
       --appendfsync everysec
       --requirepass ${REDIS_PASSWORD}
