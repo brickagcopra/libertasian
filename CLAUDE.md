@@ -249,7 +249,7 @@ async findMany(cursor?: string, limit = 20) {
 
 - **Key namespacing:** Prefix all keys by service — `nest:session:`, `nest:ratelimit:`, `bull:`, `celery:`, `cache:search:`, `cache:doc:`.
 - **TTL on everything.** No Redis key without a TTL except BullMQ job metadata. Search cache: 5 minutes. Document cache: 1 hour. Session: matches token TTL.
-- **Eviction policy:** `allkeys-lru`. Set `maxmemory` to 75% of available RAM.
+- **Eviction policy:** `noeviction` while BullMQ shares this Redis instance. Every cache write MUST set a TTL — there is no eviction safety net. When cache and queues are split into separate Redis instances (Phase 4+), the cache-only instance can switch to `allkeys-lru`. Set `maxmemory` to 75% of available RAM.
 - **Pipeline/batch** where possible. Avoid N+1 Redis round-trips.
 
 ### OpenSearch

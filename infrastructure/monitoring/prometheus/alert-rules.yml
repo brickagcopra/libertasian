@@ -152,19 +152,47 @@ groups:
   - name: redis
     interval: 30s
     rules:
-      - alert: RedisHighMemory
+      # Redis runs with maxmemory-policy=noeviction (shared with BullMQ).
+      # Once memory hits maxmemory, writes will fail with OOM — there is
+      # no LRU safety net. Alert early so we can investigate before
+      # session creation, cache writes, and job enqueue all start failing.
+      - alert: RedisMemoryPressureWarning
         expr: |
           redis_memory_used_bytes{job="redis"}
           /
           redis_memory_max_bytes{job="redis"}
-          > 0.8
+          > 0.80
         for: 5m
         labels:
           severity: warning
           service: redis
         annotations:
-          summary: "Redis memory usage above 80%"
-          description: "Redis is using {{ $value | humanizePercentage }} of max memory."
+          summary: "Redis memory > 80% of maxmemory"
+          description: "Used {{ $value | humanizePercentage }} of maxmemory. With noeviction policy, writes will start failing at 100%. Investigate: redis-cli --bigkeys, check for unbounded cache writes."
+
+      - alert: RedisMemoryPressureCritical
+        expr: |
+          redis_memory_used_bytes{job="redis"}
+          /
+          redis_memory_max_bytes{job="redis"}
+          > 0.95
+        for: 2m
+        labels:
+          severity: critical
+          service: redis
+        annotations:
+          summary: "Redis memory > 95% — write failures imminent"
+          description: "Redis is about to reject writes (noeviction policy). BullMQ enqueue, session creation, and cache writes will all fail with OOM error."
+
+      - alert: RedisEvictionsObserved
+        expr: increase(redis_evicted_keys_total{job="redis"}[15m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          service: redis
+        annotations:
+          summary: "Redis evicted keys despite noeviction policy"
+          description: "{{ $value }} keys evicted in 15m. Either policy reverted to allkeys-lru, or someone set per-key volatile-* hints. Check: redis-cli CONFIG GET maxmemory-policy."
 
       - alert: RedisDown
         expr: up{job="redis"} == 0
