@@ -3,6 +3,14 @@ import { Platform } from 'react-native';
 import { authStorage } from '../storage/auth-storage';
 
 function resolveApiBaseUrl(): string {
+  // Explicit override (e.g. EXPO_PUBLIC_API_URL=https://libertasian.com/api/v1
+  // pnpm --filter mobile start) wins over the dev loopback so a physical
+  // device can hit deployed prod API while running through the dev server.
+  const override = process.env['EXPO_PUBLIC_API_URL'];
+  if (override) {
+    return override;
+  }
+
   // In development, use the correct loopback for the platform:
   // - Android emulator: 10.0.2.2 maps to host machine's localhost
   // - iOS simulator / web: localhost works directly
