@@ -25,7 +25,14 @@ beforeEach(() => jest.clearAllMocks());
 
 describe('useLogin', () => {
   it('posts login credentials', async () => {
-    mockPost.mockResolvedValueOnce({ accessToken: 'at', refreshToken: 'rt' });
+    mockPost.mockResolvedValueOnce({
+      success: true,
+      data: {
+        user: { id: 'u1', email: 'a@b.com' },
+        tokens: { accessToken: 'at', refreshToken: 'rt' },
+        mfaRequired: false,
+      },
+    });
     const { result } = renderHook(() => useLogin(), { wrapper: createWrapper() });
     await act(async () => { result.current.mutate({ email: 'a@b.com', password: 'pass' } as never); });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -56,11 +63,15 @@ describe('useLogout', () => {
 });
 
 describe('useProfile', () => {
-  it('fetches user profile', async () => {
-    mockGet.mockResolvedValueOnce({ id: 'u1', email: 'a@b.com', fullName: 'Test' });
+  it('fetches user profile and unwraps the envelope', async () => {
+    mockGet.mockResolvedValueOnce({
+      success: true,
+      data: { id: 'u1', email: 'a@b.com', fullName: 'Test' },
+    });
     const { result } = renderHook(() => useProfile(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(mockGet).toHaveBeenCalledWith('/users/me');
+    expect(result.current.data).toEqual({ id: 'u1', email: 'a@b.com', fullName: 'Test' });
   });
 
   it('is disabled when enabled is false', () => {

@@ -130,18 +130,21 @@ describe('LoginScreen', () => {
 
   it('calls login mutation with correct data', async () => {
     mockPost.mockResolvedValueOnce({
-      user: {
-        id: '1',
-        email: 'test@example.com',
-        fullName: 'Test',
-        phone: null,
-        status: 'active',
-        emailVerified: true,
-        mfaEnabled: false,
-        createdAt: '2024-01-01',
+      success: true,
+      data: {
+        user: {
+          id: '1',
+          email: 'test@example.com',
+          fullName: 'Test',
+          phone: null,
+          status: 'active',
+          emailVerified: true,
+          mfaEnabled: false,
+          createdAt: '2024-01-01',
+        },
+        tokens: { accessToken: 'at-123', refreshToken: 'rt-456' },
+        mfaRequired: false,
       },
-      tokens: { accessToken: 'at-123', refreshToken: 'rt-456' },
-      mfaRequired: false,
     });
 
     const { getAllByText, getByPlaceholderText } = render(<LoginScreen />, {
@@ -176,9 +179,12 @@ describe('LoginScreen', () => {
 
   it('shows MFA field when mfaRequired is returned', async () => {
     mockPost.mockResolvedValueOnce({
-      mfaRequired: true,
-      tokens: { accessToken: '', refreshToken: '' },
-      user: null,
+      success: true,
+      data: {
+        mfaRequired: true,
+        tokens: { accessToken: '', refreshToken: '' },
+        user: null,
+      },
     });
 
     const { getAllByText, getByPlaceholderText, queryByText } = render(

@@ -66,8 +66,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         // Validate token by fetching profile
-        const profile = await apiClient.get<AuthUser>('/users/me');
-        setUser(profile);
+        const res = await apiClient.get<{ success: boolean; data: AuthUser }>('/users/me');
+        setUser(res.data);
       } catch {
         // Token invalid or expired — clear stored tokens
         await authStorage.clearTokens();
