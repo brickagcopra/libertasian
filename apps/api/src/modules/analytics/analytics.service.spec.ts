@@ -19,9 +19,23 @@ describe('AnalyticsService', () => {
     expire: jest.Mock;
     exists: jest.Mock;
     del: jest.Mock;
+    multi: jest.Mock;
+  };
+  let multiChain: {
+    hset: jest.Mock;
+    expire: jest.Mock;
+    hincrby: jest.Mock;
+    exec: jest.Mock;
   };
 
   beforeEach(async () => {
+    multiChain = {
+      hset: jest.fn().mockReturnThis(),
+      expire: jest.fn().mockReturnThis(),
+      hincrby: jest.fn().mockReturnThis(),
+      exec: jest.fn().mockResolvedValue([]),
+    };
+
     redisClient = {
       hset: jest.fn().mockResolvedValue(1),
       hgetall: jest.fn().mockResolvedValue({}),
@@ -29,6 +43,7 @@ describe('AnalyticsService', () => {
       expire: jest.fn().mockResolvedValue(1),
       exists: jest.fn().mockResolvedValue(1),
       del: jest.fn().mockResolvedValue(1),
+      multi: jest.fn().mockReturnValue(multiChain),
     };
 
     eventQueue = { add: jest.fn().mockResolvedValue({ id: 'job-1' }) };
@@ -461,12 +476,14 @@ describe('AnalyticsService', () => {
       });
     });
 
-    it('should store session data in Redis with 30-minute TTL', async () => {
+    it('should store session data in Redis with 30-minute TTL via atomic MULTI/EXEC', async () => {
       const sessionId = await service.startSession({
         userId: 'user-1',
       });
 
-      expect(redisClient.hset).toHaveBeenCalledWith(
+      // hset + expire must be queued on the same multi() transaction
+      expect(redisClient.multi).toHaveBeenCalledTimes(1);
+      expect(multiChain.hset).toHaveBeenCalledWith(
         `nest:analytics:session:${sessionId}`,
         expect.objectContaining({
           user_id: 'user-1',
@@ -474,11 +491,15 @@ describe('AnalyticsService', () => {
           page_count: '0',
         }),
       );
-
-      expect(redisClient.expire).toHaveBeenCalledWith(
+      expect(multiChain.expire).toHaveBeenCalledWith(
         `nest:analytics:session:${sessionId}`,
         1800, // 30 * 60
       );
+      expect(multiChain.exec).toHaveBeenCalledTimes(1);
+
+      // Crucially: nothing went through the bare client (would race vs noeviction)
+      expect(redisClient.hset).not.toHaveBeenCalled();
+      expect(redisClient.expire).not.toHaveBeenCalled();
     });
 
     it('should handle missing optional fields', async () => {
@@ -517,34 +538,53 @@ describe('AnalyticsService', () => {
   // =========================================================================
 
   describe('heartbeat', () => {
-    it('should update last_heartbeat and reset TTL', async () => {
+    it('should update last_heartbeat and reset TTL atomically via MULTI/EXEC', async () => {
       await service.heartbeat('sess-1');
 
       expect(redisClient.exists).toHaveBeenCalledWith('nest:analytics:session:sess-1');
-      expect(redisClient.hset).toHaveBeenCalledWith(
+      // hset + expire must share a single multi() transaction
+      expect(redisClient.multi).toHaveBeenCalledTimes(1);
+      expect(multiChain.hset).toHaveBeenCalledWith(
         'nest:analytics:session:sess-1',
         'last_heartbeat',
         expect.any(String),
       );
-      expect(redisClient.expire).toHaveBeenCalledWith(
+      expect(multiChain.expire).toHaveBeenCalledWith(
         'nest:analytics:session:sess-1',
         1800,
       );
+      expect(multiChain.exec).toHaveBeenCalledTimes(1);
+
+      // No bare-client writes — those would re-introduce the TTL-leak race
+      expect(redisClient.hset).not.toHaveBeenCalled();
+      expect(redisClient.expire).not.toHaveBeenCalled();
     });
 
-    it('should update exit_path and increment page_count when currentPath provided', async () => {
+    it('should queue exit_path and page_count on the same MULTI when currentPath provided', async () => {
       await service.heartbeat('sess-1', '/documents/123');
 
-      expect(redisClient.hset).toHaveBeenCalledWith(
+      // All four operations must be queued on the same multi() transaction
+      expect(redisClient.multi).toHaveBeenCalledTimes(1);
+      expect(multiChain.hset).toHaveBeenCalledWith(
+        'nest:analytics:session:sess-1',
+        'last_heartbeat',
+        expect.any(String),
+      );
+      expect(multiChain.expire).toHaveBeenCalledWith(
+        'nest:analytics:session:sess-1',
+        1800,
+      );
+      expect(multiChain.hset).toHaveBeenCalledWith(
         'nest:analytics:session:sess-1',
         'exit_path',
         '/documents/123',
       );
-      expect(redisClient.hincrby).toHaveBeenCalledWith(
+      expect(multiChain.hincrby).toHaveBeenCalledWith(
         'nest:analytics:session:sess-1',
         'page_count',
         1,
       );
+      expect(multiChain.exec).toHaveBeenCalledTimes(1);
     });
 
     it('should silently ignore heartbeats for expired sessions', async () => {
@@ -552,10 +592,12 @@ describe('AnalyticsService', () => {
 
       await service.heartbeat('expired-session');
 
-      // Should check exists but not update
+      // Should check exists but not start a transaction or write anything
       expect(redisClient.exists).toHaveBeenCalled();
-      expect(redisClient.hset).not.toHaveBeenCalled();
-      expect(redisClient.expire).not.toHaveBeenCalled();
+      expect(redisClient.multi).not.toHaveBeenCalled();
+      expect(multiChain.hset).not.toHaveBeenCalled();
+      expect(multiChain.expire).not.toHaveBeenCalled();
+      expect(multiChain.exec).not.toHaveBeenCalled();
     });
   });
 
