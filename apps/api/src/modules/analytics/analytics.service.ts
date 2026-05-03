@@ -184,17 +184,22 @@ export class AnalyticsService {
       },
     });
 
-    // Store in Redis for fast heartbeat/expiry tracking
+    // Store in Redis for fast heartbeat/expiry tracking.
+    // hset + expire MUST run in a single MULTI/EXEC so a crash between them
+    // can't leave a TTL-less key behind under noeviction.
     const client = this.redis.getClient();
     const redisKey = `${SESSION_REDIS_PREFIX}${sessionId}`;
-    await client.hset(redisKey, {
-      user_id: data.userId ?? '',
-      started_at: new Date().toISOString(),
-      last_heartbeat: new Date().toISOString(),
-      event_count: '0',
-      page_count: '0',
-    });
-    await client.expire(redisKey, SESSION_EXPIRY_SECONDS);
+    await client
+      .multi()
+      .hset(redisKey, {
+        user_id: data.userId ?? '',
+        started_at: new Date().toISOString(),
+        last_heartbeat: new Date().toISOString(),
+        event_count: '0',
+        page_count: '0',
+      })
+      .expire(redisKey, SESSION_EXPIRY_SECONDS)
+      .exec();
 
     return sessionId;
   }
@@ -213,14 +218,20 @@ export class AnalyticsService {
       return;
     }
 
-    await client.hset(redisKey, 'last_heartbeat', new Date().toISOString());
-    await client.expire(redisKey, SESSION_EXPIRY_SECONDS);
+    // Atomic batch: hset + expire MUST execute together so a crash mid-call
+    // can't strand the key without a TTL. Optional path/page_count updates
+    // are queued on the same transaction to avoid partial-write inconsistency.
+    const tx = client
+      .multi()
+      .hset(redisKey, 'last_heartbeat', new Date().toISOString())
+      .expire(redisKey, SESSION_EXPIRY_SECONDS);
 
-    // Update exit path and page count
     if (currentPath) {
-      await client.hset(redisKey, 'exit_path', currentPath);
-      await client.hincrby(redisKey, 'page_count', 1);
+      tx.hset(redisKey, 'exit_path', currentPath);
+      tx.hincrby(redisKey, 'page_count', 1);
     }
+
+    await tx.exec();
   }
 
   /**
