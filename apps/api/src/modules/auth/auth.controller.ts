@@ -71,6 +71,18 @@ export class AuthController {
     this.isProduction = this.configService.get<string>('NODE_ENV') === 'production';
   }
 
+  /**
+   * Detect mobile clients by an explicit `X-Client: mobile` request header.
+   * Mobile clients receive the refresh token in the response body and skip
+   * the httpOnly Set-Cookie path, since RN's fetch does not persist cookies.
+   * Header is opt-in — no User-Agent sniffing or auto-detection.
+   */
+  private isMobileClient(req: Request): boolean {
+    const headerValue = req.headers['x-client'];
+    const value = Array.isArray(headerValue) ? headerValue[0] : headerValue;
+    return typeof value === 'string' && value.toLowerCase() === 'mobile';
+  }
+
   /** Set httpOnly cookie with the refresh token */
   private setRefreshCookie(res: Response, refreshToken: string): void {
     res.cookie(REFRESH_COOKIE, refreshToken, {
@@ -161,16 +173,21 @@ export class AuthController {
   }))
   async login(
     @Body() dto: LoginDto,
+    @Req() req: Request,
     @Ip() ip: string,
     @Headers('user-agent') userAgent: string,
     @Res({ passthrough: true }) res: Response,
   ) {
     const fingerprint = this.buildDeviceFingerprint(userAgent, ip);
     const result = await this.authService.login(dto, fingerprint);
+    const isMobile = this.isMobileClient(req);
 
     if (!result.mfaRequired) {
-      // Set refresh token as httpOnly cookie
-      this.setRefreshCookie(res, result.tokens.refreshToken);
+      // Web clients store the refresh token in an httpOnly cookie.
+      // Mobile clients receive it in the response body (no cookie jar).
+      if (!isMobile) {
+        this.setRefreshCookie(res, result.tokens.refreshToken);
+      }
 
       await this.auditService.log({
         actorUserId: result.user.id,
@@ -182,11 +199,15 @@ export class AuthController {
       });
     }
 
-    // Return only accessToken in body — refreshToken is in httpOnly cookie
+    const tokens =
+      !result.mfaRequired && isMobile
+        ? { accessToken: result.tokens.accessToken, refreshToken: result.tokens.refreshToken }
+        : { accessToken: result.tokens.accessToken };
+
     return {
       success: true,
       data: {
-        tokens: { accessToken: result.tokens.accessToken },
+        tokens,
         user: result.user,
         mfaRequired: result.mfaRequired,
       },
@@ -194,14 +215,21 @@ export class AuthController {
   }
 
   @Post('refresh')
-  @ApiOperation({ summary: 'Refresh access token using httpOnly cookie refresh token' })
+  @ApiOperation({ summary: 'Refresh access token (web: httpOnly cookie; mobile: request body)' })
   async refresh(
     @Req() req: Request,
     @Ip() ip: string,
     @Headers('user-agent') userAgent: string,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const refreshToken = (req.cookies as Record<string, string>)?.[REFRESH_COOKIE];
+    const isMobile = this.isMobileClient(req);
+    const bodyRefreshToken =
+      isMobile && req.body && typeof req.body === 'object'
+        ? ((req.body as Record<string, unknown>)['refreshToken'] as string | undefined)
+        : undefined;
+    const refreshToken = isMobile
+      ? bodyRefreshToken
+      : (req.cookies as Record<string, string>)?.[REFRESH_COOKIE];
     if (!refreshToken) {
       throw new UnauthorizedException('No refresh token');
     }
@@ -211,11 +239,16 @@ export class AuthController {
     try {
       const tokens = await this.authService.refreshTokens(refreshToken, fingerprint);
 
-      // Rotate: set new refresh token as httpOnly cookie
-      this.setRefreshCookie(res, tokens.refreshToken);
+      // Rotate: web sets new refresh token as httpOnly cookie; mobile gets it in body.
+      if (!isMobile) {
+        this.setRefreshCookie(res, tokens.refreshToken);
+        return { success: true, data: { accessToken: tokens.accessToken } };
+      }
 
-      // Return only accessToken in body
-      return { success: true, data: { accessToken: tokens.accessToken } };
+      return {
+        success: true,
+        data: { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken },
+      };
     } catch (err) {
       if (err instanceof UnauthorizedException) {
         await this.auditService.log({
@@ -243,13 +276,22 @@ export class AuthController {
     @Ip() ip: string,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const refreshToken = (req.cookies as Record<string, string>)?.[REFRESH_COOKIE];
+    const isMobile = this.isMobileClient(req);
+    const bodyRefreshToken =
+      isMobile && req.body && typeof req.body === 'object'
+        ? ((req.body as Record<string, unknown>)['refreshToken'] as string | undefined)
+        : undefined;
+    const refreshToken = isMobile
+      ? bodyRefreshToken
+      : (req.cookies as Record<string, string>)?.[REFRESH_COOKIE];
     if (refreshToken) {
       await this.authService.logout(refreshToken);
     }
 
-    // Clear the httpOnly cookie
-    this.clearRefreshCookie(res);
+    // Web: clear the httpOnly refresh cookie. Mobile has no cookie to clear.
+    if (!isMobile) {
+      this.clearRefreshCookie(res);
+    }
 
     await this.auditService.log({
       actorUserId: user.sub,

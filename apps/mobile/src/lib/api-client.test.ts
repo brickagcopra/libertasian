@@ -46,7 +46,7 @@ describe('ApiClientError', () => {
 });
 
 describe('apiClient.get', () => {
-  it('makes GET request with auth header', async () => {
+  it('makes GET request with auth header and X-Client: mobile', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -62,10 +62,12 @@ describe('apiClient.get', () => {
         headers: expect.objectContaining({
           Authorization: 'Bearer access-token-123',
           'Content-Type': 'application/json',
+          'X-Client': 'mobile',
         }),
       }),
     );
-    expect(result).toEqual({ success: true, data: [] });
+    // Envelope unwrapped: returns `data` field only.
+    expect(result).toEqual([]);
   });
 
   it('appends query params to URL', async () => {
@@ -237,14 +239,17 @@ describe('apiClient - token refresh on 401', () => {
       json: () => Promise.resolve({ message: 'Token expired' }),
     });
 
-    // Refresh call succeeds
+    // Refresh call succeeds (mobile envelope: tokens in `data`)
     mockFetch.mockResolvedValueOnce({
       ok: true,
       status: 200,
       json: () =>
         Promise.resolve({
-          accessToken: 'new-access-token',
-          refreshToken: 'new-refresh-token',
+          success: true,
+          data: {
+            accessToken: 'new-access-token',
+            refreshToken: 'new-refresh-token',
+          },
         }),
     });
 
@@ -257,7 +262,8 @@ describe('apiClient - token refresh on 401', () => {
 
     const result = await apiClient.get('/protected');
 
-    expect(result).toEqual({ success: true, data: 'retried' });
+    // Envelope unwrapped: returns the `data` value.
+    expect(result).toEqual('retried');
     expect(mockSetAccessToken).toHaveBeenCalledWith('new-access-token');
     expect(mockSetRefreshToken).toHaveBeenCalledWith('new-refresh-token');
     expect(mockFetch).toHaveBeenCalledTimes(3);
@@ -352,14 +358,17 @@ describe('apiClient - concurrent 401 deduplication', () => {
       });
     }
 
-    // Single refresh call succeeds
+    // Single refresh call succeeds (mobile envelope shape)
     mockFetch.mockResolvedValueOnce({
       ok: true,
       status: 200,
       json: () =>
         Promise.resolve({
-          accessToken: 'new-access-token',
-          refreshToken: 'new-refresh-token',
+          success: true,
+          data: {
+            accessToken: 'new-access-token',
+            refreshToken: 'new-refresh-token',
+          },
         }),
     });
 
@@ -380,10 +389,10 @@ describe('apiClient - concurrent 401 deduplication', () => {
       apiClient.get('/e'),
     ]);
 
-    // All 5 should resolve successfully
+    // All 5 should resolve successfully — envelope unwrapped to data string.
     expect(results).toHaveLength(5);
-    results.forEach((r) => {
-      expect(r).toHaveProperty('success', true);
+    results.forEach((r, i) => {
+      expect(r).toEqual(`result-${i}`);
     });
 
     // Refresh endpoint should be called exactly once (deduplicated)
@@ -397,6 +406,28 @@ describe('apiClient - concurrent 401 deduplication', () => {
     expect(mockSetRefreshToken).toHaveBeenCalledTimes(1);
     expect(mockSetAccessToken).toHaveBeenCalledWith('new-access-token');
     expect(mockSetRefreshToken).toHaveBeenCalledWith('new-refresh-token');
+  });
+
+  it('passes through non-envelope JSON responses unchanged', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve([{ id: 1 }, { id: 2 }]),
+    });
+
+    const result = await apiClient.get('/raw-array');
+    expect(result).toEqual([{ id: 1 }, { id: 2 }]);
+  });
+
+  it('throws ApiClientError when envelope success is false', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({ success: false, data: null, message: 'Bad envelope' }),
+    });
+
+    await expect(apiClient.get('/envelope-failure')).rejects.toThrow('Bad envelope');
   });
 });
 

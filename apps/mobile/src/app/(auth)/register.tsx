@@ -13,7 +13,6 @@ import {
 } from 'react-native';
 import { Link, router } from 'expo-router';
 import { useRegister } from '../../features/auth/hooks/use-auth';
-import { useAuth } from '../../providers/auth-provider';
 import { APP_NAME } from '../../lib/constants';
 import { ApiClientError } from '../../lib/api-client';
 
@@ -24,7 +23,6 @@ export default function RegisterScreen() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  const { signIn } = useAuth();
   const registerMutation = useRegister();
 
   function validate(): boolean {
@@ -68,14 +66,17 @@ export default function RegisterScreen() {
     if (!validate()) return;
 
     try {
-      const result = await registerMutation.mutateAsync({
+      await registerMutation.mutateAsync({
         fullName: fullName.trim(),
         email: email.trim().toLowerCase(),
         password,
       });
 
-      await signIn(result.accessToken, result.refreshToken, result.user);
-      router.replace('/(tabs)');
+      Alert.alert(
+        'Account Created',
+        'Check your email for a 6-digit verification code, then sign in.',
+        [{ text: 'Sign In', onPress: () => router.replace('/(auth)/login') }],
+      );
     } catch (error) {
       if (error instanceof ApiClientError) {
         if (error.statusCode === 409) {

@@ -65,7 +65,7 @@ export default function LoginScreen() {
         return;
       }
 
-      await signIn(result.accessToken, result.refreshToken, result.user);
+      await signIn(result.tokens.accessToken, result.tokens.refreshToken, result.user);
       router.replace(result.user.onboardingCompletedAt ? '/(tabs)' : '/(onboarding)');
     } catch (error) {
       if (error instanceof ApiClientError) {
