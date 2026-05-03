@@ -4,6 +4,7 @@ import type {
   AuthResponse,
   LoginRequest,
   RegisterRequest,
+  RegisterResponse,
   UserProfile,
 } from '../types';
 
@@ -17,7 +18,7 @@ export function useLogin() {
 export function useRegister() {
   return useMutation({
     mutationFn: (data: RegisterRequest) =>
-      apiClient.post<AuthResponse>('/auth/register', data, { skipAuth: true }),
+      apiClient.post<RegisterResponse>('/auth/register', data, { skipAuth: true }),
   });
 }
 

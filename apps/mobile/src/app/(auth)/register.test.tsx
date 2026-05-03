@@ -12,18 +12,6 @@ jest.mock('../../features/auth/hooks/use-auth', () => ({
   }),
 }));
 
-const mockSignIn = jest.fn();
-jest.mock('../../providers/auth-provider', () => ({
-  useAuth: () => ({
-    signIn: mockSignIn,
-    signOut: jest.fn(),
-    user: null,
-    isAuthenticated: false,
-    isLoading: false,
-    setUser: jest.fn(),
-  }),
-}));
-
 jest.mock('../../lib/constants', () => ({
   APP_NAME: 'LIBERTASIAN',
 }));
@@ -175,8 +163,7 @@ describe('RegisterScreen', () => {
   it('calls register mutation with correct data on valid submission', async () => {
     mockMutateAsync.mockResolvedValueOnce({
       user: { id: '1', email: 'juan@test.com', fullName: 'Juan Cruz' },
-      accessToken: 'at-123',
-      refreshToken: 'rt-456',
+      verifyEmail: 'juan@test.com',
     });
 
     const { getAllByText, getByPlaceholderText } = render(<RegisterScreen />, {
@@ -198,6 +185,35 @@ describe('RegisterScreen', () => {
         email: 'juan@test.com',
         password: 'Password1234',
       });
+    });
+  });
+
+  it('shows verification alert and navigates to login on successful registration', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert');
+    mockMutateAsync.mockResolvedValueOnce({
+      user: { id: '1', email: 'juan@test.com', fullName: 'Juan Cruz' },
+      verifyEmail: 'juan@test.com',
+    });
+
+    const { getAllByText, getByPlaceholderText } = render(<RegisterScreen />, {
+      wrapper: createWrapper(),
+    });
+
+    fireEvent.changeText(getByPlaceholderText('Juan Dela Cruz'), 'Juan Cruz');
+    fireEvent.changeText(getByPlaceholderText('you@example.com'), 'juan@test.com');
+    fireEvent.changeText(getByPlaceholderText('Minimum 10 characters'), 'Password1234');
+    fireEvent.changeText(getByPlaceholderText('Re-enter your password'), 'Password1234');
+
+    await act(async () => {
+      pressSubmitButton(getAllByText);
+    });
+
+    await waitFor(() => {
+      expect(alertSpy).toHaveBeenCalledWith(
+        'Account Created',
+        expect.stringContaining('verification code'),
+        expect.any(Array),
+      );
     });
   });
 

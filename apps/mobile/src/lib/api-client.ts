@@ -39,6 +39,43 @@ interface ApiError {
   error?: string;
 }
 
+/**
+ * Default headers attached to every request. `X-Client: mobile` opts into the
+ * mobile auth transport on the API: refresh tokens travel in the response body
+ * instead of an httpOnly Set-Cookie (RN's fetch does not persist cookies).
+ */
+const DEFAULT_HEADERS: Record<string, string> = {
+  'Content-Type': 'application/json',
+  'X-Client': 'mobile',
+};
+
+/**
+ * Defensively unwrap an API envelope of shape `{ success, data }`. NestJS
+ * controllers return this shape on most endpoints; RN-side code historically
+ * read fields off the top level, which silently produced undefined values
+ * (the bug that broke mobile login). When the response is NOT this envelope
+ * shape, pass it through unchanged so endpoints with other shapes keep working.
+ */
+function unwrapEnvelope<T>(json: unknown): T {
+  if (
+    json !== null &&
+    typeof json === 'object' &&
+    'success' in json &&
+    'data' in json
+  ) {
+    const envelope = json as { success: unknown; data: unknown };
+    if (envelope.success === false) {
+      const errMessage =
+        (json as { message?: string; error?: string }).message ??
+        (json as { error?: string }).error ??
+        'Request failed';
+      throw new ApiClientError(400, errMessage);
+    }
+    return envelope.data as T;
+  }
+  return json as T;
+}
+
 export class ApiClientError extends Error {
   statusCode: number;
   serverMessage: string;
@@ -109,16 +146,15 @@ class ApiClient {
     try {
       const response = await fetch(`${this.baseUrl}/auth/refresh`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...DEFAULT_HEADERS },
         body: JSON.stringify({ refreshToken }),
       });
 
       if (!response.ok) return false;
 
-      const data = (await response.json()) as {
-        accessToken: string;
-        refreshToken: string;
-      };
+      const json = (await response.json()) as unknown;
+      const data = unwrapEnvelope<{ accessToken: string; refreshToken: string }>(json);
+      if (!data.accessToken || !data.refreshToken) return false;
       await authStorage.setAccessToken(data.accessToken);
       await authStorage.setRefreshToken(data.refreshToken);
       return true;
@@ -138,7 +174,7 @@ class ApiClient {
     const response = await fetch(url, {
       ...init,
       headers: {
-        'Content-Type': 'application/json',
+        ...DEFAULT_HEADERS,
         ...authHeaders,
         ...(init.headers as Record<string, string>),
       },
@@ -151,14 +187,16 @@ class ApiClient {
         const retryResponse = await fetch(url, {
           ...init,
           headers: {
-            'Content-Type': 'application/json',
+            ...DEFAULT_HEADERS,
             ...retryHeaders,
             ...(init.headers as Record<string, string>),
           },
         });
 
         if (retryResponse.ok) {
-          return retryResponse.json() as Promise<T>;
+          if (retryResponse.status === 204) return undefined as T;
+          const json = (await retryResponse.json()) as unknown;
+          return unwrapEnvelope<T>(json);
         }
 
         if (retryResponse.status === 401) {
@@ -187,7 +225,8 @@ class ApiClient {
       return undefined as T;
     }
 
-    return response.json() as Promise<T>;
+    const json = (await response.json()) as unknown;
+    return unwrapEnvelope<T>(json);
   }
 
   private async handleErrorResponse<T>(response: Response): Promise<T> {
@@ -250,6 +289,9 @@ class ApiClient {
     return new Promise<T>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', url);
+
+      // Note: do not set Content-Type — XHR/FormData manages multipart boundary.
+      xhr.setRequestHeader('X-Client', 'mobile');
 
       for (const [key, value] of Object.entries(authHeaders)) {
         xhr.setRequestHeader(key, value);

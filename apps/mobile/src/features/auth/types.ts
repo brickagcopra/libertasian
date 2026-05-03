@@ -27,11 +27,20 @@ export interface RegisterRequest {
   fullName: string;
 }
 
-export interface AuthResponse {
-  user: AuthUser;
+export interface AuthTokens {
   accessToken: string;
   refreshToken: string;
+}
+
+export interface AuthResponse {
+  user: AuthUser;
+  tokens: AuthTokens;
   mfaRequired: boolean;
+}
+
+export interface RegisterResponse {
+  user: AuthUser;
+  verifyEmail: string;
 }
 
 export interface RefreshResponse {

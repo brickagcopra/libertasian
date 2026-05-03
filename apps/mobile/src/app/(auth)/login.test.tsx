@@ -140,8 +140,7 @@ describe('LoginScreen', () => {
         mfaEnabled: false,
         createdAt: '2024-01-01',
       },
-      accessToken: 'at-123',
-      refreshToken: 'rt-456',
+      tokens: { accessToken: 'at-123', refreshToken: 'rt-456' },
       mfaRequired: false,
     });
 
@@ -178,8 +177,7 @@ describe('LoginScreen', () => {
   it('shows MFA field when mfaRequired is returned', async () => {
     mockPost.mockResolvedValueOnce({
       mfaRequired: true,
-      accessToken: '',
-      refreshToken: '',
+      tokens: { accessToken: '', refreshToken: '' },
       user: null,
     });
 
