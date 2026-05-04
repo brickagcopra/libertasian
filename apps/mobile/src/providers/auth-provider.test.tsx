@@ -101,17 +101,14 @@ describe('AuthProvider', () => {
       return null;
     });
     mockGet.mockResolvedValueOnce({
-      success: true,
-      data: {
-        id: '1',
-        email: 'restored@example.com',
-        fullName: 'Restored User',
-        phone: null,
-        status: 'active',
-        emailVerified: true,
-        mfaEnabled: false,
-        createdAt: '2024-01-01',
-      },
+      id: '1',
+      email: 'restored@example.com',
+      fullName: 'Restored User',
+      phone: null,
+      status: 'active',
+      emailVerified: true,
+      mfaEnabled: false,
+      createdAt: '2024-01-01',
     });
 
     const { getByTestId } = render(

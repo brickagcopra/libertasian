@@ -1,33 +1,30 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../../../lib/api-client';
 import type {
-  CheckoutResponse,
   CreateCheckoutInput,
   CancelSubscriptionInput,
-  PaymentMethodListResponse,
   PaymentMethodDetail,
-  InvoiceListResponse,
   InvoiceDetail,
-  InvoiceDetailResponse,
   CheckoutPreviewInput,
-  CheckoutPreviewResponse,
+  CheckoutPreviewData,
   ValidateCouponInput,
-  ValidateCouponResponse,
+  CouponValidationResult,
   EligiblePromotionsInput,
-  EligiblePromotionsResponse,
+  PromotionEligibilityResult,
 } from '../types';
+
+interface CheckoutData {
+  checkoutUrl: string;
+  checkoutSessionId: string;
+  paymentId: string;
+}
 
 // ─── Checkout Preview ─────────────────────────────────────
 
 export function useCheckoutPreview() {
   return useMutation({
-    mutationFn: async (input: CheckoutPreviewInput) => {
-      const res = await apiClient.post<CheckoutPreviewResponse>(
-        '/billing/checkout/preview',
-        input,
-      );
-      return res.data;
-    },
+    mutationFn: (input: CheckoutPreviewInput) =>
+      apiClient.post<CheckoutPreviewData>('/billing/checkout/preview', input),
   });
 }
 
@@ -35,13 +32,8 @@ export function useCheckoutPreview() {
 
 export function useValidateCoupon() {
   return useMutation({
-    mutationFn: async (input: ValidateCouponInput) => {
-      const res = await apiClient.post<ValidateCouponResponse>(
-        '/coupons/validate',
-        input,
-      );
-      return res.data;
-    },
+    mutationFn: (input: ValidateCouponInput) =>
+      apiClient.post<CouponValidationResult>('/coupons/validate', input),
   });
 }
 
@@ -49,13 +41,8 @@ export function useValidateCoupon() {
 
 export function useEligiblePromotions() {
   return useMutation({
-    mutationFn: async (input: EligiblePromotionsInput) => {
-      const res = await apiClient.post<EligiblePromotionsResponse>(
-        '/promotions/eligible',
-        input,
-      );
-      return res.data;
-    },
+    mutationFn: (input: EligiblePromotionsInput) =>
+      apiClient.post<PromotionEligibilityResult[]>('/promotions/eligible', input),
   });
 }
 
@@ -65,10 +52,8 @@ export function useCreateCheckout() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (input: CreateCheckoutInput) => {
-      const res = await apiClient.post<CheckoutResponse>('/billing/checkout', input);
-      return res.data;
-    },
+    mutationFn: (input: CreateCheckoutInput) =>
+      apiClient.post<CheckoutData>('/billing/checkout', input),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['billing'] });
     },
@@ -95,10 +80,7 @@ export function useCancelSubscription() {
 export function usePaymentMethods() {
   return useQuery({
     queryKey: ['billing', 'payment-methods'],
-    queryFn: async () => {
-      const res = await apiClient.get<PaymentMethodListResponse>('/billing/payment-methods');
-      return res.data;
-    },
+    queryFn: () => apiClient.get<PaymentMethodDetail[]>('/billing/payment-methods'),
   });
 }
 
@@ -106,11 +88,10 @@ export function useSetDefaultPaymentMethod() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (paymentMethodId: string) => {
-      await apiClient.patch<{ success: boolean; data: PaymentMethodDetail }>(
+    mutationFn: (paymentMethodId: string) =>
+      apiClient.patch<PaymentMethodDetail>(
         `/billing/payment-methods/${paymentMethodId}/default`,
-      );
-    },
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['billing', 'payment-methods'] });
     },
@@ -135,11 +116,10 @@ export function useDeletePaymentMethod() {
 export function useInvoices(cursor?: string, limit = 20) {
   return useQuery({
     queryKey: ['billing', 'invoices', { cursor, limit }],
-    queryFn: async () => {
+    queryFn: () => {
       const params: Record<string, string> = { limit: String(limit) };
       if (cursor) params['cursor'] = cursor;
-      const res = await apiClient.get<InvoiceListResponse>('/billing/invoices', { params });
-      return res;
+      return apiClient.get<InvoiceDetail[]>('/billing/invoices', { params });
     },
   });
 }
@@ -147,10 +127,7 @@ export function useInvoices(cursor?: string, limit = 20) {
 export function useInvoice(invoiceId: string) {
   return useQuery({
     queryKey: ['billing', 'invoices', invoiceId],
-    queryFn: async () => {
-      const res = await apiClient.get<InvoiceDetailResponse>(`/billing/invoices/${invoiceId}`);
-      return res.data;
-    },
+    queryFn: () => apiClient.get<InvoiceDetail>(`/billing/invoices/${invoiceId}`),
     enabled: !!invoiceId,
   });
 }

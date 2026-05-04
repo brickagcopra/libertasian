@@ -97,8 +97,8 @@ export default function CreateComparisonScreen() {
         documentIds: selectedDocs.map((d) => d.id),
         comparisonType,
       });
-      if (result.data?.id) {
-        router.replace(`/workspace/comparisons/${result.data.id}`);
+      if (result?.id) {
+        router.replace(`/workspace/comparisons/${result.id}`);
       } else {
         router.back();
       }

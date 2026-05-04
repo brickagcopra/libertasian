@@ -105,7 +105,7 @@ export function ShareSheet({
         password: passwordEnabled && password.length >= 4 ? password : undefined,
         expiresAt: expiresAt?.toISOString(),
       });
-      setNewToken(result.data.token);
+      setNewToken(result.token);
       setShowCreateForm(false);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to create share link';

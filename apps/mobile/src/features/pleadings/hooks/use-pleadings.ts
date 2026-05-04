@@ -79,10 +79,7 @@ export function useGeneratePleading() {
 
   return useMutation({
     mutationFn: (data: GeneratePleadingInput) =>
-      apiClient.post<{ success: boolean; data: PleadingListItem }>(
-        '/pleadings/generate',
-        data,
-      ),
+      apiClient.post<PleadingListItem>('/pleadings/generate', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['pleadings'] });
     },

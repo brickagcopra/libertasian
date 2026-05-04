@@ -26,8 +26,7 @@ export function useNotes(filters: NoteFilters = {}) {
 export function useNote(id: string | null) {
   return useQuery({
     queryKey: ['note', id],
-    queryFn: () =>
-      apiClient.get<{ success: boolean; data: NoteListItem }>(`/notes/${id}`),
+    queryFn: () => apiClient.get<NoteListItem>(`/notes/${id}`),
     enabled: !!id,
     staleTime: 2 * 60 * 1000,
   });
@@ -38,7 +37,7 @@ export function useCreateNote() {
 
   return useMutation({
     mutationFn: (data: CreateNoteInput) =>
-      apiClient.post<{ success: boolean; data: NoteListItem }>('/notes', data),
+      apiClient.post<NoteListItem>('/notes', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notes'] });
     },
@@ -50,10 +49,7 @@ export function useUpdateNote() {
 
   return useMutation({
     mutationFn: ({ id, ...data }: UpdateNoteInput & { id: string }) =>
-      apiClient.patch<{ success: boolean; data: NoteListItem }>(
-        `/notes/${id}`,
-        data,
-      ),
+      apiClient.patch<NoteListItem>(`/notes/${id}`, data),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['notes'] });
       queryClient.invalidateQueries({ queryKey: ['note', variables.id] });
@@ -65,10 +61,7 @@ export function useDeleteNote() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (id: string) =>
-      apiClient.delete<{ success: boolean; data: { message: string } }>(
-        `/notes/${id}`,
-      ),
+    mutationFn: (id: string) => apiClient.delete(`/notes/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notes'] });
     },

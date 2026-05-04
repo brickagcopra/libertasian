@@ -49,10 +49,7 @@ export function useGenerateTimeline() {
 
   return useMutation({
     mutationFn: (data: GenerateTimelineInput) =>
-      apiClient.post<{ success: boolean; data: CaseTimelineListItem }>(
-        '/timelines/generate',
-        data,
-      ),
+      apiClient.post<CaseTimelineListItem>('/timelines/generate', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['timelines'] });
     },

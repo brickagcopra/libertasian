@@ -46,10 +46,7 @@ export function useGenerateMemo() {
 
   return useMutation({
     mutationFn: (data: GenerateMemoInput) =>
-      apiClient.post<{ success: boolean; data: MemoListItem }>(
-        '/memos/generate',
-        data,
-      ),
+      apiClient.post<MemoListItem>('/memos/generate', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['memos'] });
     },

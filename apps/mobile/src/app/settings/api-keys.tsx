@@ -434,7 +434,7 @@ function CreateApiKeyForm({
         permissions: Array.from(selectedPermissions),
         rateLimitPerMinute: rateLimitValue,
       });
-      onCreated(result.data.key);
+      onCreated(result.key);
     } catch (err) {
       Alert.alert(
         'Error',

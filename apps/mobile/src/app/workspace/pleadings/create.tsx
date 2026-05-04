@@ -91,8 +91,8 @@ export default function CreatePleadingScreen() {
         inputData,
         contextQuery: contextQuery.trim() || undefined,
       });
-      if (result.data?.id) {
-        router.replace(`/workspace/pleadings/${result.data.id}`);
+      if (result?.id) {
+        router.replace(`/workspace/pleadings/${result.id}`);
       } else {
         router.back();
       }

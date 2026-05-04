@@ -65,24 +65,22 @@ describe('NoteDetailScreen', () => {
   it('renders note title and body', () => {
     mockUseNote.mockReturnValue({
       data: {
-        data: {
-          id: 'n-1',
-          title: 'My Research',
-          visibility: 'private',
-          body: {
-            type: 'doc',
-            content: [
-              {
-                type: 'paragraph',
-                content: [{ type: 'text', text: 'Research body here' }],
-              },
-            ],
-          },
-          createdAt: '2024-03-01',
-          updatedAt: '2024-03-02',
-          user: { id: 'u-1', fullName: 'Juan' },
-          matter: null,
+        id: 'n-1',
+        title: 'My Research',
+        visibility: 'private',
+        body: {
+          type: 'doc',
+          content: [
+            {
+              type: 'paragraph',
+              content: [{ type: 'text', text: 'Research body here' }],
+            },
+          ],
         },
+        createdAt: '2024-03-01',
+        updatedAt: '2024-03-02',
+        user: { id: 'u-1', fullName: 'Juan' },
+        matter: null,
       },
       isLoading: false,
     });

@@ -20,7 +20,6 @@ export function useAdminDoctrines(filters: DoctrineFilters = {}) {
     queryKey: ['admin', 'doctrines', filters],
     queryFn: async () => {
       const res = await apiClient.get<{
-        success: boolean;
         data: DoctrineListItem[];
         meta: { hasNext: boolean; nextCursor?: string; limit: number };
       }>('/admin/doctrines', { params });
@@ -35,12 +34,7 @@ export function useAdminDoctrines(filters: DoctrineFilters = {}) {
 export function useAdminDoctrineDetail(id: string) {
   return useQuery({
     queryKey: ['admin', 'doctrine', id],
-    queryFn: async () => {
-      const res = await apiClient.get<{ success: boolean; data: DoctrineDetail }>(
-        `/admin/doctrines/${id}`,
-      );
-      return res.data;
-    },
+    queryFn: () => apiClient.get<DoctrineDetail>(`/admin/doctrines/${id}`),
     enabled: id.length > 0,
     staleTime: 5 * 60 * 1000,
   });
@@ -52,12 +46,8 @@ export function useApproveDoctrine() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (id: string) => {
-      const res = await apiClient.post<{ success: boolean; data: DoctrineDetail }>(
-        `/admin/doctrines/${id}/approve`,
-      );
-      return res.data;
-    },
+    mutationFn: (id: string) =>
+      apiClient.post<DoctrineDetail>(`/admin/doctrines/${id}/approve`),
     onSuccess: (_data, id) => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'doctrines'] });
       queryClient.invalidateQueries({ queryKey: ['admin', 'doctrine', id] });
@@ -71,12 +61,8 @@ export function useRejectDoctrine() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (id: string) => {
-      const res = await apiClient.post<{ success: boolean; data: DoctrineDetail }>(
-        `/admin/doctrines/${id}/reject`,
-      );
-      return res.data;
-    },
+    mutationFn: (id: string) =>
+      apiClient.post<DoctrineDetail>(`/admin/doctrines/${id}/reject`),
     onSuccess: (_data, id) => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'doctrines'] });
       queryClient.invalidateQueries({ queryKey: ['admin', 'doctrine', id] });
@@ -102,13 +88,11 @@ export function useExtractDoctrines() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (input: ExtractDoctrinesInput) => {
-      const res = await apiClient.post<{ success: boolean; data: ExtractionResult }>(
-        '/admin/doctrines/extract',
-        { documentId: input.legalDocumentId, strategy: input.strategy },
-      );
-      return res.data;
-    },
+    mutationFn: (input: ExtractDoctrinesInput) =>
+      apiClient.post<ExtractionResult>('/admin/doctrines/extract', {
+        documentId: input.legalDocumentId,
+        strategy: input.strategy,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'doctrines'] });
     },

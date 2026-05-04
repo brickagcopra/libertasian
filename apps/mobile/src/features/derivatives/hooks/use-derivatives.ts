@@ -36,12 +36,7 @@ export function useDerivatives(params: UseDerivativesParams = {}) {
 export function useDerivative(id: string, enabled = true) {
   return useQuery({
     queryKey: ['derivatives', 'detail', id],
-    queryFn: async () => {
-      const res = await apiClient.get<{ success: boolean; data: DerivativeDetail }>(
-        `/derivatives/${id}`,
-      );
-      return res.data;
-    },
+    queryFn: () => apiClient.get<DerivativeDetail>(`/derivatives/${id}`),
     enabled: enabled && id.length > 0,
     staleTime: 60 * 1000,
   });
@@ -50,13 +45,11 @@ export function useDerivative(id: string, enabled = true) {
 export function useDerivativeSubjects(taxonomyVersion = 'study_8') {
   return useQuery({
     queryKey: ['derivatives', 'subjects', taxonomyVersion],
-    queryFn: async () => {
-      const res = await apiClient.get<{
-        success: boolean;
-        data: DerivativeSubjectSummary[];
-      }>('/derivatives/subjects/summary', { params: { taxonomyVersion } });
-      return res.data;
-    },
+    queryFn: () =>
+      apiClient.get<DerivativeSubjectSummary[]>(
+        '/derivatives/subjects/summary',
+        { params: { taxonomyVersion } },
+      ),
     staleTime: 5 * 60 * 1000,
   });
 }
@@ -67,15 +60,11 @@ export function useDerivativeSubjectsByType(
 ) {
   return useQuery({
     queryKey: ['derivatives', 'subjects-by-type', type, taxonomyVersion],
-    queryFn: async () => {
-      const res = await apiClient.get<{
-        success: boolean;
-        data: DerivativeTypeSubjectSummary[];
-      }>(`/derivatives/types/${type}/subjects/summary`, {
-        params: { taxonomyVersion },
-      });
-      return res.data;
-    },
+    queryFn: () =>
+      apiClient.get<DerivativeTypeSubjectSummary[]>(
+        `/derivatives/types/${type}/subjects/summary`,
+        { params: { taxonomyVersion } },
+      ),
     enabled: !!type,
     staleTime: 5 * 60 * 1000,
   });

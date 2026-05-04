@@ -26,12 +26,9 @@ beforeEach(() => jest.clearAllMocks());
 describe('useLogin', () => {
   it('posts login credentials', async () => {
     mockPost.mockResolvedValueOnce({
-      success: true,
-      data: {
-        user: { id: 'u1', email: 'a@b.com' },
-        tokens: { accessToken: 'at', refreshToken: 'rt' },
-        mfaRequired: false,
-      },
+      user: { id: 'u1', email: 'a@b.com' },
+      tokens: { accessToken: 'at', refreshToken: 'rt' },
+      mfaRequired: false,
     });
     const { result } = renderHook(() => useLogin(), { wrapper: createWrapper() });
     await act(async () => { result.current.mutate({ email: 'a@b.com', password: 'pass' } as never); });
@@ -63,10 +60,11 @@ describe('useLogout', () => {
 });
 
 describe('useProfile', () => {
-  it('fetches user profile and unwraps the envelope', async () => {
+  it('fetches user profile (envelope stripped at transport)', async () => {
     mockGet.mockResolvedValueOnce({
-      success: true,
-      data: { id: 'u1', email: 'a@b.com', fullName: 'Test' },
+      id: 'u1',
+      email: 'a@b.com',
+      fullName: 'Test',
     });
     const { result } = renderHook(() => useProfile(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));

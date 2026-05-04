@@ -55,7 +55,7 @@ export default function NoteDetailScreen() {
   const [editBody, setEditBody] = useState('');
   const [editVisibility, setEditVisibility] = useState<NoteVisibility>('private');
 
-  const note = data?.data;
+  const note = data;
 
   const startEditing = useCallback(() => {
     if (!note) return;

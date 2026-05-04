@@ -38,7 +38,7 @@ export function useCreateMatter() {
 
   return useMutation({
     mutationFn: (data: CreateMatterInput) =>
-      apiClient.post<{ success: boolean; data: MatterListItem }>('/matters', data),
+      apiClient.post<MatterListItem>('/matters', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['matters'] });
     },
@@ -50,10 +50,7 @@ export function useUpdateMatter() {
 
   return useMutation({
     mutationFn: ({ id, ...data }: UpdateMatterInput & { id: string }) =>
-      apiClient.patch<{ success: boolean; data: MatterListItem }>(
-        `/matters/${id}`,
-        data,
-      ),
+      apiClient.patch<MatterListItem>(`/matters/${id}`, data),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['matters'] });
       queryClient.invalidateQueries({ queryKey: ['matter', variables.id] });
@@ -65,10 +62,7 @@ export function useDeleteMatter() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (id: string) =>
-      apiClient.delete<{ success: boolean; data: { message: string } }>(
-        `/matters/${id}`,
-      ),
+    mutationFn: (id: string) => apiClient.delete(`/matters/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['matters'] });
     },
@@ -79,7 +73,7 @@ export function useMatterDocuments(matterId: string | null) {
   return useQuery({
     queryKey: ['matter-documents', matterId],
     queryFn: () =>
-      apiClient.get<{ success: boolean; data: import('../types').MatterDocument[] }>(
+      apiClient.get<import('../types').MatterDocument[]>(
         `/matters/${matterId}/documents`,
       ),
     enabled: !!matterId,
@@ -101,7 +95,7 @@ export function useAddMatterDocument() {
       title?: string;
       role?: string;
     }) =>
-      apiClient.post<{ success: boolean; data: import('../types').MatterDocument }>(
+      apiClient.post<import('../types').MatterDocument>(
         `/matters/${matterId}/documents`,
         data,
       ),
@@ -121,9 +115,7 @@ export function useRemoveMatterDocument() {
 
   return useMutation({
     mutationFn: ({ matterId, docId }: { matterId: string; docId: string }) =>
-      apiClient.delete<{ success: boolean; data: { message: string } }>(
-        `/matters/${matterId}/documents/${docId}`,
-      ),
+      apiClient.delete(`/matters/${matterId}/documents/${docId}`),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({
         queryKey: ['matter-documents', variables.matterId],

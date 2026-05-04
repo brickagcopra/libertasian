@@ -39,10 +39,7 @@ export function useGenerateDigest() {
 
   return useMutation({
     mutationFn: (data: { legalDocumentId: string; digestType?: string }) =>
-      apiClient.post<{ success: boolean; data: Digest }>(
-        '/digests/generate',
-        data,
-      ),
+      apiClient.post<Digest>('/digests/generate', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['digests'] });
     },

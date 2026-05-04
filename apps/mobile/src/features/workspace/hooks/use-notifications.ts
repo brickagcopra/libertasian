@@ -96,9 +96,7 @@ export function useMarkNotificationRead() {
 
   return useMutation({
     mutationFn: (id: string) =>
-      apiClient.patch<{ success: boolean; data: NotificationItem }>(
-        `/notifications/${id}/read`,
-      ),
+      apiClient.patch<NotificationItem>(`/notifications/${id}/read`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notifications'] });
       queryClient.invalidateQueries({
@@ -113,9 +111,7 @@ export function useMarkAllNotificationsRead() {
 
   return useMutation({
     mutationFn: () =>
-      apiClient.post<{ success: boolean; data: { count: number } }>(
-        '/notifications/mark-all-read',
-      ),
+      apiClient.post<{ count: number }>('/notifications/mark-all-read'),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notifications'] });
       queryClient.invalidateQueries({
@@ -129,10 +125,7 @@ export function useDeleteNotification() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (id: string) =>
-      apiClient.delete<{ success: boolean; data: { message: string } }>(
-        `/notifications/${id}`,
-      ),
+    mutationFn: (id: string) => apiClient.delete(`/notifications/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notifications'] });
       queryClient.invalidateQueries({

@@ -90,8 +90,8 @@ export default function CreateContradictionScreen() {
         scope,
         topic: topic.trim() || undefined,
       });
-      if (result.data?.id) {
-        router.replace(`/workspace/contradictions/${result.data.id}`);
+      if (result?.id) {
+        router.replace(`/workspace/contradictions/${result.id}`);
       } else {
         router.back();
       }

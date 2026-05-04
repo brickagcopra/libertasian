@@ -12,10 +12,7 @@ import type {
 export function useCreateFlag() {
   return useMutation({
     mutationFn: (data: CreateFlagInput) =>
-      apiClient.post<{ success: boolean; data: { id: string } }>(
-        '/community/flags',
-        data,
-      ),
+      apiClient.post<{ id: string }>('/community/flags', data),
   });
 }
 

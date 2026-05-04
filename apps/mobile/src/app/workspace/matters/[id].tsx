@@ -183,7 +183,7 @@ function CommentsTab({ matterId }: { matterId: string }) {
   const deleteComment = useDeleteMatterComment();
   const [body, setBody] = useState('');
 
-  const comments = commentsData?.data;
+  const comments = commentsData;
 
   const handleSubmit = useCallback(async () => {
     const trimmed = body.trim();

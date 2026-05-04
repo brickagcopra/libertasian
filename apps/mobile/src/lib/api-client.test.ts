@@ -66,8 +66,8 @@ describe('apiClient.get', () => {
         }),
       }),
     );
-    // Returns the JSON body verbatim — callers handle the envelope.
-    expect(result).toEqual({ success: true, data: [] });
+    // Envelope is stripped at the transport layer.
+    expect(result).toEqual([]);
   });
 
   it('appends query params to URL', async () => {
@@ -262,8 +262,8 @@ describe('apiClient - token refresh on 401', () => {
 
     const result = await apiClient.get('/protected');
 
-    // Returns the JSON body verbatim — callers handle the envelope.
-    expect(result).toEqual({ success: true, data: 'retried' });
+    // Envelope is stripped at the transport layer.
+    expect(result).toEqual('retried');
     expect(mockSetAccessToken).toHaveBeenCalledWith('new-access-token');
     expect(mockSetRefreshToken).toHaveBeenCalledWith('new-refresh-token');
     expect(mockFetch).toHaveBeenCalledTimes(3);
@@ -389,10 +389,10 @@ describe('apiClient - concurrent 401 deduplication', () => {
       apiClient.get('/e'),
     ]);
 
-    // All 5 should resolve successfully — body returned verbatim (envelope intact).
+    // All 5 should resolve successfully — envelope stripped at transport.
     expect(results).toHaveLength(5);
     results.forEach((r, i) => {
-      expect(r).toEqual({ success: true, data: `result-${i}` });
+      expect(r).toEqual(`result-${i}`);
     });
 
     // Refresh endpoint should be called exactly once (deduplicated)
