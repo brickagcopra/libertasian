@@ -18,8 +18,12 @@ function readRecent(): RecentlyViewedItem[] {
   if (!raw) return [];
   try {
     const parsed: unknown = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed as RecentlyViewedItem[];
-    return [];
+    if (!Array.isArray(parsed)) return [];
+    // Drop entries persisted under PR #113 where the api-client returned the
+    // envelope and `id`/`documentType` got stored as undefined.
+    return (parsed as RecentlyViewedItem[]).filter(
+      (e) => typeof e?.id === 'string' && typeof e?.documentType === 'string',
+    );
   } catch {
     return [];
   }
@@ -36,6 +40,10 @@ export function useRecentlyViewed() {
 
   const addEntry = useCallback(
     (doc: Omit<RecentlyViewedItem, 'viewedAt'>) => {
+      // Refuse to persist garbage so we don't poison the cache the way PR #113 did.
+      if (typeof doc.id !== 'string' || typeof doc.documentType !== 'string') {
+        return;
+      }
       setRecentlyViewed((prev) => {
         const filtered = prev.filter((d) => d.id !== doc.id);
         const entry: RecentlyViewedItem = {
