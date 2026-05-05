@@ -44,7 +44,7 @@ export function useCreateTask() {
 
   return useMutation({
     mutationFn: (data: CreateTaskInput) =>
-      apiClient.post<{ success: boolean; data: TaskListItem }>('/tasks', data),
+      apiClient.post<TaskListItem>('/tasks', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
     },
@@ -56,10 +56,7 @@ export function useUpdateTask() {
 
   return useMutation({
     mutationFn: ({ id, ...data }: UpdateTaskInput & { id: string }) =>
-      apiClient.patch<{ success: boolean; data: TaskListItem }>(
-        `/tasks/${id}`,
-        data,
-      ),
+      apiClient.patch<TaskListItem>(`/tasks/${id}`, data),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
       queryClient.invalidateQueries({ queryKey: ['task', variables.id] });
@@ -71,10 +68,7 @@ export function useDeleteTask() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (id: string) =>
-      apiClient.delete<{ success: boolean; data: { message: string } }>(
-        `/tasks/${id}`,
-      ),
+    mutationFn: (id: string) => apiClient.delete(`/tasks/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
     },
@@ -85,9 +79,7 @@ export function useTaskComments(taskId: string | null) {
   return useQuery({
     queryKey: ['task-comments', taskId],
     queryFn: () =>
-      apiClient.get<{ success: boolean; data: TaskComment[] }>(
-        `/tasks/${taskId}/comments`,
-      ),
+      apiClient.get<TaskComment[]>(`/tasks/${taskId}/comments`),
     enabled: !!taskId,
     staleTime: 60 * 1000,
   });
@@ -98,10 +90,7 @@ export function useCreateTaskComment() {
 
   return useMutation({
     mutationFn: ({ taskId, body }: { taskId: string; body: string }) =>
-      apiClient.post<{ success: boolean; data: TaskComment }>(
-        `/tasks/${taskId}/comments`,
-        { body },
-      ),
+      apiClient.post<TaskComment>(`/tasks/${taskId}/comments`, { body }),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({
         queryKey: ['task-comments', variables.taskId],
@@ -124,9 +113,7 @@ export function useDeleteTaskComment() {
       taskId: string;
       commentId: string;
     }) =>
-      apiClient.delete<{ success: boolean; data: { message: string } }>(
-        `/tasks/${taskId}/comments/${commentId}`,
-      ),
+      apiClient.delete(`/tasks/${taskId}/comments/${commentId}`),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({
         queryKey: ['task-comments', variables.taskId],

@@ -63,6 +63,35 @@ export class ApiClientError extends Error {
 
 type UnauthorizedHandler = () => void;
 
+/**
+ * NestJS controllers in this repo hand-roll a `{ success, data }` envelope on
+ * every response. Strip it once at the transport layer so callers can type
+ * requests as `apiClient.get<T>(...)` and receive `T` directly. Envelopes that
+ * carry sibling fields like `meta` (pagination) are returned untouched so
+ * those callers can still read `meta` directly. Raw arrays/primitives/error
+ * bodies are also returned untouched.
+ */
+function unwrapEnvelope<T>(payload: unknown): T {
+  if (
+    payload !== null &&
+    typeof payload === 'object' &&
+    'success' in payload &&
+    'data' in payload
+  ) {
+    const keys = Object.keys(payload as object);
+    const isPlainEnvelope = keys.every((k) => k === 'success' || k === 'data' || k === 'message');
+    if (!isPlainEnvelope) {
+      return payload as T;
+    }
+    const env = payload as { success: boolean; data: T; message?: string };
+    if (env.success === false) {
+      throw new ApiClientError(200, env.message ?? 'Request failed');
+    }
+    return env.data;
+  }
+  return payload as T;
+}
+
 class ApiClient {
   private baseUrl: string;
   private isRefreshing = false;
@@ -170,7 +199,8 @@ class ApiClient {
 
         if (retryResponse.ok) {
           if (retryResponse.status === 204) return undefined as T;
-          return retryResponse.json() as Promise<T>;
+          const retryJson = await retryResponse.json();
+          return unwrapEnvelope<T>(retryJson);
         }
 
         if (retryResponse.status === 401) {
@@ -199,7 +229,8 @@ class ApiClient {
       return undefined as T;
     }
 
-    return response.json() as Promise<T>;
+    const json = await response.json();
+    return unwrapEnvelope<T>(json);
   }
 
   private async handleErrorResponse<T>(response: Response): Promise<T> {
@@ -294,11 +325,11 @@ class ApiClient {
         }
 
         try {
-          const data = JSON.parse(xhr.responseText) as T;
+          const data = JSON.parse(xhr.responseText);
           if (xhr.status >= 200 && xhr.status < 300) {
-            resolve(data);
+            resolve(unwrapEnvelope<T>(data));
           } else {
-            const err = data as unknown as ApiError;
+            const err = data as ApiError;
             reject(new ApiClientError(xhr.status, err.message || `HTTP ${xhr.status}`));
           }
         } catch {

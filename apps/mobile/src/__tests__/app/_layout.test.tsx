@@ -1,0 +1,165 @@
+import React from 'react';
+import { render, act } from '@testing-library/react-native';
+
+// Mock dependencies
+const mockReplace = jest.fn();
+const mockUseSegments = jest.fn();
+
+jest.mock('expo-router', () => ({
+  Slot: () => null,
+  router: { replace: (...args: unknown[]) => mockReplace(...args) },
+  useSegments: () => mockUseSegments(),
+}));
+
+jest.mock('expo-status-bar', () => ({
+  StatusBar: () => null,
+}));
+
+jest.mock('@tanstack/react-query', () => ({
+  QueryClient: jest.fn().mockImplementation(() => ({})),
+  QueryClientProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
+const mockUseAuth = jest.fn();
+jest.mock('@/providers/auth-provider', () => ({
+  AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  useAuth: () => mockUseAuth(),
+}));
+
+import RootLayout from '@/app/_layout';
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockUseSegments.mockReturnValue(['(tabs)']);
+});
+
+describe('AuthNavigationGuard', () => {
+  it('shows loading indicator when auth is loading', () => {
+    mockUseAuth.mockReturnValue({
+      isAuthenticated: false,
+      isLoading: true,
+      user: null,
+    });
+
+    const { getByTestId, queryByTestId } = render(<RootLayout />);
+    // ActivityIndicator renders, Slot does not
+    // The loading state renders a View with ActivityIndicator
+  });
+
+  it('redirects unauthenticated user to login', () => {
+    mockUseAuth.mockReturnValue({
+      isAuthenticated: false,
+      isLoading: false,
+      user: null,
+    });
+    mockUseSegments.mockReturnValue(['(tabs)']);
+
+    render(<RootLayout />);
+
+    expect(mockReplace).toHaveBeenCalledWith('/(auth)/login');
+  });
+
+  it('does not redirect unauthenticated user already on auth page', () => {
+    mockUseAuth.mockReturnValue({
+      isAuthenticated: false,
+      isLoading: false,
+      user: null,
+    });
+    mockUseSegments.mockReturnValue(['(auth)']);
+
+    render(<RootLayout />);
+
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  it('allows unauthenticated access to shared (public) routes', () => {
+    mockUseAuth.mockReturnValue({
+      isAuthenticated: false,
+      isLoading: false,
+      user: null,
+    });
+    mockUseSegments.mockReturnValue(['shared']);
+
+    render(<RootLayout />);
+
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  it('redirects authenticated user from auth page to tabs (completed onboarding)', () => {
+    mockUseAuth.mockReturnValue({
+      isAuthenticated: true,
+      isLoading: false,
+      user: { id: 'u1', onboardingCompletedAt: '2026-01-01' },
+    });
+    mockUseSegments.mockReturnValue(['(auth)']);
+
+    render(<RootLayout />);
+
+    expect(mockReplace).toHaveBeenCalledWith('/(tabs)');
+  });
+
+  it('redirects authenticated user from auth page to onboarding (not completed)', () => {
+    mockUseAuth.mockReturnValue({
+      isAuthenticated: true,
+      isLoading: false,
+      user: { id: 'u1', onboardingCompletedAt: null },
+    });
+    mockUseSegments.mockReturnValue(['(auth)']);
+
+    render(<RootLayout />);
+
+    expect(mockReplace).toHaveBeenCalledWith('/(onboarding)');
+  });
+
+  it('redirects to onboarding when authenticated but onboarding not completed', () => {
+    mockUseAuth.mockReturnValue({
+      isAuthenticated: true,
+      isLoading: false,
+      user: { id: 'u1', onboardingCompletedAt: null },
+    });
+    mockUseSegments.mockReturnValue(['(tabs)']);
+
+    render(<RootLayout />);
+
+    expect(mockReplace).toHaveBeenCalledWith('/(onboarding)');
+  });
+
+  it('redirects from onboarding to tabs when onboarding is completed', () => {
+    mockUseAuth.mockReturnValue({
+      isAuthenticated: true,
+      isLoading: false,
+      user: { id: 'u1', onboardingCompletedAt: '2026-01-01' },
+    });
+    mockUseSegments.mockReturnValue(['(onboarding)']);
+
+    render(<RootLayout />);
+
+    expect(mockReplace).toHaveBeenCalledWith('/(tabs)');
+  });
+
+  it('does not redirect authenticated user with completed onboarding on tabs', () => {
+    mockUseAuth.mockReturnValue({
+      isAuthenticated: true,
+      isLoading: false,
+      user: { id: 'u1', onboardingCompletedAt: '2026-01-01' },
+    });
+    mockUseSegments.mockReturnValue(['(tabs)']);
+
+    render(<RootLayout />);
+
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  it('does not perform any navigation while loading', () => {
+    mockUseAuth.mockReturnValue({
+      isAuthenticated: false,
+      isLoading: true,
+      user: null,
+    });
+    mockUseSegments.mockReturnValue(['(tabs)']);
+
+    render(<RootLayout />);
+
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+});

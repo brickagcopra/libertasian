@@ -51,9 +51,7 @@ export function useRemoveVote() {
       entityType: string;
       entityId: string;
     }) =>
-      apiClient.delete<{ success: boolean }>(
-        `/community/votes/${entityType}/${entityId}`,
-      ),
+      apiClient.delete(`/community/votes/${entityType}/${entityId}`),
     onSuccess: (_res, variables) => {
       queryClient.invalidateQueries({
         queryKey: ['my-vote', variables.entityType, variables.entityId],

@@ -50,7 +50,7 @@ export function useGenerateComparison() {
 
   return useMutation({
     mutationFn: (data: GenerateComparisonInput) =>
-      apiClient.post<{ success: boolean; data: CaseComparisonListItem }>(
+      apiClient.post<CaseComparisonListItem>(
         '/case-comparisons/generate',
         data,
       ),

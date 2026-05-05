@@ -67,8 +67,8 @@ export default function CreateTimelineScreen() {
         title: title.trim(),
         documentIds: selectedDocs.map((d) => d.id),
       });
-      if (result.data?.id) {
-        router.replace(`/workspace/timelines/${result.data.id}`);
+      if (result?.id) {
+        router.replace(`/workspace/timelines/${result.id}`);
       } else {
         router.back();
       }

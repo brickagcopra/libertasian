@@ -28,8 +28,8 @@ export default function CreateResearchWorkspaceScreen() {
         title: title.trim(),
         description: description.trim() || undefined,
       });
-      if (result.data?.id) {
-        router.replace(`/workspace/research-workspaces/${result.data.id}`);
+      if (result?.id) {
+        router.replace(`/workspace/research-workspaces/${result.id}`);
       } else {
         router.back();
       }

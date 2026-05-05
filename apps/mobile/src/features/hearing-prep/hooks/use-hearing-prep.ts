@@ -49,10 +49,7 @@ export function useGenerateHearingPrep() {
 
   return useMutation({
     mutationFn: (data: GenerateHearingPrepInput) =>
-      apiClient.post<{ success: boolean; data: HearingPrepListItem }>(
-        '/hearing-prep/generate',
-        data,
-      ),
+      apiClient.post<HearingPrepListItem>('/hearing-prep/generate', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['hearing-preps'] });
     },

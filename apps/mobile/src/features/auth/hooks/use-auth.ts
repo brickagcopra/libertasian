@@ -11,7 +11,7 @@ import type {
 export function useLogin() {
   return useMutation({
     mutationFn: (data: LoginRequest) =>
-      apiClient.post<{ success: boolean; data: AuthResponse }>('/auth/login', data, { skipAuth: true }),
+      apiClient.post<AuthResponse>('/auth/login', data, { skipAuth: true }),
   });
 }
 
@@ -37,10 +37,7 @@ export function useLogout() {
 export function useProfile(enabled = true) {
   return useQuery({
     queryKey: ['profile'],
-    queryFn: async () => {
-      const res = await apiClient.get<{ success: boolean; data: UserProfile }>('/users/me');
-      return res.data;
-    },
+    queryFn: () => apiClient.get<UserProfile>('/users/me'),
     enabled,
     staleTime: 5 * 60 * 1000,
     retry: false,

@@ -69,8 +69,8 @@ export default function CreateHearingPrepScreen() {
             ? selectedDocs.map((d) => d.id)
             : undefined,
       });
-      if (result.data?.id) {
-        router.replace(`/workspace/hearing-prep/${result.data.id}`);
+      if (result?.id) {
+        router.replace(`/workspace/hearing-prep/${result.id}`);
       } else {
         router.back();
       }

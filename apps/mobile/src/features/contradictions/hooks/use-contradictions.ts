@@ -49,7 +49,7 @@ export function useGenerateContradiction() {
 
   return useMutation({
     mutationFn: (data: GenerateContradictionInput) =>
-      apiClient.post<{ success: boolean; data: ContradictionReportListItem }>(
+      apiClient.post<ContradictionReportListItem>(
         '/contradictions/generate',
         data,
       ),

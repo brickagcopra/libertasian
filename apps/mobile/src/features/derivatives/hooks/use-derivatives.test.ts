@@ -62,8 +62,8 @@ describe('useDerivatives', () => {
 });
 
 describe('useDerivative', () => {
-  it('fetches detail by id and unwraps envelope', async () => {
-    mockGet.mockResolvedValueOnce({ success: true, data: { id: 'a1', title: 'Sample' } });
+  it('fetches detail by id (envelope stripped at transport)', async () => {
+    mockGet.mockResolvedValueOnce({ id: 'a1', title: 'Sample' });
     const { result } = renderHook(() => useDerivative('a1'), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(mockGet).toHaveBeenCalledWith('/derivatives/a1');
@@ -79,10 +79,9 @@ describe('useDerivative', () => {
 
 describe('useDerivativeSubjects', () => {
   it('hits /derivatives/subjects/summary with default taxonomy', async () => {
-    mockGet.mockResolvedValueOnce({
-      success: true,
-      data: [{ code: 'x', name: 'X', taxonomyVersion: 'study_8', count: 1 }],
-    });
+    mockGet.mockResolvedValueOnce([
+      { code: 'x', name: 'X', taxonomyVersion: 'study_8', count: 1 },
+    ]);
     const { result } = renderHook(() => useDerivativeSubjects(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(mockGet).toHaveBeenCalledWith('/derivatives/subjects/summary', {

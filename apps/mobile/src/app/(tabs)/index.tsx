@@ -533,7 +533,7 @@ export default function SearchScreen() {
                 >
                   <View style={styles.recentDocTypeBadge}>
                     <Text style={styles.recentDocTypeBadgeText}>
-                      {doc.documentType.replace(/_/g, ' ')}
+                      {(doc.documentType ?? 'document').replace(/_/g, ' ')}
                     </Text>
                   </View>
                   <Text style={styles.recentDocTitle} numberOfLines={2}>

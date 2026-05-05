@@ -78,10 +78,7 @@ export default function OnboardingScreen() {
   async function completeOnboarding(skipped: boolean) {
     setIsSubmitting(true);
     try {
-      const res = await apiClient.patch<{
-        success: boolean;
-        data: AuthUser;
-      }>('/users/me/onboarding', {
+      const updatedUser = await apiClient.patch<AuthUser>('/users/me/onboarding', {
         userRole: selectedRole || 'student',
         ...(isStudentOrBarTaker && selectedSubjects.length > 0 && {
           preferredBarSubjects: selectedSubjects,
@@ -92,8 +89,8 @@ export default function OnboardingScreen() {
         skipped,
       });
       mmkvStorage.setBoolean(STORAGE_KEYS.ONBOARDING_COMPLETED, true);
-      if (res.data) {
-        setUser(res.data);
+      if (updatedUser) {
+        setUser(updatedUser);
       }
       router.replace('/(tabs)');
     } finally {

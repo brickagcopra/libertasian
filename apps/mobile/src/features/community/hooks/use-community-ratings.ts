@@ -69,7 +69,7 @@ export function useDeleteRating() {
       ratingId: string;
       entityType: CommunityEntityType;
       entityId: string;
-    }) => apiClient.delete<{ success: boolean }>(`/community/ratings/${ratingId}`),
+    }) => apiClient.delete(`/community/ratings/${ratingId}`),
     onSuccess: (_res, variables) => {
       queryClient.invalidateQueries({
         queryKey: ['community-ratings', variables.entityType, variables.entityId],

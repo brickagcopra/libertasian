@@ -58,8 +58,8 @@ export default function CreateMemoScreen() {
         query: query.trim(),
         memoType,
       });
-      if (result.data?.id) {
-        router.replace(`/workspace/memos/${result.data.id}`);
+      if (result?.id) {
+        router.replace(`/workspace/memos/${result.id}`);
       } else {
         router.back();
       }

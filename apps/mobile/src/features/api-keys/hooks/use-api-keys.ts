@@ -1,13 +1,25 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../../../lib/api-client';
 import type {
-  ApiKeyListResponse,
-  ApiKeyDetailResponse,
-  ApiKeyCreateResponse,
+  ApiKeyDetail,
+  ApiKeyListItem,
   ApiKeyFilters,
   CreateApiKeyInput,
   UpdateApiKeyInput,
 } from '../types';
+
+interface ApiKeyListData {
+  data: ApiKeyListItem[];
+  cursor: string | null;
+  hasNext: boolean;
+}
+
+interface ApiKeyCreateData {
+  id: string;
+  name: string;
+  keyPrefix: string;
+  key: string;
+}
 
 export function useApiKeys(params?: ApiKeyFilters) {
   const queryParams: Record<string, string> = {
@@ -18,7 +30,7 @@ export function useApiKeys(params?: ApiKeyFilters) {
   return useQuery({
     queryKey: ['api-keys', params],
     queryFn: () =>
-      apiClient.get<ApiKeyListResponse>('/api-keys', { params: queryParams }),
+      apiClient.get<ApiKeyListData>('/api-keys', { params: queryParams }),
     staleTime: 2 * 60 * 1000,
   });
 }
@@ -26,8 +38,7 @@ export function useApiKeys(params?: ApiKeyFilters) {
 export function useApiKey(id: string | null) {
   return useQuery({
     queryKey: ['api-key', id],
-    queryFn: () =>
-      apiClient.get<ApiKeyDetailResponse>(`/api-keys/${id}`),
+    queryFn: () => apiClient.get<ApiKeyDetail>(`/api-keys/${id}`),
     enabled: !!id,
     staleTime: 2 * 60 * 1000,
   });
@@ -38,7 +49,7 @@ export function useCreateApiKey() {
 
   return useMutation({
     mutationFn: (data: CreateApiKeyInput) =>
-      apiClient.post<ApiKeyCreateResponse>('/api-keys', data),
+      apiClient.post<ApiKeyCreateData>('/api-keys', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['api-keys'] });
     },
@@ -50,7 +61,7 @@ export function useUpdateApiKey() {
 
   return useMutation({
     mutationFn: ({ id, data }: { id: string; data: UpdateApiKeyInput }) =>
-      apiClient.patch<ApiKeyDetailResponse>(`/api-keys/${id}`, data),
+      apiClient.patch<ApiKeyDetail>(`/api-keys/${id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['api-keys'] });
     },
@@ -61,8 +72,7 @@ export function useDeleteApiKey() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (id: string) =>
-      apiClient.delete<{ success: boolean }>(`/api-keys/${id}`),
+    mutationFn: (id: string) => apiClient.delete(`/api-keys/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['api-keys'] });
     },

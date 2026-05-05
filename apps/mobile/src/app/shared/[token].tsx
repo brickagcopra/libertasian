@@ -53,13 +53,13 @@ export default function SharedContentScreen() {
   const { data, isLoading, error } = useSharedContent(token ?? null, submittedPassword);
   const submitPassword = useAccessSharedContentWithPassword();
 
-  const content: SharedContentResponse | undefined = data?.data ?? submitPassword.data?.data;
+  const content: SharedContentResponse | undefined = data ?? submitPassword.data;
 
   const handleSubmitPassword = useCallback(async () => {
     if (!token || password.length === 0) return;
     try {
       const result = await submitPassword.mutateAsync({ token, password });
-      if (result.data && !result.data.requiresPassword) {
+      if (result && !result.requiresPassword) {
         setSubmittedPassword(password);
       }
     } catch {

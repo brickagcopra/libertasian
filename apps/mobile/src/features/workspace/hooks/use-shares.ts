@@ -38,7 +38,7 @@ export function useCreateShare() {
 
   return useMutation({
     mutationFn: (data: CreateShareInput) =>
-      apiClient.post<{ success: boolean; data: ShareCreateResult }>('/shares', data),
+      apiClient.post<ShareCreateResult>('/shares', data),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({
         queryKey: ['shares', { entityType: variables.entityType, entityId: variables.entityId }],
@@ -55,7 +55,7 @@ export function useUpdateShare() {
 
   return useMutation({
     mutationFn: ({ id, ...data }: UpdateShareInput & { id: string }) =>
-      apiClient.patch<{ success: boolean; data: ShareListItem }>(`/shares/${id}`, data),
+      apiClient.patch<ShareListItem>(`/shares/${id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['shares'] });
     },
@@ -83,7 +83,7 @@ export function useSharedContent(token: string | null, password?: string) {
     queryFn: () => {
       const params: Record<string, string> = {};
       if (password) params['password'] = password;
-      return apiClient.get<{ success: boolean; data: SharedContentResponse }>(
+      return apiClient.get<SharedContentResponse>(
         `/shared/${token}`,
         { params, skipAuth: true },
       );
@@ -96,7 +96,7 @@ export function useSharedContent(token: string | null, password?: string) {
 export function useAccessSharedContentWithPassword() {
   return useMutation({
     mutationFn: ({ token, password }: { token: string; password: string }) =>
-      apiClient.post<{ success: boolean; data: SharedContentResponse }>(
+      apiClient.post<SharedContentResponse>(
         `/shared/${token}`,
         { password },
         { skipAuth: true },

@@ -45,10 +45,7 @@ export function useCreateResearchWorkspace() {
 
   return useMutation({
     mutationFn: (data: CreateWorkspaceInput) =>
-      apiClient.post<{ success: boolean; data: ResearchWorkspaceListItem }>(
-        '/research-workspaces',
-        data,
-      ),
+      apiClient.post<ResearchWorkspaceListItem>('/research-workspaces', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['research-workspaces'] });
     },
@@ -60,7 +57,7 @@ export function useUpdateResearchWorkspace(id: string) {
 
   return useMutation({
     mutationFn: (data: UpdateWorkspaceInput) =>
-      apiClient.patch<{ success: boolean; data: ResearchWorkspaceListItem }>(
+      apiClient.patch<ResearchWorkspaceListItem>(
         `/research-workspaces/${id}`,
         data,
       ),

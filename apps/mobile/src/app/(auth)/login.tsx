@@ -60,13 +60,13 @@ export default function LoginScreen() {
         ...(showMfa && mfaCode.trim() ? { mfaCode: mfaCode.trim() } : {}),
       });
 
-      if (result.data.mfaRequired && !showMfa) {
+      if (result.mfaRequired && !showMfa) {
         setShowMfa(true);
         return;
       }
 
-      await signIn(result.data.tokens.accessToken, result.data.tokens.refreshToken, result.data.user);
-      router.replace(result.data.user.onboardingCompletedAt ? '/(tabs)' : '/(onboarding)');
+      await signIn(result.tokens.accessToken, result.tokens.refreshToken, result.user);
+      router.replace(result.user.onboardingCompletedAt ? '/(tabs)' : '/(onboarding)');
     } catch (error) {
       if (error instanceof ApiClientError) {
         if (error.statusCode === 401) {
