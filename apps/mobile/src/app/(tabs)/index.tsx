@@ -49,8 +49,10 @@ function SearchResultCard({
   item: SearchResultItem;
   onGenerateDigest: (id: string) => void;
 }) {
-  const highlight =
-    item.highlights?.find((h) => h.fragments.length > 0)?.fragments[0] ?? null;
+  const { source, highlights } = item;
+  const highlightSnippets =
+    highlights?.plain_text ?? highlights?.section_text ?? [];
+  const highlight = highlightSnippets[0] ?? null;
 
   return (
     <TouchableOpacity
@@ -62,10 +64,10 @@ function SearchResultCard({
         <View style={styles.badges}>
           <View style={styles.typeBadge}>
             <Text style={styles.typeBadgeText}>
-              {item.documentType.replace(/_/g, ' ')}
+              {source.document_type.replace(/_/g, ' ')}
             </Text>
           </View>
-          {item.isOfficial ? (
+          {source.is_official ? (
             <View style={styles.officialBadge}>
               <Text style={styles.officialBadgeText}>Official</Text>
             </View>
@@ -81,27 +83,27 @@ function SearchResultCard({
       </View>
 
       <Text style={styles.resultTitle} numberOfLines={2}>
-        {item.title}
+        {source.title}
       </Text>
 
       <View style={styles.resultMeta}>
-        {item.grNo ? (
-          <Text style={styles.metaText}>{item.grNo}</Text>
+        {source.gr_no ? (
+          <Text style={styles.metaText}>{source.gr_no}</Text>
         ) : null}
-        {item.court ? (
-          <Text style={styles.metaText}>{item.court}</Text>
+        {source.court ? (
+          <Text style={styles.metaText}>{source.court}</Text>
         ) : null}
-        {item.decisionDate ? (
+        {source.decision_date ? (
           <Text style={styles.metaText}>
-            {new Date(item.decisionDate).toLocaleDateString('en-US', {
+            {new Date(source.decision_date).toLocaleDateString('en-US', {
               year: 'numeric',
               month: 'short',
               day: 'numeric',
             })}
           </Text>
         ) : null}
-        {item.ponente ? (
-          <Text style={styles.metaText}>J. {item.ponente}</Text>
+        {source.ponente ? (
+          <Text style={styles.metaText}>J. {source.ponente}</Text>
         ) : null}
       </View>
 
