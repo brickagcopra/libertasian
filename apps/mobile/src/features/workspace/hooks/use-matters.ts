@@ -3,7 +3,7 @@ import { apiClient } from '../../../lib/api-client';
 import type {
   MatterFilters,
   MatterListResponse,
-  MatterDetailResponse,
+  MatterDetail,
   MatterListItem,
   CreateMatterInput,
   UpdateMatterInput,
@@ -27,7 +27,7 @@ export function useMatter(id: string | null) {
   return useQuery({
     queryKey: ['matter', id],
     queryFn: () =>
-      apiClient.get<MatterDetailResponse>(`/matters/${id}`),
+      apiClient.get<MatterDetail>(`/matters/${id}`),
     enabled: !!id,
     staleTime: 2 * 60 * 1000,
   });

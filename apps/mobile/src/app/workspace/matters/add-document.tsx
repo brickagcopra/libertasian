@@ -180,7 +180,7 @@ export default function AddDocumentScreen() {
     [matterId, selectedRole, addDocument],
   );
 
-  const searchResults = searchData?.items ?? [];
+  const searchResults = searchData?.data ?? [];
   const uploads = uploadsData?.uploads ?? [];
 
   return (

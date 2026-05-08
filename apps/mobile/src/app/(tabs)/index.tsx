@@ -256,13 +256,13 @@ export default function SearchScreen() {
 
   const keyExtractor = useCallback((item: SearchResultItem) => item.id, []);
 
-  const hasResults = data && data.items.length > 0;
+  const hasResults = data && data.data.length > 0;
   const showEmpty = submittedQuery.length > 0 && !isLoading && !hasResults;
 
   const documentIds = useMemo(() => {
-    if (!data?.items || data.items.length === 0) return null;
-    return data.items.map((item) => item.id);
-  }, [data?.items]);
+    if (!data?.data || data.data.length === 0) return null;
+    return data.data.map((item) => item.id);
+  }, [data?.data]);
 
   return (
     <View style={styles.container}>
@@ -605,7 +605,7 @@ export default function SearchScreen() {
                 </Text>
               </View>
               <FlatList
-                data={data?.items ?? []}
+                data={data?.data ?? []}
                 renderItem={renderItem}
                 keyExtractor={keyExtractor}
                 contentContainerStyle={styles.listContent}

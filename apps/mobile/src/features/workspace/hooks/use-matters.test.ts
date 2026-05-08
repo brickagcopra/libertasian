@@ -42,10 +42,18 @@ describe('useMatters', () => {
 
 describe('useMatter', () => {
   it('fetches single matter', async () => {
-    mockGet.mockResolvedValueOnce({ data: { id: 'm1', title: 'Case A' } });
+    mockGet.mockResolvedValueOnce({ id: 'm1', title: 'Case A' });
     const { result } = renderHook(() => useMatter('m1'), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(mockGet).toHaveBeenCalledWith('/matters/m1');
+  });
+
+  it('returns unwrapped value matching new type', async () => {
+    const matter = { id: 'm1', title: 'Case A', documents: [], notes: [] };
+    mockGet.mockResolvedValueOnce(matter);
+    const { result } = renderHook(() => useMatter('m1'), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toEqual(matter);
   });
 
   it('is disabled when id is null', () => {
