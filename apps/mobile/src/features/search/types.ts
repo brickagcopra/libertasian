@@ -33,7 +33,8 @@ export interface SearchResultItem {
 }
 
 export interface SearchResponse {
-  items: SearchResultItem[];
+  success: boolean;
+  data: SearchResultItem[];
   meta: {
     total: number;
     page: number;

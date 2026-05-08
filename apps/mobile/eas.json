@@ -7,14 +7,26 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
+      "node": "22.13.0",
+      "pnpm": "10.30.3",
       "env": {
-        "API_URL": "https://libertasian.com/api/v1"
+        "API_URL": "https://libertasian.com/api/v1",
+        "EXPO_PUBLIC_API_URL": "https://libertasian.com/api/v1"
       }
     },
     "preview": {
       "distribution": "internal",
+      "developmentClient": false,
       "env": {
         "API_URL": "https://libertasian.com/api/v1"
+      },
+      "android": {
+        "node": "22.13.0",
+        "pnpm": "10.30.3",
+        "buildType": "apk",
+        "env": {
+          "EXPO_PUBLIC_API_URL": "https://libertasian.com/api/v1"
+        }
       }
     },
     "production": {

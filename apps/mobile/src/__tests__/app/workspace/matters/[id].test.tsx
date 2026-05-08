@@ -52,7 +52,7 @@ function makeMatterDetailMock(matter: Record<string, unknown> | null, overrides:
     };
   }
   return {
-    data: { data: matter },
+    data: matter,
     isLoading: false,
     refetch: jest.fn(),
     ...overrides,

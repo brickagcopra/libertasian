@@ -384,7 +384,7 @@ export default function MatterDetailScreen() {
   const updateMatter = useUpdateMatter();
   const removeDoc = useRemoveMatterDocument();
 
-  const matter = data?.data;
+  const matter = data;
 
   const handleDelete = useCallback(() => {
     Alert.alert(

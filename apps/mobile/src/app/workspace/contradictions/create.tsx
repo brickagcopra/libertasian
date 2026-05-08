@@ -103,7 +103,7 @@ export default function CreateContradictionScreen() {
     }
   };
 
-  const searchItems = searchResults?.items ?? [];
+  const searchItems = searchResults?.data ?? [];
   const showSearchResults =
     searchQuery.trim().length >= 3 && (isSearching || searchItems.length > 0);
 

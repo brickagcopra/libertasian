@@ -64,11 +64,6 @@ export interface MatterListResponse {
   meta: PaginationMeta;
 }
 
-export interface MatterDetailResponse {
-  success: boolean;
-  data: MatterDetail;
-}
-
 export interface CreateMatterInput {
   title: string;
   description?: string;
