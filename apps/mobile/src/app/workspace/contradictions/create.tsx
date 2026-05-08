@@ -67,7 +67,7 @@ export default function CreateContradictionScreen() {
       if (selectedDocs.some((d) => d.id === item.id)) return;
       setSelectedDocs((prev) => [
         ...prev,
-        { id: item.id, title: item.title, citationText: item.citationText },
+        { id: item.id, title: item.source.title, citationText: item.source.citation_text ?? null },
       ]);
       setSearchQuery('');
     },
@@ -236,14 +236,14 @@ export default function CreateContradictionScreen() {
                             style={styles.searchResultTitle}
                             numberOfLines={2}
                           >
-                            {item.title}
+                            {item.source.title}
                           </Text>
-                          {item.citationText && (
+                          {item.source.citation_text && (
                             <Text
                               style={styles.searchResultCitation}
                               numberOfLines={1}
                             >
-                              {item.citationText}
+                              {item.source.citation_text}
                             </Text>
                           )}
                         </View>

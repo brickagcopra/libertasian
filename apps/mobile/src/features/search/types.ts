@@ -12,24 +12,35 @@ export interface SearchFilters {
   limit?: number;
 }
 
-export interface SearchHighlight {
-  field: string;
-  fragments: string[];
+export interface SearchResultSource {
+  document_id: string;
+  title: string;
+  short_title?: string;
+  citation_text?: string;
+  document_type: string;
+  court?: string;
+  ponente?: string;
+  gr_no?: string;
+  docket_no?: string;
+  is_official: boolean;
+  is_published: boolean;
+  decision_date?: string;
+  created_at: string;
+  bar_subjects?: string[];
+  topics?: string[];
+  section_id?: string;
+  section_type?: string;
 }
 
 export interface SearchResultItem {
   id: string;
-  title: string;
-  shortTitle: string | null;
-  citationText: string | null;
-  grNo: string | null;
-  court: string | null;
-  ponente: string | null;
-  decisionDate: string | null;
-  documentType: string;
-  isOfficial: boolean;
   score: number;
-  highlights: SearchHighlight[];
+  source: SearchResultSource;
+  highlights?: {
+    plain_text?: string[];
+    section_text?: string[];
+    title?: string[];
+  };
 }
 
 export interface SearchResponse {

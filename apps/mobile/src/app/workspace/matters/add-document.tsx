@@ -43,21 +43,21 @@ function LegalDocResult({
         <Ionicons name="document-text-outline" size={20} color="#1a56db" />
         <View style={{ flex: 1 }}>
           <Text style={styles.resultTitle} numberOfLines={2}>
-            {item.title}
+            {item.source.title}
           </Text>
           <View style={styles.resultMeta}>
-            {item.citationText ? (
-              <Text style={styles.resultMetaText}>{item.citationText}</Text>
+            {item.source.citation_text ? (
+              <Text style={styles.resultMetaText}>{item.source.citation_text}</Text>
             ) : null}
-            {item.court ? (
-              <Text style={styles.resultMetaText}>{item.court}</Text>
+            {item.source.court ? (
+              <Text style={styles.resultMetaText}>{item.source.court}</Text>
             ) : null}
           </View>
           <View style={styles.resultBadges}>
             <View style={styles.typeBadge}>
-              <Text style={styles.typeBadgeText}>{item.documentType}</Text>
+              <Text style={styles.typeBadgeText}>{item.source.document_type}</Text>
             </View>
-            {item.isOfficial ? (
+            {item.source.is_official ? (
               <View style={[styles.typeBadge, { backgroundColor: '#ecfdf5' }]}>
                 <Text style={[styles.typeBadgeText, { color: '#059669' }]}>
                   Official
@@ -145,10 +145,10 @@ export default function AddDocumentScreen() {
         await addDocument.mutateAsync({
           matterId,
           legalDocumentId: item.id,
-          title: item.shortTitle ?? item.title,
+          title: item.source.short_title ?? item.source.title,
           role: selectedRole,
         });
-        Alert.alert('Added', `"${item.title}" attached to matter.`, [
+        Alert.alert('Added', `"${item.source.title}" attached to matter.`, [
           { text: 'OK' },
         ]);
       } catch (err) {
