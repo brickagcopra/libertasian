@@ -1,6 +1,57 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-04-13 (Session 202 — Document Browser, Search Enhancements, Navigation Polish, Offline Indicators)
+> Last updated: 2026-05-08 (Session 203 — Mobile Design System Phase 1: Two-Theme Tokens, 14 Primitives, 9 Restyled Screens)
+
+---
+
+## Session 203 — Mobile Design System Phase 1: Two-Theme Tokens, 14 Primitives, 9 Restyled Screens (Foundations)
+
+**Branch:** `feature/mobile-design-system-and-ia` (rebased onto `origin/main` at `993c099` — PR #115)
+**Source:** Claude Design handoff bundle (`/.design-bundle/`, gitignored).
+**Decisions confirmed with user:** (1) ship BOTH themes with runtime switcher; (2) build all 9 design screens; (3) digest detail = hybrid (Article hero + Document/digest sections + sticky CTA).
+
+1. **Synced branch onto post-PR-#115 main** — clean rebase, stash pop clean. WIP scaffolding preserved.
+
+2. **Two-theme token system** (`src/lib/design-tokens.ts`) — replaced single-palette tokens with `THEMES.A` (Warm Editorial: cream `#F6F1E8`, ink `#1C1A14`, amber accent `#D87B2A`, Fraunces serif + Inter sans, radius 22) and `THEMES.B` (Confident Modern: off-white `#F4F4F2`, ink `#0E1116`, electric lime accent `#C5F03A`, Instrument Serif + Inter, radius 18). Added `Theme` type, `fontWeights`, `typeScale`, `photoTones` (7 gradient tones), and back-compat exports for unmigrated screens.
+
+3. **ThemeProvider with MMKV persistence** (`src/providers/theme-provider.tsx`) — React context with `useTheme()` hook returning `{ theme, themeKey, setTheme, toggleTheme }`. Persisted under `theme_choice` key. Default `A`. Includes safe fallback when called outside provider.
+
+4. **Font loading expanded** (`src/app/_layout.tsx`, `package.json`) — added `@expo-google-fonts/fraunces` (400/500/600), `@expo-google-fonts/instrument-serif` (Regular + Italic), `expo-linear-gradient`. RootLayout now waits on all three font hooks. Loading splash recolored to theme A canvas.
+
+5. **5 NEW primitives** (`src/components/ui/`) — Photo (gradient placeholder + headline overlay, 7 tones), Logo (accent square + Libertasian wordmark), TabBar (floating pill bottom nav, 4 tabs, accent active state, outline/solid icon swap), StickyCTA (pinned bottom progress bar with audio icon + "X min left"), and a barrel `index.ts`. **BottomSheet was deferred** — design doesn't require it and re-adding gesture-handler/reanimated would risk the dev APK boot regression we hit in CP4.
+
+6. **All 9 existing primitives theme-ified** — Button (added accent + soft variants, 52px height, 14 radius), Chip (pill 32px, neutral/accent tones with selected pairs), Card (surface/muted/pill/accent-soft tones), Input (52px Field-style with eyebrow label + leading/trailing icons + error), Badge (added accent/accent-soft/pill/eyebrow tones), ListItem (theme-aware, optional serif title), EmptyState, ScreenHeader (serif by default, circular back button), DrawerItem.
+
+7. **9 presentational screen components** (`src/components/screens/`) — Onboarding, Login, Signup (multi-step), Home (Daily card + streak + For-you feed), Library (search + chips + featured + sectioned lists), DocumentReader (TLDR + sections + FAB), DigestDetail (HYBRID: hero photo + dropcap + structured Facts/Issues/Ruling sections + sticky CTA), Search (smart answer + results), Profile (identity + plan + theme switcher + settings rows). All consume `useTheme()`, expose props for callbacks, and ship with sensible default sample data so they render standalone.
+
+8. **Dev gallery** (`src/app/dev/screens.tsx`) — preview of all 9 screens with theme switcher and screen picker. Lets brick review on-device before approving Phase 2 route wiring.
+
+9. **First-class theme switcher** — built into `ProfileScreen` (and the gallery). Tapping a theme tile persists via MMKV.
+
+10. **Tests** — 203 suites, 1339 tests passing (`tsc --noEmit` clean). New: 4 new primitive test files (Photo, Logo, TabBar, StickyCTA), ThemeProvider test. Updated existing primitive tests to match new variant/tone APIs. `_layout.test.tsx` got mocks for 2 new font packages and `react-native-mmkv`.
+
+11. **Updated tracking files** — COMPLETED_TASKS.md and PENDING_TASKS.md (this entry + Phase 2 follow-ups).
+
+**What's NOT done yet (Phase 2 follow-up):**
+
+The 9 screens are presentational components with hardcoded sample data. The actual app routes (`(onboarding)/index.tsx`, `(auth)/login.tsx`, `(tabs)/index.tsx`, `documents/index.tsx`, `digest/[id].tsx`, etc.) **still use their original layouts**. Phase 2 wires the new screens into real routes by surgically replacing only the presentation layer — keeping every existing data hook, state machine, and navigation. This is intentional to avoid losing 4583 lines of existing screen logic in a single commit. Brick can review the screens visually via `/dev/screens` (gallery) before approving the wiring step.
+
+**Files touched (Session 203):**
+- `apps/mobile/package.json` — +3 deps
+- `apps/mobile/src/app/_layout.tsx` — wraps in ThemeProvider, loads 3 font families
+- `apps/mobile/src/app/dev/screens.tsx` — NEW
+- `apps/mobile/src/app/dev/primitives.tsx` — updated to new tones
+- `apps/mobile/src/lib/design-tokens.ts` — full rewrite, two themes
+- `apps/mobile/src/providers/theme-provider.tsx` — NEW
+- `apps/mobile/src/components/ui/{Photo,Logo,TabBar,StickyCTA,index}.tsx` — NEW (4 components + barrel)
+- `apps/mobile/src/components/ui/{Button,Chip,Card,Input,Badge,ListItem,EmptyState,ScreenHeader,DrawerItem}.tsx` — theme-ified
+- `apps/mobile/src/components/screens/*.tsx` — NEW (9 screens + index)
+- `apps/mobile/src/__tests__/components/ui/*` — 4 new test files; 6 existing updated
+- `apps/mobile/src/__tests__/providers/theme-provider.test.tsx` — NEW
+- `apps/mobile/src/__tests__/app/_layout.test.tsx` — added font + MMKV mocks
+- `.gitignore` — `.design-bundle/`
+
+**Next checkpoint:** EAS preview build for visual review (brick triggers from dashboard or `eas build --profile preview --platform android`). Cap of 2 visual feedback rounds applies before halting per original brief.
 
 ---
 

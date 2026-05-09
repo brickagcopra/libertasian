@@ -26,6 +26,42 @@ jest.mock('@/providers/auth-provider', () => ({
   useAuth: () => mockUseAuth(),
 }));
 
+jest.mock('@expo-google-fonts/inter', () => ({
+  useFonts: () => [true],
+  Inter_400Regular: 'Inter_400Regular',
+  Inter_500Medium: 'Inter_500Medium',
+  Inter_600SemiBold: 'Inter_600SemiBold',
+  Inter_700Bold: 'Inter_700Bold',
+}));
+
+jest.mock('@expo-google-fonts/fraunces', () => ({
+  useFonts: () => [true],
+  Fraunces_400Regular: 'Fraunces_400Regular',
+  Fraunces_500Medium: 'Fraunces_500Medium',
+  Fraunces_600SemiBold: 'Fraunces_600SemiBold',
+}));
+
+jest.mock('@expo-google-fonts/instrument-serif', () => ({
+  useFonts: () => [true],
+  InstrumentSerif_400Regular: 'InstrumentSerif_400Regular',
+  InstrumentSerif_400Regular_Italic: 'InstrumentSerif_400Regular_Italic',
+}));
+
+jest.mock('react-native-mmkv', () => {
+  const store = new Map<string, string | number | boolean>();
+  return {
+    MMKV: jest.fn().mockImplementation(() => ({
+      getString: (k: string) => store.get(k) as string | undefined,
+      set: (k: string, v: string | number | boolean) => store.set(k, v),
+      getBoolean: (k: string) => store.get(k) as boolean | undefined,
+      getNumber: (k: string) => store.get(k) as number | undefined,
+      delete: (k: string) => store.delete(k),
+      contains: (k: string) => store.has(k),
+      clearAll: () => store.clear(),
+    })),
+  };
+});
+
 import RootLayout from '@/app/_layout';
 
 beforeEach(() => {

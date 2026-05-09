@@ -56,10 +56,11 @@ describe('TabsLayout', () => {
     jest.clearAllMocks();
   });
 
-  it('renders 5 tab screens', () => {
+  it('renders all expected tab screens', () => {
     const { getByTestId } = render(<TabsLayout />);
 
     expect(getByTestId('tab-index')).toBeTruthy();
+    expect(getByTestId('tab-search')).toBeTruthy();
     expect(getByTestId('tab-digests')).toBeTruthy();
     expect(getByTestId('tab-study')).toBeTruthy();
     expect(getByTestId('tab-scan')).toBeTruthy();
@@ -69,7 +70,11 @@ describe('TabsLayout', () => {
   it('renders correct tab titles', () => {
     const { getByTestId } = render(<TabsLayout />);
 
-    const searchTab = JSON.parse(getByTestId('tab-index').props.children);
+    // Phase 3: index now hosts the redesigned Home (was legacy Search).
+    const homeTab = JSON.parse(getByTestId('tab-index').props.children);
+    expect(homeTab.title).toBe('Home');
+
+    const searchTab = JSON.parse(getByTestId('tab-search').props.children);
     expect(searchTab.title).toBe('Search');
 
     const digestsTab = JSON.parse(getByTestId('tab-digests').props.children);

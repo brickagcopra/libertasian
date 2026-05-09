@@ -17,7 +17,9 @@
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,css}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,css}\"",
     "analyze": "turbo run analyze",
-    "clean": "turbo run clean"
+    "clean": "turbo run clean",
+    "android": "expo run:android",
+    "ios": "expo run:ios"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
@@ -39,5 +41,10 @@
   "devDependencies": {
     "prettier": "^3.4.2",
     "turbo": "^2.3.3"
+  },
+  "dependencies": {
+    "expo": "~52.0.49",
+    "react": "18.3.1",
+    "react-native": "0.76.9"
   }
 }

@@ -1,8 +1,8 @@
 import React from 'react';
+import { Alert } from 'react-native';
 import { render, fireEvent } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-// Mock dependencies
 const mockUseDigest = jest.fn();
 jest.mock('@/features/digests/hooks/use-digests', () => ({
   useDigest: (...args: unknown[]) => mockUseDigest(...args),
@@ -11,29 +11,10 @@ jest.mock('@/features/digests/hooks/use-digests', () => ({
 jest.mock('expo-router', () => ({
   useLocalSearchParams: jest.fn(),
   router: { back: jest.fn(), push: jest.fn() },
-  Stack: Object.assign(
-    ({ children }: { children?: React.ReactNode }) => {
-      const { View } = require('react-native');
-      return <View>{children}</View>;
-    },
-    {
-      Screen: ({ options }: { options?: Record<string, unknown> }) => {
-        const { Text } = require('react-native');
-        return <Text testID="stack-screen">{String(options?.title ?? '')}</Text>;
-      },
-    },
-  ),
-}));
-
-jest.mock('@expo/vector-icons', () => ({
-  Ionicons: ({ name }: { name: string }) => {
-    const { Text } = require('react-native');
-    return <Text>{name}</Text>;
-  },
 }));
 
 import { router, useLocalSearchParams } from 'expo-router';
-import DigestDetailScreen from '@/app/digest/[id]';
+import DigestDetailRoute from '@/app/digest/[id]';
 
 function createWrapper() {
   const queryClient = new QueryClient({
@@ -49,57 +30,19 @@ function createWrapper() {
   };
 }
 
-describe('DigestDetailScreen', () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-    (useLocalSearchParams as jest.Mock).mockReturnValue({ id: 'digest-123' });
+beforeEach(() => {
+  jest.clearAllMocks();
+  (useLocalSearchParams as jest.Mock).mockReturnValue({ id: 'digest-123' });
+});
+
+describe('DigestDetailRoute (Phase 3 DigestDetailScreen)', () => {
+  it('shows the not-found state when the digest fails to load', () => {
+    mockUseDigest.mockReturnValue({ data: null, isLoading: false, error: new Error('Not found') });
+    const { getByText } = render(<DigestDetailRoute />, { wrapper: createWrapper() });
+    expect(getByText('Digest not found')).toBeTruthy();
   });
 
-  it('shows loading state', () => {
-    mockUseDigest.mockReturnValue({
-      data: null,
-      isLoading: true,
-      error: null,
-    });
-
-    const { getByTestId } = render(<DigestDetailScreen />, {
-      wrapper: createWrapper(),
-    });
-
-    expect(getByTestId('stack-screen')).toBeTruthy();
-  });
-
-  it('shows error state when digest not found', () => {
-    mockUseDigest.mockReturnValue({
-      data: null,
-      isLoading: false,
-      error: new Error('Not found'),
-    });
-
-    const { queryByText } = render(<DigestDetailScreen />, {
-      wrapper: createWrapper(),
-    });
-
-    expect(queryByText('Digest not found')).toBeTruthy();
-    expect(queryByText('Go Back')).toBeTruthy();
-  });
-
-  it('navigates back on Go Back press', () => {
-    mockUseDigest.mockReturnValue({
-      data: null,
-      isLoading: false,
-      error: new Error('Not found'),
-    });
-
-    const { getByText } = render(<DigestDetailScreen />, {
-      wrapper: createWrapper(),
-    });
-
-    fireEvent.press(getByText('Go Back'));
-    expect(router.back).toHaveBeenCalled();
-  });
-
-  it('renders digest detail with all sections', () => {
+  it('renders headline + eyebrow + tldr + sections', () => {
     mockUseDigest.mockReturnValue({
       data: {
         id: 'digest-123',
@@ -111,7 +54,13 @@ describe('DigestDetailScreen', () => {
         sourceOrigin: 'official_source',
         legalDocumentId: 'doc-456',
         createdAt: '2024-06-15T00:00:00Z',
+        updatedAt: '2024-06-15T00:00:00Z',
+        organizationId: null,
+        userId: null,
+        summary: 'Affirmed the conviction for murder; circumstantial evidence sufficed.',
         facts: 'The accused was charged with murder...',
+        petitionerArguments: null,
+        respondentArguments: null,
         issues: 'Whether the prosecution proved guilt beyond reasonable doubt.',
         ruling: 'The Court affirmed the conviction.',
         doctrine: 'Circumstantial evidence sufficient when...',
@@ -121,98 +70,23 @@ describe('DigestDetailScreen', () => {
       error: null,
     });
 
-    const { queryByText } = render(<DigestDetailScreen />, {
-      wrapper: createWrapper(),
-    });
+    const { getByText } = render(<DigestDetailRoute />, { wrapper: createWrapper() });
 
-    // Title
-    expect(queryByText('People v. Reyes — Criminal Case Digest')).toBeTruthy();
-
-    // Badges
-    expect(queryByText('case digest')).toBeTruthy();
-    expect(queryByText('approved')).toBeTruthy();
-    expect(queryByText('private')).toBeTruthy();
-
-    // Confidence
-    expect(queryByText('92%')).toBeTruthy();
-
-    // Sections
-    expect(queryByText('Facts')).toBeTruthy();
-    expect(queryByText('The accused was charged with murder...')).toBeTruthy();
-    expect(queryByText('Issues')).toBeTruthy();
-    expect(
-      queryByText(
-        'Whether the prosecution proved guilt beyond reasonable doubt.',
-      ),
-    ).toBeTruthy();
-    expect(queryByText('Ruling')).toBeTruthy();
-    expect(queryByText('Doctrine')).toBeTruthy();
-    expect(queryByText('Dispositive Portion')).toBeTruthy();
-    expect(
-      queryByText('WHEREFORE, the appeal is DISMISSED.'),
-    ).toBeTruthy();
+    expect(getByText('People v. Reyes — Criminal Case Digest')).toBeTruthy();
+    // Eyebrow uses the digest-type label map
+    expect(getByText('Case digest')).toBeTruthy();
+    // TL;DR shows the summary
+    expect(getByText('Affirmed the conviction for murder; circumstantial evidence sufficed.')).toBeTruthy();
+    // Each section heading + body
+    expect(getByText('Facts')).toBeTruthy();
+    expect(getByText('Issues')).toBeTruthy();
+    expect(getByText('Ruling')).toBeTruthy();
+    expect(getByText('Doctrine')).toBeTruthy();
+    expect(getByText('Dispositive')).toBeTruthy();
+    expect(getByText('WHEREFORE, the appeal is DISMISSED.')).toBeTruthy();
   });
 
-  it('shows View Source Document link when legalDocumentId exists', () => {
-    mockUseDigest.mockReturnValue({
-      data: {
-        id: 'digest-123',
-        title: 'Test Digest',
-        digestType: 'case_digest',
-        reviewStatus: 'draft',
-        visibility: 'private',
-        confidenceScore: null,
-        sourceOrigin: 'user_scan',
-        legalDocumentId: 'doc-789',
-        createdAt: '2024-01-01T00:00:00Z',
-        facts: 'Some facts',
-        issues: null,
-        ruling: null,
-        doctrine: null,
-        dispositive: null,
-      },
-      isLoading: false,
-      error: null,
-    });
-
-    const { getByText } = render(<DigestDetailScreen />, {
-      wrapper: createWrapper(),
-    });
-
-    fireEvent.press(getByText('View Source Document'));
-    expect(router.push).toHaveBeenCalledWith('/reader/doc-789');
-  });
-
-  it('does not show View Source Document when no legalDocumentId', () => {
-    mockUseDigest.mockReturnValue({
-      data: {
-        id: 'digest-123',
-        title: 'Test Digest',
-        digestType: 'case_digest',
-        reviewStatus: 'draft',
-        visibility: 'private',
-        confidenceScore: 0.5,
-        sourceOrigin: 'user_scan',
-        legalDocumentId: null,
-        createdAt: '2024-01-01T00:00:00Z',
-        facts: 'Facts here',
-        issues: null,
-        ruling: null,
-        doctrine: null,
-        dispositive: null,
-      },
-      isLoading: false,
-      error: null,
-    });
-
-    const { queryByText } = render(<DigestDetailScreen />, {
-      wrapper: createWrapper(),
-    });
-
-    expect(queryByText('View Source Document')).toBeNull();
-  });
-
-  it('omits null digest sections', () => {
+  it('omits sections that have no content', () => {
     mockUseDigest.mockReturnValue({
       data: {
         id: 'digest-123',
@@ -224,7 +98,13 @@ describe('DigestDetailScreen', () => {
         sourceOrigin: 'user_scan',
         legalDocumentId: null,
         createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
+        organizationId: null,
+        userId: null,
+        summary: null,
         facts: 'Only facts here',
+        petitionerArguments: null,
+        respondentArguments: null,
         issues: null,
         ruling: null,
         doctrine: null,
@@ -234,32 +114,34 @@ describe('DigestDetailScreen', () => {
       error: null,
     });
 
-    const { queryByText } = render(<DigestDetailScreen />, {
-      wrapper: createWrapper(),
-    });
-
+    const { queryByText } = render(<DigestDetailRoute />, { wrapper: createWrapper() });
     expect(queryByText('Facts')).toBeTruthy();
     expect(queryByText('Only facts here')).toBeTruthy();
-    // Null sections should not render their labels
     expect(queryByText('Issues')).toBeNull();
     expect(queryByText('Ruling')).toBeNull();
     expect(queryByText('Doctrine')).toBeNull();
-    expect(queryByText('Dispositive Portion')).toBeNull();
+    expect(queryByText('Dispositive')).toBeNull();
   });
 
-  it('renders metadata row with source and date', () => {
+  it('routes the sticky CTA to the source reader when legalDocumentId is set', () => {
     mockUseDigest.mockReturnValue({
       data: {
         id: 'digest-123',
-        title: 'Test',
+        title: 'Test Digest',
         digestType: 'case_digest',
-        reviewStatus: 'approved',
-        visibility: 'public_editorial',
-        confidenceScore: 0.8,
-        sourceOrigin: 'official_source',
-        legalDocumentId: null,
-        createdAt: '2024-03-20T00:00:00Z',
-        facts: 'Test facts',
+        reviewStatus: 'draft',
+        visibility: 'private',
+        confidenceScore: null,
+        sourceOrigin: 'user_scan',
+        legalDocumentId: 'doc-789',
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
+        organizationId: null,
+        userId: null,
+        summary: null,
+        facts: 'Some facts',
+        petitionerArguments: null,
+        respondentArguments: null,
         issues: null,
         ruling: null,
         doctrine: null,
@@ -269,14 +151,44 @@ describe('DigestDetailScreen', () => {
       error: null,
     });
 
-    const { queryByText } = render(<DigestDetailScreen />, {
-      wrapper: createWrapper(),
+    const { getByText } = render(<DigestDetailRoute />, { wrapper: createWrapper() });
+    // StickyCTA renders the default `timeLeft` meta "4 min left" — press it to
+    // trigger the parent Pressable's onPress (testing-library bubbles).
+    fireEvent.press(getByText('4 min left'));
+    expect(router.push).toHaveBeenCalledWith('/reader/doc-789');
+  });
+
+  it('alerts when the sticky CTA is pressed without a source document', () => {
+    const alertSpy = jest.spyOn(Alert, 'alert');
+    mockUseDigest.mockReturnValue({
+      data: {
+        id: 'digest-123',
+        title: 'Orphan Digest',
+        digestType: 'case_digest',
+        reviewStatus: 'draft',
+        visibility: 'private',
+        confidenceScore: null,
+        sourceOrigin: 'user_scan',
+        legalDocumentId: null,
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
+        organizationId: null,
+        userId: null,
+        summary: null,
+        facts: 'Facts',
+        petitionerArguments: null,
+        respondentArguments: null,
+        issues: null,
+        ruling: null,
+        doctrine: null,
+        dispositive: null,
+      },
+      isLoading: false,
+      error: null,
     });
 
-    expect(queryByText('Confidence')).toBeTruthy();
-    expect(queryByText('80%')).toBeTruthy();
-    expect(queryByText('Source')).toBeTruthy();
-    expect(queryByText('official source')).toBeTruthy();
-    expect(queryByText('Created')).toBeTruthy();
+    const { getByText } = render(<DigestDetailRoute />, { wrapper: createWrapper() });
+    fireEvent.press(getByText('4 min left'));
+    expect(alertSpy).toHaveBeenCalledWith('No source', expect.any(String));
   });
 });

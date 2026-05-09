@@ -1,6 +1,41 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-04-13 (Session 202 — Document Browser, Search Enhancements, Navigation Polish, Offline Indicators)
+> Last updated: 2026-05-08 (Session 203 — Mobile Design System Phase 1 complete; Phase 2 wiring deferred)
+
+---
+
+## Session 203 — Mobile Design System Phase 2 (PLANNED, NOT YET STARTED)
+
+Foundations are in place (tokens, ThemeProvider, fonts, 14 primitives, 9 presentational screens, dev gallery, theme switcher, all tests passing). Phase 2 plugs the new screens into real app routes without losing data integration.
+
+**Wire-up tasks (one PR per route or batched per cluster):**
+1. **Onboarding** — multi-step existing flow stays; restyle each step with the new visual language. The design's splash can become an optional Step 0 or first-launch screen.
+2. **Login** (`(auth)/login.tsx`) — replace JSX with `<LoginScreen onSubmit={...} loading={...} error={...} />` while keeping the existing auth-provider call.
+3. **Signup / Register** (`(auth)/register.tsx`) — multi-step register exists; design's chip-picker maps to one of the steps.
+4. **Home** (`(tabs)/index.tsx`) — currently a 935-line search-first screen. The design's home is a feed/brief/streak. Decide: replace home content entirely, or move existing search-first logic into a new search tab. Design itself answers this — Search is its own tab in the design's TabBar.
+5. **Library** (`documents/index.tsx`) — wire `useDocuments`, infinite scroll, filter chips, search hand-off into `<LibraryScreen ... />`.
+6. **Document reader** (`reader/[id].tsx`) — keep existing tabbed layout (sections/citations/related) but use the design's TLDR card + serif body + FAB.
+7. **Digest detail** (`digest/[id].tsx`) — wire to `useDigest(id)`; map facts/issues/ruling/doctrine to `DigestSection[]`; sticky CTA drives "View source document".
+8. **Search** — needs a dedicated route, e.g. `(tabs)/search.tsx`. Move search logic out of `(tabs)/index.tsx` into its own route.
+9. **Profile / Settings** (`settings/index.tsx`) — restyle with `<ProfileScreen identity plan rows />`. Hook `plan` to subscription, `rows` to existing settings actions.
+
+**TabBar IA decision pending:**
+- Existing `(tabs)/_layout.tsx` exposes 7 tabs; design has 4 (Read / Library / Search / Me).
+- Plan: hide native tab bar, overlay design TabBar, route `Me` to `/settings`. Move the other 5 routes (digests/study/scan/feed/workspace) into a drawer or secondary menu.
+- **Question for brick:** drop the extra tabs from the bar and surface them as drawer items, or keep them as deep-linkable routes only?
+
+**Verification still pending:**
+- EAS preview APK (brick triggers from dashboard or `eas build --profile preview --platform android`). Phase 1 locally verified: `tsc --noEmit` clean, 1339 tests passing.
+- Cap of 2 iteration rounds on visual feedback after the first APK.
+
+**Open design questions:**
+- Drop-cap rendering on Android — RN's split-then-prepend approach used in `DigestDetailScreen` works but kerning is approximate. Acceptable for v1 or worth a `react-native-svg` drop-cap component?
+- `expo-blur` for the article reader's translucent top buttons (currently semi-transparent white) — add real blur in Phase 2?
+
+**Follow-up (Phase 3+):**
+- BottomSheet primitive (deferred from CP4 due to gesture-handler boot regression). Memory `mobile_redesign_state.md` has the install recipe.
+- Dark-mode variant of each theme (both currently light).
+- Real images replacing the gradient `Photo` placeholders.
 
 ---
 

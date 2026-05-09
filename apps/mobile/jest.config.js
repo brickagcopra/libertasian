@@ -7,6 +7,7 @@ module.exports = {
   ],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
+    '\\.css$': '<rootDir>/src/test/css-mock.js',
   },
   testMatch: ['**/*.test.{ts,tsx}'],
   collectCoverageFrom: [

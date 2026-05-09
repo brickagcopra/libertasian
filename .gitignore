@@ -55,3 +55,6 @@ secrets/
 # Logs
 *.log
 logs/
+
+# Design handoff bundle (reference only, not shipped)
+.design-bundle/

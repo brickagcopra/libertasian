@@ -1,0 +1,293 @@
+import { useEffect, useMemo, useState } from 'react';
+import { Alert, Pressable, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
+import {
+  SearchScreen,
+  type SearchResult,
+  type SearchResultKind,
+} from '@/components/screens/SearchScreen';
+import { useSearch } from '@/features/search/hooks/use-search';
+import { useSearchHistory } from '@/features/search/hooks/use-search-history';
+import { useRecentlyViewed } from '@/features/documents/hooks/use-recently-viewed';
+import { useGenerateDigest } from '@/features/digests/hooks/use-digests';
+import { SearchTabBar } from '@/features/search/components/search-tabs';
+import { AiSummaryResults } from '@/features/search/components/ai-summary-results';
+import { DigestsResults } from '@/features/search/components/digests-results';
+import { useTheme } from '@/providers/theme-provider';
+import type { PhotoTone } from '@/lib/design-tokens';
+import type {
+  SearchFilters,
+  SearchResultItem,
+  SearchTab,
+} from '@/features/search/types';
+
+const FILTERS = ['All', 'Cases', 'Articles', 'Statutes', 'Outlines'] as const;
+type FilterLabel = (typeof FILTERS)[number];
+
+const TONES: PhotoTone[] = ['warm', 'cool', 'sage', 'plum', 'sand', 'lime', 'ink'];
+
+function toneFor(index: number): PhotoTone {
+  return TONES[index % TONES.length] ?? 'warm';
+}
+
+function kindFor(documentType: string): SearchResultKind {
+  if (documentType === 'supreme_court_decision' || documentType === 'case_decision') return 'CASE';
+  if (
+    documentType === 'republic_act'
+    || documentType === 'statute'
+    || documentType === 'executive_order'
+  ) return 'STATUTE';
+  return 'ARTICLE';
+}
+
+function chipToDocType(label: FilterLabel): string | undefined {
+  if (label === 'Cases') return 'supreme_court_decision';
+  if (label === 'Statutes') return 'republic_act';
+  return undefined;
+}
+
+function toResult(item: SearchResultItem, index: number): SearchResult {
+  const subtitle = item.source.citation_text
+    ?? item.source.gr_no
+    ?? item.source.document_type.replace(/_/g, ' ');
+  return {
+    id: item.id,
+    kind: kindFor(item.source.document_type),
+    title: item.source.short_title ?? item.source.title,
+    subtitle,
+    tone: toneFor(index),
+  };
+}
+
+export default function SearchRoute() {
+  const { theme } = useTheme();
+  const [query, setQuery] = useState('');
+  const [submittedQuery, setSubmittedQuery] = useState('');
+  const [activeFilter, setActiveFilter] = useState<FilterLabel>('All');
+  const [searchTab, setSearchTab] = useState<SearchTab>('fulltext');
+
+  const { history, addEntry, removeEntry, clearHistory } = useSearchHistory();
+  const { recentlyViewed } = useRecentlyViewed();
+  const generateDigest = useGenerateDigest();
+
+  const filters = useMemo<SearchFilters>(
+    () => ({
+      query: submittedQuery,
+      ...(chipToDocType(activeFilter) ? { documentType: chipToDocType(activeFilter) } : {}),
+      limit: 20,
+    }),
+    [submittedQuery, activeFilter],
+  );
+
+  const { data } = useSearch(filters, submittedQuery.trim().length > 0);
+
+  const items = data?.data ?? [];
+  const results = useMemo<SearchResult[]>(() => items.map(toResult), [items]);
+  const documentIds = useMemo<string[] | null>(
+    () => (items.length > 0 ? items.map((i) => i.id) : null),
+    [items],
+  );
+
+  // Track query history once a real result set is back.
+  useEffect(() => {
+    if (submittedQuery.trim() && data) addEntry(submittedQuery);
+  }, [submittedQuery, data, addEntry]);
+
+  const handleGenerateDigest = (documentId: string) => {
+    Alert.alert(
+      'Generate digest',
+      'Generate an AI case digest for this document? This uses your digest quota.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Generate',
+          onPress: async () => {
+            try {
+              const result = await generateDigest.mutateAsync({
+                legalDocumentId: documentId,
+                digestType: 'case_digest',
+              });
+              const digestId =
+                result && typeof result === 'object' && 'data' in result
+                  ? (result as { data: { id: string } }).data.id
+                  : undefined;
+              if (digestId) router.push(`/digest/${digestId}`);
+            } catch {
+              Alert.alert('Error', 'Failed to generate digest. Please try again.');
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const renderResultAction = (id: string) => (
+    <Pressable
+      onPress={() => handleGenerateDigest(id)}
+      hitSlop={8}
+      accessibilityLabel="Generate digest"
+      style={{
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: theme.accentSoft,
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      <Ionicons name="sparkles" size={14} color={theme.accent} />
+    </Pressable>
+  );
+
+  // SearchTabBar slot — tabs only meaningful once a query is submitted.
+  const tabBarSlot = submittedQuery.trim() ? (
+    <SearchTabBar
+      activeTab={searchTab}
+      onTabChange={setSearchTab}
+      resultCount={items.length}
+      documentIds={documentIds}
+    />
+  ) : null;
+
+  // Replace results list when on a non-fulltext tab.
+  let customResults: React.ReactNode = null;
+  if (submittedQuery.trim() && searchTab === 'ai-summary') {
+    customResults = <AiSummaryResults query={submittedQuery} />;
+  } else if (submittedQuery.trim() && searchTab === 'digests') {
+    customResults = <DigestsResults documentIds={documentIds} />;
+  }
+
+  // Empty-query slots: recent searches + recently viewed.
+  const historySlot = history.length > 0 ? (
+    <View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <Text
+          style={{
+            fontFamily: 'Inter_700Bold',
+            fontSize: 11,
+            letterSpacing: 0.6,
+            textTransform: 'uppercase',
+            color: theme.accent,
+          }}
+        >
+          Recent searches
+        </Text>
+        <Pressable onPress={clearHistory} hitSlop={8}>
+          <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 12, color: theme.inkSoft }}>
+            Clear
+          </Text>
+        </Pressable>
+      </View>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+        {history.map((q) => (
+          <Pressable
+            key={q}
+            onPress={() => {
+              setQuery(q);
+              setSubmittedQuery(q);
+            }}
+            onLongPress={() => removeEntry(q)}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 6,
+              backgroundColor: theme.surface,
+              borderWidth: 1,
+              borderColor: theme.line,
+              borderRadius: 16,
+              paddingHorizontal: 12,
+              paddingVertical: 6,
+            }}
+          >
+            <Ionicons name="time-outline" size={13} color={theme.inkFaint} />
+            <Text
+              style={{
+                fontFamily: 'Inter_500Medium',
+                fontSize: 13,
+                color: theme.ink,
+                maxWidth: 200,
+              }}
+              numberOfLines={1}
+            >
+              {q}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  ) : null;
+
+  const recentlyViewedSlot = recentlyViewed.length > 0 ? (
+    <View>
+      <Text
+        style={{
+          fontFamily: 'Inter_700Bold',
+          fontSize: 11,
+          letterSpacing: 0.6,
+          textTransform: 'uppercase',
+          color: theme.accent,
+          marginBottom: 8,
+        }}
+      >
+        Recently viewed
+      </Text>
+      <View style={{ gap: 8 }}>
+        {recentlyViewed.slice(0, 6).map((doc) => (
+          <Pressable
+            key={doc.id}
+            onPress={() => router.push(`/reader/${doc.id}`)}
+            style={{
+              backgroundColor: theme.surface,
+              borderColor: theme.line,
+              borderWidth: 1,
+              borderRadius: 12,
+              padding: 12,
+            }}
+          >
+            <Text
+              style={{ fontFamily: theme.serif, fontSize: 15, letterSpacing: -0.2, color: theme.ink }}
+              numberOfLines={1}
+            >
+              {doc.shortTitle ?? doc.title}
+            </Text>
+            {doc.grNo ? (
+              <Text style={{ marginTop: 2, fontFamily: 'Inter_400Regular', fontSize: 12, color: theme.inkSoft }}>
+                {doc.grNo}
+              </Text>
+            ) : null}
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  ) : null;
+
+  return (
+    <SearchScreen
+      query={query}
+      onChangeQuery={setQuery}
+      onSubmitQuery={() => setSubmittedQuery(query)}
+      onClearQuery={() => {
+        setQuery('');
+        setSubmittedQuery('');
+      }}
+      hideCancel
+      filters={FILTERS as unknown as string[]}
+      activeFilter={activeFilter}
+      onFilterChange={(f) => setActiveFilter(f as FilterLabel)}
+      results={results}
+      onPressResult={(id) => router.push(`/reader/${id}`)}
+      renderResultAction={renderResultAction}
+      belowFiltersSlot={tabBarSlot}
+      customResults={customResults}
+      historySlot={historySlot}
+      recentlyViewedSlot={recentlyViewedSlot}
+      activeTab="search"
+      onTabPress={(id) => {
+        if (id === 'home') router.push('/(tabs)');
+        else if (id === 'docs') router.push('/documents');
+        else if (id === 'me') router.push('/settings');
+      }}
+    />
+  );
+}

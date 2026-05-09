@@ -159,7 +159,7 @@ describe('OnboardingScreen', () => {
     fireEvent.press(getByText('Continue'));
 
     expect(getByText('Step 4 of 5')).toBeTruthy();
-    expect(queryByText('Select your bar subjects')).toBeTruthy();
+    expect(queryByText('Pick your bar subjects.')).toBeTruthy();
     expect(queryByText('Political Law')).toBeTruthy();
     expect(queryByText('Criminal Law')).toBeTruthy();
   });
@@ -175,7 +175,7 @@ describe('OnboardingScreen', () => {
     fireEvent.press(getByText('Continue'));
     fireEvent.press(getByText('Continue'));
 
-    expect(queryByText('Select your practice areas')).toBeTruthy();
+    expect(queryByText('Pick your practice areas.')).toBeTruthy();
     expect(queryByText('Civil Litigation')).toBeTruthy();
     expect(queryByText('Corporate Law')).toBeTruthy();
   });
@@ -193,7 +193,7 @@ describe('OnboardingScreen', () => {
     fireEvent.press(getByText('Continue'));
 
     expect(getByText('Step 5 of 5')).toBeTruthy();
-    expect(queryByText("You're all set!")).toBeTruthy();
+    expect(queryByText("You're all set.")).toBeTruthy();
     expect(queryByText(/Role: Bar Taker/)).toBeTruthy();
   });
 
@@ -226,7 +226,7 @@ describe('OnboardingScreen', () => {
     await act(async () => { fireEvent.press(getByText('Continue')); });
 
     await act(async () => {
-      fireEvent.press(getByText('Start Exploring'));
+      fireEvent.press(getByText('Start exploring'));
       // Let the async function resolve
       await new Promise((r) => setTimeout(r, 50));
     });

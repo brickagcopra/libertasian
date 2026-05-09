@@ -1,67 +1,140 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  View,
-  Text,
-  ScrollView,
-  TouchableOpacity,
-  StyleSheet,
   ActivityIndicator,
-  TextInput,
   Alert,
+  Modal,
+  Pressable,
+  Text,
+  TextInput,
+  View,
 } from 'react-native';
-import { useLocalSearchParams, router, Stack } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
+import { useLocalSearchParams, router } from 'expo-router';
+import {
+  DocumentReaderScreen,
+  type DocumentReaderCitation,
+  type DocumentReaderRelated,
+  type DocumentReaderSection,
+  type DocumentReaderTopAction,
+} from '@/components/screens/DocumentReaderScreen';
+import { Button } from '@/components/ui/Button';
 import {
   useDocument,
   useDocumentSections,
-} from '../../features/documents/hooks/use-document';
+} from '@/features/documents/hooks/use-document';
 import {
   useDocumentCitations,
   useRelatedDocuments,
-} from '../../features/documents/hooks/use-documents';
+} from '@/features/documents/hooks/use-documents';
 import {
   useBookmarks,
   useCreateBookmark,
-} from '../../features/bookmarks/hooks/use-bookmarks';
-import { useDigests, useGenerateDigest } from '../../features/digests/hooks/use-digests';
-import { useRecentlyViewed } from '../../features/documents/hooks/use-recently-viewed';
-import { useOfflineCodals } from '../../features/study/hooks/use-offline-codals';
-import { OfflineBadge } from '../../features/study/components/offline-badge';
-import { ContentDisclaimer } from '../../features/documents/components/content-disclaimer';
-import type { DocumentCitation, RelatedDocument, DocumentSection } from '../../features/documents/types';
+} from '@/features/bookmarks/hooks/use-bookmarks';
+import { useDigests, useGenerateDigest } from '@/features/digests/hooks/use-digests';
+import { useRecentlyViewed } from '@/features/documents/hooks/use-recently-viewed';
+import { useOfflineCodals } from '@/features/study/hooks/use-offline-codals';
+import { ContentDisclaimer } from '@/features/documents/components/content-disclaimer';
+import { useTheme } from '@/providers/theme-provider';
+import type { DocumentSection, LegalDocument } from '@/features/documents/types';
 
-type ContentTab = 'sections' | 'citations' | 'related';
+const DOC_TYPE_LABELS: Record<string, string> = {
+  supreme_court_decision: 'Supreme Court · Case',
+  case_decision: 'Case',
+  republic_act: 'Republic Act',
+  statute: 'Statute',
+  executive_order: 'Executive Order',
+  administrative_order: 'Administrative Order',
+  circular: 'Circular',
+  resolution: 'Resolution',
+};
 
-export default function ReaderScreen() {
+function eyebrowFor(doc: LegalDocument): string {
+  return DOC_TYPE_LABELS[doc.documentType] ?? doc.documentType.replace(/_/g, ' ');
+}
+
+function metaFor(doc: LegalDocument): string | undefined {
+  const parts: string[] = [];
+  if (doc.citationText) parts.push(doc.citationText);
+  else if (doc.grNo) parts.push(doc.grNo);
+  if (doc.ponente) parts.push(doc.ponente);
+  if (doc.decisionDate || doc.promulgationDate) {
+    const d = new Date((doc.decisionDate ?? doc.promulgationDate)!);
+    if (!Number.isNaN(d.getTime())) {
+      parts.push(d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }));
+    }
+  }
+  return parts.length > 0 ? parts.join(' · ') : undefined;
+}
+
+function disclaimerClassFor(doc: LegalDocument): string | null {
+  // Map document trust signals to ContentDisclaimer's known classes.
+  if (doc.isOfficial) return 'official_text';
+  if (doc.source?.trustLevel === 'community') return 'community';
+  if (doc.truthfulnessStatus && doc.truthfulnessStatus !== 'verified') return 'ai_generated';
+  return null;
+}
+
+function paragraphsFromSection(section: DocumentSection): string[] {
+  const text = section.plainText?.trim();
+  if (!text) return [];
+  return text
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+}
+
+function headingFor(section: DocumentSection, index: number): string {
+  if (section.sectionLabel) return section.sectionLabel;
+  if (section.sectionType) {
+    return section.sectionType
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+  return `Section ${index + 1}`;
+}
+
+function buildReaderSections(sections: DocumentSection[] | undefined): DocumentReaderSection[] {
+  if (!sections) return [];
+  return sections
+    .slice()
+    .sort((a, b) => a.ordering - b.ordering)
+    .map((s, i) => ({
+      id: s.id,
+      heading: headingFor(s, i),
+      paragraphs: paragraphsFromSection(s),
+      pageStart: s.pageStart,
+      pageEnd: s.pageEnd,
+    }))
+    .filter((s) => s.paragraphs.length > 0);
+}
+
+export default function ReaderRoute() {
+  const { theme } = useTheme();
   const { id } = useLocalSearchParams<{ id: string }>();
   const documentId = id ?? '';
 
   const { data: doc, isLoading: docLoading, error: docError } = useDocument(documentId);
-  const { data: sections, isLoading: sectionsLoading } =
-    useDocumentSections(documentId);
+  const { data: sections } = useDocumentSections(documentId);
 
-  const [activeTab, setActiveTab] = useState<ContentTab>('sections');
-  const { data: citations, isLoading: citationsLoading } =
-    useDocumentCitations(documentId, activeTab === 'citations');
-  const { data: related, isLoading: relatedLoading } =
-    useRelatedDocuments(documentId, activeTab === 'related');
-
-  const { data: existingDigests } = useDigests({ legalDocumentId: documentId, limit: 1 });
-  const hasExistingDigest =
-    existingDigests?.data && existingDigests.data.length > 0;
-  const existingDigestId = hasExistingDigest ? existingDigests.data[0].id : null;
+  // Citations + related are lazy-loaded once a document loads.
+  const enableExtras = Boolean(doc);
+  const { data: citationsData, isLoading: citationsLoading } = useDocumentCitations(
+    documentId,
+    enableExtras,
+  );
+  const { data: relatedData, isLoading: relatedLoading } = useRelatedDocuments(
+    documentId,
+    enableExtras,
+  );
 
   const { data: bookmarksData } = useBookmarks({ legalDocumentId: documentId });
   const createBookmark = useCreateBookmark();
-
+  const { data: existingDigests } = useDigests({ legalDocumentId: documentId, limit: 1 });
+  const existingDigestId =
+    existingDigests?.data && existingDigests.data.length > 0 ? existingDigests.data[0].id : null;
   const generateDigest = useGenerateDigest();
-
-  const [showBookmarkForm, setShowBookmarkForm] = useState(false);
-  const [bookmarkNote, setBookmarkNote] = useState('');
-
   const { addEntry: addRecentlyViewed } = useRecentlyViewed();
-
   const { isOffline, saveForOffline, removeOffline, saving } = useOfflineCodals();
+  const documentIsOffline = isOffline(documentId);
 
   useEffect(() => {
     if (doc) {
@@ -74,30 +147,82 @@ export default function ReaderScreen() {
         court: doc.court ?? null,
       });
     }
-    // Only run when doc loads, not on every addRecentlyViewed change
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc?.id]);
 
-  const isBookmarked =
-    bookmarksData?.data && bookmarksData.data.length > 0;
+  const isBookmarked = (bookmarksData?.data?.length ?? 0) > 0;
+  const [bookmarkSheetOpen, setBookmarkSheetOpen] = useState(false);
+  const [bookmarkNote, setBookmarkNote] = useState('');
 
-  const handleBookmark = useCallback(async () => {
-    if (isBookmarked) return;
+  const readerSections = useMemo(() => buildReaderSections(sections), [sections]);
+
+  const citations = useMemo<DocumentReaderCitation[] | undefined>(() => {
+    if (!enableExtras) return undefined;
+    if (!citationsData) return [];
+    return citationsData.map((c) => ({
+      id: c.id,
+      citationText: c.citationText,
+      context: c.context,
+      citedTitle: c.citedDocument?.shortTitle ?? c.citedDocument?.title ?? null,
+      onPress: c.citedDocument?.id
+        ? () => router.push(`/reader/${c.citedDocument!.id}`)
+        : undefined,
+    }));
+  }, [citationsData, enableExtras]);
+
+  const relatedDocuments = useMemo<DocumentReaderRelated[] | undefined>(() => {
+    if (!enableExtras) return undefined;
+    if (!relatedData) return [];
+    return relatedData.map((r) => ({
+      id: r.id,
+      title: r.shortTitle ?? r.title,
+      subtitle: r.citationText ?? r.grNo ?? null,
+      relevance: r.relevanceScore,
+      onPress: () => router.push(`/reader/${r.id}`),
+    }));
+  }, [relatedData, enableExtras]);
+
+  const submitBookmark = useCallback(async () => {
     try {
       await createBookmark.mutateAsync({
         legalDocumentId: documentId,
         note: bookmarkNote.trim() || undefined,
       });
-      setShowBookmarkForm(false);
+      setBookmarkSheetOpen(false);
       setBookmarkNote('');
     } catch {
       Alert.alert('Error', 'Failed to create bookmark.');
     }
-  }, [documentId, bookmarkNote, isBookmarked, createBookmark]);
+  }, [bookmarkNote, createBookmark, documentId]);
 
-  const handleGenerateDigest = useCallback(async () => {
+  const handleBookmark = useCallback(() => {
+    if (isBookmarked) {
+      Alert.alert('Bookmarked', 'This document is already in your bookmarks.');
+      return;
+    }
+    setBookmarkSheetOpen(true);
+  }, [isBookmarked]);
+
+  const handleToggleOffline = useCallback(async () => {
+    if (!doc) return;
+    try {
+      if (documentIsOffline) {
+        await removeOffline(doc.id);
+      } else {
+        await saveForOffline(doc.id, doc.documentType);
+      }
+    } catch {
+      Alert.alert('Error', 'Failed to update offline storage.');
+    }
+  }, [doc, documentIsOffline, removeOffline, saveForOffline]);
+
+  const handleGenerateDigest = useCallback(() => {
+    if (existingDigestId) {
+      router.push(`/digest/${existingDigestId}`);
+      return;
+    }
     Alert.alert(
-      'Generate Digest',
+      'Generate digest',
       'Generate an AI case digest for this document? This uses your digest quota.',
       [
         { text: 'Cancel', style: 'cancel' },
@@ -113,836 +238,168 @@ export default function ReaderScreen() {
                 result && typeof result === 'object' && 'data' in result
                   ? (result as { data: { id: string } }).data.id
                   : undefined;
-              Alert.alert('Success', 'Digest generated successfully.', [
-                {
-                  text: 'View Digest',
-                  onPress: () => {
-                    if (digestId) {
-                      router.push(`/digest/${digestId}`);
-                    }
-                  },
-                },
-                { text: 'OK' },
-              ]);
+              if (digestId) router.push(`/digest/${digestId}`);
             } catch {
-              Alert.alert(
-                'Error',
-                'Failed to generate digest. You may need a paid subscription or have exceeded your quota.',
-              );
+              Alert.alert('Error', 'Failed to generate digest. Please try again.');
             }
           },
         },
       ],
     );
-  }, [documentId, generateDigest]);
-
-  const handleToggleOffline = useCallback(async () => {
-    if (saving) return;
-    if (isOffline(documentId)) {
-      await removeOffline(documentId);
-    } else {
-      await saveForOffline(documentId, doc?.documentType ?? 'unknown');
-    }
-  }, [documentId, doc?.documentType, isOffline, saveForOffline, removeOffline, saving]);
+  }, [documentId, existingDigestId, generateDigest]);
 
   if (docLoading) {
     return (
-      <>
-        <Stack.Screen options={{ title: 'Loading...' }} />
-        <View style={styles.loadingState}>
-          <ActivityIndicator size="large" color="#1a56db" />
-        </View>
-      </>
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.bg }}>
+        <ActivityIndicator size="large" color={theme.ink} />
+      </View>
     );
   }
 
   if (docError || !doc) {
     return (
-      <>
-        <Stack.Screen options={{ title: 'Error' }} />
-        <View style={styles.errorState}>
-          <Ionicons name="alert-circle-outline" size={48} color="#ef4444" />
-          <Text style={styles.errorTitle}>Document not found</Text>
-          <TouchableOpacity
-            style={styles.backButton}
-            onPress={() => router.back()}
-          >
-            <Text style={styles.backButtonText}>Go Back</Text>
-          </TouchableOpacity>
-        </View>
-      </>
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.bg, paddingHorizontal: 32 }}>
+        <Text style={{ fontFamily: theme.serif, fontSize: 22, color: theme.ink, marginBottom: 8 }}>
+          Document not found
+        </Text>
+        <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 14, color: theme.inkSoft, textAlign: 'center' }}>
+          The document you&apos;re looking for could not be loaded.
+        </Text>
+      </View>
     );
   }
 
-  const sectionCount = sections?.length ?? doc._count?.sections ?? 0;
-  const citationCount = doc._count?.citations ?? 0;
+  const disclaimerClass = disclaimerClassFor(doc);
+  const disclaimerSlot = disclaimerClass ? (
+    <ContentDisclaimer contentClass={disclaimerClass} />
+  ) : null;
 
-  return (
-    <>
-      <Stack.Screen
-        options={{
-          title: doc.shortTitle ?? doc.citationText ?? 'Document',
-          headerBackTitle: 'Back',
+  const extraTopActions: DocumentReaderTopAction[] = [
+    {
+      icon: documentIsOffline ? 'cloud-done' : 'cloud-download-outline',
+      accessibilityLabel: documentIsOffline ? 'Saved offline' : 'Save offline',
+      badge: documentIsOffline,
+      onPress: saving === doc.id ? undefined : handleToggleOffline,
+    },
+  ];
+
+  const belowMetaSlot = existingDigestId ? (
+    <Pressable
+      onPress={() => router.push(`/digest/${existingDigestId}`)}
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        borderRadius: 10,
+        backgroundColor: theme.accentSoft,
+      }}
+    >
+      <Text
+        style={{
+          fontFamily: 'Inter_700Bold',
+          fontSize: 11,
+          color: theme.accent,
+          letterSpacing: 0.6,
+          textTransform: 'uppercase',
         }}
+      >
+        Digest available
+      </Text>
+      <Text style={{ flex: 1, fontFamily: 'Inter_500Medium', fontSize: 13, color: theme.ink }}>
+        Open the case digest →
+      </Text>
+    </Pressable>
+  ) : null;
+
+  return (
+    <>
+      <DocumentReaderScreen
+        eyebrow={eyebrowFor(doc)}
+        title={doc.shortTitle ?? doc.title}
+        meta={metaFor(doc)}
+        sections={readerSections}
+        disclaimerSlot={disclaimerSlot}
+        belowMetaSlot={belowMetaSlot}
+        extraTopActions={extraTopActions}
+        citations={citations}
+        citationsLoading={citationsLoading}
+        relatedDocuments={relatedDocuments}
+        relatedLoading={relatedLoading}
+        isBookmarked={isBookmarked}
+        onBack={() => router.back()}
+        onBookmark={handleBookmark}
+        onAdd={handleGenerateDigest}
       />
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-        <View style={styles.docHeader}>
-          <View style={styles.badges}>
-            <View style={styles.typeBadge}>
-              <Text style={styles.typeBadgeText}>
-                {doc.documentType.replace(/_/g, ' ')}
-              </Text>
-            </View>
-            {doc.isOfficial ? (
-              <View style={styles.officialBadge}>
-                <Text style={styles.officialBadgeText}>Official</Text>
-              </View>
-            ) : null}
-            {isOffline(documentId) ? <OfflineBadge size="small" /> : null}
-          </View>
 
-          <Text style={styles.docTitle}>{doc.title}</Text>
-
-          <ContentDisclaimer
-            contentClass={doc.isOfficial ? 'official_text' : 'community'}
-            compact
-          />
-
-          <View style={styles.metaGrid}>
-            {doc.grNo ? (
-              <View style={styles.metaItem}>
-                <Text style={styles.metaLabel}>G.R. No.</Text>
-                <Text style={styles.metaValue}>{doc.grNo}</Text>
-              </View>
-            ) : null}
-            {doc.court ? (
-              <View style={styles.metaItem}>
-                <Text style={styles.metaLabel}>Court</Text>
-                <Text style={styles.metaValue}>{doc.court}</Text>
-              </View>
-            ) : null}
-            {doc.ponente ? (
-              <View style={styles.metaItem}>
-                <Text style={styles.metaLabel}>Ponente</Text>
-                <Text style={styles.metaValue}>J. {doc.ponente}</Text>
-              </View>
-            ) : null}
-            {doc.decisionDate ? (
-              <View style={styles.metaItem}>
-                <Text style={styles.metaLabel}>Decision Date</Text>
-                <Text style={styles.metaValue}>
-                  {new Date(doc.decisionDate).toLocaleDateString('en-US', {
-                    year: 'numeric',
-                    month: 'long',
-                    day: 'numeric',
-                  })}
-                </Text>
-              </View>
-            ) : null}
-          </View>
-
-          {/* Action Row */}
-          <View style={styles.actionRow}>
-            {hasExistingDigest ? (
-              <TouchableOpacity
-                style={styles.viewDigestButton}
-                onPress={() => router.push(`/digest/${existingDigestId}`)}
-              >
-                <Ionicons name="document-text" size={16} color="#059669" />
-                <Text style={styles.viewDigestText}>View Digest</Text>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity
-                style={styles.generateDigestButton}
-                onPress={handleGenerateDigest}
-                disabled={generateDigest.isPending}
-              >
-                {generateDigest.isPending ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <>
-                    <Ionicons name="document-text-outline" size={16} color="#fff" />
-                    <Text style={styles.generateDigestText}>Generate Digest</Text>
-                  </>
-                )}
-              </TouchableOpacity>
-            )}
-
-            <TouchableOpacity
-              style={[
-                styles.offlineButton,
-                isOffline(documentId) && styles.offlineButtonSaved,
-              ]}
-              onPress={handleToggleOffline}
-              disabled={saving === documentId}
-            >
-              {saving === documentId ? (
-                <ActivityIndicator size="small" color="#1a56db" />
-              ) : (
-                <>
-                  <Ionicons
-                    name={isOffline(documentId) ? 'cloud-done' : 'cloud-download-outline'}
-                    size={16}
-                    color={isOffline(documentId) ? '#059669' : '#1a56db'}
-                  />
-                  <Text
-                    style={[
-                      styles.offlineButtonText,
-                      isOffline(documentId) && styles.offlineButtonTextSaved,
-                    ]}
-                  >
-                    {isOffline(documentId) ? 'Saved Offline' : 'Save Offline'}
-                  </Text>
-                </>
-              )}
-            </TouchableOpacity>
-          </View>
-
-          {/* Bookmark */}
-          <View style={styles.bookmarkSection}>
-            {isBookmarked ? (
-              <View style={styles.bookmarkedBadge}>
-                <Ionicons name="bookmark" size={16} color="#1a56db" />
-                <Text style={styles.bookmarkedText}>Bookmarked</Text>
-              </View>
-            ) : showBookmarkForm ? (
-              <View style={styles.bookmarkForm}>
-                <TextInput
-                  style={styles.bookmarkInput}
-                  value={bookmarkNote}
-                  onChangeText={setBookmarkNote}
-                  placeholder="Add a note (optional)"
-                  placeholderTextColor="#9ca3af"
-                  multiline
-                />
-                <View style={styles.bookmarkActions}>
-                  <TouchableOpacity
-                    style={styles.bookmarkCancel}
-                    onPress={() => {
-                      setShowBookmarkForm(false);
-                      setBookmarkNote('');
-                    }}
-                  >
-                    <Text style={styles.bookmarkCancelText}>Cancel</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.bookmarkSave}
-                    onPress={handleBookmark}
-                    disabled={createBookmark.isPending}
-                  >
-                    {createBookmark.isPending ? (
-                      <ActivityIndicator size="small" color="#fff" />
-                    ) : (
-                      <Text style={styles.bookmarkSaveText}>Save</Text>
-                    )}
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ) : (
-              <TouchableOpacity
-                style={styles.bookmarkButton}
-                onPress={() => setShowBookmarkForm(true)}
-              >
-                <Ionicons name="bookmark-outline" size={16} color="#1a56db" />
-                <Text style={styles.bookmarkButtonText}>Bookmark</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
-
-        {/* Content Tabs */}
-        <View style={styles.tabBar}>
-          <TouchableOpacity
-            style={[styles.tab, activeTab === 'sections' && styles.tabActive]}
-            onPress={() => setActiveTab('sections')}
+      {/* Bookmark-with-note sheet */}
+      <Modal
+        visible={bookmarkSheetOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setBookmarkSheetOpen(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
+          <View
+            style={{
+              backgroundColor: theme.bg,
+              padding: 22,
+              paddingBottom: 36,
+              borderTopLeftRadius: 24,
+              borderTopRightRadius: 24,
+            }}
           >
-            <Text
-              style={[
-                styles.tabText,
-                activeTab === 'sections' && styles.tabTextActive,
-              ]}
+            <Text style={{ fontFamily: theme.serif, fontSize: 24, letterSpacing: -0.5, color: theme.ink }}>
+              Add a note
+            </Text>
+            <Text style={{ marginTop: 6, fontFamily: 'Inter_400Regular', fontSize: 13, color: theme.inkSoft }}>
+              Optional — jot why this matters so you can find it later.
+            </Text>
+            <View style={{ height: 14 }} />
+            <TextInput
+              value={bookmarkNote}
+              onChangeText={setBookmarkNote}
+              placeholder="What stands out about this case?"
+              placeholderTextColor={theme.inkFaint}
+              multiline
+              numberOfLines={4}
+              style={{
+                backgroundColor: theme.surface,
+                borderColor: theme.line,
+                borderWidth: 1,
+                borderRadius: 12,
+                padding: 12,
+                minHeight: 96,
+                fontFamily: 'Inter_400Regular',
+                fontSize: 14,
+                color: theme.ink,
+                textAlignVertical: 'top',
+              }}
+            />
+            <View style={{ height: 14 }} />
+            <Button
+              label={createBookmark.isPending ? 'Saving…' : 'Save bookmark'}
+              variant="primary"
+              full
+              disabled={createBookmark.isPending}
+              onPress={submitBookmark}
+            />
+            <View style={{ height: 8 }} />
+            <Pressable
+              onPress={() => {
+                setBookmarkSheetOpen(false);
+                setBookmarkNote('');
+              }}
+              style={{ paddingVertical: 12, alignItems: 'center' }}
             >
-              Sections{sectionCount > 0 ? ` (${sectionCount})` : ''}
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.tab, activeTab === 'citations' && styles.tabActive]}
-            onPress={() => setActiveTab('citations')}
-          >
-            <Text
-              style={[
-                styles.tabText,
-                activeTab === 'citations' && styles.tabTextActive,
-              ]}
-            >
-              Citations{citationCount > 0 ? ` (${citationCount})` : ''}
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.tab, activeTab === 'related' && styles.tabActive]}
-            onPress={() => setActiveTab('related')}
-          >
-            <Text
-              style={[
-                styles.tabText,
-                activeTab === 'related' && styles.tabTextActive,
-              ]}
-            >
-              Related
-            </Text>
-          </TouchableOpacity>
+              <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 14, color: theme.inkSoft }}>
+                Cancel
+              </Text>
+            </Pressable>
+          </View>
         </View>
-
-        {/* Tab Content */}
-        <View style={styles.tabContent}>
-          {activeTab === 'sections' ? (
-            <SectionsTab sections={sections ?? []} loading={sectionsLoading} />
-          ) : activeTab === 'citations' ? (
-            <CitationsTab citations={citations ?? []} loading={citationsLoading} />
-          ) : (
-            <RelatedTab documents={related ?? []} loading={relatedLoading} />
-          )}
-        </View>
-      </ScrollView>
+      </Modal>
     </>
   );
 }
-
-function SectionsTab({
-  sections,
-  loading,
-}: {
-  sections: DocumentSection[];
-  loading: boolean;
-}) {
-  if (loading) {
-    return <ActivityIndicator color="#1a56db" style={styles.tabLoader} />;
-  }
-
-  if (sections.length === 0) {
-    return (
-      <View style={styles.noContent}>
-        <Ionicons name="document-outline" size={32} color="#d1d5db" />
-        <Text style={styles.noContentText}>
-          No sections available for this document
-        </Text>
-      </View>
-    );
-  }
-
-  return (
-    <>
-      {sections.map((section) => (
-        <View key={section.id} style={styles.sectionCard}>
-          <View style={styles.sectionTitleRow}>
-            <Text style={styles.sectionLabel}>
-              {section.sectionLabel ??
-                section.sectionType.replace(/_/g, ' ')}
-            </Text>
-            {section.pageStart !== null ? (
-              <Text style={styles.pageRef}>
-                p.{section.pageStart}
-                {section.pageEnd && section.pageEnd !== section.pageStart
-                  ? `-${section.pageEnd}`
-                  : ''}
-              </Text>
-            ) : null}
-          </View>
-          {section.plainText ? (
-            <Text style={styles.sectionText}>{section.plainText}</Text>
-          ) : (
-            <Text style={styles.noSectionContentText}>
-              Section content not available
-            </Text>
-          )}
-        </View>
-      ))}
-    </>
-  );
-}
-
-function CitationsTab({
-  citations,
-  loading,
-}: {
-  citations: DocumentCitation[];
-  loading: boolean;
-}) {
-  if (loading) {
-    return <ActivityIndicator color="#1a56db" style={styles.tabLoader} />;
-  }
-
-  if (citations.length === 0) {
-    return (
-      <View style={styles.noContent}>
-        <Ionicons name="link-outline" size={32} color="#d1d5db" />
-        <Text style={styles.noContentText}>
-          No citations found for this document
-        </Text>
-      </View>
-    );
-  }
-
-  return (
-    <>
-      {citations.map((citation) => (
-        <TouchableOpacity
-          key={citation.id}
-          style={styles.citationCard}
-          onPress={() => {
-            if (citation.citedDocumentId) {
-              router.push(`/reader/${citation.citedDocumentId}`);
-            }
-          }}
-          activeOpacity={citation.citedDocumentId ? 0.7 : 1}
-          disabled={!citation.citedDocumentId}
-        >
-          <View style={styles.citationHeader}>
-            <View style={styles.citationTypeBadge}>
-              <Text style={styles.citationTypeBadgeText}>
-                {citation.citationType.replace(/_/g, ' ')}
-              </Text>
-            </View>
-            {citation.citedDocumentId ? (
-              <Ionicons name="open-outline" size={14} color="#1a56db" />
-            ) : null}
-          </View>
-          <Text style={styles.citationText} numberOfLines={2}>
-            {citation.citationText}
-          </Text>
-          {citation.context ? (
-            <Text style={styles.citationContext} numberOfLines={2}>
-              {citation.context}
-            </Text>
-          ) : null}
-          {citation.citedDocument ? (
-            <Text style={styles.citedDocTitle} numberOfLines={1}>
-              {citation.citedDocument.title}
-            </Text>
-          ) : null}
-        </TouchableOpacity>
-      ))}
-    </>
-  );
-}
-
-function RelatedTab({
-  documents,
-  loading,
-}: {
-  documents: RelatedDocument[];
-  loading: boolean;
-}) {
-  if (loading) {
-    return <ActivityIndicator color="#1a56db" style={styles.tabLoader} />;
-  }
-
-  if (documents.length === 0) {
-    return (
-      <View style={styles.noContent}>
-        <Ionicons name="git-compare-outline" size={32} color="#d1d5db" />
-        <Text style={styles.noContentText}>
-          No related documents found
-        </Text>
-      </View>
-    );
-  }
-
-  return (
-    <>
-      {documents.map((doc) => (
-        <TouchableOpacity
-          key={doc.id}
-          style={styles.relatedCard}
-          onPress={() => router.push(`/reader/${doc.id}`)}
-          activeOpacity={0.7}
-        >
-          <View style={styles.relatedHeader}>
-            <View style={styles.relatedTypeBadge}>
-              <Text style={styles.relatedTypeBadgeText}>
-                {doc.documentType.replace(/_/g, ' ')}
-              </Text>
-            </View>
-            <Text style={styles.relevanceScore}>
-              {Math.round(doc.relevanceScore * 100)}% match
-            </Text>
-          </View>
-          <Text style={styles.relatedTitle} numberOfLines={2}>
-            {doc.title}
-          </Text>
-          <View style={styles.relatedMeta}>
-            {doc.court ? (
-              <Text style={styles.relatedMetaText}>
-                {doc.court.replace(/_/g, ' ')}
-              </Text>
-            ) : null}
-            {doc.grNo ? (
-              <Text style={styles.relatedMetaText}>{doc.grNo}</Text>
-            ) : null}
-            {doc.decisionDate ? (
-              <Text style={styles.relatedMetaText}>
-                {new Date(doc.decisionDate).toLocaleDateString('en-US', {
-                  year: 'numeric',
-                  month: 'short',
-                })}
-              </Text>
-            ) : null}
-          </View>
-        </TouchableOpacity>
-      ))}
-    </>
-  );
-}
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f3f4f6' },
-  content: { paddingBottom: 40 },
-  loadingState: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#fff',
-  },
-  errorState: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 32,
-    backgroundColor: '#fff',
-  },
-  errorTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#374151',
-    marginTop: 12,
-  },
-  backButton: {
-    marginTop: 16,
-    backgroundColor: '#1a56db',
-    borderRadius: 8,
-    paddingHorizontal: 24,
-    paddingVertical: 10,
-  },
-  backButtonText: { color: '#fff', fontSize: 14, fontWeight: '600' },
-  docHeader: {
-    backgroundColor: '#fff',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-  },
-  badges: { flexDirection: 'row', gap: 6, marginBottom: 10 },
-  typeBadge: {
-    backgroundColor: '#eff6ff',
-    borderRadius: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  typeBadgeText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#1d4ed8',
-    textTransform: 'capitalize',
-  },
-  officialBadge: {
-    backgroundColor: '#ecfdf5',
-    borderRadius: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  officialBadgeText: { fontSize: 12, fontWeight: '600', color: '#059669' },
-  docTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#111827',
-    lineHeight: 26,
-    marginBottom: 12,
-  },
-  metaGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    marginBottom: 12,
-  },
-  metaItem: { minWidth: '40%' },
-  metaLabel: { fontSize: 11, color: '#9ca3af', fontWeight: '500', marginBottom: 2 },
-  metaValue: { fontSize: 13, color: '#374151', fontWeight: '500' },
-  actionRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 8,
-    marginBottom: 4,
-  },
-  generateDigestButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#1a56db',
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    borderRadius: 8,
-  },
-  generateDigestText: {
-    fontSize: 13,
-    color: '#fff',
-    fontWeight: '600',
-  },
-  viewDigestButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#ecfdf5',
-    borderWidth: 1,
-    borderColor: '#059669',
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    borderRadius: 8,
-  },
-  viewDigestText: {
-    fontSize: 13,
-    color: '#059669',
-    fontWeight: '600',
-  },
-  offlineButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderWidth: 1,
-    borderColor: '#1a56db',
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    borderRadius: 8,
-    minWidth: 60,
-    justifyContent: 'center',
-  },
-  offlineButtonSaved: {
-    borderColor: '#059669',
-    backgroundColor: '#ecfdf5',
-  },
-  offlineButtonText: {
-    fontSize: 13,
-    color: '#1a56db',
-    fontWeight: '600',
-  },
-  offlineButtonTextSaved: {
-    color: '#059669',
-  },
-  bookmarkSection: { marginTop: 4 },
-  bookmarkedBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#eff6ff',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-    alignSelf: 'flex-start',
-  },
-  bookmarkedText: { fontSize: 13, color: '#1a56db', fontWeight: '600' },
-  bookmarkButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderWidth: 1,
-    borderColor: '#1a56db',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-    alignSelf: 'flex-start',
-  },
-  bookmarkButtonText: { fontSize: 13, color: '#1a56db', fontWeight: '600' },
-  bookmarkForm: { gap: 8 },
-  bookmarkInput: {
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 8,
-    padding: 10,
-    fontSize: 14,
-    color: '#111827',
-    backgroundColor: '#f9fafb',
-    minHeight: 60,
-    textAlignVertical: 'top',
-  },
-  bookmarkActions: { flexDirection: 'row', gap: 8, justifyContent: 'flex-end' },
-  bookmarkCancel: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-  },
-  bookmarkCancelText: { fontSize: 13, color: '#6b7280', fontWeight: '500' },
-  bookmarkSave: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 6,
-    backgroundColor: '#1a56db',
-    minWidth: 60,
-    alignItems: 'center',
-  },
-  bookmarkSaveText: { fontSize: 13, color: '#fff', fontWeight: '600' },
-
-  // Tabs
-  tabBar: {
-    flexDirection: 'row',
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-  },
-  tab: {
-    flex: 1,
-    paddingVertical: 12,
-    alignItems: 'center',
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
-  },
-  tabActive: {
-    borderBottomColor: '#1a56db',
-  },
-  tabText: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#6b7280',
-  },
-  tabTextActive: {
-    color: '#1a56db',
-    fontWeight: '600',
-  },
-  tabContent: { padding: 16 },
-  tabLoader: { paddingVertical: 20 },
-
-  // Sections
-  sectionCard: {
-    backgroundColor: '#fff',
-    borderRadius: 10,
-    padding: 14,
-    marginBottom: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  sectionTitleRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  sectionLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#1a56db',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  pageRef: { fontSize: 11, color: '#9ca3af' },
-  sectionText: {
-    fontSize: 14,
-    color: '#374151',
-    lineHeight: 22,
-  },
-  noSectionContentText: { fontSize: 13, color: '#9ca3af', fontStyle: 'italic' },
-
-  // No content
-  noContent: { alignItems: 'center', paddingVertical: 32, gap: 8 },
-  noContentText: { fontSize: 14, color: '#9ca3af', textAlign: 'center' },
-
-  // Citations
-  citationCard: {
-    backgroundColor: '#fff',
-    borderRadius: 10,
-    padding: 14,
-    marginBottom: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  citationHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  citationTypeBadge: {
-    backgroundColor: '#fef3c7',
-    borderRadius: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  citationTypeBadgeText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#92400e',
-    textTransform: 'capitalize',
-  },
-  citationText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#111827',
-    lineHeight: 20,
-    marginBottom: 4,
-  },
-  citationContext: {
-    fontSize: 13,
-    color: '#6b7280',
-    lineHeight: 19,
-    fontStyle: 'italic',
-  },
-  citedDocTitle: {
-    fontSize: 12,
-    color: '#1a56db',
-    marginTop: 4,
-    fontWeight: '500',
-  },
-
-  // Related
-  relatedCard: {
-    backgroundColor: '#fff',
-    borderRadius: 10,
-    padding: 14,
-    marginBottom: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  relatedHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  relatedTypeBadge: {
-    backgroundColor: '#eff6ff',
-    borderRadius: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  relatedTypeBadgeText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#1d4ed8',
-    textTransform: 'capitalize',
-  },
-  relevanceScore: {
-    fontSize: 11,
-    color: '#059669',
-    fontWeight: '600',
-  },
-  relatedTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#111827',
-    lineHeight: 20,
-    marginBottom: 6,
-  },
-  relatedMeta: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  relatedMetaText: { fontSize: 12, color: '#6b7280' },
-});

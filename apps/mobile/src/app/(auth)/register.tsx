@@ -1,22 +1,16 @@
 import { useState } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  ActivityIndicator,
-  Alert,
-} from 'react-native';
-import { Link, router } from 'expo-router';
-import { useRegister } from '../../features/auth/hooks/use-auth';
-import { APP_NAME } from '../../lib/constants';
-import { ApiClientError } from '../../lib/api-client';
+import { Ionicons } from '@expo/vector-icons';
+import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } from 'react-native';
+import { router } from 'expo-router';
+import { Button } from '@/components/ui/Button';
+import { Input } from '@/components/ui/Input';
+import { Logo } from '@/components/ui/Logo';
+import { useRegister } from '@/features/auth/hooks/use-auth';
+import { useTheme } from '@/providers/theme-provider';
+import { ApiClientError } from '@/lib/api-client';
 
-export default function RegisterScreen() {
+export default function RegisterRoute() {
+  const { theme } = useTheme();
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -27,65 +21,41 @@ export default function RegisterScreen() {
 
   function validate(): boolean {
     const newErrors: Record<string, string> = {};
-
-    if (!fullName.trim()) {
-      newErrors['fullName'] = 'Full name is required';
-    } else if (fullName.trim().length < 2) {
-      newErrors['fullName'] = 'Name must be at least 2 characters';
-    }
-
-    if (!email.trim()) {
-      newErrors['email'] = 'Email is required';
-    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
-      newErrors['email'] = 'Enter a valid email address';
-    }
-
-    if (!password) {
-      newErrors['password'] = 'Password is required';
-    } else if (password.length < 10) {
-      newErrors['password'] = 'Password must be at least 10 characters';
-    }
-
-    if (!confirmPassword) {
-      newErrors['confirmPassword'] = 'Please confirm your password';
-    } else if (password !== confirmPassword) {
-      newErrors['confirmPassword'] = 'Passwords do not match';
-    }
-
+    if (!fullName.trim()) newErrors['fullName'] = 'Full name is required';
+    else if (fullName.trim().length < 2) newErrors['fullName'] = 'Name must be at least 2 characters';
+    if (!email.trim()) newErrors['email'] = 'Email is required';
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) newErrors['email'] = 'Enter a valid email address';
+    if (!password) newErrors['password'] = 'Password is required';
+    else if (password.length < 10) newErrors['password'] = 'Password must be at least 10 characters';
+    if (!confirmPassword) newErrors['confirmPassword'] = 'Please confirm your password';
+    else if (password !== confirmPassword) newErrors['confirmPassword'] = 'Passwords do not match';
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   }
 
   function clearFieldError(field: string) {
-    if (errors[field]) {
-      setErrors((e) => ({ ...e, [field]: '' }));
-    }
+    if (errors[field]) setErrors((e) => ({ ...e, [field]: '' }));
   }
 
   async function handleRegister() {
     if (!validate()) return;
-
     try {
       await registerMutation.mutateAsync({
         fullName: fullName.trim(),
         email: email.trim().toLowerCase(),
         password,
       });
-
       Alert.alert(
-        'Account Created',
+        'Account created',
         'Check your email for a 6-digit verification code, then sign in.',
-        [{ text: 'Sign In', onPress: () => router.replace('/(auth)/login') }],
+        [{ text: 'Sign in', onPress: () => router.replace('/(auth)/login') }],
       );
     } catch (error) {
       if (error instanceof ApiClientError) {
         if (error.statusCode === 409) {
           setErrors({ email: 'An account with this email already exists' });
         } else if (error.statusCode === 429) {
-          Alert.alert(
-            'Too Many Attempts',
-            'Please wait a few minutes before trying again.',
-          );
+          Alert.alert('Too many attempts', 'Please wait a few minutes before trying again.');
         } else if (
           error.serverMessage.toLowerCase().includes('password') &&
           error.serverMessage.toLowerCase().includes('breach')
@@ -95,7 +65,7 @@ export default function RegisterScreen() {
               'This password has been found in a data breach. Please choose a different one.',
           });
         } else {
-          Alert.alert('Registration Failed', error.serverMessage);
+          Alert.alert('Registration failed', error.serverMessage);
         }
       } else {
         Alert.alert('Error', 'Unable to connect to the server. Please try again.');
@@ -105,194 +75,163 @@ export default function RegisterScreen() {
 
   return (
     <KeyboardAvoidingView
-      style={styles.flex}
+      style={{ flex: 1, backgroundColor: theme.bg }}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={{
+          paddingTop: 64,
+          paddingBottom: 24,
+          paddingHorizontal: 22,
+          flexGrow: 1,
+        }}
         keyboardShouldPersistTaps="handled"
       >
-        <View style={styles.container}>
-          <View style={styles.header}>
-            <Text style={styles.appName}>{APP_NAME}</Text>
-            <Text style={styles.title}>Create Account</Text>
-            <Text style={styles.subtitle}>
-              Join the Philippine legal AI platform
-            </Text>
-          </View>
-
-          <View style={styles.form}>
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Full Name</Text>
-              <TextInput
-                style={[
-                  styles.input,
-                  errors['fullName'] ? styles.inputError : null,
-                ]}
-                value={fullName}
-                onChangeText={(text) => {
-                  setFullName(text);
-                  clearFieldError('fullName');
-                }}
-                placeholder="Juan Dela Cruz"
-                placeholderTextColor="#9ca3af"
-                autoCapitalize="words"
-                autoCorrect={false}
-                autoComplete="name"
-                editable={!registerMutation.isPending}
-              />
-              {errors['fullName'] ? (
-                <Text style={styles.errorText}>{errors['fullName']}</Text>
-              ) : null}
-            </View>
-
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Email</Text>
-              <TextInput
-                style={[styles.input, errors['email'] ? styles.inputError : null]}
-                value={email}
-                onChangeText={(text) => {
-                  setEmail(text);
-                  clearFieldError('email');
-                }}
-                placeholder="you@example.com"
-                placeholderTextColor="#9ca3af"
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoCorrect={false}
-                autoComplete="email"
-                editable={!registerMutation.isPending}
-              />
-              {errors['email'] ? (
-                <Text style={styles.errorText}>{errors['email']}</Text>
-              ) : null}
-            </View>
-
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Password</Text>
-              <TextInput
-                style={[
-                  styles.input,
-                  errors['password'] ? styles.inputError : null,
-                ]}
-                value={password}
-                onChangeText={(text) => {
-                  setPassword(text);
-                  clearFieldError('password');
-                }}
-                placeholder="Minimum 10 characters"
-                placeholderTextColor="#9ca3af"
-                secureTextEntry
-                autoComplete="new-password"
-                editable={!registerMutation.isPending}
-              />
-              {errors['password'] ? (
-                <Text style={styles.errorText}>{errors['password']}</Text>
-              ) : null}
-            </View>
-
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Confirm Password</Text>
-              <TextInput
-                style={[
-                  styles.input,
-                  errors['confirmPassword'] ? styles.inputError : null,
-                ]}
-                value={confirmPassword}
-                onChangeText={(text) => {
-                  setConfirmPassword(text);
-                  clearFieldError('confirmPassword');
-                }}
-                placeholder="Re-enter your password"
-                placeholderTextColor="#9ca3af"
-                secureTextEntry
-                autoComplete="new-password"
-                editable={!registerMutation.isPending}
-              />
-              {errors['confirmPassword'] ? (
-                <Text style={styles.errorText}>{errors['confirmPassword']}</Text>
-              ) : null}
-            </View>
-
-            <TouchableOpacity
-              style={[
-                styles.button,
-                registerMutation.isPending ? styles.buttonDisabled : null,
-              ]}
-              onPress={handleRegister}
-              disabled={registerMutation.isPending}
-              activeOpacity={0.8}
-            >
-              {registerMutation.isPending ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <Text style={styles.buttonText}>Create Account</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.footer}>
-            <Link href="/(auth)/login" asChild>
-              <TouchableOpacity>
-                <Text style={styles.footerText}>
-                  Already have an account?{' '}
-                  <Text style={styles.footerLink}>Sign in</Text>
-                </Text>
-              </TouchableOpacity>
-            </Link>
-          </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Pressable
+            onPress={() => router.back()}
+            accessibilityLabel="Go back"
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: 20,
+              borderWidth: 1,
+              borderColor: theme.line,
+              backgroundColor: theme.surface,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <Ionicons name="chevron-back" size={18} color={theme.ink} />
+          </Pressable>
+          <Logo size={22} />
+          <View style={{ width: 40 }} />
         </View>
+
+        <View style={{ height: 30 }} />
+        <Text
+          style={{
+            fontFamily: 'Inter_600SemiBold',
+            fontSize: 12,
+            color: theme.accent,
+            letterSpacing: 0.6,
+            textTransform: 'uppercase',
+          }}
+        >
+          Step 1 of 3
+        </Text>
+        <Text
+          style={{
+            marginTop: 6,
+            fontFamily: theme.serif,
+            fontSize: 32,
+            lineHeight: 33.6,
+            letterSpacing: -1,
+            color: theme.ink,
+          }}
+        >
+          Create your account.
+        </Text>
+        <Text
+          style={{
+            marginTop: 10,
+            fontFamily: 'Inter_400Regular',
+            fontSize: 14,
+            color: theme.inkSoft,
+          }}
+        >
+          A few basics — we&apos;ll tune the experience to you next.
+        </Text>
+
+        <View style={{ height: 22 }} />
+        <View style={{ gap: 14 }}>
+          <Input
+            label="Full name"
+            value={fullName}
+            onChangeText={(t) => {
+              setFullName(t);
+              clearFieldError('fullName');
+            }}
+            placeholder="Juan Dela Cruz"
+            autoCapitalize="words"
+            autoComplete="name"
+            error={errors['fullName'] || undefined}
+            leading={<Ionicons name="person-outline" size={18} color={theme.inkFaint} />}
+            editable={!registerMutation.isPending}
+          />
+          <Input
+            label="Email"
+            value={email}
+            onChangeText={(t) => {
+              setEmail(t);
+              clearFieldError('email');
+            }}
+            placeholder="you@example.com"
+            keyboardType="email-address"
+            autoCapitalize="none"
+            autoComplete="email"
+            error={errors['email'] || undefined}
+            leading={<Ionicons name="mail-outline" size={18} color={theme.inkFaint} />}
+            editable={!registerMutation.isPending}
+          />
+          <Input
+            label="Password"
+            value={password}
+            onChangeText={(t) => {
+              setPassword(t);
+              clearFieldError('password');
+            }}
+            placeholder="Minimum 10 characters"
+            secureTextEntry
+            autoComplete="new-password"
+            error={errors['password'] || undefined}
+            leading={<Ionicons name="lock-closed-outline" size={18} color={theme.inkFaint} />}
+            editable={!registerMutation.isPending}
+          />
+          <Input
+            label="Confirm password"
+            value={confirmPassword}
+            onChangeText={(t) => {
+              setConfirmPassword(t);
+              clearFieldError('confirmPassword');
+            }}
+            placeholder="Re-enter your password"
+            secureTextEntry
+            autoComplete="new-password"
+            error={errors['confirmPassword'] || undefined}
+            leading={<Ionicons name="lock-closed-outline" size={18} color={theme.inkFaint} />}
+            editable={!registerMutation.isPending}
+          />
+        </View>
+
+        <View style={{ flex: 1, minHeight: 24 }} />
+        <View style={{ marginTop: 24 }}>
+          <Button
+            label={registerMutation.isPending ? 'Creating…' : 'Create account'}
+            variant="primary"
+            full
+            disabled={registerMutation.isPending}
+            onPress={handleRegister}
+          />
+        </View>
+
+        <Pressable
+          onPress={() => router.replace('/(auth)/login')}
+          style={{ marginTop: 16, paddingVertical: 8 }}
+        >
+          <Text
+            style={{
+              textAlign: 'center',
+              fontFamily: 'Inter_400Regular',
+              fontSize: 13,
+              color: theme.inkSoft,
+            }}
+          >
+            Already have an account?{' '}
+            <Text style={{ color: theme.ink, fontFamily: 'Inter_600SemiBold' }}>Sign in</Text>
+          </Text>
+        </Pressable>
       </ScrollView>
     </KeyboardAvoidingView>
   );
 }
-
-const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: '#fff' },
-  scrollContent: { flexGrow: 1 },
-  container: {
-    flex: 1,
-    paddingHorizontal: 24,
-    paddingTop: 60,
-    paddingBottom: 40,
-    justifyContent: 'center',
-  },
-  header: { marginBottom: 28 },
-  appName: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#1a56db',
-    textTransform: 'uppercase',
-    letterSpacing: 2,
-    marginBottom: 8,
-  },
-  title: { fontSize: 28, fontWeight: 'bold', color: '#111827', marginBottom: 8 },
-  subtitle: { fontSize: 15, color: '#6b7280', lineHeight: 22 },
-  form: { gap: 14 },
-  fieldGroup: { gap: 6 },
-  label: { fontSize: 14, fontWeight: '600', color: '#374151' },
-  input: {
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 16,
-    color: '#111827',
-    backgroundColor: '#f9fafb',
-  },
-  inputError: { borderColor: '#ef4444' },
-  errorText: { fontSize: 13, color: '#ef4444' },
-  button: {
-    backgroundColor: '#1a56db',
-    borderRadius: 10,
-    paddingVertical: 14,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  buttonDisabled: { opacity: 0.7 },
-  buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  footer: { marginTop: 28, alignItems: 'center' },
-  footerText: { fontSize: 14, color: '#6b7280' },
-  footerLink: { color: '#1a56db', fontWeight: '600' },
-});
