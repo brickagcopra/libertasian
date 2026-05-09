@@ -10,6 +10,8 @@ export { DrawerItem } from './DrawerItem';
 export type { DrawerItemProps } from './DrawerItem';
 export { EmptyState } from './EmptyState';
 export type { EmptyStateProps } from './EmptyState';
+export { Fab } from './Fab';
+export type { FabProps } from './Fab';
 export { Input } from './Input';
 export type { InputProps } from './Input';
 export { ListItem } from './ListItem';

@@ -3,17 +3,12 @@ import { Alert } from 'react-native';
 import { render, fireEvent, waitFor, act } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-// Mock dependencies
 const mockMutateAsync = jest.fn();
 jest.mock('@/features/auth/hooks/use-auth', () => ({
   useRegister: () => ({
     mutateAsync: mockMutateAsync,
     isPending: false,
   }),
-}));
-
-jest.mock('@/lib/constants', () => ({
-  APP_NAME: 'LIBERTASIAN',
 }));
 
 jest.mock('@/lib/api-client', () => ({
@@ -52,18 +47,14 @@ describe('RegisterScreen', () => {
     jest.clearAllMocks();
   });
 
-  function pressSubmitButton(getAllByText: ReturnType<typeof render>['getAllByText']) {
-    const elements = getAllByText('Create Account');
-    fireEvent.press(elements[elements.length - 1]);
-  }
-
   it('renders the registration form', () => {
-    const { getAllByText, getByPlaceholderText } = render(<RegisterScreen />, {
+    const { getByText, getByPlaceholderText } = render(<RegisterScreen />, {
       wrapper: createWrapper(),
     });
 
-    expect(getAllByText('LIBERTASIAN').length).toBeGreaterThanOrEqual(1);
-    expect(getAllByText('Create Account').length).toBeGreaterThanOrEqual(2);
+    expect(getByText('Create your account.')).toBeTruthy();
+    expect(getByText('Step 1 of 3')).toBeTruthy();
+    expect(getByText('Create account')).toBeTruthy();
     expect(getByPlaceholderText('Juan Dela Cruz')).toBeTruthy();
     expect(getByPlaceholderText('you@example.com')).toBeTruthy();
     expect(getByPlaceholderText('Minimum 10 characters')).toBeTruthy();
@@ -71,12 +62,12 @@ describe('RegisterScreen', () => {
   });
 
   it('shows validation error for empty full name', async () => {
-    const { getAllByText, queryByText } = render(<RegisterScreen />, {
+    const { getByText, queryByText } = render(<RegisterScreen />, {
       wrapper: createWrapper(),
     });
 
     await act(async () => {
-      pressSubmitButton(getAllByText);
+      fireEvent.press(getByText('Create account'));
     });
 
     await waitFor(() => {
@@ -85,7 +76,7 @@ describe('RegisterScreen', () => {
   });
 
   it('shows validation error for short name', async () => {
-    const { getAllByText, getByPlaceholderText, queryByText } = render(
+    const { getByText, getByPlaceholderText, queryByText } = render(
       <RegisterScreen />,
       { wrapper: createWrapper() },
     );
@@ -93,7 +84,7 @@ describe('RegisterScreen', () => {
     fireEvent.changeText(getByPlaceholderText('Juan Dela Cruz'), 'A');
 
     await act(async () => {
-      pressSubmitButton(getAllByText);
+      fireEvent.press(getByText('Create account'));
     });
 
     await waitFor(() => {
@@ -102,7 +93,7 @@ describe('RegisterScreen', () => {
   });
 
   it('shows validation error for invalid email', async () => {
-    const { getAllByText, getByPlaceholderText, queryByText } = render(
+    const { getByText, getByPlaceholderText, queryByText } = render(
       <RegisterScreen />,
       { wrapper: createWrapper() },
     );
@@ -113,7 +104,7 @@ describe('RegisterScreen', () => {
     fireEvent.changeText(getByPlaceholderText('Re-enter your password'), 'Password1234');
 
     await act(async () => {
-      pressSubmitButton(getAllByText);
+      fireEvent.press(getByText('Create account'));
     });
 
     await waitFor(() => {
@@ -122,7 +113,7 @@ describe('RegisterScreen', () => {
   });
 
   it('shows validation error for short password', async () => {
-    const { getAllByText, getByPlaceholderText, queryByText } = render(
+    const { getByText, getByPlaceholderText, queryByText } = render(
       <RegisterScreen />,
       { wrapper: createWrapper() },
     );
@@ -132,7 +123,7 @@ describe('RegisterScreen', () => {
     fireEvent.changeText(getByPlaceholderText('Minimum 10 characters'), 'short');
 
     await act(async () => {
-      pressSubmitButton(getAllByText);
+      fireEvent.press(getByText('Create account'));
     });
 
     await waitFor(() => {
@@ -141,7 +132,7 @@ describe('RegisterScreen', () => {
   });
 
   it('shows validation error for mismatched passwords', async () => {
-    const { getAllByText, getByPlaceholderText, queryByText } = render(
+    const { getByText, getByPlaceholderText, queryByText } = render(
       <RegisterScreen />,
       { wrapper: createWrapper() },
     );
@@ -152,7 +143,7 @@ describe('RegisterScreen', () => {
     fireEvent.changeText(getByPlaceholderText('Re-enter your password'), 'DifferentPass1');
 
     await act(async () => {
-      pressSubmitButton(getAllByText);
+      fireEvent.press(getByText('Create account'));
     });
 
     await waitFor(() => {
@@ -166,7 +157,7 @@ describe('RegisterScreen', () => {
       verifyEmail: 'juan@test.com',
     });
 
-    const { getAllByText, getByPlaceholderText } = render(<RegisterScreen />, {
+    const { getByText, getByPlaceholderText } = render(<RegisterScreen />, {
       wrapper: createWrapper(),
     });
 
@@ -176,7 +167,7 @@ describe('RegisterScreen', () => {
     fireEvent.changeText(getByPlaceholderText('Re-enter your password'), 'Password1234');
 
     await act(async () => {
-      pressSubmitButton(getAllByText);
+      fireEvent.press(getByText('Create account'));
     });
 
     await waitFor(() => {
@@ -195,7 +186,7 @@ describe('RegisterScreen', () => {
       verifyEmail: 'juan@test.com',
     });
 
-    const { getAllByText, getByPlaceholderText } = render(<RegisterScreen />, {
+    const { getByText, getByPlaceholderText } = render(<RegisterScreen />, {
       wrapper: createWrapper(),
     });
 
@@ -205,12 +196,12 @@ describe('RegisterScreen', () => {
     fireEvent.changeText(getByPlaceholderText('Re-enter your password'), 'Password1234');
 
     await act(async () => {
-      pressSubmitButton(getAllByText);
+      fireEvent.press(getByText('Create account'));
     });
 
     await waitFor(() => {
       expect(alertSpy).toHaveBeenCalledWith(
-        'Account Created',
+        'Account created',
         expect.stringContaining('verification code'),
         expect.any(Array),
       );
@@ -222,7 +213,7 @@ describe('RegisterScreen', () => {
       new ApiClientError(409, 'Email already exists'),
     );
 
-    const { getAllByText, getByPlaceholderText, queryByText } = render(
+    const { getByText, getByPlaceholderText, queryByText } = render(
       <RegisterScreen />,
       { wrapper: createWrapper() },
     );
@@ -233,7 +224,7 @@ describe('RegisterScreen', () => {
     fireEvent.changeText(getByPlaceholderText('Re-enter your password'), 'Password1234');
 
     await act(async () => {
-      pressSubmitButton(getAllByText);
+      fireEvent.press(getByText('Create account'));
     });
 
     await waitFor(() => {
@@ -247,7 +238,7 @@ describe('RegisterScreen', () => {
       new ApiClientError(429, 'Too many requests'),
     );
 
-    const { getAllByText, getByPlaceholderText } = render(<RegisterScreen />, {
+    const { getByText, getByPlaceholderText } = render(<RegisterScreen />, {
       wrapper: createWrapper(),
     });
 
@@ -257,12 +248,12 @@ describe('RegisterScreen', () => {
     fireEvent.changeText(getByPlaceholderText('Re-enter your password'), 'Password1234');
 
     await act(async () => {
-      pressSubmitButton(getAllByText);
+      fireEvent.press(getByText('Create account'));
     });
 
     await waitFor(() => {
       expect(alertSpy).toHaveBeenCalledWith(
-        'Too Many Attempts',
+        'Too many attempts',
         'Please wait a few minutes before trying again.',
       );
     });
@@ -273,7 +264,7 @@ describe('RegisterScreen', () => {
       new ApiClientError(400, 'This password has been found in a data breach'),
     );
 
-    const { getAllByText, getByPlaceholderText, queryByText } = render(
+    const { getByText, getByPlaceholderText, queryByText } = render(
       <RegisterScreen />,
       { wrapper: createWrapper() },
     );
@@ -284,7 +275,7 @@ describe('RegisterScreen', () => {
     fireEvent.changeText(getByPlaceholderText('Re-enter your password'), 'Password1234');
 
     await act(async () => {
-      pressSubmitButton(getAllByText);
+      fireEvent.press(getByText('Create account'));
     });
 
     await waitFor(() => {

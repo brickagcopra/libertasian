@@ -3,7 +3,6 @@ import { Alert } from 'react-native';
 import { render, fireEvent } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-// Mock dependencies
 const mockSignOut = jest.fn();
 const mockAuthUser = {
   id: 'u1',
@@ -32,24 +31,8 @@ jest.mock('@/features/auth/hooks/use-auth', () => ({
   useProfile: () => mockUseProfile(),
 }));
 
-jest.mock('@/lib/constants', () => ({
-  APP_NAME: 'LIBERTASIAN',
-}));
-
-jest.mock('expo-router', () => ({
-  Stack: { Screen: () => null },
-  router: { push: jest.fn() },
-}));
-
-jest.mock('@expo/vector-icons', () => ({
-  Ionicons: ({ name }: { name: string }) => {
-    const { Text } = require('react-native');
-    return <Text>{name}</Text>;
-  },
-}));
-
 import { router } from 'expo-router';
-import SettingsScreen from '@/app/settings/index';
+import SettingsRoute from '@/app/settings/index';
 
 function createWrapper() {
   const queryClient = new QueryClient({
@@ -65,7 +48,7 @@ function createWrapper() {
   };
 }
 
-describe('SettingsScreen', () => {
+describe('SettingsRoute (Phase 2 ProfileScreen)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockUseProfile.mockReturnValue({
@@ -74,109 +57,75 @@ describe('SettingsScreen', () => {
       isFetching: false,
       refetch: jest.fn(),
     });
+    (mockAuthUser as Record<string, unknown>).organizationRole = 'admin';
+    (mockAuthUser as Record<string, unknown>).emailVerified = true;
+    (mockAuthUser as Record<string, unknown>).mfaEnabled = false;
   });
 
-  it('renders profile information', () => {
-    const { getByText, queryByText } = render(<SettingsScreen />, {
-      wrapper: createWrapper(),
-    });
+  it('renders profile identity (name, email, initials)', () => {
+    const { getByText } = render(<SettingsRoute />, { wrapper: createWrapper() });
 
-    expect(getByText('Profile')).toBeTruthy();
     expect(getByText('Juan Cruz')).toBeTruthy();
     expect(getByText('juan@libertasian.com')).toBeTruthy();
-    expect(queryByText('JC')).toBeTruthy(); // Avatar initials
+    expect(getByText('JC')).toBeTruthy();
   });
 
-  it('shows email verification status', () => {
-    const { getByText } = render(<SettingsScreen />, {
-      wrapper: createWrapper(),
-    });
+  it('renders verified / MFA / member-since stats', () => {
+    const { getByText } = render(<SettingsRoute />, { wrapper: createWrapper() });
 
-    expect(getByText('Email Verified')).toBeTruthy();
+    expect(getByText('Yes')).toBeTruthy();
     expect(getByText('Verified')).toBeTruthy();
-  });
-
-  it('shows MFA status', () => {
-    const { getByText } = render(<SettingsScreen />, {
-      wrapper: createWrapper(),
-    });
-
+    expect(getByText('Off')).toBeTruthy();
     expect(getByText('MFA')).toBeTruthy();
-    expect(getByText('Disabled')).toBeTruthy();
+    expect(getByText('Member')).toBeTruthy();
+    expect(getByText(/Jan 2024/)).toBeTruthy();
   });
 
-  it('shows member since date', () => {
-    const { getByText } = render(<SettingsScreen />, {
-      wrapper: createWrapper(),
-    });
+  it('renders the Admin dashboard row for admin users', () => {
+    const { getByText } = render(<SettingsRoute />, { wrapper: createWrapper() });
+    expect(getByText('Admin dashboard')).toBeTruthy();
 
-    expect(getByText('Member Since')).toBeTruthy();
-    // Date may render as Jan 14 or 15 depending on timezone offset
-    expect(getByText(/January 1[45], 2024/)).toBeTruthy();
-  });
-
-  it('renders Admin Dashboard link', () => {
-    const { getByText } = render(<SettingsScreen />, {
-      wrapper: createWrapper(),
-    });
-
-    expect(getByText('Admin Dashboard')).toBeTruthy();
-
-    fireEvent.press(getByText('Admin Dashboard'));
+    fireEvent.press(getByText('Admin dashboard'));
     expect(router.push).toHaveBeenCalledWith('/admin');
   });
 
-  it('renders API Keys link', () => {
-    const { getByText } = render(<SettingsScreen />, {
-      wrapper: createWrapper(),
-    });
+  it('hides the Admin dashboard row for non-admin users', () => {
+    (mockAuthUser as Record<string, unknown>).organizationRole = 'member';
+    const { queryByText } = render(<SettingsRoute />, { wrapper: createWrapper() });
+    expect(queryByText('Admin dashboard')).toBeNull();
+  });
 
-    expect(getByText('API Keys')).toBeTruthy();
+  it('renders the API keys row and routes to /settings/api-keys', () => {
+    const { getByText } = render(<SettingsRoute />, { wrapper: createWrapper() });
 
-    fireEvent.press(getByText('API Keys'));
+    expect(getByText('API keys')).toBeTruthy();
+
+    fireEvent.press(getByText('API keys'));
     expect(router.push).toHaveBeenCalledWith('/settings/api-keys');
   });
 
-  it('hides Admin Dashboard for non-admin roles', () => {
-    // Temporarily override the mock user's role
-    const originalRole = mockAuthUser.organizationRole;
-    (mockAuthUser as Record<string, unknown>).organizationRole = 'member';
+  it('renders drawer-replacement quick links (Phase 2 IA)', () => {
+    const { getByText } = render(<SettingsRoute />, { wrapper: createWrapper() });
 
-    const { queryByText } = render(<SettingsScreen />, {
-      wrapper: createWrapper(),
-    });
-
-    expect(queryByText('Admin Dashboard')).toBeNull();
-
-    // Restore
-    (mockAuthUser as Record<string, unknown>).organizationRole = originalRole;
+    expect(getByText('Digests')).toBeTruthy();
+    expect(getByText('Study')).toBeTruthy();
+    expect(getByText('Feed')).toBeTruthy();
+    expect(getByText('Workspace')).toBeTruthy();
   });
 
-  it('renders About section with app info', () => {
-    const { getByText } = render(<SettingsScreen />, {
-      wrapper: createWrapper(),
-    });
-
-    expect(getByText('About')).toBeTruthy();
-    expect(getByText('LIBERTASIAN')).toBeTruthy();
-    expect(getByText('1.0.0')).toBeTruthy();
-  });
-
-  it('shows sign out confirmation dialog', () => {
+  it('shows the sign-out confirmation dialog', () => {
     const alertSpy = jest.spyOn(Alert, 'alert');
 
-    const { getByText } = render(<SettingsScreen />, {
-      wrapper: createWrapper(),
-    });
+    const { getByText } = render(<SettingsRoute />, { wrapper: createWrapper() });
 
-    fireEvent.press(getByText('Sign Out'));
+    fireEvent.press(getByText('Sign out'));
 
     expect(alertSpy).toHaveBeenCalledWith(
-      'Sign Out',
+      'Sign out',
       'Are you sure you want to sign out?',
       expect.arrayContaining([
         expect.objectContaining({ text: 'Cancel' }),
-        expect.objectContaining({ text: 'Sign Out', style: 'destructive' }),
+        expect.objectContaining({ text: 'Sign out', style: 'destructive' }),
       ]),
     );
   });
@@ -184,19 +133,13 @@ describe('SettingsScreen', () => {
   it('calls signOut when confirmation is accepted', () => {
     const alertSpy = jest.spyOn(Alert, 'alert');
 
-    const { getByText } = render(<SettingsScreen />, {
-      wrapper: createWrapper(),
-    });
+    const { getByText } = render(<SettingsRoute />, { wrapper: createWrapper() });
 
-    fireEvent.press(getByText('Sign Out'));
+    fireEvent.press(getByText('Sign out'));
 
-    // Get the onPress handler from the destructive button
-    const buttons = alertSpy.mock.calls[0][2] as Array<{
-      text: string;
-      onPress?: () => void;
-    }>;
-    const signOutButton = buttons.find((b) => b.text === 'Sign Out');
-    signOutButton?.onPress?.();
+    const buttons = alertSpy.mock.calls[0][2] as Array<{ text: string; onPress?: () => void }>;
+    const confirmButton = buttons.find((b) => b.text === 'Sign out' && b !== buttons[0]);
+    confirmButton?.onPress?.();
 
     expect(mockSignOut).toHaveBeenCalled();
   });

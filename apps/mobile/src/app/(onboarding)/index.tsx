@@ -1,17 +1,15 @@
+import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useState } from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  ScrollView,
-  StyleSheet,
-  ActivityIndicator,
-  SafeAreaView,
-} from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 
+import { Button } from '../../components/ui/Button';
+import { Card } from '../../components/ui/Card';
+import { Chip } from '../../components/ui/Chip';
+import { Logo } from '../../components/ui/Logo';
 import { apiClient } from '../../lib/api-client';
 import { useAuth } from '../../providers/auth-provider';
+import { useTheme } from '../../providers/theme-provider';
 import { mmkvStorage, STORAGE_KEYS } from '../../storage/mmkv';
 import type { AuthUser } from '../../features/auth/types';
 
@@ -60,7 +58,8 @@ function getFeatures(role: string): Feature[] {
   ];
 }
 
-export default function OnboardingScreen() {
+export default function OnboardingRoute() {
+  const { theme } = useTheme();
   const { user, setUser } = useAuth();
   const [step, setStep] = useState(0);
   const [selectedRole, setSelectedRole] = useState('');
@@ -68,8 +67,8 @@ export default function OnboardingScreen() {
   const [selectedAreas, setSelectedAreas] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const progress = ((step + 1) / STEPS.length) * 100;
   const isStudentOrBarTaker = selectedRole === 'student' || selectedRole === 'bar_taker';
+  const firstName = user?.fullName?.split(' ')[0] ?? '';
 
   function toggleChip(value: string, list: string[], setter: (v: string[]) => void) {
     setter(list.includes(value) ? list.filter((v) => v !== value) : [...list, value]);
@@ -89,9 +88,7 @@ export default function OnboardingScreen() {
         skipped,
       });
       mmkvStorage.setBoolean(STORAGE_KEYS.ONBOARDING_COMPLETED, true);
-      if (updatedUser) {
-        setUser(updatedUser);
-      }
+      if (updatedUser) setUser(updatedUser);
       router.replace('/(tabs)');
     } finally {
       setIsSubmitting(false);
@@ -99,295 +96,394 @@ export default function OnboardingScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
-        {/* Progress */}
-        <View style={styles.progressContainer}>
-          <Text style={styles.stepText}>Step {step + 1} of {STEPS.length}</Text>
-          <View style={styles.progressBar}>
-            <View style={[styles.progressFill, { width: `${progress}%` }]} />
-          </View>
+    <View style={{ flex: 1, backgroundColor: theme.bg }}>
+      <ScrollView
+        contentContainerStyle={{ paddingTop: 64, paddingBottom: 24, paddingHorizontal: 22, flexGrow: 1 }}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Logo size={22} />
+          <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 12, color: theme.inkSoft }}>
+            Step {step + 1} of {STEPS.length}
+          </Text>
+        </View>
+        <View style={{ flexDirection: 'row', gap: 4, marginTop: 14 }}>
+          {STEPS.map((_, i) => (
+            <View
+              key={i}
+              style={{
+                flex: 1,
+                height: 4,
+                borderRadius: 2,
+                backgroundColor: i <= step ? theme.ink : theme.line,
+              }}
+            />
+          ))}
         </View>
 
-        <View style={styles.card}>
-          {/* Step 1: Welcome */}
-          {step === 0 && (
-            <View style={styles.centered}>
-              <View style={styles.iconCircle}>
-                <Text style={styles.iconText}>&#x2696;</Text>
-              </View>
-              <Text style={styles.heading}>
-                Welcome{user?.fullName ? `, ${user.fullName.split(' ')[0]}` : ''}!
-              </Text>
-              <Text style={styles.subheading}>
-                Let&apos;s set up your LIBERTASIAN experience in under a minute.
-              </Text>
-              <View style={styles.bulletList}>
+        <View style={{ height: 30 }} />
+
+        {step === 0 && (
+          <>
+            <Text
+              style={{
+                fontFamily: theme.serif,
+                fontSize: 36,
+                lineHeight: 37.8,
+                letterSpacing: -1.2,
+                color: theme.ink,
+              }}
+            >
+              {firstName ? `Welcome, ${firstName}.` : 'Welcome.'}
+            </Text>
+            <Text
+              style={{
+                marginTop: 10,
+                fontFamily: 'Inter_400Regular',
+                fontSize: 15,
+                lineHeight: 22.5,
+                color: theme.inkSoft,
+              }}
+            >
+              Let&apos;s set up your LIBERTASIAN experience in under a minute.
+            </Text>
+            <View style={{ height: 22 }} />
+            <Card>
+              <View style={{ gap: 14 }}>
                 {[
                   'AI-powered Philippine legal research',
                   'Auto-generated case digests with citations',
                   'Study mode with flashcards & bar reviewer',
                   'Scan documents to instant legal analysis',
                 ].map((item) => (
-                  <View key={item} style={styles.bulletRow}>
-                    <Text style={styles.bulletCheck}>&#x2713;</Text>
-                    <Text style={styles.bulletText}>{item}</Text>
+                  <View key={item} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+                    <View
+                      style={{
+                        width: 22,
+                        height: 22,
+                        borderRadius: 6,
+                        backgroundColor: theme.accent,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        marginTop: 1,
+                      }}
+                    >
+                      <Ionicons name="checkmark" size={14} color={theme.accentInk} />
+                    </View>
+                    <Text
+                      style={{
+                        flex: 1,
+                        fontFamily: 'Inter_400Regular',
+                        fontSize: 14,
+                        lineHeight: 20,
+                        color: theme.ink,
+                      }}
+                    >
+                      {item}
+                    </Text>
                   </View>
                 ))}
               </View>
-            </View>
-          )}
+            </Card>
+          </>
+        )}
 
-          {/* Step 2: Role */}
-          {step === 1 && (
-            <View>
-              <Text style={styles.heading}>What best describes you?</Text>
-              <Text style={styles.subheadingLeft}>
-                This helps us personalize your experience.
-              </Text>
+        {step === 1 && (
+          <>
+            <Text
+              style={{
+                fontFamily: 'Inter_600SemiBold',
+                fontSize: 12,
+                color: theme.accent,
+                letterSpacing: 0.6,
+                textTransform: 'uppercase',
+              }}
+            >
+              About you
+            </Text>
+            <Text
+              style={{
+                marginTop: 6,
+                fontFamily: theme.serif,
+                fontSize: 32,
+                lineHeight: 33.6,
+                letterSpacing: -1,
+                color: theme.ink,
+              }}
+            >
+              What best describes you?
+            </Text>
+            <Text
+              style={{
+                marginTop: 10,
+                fontFamily: 'Inter_400Regular',
+                fontSize: 14,
+                color: theme.inkSoft,
+              }}
+            >
+              We&apos;ll personalize your experience.
+            </Text>
+            <View style={{ height: 22 }} />
+            <View style={{ gap: 10 }}>
               {ROLES.map((role) => {
                 const isSelected = selectedRole === role.value;
                 return (
-                  <TouchableOpacity
+                  <Pressable
                     key={role.value}
-                    style={[styles.roleCard, isSelected && styles.roleCardSelected]}
                     onPress={() => setSelectedRole(role.value)}
-                    activeOpacity={0.7}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: isSelected }}
+                    style={{
+                      backgroundColor: isSelected ? theme.accentSoft : theme.surface,
+                      borderRadius: 14,
+                      padding: 14,
+                      borderWidth: 2,
+                      borderColor: isSelected ? theme.accent : theme.line,
+                    }}
                   >
-                    <Text style={[styles.roleLabel, isSelected && styles.roleLabelSelected]}>
+                    <Text
+                      style={{
+                        fontFamily: theme.serif,
+                        fontSize: 17,
+                        letterSpacing: -0.2,
+                        color: theme.ink,
+                      }}
+                    >
                       {role.label}
                     </Text>
-                    <Text style={styles.roleDesc}>{role.description}</Text>
-                  </TouchableOpacity>
+                    <Text
+                      style={{
+                        marginTop: 2,
+                        fontFamily: 'Inter_400Regular',
+                        fontSize: 13,
+                        color: theme.inkSoft,
+                      }}
+                    >
+                      {role.description}
+                    </Text>
+                  </Pressable>
                 );
               })}
             </View>
-          )}
+          </>
+        )}
 
-          {/* Step 3: Features */}
-          {step === 2 && (
-            <View>
-              <Text style={styles.heading}>Here&apos;s what you can do</Text>
-              <Text style={styles.subheadingLeft}>Key features tailored for your needs</Text>
+        {step === 2 && (
+          <>
+            <Text
+              style={{
+                fontFamily: 'Inter_600SemiBold',
+                fontSize: 12,
+                color: theme.accent,
+                letterSpacing: 0.6,
+                textTransform: 'uppercase',
+              }}
+            >
+              What you&apos;ll get
+            </Text>
+            <Text
+              style={{
+                marginTop: 6,
+                fontFamily: theme.serif,
+                fontSize: 32,
+                lineHeight: 33.6,
+                letterSpacing: -1,
+                color: theme.ink,
+              }}
+            >
+              Here&apos;s what you can do.
+            </Text>
+            <View style={{ height: 22 }} />
+            <View style={{ gap: 10 }}>
               {getFeatures(selectedRole).map((f) => (
-                <View key={f.title} style={styles.featureCard}>
-                  <Text style={styles.featureTitle}>{f.title}</Text>
-                  <Text style={styles.featureDesc}>{f.description}</Text>
-                </View>
+                <Card key={f.title}>
+                  <Text style={{ fontFamily: theme.serif, fontSize: 17, color: theme.ink, letterSpacing: -0.2 }}>
+                    {f.title}
+                  </Text>
+                  <Text
+                    style={{
+                      marginTop: 4,
+                      fontFamily: 'Inter_400Regular',
+                      fontSize: 13,
+                      lineHeight: 19,
+                      color: theme.inkSoft,
+                    }}
+                  >
+                    {f.description}
+                  </Text>
+                </Card>
               ))}
             </View>
-          )}
+          </>
+        )}
 
-          {/* Step 4: Preferences */}
-          {step === 3 && (
-            <View>
-              <Text style={styles.heading}>
-                {isStudentOrBarTaker ? 'Select your bar subjects' : 'Select your practice areas'}
-              </Text>
-              <Text style={styles.subheadingLeft}>
-                Pick the ones most relevant to you.
-              </Text>
-              <View style={styles.chipContainer}>
-                {(isStudentOrBarTaker ? BAR_SUBJECTS : PRACTICE_AREAS).map((item) => {
-                  const list = isStudentOrBarTaker ? selectedSubjects : selectedAreas;
-                  const setter = isStudentOrBarTaker ? setSelectedSubjects : setSelectedAreas;
-                  const isSelected = list.includes(item);
-                  return (
-                    <TouchableOpacity
-                      key={item}
-                      style={[styles.chip, isSelected && styles.chipSelected]}
-                      onPress={() => toggleChip(item, list, setter)}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={[styles.chipText, isSelected && styles.chipTextSelected]}>
-                        {item}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
+        {step === 3 && (
+          <>
+            <Text
+              style={{
+                fontFamily: 'Inter_600SemiBold',
+                fontSize: 12,
+                color: theme.accent,
+                letterSpacing: 0.6,
+                textTransform: 'uppercase',
+              }}
+            >
+              {isStudentOrBarTaker ? 'Bar subjects' : 'Practice areas'}
+            </Text>
+            <Text
+              style={{
+                marginTop: 6,
+                fontFamily: theme.serif,
+                fontSize: 32,
+                lineHeight: 33.6,
+                letterSpacing: -1,
+                color: theme.ink,
+              }}
+            >
+              {isStudentOrBarTaker ? 'Pick your bar subjects.' : 'Pick your practice areas.'}
+            </Text>
+            <Text
+              style={{
+                marginTop: 10,
+                fontFamily: 'Inter_400Regular',
+                fontSize: 14,
+                color: theme.inkSoft,
+              }}
+            >
+              Choose as many as you like.
+            </Text>
+            <View style={{ height: 22 }} />
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {(isStudentOrBarTaker ? BAR_SUBJECTS : PRACTICE_AREAS).map((item) => {
+                const list = isStudentOrBarTaker ? selectedSubjects : selectedAreas;
+                const setter = isStudentOrBarTaker ? setSelectedSubjects : setSelectedAreas;
+                const isSelected = list.includes(item);
+                return (
+                  <Chip
+                    key={item}
+                    label={item}
+                    selected={isSelected}
+                    onPress={() => toggleChip(item, list, setter)}
+                  />
+                );
+              })}
             </View>
-          )}
+          </>
+        )}
 
-          {/* Step 5: Ready */}
-          {step === 4 && (
-            <View style={styles.centered}>
-              <View style={[styles.iconCircle, { backgroundColor: '#dcfce7' }]}>
-                <Text style={[styles.iconText, { color: '#16a34a' }]}>&#x2713;</Text>
-              </View>
-              <Text style={styles.heading}>You&apos;re all set!</Text>
-              <Text style={styles.subheading}>
-                Your personalized legal research experience is ready.
+        {step === 4 && (
+          <>
+            <View
+              style={{
+                width: 64,
+                height: 64,
+                borderRadius: 32,
+                backgroundColor: theme.accent,
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginBottom: 18,
+              }}
+            >
+              <Ionicons name="checkmark" size={36} color={theme.accentInk} />
+            </View>
+            <Text
+              style={{
+                fontFamily: theme.serif,
+                fontSize: 36,
+                lineHeight: 37.8,
+                letterSpacing: -1.2,
+                color: theme.ink,
+              }}
+            >
+              You&apos;re all set.
+            </Text>
+            <Text
+              style={{
+                marginTop: 10,
+                fontFamily: 'Inter_400Regular',
+                fontSize: 15,
+                lineHeight: 22.5,
+                color: theme.inkSoft,
+              }}
+            >
+              Your personalized legal research experience is ready.
+            </Text>
+            <View style={{ height: 22 }} />
+            <Card tone="muted" bordered={false}>
+              <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 14, color: theme.ink }}>
+                Role: {ROLES.find((r) => r.value === selectedRole)?.label ?? 'Not set'}
               </Text>
-              <View style={styles.summaryBox}>
-                <Text style={styles.summaryLabel}>
-                  Role: {ROLES.find((r) => r.value === selectedRole)?.label ?? 'Not set'}
+              {isStudentOrBarTaker && selectedSubjects.length > 0 ? (
+                <Text style={{ marginTop: 6, fontFamily: 'Inter_400Regular', fontSize: 13, color: theme.inkSoft }}>
+                  Subjects: {selectedSubjects.join(', ')}
                 </Text>
-                {isStudentOrBarTaker && selectedSubjects.length > 0 && (
-                  <Text style={styles.summaryLabel}>
-                    Subjects: {selectedSubjects.join(', ')}
-                  </Text>
-                )}
-                {!isStudentOrBarTaker && selectedAreas.length > 0 && (
-                  <Text style={styles.summaryLabel}>
-                    Areas: {selectedAreas.join(', ')}
-                  </Text>
-                )}
-              </View>
-            </View>
-          )}
-        </View>
+              ) : null}
+              {!isStudentOrBarTaker && selectedAreas.length > 0 ? (
+                <Text style={{ marginTop: 6, fontFamily: 'Inter_400Regular', fontSize: 13, color: theme.inkSoft }}>
+                  Areas: {selectedAreas.join(', ')}
+                </Text>
+              ) : null}
+            </Card>
+          </>
+        )}
 
-        {/* Navigation */}
-        <View style={styles.navRow}>
-          <View>
-            {step > 0 && (
-              <TouchableOpacity onPress={() => setStep(step - 1)} style={styles.backButton}>
-                <Text style={styles.backButtonText}>Back</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-          <View style={styles.navRight}>
-            {step < STEPS.length - 1 && (
-              <TouchableOpacity
-                onPress={() => completeOnboarding(true)}
-                disabled={isSubmitting}
-                style={styles.skipButton}
-              >
-                <Text style={styles.skipButtonText}>Skip</Text>
-              </TouchableOpacity>
-            )}
+        <View style={{ flex: 1, minHeight: 24 }} />
+
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginTop: 24,
+            gap: 12,
+          }}
+        >
+          {step > 0 ? (
+            <Pressable
+              onPress={() => setStep(step - 1)}
+              style={{ paddingVertical: 12, paddingHorizontal: 16 }}
+              accessibilityRole="button"
+              accessibilityLabel="Back"
+            >
+              <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 15, color: theme.inkSoft }}>
+                Back
+              </Text>
+            </Pressable>
+          ) : (
+            <View />
+          )}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1, justifyContent: 'flex-end' }}>
             {step < STEPS.length - 1 ? (
-              <TouchableOpacity
-                style={[styles.primaryButton, step === 1 && !selectedRole && styles.buttonDisabled]}
-                onPress={() => setStep(step + 1)}
-                disabled={step === 1 && !selectedRole}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.primaryButtonText}>Continue</Text>
-              </TouchableOpacity>
+              <>
+                <Pressable
+                  onPress={() => completeOnboarding(true)}
+                  disabled={isSubmitting}
+                  style={{ paddingVertical: 12, paddingHorizontal: 12 }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Skip"
+                >
+                  <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 14, color: theme.inkFaint }}>
+                    Skip
+                  </Text>
+                </Pressable>
+                <Button
+                  label="Continue"
+                  variant="primary"
+                  disabled={step === 1 && !selectedRole}
+                  onPress={() => setStep(step + 1)}
+                />
+              </>
             ) : (
-              <TouchableOpacity
-                style={[styles.primaryButton, isSubmitting && styles.buttonDisabled]}
-                onPress={() => completeOnboarding(false)}
+              <Button
+                label={isSubmitting ? 'Setting up…' : 'Start exploring'}
+                variant="primary"
                 disabled={isSubmitting}
-                activeOpacity={0.8}
-              >
-                {isSubmitting ? (
-                  <ActivityIndicator color="#fff" size="small" />
-                ) : (
-                  <Text style={styles.primaryButtonText}>Start Exploring</Text>
-                )}
-              </TouchableOpacity>
+                onPress={() => completeOnboarding(false)}
+              />
             )}
           </View>
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
-
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#f0f5ff' },
-  scrollContent: { flexGrow: 1, padding: 20, paddingTop: 40 },
-  progressContainer: { marginBottom: 20 },
-  stepText: { fontSize: 13, color: '#6b7280', marginBottom: 8 },
-  progressBar: {
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#e5e7eb',
-    overflow: 'hidden',
-  },
-  progressFill: { height: '100%', backgroundColor: '#1a56db', borderRadius: 3 },
-  card: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 24,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  centered: { alignItems: 'center' },
-  iconCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: '#dbeafe',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 16,
-  },
-  iconText: { fontSize: 28, color: '#1a56db' },
-  heading: { fontSize: 22, fontWeight: 'bold', color: '#111827', marginBottom: 8, textAlign: 'center' },
-  subheading: { fontSize: 14, color: '#6b7280', textAlign: 'center', marginBottom: 20, lineHeight: 20 },
-  subheadingLeft: { fontSize: 14, color: '#6b7280', marginBottom: 16, lineHeight: 20 },
-  bulletList: { width: '100%', gap: 10, marginTop: 8 },
-  bulletRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
-  bulletCheck: { fontSize: 16, color: '#16a34a', fontWeight: 'bold', marginTop: 1 },
-  bulletText: { fontSize: 14, color: '#374151', flex: 1 },
-  roleCard: {
-    borderWidth: 2,
-    borderColor: '#e5e7eb',
-    borderRadius: 10,
-    padding: 14,
-    marginBottom: 10,
-  },
-  roleCardSelected: { borderColor: '#1a56db', backgroundColor: '#eff6ff' },
-  roleLabel: { fontSize: 15, fontWeight: '600', color: '#111827', marginBottom: 2 },
-  roleLabelSelected: { color: '#1a56db' },
-  roleDesc: { fontSize: 13, color: '#6b7280' },
-  featureCard: {
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 10,
-    padding: 14,
-    marginBottom: 10,
-  },
-  featureTitle: { fontSize: 15, fontWeight: '600', color: '#111827', marginBottom: 4 },
-  featureDesc: { fontSize: 13, color: '#6b7280', lineHeight: 18 },
-  chipContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: {
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    backgroundColor: '#fff',
-  },
-  chipSelected: { backgroundColor: '#1a56db', borderColor: '#1a56db' },
-  chipText: { fontSize: 13, color: '#374151' },
-  chipTextSelected: { color: '#fff', fontWeight: '600' },
-  summaryBox: {
-    backgroundColor: '#f9fafb',
-    borderRadius: 10,
-    padding: 16,
-    width: '100%',
-    marginTop: 8,
-    gap: 6,
-  },
-  summaryLabel: { fontSize: 14, color: '#374151' },
-  navRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 20,
-    paddingBottom: 20,
-  },
-  navRight: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  backButton: { paddingVertical: 10, paddingHorizontal: 16 },
-  backButtonText: { fontSize: 15, color: '#6b7280', fontWeight: '500' },
-  skipButton: { paddingVertical: 10, paddingHorizontal: 12 },
-  skipButtonText: { fontSize: 14, color: '#9ca3af' },
-  primaryButton: {
-    backgroundColor: '#1a56db',
-    borderRadius: 10,
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    alignItems: 'center',
-    minWidth: 120,
-  },
-  primaryButtonText: { color: '#fff', fontSize: 15, fontWeight: '600' },
-  buttonDisabled: { opacity: 0.5 },
-});

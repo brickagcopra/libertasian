@@ -48,6 +48,23 @@ jest.mock('react-native/Libraries/Alert/Alert', () => ({
   alert: jest.fn(),
 }));
 
+// Mock @expo/vector-icons — its transitive expo-font/expo-asset imports
+// reach into native PlatformUtils (Expo global) which is undefined under jsdom.
+jest.mock('@expo/vector-icons', () => {
+  const React = require('react');
+  const { Text } = require('react-native');
+  const makeIconFamily = (family: string) =>
+    function IconFamilyMock(props: { name?: string; testID?: string }) {
+      return React.createElement(Text, { testID: props.testID ?? `icon-${family}-${props.name ?? ''}` }, props.name ?? '');
+    };
+  return new Proxy(
+    {},
+    {
+      get: (_t, prop: string) => makeIconFamily(prop),
+    },
+  );
+});
+
 // Suppress noisy warnings in test output
 const originalWarn = console.warn;
 console.warn = (...args: unknown[]) => {
