@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import type { ReactNode } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { Photo } from '@/components/ui/Photo';
 import { StickyCTA } from '@/components/ui/StickyCTA';
@@ -17,6 +18,25 @@ export interface DigestAuthor {
   meta?: string;
 }
 
+/** Tone-aware badge rendered below the author row (trust/status/visibility/source/confidence). */
+export interface DigestBadge {
+  label: string;
+  /** Visual treatment.
+   *  - `accent` — accent color (TL;DR style)
+   *  - `info` — neutral surface
+   *  - `warn` — amber tone for AI-generated / needs-review
+   *  - `success` — green for verified/approved
+   *  - `private` — muted neutral for private visibility
+   */
+  tone?: 'accent' | 'info' | 'warn' | 'success' | 'private';
+}
+
+export interface DigestTopAction {
+  icon: keyof typeof Ionicons.glyphMap;
+  accessibilityLabel: string;
+  onPress?: () => void;
+}
+
 export interface DigestDetailScreenProps {
   /** Hero photo tone. Defaults 'warm'. */
   heroTone?: PhotoTone;
@@ -32,6 +52,23 @@ export interface DigestDetailScreenProps {
   tldr?: string;
   /** Structured digest sections (Facts, Issues, Ruling, Doctrine, etc). */
   sections?: DigestSection[];
+  /**
+   * Trust/status/visibility/source/confidence chips rendered below the author.
+   * When provided alongside disclaimerSlot, both render (badges first).
+   */
+  badges?: DigestBadge[];
+  /** Provenance/trust banner (e.g. ContentDisclaimer) rendered above the TL;DR. */
+  disclaimerSlot?: ReactNode;
+  /** Additional top-right action buttons rendered alongside bookmark/share/more. */
+  extraTopActions?: DigestTopAction[];
+  /**
+   * Replaces the default `sections` rendering when provided. Used for IRAC / MCQ
+   * / Essay / Outline digest types where the default Facts/Issues/Ruling shape
+   * doesn't fit. When set, `sections` is ignored.
+   */
+  customSections?: ReactNode;
+  /** Slot rendered after the body (e.g. timestamps). */
+  footerSlot?: ReactNode;
   /** Reading progress 0..1. */
   progress?: number;
   /** Time-left text on the sticky bottom bar. */
@@ -40,8 +77,26 @@ export interface DigestDetailScreenProps {
   onMore?: () => void;
   onBookmark?: () => void;
   onShare?: () => void;
-  /** Sticky CTA tap (e.g. start audio playback). */
+  /** Sticky CTA tap (e.g. start audio playback or open source doc). */
   onCTAPress?: () => void;
+}
+
+const TOP_ACTION_BG = 'rgba(255,255,255,0.92)';
+
+function badgeColors(theme: ReturnType<typeof useTheme>['theme'], tone: DigestBadge['tone']) {
+  switch (tone) {
+    case 'accent':
+      return { bg: theme.accent, fg: theme.accentInk };
+    case 'warn':
+      return { bg: '#FDE68A', fg: '#92400E' };
+    case 'success':
+      return { bg: '#DCFCE7', fg: '#166534' };
+    case 'private':
+      return { bg: theme.surfaceMuted, fg: theme.inkSoft };
+    case 'info':
+    default:
+      return { bg: theme.surfaceMuted, fg: theme.ink };
+  }
 }
 
 export function DigestDetailScreen({
@@ -52,6 +107,11 @@ export function DigestDetailScreen({
   intro,
   tldr,
   sections = [],
+  badges = [],
+  disclaimerSlot,
+  extraTopActions = [],
+  customSections,
+  footerSlot,
   progress = 0.38,
   timeLeft = '4 min left',
   onBack,
@@ -96,7 +156,7 @@ export function DigestDetailScreen({
             width: 38,
             height: 38,
             borderRadius: 19,
-            backgroundColor: 'rgba(255,255,255,0.92)',
+            backgroundColor: TOP_ACTION_BG,
             alignItems: 'center',
             justifyContent: 'center',
           }}
@@ -104,6 +164,23 @@ export function DigestDetailScreen({
           <Ionicons name="chevron-back" size={16} color={theme.ink} />
         </Pressable>
         <View style={{ flexDirection: 'row', gap: 8 }}>
+          {extraTopActions.map((a) => (
+            <Pressable
+              key={a.accessibilityLabel}
+              onPress={a.onPress}
+              accessibilityLabel={a.accessibilityLabel}
+              style={{
+                width: 38,
+                height: 38,
+                borderRadius: 19,
+                backgroundColor: TOP_ACTION_BG,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Ionicons name={a.icon} size={16} color={theme.ink} />
+            </Pressable>
+          ))}
           <Pressable
             onPress={onBookmark}
             accessibilityLabel="Bookmark"
@@ -111,7 +188,7 @@ export function DigestDetailScreen({
               width: 38,
               height: 38,
               borderRadius: 19,
-              backgroundColor: 'rgba(255,255,255,0.92)',
+              backgroundColor: TOP_ACTION_BG,
               alignItems: 'center',
               justifyContent: 'center',
             }}
@@ -125,7 +202,7 @@ export function DigestDetailScreen({
               width: 38,
               height: 38,
               borderRadius: 19,
-              backgroundColor: 'rgba(255,255,255,0.92)',
+              backgroundColor: TOP_ACTION_BG,
               alignItems: 'center',
               justifyContent: 'center',
             }}
@@ -139,7 +216,7 @@ export function DigestDetailScreen({
               width: 38,
               height: 38,
               borderRadius: 19,
-              backgroundColor: 'rgba(255,255,255,0.92)',
+              backgroundColor: TOP_ACTION_BG,
               alignItems: 'center',
               justifyContent: 'center',
             }}
@@ -199,7 +276,7 @@ export function DigestDetailScreen({
               flexDirection: 'row',
               alignItems: 'center',
               gap: 10,
-              marginBottom: 18,
+              marginBottom: 12,
             }}
           >
             <View style={{ width: 28, height: 28, borderRadius: 14, overflow: 'hidden' }}>
@@ -222,6 +299,39 @@ export function DigestDetailScreen({
             </View>
           </View>
         ) : null}
+
+        {badges.length > 0 ? (
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
+            {badges.map((b) => {
+              const c = badgeColors(theme, b.tone);
+              return (
+                <View
+                  key={b.label}
+                  style={{
+                    backgroundColor: c.bg,
+                    paddingHorizontal: 8,
+                    paddingVertical: 3,
+                    borderRadius: 6,
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: c.fg,
+                      fontFamily: 'Inter_600SemiBold',
+                      fontSize: 10.5,
+                      letterSpacing: 0.4,
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    {b.label}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+        ) : null}
+
+        {disclaimerSlot ? <View style={{ marginBottom: 14 }}>{disclaimerSlot}</View> : null}
 
         {/* TL;DR card (digest-specific) */}
         {tldr ? (
@@ -296,36 +406,42 @@ export function DigestDetailScreen({
           </View>
         ) : null}
 
-        {/* Structured sections — Facts / Issues / Ruling / Doctrine */}
-        {sections.map((section) => (
-          <View key={section.id} style={{ marginTop: 22 }}>
-            <Text
-              style={{
-                marginBottom: 8,
-                fontFamily: theme.serif,
-                fontSize: 22,
-                letterSpacing: -0.4,
-                color: theme.ink,
-              }}
-            >
-              {section.heading}
-            </Text>
-            {section.paragraphs.map((para, i) => (
+        {/* Body — either custom (IRAC / MCQ / Essay / Outline) or default sections */}
+        {customSections ? (
+          customSections
+        ) : (
+          sections.map((section) => (
+            <View key={section.id} style={{ marginTop: 22 }}>
               <Text
-                key={i}
                 style={{
+                  marginBottom: 8,
                   fontFamily: theme.serif,
-                  fontSize: 17,
-                  lineHeight: 26.35,
+                  fontSize: 22,
+                  letterSpacing: -0.4,
                   color: theme.ink,
-                  marginTop: i === 0 ? 0 : 14,
                 }}
               >
-                {para}
+                {section.heading}
               </Text>
-            ))}
-          </View>
-        ))}
+              {section.paragraphs.map((para, i) => (
+                <Text
+                  key={i}
+                  style={{
+                    fontFamily: theme.serif,
+                    fontSize: 17,
+                    lineHeight: 26.35,
+                    color: theme.ink,
+                    marginTop: i === 0 ? 0 : 14,
+                  }}
+                >
+                  {para}
+                </Text>
+              ))}
+            </View>
+          ))
+        )}
+
+        {footerSlot ? <View style={{ marginTop: 28 }}>{footerSlot}</View> : null}
       </ScrollView>
 
       <StickyCTA progress={progress} meta={timeLeft} onPress={onCTAPress} />

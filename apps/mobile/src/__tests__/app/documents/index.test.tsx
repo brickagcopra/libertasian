@@ -14,6 +14,10 @@ jest.mock('@/hooks/use-network-state', () => ({
   useNetworkState: () => ({ isConnected: true, isInternetReachable: true, type: 'wifi' }),
 }));
 
+jest.mock('@/features/study/hooks/use-bar-subjects', () => ({
+  useBarSubjects: () => ({ data: [] }),
+}));
+
 import { router } from 'expo-router';
 import DocumentsRoute from '@/app/documents/index';
 
@@ -27,6 +31,7 @@ function noopPage<T>(data: T[]) {
     isLoading: false,
     isFetching: false,
     isFetchingNextPage: false,
+    isRefetching: false,
     hasNextPage: false,
     fetchNextPage: jest.fn(),
     refetch: jest.fn(),
@@ -46,12 +51,10 @@ describe('DocumentsRoute (Phase 2 LibraryScreen)', () => {
     expect(getByText('Statutes')).toBeTruthy();
   });
 
-  it('renders the redesigned search field copy', () => {
+  it('renders the redesigned search field as a controlled TextInput', () => {
     mockUseDocuments.mockReturnValue(noopPage([]));
-    const { getByText } = render(<DocumentsRoute />);
-    // The search bar is a Pressable that displays the placeholder as Text,
-    // not a TextInput — assert by text content.
-    expect(getByText('Search 12,000+ cases & statutes')).toBeTruthy();
+    const { getByPlaceholderText } = render(<DocumentsRoute />);
+    expect(getByPlaceholderText('Search 12,000+ cases & statutes')).toBeTruthy();
   });
 
   it('groups documents into sections by document type', () => {

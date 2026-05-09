@@ -1,10 +1,21 @@
 import { useMemo } from 'react';
 import { ActivityIndicator, Alert, Share, Text, View } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
-import { DigestDetailScreen } from '@/components/screens/DigestDetailScreen';
+import {
+  DigestDetailScreen,
+  type DigestBadge,
+  type DigestSection,
+} from '@/components/screens/DigestDetailScreen';
+import {
+  IracDigestRenderer,
+  McqDigestRenderer,
+  EssayDigestRenderer,
+  OutlineDigestRenderer,
+} from '@/components/screens/digest-renderers';
 import { useDigest } from '@/features/digests/hooks/use-digests';
+import { ContentDisclaimer } from '@/features/documents/components/content-disclaimer';
+import { ExportButton } from '@/features/exports/components/export-button';
 import { useTheme } from '@/providers/theme-provider';
-import type { DigestSection } from '@/components/screens/DigestDetailScreen';
 import type { Digest } from '@/features/digests/types';
 
 const DIGEST_TYPE_LABELS: Record<string, string> = {
@@ -13,6 +24,22 @@ const DIGEST_TYPE_LABELS: Record<string, string> = {
   mcq: 'MCQ',
   essay: 'Essay',
   outline: 'Outline',
+};
+
+const REVIEW_STATUS_LABELS: Record<string, string> = {
+  draft: 'Draft',
+  ai_generated: 'AI generated',
+  needs_human_review: 'Needs review',
+  approved: 'Approved',
+  rejected: 'Rejected',
+};
+
+const SOURCE_LABELS: Record<string, string> = {
+  official_source: 'Official source',
+  user_scan: 'User scan',
+  user_upload: 'User upload',
+  user_text: 'User text',
+  community: 'Community',
 };
 
 function eyebrowFor(digest: Digest): string {
@@ -27,7 +54,7 @@ function paragraphsFromBlock(block: string | null): string[] {
     .filter((p) => p.length > 0);
 }
 
-function buildSections(digest: Digest): DigestSection[] {
+function buildCaseDigestSections(digest: Digest): DigestSection[] {
   const candidates: Array<[string, string, string | null]> = [
     ['facts', 'Facts', digest.facts],
     ['petitioner', "Petitioner's arguments", digest.petitionerArguments],
@@ -37,10 +64,75 @@ function buildSections(digest: Digest): DigestSection[] {
     ['doctrine', 'Doctrine', digest.doctrine],
     ['dispositive', 'Dispositive', digest.dispositive],
   ];
-
   return candidates
     .map(([id, heading, body]) => ({ id, heading, paragraphs: paragraphsFromBlock(body) }))
     .filter((s) => s.paragraphs.length > 0);
+}
+
+function buildBadges(digest: Digest): DigestBadge[] {
+  const badges: DigestBadge[] = [];
+
+  // Review status — trust calibration
+  if (digest.reviewStatus) {
+    const label = REVIEW_STATUS_LABELS[digest.reviewStatus] ?? digest.reviewStatus.replace(/_/g, ' ');
+    const tone: DigestBadge['tone'] =
+      digest.reviewStatus === 'approved'
+        ? 'success'
+        : digest.reviewStatus === 'needs_human_review' || digest.reviewStatus === 'ai_generated'
+          ? 'warn'
+          : 'info';
+    badges.push({ label, tone });
+  }
+
+  // Visibility — multi-tenancy / scope signal
+  if (digest.visibility) {
+    const tone: DigestBadge['tone'] = digest.visibility === 'private' ? 'private' : 'info';
+    badges.push({
+      label: digest.visibility.replace(/_/g, ' '),
+      tone,
+    });
+  }
+
+  // Source origin
+  if (digest.sourceOrigin) {
+    const label = SOURCE_LABELS[digest.sourceOrigin] ?? digest.sourceOrigin.replace(/_/g, ' ');
+    const tone: DigestBadge['tone'] =
+      digest.sourceOrigin === 'official_source' ? 'success' : 'info';
+    badges.push({ label, tone });
+  }
+
+  // Confidence — required by CLAUDE.md domain rules for AI output trust calibration
+  if (typeof digest.confidenceScore === 'number') {
+    const pct = Math.round(digest.confidenceScore * 100);
+    const tone: DigestBadge['tone'] =
+      digest.confidenceScore >= 0.85 ? 'success' : digest.confidenceScore >= 0.7 ? 'info' : 'warn';
+    badges.push({ label: `Confidence ${pct}%`, tone });
+  }
+
+  return badges;
+}
+
+function disclaimerClassFor(digest: Digest): string | null {
+  // Map digest signals to ContentDisclaimer classes per CLAUDE.md provenance rules.
+  if (digest.sourceOrigin === 'official_source' && digest.reviewStatus === 'approved') {
+    return 'official_text';
+  }
+  if (digest.visibility === 'private') return 'user_private';
+  if (
+    digest.reviewStatus === 'ai_generated'
+    || digest.reviewStatus === 'needs_human_review'
+    || digest.reviewStatus === 'draft'
+  ) {
+    return 'ai_generated';
+  }
+  if (digest.sourceOrigin === 'community') return 'community';
+  return null;
+}
+
+function formatTimestamp(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 export default function DigestDetailRoute() {
@@ -50,7 +142,11 @@ export default function DigestDetailRoute() {
 
   const { data: digest, isLoading, error } = useDigest(digestId);
 
-  const sections = useMemo(() => (digest ? buildSections(digest) : []), [digest]);
+  const sections = useMemo(
+    () => (digest ? buildCaseDigestSections(digest) : []),
+    [digest],
+  );
+  const badges = useMemo(() => (digest ? buildBadges(digest) : []), [digest]);
 
   if (isLoading) {
     return (
@@ -94,12 +190,71 @@ export default function DigestDetailRoute() {
     }
   };
 
+  // Type-specific renderers replace the default Facts/Issues/Ruling body.
+  let customSections: React.ReactNode = null;
+  if (digest.digestType === 'irac') {
+    customSections = (
+      <IracDigestRenderer
+        issue={digest.iracIssue}
+        rule={digest.iracRule}
+        application={digest.iracApplication}
+        conclusion={digest.iracConclusion}
+      />
+    );
+  } else if (digest.digestType === 'mcq' && digest.mcqStem) {
+    customSections = (
+      <McqDigestRenderer
+        stem={digest.mcqStem}
+        choices={[digest.mcqChoiceA, digest.mcqChoiceB, digest.mcqChoiceC, digest.mcqChoiceD]}
+        correctChoice={digest.mcqCorrectChoice}
+        explanation={digest.mcqExplanation}
+      />
+    );
+  } else if (digest.digestType === 'essay' && digest.essayPrompt) {
+    customSections = (
+      <EssayDigestRenderer prompt={digest.essayPrompt} modelAnswer={digest.essayModelAnswer} />
+    );
+  } else if (digest.digestType === 'outline' && digest.subjectOutlineJson) {
+    customSections = <OutlineDigestRenderer outline={digest.subjectOutlineJson} />;
+  }
+
+  const disclaimerClass = disclaimerClassFor(digest);
+  const disclaimerSlot = disclaimerClass ? <ContentDisclaimer contentClass={disclaimerClass} /> : null;
+
+  // Footer: timestamps + ExportButton. ExportButton owns its own sheet trigger,
+  // so we render it directly rather than fronting it with a top-action stub.
+  const footerSlot = (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+      <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 12, color: theme.inkSoft }}>
+        Created {formatTimestamp(digest.createdAt)}
+      </Text>
+      {digest.updatedAt && digest.updatedAt !== digest.createdAt ? (
+        <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 12, color: theme.inkSoft }}>
+          · Updated {formatTimestamp(digest.updatedAt)}
+        </Text>
+      ) : null}
+      <View style={{ marginLeft: 'auto' }}>
+        <ExportButton
+          contentType="digest"
+          contentId={digest.id}
+          title={digest.title}
+          color={theme.ink}
+          size={20}
+        />
+      </View>
+    </View>
+  );
+
   return (
     <DigestDetailScreen
       eyebrow={eyebrowFor(digest)}
       headline={digest.title}
       tldr={digest.summary ?? undefined}
       sections={sections}
+      badges={badges}
+      disclaimerSlot={disclaimerSlot}
+      customSections={customSections}
+      footerSlot={footerSlot}
       onBack={() => router.back()}
       onShare={handleShare}
       onCTAPress={handleSourcePress}

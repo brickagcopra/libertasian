@@ -21,11 +21,33 @@ jest.mock('@/features/bookmarks/hooks/use-bookmarks', () => ({
 }));
 
 jest.mock('@/features/digests/hooks/use-digests', () => ({
+  useDigests: () => ({ data: { data: [] } }),
   useGenerateDigest: () => ({ mutateAsync: jest.fn(), isPending: false }),
 }));
 
 jest.mock('@/features/documents/hooks/use-recently-viewed', () => ({
   useRecentlyViewed: () => ({ addEntry: jest.fn() }),
+}));
+
+jest.mock('@/features/documents/hooks/use-documents', () => ({
+  useDocumentCitations: () => ({ data: [], isLoading: false }),
+  useRelatedDocuments: () => ({ data: [], isLoading: false }),
+}));
+
+jest.mock('@/features/study/hooks/use-offline-codals', () => ({
+  useOfflineCodals: () => ({
+    isOffline: jest.fn(() => false),
+    saveForOffline: jest.fn(),
+    removeOffline: jest.fn(),
+    saving: null,
+  }),
+}));
+
+jest.mock('@/features/documents/components/content-disclaimer', () => ({
+  ContentDisclaimer: ({ contentClass }: { contentClass: string }) => {
+    const { Text } = require('react-native');
+    return <Text>disclaimer:{contentClass}</Text>;
+  },
 }));
 
 import ReaderRoute from '@/app/reader/[id]';

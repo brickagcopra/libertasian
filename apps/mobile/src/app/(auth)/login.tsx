@@ -16,11 +16,34 @@ export default function LoginRoute() {
   const [mfaCode, setMfaCode] = useState('');
   const [mfaError, setMfaError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [emailError, setEmailError] = useState<string | undefined>(undefined);
+  const [passwordError, setPasswordError] = useState<string | undefined>(undefined);
 
   const { signIn } = useAuth();
   const loginMutation = useLogin();
 
+  function validate(email: string, password: string): boolean {
+    let ok = true;
+    if (!email.trim()) {
+      setEmailError('Email is required');
+      ok = false;
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setEmailError('Enter a valid email address');
+      ok = false;
+    } else {
+      setEmailError(undefined);
+    }
+    if (!password) {
+      setPasswordError('Password is required');
+      ok = false;
+    } else {
+      setPasswordError(undefined);
+    }
+    return ok;
+  }
+
   async function attemptLogin(email: string, password: string, mfa?: string) {
+    if (!mfa && !validate(email, password)) return;
     setError(null);
     setMfaError(null);
     try {
@@ -64,6 +87,8 @@ export default function LoginRoute() {
       <LoginScreenView
         loading={loginMutation.isPending}
         error={error}
+        emailError={emailError}
+        passwordError={passwordError}
         onBack={() => router.back()}
         onSubmit={(email, password) => attemptLogin(email, password)}
         onForgot={() => router.push('/(auth)/forgot-password')}

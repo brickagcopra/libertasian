@@ -1,7 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import type { ReactNode } from 'react';
 import { useState } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { Chip } from '@/components/ui/Chip';
 import { TabBar, type TabBarItemId } from '@/components/ui/TabBar';
 import { photoTones, type PhotoTone } from '@/lib/design-tokens';
@@ -26,6 +27,7 @@ export interface SmartAnswer {
 export interface SearchScreenProps {
   query?: string;
   onChangeQuery?: (q: string) => void;
+  onSubmitQuery?: () => void;
   onClearQuery?: () => void;
   onCancel?: () => void;
   filters?: string[];
@@ -34,6 +36,20 @@ export interface SearchScreenProps {
   smartAnswer?: SmartAnswer | null;
   results?: SearchResult[];
   onPressResult?: (id: string) => void;
+  /** Per-result trailing action (e.g. "Generate digest"). Rendered to the right of each result. */
+  renderResultAction?: (id: string) => ReactNode;
+  /** Optional results-list heading override (defaults to "Top results"). */
+  resultsHeading?: string;
+  /** Slot rendered between filter chips and the results list (used for the SearchTabBar). */
+  belowFiltersSlot?: ReactNode;
+  /** When provided, replaces the default results list (used by AI Summary / Digests sub-tabs). */
+  customResults?: ReactNode;
+  /** Rendered when the query is empty — recent searches list. */
+  historySlot?: ReactNode;
+  /** Rendered when the query is empty — recently viewed grid. */
+  recentlyViewedSlot?: ReactNode;
+  /** Hide the "Cancel" button on the right of the search bar (used inside (tabs)/search). */
+  hideCancel?: boolean;
   activeTab?: TabBarItemId;
   onTabPress?: (id: TabBarItemId) => void;
 }
@@ -50,6 +66,7 @@ const DEFAULT_RESULTS: SearchResult[] = [
 export function SearchScreen({
   query = '',
   onChangeQuery,
+  onSubmitQuery,
   onClearQuery,
   onCancel,
   filters = DEFAULT_FILTERS,
@@ -58,6 +75,13 @@ export function SearchScreen({
   smartAnswer,
   results = DEFAULT_RESULTS,
   onPressResult,
+  renderResultAction,
+  resultsHeading = 'Top results',
+  belowFiltersSlot,
+  customResults,
+  historySlot,
+  recentlyViewedSlot,
+  hideCancel = false,
   activeTab = 'search',
   onTabPress,
 }: SearchScreenProps) {
@@ -98,34 +122,42 @@ export function SearchScreen({
             }}
           >
             <Ionicons name="search" size={16} color={theme.ink} />
-            <Text
+            <TextInput
+              value={effectiveQuery}
+              onChangeText={setQuery}
+              onSubmitEditing={onSubmitQuery}
+              placeholder="Search cases, articles, statutes…"
+              placeholderTextColor={theme.inkFaint}
+              returnKeyType="search"
+              autoCorrect={false}
+              autoCapitalize="none"
               style={{
                 flex: 1,
                 fontFamily: 'Inter_400Regular',
                 fontSize: 14,
-                color: effectiveQuery ? theme.ink : theme.inkFaint,
+                color: theme.ink,
+                paddingVertical: 0,
               }}
-              onPress={() => setQuery(effectiveQuery)}
-            >
-              {effectiveQuery || 'Search cases, articles, statutes…'}
-            </Text>
+            />
             {effectiveQuery ? (
-              <Pressable onPress={clearQuery} accessibilityLabel="Clear search">
+              <Pressable onPress={clearQuery} accessibilityLabel="Clear search" hitSlop={8}>
                 <Ionicons name="close" size={14} color={theme.inkFaint} />
               </Pressable>
             ) : null}
           </View>
-          <Pressable onPress={onCancel}>
-            <Text
-              style={{
-                fontFamily: 'Inter_600SemiBold',
-                fontSize: 14,
-                color: theme.ink,
-              }}
-            >
-              Cancel
-            </Text>
-          </Pressable>
+          {hideCancel ? null : (
+            <Pressable onPress={onCancel}>
+              <Text
+                style={{
+                  fontFamily: 'Inter_600SemiBold',
+                  fontSize: 14,
+                  color: theme.ink,
+                }}
+              >
+                Cancel
+              </Text>
+            </Pressable>
+          )}
         </View>
 
         <View style={{ height: 14 }} />
@@ -243,84 +275,110 @@ export function SearchScreen({
           </View>
         ) : null}
 
+        {belowFiltersSlot ? (
+          <>
+            <View style={{ height: 14 }} />
+            {belowFiltersSlot}
+          </>
+        ) : null}
+
         <View style={{ height: 22 }} />
 
-        <Text
-          style={{
-            fontFamily: theme.serif,
-            fontSize: 18,
-            letterSpacing: -0.3,
-            color: theme.ink,
-            marginBottom: 12,
-          }}
-        >
-          Top results
-        </Text>
-        <View style={{ gap: 10 }}>
-          {results.map((r) => {
-            const tone = r.tone ?? 'warm';
-            const palette = photoTones[tone];
-            return (
-              <Pressable
-                key={r.id}
-                onPress={() => onPressResult?.(r.id)}
-                style={{
-                  backgroundColor: theme.surface,
-                  borderRadius: 14,
-                  padding: 12,
-                  borderWidth: 1,
-                  borderColor: theme.line,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 12,
-                }}
-              >
-                <View style={{ width: 40, height: 50, borderRadius: 6, overflow: 'hidden' }}>
-                  <LinearGradient
-                    colors={[palette[0], palette[1]]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={{ width: '100%', height: '100%' }}
-                  />
-                </View>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text
+        {/*
+         * Results region. Order of precedence:
+         *   1. customResults (e.g. AI Summary tab, Digests tab)
+         *   2. empty-query slots (history + recently viewed)
+         *   3. default results list
+         */}
+        {customResults ? (
+          customResults
+        ) : !effectiveQuery && (historySlot || recentlyViewedSlot) ? (
+          <>
+            {historySlot}
+            {historySlot && recentlyViewedSlot ? <View style={{ height: 16 }} /> : null}
+            {recentlyViewedSlot}
+          </>
+        ) : (
+          <>
+            <Text
+              style={{
+                fontFamily: theme.serif,
+                fontSize: 18,
+                letterSpacing: -0.3,
+                color: theme.ink,
+                marginBottom: 12,
+              }}
+            >
+              {resultsHeading}
+            </Text>
+            <View style={{ gap: 10 }}>
+              {results.map((r) => {
+                const tone = r.tone ?? 'warm';
+                const palette = photoTones[tone];
+                return (
+                  <Pressable
+                    key={r.id}
+                    onPress={() => onPressResult?.(r.id)}
                     style={{
-                      fontFamily: 'Inter_700Bold',
-                      fontSize: 10,
-                      letterSpacing: 0.6,
-                      color: theme.accent,
+                      backgroundColor: theme.surface,
+                      borderRadius: 14,
+                      padding: 12,
+                      borderWidth: 1,
+                      borderColor: theme.line,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 12,
                     }}
                   >
-                    {r.kind}
-                  </Text>
-                  <Text
-                    numberOfLines={1}
-                    style={{
-                      fontFamily: theme.serif,
-                      fontSize: 15,
-                      letterSpacing: -0.2,
-                      color: theme.ink,
-                      marginTop: 2,
-                    }}
-                  >
-                    {r.title}
-                  </Text>
-                  <Text
-                    style={{
-                      fontFamily: 'Inter_400Regular',
-                      fontSize: 12,
-                      color: theme.inkSoft,
-                      marginTop: 2,
-                    }}
-                  >
-                    {r.subtitle}
-                  </Text>
-                </View>
-              </Pressable>
-            );
-          })}
-        </View>
+                    <View style={{ width: 40, height: 50, borderRadius: 6, overflow: 'hidden' }}>
+                      <LinearGradient
+                        colors={[palette[0], palette[1]]}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={{ width: '100%', height: '100%' }}
+                      />
+                    </View>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text
+                        style={{
+                          fontFamily: 'Inter_700Bold',
+                          fontSize: 10,
+                          letterSpacing: 0.6,
+                          color: theme.accent,
+                        }}
+                      >
+                        {r.kind}
+                      </Text>
+                      <Text
+                        numberOfLines={1}
+                        style={{
+                          fontFamily: theme.serif,
+                          fontSize: 15,
+                          letterSpacing: -0.2,
+                          color: theme.ink,
+                          marginTop: 2,
+                        }}
+                      >
+                        {r.title}
+                      </Text>
+                      <Text
+                        style={{
+                          fontFamily: 'Inter_400Regular',
+                          fontSize: 12,
+                          color: theme.inkSoft,
+                          marginTop: 2,
+                        }}
+                      >
+                        {r.subtitle}
+                      </Text>
+                    </View>
+                    {renderResultAction ? renderResultAction(r.id) : null}
+                  </Pressable>
+                );
+              })}
+            </View>
+          </>
+        )}
       </ScrollView>
       <TabBar active={activeTab} onPress={onTabPress} />
     </View>

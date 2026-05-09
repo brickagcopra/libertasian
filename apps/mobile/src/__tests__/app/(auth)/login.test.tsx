@@ -184,4 +184,55 @@ describe('LoginScreen', () => {
     expect(getByText('Forgot?')).toBeTruthy();
     expect(getByText('Create an account')).toBeTruthy();
   });
+
+  it('shows inline validation error when email is empty', async () => {
+    const { getByText, queryByText } = render(<LoginScreen />, {
+      wrapper: createWrapper(),
+    });
+
+    await act(async () => {
+      fireEvent.press(getByText('Sign in'));
+    });
+
+    await waitFor(() => {
+      expect(queryByText('Email is required')).toBeTruthy();
+    });
+    // Submission was blocked — no API call.
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it('shows inline validation error for invalid email', async () => {
+    const { getByText, getByPlaceholderText, queryByText } = render(<LoginScreen />, {
+      wrapper: createWrapper(),
+    });
+
+    fireEvent.changeText(getByPlaceholderText('you@example.com'), 'not-an-email');
+    fireEvent.changeText(getByPlaceholderText('••••••••'), 'somepassword');
+
+    await act(async () => {
+      fireEvent.press(getByText('Sign in'));
+    });
+
+    await waitFor(() => {
+      expect(queryByText('Enter a valid email address')).toBeTruthy();
+    });
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it('shows inline validation error when password is empty', async () => {
+    const { getByText, getByPlaceholderText, queryByText } = render(<LoginScreen />, {
+      wrapper: createWrapper(),
+    });
+
+    fireEvent.changeText(getByPlaceholderText('you@example.com'), 'test@example.com');
+
+    await act(async () => {
+      fireEvent.press(getByText('Sign in'));
+    });
+
+    await waitFor(() => {
+      expect(queryByText('Password is required')).toBeTruthy();
+    });
+    expect(mockPost).not.toHaveBeenCalled();
+  });
 });

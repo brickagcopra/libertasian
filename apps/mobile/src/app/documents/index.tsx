@@ -1,20 +1,32 @@
 import { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Modal,
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+} from 'react-native';
 import { router } from 'expo-router';
-import { Fab } from '../../components/ui/Fab';
-import { LibraryScreen } from '../../components/screens/LibraryScreen';
-import { useDocuments } from '../../features/documents/hooks/use-documents';
-import { useNetworkState } from '../../hooks/use-network-state';
-import { useTheme } from '../../providers/theme-provider';
+import { Button } from '@/components/ui/Button';
+import { Chip } from '@/components/ui/Chip';
+import { Fab } from '@/components/ui/Fab';
+import { LibraryScreen } from '@/components/screens/LibraryScreen';
+import { useDocuments } from '@/features/documents/hooks/use-documents';
+import { useBarSubjects } from '@/features/study/hooks/use-bar-subjects';
+import { useNetworkState } from '@/hooks/use-network-state';
+import { useTheme } from '@/providers/theme-provider';
 import type {
   LibraryItem,
   LibrarySection,
-} from '../../components/screens/LibraryScreen';
-import type { DocumentFilters, DocumentListItem } from '../../features/documents/types';
-import type { PhotoTone } from '../../lib/design-tokens';
+} from '@/components/screens/LibraryScreen';
+import type { DocumentFilters, DocumentListItem } from '@/features/documents/types';
+import type { PhotoTone } from '@/lib/design-tokens';
 
 const FILTER_LABELS = ['All', 'Cases', 'Statutes', 'Issuances', 'Resolutions'] as const;
 type FilterLabel = (typeof FILTER_LABELS)[number];
+
+const COURTS = ['SUPREME_COURT', 'COURT_OF_APPEALS', 'SANDIGANBAYAN', 'CTA'] as const;
 
 function chipToDocType(label: FilterLabel): string | undefined {
   switch (label) {
@@ -29,6 +41,10 @@ function chipToDocType(label: FilterLabel): string | undefined {
     default:
       return undefined;
   }
+}
+
+function courtLabel(c: string): string {
+  return c.replace(/_/g, ' ').replace(/\b\w/g, (ch) => ch.toUpperCase());
 }
 
 const TONES: PhotoTone[] = ['warm', 'cool', 'sage', 'plum', 'sand', 'lime', 'ink'];
@@ -53,18 +69,42 @@ function buildItems(docs: DocumentListItem[]): LibraryItem[] {
 export default function DocumentsRoute() {
   const { theme } = useTheme();
   const [activeFilter, setActiveFilter] = useState<FilterLabel>('All');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [submittedQuery, setSubmittedQuery] = useState('');
+  const [filterCourt, setFilterCourt] = useState<string>('');
+  const [filterBarSubject, setFilterBarSubject] = useState<string>('');
+  const [filterSheetOpen, setFilterSheetOpen] = useState(false);
   const { isConnected } = useNetworkState();
 
   const filters: DocumentFilters = useMemo(() => {
     const docType = chipToDocType(activeFilter);
     return {
       ...(docType ? { documentType: docType } : {}),
+      ...(filterCourt ? { court: filterCourt } : {}),
+      ...(filterBarSubject ? { barSubjectCode: filterBarSubject } : {}),
+      ...(submittedQuery.trim() ? { query: submittedQuery.trim() } : {}),
       limit: 24,
     };
-  }, [activeFilter]);
+  }, [activeFilter, filterCourt, filterBarSubject, submittedQuery]);
 
-  const { data, isLoading, isFetchingNextPage, hasNextPage, fetchNextPage } =
-    useDocuments(filters);
+  const {
+    data,
+    isLoading,
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+    refetch,
+    isRefetching,
+  } = useDocuments(filters);
+
+  const { data: barSubjects } = useBarSubjects();
+
+  const advancedFilterCount = useMemo(() => {
+    let count = 0;
+    if (filterCourt) count++;
+    if (filterBarSubject) count++;
+    return count;
+  }, [filterCourt, filterBarSubject]);
 
   const allDocuments = useMemo(
     () => data?.pages.flatMap((p) => p.data) ?? [],
@@ -73,8 +113,6 @@ export default function DocumentsRoute() {
 
   const sections = useMemo<LibrarySection[]>(() => {
     if (allDocuments.length === 0) return [];
-    // Bucket by documentType so the section view groups intuitively, capped
-    // to keep ScrollView responsive without infinite scroll wiring this PR.
     const groups = new Map<string, DocumentListItem[]>();
     for (const doc of allDocuments) {
       const arr = groups.get(doc.documentType) ?? [];
@@ -97,6 +135,15 @@ export default function DocumentsRoute() {
       fetchNextPage();
     }
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+
+  const handleRefresh = useCallback(() => {
+    refetch();
+  }, [refetch]);
+
+  const handleClearAdvanced = useCallback(() => {
+    setFilterCourt('');
+    setFilterBarSubject('');
+  }, []);
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -127,7 +174,13 @@ export default function DocumentsRoute() {
         activeFilter={activeFilter}
         onFilterChange={(f) => setActiveFilter(f as FilterLabel)}
         searchPlaceholder="Search 12,000+ cases & statutes"
-        onSearchPress={() => router.push('/(tabs)/search')}
+        searchValue={searchQuery}
+        onSearchChange={setSearchQuery}
+        onSearchSubmit={() => setSubmittedQuery(searchQuery)}
+        onSearchClear={() => {
+          setSearchQuery('');
+          setSubmittedQuery('');
+        }}
         sections={
           sections.length > 0
             ? sections
@@ -142,9 +195,10 @@ export default function DocumentsRoute() {
               ]
         }
         onPressItem={handlePressItem}
-        onPressFilter={() => {
-          // Phase 2 stub — advanced filters land in Phase 3 modal.
-        }}
+        onPressFilter={() => setFilterSheetOpen(true)}
+        filterCount={advancedFilterCount}
+        refreshing={isRefetching}
+        onRefresh={handleRefresh}
         onTabPress={(id) => {
           if (id === 'home') router.push('/(tabs)');
           else if (id === 'search') router.push('/(tabs)/search');
@@ -177,6 +231,104 @@ export default function DocumentsRoute() {
         </Pressable>
       ) : null}
       <Fab onPress={() => router.push('/(tabs)/scan')} accessibilityLabel="Scan a document" />
+
+      {/* Advanced filter sheet — Court + Bar Subject. */}
+      <Modal
+        visible={filterSheetOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setFilterSheetOpen(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
+          <View
+            style={{
+              backgroundColor: theme.bg,
+              padding: 22,
+              paddingBottom: 36,
+              borderTopLeftRadius: 24,
+              borderTopRightRadius: 24,
+              maxHeight: '80%',
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Text style={{ fontFamily: theme.serif, fontSize: 26, letterSpacing: -0.6, color: theme.ink }}>
+                Filters
+              </Text>
+              {advancedFilterCount > 0 ? (
+                <Pressable onPress={handleClearAdvanced}>
+                  <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: theme.accent }}>
+                    Clear all
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
+
+            <ScrollView style={{ marginTop: 12 }} showsVerticalScrollIndicator={false}>
+              <Text
+                style={{
+                  fontFamily: 'Inter_700Bold',
+                  fontSize: 11,
+                  letterSpacing: 0.6,
+                  textTransform: 'uppercase',
+                  color: theme.accent,
+                  marginTop: 6,
+                  marginBottom: 8,
+                }}
+              >
+                Court
+              </Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                {COURTS.map((c) => (
+                  <Chip
+                    key={c}
+                    label={courtLabel(c)}
+                    selected={filterCourt === c}
+                    onPress={() => setFilterCourt(filterCourt === c ? '' : c)}
+                  />
+                ))}
+              </View>
+
+              {barSubjects && barSubjects.length > 0 ? (
+                <>
+                  <Text
+                    style={{
+                      fontFamily: 'Inter_700Bold',
+                      fontSize: 11,
+                      letterSpacing: 0.6,
+                      textTransform: 'uppercase',
+                      color: theme.accent,
+                      marginTop: 22,
+                      marginBottom: 8,
+                    }}
+                  >
+                    Bar subject
+                  </Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                    {barSubjects.map((s) => (
+                      <Chip
+                        key={s.code}
+                        label={s.name}
+                        selected={filterBarSubject === s.code}
+                        onPress={() =>
+                          setFilterBarSubject(filterBarSubject === s.code ? '' : s.code)
+                        }
+                      />
+                    ))}
+                  </View>
+                </>
+              ) : null}
+            </ScrollView>
+
+            <View style={{ height: 14 }} />
+            <Button
+              label="Apply filters"
+              variant="primary"
+              full
+              onPress={() => setFilterSheetOpen(false)}
+            />
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

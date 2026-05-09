@@ -17,6 +17,9 @@ export interface LoginScreenProps {
   loading?: boolean;
   error?: string | null;
   defaultEmail?: string;
+  /** Inline per-field validation errors. */
+  emailError?: string;
+  passwordError?: string;
 }
 
 export function LoginScreen({
@@ -30,6 +33,8 @@ export function LoginScreen({
   loading = false,
   error,
   defaultEmail = '',
+  emailError,
+  passwordError,
 }: LoginScreenProps) {
   const { theme } = useTheme();
   const [email, setEmail] = useState(defaultEmail);
@@ -101,6 +106,7 @@ export function LoginScreen({
           autoCapitalize="none"
           keyboardType="email-address"
           autoComplete="email"
+          error={emailError}
           leading={<Ionicons name="mail-outline" size={18} color={theme.inkFaint} />}
         />
         <Input
@@ -110,6 +116,7 @@ export function LoginScreen({
           placeholder="••••••••"
           secureTextEntry
           autoComplete="password"
+          error={passwordError}
           leading={<Ionicons name="lock-closed-outline" size={18} color={theme.inkFaint} />}
           trailing={<Ionicons name="eye-outline" size={18} color={theme.inkFaint} />}
         />

@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, Text, TextInput, View } from 'react-native';
 import { Chip } from '@/components/ui/Chip';
 import { TabBar, type TabBarItemId } from '@/components/ui/TabBar';
 import { photoTones, type PhotoTone } from '@/lib/design-tokens';
@@ -32,11 +32,22 @@ export interface LibraryScreenProps {
   activeFilter?: string;
   onFilterChange?: (filter: string) => void;
   searchPlaceholder?: string;
+  /** Tap to open a search modal. Used when searchValue/onSearchChange aren't passed. */
   onSearchPress?: () => void;
+  /** Controlled search input. When provided, the search field becomes editable. */
+  searchValue?: string;
+  onSearchChange?: (q: string) => void;
+  onSearchSubmit?: () => void;
+  onSearchClear?: () => void;
   featured?: LibraryFeatured;
   sections?: LibrarySection[];
   onPressItem?: (sectionId: string, itemId: string) => void;
   onPressFilter?: () => void;
+  /** Optional badge count rendered on the filter button (advanced filters active). */
+  filterCount?: number;
+  /** Optional pull-to-refresh state. */
+  refreshing?: boolean;
+  onRefresh?: () => void;
   activeTab?: TabBarItemId;
   onTabPress?: (id: TabBarItemId) => void;
 }
@@ -75,14 +86,22 @@ export function LibraryScreen({
   onFilterChange,
   searchPlaceholder = 'Search 12,000+ cases & statutes',
   onSearchPress,
+  searchValue,
+  onSearchChange,
+  onSearchSubmit,
+  onSearchClear,
   featured = DEFAULT_FEATURED,
   sections = DEFAULT_SECTIONS,
   onPressItem,
   onPressFilter,
+  filterCount = 0,
+  refreshing = false,
+  onRefresh,
   activeTab = 'docs',
   onTabPress,
 }: LibraryScreenProps) {
   const { theme } = useTheme();
+  const isControlledSearch = onSearchChange !== undefined;
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -92,6 +111,11 @@ export function LibraryScreen({
           paddingBottom: 110,
           paddingHorizontal: 18,
         }}
+        refreshControl={
+          onRefresh ? (
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.ink} />
+          ) : undefined
+        }
       >
         <View
           style={{
@@ -117,64 +141,132 @@ export function LibraryScreen({
               width: 40,
               height: 40,
               borderRadius: 20,
-              backgroundColor: theme.surface,
+              backgroundColor: filterCount > 0 ? theme.accentSoft : theme.surface,
               borderWidth: 1,
-              borderColor: theme.line,
+              borderColor: filterCount > 0 ? theme.accent : theme.line,
               alignItems: 'center',
               justifyContent: 'center',
             }}
           >
-            <Ionicons name="options-outline" size={18} color={theme.ink} />
+            <Ionicons
+              name="options-outline"
+              size={18}
+              color={filterCount > 0 ? theme.accent : theme.ink}
+            />
+            {filterCount > 0 ? (
+              <View
+                style={{
+                  position: 'absolute',
+                  top: -4,
+                  right: -4,
+                  minWidth: 18,
+                  height: 18,
+                  borderRadius: 9,
+                  paddingHorizontal: 4,
+                  backgroundColor: theme.accent,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Text
+                  style={{
+                    color: theme.accentInk,
+                    fontFamily: 'Inter_700Bold',
+                    fontSize: 10,
+                  }}
+                >
+                  {filterCount}
+                </Text>
+              </View>
+            ) : null}
           </Pressable>
         </View>
 
         <View style={{ height: 14 }} />
 
-        {/* Search field (tap to open search screen) */}
-        <Pressable
-          onPress={onSearchPress}
-          style={{
-            height: 48,
-            borderRadius: 14,
-            backgroundColor: theme.surface,
-            borderWidth: 1,
-            borderColor: theme.line,
-            flexDirection: 'row',
-            alignItems: 'center',
-            paddingHorizontal: 14,
-            gap: 10,
-          }}
-        >
-          <Ionicons name="search" size={16} color={theme.inkFaint} />
-          <Text
-            style={{
-              flex: 1,
-              fontFamily: 'Inter_400Regular',
-              fontSize: 14,
-              color: theme.inkFaint,
-            }}
-          >
-            {searchPlaceholder}
-          </Text>
+        {/* Search field — TextInput when controlled, Pressable-stub otherwise. */}
+        {isControlledSearch ? (
           <View
             style={{
-              backgroundColor: theme.surfaceMuted,
-              paddingHorizontal: 6,
-              paddingVertical: 2,
-              borderRadius: 4,
+              height: 48,
+              borderRadius: 14,
+              backgroundColor: theme.surface,
+              borderWidth: 1,
+              borderColor: theme.line,
+              flexDirection: 'row',
+              alignItems: 'center',
+              paddingHorizontal: 14,
+              gap: 10,
             }}
           >
+            <Ionicons name="search" size={16} color={theme.inkFaint} />
+            <TextInput
+              value={searchValue ?? ''}
+              onChangeText={onSearchChange}
+              onSubmitEditing={onSearchSubmit}
+              placeholder={searchPlaceholder}
+              placeholderTextColor={theme.inkFaint}
+              returnKeyType="search"
+              style={{
+                flex: 1,
+                fontFamily: 'Inter_400Regular',
+                fontSize: 14,
+                color: theme.ink,
+                paddingVertical: 0,
+              }}
+            />
+            {searchValue && searchValue.length > 0 ? (
+              <Pressable onPress={onSearchClear} accessibilityLabel="Clear search" hitSlop={8}>
+                <Ionicons name="close-circle" size={16} color={theme.inkFaint} />
+              </Pressable>
+            ) : null}
+          </View>
+        ) : (
+          <Pressable
+            onPress={onSearchPress}
+            style={{
+              height: 48,
+              borderRadius: 14,
+              backgroundColor: theme.surface,
+              borderWidth: 1,
+              borderColor: theme.line,
+              flexDirection: 'row',
+              alignItems: 'center',
+              paddingHorizontal: 14,
+              gap: 10,
+            }}
+          >
+            <Ionicons name="search" size={16} color={theme.inkFaint} />
             <Text
               style={{
-                fontFamily: 'Inter_500Medium',
-                fontSize: 11,
-                color: theme.inkSoft,
+                flex: 1,
+                fontFamily: 'Inter_400Regular',
+                fontSize: 14,
+                color: theme.inkFaint,
               }}
             >
-              ⌘K
+              {searchPlaceholder}
             </Text>
-          </View>
-        </Pressable>
+            <View
+              style={{
+                backgroundColor: theme.surfaceMuted,
+                paddingHorizontal: 6,
+                paddingVertical: 2,
+                borderRadius: 4,
+              }}
+            >
+              <Text
+                style={{
+                  fontFamily: 'Inter_500Medium',
+                  fontSize: 11,
+                  color: theme.inkSoft,
+                }}
+              >
+                ⌘K
+              </Text>
+            </View>
+          </Pressable>
+        )}
 
         <View style={{ height: 16 }} />
 
