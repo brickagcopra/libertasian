@@ -28,18 +28,56 @@ jest.mock('expo-router', () => ({
   router: { push: jest.fn(), replace: jest.fn(), back: jest.fn() },
 }));
 
+const mockUseHomeFeed = jest.fn();
+jest.mock('@/features/home/hooks/use-home-feed', () => ({
+  useHomeFeed: () => mockUseHomeFeed(),
+}));
+
 import { router } from 'expo-router';
 import HomeRoute from '@/app/(tabs)/index';
 
+const seededFeed = {
+  todaysBrief: [
+    {
+      id: 'brief-1',
+      kind: 'digest' as const,
+      category: 'CASE DIGEST',
+      headline: 'Briefed: People v. Santos',
+      minutes: 4,
+    },
+  ],
+  forYou: [
+    {
+      id: 'digest-1',
+      kind: 'digest' as const,
+      category: 'CASE DIGEST',
+      headline: 'Digest of Agabon v. NLRC',
+      minutes: 3,
+    },
+    {
+      id: 'doc-article-1',
+      kind: 'document' as const,
+      category: 'ARTICLE',
+      headline: 'Right to be Forgotten',
+      minutes: 6,
+      byline: 'LIBERTASIAN Editorial',
+    },
+  ],
+  nextCursor: null,
+};
+
 beforeEach(() => {
   jest.clearAllMocks();
+  mockUseHomeFeed.mockReturnValue({
+    data: seededFeed,
+    isLoading: false,
+    isError: false,
+  });
 });
 
-describe('HomeRoute (Phase 3 HomeScreen)', () => {
+describe('HomeRoute', () => {
   it('renders the redesigned home greeting with the user first name', () => {
     const { getByText } = render(<HomeRoute />);
-    // Greeting renders as "<name> <follow-up>" with the follow-up nested in
-    // a sibling Text — match by regex on the prefix.
     expect(getByText(/^Hi, Juan\./)).toBeTruthy();
   });
 
@@ -50,16 +88,54 @@ describe('HomeRoute (Phase 3 HomeScreen)', () => {
     (mockAuthUser as Record<string, unknown>).fullName = 'Juan Cruz';
   });
 
-  it("renders today's brief default copy", () => {
+  it("renders today's brief headline from the API response", () => {
     const { getByText } = render(<HomeRoute />);
-    // Default brief from HomeScreen
-    expect(getByText('When does a tweet become a contract?')).toBeTruthy();
+    expect(getByText('Briefed: People v. Santos')).toBeTruthy();
+    // Eyebrow is built from the brief item's minutes — verify wiring.
+    expect(getByText("Today's brief · 4 min")).toBeTruthy();
   });
 
-  it('routes to /digest/:id when a feed item is pressed', () => {
+  it('routes a digest feed item to /digest/:id', () => {
     const { getByText } = render(<HomeRoute />);
-    // First default feed item headline
-    fireEvent.press(getByText("The promise that wasn't: a guide to consideration"));
-    expect(router.push).toHaveBeenCalledWith('/digest/a');
+    fireEvent.press(getByText('Digest of Agabon v. NLRC'));
+    expect(router.push).toHaveBeenCalledWith('/digest/digest-1');
+  });
+
+  it('routes a document feed item to /reader/:id (kind discriminator)', () => {
+    const { getByText } = render(<HomeRoute />);
+    fireEvent.press(getByText('Right to be Forgotten'));
+    expect(router.push).toHaveBeenCalledWith('/reader/doc-article-1');
+  });
+
+  it('routes the brief CTA to the brief item route', () => {
+    // Brief item is a digest in our fixture, so the CTA must route to /digest/:id.
+    const { getByText } = render(<HomeRoute />);
+    fireEvent.press(getByText('Read brief →'));
+    expect(router.push).toHaveBeenCalledWith('/digest/brief-1');
+  });
+
+  it('renders a loading indicator while the feed is in flight', () => {
+    mockUseHomeFeed.mockReturnValueOnce({
+      data: undefined,
+      isLoading: true,
+      isError: false,
+    });
+    const { UNSAFE_getByType } = render(<HomeRoute />);
+    // ActivityIndicator from react-native is used during loading
+    const ActivityIndicator = require('react-native').ActivityIndicator;
+    expect(UNSAFE_getByType(ActivityIndicator)).toBeTruthy();
+  });
+
+  it('renders the screen with an empty feed when the API errors out', () => {
+    mockUseHomeFeed.mockReturnValueOnce({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+    });
+    const { getByText, queryByText } = render(<HomeRoute />);
+    // Greeting still mounts (the screen stays usable on error).
+    expect(getByText(/^Hi, Juan\./)).toBeTruthy();
+    // No fixture items leak in — the API-only seam is tight.
+    expect(queryByText('Right to be Forgotten')).toBeNull();
   });
 });

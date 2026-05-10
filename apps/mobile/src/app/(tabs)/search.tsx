@@ -32,18 +32,20 @@ function toneFor(index: number): PhotoTone {
 }
 
 function kindFor(documentType: string): SearchResultKind {
-  if (documentType === 'supreme_court_decision' || documentType === 'case_decision') return 'CASE';
-  if (
-    documentType === 'republic_act'
-    || documentType === 'statute'
-    || documentType === 'executive_order'
-  ) return 'STATUTE';
+  if (documentType === 'case') return 'CASE';
+  if (documentType === 'statute' || documentType === 'codal') return 'STATUTE';
+  if (documentType === 'outline') return 'OUTLINE';
   return 'ARTICLE';
 }
 
 function chipToDocType(label: FilterLabel): string | undefined {
-  if (label === 'Cases') return 'supreme_court_decision';
-  if (label === 'Statutes') return 'republic_act';
+  // documentType values must match the API enum on
+  // apps/api/src/modules/search/dto/search-query.dto.ts:24:
+  // ['case','statute','codal','article','outline']
+  if (label === 'Cases') return 'case';
+  if (label === 'Statutes') return 'statute';
+  if (label === 'Articles') return 'article';
+  if (label === 'Outlines') return 'outline';
   return undefined;
 }
 
