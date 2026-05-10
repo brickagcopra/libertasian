@@ -23,7 +23,12 @@ import type {
 import type { DocumentFilters, DocumentListItem } from '@/features/documents/types';
 import type { PhotoTone } from '@/lib/design-tokens';
 
-const FILTER_LABELS = ['All', 'Cases', 'Statutes', 'Issuances', 'Resolutions'] as const;
+// Chip labels match the API documentType enum on
+// apps/api/src/modules/search/dto/search-query.dto.ts:24:
+// ['case','statute','codal','article','outline']. The previous chips
+// "Issuances" / "Resolutions" mapped to documentType values that the DB
+// has never stored (every Library filter returned empty on prod).
+const FILTER_LABELS = ['All', 'Cases', 'Statutes', 'Codals', 'Articles', 'Outlines'] as const;
 type FilterLabel = (typeof FILTER_LABELS)[number];
 
 const COURTS = ['SUPREME_COURT', 'COURT_OF_APPEALS', 'SANDIGANBAYAN', 'CTA'] as const;
@@ -31,13 +36,15 @@ const COURTS = ['SUPREME_COURT', 'COURT_OF_APPEALS', 'SANDIGANBAYAN', 'CTA'] as 
 function chipToDocType(label: FilterLabel): string | undefined {
   switch (label) {
     case 'Cases':
-      return 'supreme_court_decision';
+      return 'case';
     case 'Statutes':
-      return 'republic_act';
-    case 'Issuances':
-      return 'executive_order';
-    case 'Resolutions':
-      return 'resolution';
+      return 'statute';
+    case 'Codals':
+      return 'codal';
+    case 'Articles':
+      return 'article';
+    case 'Outlines':
+      return 'outline';
     default:
       return undefined;
   }
