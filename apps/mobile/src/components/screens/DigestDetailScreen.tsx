@@ -62,9 +62,8 @@ export interface DigestDetailScreenProps {
   /** Additional top-right action buttons rendered alongside bookmark/share/more. */
   extraTopActions?: DigestTopAction[];
   /**
-   * Replaces the default `sections` rendering when provided. Used for IRAC / MCQ
-   * / Essay / Outline digest types where the default Facts/Issues/Ruling shape
-   * doesn't fit. When set, `sections` is ignored.
+   * Replaces the default `sections` rendering when provided. When set,
+   * `sections` is ignored.
    */
   customSections?: ReactNode;
   /** Slot rendered after the body (e.g. timestamps). */
@@ -406,7 +405,7 @@ export function DigestDetailScreen({
           </View>
         ) : null}
 
-        {/* Body — either custom (IRAC / MCQ / Essay / Outline) or default sections */}
+        {/* Body — either a custom slot or default sections */}
         {customSections ? (
           customSections
         ) : (

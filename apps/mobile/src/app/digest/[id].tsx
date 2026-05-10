@@ -6,12 +6,6 @@ import {
   type DigestBadge,
   type DigestSection,
 } from '@/components/screens/DigestDetailScreen';
-import {
-  IracDigestRenderer,
-  McqDigestRenderer,
-  EssayDigestRenderer,
-  OutlineDigestRenderer,
-} from '@/components/screens/digest-renderers';
 import { useDigest } from '@/features/digests/hooks/use-digests';
 import { ContentDisclaimer } from '@/features/documents/components/content-disclaimer';
 import { ExportButton } from '@/features/exports/components/export-button';
@@ -190,34 +184,6 @@ export default function DigestDetailRoute() {
     }
   };
 
-  // Type-specific renderers replace the default Facts/Issues/Ruling body.
-  let customSections: React.ReactNode = null;
-  if (digest.digestType === 'irac') {
-    customSections = (
-      <IracDigestRenderer
-        issue={digest.iracIssue}
-        rule={digest.iracRule}
-        application={digest.iracApplication}
-        conclusion={digest.iracConclusion}
-      />
-    );
-  } else if (digest.digestType === 'mcq' && digest.mcqStem) {
-    customSections = (
-      <McqDigestRenderer
-        stem={digest.mcqStem}
-        choices={[digest.mcqChoiceA, digest.mcqChoiceB, digest.mcqChoiceC, digest.mcqChoiceD]}
-        correctChoice={digest.mcqCorrectChoice}
-        explanation={digest.mcqExplanation}
-      />
-    );
-  } else if (digest.digestType === 'essay' && digest.essayPrompt) {
-    customSections = (
-      <EssayDigestRenderer prompt={digest.essayPrompt} modelAnswer={digest.essayModelAnswer} />
-    );
-  } else if (digest.digestType === 'outline' && digest.subjectOutlineJson) {
-    customSections = <OutlineDigestRenderer outline={digest.subjectOutlineJson} />;
-  }
-
   const disclaimerClass = disclaimerClassFor(digest);
   const disclaimerSlot = disclaimerClass ? <ContentDisclaimer contentClass={disclaimerClass} /> : null;
 
@@ -253,7 +219,6 @@ export default function DigestDetailRoute() {
       sections={sections}
       badges={badges}
       disclaimerSlot={disclaimerSlot}
-      customSections={customSections}
       footerSlot={footerSlot}
       onBack={() => router.back()}
       onShare={handleShare}
