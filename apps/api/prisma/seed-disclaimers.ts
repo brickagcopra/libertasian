@@ -261,6 +261,78 @@ export const DISCLAIMER_SEEDS: DisclaimerSeed[] = [
       'legal advice.',
     authorNote: COMMON_AUTHOR_NOTE,
   },
+
+  // ------------------------------------------------------------------
+  // editorial_article — drafted at seed-data authoring time per §8.2
+  // pattern (bold framing → how produced → what it is not → load-bearing
+  // closing). Covers documentType='article' rows authored by LIBERTASIAN
+  // editorial. Distinct from ai_digest because articles are
+  // human-(or-mixed-)authored commentary, not auto-generated summaries.
+  // ------------------------------------------------------------------
+  {
+    contentClass: 'editorial_article',
+    version: 1,
+    isActive: true,
+    bodyHtml:
+      '<p><strong>LIBERTASIAN editorial article — commentary, not advice.</strong></p>\n' +
+      '<p>This article was authored or edited by the LIBERTASIAN editorial team as commentary on\n' +
+      'Philippine law. It is not a court decision, not a statute, and not a position taken by any\n' +
+      'Philippine government body. Where it cites authorities, the original text of those\n' +
+      'authorities controls — the article\'s paraphrase or characterisation does not.</p>\n' +
+      '<p>Articles are written for general readers and bar candidates. They are not tailored to\n' +
+      'any specific matter, jurisdiction within the Philippines, or set of facts you may be\n' +
+      'considering, and the law cited may have been amended after the publication date shown\n' +
+      'above.</p>\n' +
+      '<p>LIBERTASIAN is an educational research platform. Nothing it publishes is legal advice.</p>',
+    bodyPlain:
+      'LIBERTASIAN editorial article — commentary, not advice.\n\n' +
+      'This article was authored or edited by the LIBERTASIAN editorial team as commentary on ' +
+      'Philippine law. It is not a court decision, not a statute, and not a position taken by ' +
+      'any Philippine government body. Where it cites authorities, the original text of those ' +
+      'authorities controls — the article\'s paraphrase or characterisation does not.\n\n' +
+      'Articles are written for general readers and bar candidates. They are not tailored to any ' +
+      'specific matter, jurisdiction within the Philippines, or set of facts you may be ' +
+      'considering, and the law cited may have been amended after the publication date shown.\n\n' +
+      'LIBERTASIAN is an educational research platform. Nothing it publishes is legal advice.',
+    authorNote: AUTHOR_NOTE_PATTERN_ONLY,
+  },
+
+  // ------------------------------------------------------------------
+  // legal_outline — drafted at seed-data authoring time per §8.2 pattern.
+  // Covers documentType='outline' rows (bar-review study outlines).
+  // Distinct from editorial_article because outlines are highly
+  // compressed and are designed to be memorised, which makes their
+  // staleness risk higher and their substitutability for primary text
+  // lower.
+  // ------------------------------------------------------------------
+  {
+    contentClass: 'legal_outline',
+    version: 1,
+    isActive: true,
+    bodyHtml:
+      '<p><strong>Bar-review study outline — compressed, not authoritative.</strong></p>\n' +
+      '<p>This outline is a study aid prepared by the LIBERTASIAN editorial team. By design it\n' +
+      'compresses doctrines, statutes, and case law into a memorable form, and that compression\n' +
+      'necessarily loses qualifications, exceptions, and recent developments. Read the underlying\n' +
+      'authority before you rely on any proposition stated here, especially for an exam answer\n' +
+      'where the qualification is what the examiner is looking for.</p>\n' +
+      '<p>The outline reflects Philippine law as of the publication date shown above. The\n' +
+      'Constitution and codes change rarely; the Rules of Court, Supreme Court doctrine, and\n' +
+      'special laws change often.</p>\n' +
+      '<p>LIBERTASIAN is an educational research platform. Nothing it publishes is legal advice.</p>',
+    bodyPlain:
+      'Bar-review study outline — compressed, not authoritative.\n\n' +
+      'This outline is a study aid prepared by the LIBERTASIAN editorial team. By design it ' +
+      'compresses doctrines, statutes, and case law into a memorable form, and that compression ' +
+      'necessarily loses qualifications, exceptions, and recent developments. Read the ' +
+      'underlying authority before you rely on any proposition stated here, especially for an ' +
+      'exam answer where the qualification is what the examiner is looking for.\n\n' +
+      'The outline reflects Philippine law as of the publication date shown above. The ' +
+      'Constitution and codes change rarely; the Rules of Court, Supreme Court doctrine, and ' +
+      'special laws change often.\n\n' +
+      'LIBERTASIAN is an educational research platform. Nothing it publishes is legal advice.',
+    authorNote: AUTHOR_NOTE_PATTERN_ONLY,
+  },
 ];
 
 /**

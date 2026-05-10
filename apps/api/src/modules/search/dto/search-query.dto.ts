@@ -18,8 +18,11 @@ export class SearchQueryDto {
   @MaxLength(1000)
   query!: string;
 
-  @ApiPropertyOptional({ description: 'Filter by document type' })
-  @IsString()
+  @ApiPropertyOptional({
+    description: 'Filter by document class',
+    enum: ['case', 'statute', 'codal', 'article', 'outline'],
+  })
+  @IsIn(['case', 'statute', 'codal', 'article', 'outline'])
   @IsOptional()
   documentType?: string;
 
