@@ -1,5 +1,5 @@
 /**
- * Legal Documents Seed Data — 5 Philippine legal documents with sections,
+ * Legal Documents Seed Data — 9 Philippine legal documents with sections,
  * versions, tag maps, and cross-document citations.
  *
  * Documents:
@@ -8,6 +8,12 @@
  *   3. RA 10173 — Data Privacy Act (statute, political_law)
  *   4. Civil Code — Obligations (codal, civil_law)
  *   5. Rules of Court — Rule 16 (codal, remedial_law)
+ *   6. Editorial: Right to be Forgotten (article, political_law)
+ *   7. Editorial: Treachery vs Evident Premeditation (article, criminal_law)
+ *   8. Bar Outline: Constitutional Law I (outline, political_law)
+ *   9. Bar Outline: Obligations & Contracts (outline, civil_law)
+ *
+ * Editorial / outline rows are isOfficial=false; everything else is isOfficial=true.
  */
 
 import { PrismaClient } from '@prisma/client';
@@ -32,6 +38,10 @@ interface DocumentSeed {
   publicationDate?: string;
   barSubjectCode: string;
   sections: SectionSeed[];
+  /** Editorial articles + outlines are not official; defaults to true. */
+  isOfficial?: boolean;
+  /** Defaults to 'verified' for official, 'editorial' for non-official. */
+  truthfulnessStatus?: string;
 }
 
 interface SectionSeed {
@@ -50,6 +60,10 @@ export interface SeededDocuments {
   ra10173: { id: string; sectionIds: Record<string, string> };
   civilCodeObligations: { id: string; sectionIds: Record<string, string> };
   rulesOfCourtRule16: { id: string; sectionIds: Record<string, string> };
+  rightToBeForgottenArticle: { id: string; sectionIds: Record<string, string> };
+  treacheryArticle: { id: string; sectionIds: Record<string, string> };
+  conLawOutline: { id: string; sectionIds: Record<string, string> };
+  obligationsOutline: { id: string; sectionIds: Record<string, string> };
 }
 
 // ---------------------------------------------------------------------------
@@ -531,6 +545,158 @@ const DOCUMENTS: DocumentSeed[] = [
       },
     ],
   },
+
+  // =========================================================================
+  // 6. Editorial Article — Right to be Forgotten under the Data Privacy Act
+  // =========================================================================
+  {
+    title: 'Right to be Forgotten in Philippine Data Privacy Practice',
+    shortTitle: 'Right to be Forgotten',
+    documentType: 'article',
+    citationText: 'LIBERTASIAN Editorial · 2026',
+    agency: 'LIBERTASIAN Editorial',
+    publicationDate: '2026-04-01',
+    barSubjectCode: 'political_law',
+    isOfficial: false,
+    truthfulnessStatus: 'editorial',
+    sections: [
+      {
+        sectionType: 'introduction',
+        sectionLabel: 'Introduction',
+        ordering: 0,
+        plainText:
+          'The Data Privacy Act of 2012 (RA 10173) does not use the phrase "right to be forgotten," yet § 16(e) gives every data subject the right to require erasure or blocking of personal information that is incomplete, outdated, false, unlawfully obtained, or used for unauthorized purposes. NPC Circular 16-01 and a growing body of NPC decisions have begun to translate that statutory hook into something resembling the European right-to-erasure model, but with characteristically Philippine constraints — most importantly, the constitutional commitment to a free press and to public records.',
+      },
+      {
+        sectionType: 'discussion',
+        sectionLabel: 'How NPC reads § 16(e)',
+        ordering: 1,
+        plainText:
+          'NPC takes the position that § 16(e) creates a qualified right, not an absolute one. Erasure is appropriate where (i) the data subject withdraws consent and no other lawful basis remains, (ii) the data was processed unlawfully, or (iii) the purpose of processing has been served. NPC will deny erasure where the controller can show a continuing lawful basis — most often a legal obligation, a public-interest task, or the establishment, exercise, or defense of legal claims. In practice the third ground is what defeats most journalistic-archive complaints.',
+      },
+      {
+        sectionType: 'practitioner_note',
+        sectionLabel: 'Practitioner note',
+        ordering: 2,
+        plainText:
+          'When advising a data subject who wants old reporting taken down, lead with the controller\'s lawful basis matrix rather than with § 16(e). If the basis is consent and the consent was withdrawn, the case is straightforward. If the basis is "legitimate interest" or a free-speech claim, the analysis collapses into the standard balancing test and the practitioner should expect the controller to win unless the underlying article is provably false or unlawfully obtained.',
+      },
+    ],
+  },
+
+  // =========================================================================
+  // 7. Editorial Article — Treachery vs Evident Premeditation
+  // =========================================================================
+  {
+    title: 'Treachery vs Evident Premeditation: A Practitioner\'s Distinction',
+    shortTitle: 'Treachery vs Premeditation',
+    documentType: 'article',
+    citationText: 'LIBERTASIAN Editorial · 2026',
+    agency: 'LIBERTASIAN Editorial',
+    publicationDate: '2026-03-15',
+    barSubjectCode: 'criminal_law',
+    isOfficial: false,
+    truthfulnessStatus: 'editorial',
+    sections: [
+      {
+        sectionType: 'introduction',
+        sectionLabel: 'Why the distinction matters',
+        ordering: 0,
+        plainText:
+          'Treachery and evident premeditation are distinct qualifying circumstances under Article 14 of the Revised Penal Code, but bar candidates routinely conflate them because both involve "planning." The Supreme Court has been clear, most recently in People v. Santos (G.R. No. 147678, 2005) and the line of cases following it, that the qualifier turns on the manner of execution, not on whether the offender thought about it beforehand.',
+      },
+      {
+        sectionType: 'discussion',
+        sectionLabel: 'Elements at a glance',
+        ordering: 1,
+        plainText:
+          'Treachery (alevosia) requires that the offender employ means, methods, or forms of execution that tend directly and specially to insure the act\'s success without risk to himself from any defense the victim might offer. The decisive fact is the suddenness and unexpectedness of the attack. Evident premeditation, by contrast, requires (i) the time when the offender determined to commit the crime, (ii) an act manifestly indicating that he clung to that determination, and (iii) a sufficient lapse of time between determination and execution to allow the offender to reflect upon the consequences. The first speaks to method; the second speaks to timing of the resolve.',
+      },
+      {
+        sectionType: 'practitioner_note',
+        sectionLabel: 'Common bar trap',
+        ordering: 2,
+        plainText:
+          'A fact pattern that includes a stab from behind plus a two-week-old quarrel is not automatically both qualifiers. The two-week interval, by itself, does not establish evident premeditation — the prosecution must still show overt acts during that period that manifest a clinging-to-the-resolve. People v. Santos illustrates the point: treachery was found, evident premeditation was not, despite a documented prior altercation.',
+      },
+    ],
+  },
+
+  // =========================================================================
+  // 8. Bar Outline — Constitutional Law I
+  // =========================================================================
+  {
+    title: 'Bar Review Outline — Constitutional Law I (2026)',
+    shortTitle: 'Con Law I — Bar Outline',
+    documentType: 'outline',
+    citationText: 'LIBERTASIAN Bar Reviewer · 2026',
+    agency: 'LIBERTASIAN Editorial',
+    publicationDate: '2026-02-01',
+    barSubjectCode: 'political_law',
+    isOfficial: false,
+    truthfulnessStatus: 'editorial',
+    sections: [
+      {
+        sectionType: 'outline_part',
+        sectionLabel: 'I. The 1987 Constitution — structure and self-execution',
+        ordering: 0,
+        plainText:
+          'A. Preamble — non-justiciable but interpretive.\nB. Self-executing vs non-self-executing provisions (Manila Prince Hotel v. GSIS).\nC. Constitution as a hierarchy — primacy over statutes, treaties, ordinances.\nD. Doctrine of constitutional supremacy and the political-question doctrine post-Marcos.',
+      },
+      {
+        sectionType: 'outline_part',
+        sectionLabel: 'II. Bill of Rights — Article III',
+        ordering: 1,
+        plainText:
+          'A. Due process and equal protection — substantive vs procedural.\nB. Searches and seizures (§2) — Stonehill, Burgos, the warrantless-arrest rules.\nC. Right against self-incrimination (§17) — testimonial vs object evidence.\nD. Right to privacy as a stand-alone right — Ople v. Torres, Disini v. Secretary of Justice.\nE. Free speech (§4) — content-based vs content-neutral, the dangerous-tendency line and its abandonment.',
+      },
+      {
+        sectionType: 'outline_part',
+        sectionLabel: 'III. Separation of powers',
+        ordering: 2,
+        plainText:
+          'A. Tripartite structure — legislative, executive, judicial.\nB. Delegation doctrine — completeness and sufficient-standard tests.\nC. Judicial review — § 1, Art. VIII — expanded certiorari and grave abuse of discretion.\nD. Political-question doctrine after Marcos and Sanlakas v. Reyes.',
+      },
+    ],
+  },
+
+  // =========================================================================
+  // 9. Bar Outline — Obligations & Contracts
+  // =========================================================================
+  {
+    title: 'Bar Review Outline — Obligations and Contracts (2026)',
+    shortTitle: 'Obligations — Bar Outline',
+    documentType: 'outline',
+    citationText: 'LIBERTASIAN Bar Reviewer · 2026',
+    agency: 'LIBERTASIAN Editorial',
+    publicationDate: '2026-02-15',
+    barSubjectCode: 'civil_law',
+    isOfficial: false,
+    truthfulnessStatus: 'editorial',
+    sections: [
+      {
+        sectionType: 'outline_part',
+        sectionLabel: 'I. Sources of obligations (Art. 1157)',
+        ordering: 0,
+        plainText:
+          'A. Law — obligations arising directly from statute (e.g. tax, support).\nB. Contracts — meeting of minds, autonomy of will, mutuality.\nC. Quasi-contracts — solutio indebiti, negotiorum gestio.\nD. Acts or omissions punished by law — civil liability ex delicto.\nE. Quasi-delicts (Art. 2176) — fault or negligence not arising from contract.',
+      },
+      {
+        sectionType: 'outline_part',
+        sectionLabel: 'II. Nature and effect of obligations',
+        ordering: 1,
+        plainText:
+          'A. Pure vs conditional obligations (Arts. 1179–1192).\nB. Obligations with a period (Arts. 1193–1198).\nC. Alternative and facultative obligations (Arts. 1199–1206).\nD. Joint and solidary obligations (Arts. 1207–1222).\nE. Divisible and indivisible obligations (Arts. 1223–1225).',
+      },
+      {
+        sectionType: 'outline_part',
+        sectionLabel: 'III. Modes of extinguishment',
+        ordering: 2,
+        plainText:
+          'A. Payment or performance (Arts. 1232–1251).\nB. Loss of the thing due (Arts. 1262–1269).\nC. Condonation or remission (Arts. 1270–1274).\nD. Confusion or merger (Arts. 1275–1277).\nE. Compensation (Arts. 1278–1290).\nF. Novation (Arts. 1291–1304).',
+      },
+    ],
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -551,6 +717,10 @@ export async function seedLegalDocuments(prisma: PrismaClient): Promise<SeededDo
     'ra10173',
     'civilCodeObligations',
     'rulesOfCourtRule16',
+    'rightToBeForgottenArticle',
+    'treacheryArticle',
+    'conLawOutline',
+    'obligationsOutline',
   ];
 
   for (let i = 0; i < DOCUMENTS.length; i++) {
@@ -559,7 +729,11 @@ export async function seedLegalDocuments(prisma: PrismaClient): Promise<SeededDo
     const sourceId =
       doc.documentType === 'case'
         ? scSource?.id ?? null
-        : congressSource?.id ?? null;
+        : doc.documentType === 'article' || doc.documentType === 'outline'
+          ? null // editorial / study material — no upstream source
+          : congressSource?.id ?? null;
+    const isOfficial = doc.isOfficial ?? true;
+    const truthfulnessStatus = doc.truthfulnessStatus ?? 'verified';
 
     // Upsert document: cases by grNo, statutes/codals by title+type
     let legalDoc;
@@ -580,9 +754,9 @@ export async function seedLegalDocuments(prisma: PrismaClient): Promise<SeededDo
             publicationDate: doc.publicationDate ? new Date(doc.publicationDate) : null,
             sourceId,
             status: 'published',
-            isOfficial: true,
+            isOfficial,
             isPublished: true,
-            truthfulnessStatus: 'verified',
+            truthfulnessStatus,
           },
         });
       } else {
@@ -603,9 +777,9 @@ export async function seedLegalDocuments(prisma: PrismaClient): Promise<SeededDo
             sourceId,
             jurisdiction: 'PH',
             status: 'published',
-            isOfficial: true,
+            isOfficial,
             isPublished: true,
-            truthfulnessStatus: 'verified',
+            truthfulnessStatus,
           },
         });
       }
@@ -625,9 +799,9 @@ export async function seedLegalDocuments(prisma: PrismaClient): Promise<SeededDo
             publicationDate: doc.publicationDate ? new Date(doc.publicationDate) : null,
             sourceId,
             status: 'published',
-            isOfficial: true,
+            isOfficial,
             isPublished: true,
-            truthfulnessStatus: 'verified',
+            truthfulnessStatus,
           },
         });
       } else {
@@ -644,9 +818,9 @@ export async function seedLegalDocuments(prisma: PrismaClient): Promise<SeededDo
             sourceId,
             jurisdiction: 'PH',
             status: 'published',
-            isOfficial: true,
+            isOfficial,
             isPublished: true,
-            truthfulnessStatus: 'verified',
+            truthfulnessStatus,
           },
         });
       }

@@ -88,19 +88,22 @@ describe('HealthService', () => {
   });
 
   it('should measure database latency accurately', async () => {
-    // Arrange
+    // The service measures latency via `Date.now() - start` (1ms resolution).
+    // Node's setTimeout is best-effort — `setTimeout(50)` can resolve at 49.x ms
+    // on fast CI runners, producing a 49ms reading and tripping a `>= 50` floor.
+    // Mock with a 75ms delay so even with timer jitter the floor is comfortably cleared.
+    const SIMULATED_QUERY_MS = 75;
+    const ASSERTION_FLOOR_MS = 50;
+
     prismaService.$queryRaw.mockImplementation(async () => {
-      // Simulate a 50ms database query
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, SIMULATED_QUERY_MS));
       return [{ '?column?': 1 }];
     });
 
-    // Act
     const result: HealthCheckResponse = await service.check();
 
-    // Assert
     expect(result.services['database']!.status).toBe('up');
-    expect(result.services['database']!.latencyMs).toBeGreaterThanOrEqual(50);
+    expect(result.services['database']!.latencyMs).toBeGreaterThanOrEqual(ASSERTION_FLOOR_MS);
     expect(result.services['database']!.latencyMs).toBeLessThan(500); // Allow generous tolerance for CI/slow environments
   });
 

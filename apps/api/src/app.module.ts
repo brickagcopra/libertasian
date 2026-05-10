@@ -51,6 +51,7 @@ import { ExternalApiModule } from './modules/external-api/external-api.module';
 import { AdsModule } from './modules/ads/ads.module';
 import { BlogModule } from './modules/blog/blog.module';
 import { FeedModule } from './modules/feed/feed.module';
+import { HomeModule } from './modules/home/home.module';
 import { SimulatorModule } from './modules/simulator/simulator.module';
 import { SiteContentModule } from './modules/site-content/site-content.module';
 import { FeatureFlagsModule } from './modules/feature-flags/feature-flags.module';
@@ -220,6 +221,7 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
     AdsModule,
     BlogModule,
     FeedModule,
+    HomeModule,
     SimulatorModule,
     SiteContentModule,
     ReportingModule,

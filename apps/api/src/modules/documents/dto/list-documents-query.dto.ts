@@ -2,8 +2,16 @@ import { IsDateString, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, Min } fro
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 
+// Mobile Library + Search filter chips send these documentType values.
+// Keep aligned with apps/api/src/modules/search/dto/search-query.dto.ts:24
+// ('case', 'statute', 'codal', 'article', 'outline'). Legacy values
+// ('rule', 'issuance', 'memorandum', 'order', 'digest', 'reviewer',
+// 'user_private_doc') stay in the whitelist for backwards compatibility
+// with consumers that already pass them; they may be pruned in a future
+// chore PR alongside a Prisma enum migration.
 const DOCUMENT_TYPES = [
-  'case', 'statute', 'rule', 'issuance', 'memorandum',
+  'case', 'statute', 'codal', 'article', 'outline',
+  'rule', 'issuance', 'memorandum',
   'order', 'digest', 'reviewer', 'user_private_doc',
 ] as const;
 
