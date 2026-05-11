@@ -27,6 +27,9 @@ function ThemeProbe() {
       <Pressable testID="toggle" onPress={toggleTheme}>
         <Text>toggle</Text>
       </Pressable>
+      <Pressable testID="set-a" onPress={() => setTheme('A')}>
+        <Text>set a</Text>
+      </Pressable>
       <Pressable testID="set-b" onPress={() => setTheme('B')}>
         <Text>set b</Text>
       </Pressable>
@@ -41,27 +44,27 @@ describe('ThemeProvider', () => {
     if (mmkv.__resetStore) mmkv.__resetStore();
   });
 
-  it('defaults to theme A (Warm Editorial)', () => {
+  it('defaults to theme B (Confident Modern)', () => {
     const { getByTestId } = render(
       <ThemeProvider>
         <ThemeProbe />
       </ThemeProvider>,
     );
-    expect(getByTestId('key').props.children).toBe('A');
-    expect(getByTestId('name').props.children).toBe('Warm Editorial');
+    expect(getByTestId('key').props.children).toBe('B');
+    expect(getByTestId('name').props.children).toBe('Confident Modern');
   });
 
-  it('toggleTheme flips A → B → A', () => {
+  it('toggleTheme flips B → A → B', () => {
     const { getByTestId } = render(
       <ThemeProvider>
         <ThemeProbe />
       </ThemeProvider>,
     );
-    expect(getByTestId('key').props.children).toBe('A');
-    fireEvent.press(getByTestId('toggle'));
     expect(getByTestId('key').props.children).toBe('B');
     fireEvent.press(getByTestId('toggle'));
     expect(getByTestId('key').props.children).toBe('A');
+    fireEvent.press(getByTestId('toggle'));
+    expect(getByTestId('key').props.children).toBe('B');
   });
 
   it('setTheme persists the explicit choice', () => {
@@ -70,6 +73,9 @@ describe('ThemeProvider', () => {
         <ThemeProbe />
       </ThemeProvider>,
     );
+    fireEvent.press(getByTestId('set-a'));
+    expect(getByTestId('key').props.children).toBe('A');
+    expect(getByTestId('name').props.children).toBe('Warm Editorial');
     fireEvent.press(getByTestId('set-b'));
     expect(getByTestId('key').props.children).toBe('B');
     expect(getByTestId('name').props.children).toBe('Confident Modern');
@@ -77,6 +83,6 @@ describe('ThemeProvider', () => {
 
   it('useTheme returns a default object when called outside provider', () => {
     const { getByTestId } = render(<ThemeProbe />);
-    expect(getByTestId('key').props.children).toBe('A');
+    expect(getByTestId('key').props.children).toBe('B');
   });
 });

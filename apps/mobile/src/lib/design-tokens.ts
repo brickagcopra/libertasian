@@ -68,7 +68,7 @@ export const THEMES: Record<ThemeKey, Theme> = {
   },
 };
 
-export const DEFAULT_THEME: ThemeKey = 'A';
+export const DEFAULT_THEME: ThemeKey = 'B';
 
 // Per-theme font weight map. Used when a primitive needs a specific weight that
 // the theme's "sans" or "serif" entry doesn't cover. Theme-aware so we can swap
