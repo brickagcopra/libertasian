@@ -59,6 +59,38 @@ export interface DerivativeDetail extends DerivativeListItem {
   essayPrompt: unknown | null;
 }
 
+interface DigestRowForMapping {
+  id: string;
+  title: string;
+  confidenceScore: number | null;
+  createdAt: Date;
+  summary: string | null;
+  facts: string | null;
+  petitionerArguments: string | null;
+  respondentArguments: string | null;
+  issues: string | null;
+  ruling: string | null;
+  doctrine: string | null;
+  dispositive: string | null;
+  legalDocument: {
+    id: string;
+    title: string;
+    shortTitle: string | null;
+    citationText: string | null;
+    court: string | null;
+    decisionDate: Date | null;
+    subjectAssignments: Array<{
+      isPrimary: boolean;
+      subject: { code: string; name: string; taxonomyVersion: string };
+    }>;
+  } | null;
+  contentDisclaimer: {
+    id: string;
+    contentClass: string;
+    version: number;
+  } | null;
+}
+
 @Injectable()
 export class DerivativesService {
   private readonly logger = new Logger(DerivativesService.name);
@@ -77,6 +109,10 @@ export class DerivativesService {
     items: DerivativeListItem[];
     meta: { hasNext: boolean; nextCursor?: string; limit: number };
   }> {
+    if (query.derivativeType === 'case_digest') {
+      return this.listCaseDigests(query);
+    }
+
     const limit = query.limit ?? 20;
     const taxonomyVersion = query.taxonomyVersion ?? 'study_8';
 
@@ -246,6 +282,10 @@ export class DerivativesService {
     });
 
     if (!row) {
+      const digest = await this.findCaseDigestById(id);
+      if (digest) {
+        return digest;
+      }
       // Return 404 (not 403) to avoid leaking existence across tenants.
       throw new NotFoundException('Derivative artifact not found');
     }
@@ -327,6 +367,29 @@ export class DerivativesService {
       select: { id: true, code: true, name: true, taxonomyVersion: true },
     });
 
+    if (type === 'case_digest') {
+      const digestCounts = await Promise.all(
+        subjects.map((s) =>
+          this.prisma.digest.count({
+            where: {
+              ...this.caseDigestVisibilityWhere(),
+              legalDocument: {
+                subjectAssignments: { some: { subjectId: s.id } },
+              },
+            },
+          }),
+        ),
+      );
+
+      return subjects.map((s, i) => ({
+        subjectCode: s.code,
+        subjectName: s.name,
+        taxonomyVersion: s.taxonomyVersion,
+        totalCount: digestCounts[i] ?? 0,
+        approvedCount: digestCounts[i] ?? 0,
+      }));
+    }
+
     const visibilityOr: Prisma.DerivativeArtifactWhereInput[] = [
       { createdByUserId: userId },
       { organizationId, visibility: { not: 'private' } },
@@ -394,26 +457,40 @@ export class DerivativesService {
       select: { id: true, code: true, name: true, taxonomyVersion: true },
     });
 
-    const counts = await this.prisma.documentSubjectAssignment.groupBy({
-      by: ['subjectId'],
-      where: {
-        subjectId: { in: subjects.map((s) => s.id) },
-        derivativeArtifact: {
-          deletedAt: null,
-          visibility: 'public_editorial',
-          reviewStatus: 'approved',
+    const [counts, digestCounts] = await Promise.all([
+      this.prisma.documentSubjectAssignment.groupBy({
+        by: ['subjectId'],
+        where: {
+          subjectId: { in: subjects.map((s) => s.id) },
+          derivativeArtifact: {
+            deletedAt: null,
+            visibility: 'public_editorial',
+            reviewStatus: 'approved',
+          },
         },
-      },
-      _count: { _all: true },
-    });
+        _count: { _all: true },
+      }),
+      Promise.all(
+        subjects.map((s) =>
+          this.prisma.digest.count({
+            where: {
+              ...this.caseDigestVisibilityWhere(),
+              legalDocument: {
+                subjectAssignments: { some: { subjectId: s.id } },
+              },
+            },
+          }),
+        ),
+      ),
+    ]);
 
     const countMap = new Map(counts.map((c) => [c.subjectId, c._count._all]));
 
-    const result = subjects.map((s) => ({
+    const result = subjects.map((s, i) => ({
       code: s.code,
       name: s.name,
       taxonomyVersion: s.taxonomyVersion,
-      count: countMap.get(s.id) ?? 0,
+      count: (countMap.get(s.id) ?? 0) + (digestCounts[i] ?? 0),
     }));
 
     if (this.redis) {
@@ -425,6 +502,186 @@ export class DerivativesService {
     }
 
     return result;
+  }
+
+  /**
+   * Case digests still live in the legacy `digests` table — the auto-promote
+   * sweep flips them to public_editorial without changing review_status from
+   * 'ai_generated', so accept both 'approved' and 'ai_generated' here.
+   */
+  private caseDigestVisibilityWhere(): Prisma.DigestWhereInput {
+    return {
+      visibility: 'public_editorial',
+      reviewStatus: { in: ['approved', 'ai_generated'] },
+    };
+  }
+
+  private async listCaseDigests(query: ListDerivativesQueryDto): Promise<{
+    items: DerivativeListItem[];
+    meta: { hasNext: boolean; nextCursor?: string; limit: number };
+  }> {
+    const limit = query.limit ?? 20;
+    const taxonomyVersion = query.taxonomyVersion ?? 'study_8';
+
+    const where: Prisma.DigestWhereInput = this.caseDigestVisibilityWhere();
+
+    if (query.subjectCode) {
+      where.legalDocument = {
+        subjectAssignments: {
+          some: {
+            subject: {
+              code: query.subjectCode,
+              taxonomyVersion,
+            },
+          },
+        },
+      };
+    }
+
+    if (query.search) {
+      where.title = { contains: query.search, mode: 'insensitive' };
+    }
+
+    const rows = await this.prisma.digest.findMany({
+      where,
+      take: limit + 1,
+      ...(query.cursor && { skip: 1, cursor: { id: query.cursor } }),
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      include: {
+        legalDocument: {
+          select: {
+            id: true,
+            title: true,
+            shortTitle: true,
+            citationText: true,
+            court: true,
+            decisionDate: true,
+            subjectAssignments: {
+              include: {
+                subject: {
+                  select: { code: true, name: true, taxonomyVersion: true },
+                },
+              },
+            },
+          },
+        },
+        contentDisclaimer: {
+          select: { id: true, contentClass: true, version: true },
+        },
+      },
+    });
+
+    const hasNext = rows.length > limit;
+    const pageRows = hasNext ? rows.slice(0, limit) : rows;
+    const lastRow = pageRows[pageRows.length - 1];
+    const nextCursor = hasNext && lastRow ? lastRow.id : undefined;
+
+    const items: DerivativeListItem[] = pageRows.map((row) => this.mapDigestToListItem(row));
+
+    return { items, meta: { hasNext, nextCursor, limit } };
+  }
+
+  private async findCaseDigestById(id: string): Promise<DerivativeDetail | null> {
+    const row = await this.prisma.digest.findFirst({
+      where: { id, ...this.caseDigestVisibilityWhere() },
+      include: {
+        legalDocument: {
+          select: {
+            id: true,
+            title: true,
+            shortTitle: true,
+            citationText: true,
+            court: true,
+            decisionDate: true,
+            subjectAssignments: {
+              include: {
+                subject: {
+                  select: { code: true, name: true, taxonomyVersion: true },
+                },
+              },
+            },
+          },
+        },
+        contentDisclaimer: {
+          select: {
+            id: true,
+            contentClass: true,
+            version: true,
+            bodyHtml: true,
+            bodyPlain: true,
+          },
+        },
+      },
+    });
+
+    if (!row) return null;
+
+    const listItem = this.mapDigestToListItem(row);
+    return {
+      ...listItem,
+      contentJson: this.buildDigestContentJson(row),
+      contentPlainText: null,
+      disclaimerBody: row.contentDisclaimer
+        ? {
+            bodyHtml: row.contentDisclaimer.bodyHtml,
+            bodyPlain: row.contentDisclaimer.bodyPlain,
+          }
+        : null,
+      mcqQuestion: null,
+      essayPrompt: null,
+    };
+  }
+
+  private mapDigestToListItem(row: DigestRowForMapping): DerivativeListItem {
+    const subjectAssignments = row.legalDocument?.subjectAssignments ?? [];
+    return {
+      id: row.id,
+      title: row.title,
+      derivativeType: 'case_digest',
+      confidenceScore: row.confidenceScore,
+      createdAt: row.createdAt,
+      publishedAt: null,
+      audience: 'both',
+      language: 'en',
+      sourceDocument: row.legalDocument
+        ? {
+            id: row.legalDocument.id,
+            title: row.legalDocument.title,
+            shortTitle: row.legalDocument.shortTitle,
+            citationText: row.legalDocument.citationText,
+            court: row.legalDocument.court,
+            decisionDate: row.legalDocument.decisionDate,
+          }
+        : null,
+      subjects: subjectAssignments.map((a) => ({
+        code: a.subject.code,
+        name: a.subject.name,
+        taxonomyVersion: a.subject.taxonomyVersion,
+        isPrimary: a.isPrimary,
+      })),
+      disclaimer: row.contentDisclaimer
+        ? {
+            id: row.contentDisclaimer.id,
+            contentClass: row.contentDisclaimer.contentClass,
+            version: row.contentDisclaimer.version,
+          }
+        : null,
+      isGated: false,
+      upgradeTier: null,
+    };
+  }
+
+  private buildDigestContentJson(row: DigestRowForMapping): Prisma.JsonValue {
+    return {
+      summary: row.summary,
+      facts: row.facts,
+      petitionerArguments: row.petitionerArguments,
+      respondentArguments: row.respondentArguments,
+      issues: row.issues,
+      ruling: row.ruling,
+      doctrine: row.doctrine,
+      dispositive: row.dispositive,
+    } as Prisma.JsonValue;
   }
 
   /**

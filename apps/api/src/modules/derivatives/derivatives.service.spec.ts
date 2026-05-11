@@ -8,6 +8,11 @@ function makePrisma() {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),
     },
+    digest: {
+      findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn().mockResolvedValue(null),
+      count: jest.fn().mockResolvedValue(0),
+    },
     subject: {
       findMany: jest.fn().mockResolvedValue([]),
     },
@@ -338,6 +343,289 @@ describe('DerivativesService', () => {
       expect(where.derivativeArtifact.visibility).toBe('public_editorial');
       expect(where.derivativeArtifact.reviewStatus).toBe('approved');
       expect(where.derivativeArtifact.OR).toBeUndefined();
+    });
+
+    describe('case_digest special case (legacy digests table)', () => {
+      it('returns non-zero counts from digests grouped by subject when visible', async () => {
+        prisma.subject.findMany.mockResolvedValue(fullTaxonomy);
+        // 8 subjects → 8 parallel digest.count calls
+        prisma.digest.count
+          .mockResolvedValueOnce(12) // political_law
+          .mockResolvedValueOnce(0) // civil_law
+          .mockResolvedValueOnce(7) // criminal_law
+          .mockResolvedValueOnce(0)
+          .mockResolvedValueOnce(0)
+          .mockResolvedValueOnce(0)
+          .mockResolvedValueOnce(3) // remedial_law
+          .mockResolvedValueOnce(0);
+
+        const result = await service.subjectsSummaryByType(
+          'case_digest',
+          'user-1',
+          'org-1',
+          'study_8',
+        );
+
+        const political = result.find((r) => r.subjectCode === 'political_law');
+        expect(political).toEqual({
+          subjectCode: 'political_law',
+          subjectName: 'Political Law',
+          taxonomyVersion: 'study_8',
+          totalCount: 12,
+          approvedCount: 12,
+        });
+
+        // total === approved for case_digest (single visibility-filter count
+        // serves both — auto-promote sweep keeps review_status='ai_generated').
+        for (const row of result) {
+          expect(row.totalCount).toBe(row.approvedCount);
+        }
+
+        // Sanity: artifact groupBy path NOT used for case_digest
+        expect(prisma.documentSubjectAssignment.groupBy).not.toHaveBeenCalled();
+      });
+
+      it('counts both approved and ai_generated review statuses (single visibility query)', async () => {
+        prisma.subject.findMany.mockResolvedValue(fullTaxonomy);
+        prisma.digest.count.mockResolvedValue(0);
+
+        await service.subjectsSummaryByType('case_digest', 'user-1', 'org-1', 'study_8');
+
+        // All 8 count calls must filter to public_editorial + approved|ai_generated
+        for (const call of prisma.digest.count.mock.calls) {
+          const where = call[0].where;
+          expect(where.visibility).toBe('public_editorial');
+          expect(where.reviewStatus).toEqual({ in: ['approved', 'ai_generated'] });
+        }
+      });
+
+      it('excludes private and needs_human_review digests via the visibility filter', async () => {
+        prisma.subject.findMany.mockResolvedValue(fullTaxonomy);
+        prisma.digest.count.mockResolvedValue(0);
+
+        await service.subjectsSummaryByType('case_digest', 'user-1', 'org-1', 'study_8');
+
+        for (const call of prisma.digest.count.mock.calls) {
+          const where = call[0].where;
+          // visibility filter is strict equality to public_editorial — excludes 'private'
+          expect(where.visibility).toBe('public_editorial');
+          // reviewStatus 'in' set must NOT include 'needs_human_review' or 'draft'
+          expect(where.reviewStatus.in).not.toContain('needs_human_review');
+          expect(where.reviewStatus.in).not.toContain('draft');
+          expect(where.reviewStatus.in).not.toContain('rejected');
+        }
+      });
+
+      it('joins via legalDocument.subjectAssignments (not derivativeArtifact)', async () => {
+        prisma.subject.findMany.mockResolvedValue(fullTaxonomy);
+        prisma.digest.count.mockResolvedValue(0);
+
+        await service.subjectsSummaryByType('case_digest', 'user-1', 'org-1', 'study_8');
+
+        const firstCall = prisma.digest.count.mock.calls[0][0];
+        expect(firstCall.where.legalDocument).toEqual({
+          subjectAssignments: { some: { subjectId: 's1' } },
+        });
+      });
+    });
+  });
+
+  describe('list — case_digest special case', () => {
+    const makeDigestRow = (overrides: Partial<Record<string, unknown>> = {}) => ({
+      id: 'd1',
+      title: 'People v. Doe — Search & Seizure',
+      confidenceScore: 0.85,
+      createdAt: new Date('2026-05-01'),
+      summary: 'Sum',
+      facts: 'F',
+      petitionerArguments: 'P args',
+      respondentArguments: 'R args',
+      issues: 'WON the search was valid',
+      ruling: 'Affirmed',
+      doctrine: 'Plain view',
+      dispositive: 'Petition denied',
+      legalDocument: {
+        id: 'doc-1',
+        title: 'People v. Doe',
+        shortTitle: 'Doe',
+        citationText: 'G.R. No. 12345',
+        court: 'SC',
+        decisionDate: new Date('2024-06-15'),
+        subjectAssignments: [
+          {
+            isPrimary: true,
+            subject: {
+              code: 'criminal_law',
+              name: 'Criminal Law',
+              taxonomyVersion: 'study_8',
+            },
+          },
+        ],
+      },
+      contentDisclaimer: { id: 'cd', contentClass: 'digest', version: 1 },
+      ...overrides,
+    });
+
+    it('queries the digests table (not derivative_artifacts) when derivativeType=case_digest', async () => {
+      prisma.digest.findMany.mockResolvedValue([makeDigestRow()]);
+
+      const { items } = await service.list('user-1', 'org-1', {
+        derivativeType: 'case_digest',
+      });
+
+      expect(prisma.digest.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.derivativeArtifact.findMany).not.toHaveBeenCalled();
+      expect(items).toHaveLength(1);
+    });
+
+    it('applies the public_editorial + (approved|ai_generated) visibility filter', async () => {
+      prisma.digest.findMany.mockResolvedValue([]);
+
+      await service.list('user-1', 'org-1', { derivativeType: 'case_digest' });
+
+      const call = prisma.digest.findMany.mock.calls[0][0];
+      expect(call.where.visibility).toBe('public_editorial');
+      expect(call.where.reviewStatus).toEqual({ in: ['approved', 'ai_generated'] });
+    });
+
+    it('filters by subjectCode via legalDocument.subjectAssignments.some', async () => {
+      prisma.digest.findMany.mockResolvedValue([]);
+
+      await service.list('user-1', 'org-1', {
+        derivativeType: 'case_digest',
+        subjectCode: 'criminal_law',
+        taxonomyVersion: 'study_8',
+      });
+
+      const call = prisma.digest.findMany.mock.calls[0][0];
+      expect(call.where.legalDocument).toEqual({
+        subjectAssignments: {
+          some: { subject: { code: 'criminal_law', taxonomyVersion: 'study_8' } },
+        },
+      });
+    });
+
+    it('maps digest rows to the DerivativeListItem shape (derivativeType=case_digest, never gated)', async () => {
+      prisma.digest.findMany.mockResolvedValue([makeDigestRow()]);
+
+      const { items } = await service.list('user-1', 'org-1', {
+        derivativeType: 'case_digest',
+      });
+
+      const [first] = items;
+      expect(first).toBeDefined();
+      expect(first!.id).toBe('d1');
+      expect(first!.title).toBe('People v. Doe — Search & Seizure');
+      expect(first!.derivativeType).toBe('case_digest');
+      expect(first!.isGated).toBe(false);
+      expect(first!.upgradeTier).toBeNull();
+      expect(first!.sourceDocument).toEqual({
+        id: 'doc-1',
+        title: 'People v. Doe',
+        shortTitle: 'Doe',
+        citationText: 'G.R. No. 12345',
+        court: 'SC',
+        decisionDate: new Date('2024-06-15'),
+      });
+      expect(first!.subjects).toEqual([
+        {
+          code: 'criminal_law',
+          name: 'Criminal Law',
+          taxonomyVersion: 'study_8',
+          isPrimary: true,
+        },
+      ]);
+      expect(first!.disclaimer).toEqual({ id: 'cd', contentClass: 'digest', version: 1 });
+    });
+
+    it('handles pagination with take=limit+1 and nextCursor', async () => {
+      // limit=2, return 3 rows → hasNext=true
+      prisma.digest.findMany.mockResolvedValue([
+        makeDigestRow({ id: 'd1' }),
+        makeDigestRow({ id: 'd2' }),
+        makeDigestRow({ id: 'd3' }),
+      ]);
+
+      const result = await service.list('user-1', 'org-1', {
+        derivativeType: 'case_digest',
+        limit: 2,
+      });
+
+      expect(result.items).toHaveLength(2);
+      expect(result.meta.hasNext).toBe(true);
+      expect(result.meta.nextCursor).toBe('d2');
+    });
+  });
+
+  describe('findOne — case_digest fallback', () => {
+    const makeDigestRow = () => ({
+      id: 'd1',
+      title: 'People v. Doe',
+      confidenceScore: 0.85,
+      createdAt: new Date('2026-05-01'),
+      summary: 'Sum',
+      facts: 'Facts text',
+      petitionerArguments: null,
+      respondentArguments: null,
+      issues: 'Issues',
+      ruling: 'Ruling',
+      doctrine: 'Doctrine',
+      dispositive: 'Dispositive',
+      legalDocument: {
+        id: 'doc-1',
+        title: 'People v. Doe',
+        shortTitle: null,
+        citationText: 'G.R. No. 12345',
+        court: 'SC',
+        decisionDate: new Date('2024-06-15'),
+        subjectAssignments: [],
+      },
+      contentDisclaimer: {
+        id: 'cd',
+        contentClass: 'digest',
+        version: 1,
+        bodyHtml: '<p>disc</p>',
+        bodyPlain: 'disc',
+      },
+    });
+
+    it('falls back to digests when no derivative_artifact matches', async () => {
+      prisma.derivativeArtifact.findFirst.mockResolvedValue(null);
+      prisma.digest.findFirst.mockResolvedValue(makeDigestRow());
+
+      const result = await service.findOne('d1', 'user-1', 'org-1');
+
+      expect(result.id).toBe('d1');
+      expect(result.derivativeType).toBe('case_digest');
+      const content = result.contentJson as Record<string, unknown>;
+      expect(content['facts']).toBe('Facts text');
+      expect(content['doctrine']).toBe('Doctrine');
+      expect(content['dispositive']).toBe('Dispositive');
+      expect(result.disclaimerBody).toEqual({ bodyHtml: '<p>disc</p>', bodyPlain: 'disc' });
+      expect(result.isGated).toBe(false);
+    });
+
+    it('applies the case-digest visibility filter on the fallback lookup', async () => {
+      prisma.derivativeArtifact.findFirst.mockResolvedValue(null);
+      prisma.digest.findFirst.mockResolvedValue(null);
+
+      await expect(service.findOne('d1', 'user-1', 'org-1')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+
+      const call = prisma.digest.findFirst.mock.calls[0][0];
+      expect(call.where.id).toBe('d1');
+      expect(call.where.visibility).toBe('public_editorial');
+      expect(call.where.reviewStatus).toEqual({ in: ['approved', 'ai_generated'] });
+    });
+
+    it('throws NotFound when neither table matches', async () => {
+      prisma.derivativeArtifact.findFirst.mockResolvedValue(null);
+      prisma.digest.findFirst.mockResolvedValue(null);
+
+      await expect(service.findOne('d1', 'user-1', 'org-1')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
     });
   });
 });
