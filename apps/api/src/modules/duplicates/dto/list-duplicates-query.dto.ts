@@ -3,8 +3,8 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 
 const DUPLICATE_STATUSES = ['pending', 'merged', 'dismissed', 'auto_dismissed'] as const;
-const SIMILARITY_TYPES = ['checksum', 'title', 'citation', 'exact_duplicate', 'mirror_duplicate', 'version_update', 'possible_duplicate'] as const;
-const CLASSIFICATION_TIERS = ['exact_duplicate', 'mirror_duplicate', 'version_update', 'possible_duplicate', 'new_document'] as const;
+const SIMILARITY_TYPES = ['checksum', 'title', 'citation', 'canonical_url_match', 'exact_duplicate', 'mirror_duplicate', 'version_update', 'possible_duplicate'] as const;
+const CLASSIFICATION_TIERS = ['exact_duplicate', 'canonical_url_match', 'mirror_duplicate', 'version_update', 'possible_duplicate', 'new_document'] as const;
 
 export class ListDuplicatesQueryDto {
   @ApiPropertyOptional({ description: 'Cursor for pagination' })

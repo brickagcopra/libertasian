@@ -6,8 +6,12 @@ import {
 } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 
+import { CeleryDispatcherService } from '../../common/services/celery-dispatcher.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ListDuplicatesQueryDto, MergeDuplicateDto } from './dto';
+
+const CANONICAL_URL_BACKFILL_TASK =
+  'tasks.canonical_url_backfill_published_documents';
 
 const DOC_SELECT = {
   id: true,
@@ -23,7 +27,27 @@ const DOC_SELECT = {
 export class DuplicatesService {
   private readonly logger = new Logger(DuplicatesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly celery: CeleryDispatcherService,
+  ) {}
+
+  // ---- Backfill dispatch ----
+
+  /**
+   * Dispatch the worker-side canonical_url backfill task. Returns the
+   * Celery task id. Reviewer-gated by design: every pair the task writes
+   * is ``status='pending'`` (NEVER auto-dismissed) because same-URL +
+   * different-checksum can legitimately mean either a mirror site or
+   * genuine version drift, and only a human can tell which.
+   */
+  async dispatchCanonicalUrlBackfill(): Promise<{ taskId: string; taskName: string }> {
+    const taskId = await this.celery.sendTask(CANONICAL_URL_BACKFILL_TASK);
+    this.logger.log(
+      `Dispatched canonical_url backfill task id=${taskId}`,
+    );
+    return { taskId, taskName: CANONICAL_URL_BACKFILL_TASK };
+  }
 
   // ---- Query Methods ----
 

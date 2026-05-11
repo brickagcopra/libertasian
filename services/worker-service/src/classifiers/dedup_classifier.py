@@ -1,14 +1,18 @@
-"""LIBERTASIAN Worker Service — 5-tier deduplication classifier.
+"""LIBERTASIAN Worker Service — 6-tier deduplication classifier.
 
-Classifies incoming ingestion candidates into one of five tiers:
-1. exact_duplicate   — Checksum match (confidence 1.0)
-2. mirror_duplicate  — Same GR No. + same citation from different source (0.90-0.95)
-3. version_update    — Same GR No. + different checksum from same source (0.80-0.85)
-4. possible_duplicate — Title similarity >= threshold (0.65-0.70)
-5. new_document      — No match above threshold
+Classifies incoming ingestion candidates into one of six tiers:
+1. exact_duplicate      — Checksum match (confidence 1.0)
+2. canonical_url_match  — Same canonical_url + different checksum (0.75, pending review)
+3. mirror_duplicate     — Same GR No. + same citation from different source (0.90-0.95)
+4. version_update       — Same GR No. + different checksum from same source (0.80-0.85)
+5. possible_duplicate   — Title similarity >= threshold (0.65-0.70)
+6. new_document         — No match above threshold
 
 Behavior per tier:
 - exact_duplicate / mirror_duplicate: skip ingestion, create DocumentSimilarity
+- canonical_url_match: ingest AND create DocumentSimilarity (status='pending' → review).
+  Mirror sites and Lawphil ↔ SC E-Library publish under the same URL but content
+  diverges; reviewer must classify manually (merge / version_update / dismiss).
 - version_update: create new LegalDocumentVersion, create DocumentSimilarity
 - possible_duplicate: create document AND DocumentSimilarity (status='pending' → review)
 - new_document: proceed with normal ingestion
@@ -27,9 +31,10 @@ logger = logging.getLogger(__name__)
 
 
 class DedupTier(str, Enum):
-    """5-tier dedup classification."""
+    """6-tier dedup classification."""
 
     EXACT_DUPLICATE = "exact_duplicate"
+    CANONICAL_URL_MATCH = "canonical_url_match"
     MIRROR_DUPLICATE = "mirror_duplicate"
     VERSION_UPDATE = "version_update"
     POSSIBLE_DUPLICATE = "possible_duplicate"
@@ -59,7 +64,10 @@ class DedupResult:
     @property
     def needs_review(self) -> bool:
         """Whether this candidate needs human review."""
-        return self.tier == DedupTier.POSSIBLE_DUPLICATE
+        return self.tier in (
+            DedupTier.POSSIBLE_DUPLICATE,
+            DedupTier.CANONICAL_URL_MATCH,
+        )
 
 
 def _levenshtein_similarity(s1: str, s2: str) -> float:
@@ -132,12 +140,14 @@ class DedupClassifier:
         citation_text: str | None = None,
         court: str | None = None,
         document_type: str | None = None,
+        canonical_url: str | None = None,
         checksum_match: dict[str, Any] | None = None,
+        canonical_url_match: dict[str, Any] | None = None,
         gr_no_same_source_match: dict[str, Any] | None = None,
         gr_no_cross_source_matches: list[dict[str, Any]] | None = None,
         title_candidates: list[dict[str, Any]] | None = None,
     ) -> DedupResult:
-        """Classify a candidate document into one of 5 dedup tiers.
+        """Classify a candidate document into one of 6 dedup tiers.
 
         Args:
             content_checksum: SHA-256 of the raw document content.
@@ -147,7 +157,11 @@ class DedupClassifier:
             citation_text: Normalized citation text (if any).
             court: Court name (if any).
             document_type: Document type (case, codal, etc).
+            canonical_url: Candidate's canonical_url (if any).
             checksum_match: Existing document with same checksum (or None).
+            canonical_url_match: Existing doc with same canonical_url +
+                different checksum (or None). Fallback signal — checksum match
+                wins, so callers should only set this when no checksum match.
             gr_no_same_source_match: Existing doc with same GR No. + same source.
             gr_no_cross_source_matches: Existing docs with same GR No. from other sources.
             title_candidates: Docs with similar titles (same source + doc type scope).
@@ -155,7 +169,9 @@ class DedupClassifier:
         Returns:
             DedupResult with tier, confidence, matched doc, and evidence.
         """
-        # Tier 1: Exact duplicate (checksum match)
+        # Tier 1: Exact duplicate (checksum match) — wins over everything,
+        # including canonical_url. Mirror sites with stable URLs can still
+        # serve byte-identical content; that path is auto-dismiss, not pending.
         if checksum_match:
             return DedupResult(
                 tier=DedupTier.EXACT_DUPLICATE,
@@ -169,7 +185,29 @@ class DedupClassifier:
                 },
             )
 
-        # Tier 2: Mirror duplicate (same GR No. + same citation from different source)
+        # Tier 2: Canonical URL match (same URL, different checksum) —
+        # reviewer-gated. Lawphil ↔ SC E-Library publish under the same URL
+        # but content can diverge (mirror site or version drift), so this
+        # MUST stay pending — never auto-dismiss.
+        if canonical_url and canonical_url_match:
+            existing_checksum = canonical_url_match.get("checksum")
+            if existing_checksum != content_checksum:
+                return DedupResult(
+                    tier=DedupTier.CANONICAL_URL_MATCH,
+                    confidence=0.75,
+                    matched_document_id=canonical_url_match["id"],
+                    matched_document_title=canonical_url_match.get("title"),
+                    evidence={
+                        "method": "canonical_url",
+                        "matched_on": "canonical_url",
+                        "url": canonical_url,
+                        "existing_checksum": existing_checksum,
+                        "new_checksum": content_checksum,
+                        "matched_source_id": canonical_url_match.get("source_id"),
+                    },
+                )
+
+        # Tier 3: Mirror duplicate (same GR No. + same citation from different source)
         if gr_no and gr_no_cross_source_matches:
             for match in gr_no_cross_source_matches:
                 match_citation = match.get("citation_text", "")
@@ -194,7 +232,7 @@ class DedupClassifier:
                     },
                 )
 
-        # Tier 3: Version update (same GR No. + different checksum from same source)
+        # Tier 4: Version update (same GR No. + different checksum from same source)
         if gr_no and gr_no_same_source_match:
             existing_checksum = gr_no_same_source_match.get("checksum")
             if existing_checksum != content_checksum:
@@ -217,7 +255,7 @@ class DedupClassifier:
                     },
                 )
 
-        # Tier 4: Possible duplicate (title similarity)
+        # Tier 5: Possible duplicate (title similarity)
         if title_candidates:
             normalized_title = _normalize_title(title)
             best_match: dict[str, Any] | None = None
@@ -259,7 +297,7 @@ class DedupClassifier:
                     },
                 )
 
-        # Tier 5: New document
+        # Tier 6: New document
         return DedupResult(
             tier=DedupTier.NEW_DOCUMENT,
             confidence=0.0,

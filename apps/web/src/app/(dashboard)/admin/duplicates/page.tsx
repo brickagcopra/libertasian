@@ -8,6 +8,7 @@ import {
   useDuplicates,
   useDuplicateStats,
   useRunDuplicateDetection,
+  useRunCanonicalUrlBackfill,
   useMergeDuplicate,
   useDismissDuplicate,
 } from '@/features/admin/hooks/use-admin';
@@ -38,6 +39,7 @@ export default function DuplicatesPage() {
     cursor,
   });
   const detect = useRunDuplicateDetection();
+  const canonicalUrlBackfill = useRunCanonicalUrlBackfill();
 
   return (
     <div className="space-y-6">
@@ -111,7 +113,40 @@ export default function DuplicatesPage() {
         >
           Citation Only
         </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => canonicalUrlBackfill.mutate()}
+          disabled={canonicalUrlBackfill.isPending}
+          title="Scan legal_documents for same canonical_url with different checksums; writes pending review-queue rows. Hard-capped at 500 pairs per dispatch."
+        >
+          {canonicalUrlBackfill.isPending
+            ? 'Dispatching...'
+            : 'Run canonical_url backfill'}
+        </Button>
       </div>
+
+      {canonicalUrlBackfill.isSuccess && (
+        <Alert>
+          <AlertDescription className="text-green-700">
+            canonical_url backfill dispatched (task id{' '}
+            <code className="text-xs">{canonicalUrlBackfill.data.taskId}</code>
+            ). New pairs land in the review queue as canonical_url_match — refresh
+            to see them.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {canonicalUrlBackfill.isError && (
+        <Alert variant="destructive">
+          <AlertDescription>
+            canonical_url backfill failed:{' '}
+            {canonicalUrlBackfill.error instanceof Error
+              ? canonicalUrlBackfill.error.message
+              : 'Unknown error'}
+          </AlertDescription>
+        </Alert>
+      )}
 
       {detect.isSuccess && (
         <Alert>
@@ -158,6 +193,7 @@ export default function DuplicatesPage() {
             <SelectItem value="checksum">Checksum</SelectItem>
             <SelectItem value="title">Title</SelectItem>
             <SelectItem value="citation">Citation</SelectItem>
+            <SelectItem value="canonical_url_match">canonical_url</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -238,7 +274,10 @@ function DuplicateCard({ pair }: { pair: DocumentSimilarityItem }) {
     checksum: 'bg-red-100 text-red-700',
     title: 'bg-blue-100 text-blue-700',
     citation: 'bg-purple-100 text-purple-700',
+    canonical_url_match: 'bg-amber-100 text-amber-800',
   };
+
+  const isCanonicalUrlMatch = pair.similarityType === 'canonical_url_match';
 
   const statusVariants: Record<string, string> = {
     pending: 'bg-yellow-100 text-yellow-700',
@@ -278,6 +317,15 @@ function DuplicateCard({ pair }: { pair: DocumentSimilarityItem }) {
             </div>
           </button>
         </div>
+
+        {isCanonicalUrlMatch && (
+          <Alert className="mt-3 border-amber-300 bg-amber-50">
+            <AlertDescription className="text-amber-900">
+              Same URL, different checksum — likely mirror site or version
+              drift; classify manually.
+            </AlertDescription>
+          </Alert>
+        )}
 
         {expanded && isPending && (
           <>

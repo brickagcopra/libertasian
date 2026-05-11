@@ -473,6 +473,23 @@ export function useRunDuplicateDetection() {
   });
 }
 
+export function useRunCanonicalUrlBackfill() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const res = await apiClient.post<{
+        success: boolean;
+        data: { taskId: string; taskName: string };
+      }>('/admin/duplicates/canonical-url-backfill');
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'duplicates'] });
+      queryClient.invalidateQueries({ queryKey: ['admin', 'duplicate-stats'] });
+    },
+  });
+}
+
 export function useMergeDuplicate() {
   const queryClient = useQueryClient();
   return useMutation({

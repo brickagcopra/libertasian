@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 
+import { CeleryDispatcherService } from '../../common/services/celery-dispatcher.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { DuplicatesService } from './duplicates.service';
 
@@ -48,6 +49,10 @@ describe('DuplicatesService', () => {
             editorialFlag: { updateMany: jest.fn() },
             $transaction: jest.fn(),
           },
+        },
+        {
+          provide: CeleryDispatcherService,
+          useValue: { sendTask: jest.fn().mockResolvedValue('task-id-mock') },
         },
       ],
     }).compile();
