@@ -6,24 +6,19 @@ import {
   type DigestBadge,
   type DigestSection,
 } from '@/components/screens/DigestDetailScreen';
-import {
-  IracDigestRenderer,
-  McqDigestRenderer,
-  EssayDigestRenderer,
-  OutlineDigestRenderer,
-} from '@/components/screens/digest-renderers';
 import { useDigest } from '@/features/digests/hooks/use-digests';
 import { ContentDisclaimer } from '@/features/documents/components/content-disclaimer';
 import { ExportButton } from '@/features/exports/components/export-button';
 import { useTheme } from '@/providers/theme-provider';
 import type { Digest } from '@/features/digests/types';
 
+// API enum: ['case_digest','statute_summary','reviewer_note','study_digest']
+// see apps/api/src/modules/digests/dto/generate-digest.dto.ts:14
 const DIGEST_TYPE_LABELS: Record<string, string> = {
   case_digest: 'Case digest',
-  irac: 'IRAC digest',
-  mcq: 'MCQ',
-  essay: 'Essay',
-  outline: 'Outline',
+  statute_summary: 'Statute summary',
+  reviewer_note: 'Reviewer note',
+  study_digest: 'Study digest',
 };
 
 const REVIEW_STATUS_LABELS: Record<string, string> = {
@@ -34,12 +29,14 @@ const REVIEW_STATUS_LABELS: Record<string, string> = {
   rejected: 'Rejected',
 };
 
+// API enum: ['official_pipeline','admin_generated','user_scan','user_upload','camera_capture']
+// see apps/api/src/modules/digests/dto/create-digest.dto.ts:26
 const SOURCE_LABELS: Record<string, string> = {
-  official_source: 'Official source',
+  official_pipeline: 'Official source',
+  admin_generated: 'Admin generated',
   user_scan: 'User scan',
   user_upload: 'User upload',
-  user_text: 'User text',
-  community: 'Community',
+  camera_capture: 'Camera capture',
 };
 
 function eyebrowFor(digest: Digest): string {
@@ -97,7 +94,7 @@ function buildBadges(digest: Digest): DigestBadge[] {
   if (digest.sourceOrigin) {
     const label = SOURCE_LABELS[digest.sourceOrigin] ?? digest.sourceOrigin.replace(/_/g, ' ');
     const tone: DigestBadge['tone'] =
-      digest.sourceOrigin === 'official_source' ? 'success' : 'info';
+      digest.sourceOrigin === 'official_pipeline' ? 'success' : 'info';
     badges.push({ label, tone });
   }
 
@@ -114,7 +111,7 @@ function buildBadges(digest: Digest): DigestBadge[] {
 
 function disclaimerClassFor(digest: Digest): string | null {
   // Map digest signals to ContentDisclaimer classes per CLAUDE.md provenance rules.
-  if (digest.sourceOrigin === 'official_source' && digest.reviewStatus === 'approved') {
+  if (digest.sourceOrigin === 'official_pipeline' && digest.reviewStatus === 'approved') {
     return 'official_text';
   }
   if (digest.visibility === 'private') return 'user_private';
@@ -125,7 +122,6 @@ function disclaimerClassFor(digest: Digest): string | null {
   ) {
     return 'ai_generated';
   }
-  if (digest.sourceOrigin === 'community') return 'community';
   return null;
 }
 
@@ -190,34 +186,6 @@ export default function DigestDetailRoute() {
     }
   };
 
-  // Type-specific renderers replace the default Facts/Issues/Ruling body.
-  let customSections: React.ReactNode = null;
-  if (digest.digestType === 'irac') {
-    customSections = (
-      <IracDigestRenderer
-        issue={digest.iracIssue}
-        rule={digest.iracRule}
-        application={digest.iracApplication}
-        conclusion={digest.iracConclusion}
-      />
-    );
-  } else if (digest.digestType === 'mcq' && digest.mcqStem) {
-    customSections = (
-      <McqDigestRenderer
-        stem={digest.mcqStem}
-        choices={[digest.mcqChoiceA, digest.mcqChoiceB, digest.mcqChoiceC, digest.mcqChoiceD]}
-        correctChoice={digest.mcqCorrectChoice}
-        explanation={digest.mcqExplanation}
-      />
-    );
-  } else if (digest.digestType === 'essay' && digest.essayPrompt) {
-    customSections = (
-      <EssayDigestRenderer prompt={digest.essayPrompt} modelAnswer={digest.essayModelAnswer} />
-    );
-  } else if (digest.digestType === 'outline' && digest.subjectOutlineJson) {
-    customSections = <OutlineDigestRenderer outline={digest.subjectOutlineJson} />;
-  }
-
   const disclaimerClass = disclaimerClassFor(digest);
   const disclaimerSlot = disclaimerClass ? <ContentDisclaimer contentClass={disclaimerClass} /> : null;
 
@@ -253,7 +221,6 @@ export default function DigestDetailRoute() {
       sections={sections}
       badges={badges}
       disclaimerSlot={disclaimerSlot}
-      customSections={customSections}
       footerSlot={footerSlot}
       onBack={() => router.back()}
       onShare={handleShare}
