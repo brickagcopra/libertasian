@@ -80,6 +80,12 @@ describe('Duplicates Admin (E2E)', () => {
         .expect(401);
     });
 
+    it('should reject unauthenticated POST /api/v1/admin/duplicates/canonical-url-backfill', async () => {
+      await request(app.getHttpServer())
+        .post('/api/v1/admin/duplicates/canonical-url-backfill')
+        .expect(401);
+    });
+
     it('should reject unauthenticated POST /api/v1/admin/duplicates/:id/merge', async () => {
       await request(app.getHttpServer())
         .post(`/api/v1/admin/duplicates/${FAKE_UUID_1}/merge`)

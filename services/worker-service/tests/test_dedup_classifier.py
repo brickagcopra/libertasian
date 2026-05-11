@@ -1,11 +1,12 @@
-"""Tests for the 5-tier dedup classifier.
+"""Tests for the 6-tier dedup classifier.
 
-Covers all 5 tiers:
+Covers all 6 tiers:
 1. exact_duplicate — checksum match
-2. mirror_duplicate — same GR No. + different source
-3. version_update — same GR No. + same source + different checksum
-4. possible_duplicate — title Levenshtein similarity >= threshold
-5. new_document — no match
+2. canonical_url_match — same canonical_url + different checksum (pending review)
+3. mirror_duplicate — same GR No. + different source
+4. version_update — same GR No. + same source + different checksum
+5. possible_duplicate — title Levenshtein similarity >= threshold
+6. new_document — no match
 """
 
 from __future__ import annotations
@@ -147,6 +148,150 @@ class TestExactDuplicate:
         )
 
         assert result.tier == DedupTier.EXACT_DUPLICATE
+
+
+class TestCanonicalUrlMatch:
+    """Tier 2: canonical_url_match — same canonical_url + different checksum.
+
+    Must stay reviewer-gated (needs_review=True, should_skip_ingestion=False)
+    because mirror sites (Lawphil ↔ SC E-Library) publish under the same URL
+    but content can diverge.
+    """
+
+    def test_canonical_url_match_returns_pending_tier(
+        self,
+        classifier: DedupClassifier,
+        source_id: str,
+    ) -> None:
+        existing = {
+            "id": make_uuid(),
+            "title": "Republic v. Sandiganbayan",
+            "checksum": "old_checksum",
+            "source_id": make_uuid(),
+        }
+
+        result = classifier.classify(
+            content_checksum="new_different_checksum",
+            source_id=source_id,
+            title="Republic v. Sandiganbayan",
+            canonical_url="https://lawphil.net/judjuris/juri2024/jan2024/gr_123456_2024.html",
+            canonical_url_match=existing,
+        )
+
+        assert result.tier == DedupTier.CANONICAL_URL_MATCH
+        assert result.confidence == 0.75
+        assert result.matched_document_id == existing["id"]
+        assert result.needs_review is True
+        assert result.should_skip_ingestion is False
+        assert result.is_version_update is False
+        assert result.evidence["method"] == "canonical_url"
+        assert result.evidence["matched_on"] == "canonical_url"
+        assert (
+            result.evidence["url"]
+            == "https://lawphil.net/judjuris/juri2024/jan2024/gr_123456_2024.html"
+        )
+
+    def test_canonical_url_same_checksum_does_not_trigger(
+        self,
+        classifier: DedupClassifier,
+        source_id: str,
+    ) -> None:
+        """If the candidate's checksum matches the existing doc at that URL,
+        the canonical_url tier does NOT fire — that's a checksum match, which
+        is handled upstream. The fallback assumes the candidate already
+        survived the checksum tier."""
+        existing = {
+            "id": make_uuid(),
+            "checksum": "same_checksum",
+        }
+
+        result = classifier.classify(
+            content_checksum="same_checksum",
+            source_id=source_id,
+            title="Some Title",
+            canonical_url="https://example.com/doc",
+            canonical_url_match=existing,
+        )
+
+        assert result.tier != DedupTier.CANONICAL_URL_MATCH
+        assert result.tier == DedupTier.NEW_DOCUMENT
+
+    def test_checksum_match_wins_over_canonical_url(
+        self,
+        classifier: DedupClassifier,
+        source_id: str,
+    ) -> None:
+        """Checksum match (exact_duplicate) MUST pre-empt canonical_url.
+        The user explicitly required this: canonical_url is a FALLBACK, never
+        a pre-empt."""
+        checksum_doc = {
+            "id": make_uuid(),
+            "title": "Byte-identical content",
+            "source_id": make_uuid(),
+        }
+        canonical_url_doc = {
+            "id": make_uuid(),
+            "title": "Different content at same URL",
+            "checksum": "different_checksum",
+        }
+
+        result = classifier.classify(
+            content_checksum="abc123",
+            source_id=source_id,
+            title="Some Title",
+            canonical_url="https://example.com/doc",
+            checksum_match=checksum_doc,
+            canonical_url_match=canonical_url_doc,
+        )
+
+        assert result.tier == DedupTier.EXACT_DUPLICATE
+        assert result.matched_document_id == checksum_doc["id"]
+
+    def test_canonical_url_match_without_url_does_not_fire(
+        self,
+        classifier: DedupClassifier,
+        source_id: str,
+    ) -> None:
+        """Defensive guard: if canonical_url is None we never fire the tier,
+        even if the caller mistakenly populated canonical_url_match."""
+        existing = {
+            "id": make_uuid(),
+            "checksum": "old_checksum",
+        }
+
+        result = classifier.classify(
+            content_checksum="new_checksum",
+            source_id=source_id,
+            title="No URL Provided",
+            canonical_url=None,
+            canonical_url_match=existing,
+        )
+
+        assert result.tier != DedupTier.CANONICAL_URL_MATCH
+
+    def test_canonical_url_match_evidence_includes_checksums(
+        self,
+        classifier: DedupClassifier,
+        source_id: str,
+    ) -> None:
+        existing = {
+            "id": make_uuid(),
+            "checksum": "old_abc",
+            "source_id": "source-xyz",
+        }
+
+        result = classifier.classify(
+            content_checksum="new_def",
+            source_id=source_id,
+            title="Test",
+            canonical_url="https://example.com/x",
+            canonical_url_match=existing,
+        )
+
+        assert result.tier == DedupTier.CANONICAL_URL_MATCH
+        assert result.evidence["existing_checksum"] == "old_abc"
+        assert result.evidence["new_checksum"] == "new_def"
+        assert result.evidence["matched_source_id"] == "source-xyz"
 
 
 class TestMirrorDuplicate:
@@ -545,14 +690,27 @@ class TestDedupResult:
         result = DedupResult(tier=DedupTier.POSSIBLE_DUPLICATE, confidence=0.70)
         assert result.should_skip_ingestion is False
 
+    def test_should_not_skip_canonical_url_match(self) -> None:
+        """canonical_url_match MUST ingest + write a pending review row.
+        Reviewer-gated by design — never auto-dismissed.
+        """
+        result = DedupResult(tier=DedupTier.CANONICAL_URL_MATCH, confidence=0.75)
+        assert result.should_skip_ingestion is False
+
     def test_should_not_skip_new(self) -> None:
         result = DedupResult(tier=DedupTier.NEW_DOCUMENT, confidence=0.0)
         assert result.should_skip_ingestion is False
 
-    def test_needs_review_only_possible(self) -> None:
+    def test_needs_review_possible_and_canonical_url(self) -> None:
+        """needs_review is True for both POSSIBLE_DUPLICATE and
+        CANONICAL_URL_MATCH — both require human classification."""
+        review_tiers = {
+            DedupTier.POSSIBLE_DUPLICATE,
+            DedupTier.CANONICAL_URL_MATCH,
+        }
         for tier in DedupTier:
             result = DedupResult(tier=tier, confidence=0.5)
-            if tier == DedupTier.POSSIBLE_DUPLICATE:
+            if tier in review_tiers:
                 assert result.needs_review is True
             else:
                 assert result.needs_review is False

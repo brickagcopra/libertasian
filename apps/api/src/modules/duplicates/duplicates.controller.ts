@@ -2,6 +2,8 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
   Ip,
   Param,
   ParseUUIDPipe,
@@ -167,6 +169,30 @@ export class DuplicatesController {
       metadata: { ip, pairsCreated: result.pairsCreated },
     });
     return { success: true, data: { ...result, similarityType: 'citation' } };
+  }
+
+  // ---- Backfill Endpoints ----
+
+  @Post('canonical-url-backfill')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({
+    summary:
+      'Dispatch the canonical_url backfill task (writes pending review-queue rows for same-URL collisions with different checksums)',
+  })
+  async runCanonicalUrlBackfill(
+    @CurrentUser() user: JwtPayload,
+    @Ip() ip: string,
+  ) {
+    const result = await this.duplicatesService.dispatchCanonicalUrlBackfill();
+    await this.auditService.log({
+      actorUserId: user.sub,
+      actorType: 'admin',
+      action: 'duplicate.canonical_url_backfill_dispatched',
+      entityType: 'document_similarity',
+      entityId: undefined,
+      metadata: { ip, taskId: result.taskId, taskName: result.taskName },
+    });
+    return { success: true, data: result };
   }
 
   // ---- Action Endpoints ----
