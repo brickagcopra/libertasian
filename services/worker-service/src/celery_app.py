@@ -108,6 +108,7 @@ app.conf.include = [
     "src.tasks.cost_tasks",
     "src.tasks.citations_backfill_tasks",
     "src.tasks.bar_exam_tasks",
+    "src.tasks.bar_exam_answer_tasks",
     "src.tasks.dedup_backfill_tasks",
     "src.tasks.canonical_url_backfill_tasks",
 ]
