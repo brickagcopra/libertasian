@@ -112,6 +112,7 @@ const ADMIN_NAV_ITEMS: NavItem[] = [
   { href: '/admin/ingestion', label: 'Ingestion', icon: DownloadCloudIcon },
   { href: '/admin/backfill', label: 'Backfill', icon: ArchiveRestoreIcon },
   { href: '/admin/bar-exams', label: 'Bar Exams', icon: ScrollTextIcon },
+  { href: '/admin/bar-exams/answers', label: 'Bar Exam Answers', icon: SparklesIcon },
 
   // 3 — Document review
   { href: '/admin/documents', label: 'Documents', icon: FileStackIcon },

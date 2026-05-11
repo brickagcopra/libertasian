@@ -1551,3 +1551,103 @@ def publish_legal_document_immediately(document_id: str) -> None:
             (document_id,),
         )
     logger.info("Published bar exam document %s immediately", document_id)
+
+
+# ─── Bar Exam Answers (Phase 3a) ────────────────────────────────────────
+
+
+def get_bar_exam_question_with_context(
+    question_id: str,
+) -> dict[str, Any] | None:
+    """Fetch a bar exam question joined with its sitting's year + subject.
+
+    Returns ``{id, question_text, subject_study_code, sitting_year,
+    sitting_id}`` or ``None`` if the question doesn't exist. The columns
+    drive prompt rendering and citation retrieval.
+    """
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """SELECT q.id,
+                      q.question_text,
+                      q.bar_exam_sitting_id AS sitting_id,
+                      s.year AS sitting_year,
+                      s.subject_study_code,
+                      s.subject_bar_admin_code
+               FROM bar_exam_questions q
+               JOIN bar_exam_sittings s ON s.id = q.bar_exam_sitting_id
+               WHERE q.id = %s""",
+            (question_id,),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def bar_exam_answer_exists(
+    bar_exam_question_id: str,
+    answer_type: str = "ai_generated",
+) -> bool:
+    """Idempotency check for the answer generator — returns True if the
+    (question, answer_type) pair already has a row.
+    """
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT 1
+                   FROM bar_exam_answers
+                   WHERE bar_exam_question_id = %s
+                     AND answer_type = %s
+                   LIMIT 1""",
+            (bar_exam_question_id, answer_type),
+        )
+        return cur.fetchone() is not None
+
+
+def create_bar_exam_answer(
+    bar_exam_question_id: str,
+    answer_text: str,
+    structured_answer: dict[str, Any] | None,
+    answer_type: str = "ai_generated",
+    model_run_id: str | None = None,
+    confidence: float | None = None,
+    review_status: str = "pending",
+    visibility: str = "private",
+) -> str:
+    """Insert a bar_exam_answers row. Returns the new id.
+
+    Caller is responsible for the idempotency check
+    (``bar_exam_answer_exists``) — the unique constraint will raise on
+    conflict if it's skipped.
+    """
+    import uuid
+
+    answer_id = str(uuid.uuid4())
+    structured_json = (
+        json.dumps(structured_answer) if structured_answer is not None else None
+    )
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO bar_exam_answers
+                   (id, bar_exam_question_id, answer_type, answer_text,
+                    structured_answer_json, model_run_id, confidence,
+                    review_status, visibility, created_at, updated_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())""",
+            (
+                answer_id,
+                bar_exam_question_id,
+                answer_type,
+                answer_text,
+                structured_json,
+                model_run_id,
+                confidence,
+                review_status,
+                visibility,
+            ),
+        )
+    logger.info(
+        "Created bar exam answer %s for question %s (type=%s status=%s)",
+        answer_id,
+        bar_exam_question_id,
+        answer_type,
+        review_status,
+    )
+    return answer_id

@@ -116,6 +116,8 @@ model User {
   createdBackfillBatches     BackfillBatch[]           @relation("BackfillBatchCreatedBy")
   // Golden sets (PR 4.1)
   goldenSetReviews           GoldenSetEntry[]          @relation("GoldenSetReviewer")
+  // Bar exam answer reviews (Phase 3a)
+  barExamAnswerReviews       BarExamAnswer[]           @relation("BarExamAnswerReviewer")
 
   @@map("users")
 }
@@ -1270,6 +1272,8 @@ model ModelRun {
   subjectClassifications DocumentSubjectAssignment[]
   // Budget ledger entries (§7.2)
   budgetLedgerEntries    BudgetLedger[]
+  // Bar exam answers (Phase 3a)
+  barExamAnswers         BarExamAnswer[]
 
   @@map("model_runs")
 }
@@ -3824,12 +3828,50 @@ model BarExamQuestion {
   createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt           DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  barExamSitting BarExamSitting @relation(fields: [barExamSittingId], references: [id], onDelete: Cascade)
+  barExamSitting BarExamSitting  @relation(fields: [barExamSittingId], references: [id], onDelete: Cascade)
+  answers        BarExamAnswer[]
 
   @@unique([barExamSittingId, questionNumber])
   @@index([barExamSittingId])
   @@index([questionNumber])
   @@map("bar_exam_questions")
+}
+
+// ---------------------------------------------------------------------------
+// BarExamAnswer (Phase 3a) — AI-generated ALAC answers for past bar exam
+// questions, pending admin review before they become public.
+//
+// Phase 3a: only `answer_type = 'ai_generated'` is written. Phase 3b will
+// surface approved answers in a public route. Future types ('editorial',
+// 'community') reuse the same table.
+//
+// The unique (bar_exam_question_id, answer_type) constraint guarantees one
+// AI answer per question — the worker task is idempotent on this. New
+// generations require deleting the prior row first.
+// ---------------------------------------------------------------------------
+
+model BarExamAnswer {
+  id                   String    @id @default(uuid()) @db.Uuid
+  barExamQuestionId    String    @map("bar_exam_question_id") @db.Uuid
+  answerType           String    @default("ai_generated") @map("answer_type") @db.VarChar(20)
+  answerText           String    @map("answer_text") @db.Text
+  structuredAnswerJson Json?     @map("structured_answer_json")
+  modelRunId           String?   @map("model_run_id") @db.Uuid
+  confidence           Float?    @db.Real
+  reviewStatus         String    @default("pending") @map("review_status") @db.VarChar(20)
+  visibility           String    @default("private") @map("visibility") @db.VarChar(20)
+  reviewedByUserId     String?   @map("reviewed_by_user_id") @db.Uuid
+  reviewedAt           DateTime? @map("reviewed_at") @db.Timestamptz
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  question BarExamQuestion @relation(fields: [barExamQuestionId], references: [id], onDelete: Cascade)
+  modelRun ModelRun?       @relation(fields: [modelRunId], references: [id])
+  reviewer User?           @relation("BarExamAnswerReviewer", fields: [reviewedByUserId], references: [id])
+
+  @@unique([barExamQuestionId, answerType])
+  @@index([reviewStatus, createdAt])
+  @@map("bar_exam_answers")
 }
 
 // ---------------------------------------------------------------------------
