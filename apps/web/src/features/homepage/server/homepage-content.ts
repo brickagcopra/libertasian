@@ -247,7 +247,7 @@ export const DEFAULT_HOMEPAGE_CONTENT: HomepageContent = {
     brandDescription: 'Philippine Legal AI Platform. Democratizing access to legal knowledge.',
     contactEmail: 'support@libertasian.com',
     productLinks: [
-      { label: 'Features', href: '#features' },
+      { label: 'Features', href: '/#features' },
       { label: 'Blog', href: '/blog' },
       { label: 'Pricing', href: '/pricing' },
       { label: 'Get Started', href: '/auth/callback?mode=register' },
