@@ -1,11 +1,11 @@
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'Account',
+  title: 'Digests',
 };
 
-export default function AuthLayout({
+export default function DigestsLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
-  return <div className="min-h-screen bg-gray-50">{children}</div>;
+  return <>{children}</>;
 }

@@ -22,7 +22,10 @@ const inter = Inter({
 export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
-  title: 'LIBERTASIAN — Philippine Legal AI Platform',
+  title: {
+    default: 'LIBERTASIAN — Philippine Legal AI Platform',
+    template: '%s — LIBERTASIAN',
+  },
   description: 'AI-powered Philippine legal research, case digests, and codal reading',
 };
 

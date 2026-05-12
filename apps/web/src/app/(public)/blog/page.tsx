@@ -4,7 +4,7 @@ import type { Metadata } from 'next';
 import { BlogInlineAd } from '@/components/ads/BlogInlineAd';
 
 export const metadata: Metadata = {
-  title: 'Blog — LIBERTASIAN',
+  title: 'Blog',
   description: 'Legal tech insights, Philippine law updates, and platform news from LIBERTASIAN.',
 };
 

@@ -1,6 +1,12 @@
+import type { Metadata } from 'next';
+
 import type { PlanDetail } from '@/features/billing/types';
 
 import { PricingPageClient } from './pricing-page-client';
+
+export const metadata: Metadata = {
+  title: 'Pricing',
+};
 
 export const revalidate = 60;
 

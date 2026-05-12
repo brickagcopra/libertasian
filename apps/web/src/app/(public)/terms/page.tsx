@@ -1,5 +1,5 @@
 export const metadata = {
-  title: 'Terms of Service — LIBERTASIAN',
+  title: 'Terms',
   description: 'Terms of Service for LIBERTASIAN Philippine Legal AI Platform.',
 };
 
