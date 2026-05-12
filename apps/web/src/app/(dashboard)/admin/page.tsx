@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useCorpusHealth } from '@/features/admin/hooks/use-admin';
 import { AdminCardSkeleton } from '@/components/ui/skeleton';
 import { AnimatedCounter } from '@/components/ui/animated-counter';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 export default function AdminDashboardPage() {
   const { data: health, isLoading, error } = useCorpusHealth();
@@ -70,13 +71,24 @@ export default function AdminDashboardPage() {
                 label="Citations Indexed"
                 value={health.pipelineOps.citationsTotal}
               />
-              <StatCard
-                label="Pending Review Queue"
-                value={health.pipelineOps.pendingReviewQueue}
-                accent={
-                  health.pipelineOps.pendingReviewQueue > 0 ? 'yellow' : undefined
-                }
-              />
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div>
+                    <StatCard
+                      label="Pending Review Queue"
+                      value={health.pipelineOps.pendingReviewQueue}
+                      accent={
+                        health.pipelineOps.pendingReviewQueue > 0 ? 'yellow' : undefined
+                      }
+                    />
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Items in the review queue can include duplicates, derivatives, and
+                  AI-generated content awaiting human approval — counts may exceed
+                  unique document counts.
+                </TooltipContent>
+              </Tooltip>
             </div>
             {health.pipelineOps.activeBackfillBatches.items.length > 0 && (
               <div className="mt-3 divide-y rounded-md border border-gray-200 bg-white">

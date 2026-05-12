@@ -1,5 +1,5 @@
 export const metadata = {
-  title: 'Privacy Policy — LIBERTASIAN',
+  title: 'Privacy',
   description:
     'Privacy Policy for LIBERTASIAN Philippine Legal AI Platform, aligned with the Philippine Data Privacy Act of 2012.',
 };

@@ -6,7 +6,7 @@ import { StaggerGrid } from '@/components/ui/stagger-grid';
 import { fetchAllYears, type YearGroup } from './lib';
 
 export const metadata: Metadata = {
-  title: 'Past Bar Examinations — LIBERTASIAN',
+  title: 'Bar Exams',
   description:
     'Browse past Philippine Bar examination question papers (2006-2022) ' +
     'sourced from LawPhil. Free, ad-free, fully searchable.',
