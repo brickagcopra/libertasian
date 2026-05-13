@@ -212,6 +212,53 @@ describe('FeedService', () => {
         ),
       ).rejects.toThrow(BadRequestException);
     });
+
+    it('should allow image-only posts (no textContent)', async () => {
+      mockPrisma.feedPostMedia.findUnique.mockResolvedValue(mockMedia);
+      mockPrisma.feedPost.findUnique.mockResolvedValue(null);
+      mockPrisma.feedPost.create.mockResolvedValue({
+        ...mockPost,
+        textContent: null,
+        mediaId: MEDIA_ID,
+        media: mockMedia,
+      });
+
+      const result = await service.createPost(
+        { mediaId: MEDIA_ID },
+        USER_ID,
+        ORG_ID,
+      );
+
+      expect(result.id).toBe(POST_ID);
+      expect(result.textContent).toBeNull();
+      expect(result.media?.id).toBe(MEDIA_ID);
+      expect(mockPrisma.feedPost.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            textContent: null,
+            mediaId: MEDIA_ID,
+          }),
+        }),
+      );
+    });
+
+    it('should reject when both textContent and mediaId are missing', async () => {
+      await expect(
+        service.createPost({}, USER_ID, ORG_ID),
+      ).rejects.toThrow(
+        new BadRequestException('Post must have text or an image'),
+      );
+      expect(mockPrisma.feedPost.create).not.toHaveBeenCalled();
+    });
+
+    it('should reject whitespace-only textContent without media', async () => {
+      await expect(
+        service.createPost({ textContent: '   ' }, USER_ID, ORG_ID),
+      ).rejects.toThrow(
+        new BadRequestException('Post must have text or an image'),
+      );
+      expect(mockPrisma.feedPost.create).not.toHaveBeenCalled();
+    });
   });
 
   // ─── Update Post ──────────────────────────────────────────────────────────
