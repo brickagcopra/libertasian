@@ -134,7 +134,10 @@ export class BackfillService {
 
   async findAll(
     dto: ListBackfillBatchesDto,
-  ): Promise<{ data: BackfillBatch[]; total: number }> {
+  ): Promise<{
+    data: Omit<BackfillBatch, 'checkpointState'>[];
+    total: number;
+  }> {
     const page = dto.page ?? 1;
     const limit = dto.limit ?? 20;
     const skip = (page - 1) * limit;
@@ -150,6 +153,8 @@ export class BackfillService {
         take: limit,
         orderBy: { createdAt: 'desc' },
         include: { source: { select: { id: true, name: true } } },
+        // checkpointState is multi-MB for live batches; detail endpoint serves it.
+        omit: { checkpointState: true },
       }),
       this.prisma.backfillBatch.count({ where }),
     ]);

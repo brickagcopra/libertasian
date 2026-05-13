@@ -346,6 +346,23 @@ describe('BackfillService', () => {
         }),
       );
     });
+
+    it('should omit checkpointState from list rows', async () => {
+      const { checkpointState: _omit, ...rowWithoutCheckpoint } = baseBatch;
+      (prisma.backfillBatch.findMany as jest.Mock).mockResolvedValue([
+        rowWithoutCheckpoint,
+      ]);
+      (prisma.backfillBatch.count as jest.Mock).mockResolvedValue(1);
+
+      const result = await service.findAll({});
+
+      expect(prisma.backfillBatch.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          omit: { checkpointState: true },
+        }),
+      );
+      expect(result.data[0]).not.toHaveProperty('checkpointState');
+    });
   });
 
   // ---- findOne() ----
