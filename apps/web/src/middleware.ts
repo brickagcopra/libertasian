@@ -19,6 +19,9 @@ const SESSION_COOKIE = 'libertasian-session';
 const PUBLIC_PATHS = [
   '/',
   '/pricing',
+  '/bar-exams',
+  '/terms',
+  '/privacy',
   '/login',
   '/register',
   '/forgot-password',
@@ -29,7 +32,7 @@ const PUBLIC_PATHS = [
 ];
 
 /** Path prefixes that should be accessible without authentication. */
-const PUBLIC_PREFIXES = ['/shared/', '/blog'];
+const PUBLIC_PREFIXES = ['/shared/', '/blog', '/bar-exams/'];
 
 function isPublicRoute(pathname: string): boolean {
   if (PUBLIC_PATHS.includes(pathname)) return true;
