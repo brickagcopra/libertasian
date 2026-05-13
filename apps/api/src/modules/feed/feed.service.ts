@@ -52,6 +52,12 @@ export class FeedService {
   constructor(private readonly prisma: PrismaService) {}
 
   async createPost(dto: CreatePostDto, userId: string, organizationId: string) {
+    const hasText = (dto.textContent ?? '').trim().length > 0;
+    const hasMedia = !!dto.mediaId;
+    if (!hasText && !hasMedia) {
+      throw new BadRequestException('Post must have text or an image');
+    }
+
     // Validate media if provided
     if (dto.mediaId) {
       const media = await this.prisma.feedPostMedia.findUnique({
@@ -81,7 +87,7 @@ export class FeedService {
       data: {
         organizationId,
         authorId: userId,
-        textContent: dto.textContent,
+        textContent: dto.textContent?.trim() ?? null,
         visibility: dto.visibility ?? 'organization',
         mediaId: dto.mediaId,
       },

@@ -1,10 +1,10 @@
-import { IsIn, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
+import { IsIn, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 
 export class CreatePostDto {
+  @IsOptional()
   @IsString()
-  @MinLength(1)
   @MaxLength(5000)
-  textContent!: string;
+  textContent?: string;
 
   @IsOptional()
   @IsUUID()
