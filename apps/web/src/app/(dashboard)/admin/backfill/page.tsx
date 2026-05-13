@@ -474,8 +474,13 @@ export default function BackfillPage() {
             <DialogDescription>Provide a reason for halting this batch.</DialogDescription>
           </DialogHeader>
           <div>
-            <Label>Reason</Label>
-            <Input value={haltReason} onChange={(e) => setHaltReason(e.target.value)} placeholder="Why is this batch being halted?" />
+            <Label>Reason *</Label>
+            <Input
+              value={haltReason}
+              onChange={(e) => setHaltReason(e.target.value)}
+              placeholder="(required) Why is this batch being halted?"
+              aria-required="true"
+            />
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setHaltDialog({ open: false, batchId: '' })}>Cancel</Button>
@@ -499,8 +504,13 @@ export default function BackfillPage() {
               <Input type="number" value={newBudget} onChange={(e) => setNewBudget(e.target.value)} min={0.01} step={0.01} />
             </div>
             <div>
-              <Label>Reason</Label>
-              <Input value={budgetReason} onChange={(e) => setBudgetReason(e.target.value)} placeholder="Reason for budget extension" />
+              <Label>Reason *</Label>
+              <Input
+                value={budgetReason}
+                onChange={(e) => setBudgetReason(e.target.value)}
+                placeholder="(required) Reason for budget extension"
+                aria-required="true"
+              />
             </div>
           </div>
           <DialogFooter>
