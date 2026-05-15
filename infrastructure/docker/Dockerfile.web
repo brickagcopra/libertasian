@@ -27,6 +27,9 @@ RUN mkdir -p /app/apps/web/public
 ARG NEXT_PUBLIC_API_URL=https://libertasian.com/api/v1
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
+ARG NEXT_PUBLIC_GOOGLE_AUTH_ENABLED=false
+ENV NEXT_PUBLIC_GOOGLE_AUTH_ENABLED=$NEXT_PUBLIC_GOOGLE_AUTH_ENABLED
+
 RUN pnpm --filter @libertasian/web build
 
 # Stage 3: Production

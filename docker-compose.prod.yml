@@ -46,6 +46,7 @@ services:
       dockerfile: infrastructure/docker/Dockerfile.web
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://libertasian.com/api/v1}
+        NEXT_PUBLIC_GOOGLE_AUTH_ENABLED: ${NEXT_PUBLIC_GOOGLE_AUTH_ENABLED:-false}
     container_name: libertasian-web
     restart: always
     expose:
