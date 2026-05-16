@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+from src.tasks import bar_exam_answer_tasks
 from src.tasks.bar_exam_answer_tasks import (
     MAX_QUESTIONS_PER_DISPATCH,
     generate_answers_for_questions,
@@ -78,6 +79,7 @@ class TestGenerateAnswersForQuestions:
         mock_db.get_bar_exam_question_with_context.return_value = FAKE_QUESTION
         mock_db.create_model_run.return_value = "run-1"
         mock_db.create_bar_exam_answer.return_value = "ans-1"
+        mock_rag.retrieve_passages.return_value = []
         mock_rag.generate_completion.return_value = _llm_response()
 
         result = generate_answers_for_questions.run(["q-1"])
@@ -141,6 +143,7 @@ class TestGenerateAnswersForQuestions:
         mock_db.get_bar_exam_question_with_context.return_value = FAKE_QUESTION
         mock_db.create_model_run.return_value = "run-1"
         mock_db.create_bar_exam_answer.return_value = "ans-1"
+        mock_rag.retrieve_passages.return_value = []
         mock_rag.generate_completion.return_value = _llm_response()
 
         result = generate_answers_for_questions.run(ids)
@@ -178,6 +181,7 @@ class TestGenerateAnswersForQuestions:
     ) -> None:
         mock_db.bar_exam_answer_exists.return_value = False
         mock_db.get_bar_exam_question_with_context.return_value = FAKE_QUESTION
+        mock_rag.retrieve_passages.return_value = []
         mock_rag.generate_completion.return_value = _llm_response(
             content="not actually json {broken"
         )
@@ -199,6 +203,7 @@ class TestGenerateAnswersForQuestions:
         # JSON parses but is missing required ALAC fields.
         mock_db.bar_exam_answer_exists.return_value = False
         mock_db.get_bar_exam_question_with_context.return_value = FAKE_QUESTION
+        mock_rag.retrieve_passages.return_value = []
         mock_rag.generate_completion.return_value = _llm_response(
             content={"answer": "Yes", "law": ""}  # blank law, no analysis/conclusion
         )
@@ -218,6 +223,7 @@ class TestGenerateAnswersForQuestions:
     ) -> None:
         mock_db.bar_exam_answer_exists.return_value = False
         mock_db.get_bar_exam_question_with_context.return_value = FAKE_QUESTION
+        mock_rag.retrieve_passages.return_value = []
         mock_rag.generate_completion.return_value = _llm_response(
             content={"abstain": True, "abstainReason": "needs appended Code"}
         )
@@ -246,6 +252,7 @@ class TestGenerateAnswersForQuestions:
         ]
         mock_db.create_model_run.return_value = "run-1"
         mock_db.create_bar_exam_answer.return_value = "ans-1"
+        mock_rag.retrieve_passages.return_value = []
         mock_rag.generate_completion.return_value = _llm_response()
 
         result = generate_answers_for_questions.run(["q-1", "q-2"])
@@ -265,3 +272,170 @@ class TestGenerateAnswersForQuestions:
             "failed": 0,
             "results": [],
         }
+
+
+SAMPLE_PASSAGES = [
+    {
+        "id": "p-1",
+        "title": "Rule on Notarial Practice",
+        "text": "Personal appearance is required for valid notarization.",
+    },
+    {
+        "id": "p-2",
+        "title": "Civil Code, Art. 1316",
+        "text": "Sale requires consent of contracting parties.",
+    },
+]
+
+
+class TestRagRetrieval:
+    @patch("src.tasks.bar_exam_answer_tasks.rag_client")
+    @patch("src.tasks.bar_exam_answer_tasks.db")
+    def test_rag_disabled_never_calls_retrieve_and_stamps_v1(
+        self,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        monkeypatch,
+    ) -> None:
+        monkeypatch.setattr(
+            bar_exam_answer_tasks, "BAR_EXAM_RAG_ENABLED", False
+        )
+        mock_db.bar_exam_answer_exists.return_value = False
+        mock_db.get_bar_exam_question_with_context.return_value = FAKE_QUESTION
+        mock_db.create_model_run.return_value = "run-1"
+        mock_db.create_bar_exam_answer.return_value = "ans-1"
+        mock_rag.generate_completion.return_value = _llm_response()
+
+        result = generate_answers_for_questions.run(["q-1"])
+
+        assert result["generated"] == 1
+        mock_rag.retrieve_passages.assert_not_called()
+        run_kwargs = mock_db.create_model_run.call_args.kwargs
+        assert run_kwargs["prompt_template_version"] == "bar_exam_alac.v1"
+
+    @patch("src.tasks.bar_exam_answer_tasks.rag_client")
+    @patch("src.tasks.bar_exam_answer_tasks.db")
+    def test_rag_enabled_with_passages_uses_v2_and_includes_them(
+        self,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        monkeypatch,
+    ) -> None:
+        monkeypatch.setattr(bar_exam_answer_tasks, "BAR_EXAM_RAG_ENABLED", True)
+        mock_db.bar_exam_answer_exists.return_value = False
+        mock_db.get_bar_exam_question_with_context.return_value = FAKE_QUESTION
+        mock_db.create_model_run.return_value = "run-1"
+        mock_db.create_bar_exam_answer.return_value = "ans-1"
+        mock_rag.retrieve_passages.return_value = SAMPLE_PASSAGES
+        mock_rag.generate_completion.return_value = _llm_response()
+
+        result = generate_answers_for_questions.run(["q-1"])
+
+        assert result["generated"] == 1
+        mock_rag.retrieve_passages.assert_called_once()
+        retr_kwargs = mock_rag.retrieve_passages.call_args.kwargs
+        assert retr_kwargs["question_id"] == "q-1"
+        assert retr_kwargs["query"] == FAKE_QUESTION["question_text"]
+
+        # Prompt body must carry the retrieved passage IDs through to the LLM.
+        comp_kwargs = mock_rag.generate_completion.call_args.kwargs
+        user_prompt = comp_kwargs["user_prompt"]
+        assert "[p-1]" in user_prompt
+        assert "[p-2]" in user_prompt
+        assert "SOURCE PASSAGES" in user_prompt
+
+        run_kwargs = mock_db.create_model_run.call_args.kwargs
+        assert run_kwargs["prompt_template_version"] == "bar_exam_alac.v2"
+
+    @patch("src.tasks.bar_exam_answer_tasks.rag_client")
+    @patch("src.tasks.bar_exam_answer_tasks.db")
+    def test_rag_retrieve_raises_falls_through_to_v1(
+        self,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        monkeypatch,
+    ) -> None:
+        monkeypatch.setattr(bar_exam_answer_tasks, "BAR_EXAM_RAG_ENABLED", True)
+        mock_db.bar_exam_answer_exists.return_value = False
+        mock_db.get_bar_exam_question_with_context.return_value = FAKE_QUESTION
+        mock_db.create_model_run.return_value = "run-1"
+        mock_db.create_bar_exam_answer.return_value = "ans-1"
+        mock_rag.retrieve_passages.side_effect = RuntimeError("opensearch down")
+        mock_rag.generate_completion.return_value = _llm_response()
+
+        result = generate_answers_for_questions.run(["q-1"])
+
+        # Retrieval failure does NOT fail the task; we fall through to priors.
+        assert result["generated"] == 1
+        assert result["failed"] == 0
+        run_kwargs = mock_db.create_model_run.call_args.kwargs
+        assert run_kwargs["prompt_template_version"] == "bar_exam_alac.v1"
+        # User prompt must NOT include SOURCE PASSAGES when retrieval failed.
+        comp_kwargs = mock_rag.generate_completion.call_args.kwargs
+        assert "SOURCE PASSAGES" not in comp_kwargs["user_prompt"]
+
+
+class TestForceRegenerate:
+    @patch("src.tasks.bar_exam_answer_tasks.rag_client")
+    @patch("src.tasks.bar_exam_answer_tasks.db")
+    def test_force_regenerate_deletes_pending_then_writes_new_row(
+        self,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        monkeypatch,
+    ) -> None:
+        # Toggle retrieval off so this test focuses on the regenerate path.
+        monkeypatch.setattr(
+            bar_exam_answer_tasks, "BAR_EXAM_RAG_ENABLED", False
+        )
+        # The pending row is deleted before the exists-check runs, so the
+        # second branch sees an empty table.
+        mock_db.delete_pending_bar_exam_answer.return_value = 1
+        mock_db.bar_exam_answer_exists.return_value = False
+        mock_db.get_bar_exam_question_with_context.return_value = FAKE_QUESTION
+        mock_db.create_model_run.return_value = "run-2"
+        mock_db.create_bar_exam_answer.return_value = "ans-2"
+        mock_rag.generate_completion.return_value = _llm_response()
+
+        result = generate_answers_for_questions.run(
+            ["q-1"], force_regenerate=True
+        )
+
+        assert result["generated"] == 1
+        mock_db.delete_pending_bar_exam_answer.assert_called_once()
+        del_args = mock_db.delete_pending_bar_exam_answer.call_args
+        assert del_args.args[0] == "q-1"
+        assert del_args.kwargs.get("answer_type") == "ai_generated"
+        mock_db.create_bar_exam_answer.assert_called_once()
+
+    @patch("src.tasks.bar_exam_answer_tasks.rag_client")
+    @patch("src.tasks.bar_exam_answer_tasks.db")
+    def test_force_regenerate_skips_when_approved_row_blocks_delete(
+        self,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        monkeypatch,
+    ) -> None:
+        # The DB helper restricts to review_status='pending', so for an
+        # approved row it returns 0 — the existing row stays in place and
+        # the exists-check skips generation. The task code itself never
+        # short-circuits the delete call; the SQL clause is what protects
+        # approved rows.
+        monkeypatch.setattr(
+            bar_exam_answer_tasks, "BAR_EXAM_RAG_ENABLED", False
+        )
+        mock_db.delete_pending_bar_exam_answer.return_value = 0
+        mock_db.bar_exam_answer_exists.return_value = True
+
+        result = generate_answers_for_questions.run(
+            ["q-approved"], force_regenerate=True
+        )
+
+        assert result["skipped_existing"] == 1
+        assert result["generated"] == 0
+        # The delete was attempted, but the SQL WHERE clause meant 0 rows
+        # were removed — approved rows are physically untouchable.
+        mock_db.delete_pending_bar_exam_answer.assert_called_once()
+        mock_rag.generate_completion.assert_not_called()
+        mock_db.create_bar_exam_answer.assert_not_called()
+        mock_db.create_model_run.assert_not_called()
