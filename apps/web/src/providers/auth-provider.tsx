@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 
 import { apiClient } from '@/lib/api-client';
-import { useAuthStore } from '@/stores/auth-store';
+import { useAuthStore, type User } from '@/stores/auth-store';
 
 /**
  * Wires the apiClient singleton to the Zustand auth store so that
@@ -63,6 +63,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (!token && !cancelled) {
             // Cookie expired or invalid — clear local state
             useAuthStore.getState().logout();
+          } else if (token && !cancelled && !useAuthStore.getState().user) {
+            // Refresh succeeded but persisted user slice is empty (e.g. Google-OAuth-only
+            // user whose callback ran before this field was populated). Hydrate it now.
+            try {
+              const res = await apiClient.get<{ success: boolean; data: User }>('/users/me');
+              if (!cancelled) {
+                useAuthStore.getState().setUser(res.data);
+              }
+            } catch {
+              // Leave isAuthReady to flip true; downstream guards handle the missing user.
+            }
           }
         } catch {
           // Network error — don't force logout, they might be offline
