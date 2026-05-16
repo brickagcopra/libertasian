@@ -8,6 +8,7 @@ import { AdminBarExamAnswersController } from './admin-bar-exam-answers.controll
 import { AdminBarExamAnswersService } from './admin-bar-exam-answers.service';
 import { AdminBarExamsController } from './admin-bar-exams.controller';
 import { AdminBarExamsService } from './admin-bar-exams.service';
+import { BarExamAnswersPublicController } from './bar-exam-answers.public.controller';
 import { BarExamsController } from './bar-exams.controller';
 import { BarExamsService } from './bar-exams.service';
 
@@ -15,6 +16,7 @@ import { BarExamsService } from './bar-exams.service';
   imports: [PrismaModule, RedisModule, AuditModule],
   controllers: [
     BarExamsController,
+    BarExamAnswersPublicController,
     AdminBarExamsController,
     AdminBarExamAnswersController,
   ],
