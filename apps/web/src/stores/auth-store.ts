@@ -15,7 +15,7 @@ function clearSessionCookie() {
   document.cookie = `${SESSION_COOKIE}=; path=/; max-age=0; SameSite=Lax`;
 }
 
-interface User {
+export interface User {
   id: string;
   email: string;
   fullName: string;
