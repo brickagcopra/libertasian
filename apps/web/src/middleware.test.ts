@@ -30,11 +30,9 @@ describe('middleware — public-path allowlist', () => {
     const publicPaths = [
       '/',
       '/pricing',
-      '/bar-exams',
       '/terms',
       '/privacy',
       '/blog/some-slug',
-      '/bar-exams/2022',
       '/shared/abc',
     ];
 
@@ -47,7 +45,14 @@ describe('middleware — public-path allowlist', () => {
       });
     }
 
-    const protectedPaths = ['/admin', '/search', '/digests', '/some-unknown-page'];
+    const protectedPaths = [
+      '/admin',
+      '/search',
+      '/digests',
+      '/some-unknown-page',
+      '/bar-exams',
+      '/bar-exams/2022',
+    ];
     for (const path of protectedPaths) {
       it(`redirects ${path} → /login?from=${path}`, () => {
         const res = middleware(makeRequest(path));
