@@ -17,6 +17,7 @@ from .doctrines.router import router as doctrines_router
 from .flashcards.router import router as flashcards_router
 from .hearing_prep.router import router as hearing_prep_router
 from .memos.router import router as memos_router
+from .passages.router import router as passages_router
 from .pleadings.router import router as pleadings_router
 from .research_workspaces.router import router as research_workspaces_router
 from .shared.exceptions import BudgetExceededError
@@ -58,6 +59,7 @@ app.include_router(contradictions_router)
 app.include_router(flashcards_router)
 app.include_router(doctrines_router)
 app.include_router(memos_router)
+app.include_router(passages_router)
 app.include_router(pleadings_router)
 app.include_router(research_workspaces_router)
 app.include_router(timelines_router)

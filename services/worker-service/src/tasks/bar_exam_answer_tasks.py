@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from typing import Any
 
@@ -32,6 +33,7 @@ from ..clients import rag_client
 from ..prompts.bar_exam_alac_v1 import (
     BAR_EXAM_ALAC_SYSTEM_PROMPT,
     PROMPT_TEMPLATE_VERSION,
+    PROMPT_TEMPLATE_VERSION_V2,
     build_user_prompt,
     parse_alac_response,
     render_answer_markdown,
@@ -43,6 +45,25 @@ logger = logging.getLogger(__name__)
 # admin controller enforces the same cap at request time; this is defense in
 # depth so a manually-crafted Celery message can't bypass it either.
 MAX_QUESTIONS_PER_DISPATCH = 50
+
+# Retrieval toggle + size. Default-on so deployments pick up grounding without
+# a config flip; set ``BAR_EXAM_RAG_ENABLED=false`` to fall straight back to
+# priors-only generation if retrieval misbehaves.
+BAR_EXAM_RAG_ENABLED: bool = (
+    os.getenv("BAR_EXAM_RAG_ENABLED", "true").lower() == "true"
+)
+
+
+def _resolve_top_k() -> int:
+    raw = os.getenv("BAR_EXAM_RAG_TOP_K", "8")
+    try:
+        value = int(raw)
+    except ValueError:
+        return 8
+    return max(1, min(20, value))
+
+
+BAR_EXAM_RAG_TOP_K: int = _resolve_top_k()
 
 
 @shared_task(
@@ -57,6 +78,7 @@ MAX_QUESTIONS_PER_DISPATCH = 50
 def generate_answers_for_questions(
     self: Any,
     question_ids: list[str],
+    force_regenerate: bool = False,
 ) -> dict[str, Any]:
     """Generate ALAC answers for the given question IDs.
 
@@ -98,7 +120,7 @@ def generate_answers_for_questions(
     results: list[dict[str, Any]] = []
 
     for question_id in capped_ids:
-        result = _generate_one(question_id)
+        result = _generate_one(question_id, force_regenerate=force_regenerate)
         results.append(result)
         status = result["status"]
         if status == "generated":
@@ -118,15 +140,30 @@ def generate_answers_for_questions(
     }
 
 
-def _generate_one(question_id: str) -> dict[str, Any]:
+def _generate_one(
+    question_id: str,
+    force_regenerate: bool = False,
+) -> dict[str, Any]:
     """Generate (or skip) the AI answer for a single question.
 
     Wrapping the per-question work in a function with broad exception
     handling means one bad question doesn't poison the whole batch — the
     surrounding loop keeps going and the result dict records what
     happened.
+
+    ``force_regenerate`` first deletes the row IF it is still pending,
+    then proceeds to the usual exists-skip / generate path. The delete
+    WHERE clause restricts to ``review_status='pending'``, so approved or
+    rejected rows are physically untouchable — they fall through to the
+    skip path below.
     """
     try:
+        if force_regenerate:
+            db.delete_pending_bar_exam_answer(
+                question_id,
+                answer_type="ai_generated",
+            )
+
         if db.bar_exam_answer_exists(question_id, answer_type="ai_generated"):
             return {
                 "question_id": question_id,
@@ -140,11 +177,47 @@ def _generate_one(question_id: str) -> dict[str, Any]:
                 "status": "question_not_found",
             }
 
+        source_passages: list[dict[str, Any]] | None = None
+        used_rag = False
+        if BAR_EXAM_RAG_ENABLED:
+            try:
+                retrieved = rag_client.retrieve_passages(
+                    query=question["question_text"],
+                    top_k=BAR_EXAM_RAG_TOP_K,
+                    filter_terms=None,
+                    question_id=question_id,
+                )
+            except Exception as exc:  # noqa: BLE001 — retrieval is best-effort
+                logger.warning(
+                    "bar_exam_answer: retrieval raised for question %s: %s",
+                    question_id,
+                    exc,
+                )
+                retrieved = []
+            if retrieved:
+                source_passages = retrieved
+                used_rag = True
+                logger.info(
+                    "bar_exam_answer: retrieved %d passages for question %s",
+                    len(retrieved),
+                    question_id,
+                )
+            else:
+                logger.warning(
+                    "bar_exam_answer: retrieval returned no passages for "
+                    "question %s — falling back to priors-only",
+                    question_id,
+                )
+
+        prompt_version = (
+            PROMPT_TEMPLATE_VERSION_V2 if used_rag else PROMPT_TEMPLATE_VERSION
+        )
+
         user_prompt = build_user_prompt(
             question_text=question["question_text"],
             subject_code=question.get("subject_study_code"),
             sitting_year=int(question["sitting_year"]),
-            source_passages=None,  # Phase 3a: no retrieval yet
+            source_passages=source_passages,
         )
 
         start = time.monotonic()
@@ -215,7 +288,7 @@ def _generate_one(question_id: str) -> dict[str, Any]:
         model_run_id = db.create_model_run(
             run_type="bar_exam_answer_generation",
             model_name=model_name,
-            prompt_template_version=PROMPT_TEMPLATE_VERSION,
+            prompt_template_version=prompt_version,
             input_ref=f"bar_exam_question:{question_id}",
             output_ref=None,
             confidence=None,

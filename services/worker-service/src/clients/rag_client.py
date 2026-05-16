@@ -106,6 +106,57 @@ def resolve_citations(
         return response.json()
 
 
+def retrieve_passages(
+    query: str,
+    top_k: int = 8,
+    filter_terms: dict[str, Any] | None = None,
+    question_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Retrieve BM25 passages from rag-service for prompt grounding.
+
+    Returns a list of ``{id, title, text}`` dicts suitable for the bar exam
+    ALAC prompt builder. ``Passage.title`` can be empty for sections, so we
+    fall back to ``citation_text`` and then a generic ``"Source"`` label so
+    the prompt always has something to attribute each passage to.
+
+    Any HTTP / network failure is swallowed and logged at WARNING; callers
+    treat ``[]`` as a soft retrieval failure and fall back to priors-only
+    generation. ``question_id`` is purely for log context.
+    """
+    url = f"{settings.rag_service_url}/passages/retrieve"
+    payload: dict[str, Any] = {"query": query, "top_k": top_k}
+    if filter_terms is not None:
+        payload["filter_terms"] = filter_terms
+
+    try:
+        with httpx.Client(timeout=settings.rag_request_timeout) as client:
+            response = client.post(url, json=payload, headers=_internal_headers())
+            response.raise_for_status()
+            data = response.json()
+    except Exception as exc:  # noqa: BLE001 — retrieval is best-effort
+        logger.warning(
+            "rag_client.retrieve_passages failed (question_id=%s): %s",
+            question_id,
+            exc,
+        )
+        return []
+
+    passages = data.get("passages", []) if isinstance(data, dict) else []
+    flattened: list[dict[str, Any]] = []
+    for p in passages:
+        if not isinstance(p, dict):
+            continue
+        title = p.get("title") or p.get("citation_text") or "Source"
+        flattened.append(
+            {
+                "id": p.get("id", ""),
+                "title": title,
+                "text": p.get("text", ""),
+            }
+        )
+    return flattened
+
+
 def generate_completion(
     system_prompt: str,
     user_prompt: str,

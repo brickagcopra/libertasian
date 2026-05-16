@@ -1602,6 +1602,37 @@ def bar_exam_answer_exists(
         return cur.fetchone() is not None
 
 
+def delete_pending_bar_exam_answer(
+    question_id: str,
+    answer_type: str = "ai_generated",
+) -> int:
+    """Delete a bar_exam_answers row only if its review_status is 'pending'.
+
+    The WHERE clause makes deletion of approved / rejected rows physically
+    impossible — that invariant is what lets the admin "force regenerate"
+    flow operate safely without an extra application-level guard. Returns
+    the number of rows actually deleted (0 or 1).
+    """
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """DELETE FROM bar_exam_answers
+                   WHERE bar_exam_question_id = %s
+                     AND answer_type = %s
+                     AND review_status = 'pending'
+                   RETURNING id""",
+            (question_id, answer_type),
+        )
+        rows = cur.fetchall()
+    deleted = len(rows)
+    if deleted:
+        logger.info(
+            "Deleted pending bar exam answer for question %s (type=%s)",
+            question_id,
+            answer_type,
+        )
+    return deleted
+
+
 def create_bar_exam_answer(
     bar_exam_question_id: str,
     answer_text: str,

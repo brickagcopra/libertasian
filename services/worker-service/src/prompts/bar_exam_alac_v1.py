@@ -11,6 +11,7 @@ approves the row.
 from __future__ import annotations
 
 PROMPT_TEMPLATE_VERSION = "bar_exam_alac.v1"
+PROMPT_TEMPLATE_VERSION_V2 = "bar_exam_alac.v2"
 
 BAR_EXAM_ALAC_SYSTEM_PROMPT = """You are a Philippine bar review tutor answering a past bar exam question.
 
