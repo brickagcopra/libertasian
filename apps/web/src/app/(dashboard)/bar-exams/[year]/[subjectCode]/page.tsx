@@ -175,20 +175,6 @@ export default function BarExamSittingPage() {
             <div className="whitespace-pre-wrap text-sm leading-relaxed text-gray-800">
               {q.text}
             </div>
-            {sitting.sourceUrl && (
-              <p className="mt-4 text-xs text-gray-400">
-                <a
-                  href={`${sitting.sourceUrl}${
-                    q.sourceSectionAnchor ? `#${q.sourceSectionAnchor}` : ''
-                  }`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="hover:text-gray-700"
-                >
-                  View on LawPhil →
-                </a>
-              </p>
-            )}
 
             {featureEnabled && (
               <div className="mt-4 border-t border-gray-100 pt-2">
