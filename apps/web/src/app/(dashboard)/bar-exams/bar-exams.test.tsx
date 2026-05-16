@@ -232,6 +232,9 @@ describe('bar-exams sitting page', () => {
     expect(screen.getByText('Question 2')).toBeInTheDocument();
     expect(screen.getByText('2 sub-parts')).toBeInTheDocument();
     expect(screen.getByText(/View original on LawPhil/i)).toBeInTheDocument();
+    // Per-question "View on LawPhil →" link is superseded by the AI Answer
+    // accordion as the per-question expand affordance.
+    expect(screen.queryByText(/^View on LawPhil/)).not.toBeInTheDocument();
   });
 
   describe('AI answer accordion (feature-flagged)', () => {
