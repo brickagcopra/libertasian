@@ -76,6 +76,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/search', label: 'Search', icon: SearchIcon },
   { href: '/digests', label: 'Digests', icon: FileTextIcon },
   { href: '/library', label: 'Library', icon: LibraryBigIcon },
+  { href: '/bar-exams', label: 'Bar Exams', icon: ScrollTextIcon },
   { href: '/scans', label: 'Scans', icon: ScanLineIcon },
   { href: '/study', label: 'Study', icon: GraduationCapIcon },
   { href: '/community', label: 'Community', icon: UsersIcon },

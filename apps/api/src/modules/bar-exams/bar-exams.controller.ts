@@ -5,18 +5,21 @@ import {
   Param,
   ParseIntPipe,
   Query,
+  UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { BarExamsService } from './bar-exams.service';
 
 /**
- * Public read endpoints for past Philippine Bar Examinations.
- * No auth required — bar exam questions are official public-domain content.
+ * Authenticated read endpoints for past Philippine Bar Examinations.
  */
 @ApiTags('Bar Exams')
+@ApiBearerAuth()
 @Controller('bar-exams')
+@UseGuards(JwtAuthGuard)
 export class BarExamsController {
   constructor(private readonly service: BarExamsService) {}
 
