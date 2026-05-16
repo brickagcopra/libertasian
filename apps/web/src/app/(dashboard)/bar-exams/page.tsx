@@ -1,22 +1,29 @@
+'use client';
+
 import Link from 'next/link';
-import type { Metadata } from 'next';
+import { useQuery } from '@tanstack/react-query';
 
 import { EmptyState } from '@/components/empty-states/empty-state';
 import { StaggerGrid } from '@/components/ui/stagger-grid';
-import { fetchAllYears, type YearGroup } from './lib';
+import { apiClient } from '@/lib/api-client';
+import type { YearGroup } from './subjects';
 
-export const metadata: Metadata = {
-  title: 'Bar Exams',
-  description:
-    'Browse past Philippine Bar examination question papers (2006-2022) ' +
-    'sourced from LawPhil. Free, ad-free, fully searchable.',
-};
+export default function BarExamsHubPage() {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['bar-exams', 'all-years'],
+    queryFn: async () => {
+      const res = await apiClient.get<{ success: boolean; data: YearGroup[] }>(
+        '/bar-exams',
+      );
+      return res.data ?? [];
+    },
+    staleTime: 5 * 60_000,
+  });
 
-export default async function BarExamsHubPage() {
-  const groups = (await fetchAllYears()) ?? [];
+  const groups = data ?? [];
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-12">
+    <div className="mx-auto max-w-5xl">
       <div className="mb-10">
         <h1 className="text-3xl font-bold tracking-tight text-gray-900 sm:text-4xl">
           Past Bar Examinations
@@ -35,7 +42,22 @@ export default async function BarExamsHubPage() {
         </p>
       </div>
 
-      {groups.length === 0 ? (
+      {isLoading ? (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div
+              key={i}
+              className="h-28 animate-pulse rounded-xl border border-gray-200 bg-gray-50"
+            />
+          ))}
+        </div>
+      ) : isError ? (
+        <EmptyState
+          illustration="scales"
+          title="Unable to load bar exam papers"
+          message="Something went wrong fetching the archive. Refresh to try again."
+        />
+      ) : groups.length === 0 ? (
         <EmptyState
           illustration="archive"
           title="No bar exam papers are loaded yet"

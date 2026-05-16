@@ -1,11 +1,16 @@
-import { NotFoundException } from '@nestjs/common';
+import { ExecutionContext, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BarExamsController } from './bar-exams.controller';
 import { BarExamsService } from './bar-exams.service';
 
-describe('BarExamsController (public)', () => {
+const passingGuard = {
+  canActivate: jest.fn((_ctx: ExecutionContext) => true),
+};
+
+describe('BarExamsController (authenticated)', () => {
   let controller: BarExamsController;
   let prisma: {
     barExamSitting: {
@@ -28,7 +33,10 @@ describe('BarExamsController (public)', () => {
         BarExamsService,
         { provide: PrismaService, useValue: prisma },
       ],
-    }).compile();
+    })
+      .overrideGuard(JwtAuthGuard)
+      .useValue(passingGuard)
+      .compile();
 
     controller = module.get<BarExamsController>(BarExamsController);
   });
