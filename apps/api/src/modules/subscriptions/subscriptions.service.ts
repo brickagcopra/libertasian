@@ -129,7 +129,7 @@ export class SubscriptionsService {
     switch (planCode) {
       case 'free':
         return {
-          aiAnswers: 15,
+          aiAnswers: 0,
           searchQueries: 50,
           digestsPerMonth: 3,
           cameraScansPerMonth: 3,

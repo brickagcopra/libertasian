@@ -14,6 +14,7 @@ import {
 import { EmptyState } from '@/components/empty-states/empty-state';
 import { useBarExamAnswer } from '@/features/bar-exams/hooks/use-bar-exam-answer';
 import type { BarExamAnswer } from '@/features/bar-exams/types';
+import { useSubscription } from '@/features/billing/hooks/use-subscription';
 import { ApiClientError, apiClient } from '@/lib/api-client';
 import { subjectLabelWithPart, type SittingDetail } from '../../subjects';
 
@@ -23,6 +24,11 @@ function isAnswersPublicEnabled(): boolean {
 
 export default function BarExamSittingPage() {
   const featureEnabled = isAnswersPublicEnabled();
+  const { data: sub, isLoading: subLoading } = useSubscription();
+  const hasPaidPlan =
+    !!sub &&
+    sub.planCode !== 'free' &&
+    (sub.status === 'active' || sub.status === 'trialing');
   const params = useParams<{ year: string; subjectCode: string }>();
   const searchParams = useSearchParams();
   const yearParam = params?.year ?? '';
@@ -177,28 +183,59 @@ export default function BarExamSittingPage() {
             </div>
 
             {featureEnabled && (
-              <div className="mt-4 border-t border-gray-100 pt-2">
-                <Accordion
-                  type="single"
-                  collapsible
-                  onValueChange={handleAccordionChange(q.id)}
+              subLoading ? (
+                <div
+                  className="mt-4 border-t border-gray-100 pt-2"
+                  data-testid="answer-access-loading"
                 >
-                  <AccordionItem value="answer" className="border-b-0">
-                    <AccordionTrigger
-                      className="py-2 text-sm font-medium text-gray-700"
-                      data-testid={`answer-trigger-${q.number}`}
+                  <div className="h-9 w-48 animate-pulse rounded bg-gray-100" />
+                </div>
+              ) : hasPaidPlan ? (
+                <div className="mt-4 border-t border-gray-100 pt-2">
+                  <Accordion
+                    type="single"
+                    collapsible
+                    onValueChange={handleAccordionChange(q.id)}
+                  >
+                    <AccordionItem value="answer" className="border-b-0">
+                      <AccordionTrigger
+                        className="py-2 text-sm font-medium text-gray-700"
+                        data-testid={`answer-trigger-${q.number}`}
+                      >
+                        AI Answer (preview)
+                      </AccordionTrigger>
+                      <AccordionContent>
+                        <BarExamAnswerSection
+                          questionId={q.id}
+                          enabled={openedQuestions.has(q.id)}
+                        />
+                      </AccordionContent>
+                    </AccordionItem>
+                  </Accordion>
+                </div>
+              ) : (
+                <div
+                  className="mt-4 border-t border-gray-100 pt-2"
+                  data-testid={`answer-locked-${q.number}`}
+                >
+                  <div className="flex items-center justify-between gap-3 py-2">
+                    <div>
+                      <p className="text-sm font-medium text-gray-700">
+                        AI Answer
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        Subscribe to a plan to view AI-generated answers.
+                      </p>
+                    </div>
+                    <Link
+                      href="/pricing"
+                      className="text-sm font-medium text-indigo-600 hover:underline whitespace-nowrap"
                     >
-                      AI Answer (preview)
-                    </AccordionTrigger>
-                    <AccordionContent>
-                      <BarExamAnswerSection
-                        questionId={q.id}
-                        enabled={openedQuestions.has(q.id)}
-                      />
-                    </AccordionContent>
-                  </AccordionItem>
-                </Accordion>
-              </div>
+                      See plans →
+                    </Link>
+                  </div>
+                </div>
+              )
             )}
           </li>
         ))}

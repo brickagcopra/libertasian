@@ -300,13 +300,16 @@ describe('AuthService', () => {
         },
       });
 
-      // Verify subscription creation
+      // Verify subscription creation — entitlementsJson must be empty so
+      // future plan-default changes (e.g. free.aiAnswers) flow through
+      // instead of being frozen at registration time.
       expect(prismaService.subscription.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
           organizationId: mockOrganization.id,
           planCode: 'free',
           status: 'active',
           seats: 1,
+          entitlementsJson: {},
         }),
       });
 
@@ -577,7 +580,15 @@ describe('AuthService', () => {
 
       // Verify membership and subscription
       expect(prismaService.organizationMember.create).toHaveBeenCalled();
-      expect(prismaService.subscription.create).toHaveBeenCalled();
+      expect(prismaService.subscription.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          organizationId: mockOrganization.id,
+          planCode: 'free',
+          status: 'active',
+          seats: 1,
+          entitlementsJson: {},
+        }),
+      });
     });
 
     it('should link Google account to existing user when found by email', async () => {

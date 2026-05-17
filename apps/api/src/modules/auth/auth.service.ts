@@ -112,7 +112,7 @@ export class AuthService {
         planCode: 'free',
         status: 'active',
         seats: 1,
-        entitlementsJson: { aiAnswers: 15, searchQueries: 50, digestsPerMonth: 3 },
+        entitlementsJson: {},
       },
     });
 
@@ -256,7 +256,7 @@ export class AuthService {
             planCode: 'free',
             status: 'active',
             seats: 1,
-            entitlementsJson: { aiAnswers: 15, searchQueries: 50, digestsPerMonth: 3 },
+            entitlementsJson: {},
           },
         });
 
