@@ -19,6 +19,21 @@ vi.mock('@/lib/api-client', () => ({
   },
 }));
 
+// Configurable subscription mock for AI-answer gating tests. Each test
+// resets `mockSubscriptionState` to control what useSubscription() returns,
+// driving the locked/loading/accordion branches in the sitting page.
+const mockSubscriptionState: {
+  data: { planCode: string; status: string } | null;
+  isLoading: boolean;
+} = { data: null, isLoading: false };
+
+vi.mock('@/features/billing/hooks/use-subscription', () => ({
+  useSubscription: () => ({
+    data: mockSubscriptionState.data,
+    isLoading: mockSubscriptionState.isLoading,
+  }),
+}));
+
 const navigationMocks = vi.hoisted(() => ({
   useParams: vi.fn<() => Record<string, string>>(),
   useSearchParams: vi.fn(() => new URLSearchParams()),
@@ -54,6 +69,8 @@ beforeEach(() => {
   navigationMocks.useParams.mockReset();
   navigationMocks.useSearchParams.mockReturnValue(new URLSearchParams());
   navigationMocks.notFound.mockClear();
+  mockSubscriptionState.data = null;
+  mockSubscriptionState.isLoading = false;
 });
 
 describe('bar-exams subject helpers', () => {
@@ -288,6 +305,7 @@ describe('bar-exams sitting page', () => {
 
     it('renders the accordion closed and does NOT fetch the answer until opened', async () => {
       process.env['NEXT_PUBLIC_FEATURE_BAR_EXAM_ANSWERS_PUBLIC'] = 'true';
+      mockSubscriptionState.data = { planCode: 'pro', status: 'active' };
       navigationMocks.useParams.mockReturnValue({
         year: '2018',
         subjectCode: 'civil_law',
@@ -308,6 +326,7 @@ describe('bar-exams sitting page', () => {
 
     it('renders the structured answer when the accordion is opened (200)', async () => {
       process.env['NEXT_PUBLIC_FEATURE_BAR_EXAM_ANSWERS_PUBLIC'] = 'true';
+      mockSubscriptionState.data = { planCode: 'pro', status: 'active' };
       navigationMocks.useParams.mockReturnValue({
         year: '2018',
         subjectCode: 'civil_law',
@@ -362,6 +381,7 @@ describe('bar-exams sitting page', () => {
 
     it('shows quota-exceeded message when the answer endpoint returns 429', async () => {
       process.env['NEXT_PUBLIC_FEATURE_BAR_EXAM_ANSWERS_PUBLIC'] = 'true';
+      mockSubscriptionState.data = { planCode: 'pro', status: 'active' };
       navigationMocks.useParams.mockReturnValue({
         year: '2018',
         subjectCode: 'civil_law',
@@ -392,6 +412,89 @@ describe('bar-exams sitting page', () => {
       );
       expect(screen.getByText(/Daily limit reached/i)).toBeInTheDocument();
       expect(screen.getByText(/Upgrade for more/i)).toBeInTheDocument();
+    });
+
+    it('renders locked upsell card for free plan (no clickable accordion)', async () => {
+      process.env['NEXT_PUBLIC_FEATURE_BAR_EXAM_ANSWERS_PUBLIC'] = 'true';
+      mockSubscriptionState.data = { planCode: 'free', status: 'active' };
+      navigationMocks.useParams.mockReturnValue({
+        year: '2018',
+        subjectCode: 'civil_law',
+      });
+      mockGet.mockResolvedValueOnce(SITTING_PAYLOAD);
+
+      render(withProviders(<BarExamSittingPage />));
+
+      await waitFor(() =>
+        expect(screen.getByTestId('answer-locked-1')).toBeInTheDocument(),
+      );
+      expect(
+        screen.getByText(/Subscribe to a plan to view AI-generated answers/i),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: /AI Answer \(preview\)/i }),
+      ).not.toBeInTheDocument();
+      // No answer endpoint fetch fires for locked users.
+      expect(mockGet).toHaveBeenCalledTimes(1);
+    });
+
+    it('renders locked upsell card for canceled paid plan', async () => {
+      process.env['NEXT_PUBLIC_FEATURE_BAR_EXAM_ANSWERS_PUBLIC'] = 'true';
+      mockSubscriptionState.data = { planCode: 'pro', status: 'canceled' };
+      navigationMocks.useParams.mockReturnValue({
+        year: '2018',
+        subjectCode: 'civil_law',
+      });
+      mockGet.mockResolvedValueOnce(SITTING_PAYLOAD);
+
+      render(withProviders(<BarExamSittingPage />));
+
+      await waitFor(() =>
+        expect(screen.getByTestId('answer-locked-1')).toBeInTheDocument(),
+      );
+      expect(
+        screen.queryByRole('button', { name: /AI Answer \(preview\)/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it('renders locked upsell card when no subscription exists', async () => {
+      process.env['NEXT_PUBLIC_FEATURE_BAR_EXAM_ANSWERS_PUBLIC'] = 'true';
+      mockSubscriptionState.data = null;
+      navigationMocks.useParams.mockReturnValue({
+        year: '2018',
+        subjectCode: 'civil_law',
+      });
+      mockGet.mockResolvedValueOnce(SITTING_PAYLOAD);
+
+      render(withProviders(<BarExamSittingPage />));
+
+      await waitFor(() =>
+        expect(screen.getByTestId('answer-locked-1')).toBeInTheDocument(),
+      );
+      expect(
+        screen.queryByRole('button', { name: /AI Answer \(preview\)/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it('renders loading skeleton while subscription is loading', async () => {
+      process.env['NEXT_PUBLIC_FEATURE_BAR_EXAM_ANSWERS_PUBLIC'] = 'true';
+      mockSubscriptionState.data = null;
+      mockSubscriptionState.isLoading = true;
+      navigationMocks.useParams.mockReturnValue({
+        year: '2018',
+        subjectCode: 'civil_law',
+      });
+      mockGet.mockResolvedValueOnce(SITTING_PAYLOAD);
+
+      render(withProviders(<BarExamSittingPage />));
+
+      await waitFor(() =>
+        expect(screen.getByTestId('answer-access-loading')).toBeInTheDocument(),
+      );
+      expect(
+        screen.queryByRole('button', { name: /AI Answer \(preview\)/i }),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByTestId('answer-locked-1')).not.toBeInTheDocument();
     });
   });
 
