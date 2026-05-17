@@ -4,65 +4,104 @@ import { getHomepageContent } from '@/features/homepage/server/homepage-content'
 
 export async function PublicFooter() {
   const content = await getHomepageContent();
+  const tagline = content.footer.tagline ?? content.footer.brandDescription;
+  const companyLinks = content.footer.companyLinks ?? [];
 
   return (
     <>
-      {/* Legal Disclaimer */}
-      <div className="border-t border-gray-200 bg-gray-50 px-6 py-4">
-        <p className="mx-auto max-w-4xl text-center text-xs leading-relaxed text-gray-400">
+      <div
+        className="border-t px-6 py-4"
+        style={{ background: 'var(--warm-cream-2)', borderColor: 'var(--warm-line)' }}
+      >
+        <p
+          className="mx-auto max-w-4xl text-center text-xs leading-relaxed"
+          style={{ color: 'var(--warm-ink-faint)' }}
+        >
           {content.disclaimer}
         </p>
       </div>
 
-      <footer className="border-t border-gray-200 bg-white">
-        <div className="mx-auto max-w-7xl px-6 py-12">
-          <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
-            <div>
-              <p className="text-sm font-semibold text-gray-900">LIBERTASIAN</p>
-              <p className="mt-2 text-sm text-gray-500">
-                {content.footer.brandDescription}
-              </p>
+      <footer
+        className="px-6 pb-10 pt-16 sm:px-10"
+        style={{ background: 'var(--warm-ink)', color: 'var(--warm-cream)' }}
+      >
+        <div className="mx-auto grid max-w-[1320px] gap-10 sm:grid-cols-2 lg:grid-cols-[2fr_1fr_1fr_1fr]">
+          <div>
+            <div className="mb-4 flex items-center gap-2.5">
+              <span
+                className="flex h-9 w-9 items-center justify-center rounded-[10px] text-[22px] font-medium leading-none"
+                style={{
+                  background: 'var(--warm-accent)',
+                  color: 'var(--warm-surface)',
+                  fontFamily: 'var(--font-display)',
+                }}
+              >
+                L
+              </span>
+              <span
+                className="text-[28px] font-medium tracking-[-0.6px]"
+                style={{ fontFamily: 'var(--font-display)', color: 'var(--warm-cream-3)' }}
+              >
+                libertasian
+              </span>
             </div>
-            <div>
-              <p className="text-sm font-semibold text-gray-900">Product</p>
-              <ul className="mt-3 space-y-2">
-                {content.footer.productLinks.map((link) => (
-                  <li key={link.href}>
-                    <Link href={link.href} className="text-sm text-gray-500 hover:text-gray-700">
-                      {link.label}
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-gray-900">Legal</p>
-              <ul className="mt-3 space-y-2">
-                {content.footer.legalLinks.map((link) => (
-                  <li key={link.href}>
-                    <Link href={link.href} className="text-sm text-gray-500 hover:text-gray-700">
-                      {link.label}
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-gray-900">Contact</p>
-              <ul className="mt-3 space-y-2">
-                <li>
-                  <span className="text-sm text-gray-500">{content.footer.contactEmail}</span>
-                </li>
-              </ul>
-            </div>
-          </div>
-          <div className="mt-10 border-t border-gray-200 pt-6">
-            <p className="text-center text-xs text-gray-400">
-              &copy; {new Date().getFullYear()} LIBERTASIAN. All rights reserved.
+            <p
+              className="max-w-xs text-sm leading-relaxed opacity-70"
+              style={{ color: 'var(--warm-cream)' }}
+            >
+              {tagline}
+            </p>
+            <p className="mt-4 text-sm opacity-70" style={{ color: 'var(--warm-cream)' }}>
+              {content.footer.contactEmail}
             </p>
           </div>
+
+          <FooterColumn heading="Product" items={content.footer.productLinks} />
+          <FooterColumn heading="Company" items={companyLinks} />
+          <FooterColumn heading="Legal" items={content.footer.legalLinks} />
+        </div>
+
+        <div
+          className="mx-auto mt-10 flex max-w-[1320px] flex-col gap-2 border-t pt-6 text-xs opacity-60 sm:flex-row sm:justify-between"
+          style={{ borderColor: 'rgba(246,241,232,0.15)', color: 'var(--warm-cream)' }}
+        >
+          <span>&copy; {new Date().getFullYear()} LIBERTASIAN, Inc.</span>
+          <span>Made with respect for your time, in the Philippines.</span>
         </div>
       </footer>
     </>
+  );
+}
+
+function FooterColumn({
+  heading,
+  items,
+}: {
+  heading: string;
+  items: Array<{ label: string; href: string }>;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div>
+      <p
+        className="mb-4 text-[11px] uppercase tracking-[1px] opacity-50"
+        style={{ fontFamily: 'var(--font-mono)', color: 'var(--warm-cream)' }}
+      >
+        {heading}
+      </p>
+      <ul className="flex flex-col gap-2.5">
+        {items.map((link) => (
+          <li key={`${heading}-${link.href}-${link.label}`}>
+            <Link
+              href={link.href}
+              className="text-sm opacity-85 transition-opacity hover:opacity-100"
+              style={{ color: 'var(--warm-cream)' }}
+            >
+              {link.label}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
