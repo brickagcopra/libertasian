@@ -3,7 +3,6 @@
 import Link from 'next/link';
 import { LogOutIcon, SettingsIcon, UserIcon } from 'lucide-react';
 
-import { Logo } from '@/components/brand/logo';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import {
@@ -16,6 +15,13 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useLogout } from '@/features/auth/hooks/use-auth';
 import { useAuthStore } from '@/stores/auth-store';
+
+const NAV_LINKS: Array<{ label: string; href: string }> = [
+  { label: 'Bar Exams', href: '/bar-exams' },
+  { label: 'Features', href: '/#features' },
+  { label: 'Blog', href: '/blog' },
+  { label: 'Pricing', href: '/pricing' },
+];
 
 export function PublicHeader() {
   const user = useAuthStore((s) => s.user);
@@ -31,49 +37,69 @@ export function PublicHeader() {
     : '?';
 
   return (
-    <header className="sticky top-0 z-50 border-b border-gray-200 bg-white/95 backdrop-blur">
-      <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-        <Link href="/">
-          <Logo width={200} height={44} />
+    <header
+      className="sticky top-0 z-50 border-b backdrop-blur"
+      style={{
+        background: 'rgba(246, 241, 232, 0.92)',
+        borderColor: 'var(--warm-line)',
+      }}
+    >
+      <div className="mx-auto flex max-w-[1320px] items-center gap-7 px-6 py-4 sm:px-10">
+        <Link
+          href="/"
+          aria-label="LIBERTASIAN"
+          className="flex items-center gap-2.5"
+        >
+          <span
+            className="flex h-9 w-9 items-center justify-center rounded-[10px] text-[22px] font-medium leading-none"
+            style={{
+              background: 'var(--warm-ink)',
+              color: 'var(--warm-cream)',
+              fontFamily: 'var(--font-display)',
+              letterSpacing: '-0.5px',
+            }}
+          >
+            L
+          </span>
+          <span
+            className="text-[22px] font-medium tracking-[-0.6px] sm:text-2xl"
+            style={{ fontFamily: 'var(--font-display)', color: 'var(--warm-ink)' }}
+          >
+            libertasian
+          </span>
         </Link>
-        <nav className="hidden items-center gap-6 sm:flex">
-          <Link
-            href="/#features"
-            className="text-sm font-medium text-gray-600 hover:text-gray-900"
-          >
-            Features
-          </Link>
-          <Link
-            href="/bar-exams"
-            className="text-sm font-medium text-gray-600 hover:text-gray-900"
-          >
-            Bar Exams
-          </Link>
-          <Link
-            href="/blog"
-            className="text-sm font-medium text-gray-600 hover:text-gray-900"
-          >
-            Blog
-          </Link>
-          <Link
-            href="/pricing"
-            className="text-sm font-medium text-gray-600 hover:text-gray-900"
-          >
-            Pricing
-          </Link>
+
+        <div className="flex-1" />
+
+        <nav className="hidden items-center gap-7 lg:flex">
+          {NAV_LINKS.map((link) => (
+            <Link
+              key={link.href}
+              href={link.href}
+              className="text-sm font-medium transition-opacity hover:opacity-70"
+              style={{ color: 'var(--warm-ink-soft)' }}
+            >
+              {link.label}
+            </Link>
+          ))}
+        </nav>
+
+        <div className="flex items-center gap-3">
           {!user && (
             <>
               <Link
                 href="/auth/callback?mode=login"
-                className="text-sm font-medium text-gray-600 hover:text-gray-900"
+                className="hidden text-sm font-medium transition-opacity hover:opacity-70 sm:inline-flex"
+                style={{ color: 'var(--warm-ink)' }}
               >
                 Log in
               </Link>
               <Link
                 href="/auth/callback?mode=register"
-                className="rounded-md bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800"
+                className="inline-flex h-10 items-center gap-2 rounded-full px-5 text-sm font-semibold transition-opacity hover:opacity-90"
+                style={{ background: 'var(--warm-ink)', color: 'var(--warm-cream)' }}
               >
-                Get Started
+                Get Started <span aria-hidden>→</span>
               </Link>
             </>
           )}
@@ -84,7 +110,10 @@ export function PublicHeader() {
                   <Avatar className="size-7">
                     <AvatarFallback className="text-[10px]">{initials}</AvatarFallback>
                   </Avatar>
-                  <span className="hidden text-sm font-medium sm:inline-block">
+                  <span
+                    className="hidden text-sm font-medium sm:inline-block"
+                    style={{ color: 'var(--warm-ink)' }}
+                  >
                     {user.fullName}
                   </span>
                 </Button>
@@ -126,7 +155,7 @@ export function PublicHeader() {
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-        </nav>
+        </div>
       </div>
     </header>
   );

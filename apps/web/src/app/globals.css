@@ -5,6 +5,8 @@
 
 @theme inline {
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-display: var(--font-fraunces), 'Iowan Old Style', Georgia, serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -44,6 +46,21 @@
 }
 
 :root {
+  /* Warm Editorial palette (web public surface — design bundle).
+     Hex values mirror .design-bundle/project/libertasian-web.jsx (W object). */
+  --warm-cream: #f6f1e8;
+  --warm-cream-2: #efe7d7;
+  --warm-cream-3: #faefd9;
+  --warm-ink: #1c1a14;
+  --warm-ink-soft: #3a352b;
+  --warm-ink-mid: #5c5448;
+  --warm-ink-faint: #9a8f7c;
+  --warm-accent: #d87b2a;
+  --warm-accent-deep: #b65e13;
+  --warm-accent-soft: #fbe7cf;
+  --warm-surface: #ffffff;
+  --warm-line: rgba(28, 26, 20, 0.1);
+
   --radius: 1rem;
   --background: oklch(0.985 0.005 85);
   --foreground: oklch(0.18 0 0);
@@ -137,5 +154,22 @@
   h6 {
     font-weight: 700;
     letter-spacing: -0.01em;
+  }
+
+  /* Warm Editorial scope — applied to (public) routes and the homepage.
+     Resets headings to the design-bundle weights so Fraunces lands at 500. */
+  .public-warm {
+    background: var(--warm-cream);
+    color: var(--warm-ink);
+    font-family: var(--font-sans);
+  }
+  .public-warm h1,
+  .public-warm h2,
+  .public-warm h3,
+  .public-warm h4,
+  .public-warm h5,
+  .public-warm h6 {
+    font-family: var(--font-display);
+    font-weight: 500;
   }
 }

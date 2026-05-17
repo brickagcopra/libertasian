@@ -47,9 +47,13 @@ describe('PublicHeader', () => {
     mockIsPending = false;
   });
 
-  it('renders the animated Logo (LIBERTASIAN aria-label)', () => {
+  it('renders the warm-editorial wordmark linking to the homepage', () => {
     render(<PublicHeader />);
-    expect(screen.getByLabelText('LIBERTASIAN')).toBeInTheDocument();
+    // Wordmark is rendered as a lowercase Fraunces "libertasian" alongside an "L" badge.
+    expect(screen.getByText('libertasian')).toBeInTheDocument();
+    // Logo link points back to root.
+    const homeLink = screen.getByText('libertasian').closest('a');
+    expect(homeLink).toHaveAttribute('href', '/');
   });
 
   it('renders the 4 public nav links: Features, Bar Exams, Blog, Pricing', () => {

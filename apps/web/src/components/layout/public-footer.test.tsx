@@ -22,8 +22,10 @@ describe('PublicFooter', () => {
     const tree = await PublicFooter();
     render(tree);
 
-    // Brand description from fallback
-    expect(screen.getByText(DEFAULT_HOMEPAGE_CONTENT.footer.brandDescription)).toBeInTheDocument();
+    // Warm-editorial footer uses `tagline` when present (falls back to brandDescription otherwise).
+    const tagline =
+      DEFAULT_HOMEPAGE_CONTENT.footer.tagline ?? DEFAULT_HOMEPAGE_CONTENT.footer.brandDescription;
+    expect(screen.getByText(tagline)).toBeInTheDocument();
     // Contact email from fallback
     expect(screen.getByText(DEFAULT_HOMEPAGE_CONTENT.footer.contactEmail)).toBeInTheDocument();
     // Every fallback product link rendered
@@ -32,6 +34,10 @@ describe('PublicFooter', () => {
     }
     // Legal links rendered
     for (const link of DEFAULT_HOMEPAGE_CONTENT.footer.legalLinks) {
+      expect(screen.getByRole('link', { name: link.label })).toHaveAttribute('href', link.href);
+    }
+    // Company links (new in warm-editorial footer) — only assert when the default ships them.
+    for (const link of DEFAULT_HOMEPAGE_CONTENT.footer.companyLinks ?? []) {
       expect(screen.getByRole('link', { name: link.label })).toHaveAttribute('href', link.href);
     }
     // Disclaimer rendered
