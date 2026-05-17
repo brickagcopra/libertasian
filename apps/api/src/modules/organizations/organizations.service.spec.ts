@@ -104,7 +104,7 @@ describe('OrganizationsService', () => {
         planCode: 'free',
         status: 'active',
         seats: 1,
-        entitlementsJson: { aiAnswers: 15, searchQueries: 50, digestsPerMonth: 3 },
+        entitlementsJson: {},
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -138,7 +138,7 @@ describe('OrganizationsService', () => {
           planCode: 'free',
           status: 'active',
           seats: 1,
-          entitlementsJson: { aiAnswers: 15, searchQueries: 50, digestsPerMonth: 3 },
+          entitlementsJson: {},
         },
       });
     });
