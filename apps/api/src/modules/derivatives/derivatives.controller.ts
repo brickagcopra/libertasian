@@ -16,6 +16,7 @@ import type { JwtPayload } from '@libertasian/types';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { EntitlementService } from '../subscriptions/entitlement.service';
 import { DerivativesService } from './derivatives.service';
 import {
   ListDerivativesQueryDto,
@@ -43,7 +44,17 @@ export class DerivativesPublicFeatureFlagGuard implements CanActivate {
 @UseGuards(DerivativesPublicFeatureFlagGuard, JwtAuthGuard)
 @ApiBearerAuth()
 export class DerivativesController {
-  constructor(private readonly service: DerivativesService) {}
+  constructor(
+    private readonly service: DerivativesService,
+    private readonly entitlementService: EntitlementService,
+  ) {}
+
+  private async resolvePreviewOnly(organizationId: string): Promise<boolean> {
+    const ent = await this.entitlementService.resolveEffectiveEntitlements(
+      organizationId,
+    );
+    return ent.previewOnly === true;
+  }
 
   @Get()
   @ApiOperation({ summary: 'List approved derivative artifacts for students' })
@@ -52,7 +63,13 @@ export class DerivativesController {
     @Query() query: ListDerivativesQueryDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    const result = await this.service.list(user.sub, user.organizationId, query);
+    const previewOnly = await this.resolvePreviewOnly(user.organizationId);
+    const result = await this.service.list(
+      user.sub,
+      user.organizationId,
+      query,
+      previewOnly,
+    );
     return {
       success: true,
       data: result.items,
@@ -96,7 +113,13 @@ export class DerivativesController {
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: JwtPayload,
   ) {
-    const data = await this.service.findOne(id, user.sub, user.organizationId);
+    const previewOnly = await this.resolvePreviewOnly(user.organizationId);
+    const data = await this.service.findOne(
+      id,
+      user.sub,
+      user.organizationId,
+      previewOnly,
+    );
     return { success: true, data };
   }
 }

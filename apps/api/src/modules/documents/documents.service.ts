@@ -3,9 +3,12 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 
+import { PaywallException } from '../../common/exceptions/paywall.exception';
+import { RedisService } from '../../common/services/redis.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import {
@@ -17,6 +20,9 @@ import {
 
 const AUTO_ENQUEUE_DERIVATIVE_TYPES = ['case_digest', 'doctrine_extract'] as const;
 
+const PREVIEW_IDS_CACHE_KEY = 'cache:doc-preview-ids';
+const PREVIEW_IDS_CACHE_TTL = 60;
+
 @Injectable()
 export class DocumentsService {
   private readonly logger = new Logger(DocumentsService.name);
@@ -24,6 +30,7 @@ export class DocumentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    @Optional() private readonly redis?: RedisService,
   ) {}
 
   // ---- Legal Document CRUD ----
@@ -57,7 +64,11 @@ export class DocumentsService {
     return this.prisma.legalDocument.create({ data });
   }
 
-  async findById(id: string) {
+  async findById(id: string, previewOnly = false) {
+    if (previewOnly) {
+      await this.assertPreviewAllowed(id);
+    }
+
     const doc = await this.prisma.legalDocument.findUnique({
       where: { id },
       include: {
@@ -97,7 +108,7 @@ export class DocumentsService {
     return this.prisma.legalDocument.update({ where: { id }, data });
   }
 
-  async list(query: ListDocumentsQueryDto) {
+  async list(query: ListDocumentsQueryDto, previewOnly = false) {
     const limit = query.limit ?? 20;
 
     const where: Prisma.LegalDocumentWhereInput = {};
@@ -118,6 +129,54 @@ export class DocumentsService {
       where.decisionDate = {};
       if (query.dateFrom) where.decisionDate.gte = new Date(query.dateFrom);
       if (query.dateTo) where.decisionDate.lte = new Date(query.dateTo);
+    }
+
+    if (previewOnly) {
+      const previewIds = await this.getFreePreviewIds();
+      const previewIdList = Array.from(previewIds);
+      const lockedCount = previewIdList.length === 0
+        ? 0
+        : await this.prisma.legalDocument.count({
+            where: { ...where, id: { notIn: previewIdList } },
+          });
+
+      const restrictedWhere: Prisma.LegalDocumentWhereInput = previewIdList.length === 0
+        ? { ...where, id: { in: [] } }
+        : { ...where, id: { in: previewIdList } };
+
+      const items = await this.prisma.legalDocument.findMany({
+        where: restrictedWhere,
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          documentType: true,
+          title: true,
+          shortTitle: true,
+          citationText: true,
+          grNo: true,
+          decisionDate: true,
+          ponente: true,
+          court: true,
+          status: true,
+          isPublished: true,
+          isOfficial: true,
+          truthfulnessStatus: true,
+          createdAt: true,
+          source: { select: { id: true, name: true } },
+        },
+      });
+
+      return {
+        items,
+        meta: {
+          hasNext: false,
+          nextCursor: undefined as string | undefined,
+          limit,
+          previewMode: true,
+          lockedCount,
+          upgradeRequired: true,
+        },
+      };
     }
 
     const documents = await this.prisma.legalDocument.findMany({
@@ -155,9 +214,64 @@ export class DocumentsService {
     };
   }
 
+  /**
+   * One document id per documentType, newest first, restricted to published
+   * rows. Used by the free-plan preview cap: free/anonymous users can read
+   * exactly one document per type from the public corpus, everything else
+   * 402s.
+   */
+  async getFreePreviewIds(): Promise<Set<string>> {
+    if (this.redis) {
+      try {
+        const cached = await this.redis.get(PREVIEW_IDS_CACHE_KEY);
+        if (cached) {
+          return new Set(JSON.parse(cached) as string[]);
+        }
+      } catch (err) {
+        this.logger.warn(
+          `Document preview-ids cache read failed: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    const rows = await this.prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT DISTINCT ON (document_type) id
+      FROM legal_documents
+      WHERE status = 'published'
+      ORDER BY document_type, decision_date DESC NULLS LAST, id ASC
+    `;
+    const ids = rows.map((r) => r.id);
+
+    if (this.redis) {
+      try {
+        await this.redis.set(
+          PREVIEW_IDS_CACHE_KEY,
+          JSON.stringify(ids),
+          PREVIEW_IDS_CACHE_TTL,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Document preview-ids cache write failed: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    return new Set(ids);
+  }
+
+  private async assertPreviewAllowed(id: string): Promise<void> {
+    const previewIds = await this.getFreePreviewIds();
+    if (!previewIds.has(id)) {
+      throw new PaywallException({ corpus: 'documents' });
+    }
+  }
+
   // ---- Sections ----
 
-  async listSections(documentId: string) {
+  async listSections(documentId: string, previewOnly = false) {
+    if (previewOnly) {
+      await this.assertPreviewAllowed(documentId);
+    }
     await this.assertDocExists(documentId);
 
     return this.prisma.legalDocumentSection.findMany({
@@ -178,7 +292,11 @@ export class DocumentsService {
     });
   }
 
-  async getSection(documentId: string, sectionId: string) {
+  async getSection(documentId: string, sectionId: string, previewOnly = false) {
+    if (previewOnly) {
+      await this.assertPreviewAllowed(documentId);
+    }
+
     const section = await this.prisma.legalDocumentSection.findFirst({
       where: { id: sectionId, legalDocumentId: documentId },
     });
@@ -234,7 +352,10 @@ export class DocumentsService {
 
   // ---- Citations ----
 
-  async listCitations(documentId: string) {
+  async listCitations(documentId: string, previewOnly = false) {
+    if (previewOnly) {
+      await this.assertPreviewAllowed(documentId);
+    }
     await this.assertDocExists(documentId);
 
     return this.prisma.citation.findMany({
@@ -250,7 +371,10 @@ export class DocumentsService {
 
   // ---- Related Documents ----
 
-  async listRelated(documentId: string) {
+  async listRelated(documentId: string, previewOnly = false) {
+    if (previewOnly) {
+      await this.assertPreviewAllowed(documentId);
+    }
     await this.assertDocExists(documentId);
 
     // Find documents cited by this document (outgoing citations)

@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { DocumentsService } from './documents.service';
+import { PaywallException } from '../../common/exceptions/paywall.exception';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import {
@@ -37,6 +38,7 @@ describe('DocumentsService', () => {
     derivativeArtifact: {
       findFirst: jest.fn(),
     },
+    $queryRaw: jest.fn(),
   };
 
   const mockAuditService = {
@@ -792,6 +794,148 @@ describe('DocumentsService', () => {
 
     it('should return input as-is if pattern does not match', () => {
       expect(service.normalizeGrNo('SOMETHING 123456')).toBe('SOMETHING 123456');
+    });
+  });
+
+  describe('free-plan preview cap (previewOnly)', () => {
+    const previewIdsByType = [
+      { id: 'doc-decision-1' },
+      { id: 'doc-bar-exam-1' },
+    ];
+
+    beforeEach(() => {
+      mockPrismaService.$queryRaw.mockResolvedValue(previewIdsByType);
+    });
+
+    describe('list', () => {
+      it('returns only preview-set documents and stamps meta.previewMode/lockedCount when previewOnly=true', async () => {
+        const previewItems = [
+          { id: 'doc-decision-1', documentType: 'decision', title: 'Sample Decision' },
+          { id: 'doc-bar-exam-1', documentType: 'bar_exam_questions', title: 'Sample Bar Q' },
+        ];
+        mockPrismaService.legalDocument.count.mockResolvedValue(3987);
+        mockPrismaService.legalDocument.findMany.mockResolvedValue(previewItems);
+
+        const result = await service.list({} as ListDocumentsQueryDto, true);
+
+        expect(result.items).toHaveLength(2);
+        expect(result.items.map((i) => i.id)).toEqual([
+          'doc-decision-1',
+          'doc-bar-exam-1',
+        ]);
+        expect(result.meta).toMatchObject({
+          previewMode: true,
+          lockedCount: 3987,
+          upgradeRequired: true,
+          hasNext: false,
+        });
+
+        // Verify the findMany was scoped to the preview set
+        const call = mockPrismaService.legalDocument.findMany.mock.calls[0]![0]!;
+        expect(call.where.id).toEqual({
+          in: ['doc-decision-1', 'doc-bar-exam-1'],
+        });
+        // No cursor pagination when previewOnly
+        expect(call.take).toBeUndefined();
+      });
+
+      it('returns empty items + zero lockedCount when no preview ids exist', async () => {
+        mockPrismaService.$queryRaw.mockResolvedValue([]);
+        mockPrismaService.legalDocument.findMany.mockResolvedValue([]);
+
+        const result = await service.list({} as ListDocumentsQueryDto, true);
+
+        expect(result.items).toEqual([]);
+        expect(result.meta).toMatchObject({
+          previewMode: true,
+          lockedCount: 0,
+          upgradeRequired: true,
+        });
+      });
+
+      it('behaves unchanged when previewOnly=false (no meta.previewMode flag)', async () => {
+        mockPrismaService.legalDocument.findMany.mockResolvedValue([]);
+
+        const result = await service.list({} as ListDocumentsQueryDto, false);
+
+        expect(result.meta).not.toHaveProperty('previewMode');
+        expect(result.meta.hasNext).toBe(false);
+
+        // Default-path: no $queryRaw call, no scoped id filter
+        expect(mockPrismaService.$queryRaw).not.toHaveBeenCalled();
+        const call = mockPrismaService.legalDocument.findMany.mock.calls[0]![0]!;
+        expect(call.take).toBe(21); // default limit 20 + 1
+      });
+    });
+
+    describe('findById', () => {
+      it('returns the doc when previewOnly=true and id is in preview set', async () => {
+        mockPrismaService.legalDocument.findUnique.mockResolvedValue({
+          id: 'doc-decision-1',
+          documentType: 'decision',
+        });
+
+        const doc = await service.findById('doc-decision-1', true);
+        expect(doc.id).toBe('doc-decision-1');
+      });
+
+      it('throws PaywallException when previewOnly=true and id is NOT in preview set', async () => {
+        await expect(service.findById('doc-not-in-preview', true)).rejects.toBeInstanceOf(
+          PaywallException,
+        );
+        // Underlying lookup should never have run
+        expect(mockPrismaService.legalDocument.findUnique).not.toHaveBeenCalled();
+      });
+
+      it('behaves unchanged when previewOnly=false', async () => {
+        mockPrismaService.legalDocument.findUnique.mockResolvedValue({ id: 'any-doc' });
+
+        const doc = await service.findById('any-doc', false);
+        expect(doc.id).toBe('any-doc');
+        expect(mockPrismaService.$queryRaw).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('listSections / getSection / listCitations / listRelated', () => {
+      it('listSections throws PaywallException for non-preview doc when previewOnly=true', async () => {
+        await expect(
+          service.listSections('doc-not-in-preview', true),
+        ).rejects.toBeInstanceOf(PaywallException);
+      });
+
+      it('getSection throws PaywallException for non-preview doc when previewOnly=true', async () => {
+        await expect(
+          service.getSection('doc-not-in-preview', 'section-1', true),
+        ).rejects.toBeInstanceOf(PaywallException);
+      });
+
+      it('listCitations throws PaywallException for non-preview doc when previewOnly=true', async () => {
+        await expect(
+          service.listCitations('doc-not-in-preview', true),
+        ).rejects.toBeInstanceOf(PaywallException);
+      });
+
+      it('listRelated throws PaywallException for non-preview doc when previewOnly=true', async () => {
+        await expect(
+          service.listRelated('doc-not-in-preview', true),
+        ).rejects.toBeInstanceOf(PaywallException);
+      });
+
+      it('listSections succeeds for preview-set doc when previewOnly=true', async () => {
+        mockPrismaService.legalDocument.count.mockResolvedValue(1);
+        mockPrismaService.legalDocumentSection.findMany.mockResolvedValue([]);
+
+        await expect(
+          service.listSections('doc-decision-1', true),
+        ).resolves.toEqual([]);
+      });
+    });
+
+    describe('getFreePreviewIds', () => {
+      it('returns ids from the DISTINCT ON query', async () => {
+        const ids = await service.getFreePreviewIds();
+        expect(Array.from(ids)).toEqual(['doc-decision-1', 'doc-bar-exam-1']);
+      });
     });
   });
 

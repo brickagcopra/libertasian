@@ -1,5 +1,6 @@
 import { NotFoundException } from '@nestjs/common';
 
+import { PaywallException } from '../../common/exceptions/paywall.exception';
 import { DerivativesService } from './derivatives.service';
 
 function makePrisma() {
@@ -7,6 +8,7 @@ function makePrisma() {
     derivativeArtifact: {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
     },
     digest: {
       findMany: jest.fn().mockResolvedValue([]),
@@ -19,6 +21,7 @@ function makePrisma() {
     documentSubjectAssignment: {
       groupBy: jest.fn().mockResolvedValue([]),
     },
+    $queryRaw: jest.fn().mockResolvedValue([]),
   };
 }
 
@@ -626,6 +629,156 @@ describe('DerivativesService', () => {
       await expect(service.findOne('d1', 'user-1', 'org-1')).rejects.toBeInstanceOf(
         NotFoundException,
       );
+    });
+  });
+
+  describe('free-plan preview cap (previewOnly)', () => {
+    const makeArtifactRow = (overrides: Partial<Record<string, unknown>> = {}) => ({
+      id: 'a1',
+      title: 'Sample MCQ',
+      derivativeType: 'mcq_question',
+      confidenceScore: 0.9,
+      createdAt: new Date('2026-04-20'),
+      publishedAt: null,
+      audience: 'both',
+      language: 'en',
+      sourceDocument: null,
+      subjectAssignments: [],
+      contentDisclaimer: { id: 'cd', contentClass: 'mcq', version: 1 },
+      ...overrides,
+    });
+
+    describe('list', () => {
+      it('returns ≤1 per derivativeType + meta.previewMode when previewOnly=true', async () => {
+        prisma.$queryRaw.mockResolvedValue([
+          { id: 'preview-mcq' },
+          { id: 'preview-essay' },
+        ]);
+        prisma.derivativeArtifact.count.mockResolvedValue(123);
+        prisma.derivativeArtifact.findMany.mockResolvedValue([
+          makeArtifactRow({ id: 'preview-mcq', derivativeType: 'mcq_question' }),
+          makeArtifactRow({ id: 'preview-essay', derivativeType: 'essay_model_answer' }),
+        ]);
+        subs.getPlanCode.mockResolvedValue('free');
+
+        const result = await service.list('user-1', 'org-1', {}, true);
+
+        expect(result.items).toHaveLength(2);
+        expect(result.items.map((i) => i.id)).toEqual([
+          'preview-mcq',
+          'preview-essay',
+        ]);
+        expect(result.meta).toMatchObject({
+          previewMode: true,
+          lockedCount: 123,
+          upgradeRequired: true,
+          hasNext: false,
+        });
+      });
+
+      it('preview items KEEP their original isGated flag (additive to GATED_DERIVATIVE_TYPES)', async () => {
+        prisma.$queryRaw.mockResolvedValue([{ id: 'preview-mcq' }]);
+        prisma.derivativeArtifact.count.mockResolvedValue(50);
+        prisma.derivativeArtifact.findMany.mockResolvedValue([
+          makeArtifactRow({ id: 'preview-mcq', derivativeType: 'mcq_question' }),
+        ]);
+        subs.getPlanCode.mockResolvedValue('free');
+
+        const { items } = await service.list('user-1', 'org-1', {}, true);
+        const [item] = items;
+        expect(item!.isGated).toBe(true);
+        expect(item!.upgradeTier).toBe('edu');
+      });
+
+      it('returns empty items when no preview ids exist', async () => {
+        prisma.$queryRaw.mockResolvedValue([]);
+
+        const result = await service.list('user-1', 'org-1', {}, true);
+
+        expect(result.items).toEqual([]);
+        expect(result.meta.previewMode).toBe(true);
+        expect(result.meta.lockedCount).toBe(0);
+      });
+
+      it('behaves unchanged when previewOnly=false (default)', async () => {
+        prisma.derivativeArtifact.findMany.mockResolvedValue([]);
+
+        const result = await service.list('user-1', 'org-1', {});
+
+        expect(result.meta).not.toHaveProperty('previewMode');
+        // No DISTINCT ON raw query when not in preview mode
+        expect(prisma.$queryRaw).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('findOne', () => {
+      it('throws PaywallException BEFORE tenant lookup when previewOnly=true and id is NOT preview', async () => {
+        prisma.$queryRaw.mockResolvedValue([{ id: 'preview-mcq' }]);
+
+        await expect(
+          service.findOne('not-in-preview', 'user-1', 'org-1', true),
+        ).rejects.toBeInstanceOf(PaywallException);
+
+        // Tenant lookup must NOT run — preserves no-existence-leak invariant
+        expect(prisma.derivativeArtifact.findFirst).not.toHaveBeenCalled();
+      });
+
+      it('returns the artifact when previewOnly=true and id IS in preview set', async () => {
+        prisma.$queryRaw.mockResolvedValue([{ id: 'preview-mcq' }]);
+        prisma.derivativeArtifact.findFirst.mockResolvedValue({
+          id: 'preview-mcq',
+          title: 'Preview MCQ',
+          derivativeType: 'mcq_question',
+          confidenceScore: 0.9,
+          createdAt: new Date(),
+          publishedAt: null,
+          audience: 'both',
+          language: 'en',
+          contentJson: { stem: 'Q' },
+          contentPlainText: 'plain',
+          sourceDocument: null,
+          subjectAssignments: [],
+          contentDisclaimer: {
+            id: 'cd',
+            contentClass: 'mcq',
+            version: 1,
+            bodyHtml: '<p>disc</p>',
+            bodyPlain: 'disc',
+          },
+          mcqQuestion: null,
+          essayPrompt: null,
+        });
+        subs.getPlanCode.mockResolvedValue('free');
+
+        const result = await service.findOne('preview-mcq', 'user-1', 'org-1', true);
+
+        expect(result.id).toBe('preview-mcq');
+        // Existing gating still applies on top
+        expect(result.isGated).toBe(true);
+      });
+
+      it('behaves unchanged when previewOnly=false (default)', async () => {
+        prisma.derivativeArtifact.findFirst.mockResolvedValue(null);
+        prisma.digest.findFirst.mockResolvedValue(null);
+
+        await expect(
+          service.findOne('any-id', 'user-1', 'org-1'),
+        ).rejects.toBeInstanceOf(NotFoundException);
+
+        expect(prisma.$queryRaw).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('getFreePreviewIds', () => {
+      it('returns ids from the DISTINCT ON query', async () => {
+        prisma.$queryRaw.mockResolvedValue([
+          { id: 'preview-mcq' },
+          { id: 'preview-essay' },
+        ]);
+
+        const ids = await service.getFreePreviewIds();
+        expect(Array.from(ids)).toEqual(['preview-mcq', 'preview-essay']);
+      });
     });
   });
 });

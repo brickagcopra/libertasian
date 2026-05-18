@@ -22,6 +22,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { TrackEvent } from '../analytics';
 import { AuditService } from '../audit/audit.service';
+import { EntitlementService } from '../subscriptions/entitlement.service';
 import { UsageQuotaService } from '../subscriptions/usage-quota.service';
 import { DigestsService } from './digests.service';
 import {
@@ -50,7 +51,15 @@ export class DigestsController {
     private readonly digestsService: DigestsService,
     private readonly auditService: AuditService,
     private readonly usageQuota: UsageQuotaService,
+    private readonly entitlementService: EntitlementService,
   ) {}
+
+  private async resolvePreviewOnly(organizationId: string): Promise<boolean> {
+    const ent = await this.entitlementService.resolveEffectiveEntitlements(
+      organizationId,
+    );
+    return ent.previewOnly === true;
+  }
 
   @Post('by-documents')
   @ApiOperation({ summary: 'Get digests by legal document IDs (batch lookup)' })
@@ -148,10 +157,12 @@ export class DigestsController {
     @Query() query: ListDigestsQueryDto,
     @CurrentUser() user: JwtPayload,
   ) {
+    const previewOnly = await this.resolvePreviewOnly(user.organizationId);
     const result = await this.digestsService.list(
       user.sub,
       user.organizationId,
       query,
+      previewOnly,
     );
     return { success: true, data: result.items, meta: result.meta };
   }
@@ -161,12 +172,27 @@ export class DigestsController {
     summary:
       'Search approved public-editorial digests; returns matchedDocuments for on-demand generation when empty',
   })
-  async search(@Query() query: SearchDigestsQueryDto) {
-    const { results, hasMore, cursor, matchedDocuments } =
-      await this.digestsService.search(query);
+  async search(
+    @Query() query: SearchDigestsQueryDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const previewOnly = await this.resolvePreviewOnly(user.organizationId);
+    const searchResult = await this.digestsService.search(query, previewOnly);
     return {
       success: true,
-      data: { results, hasMore, cursor, matchedDocuments },
+      data: {
+        results: searchResult.results,
+        hasMore: searchResult.hasMore,
+        cursor: searchResult.cursor,
+        matchedDocuments: searchResult.matchedDocuments,
+      },
+      meta: previewOnly
+        ? {
+            previewMode: true,
+            lockedCount: searchResult.lockedCount,
+            upgradeRequired: true,
+          }
+        : undefined,
     };
   }
 
@@ -252,10 +278,12 @@ export class DigestsController {
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: JwtPayload,
   ) {
+    const previewOnly = await this.resolvePreviewOnly(user.organizationId);
     const digest = await this.digestsService.findById(
       id,
       user.sub,
       user.organizationId,
+      previewOnly,
     );
     return { success: true, data: digest };
   }
@@ -312,8 +340,10 @@ export class DigestsController {
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: JwtPayload,
   ) {
-    // Verify access to the digest first
-    await this.digestsService.findById(id, user.sub, user.organizationId);
+    const previewOnly = await this.resolvePreviewOnly(user.organizationId);
+    // Verify access to the digest first — also enforces the preview cap
+    // when the caller is on a free plan.
+    await this.digestsService.findById(id, user.sub, user.organizationId, previewOnly);
     const records = await this.digestsService.getProvenanceRecords(id);
     return { success: true, data: records };
   }

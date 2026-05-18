@@ -195,6 +195,32 @@ describe('SubscriptionsService', () => {
       expect(ent.aiAnswers).toBe(0);
       expect(ent.searchQueries).toBe(50);
     });
+
+    describe('previewOnly entitlement', () => {
+      it('is true for free plan', () => {
+        expect(service.getDefaultEntitlements('free').previewOnly).toBe(true);
+      });
+
+      it('is false for edu plan', () => {
+        expect(service.getDefaultEntitlements('edu').previewOnly).toBe(false);
+      });
+
+      it('is false for pro plan', () => {
+        expect(service.getDefaultEntitlements('pro').previewOnly).toBe(false);
+      });
+
+      it('is false for team plan', () => {
+        expect(service.getDefaultEntitlements('team').previewOnly).toBe(false);
+      });
+
+      it('is false for enterprise plan', () => {
+        expect(service.getDefaultEntitlements('enterprise').previewOnly).toBe(false);
+      });
+
+      it('falls back to free=true for unknown plan codes', () => {
+        expect(service.getDefaultEntitlements('platinum').previewOnly).toBe(true);
+      });
+    });
   });
 
   // ---- getEntitlements (flag OFF — hardcoded fallback) ----

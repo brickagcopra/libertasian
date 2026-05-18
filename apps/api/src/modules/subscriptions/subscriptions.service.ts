@@ -36,6 +36,8 @@ export interface SubscriptionEntitlements {
   contradictionDetectionPerMonth?: number;
   maxResearchWorkspaces?: number;
   maxApiKeys?: number;
+  // When true, public read endpoints expose at most one item per corpus type.
+  previewOnly?: boolean;
 }
 
 @Injectable()
@@ -146,6 +148,7 @@ export class SubscriptionsService {
           contradictionDetectionPerMonth: 0,
           maxResearchWorkspaces: 0,
           maxApiKeys: 0,
+          previewOnly: true,
         };
       case 'edu':
         return {
@@ -166,6 +169,7 @@ export class SubscriptionsService {
           contradictionDetectionPerMonth: 0,
           maxResearchWorkspaces: 0,
           maxApiKeys: 0,
+          previewOnly: false,
         };
       case 'pro':
         return {
@@ -186,6 +190,7 @@ export class SubscriptionsService {
           contradictionDetectionPerMonth: 0,
           maxResearchWorkspaces: 3,
           maxApiKeys: 0,
+          previewOnly: false,
         };
       case 'team':
         return {
@@ -206,6 +211,7 @@ export class SubscriptionsService {
           contradictionDetectionPerMonth: 5,
           maxResearchWorkspaces: 20,
           maxApiKeys: 0,
+          previewOnly: false,
         };
       case 'enterprise':
         return {
@@ -226,6 +232,7 @@ export class SubscriptionsService {
           contradictionDetectionPerMonth: -1,
           maxResearchWorkspaces: -1,
           maxApiKeys: 10,
+          previewOnly: false,
         };
       default:
         return this.getDefaultEntitlements('free');
