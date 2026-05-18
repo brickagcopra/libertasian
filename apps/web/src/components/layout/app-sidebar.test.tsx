@@ -35,8 +35,8 @@ vi.mock('@/features/settings/hooks/use-rbac', () => ({
   useHasPermission: () => ({ hasPermission: false, isLoading: false }),
 }));
 
-vi.mock('@/components/brand/logo', () => ({
-  Logo: () => <div>LIBERTASIAN</div>,
+vi.mock('@/components/brand/wordmark', () => ({
+  Wordmark: () => <div>libertasian</div>,
 }));
 
 import { AppSidebar, SidebarContent } from './app-sidebar';
@@ -51,9 +51,9 @@ describe('SidebarContent', () => {
     mockSubscription = { planCode: 'free' };
   });
 
-  it('renders the brand name', () => {
+  it('renders the warm-editorial wordmark', () => {
     render(<SidebarContent />);
-    expect(screen.getByText('LIBERTASIAN')).toBeInTheDocument();
+    expect(screen.getByText('libertasian')).toBeInTheDocument();
   });
 
   it('renders main navigation items', () => {
@@ -126,6 +126,6 @@ describe('SidebarContent', () => {
 describe('AppSidebar', () => {
   it('renders aside element', () => {
     render(<AppSidebar />);
-    expect(screen.getByText('LIBERTASIAN')).toBeInTheDocument();
+    expect(screen.getByText('libertasian')).toBeInTheDocument();
   });
 });

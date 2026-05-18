@@ -6,7 +6,8 @@ import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 
 import { useVerifyEmail, useResendVerification } from '@/features/auth/hooks/use-auth';
 import { ApiClientError } from '@/lib/api-client';
-import { APP_NAME, ROUTES } from '@/lib/constants';
+import { Wordmark } from '@/components/brand/wordmark';
+import { ROUTES } from '@/lib/constants';
 
 type VerifyState = 'input' | 'verifying' | 'success' | 'error' | 'no-email';
 
@@ -112,11 +113,11 @@ function VerifyEmailContent() {
   if (state === 'no-email') {
     return (
       <div className="space-y-4">
-        <div className="rounded-md bg-yellow-50 p-4 text-sm text-yellow-700">
+        <div className="rounded-md border border-warm-accent bg-warm-accent-soft p-4 text-sm text-warm-ink">
           No email address provided. Please register first.
         </div>
-        <p className="text-center text-sm text-gray-600">
-          <Link href={ROUTES.LOGIN} className="font-medium text-gray-900 hover:text-gray-700">
+        <p className="text-center text-sm text-warm-ink-mid">
+          <Link href={ROUTES.LOGIN} className="font-medium text-warm-ink hover:underline">
             Go to sign in
           </Link>
         </p>
@@ -127,13 +128,13 @@ function VerifyEmailContent() {
   if (state === 'success') {
     return (
       <div className="space-y-4">
-        <div className="rounded-md bg-green-50 p-4 text-sm text-green-700">
+        <div className="rounded-md border border-green-200 bg-green-50 p-4 text-sm text-green-800">
           Your email has been verified successfully. You can now sign in.
         </div>
         <p className="text-center">
           <Link
             href={ROUTES.LOGIN}
-            className="inline-flex rounded-md bg-gray-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-gray-800"
+            className="inline-flex h-12 items-center rounded-full bg-warm-ink px-6 text-sm font-semibold text-warm-cream shadow-sm hover:bg-warm-ink/90"
           >
             Sign in
           </Link>
@@ -145,14 +146,14 @@ function VerifyEmailContent() {
   return (
     <div className="space-y-6">
       <div className="text-center">
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-warm-ink-mid">
           We sent a 6-digit code to
         </p>
-        <p className="font-medium text-gray-900">{email}</p>
+        <p className="font-medium text-warm-ink">{email}</p>
       </div>
 
       {(state === 'error') && errorMessage && (
-        <div className="rounded-md bg-red-50 p-4 text-sm text-red-700">
+        <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">
           {errorMessage}
         </div>
       )}
@@ -169,7 +170,7 @@ function VerifyEmailContent() {
             onChange={(e) => handleDigitChange(i, e.target.value)}
             onKeyDown={(e) => handleKeyDown(i, e)}
             disabled={state === 'verifying'}
-            className="h-14 w-11 rounded-lg border border-gray-300 text-center text-2xl font-bold text-gray-900 focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900 disabled:opacity-50"
+            className="h-14 w-11 rounded-lg border border-warm-ink/15 bg-warm-surface text-center text-2xl font-bold text-warm-ink focus:border-warm-ink focus:outline-none focus:ring-1 focus:ring-warm-ink disabled:opacity-50"
             autoFocus={i === 0}
           />
         ))}
@@ -177,19 +178,19 @@ function VerifyEmailContent() {
 
       {state === 'verifying' && (
         <div className="flex justify-center">
-          <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-300 border-t-gray-800" />
+          <div className="h-5 w-5 animate-spin rounded-full border-2 border-warm-ink/20 border-t-warm-ink" />
         </div>
       )}
 
-      <p className="text-center text-sm text-gray-600">
+      <p className="text-center text-sm text-warm-ink-mid">
         {"Didn't receive the code? "}
         {resendCountdown > 0 ? (
-          <span className="text-gray-400">Resend in {resendCountdown}s</span>
+          <span className="text-warm-ink-faint">Resend in {resendCountdown}s</span>
         ) : (
           <button
             type="button"
             onClick={handleResend}
-            className="font-medium text-gray-900 hover:text-gray-700"
+            className="font-medium text-warm-ink hover:underline disabled:opacity-50"
             disabled={resendVerification.isPending}
           >
             {resendVerification.isPending ? 'Sending...' : 'Resend code'}
@@ -197,7 +198,7 @@ function VerifyEmailContent() {
         )}
       </p>
 
-      <p className="text-center text-xs text-gray-500">
+      <p className="text-center text-xs text-warm-ink-faint">
         Code expires in 15 minutes.
       </p>
     </div>
@@ -206,24 +207,20 @@ function VerifyEmailContent() {
 
 export default function VerifyEmailPage() {
   return (
-    <main className="flex min-h-screen items-center justify-center px-4">
-      <div className="w-full max-w-md space-y-8">
-        <div className="text-center">
-          <h1 className="text-3xl font-bold tracking-tight text-gray-900">
-            {APP_NAME}
-          </h1>
-          <p className="mt-2 text-sm text-gray-600">
-            Verify your email
-          </p>
+    <div className="w-full max-w-md">
+      <div className="rounded-2xl border border-warm-ink/10 bg-warm-surface p-8 shadow-[0_1px_0_rgba(0,0,0,0.04)]">
+        <div className="mb-6 flex flex-col items-center text-center">
+          <Wordmark size={36} />
+          <p className="mt-3 text-sm text-warm-ink-mid">Verify your email</p>
         </div>
         <Suspense fallback={
           <div className="flex justify-center py-8">
-            <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-300 border-t-gray-800" />
+            <div className="h-6 w-6 animate-spin rounded-full border-2 border-warm-ink/20 border-t-warm-ink" />
           </div>
         }>
           <VerifyEmailContent />
         </Suspense>
       </div>
-    </main>
+    </div>
   );
 }

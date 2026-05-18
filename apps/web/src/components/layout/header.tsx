@@ -87,21 +87,29 @@ export function Header({ onMenuClick }: HeaderProps) {
     : '?';
 
   return (
-    <header className="flex h-14 items-center justify-between border-b bg-background px-4 md:px-6">
+    <header
+      className="flex h-14 items-center justify-between border-b border-warm-ink/10 px-4 backdrop-blur md:px-6"
+      style={{ background: 'rgba(246, 241, 232, 0.9)' }}
+    >
       <div className="flex items-center gap-2">
         {onMenuClick && (
           <Button
             variant="ghost"
             size="icon"
-            className="md:hidden"
+            className="text-warm-ink md:hidden"
             onClick={onMenuClick}
             aria-label="Open menu"
           >
             <MenuIcon />
           </Button>
         )}
-        <Separator orientation="vertical" className="mr-2 h-4 md:hidden" />
-        <span className="text-sm font-medium text-muted-foreground">{pageTitle}</span>
+        <Separator orientation="vertical" className="mr-2 h-4 bg-warm-ink/15 md:hidden" />
+        <span
+          className="text-sm font-medium text-warm-ink"
+          style={{ fontFamily: 'var(--font-display)' }}
+        >
+          {pageTitle}
+        </span>
       </div>
 
       <div className="flex items-center gap-2">

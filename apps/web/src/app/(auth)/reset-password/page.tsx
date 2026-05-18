@@ -7,7 +7,6 @@ import { Suspense, useState } from 'react';
 import { useForm } from 'react-hook-form';
 
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -15,7 +14,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { resetPasswordSchema, type ResetPasswordFormData } from '@/features/auth/schemas';
 import { useResetPassword } from '@/features/auth/hooks/use-auth';
 import { ApiClientError } from '@/lib/api-client';
-import { APP_NAME, ROUTES } from '@/lib/constants';
+import { Wordmark } from '@/components/brand/wordmark';
+import { ROUTES } from '@/lib/constants';
 
 function ResetPasswordForm() {
   const searchParams = useSearchParams();
@@ -61,8 +61,8 @@ function ResetPasswordForm() {
             No reset token found. Please use the link from your email.
           </AlertDescription>
         </Alert>
-        <p className="text-muted-foreground text-center text-sm">
-          <Link href={ROUTES.FORGOT_PASSWORD} className="text-foreground font-medium hover:underline">
+        <p className="text-center text-sm text-warm-ink-mid">
+          <Link href={ROUTES.FORGOT_PASSWORD} className="font-medium text-warm-ink hover:underline">
             Request a new reset link
           </Link>
         </p>
@@ -79,7 +79,10 @@ function ResetPasswordForm() {
           </AlertDescription>
         </Alert>
         <div className="text-center">
-          <Button asChild>
+          <Button
+            asChild
+            className="h-12 rounded-full bg-warm-ink text-warm-cream hover:bg-warm-ink/90"
+          >
             <Link href={ROUTES.LOGIN}>Sign in</Link>
           </Button>
         </div>
@@ -108,7 +111,7 @@ function ResetPasswordForm() {
         {errors.newPassword ? (
           <p className="text-destructive text-xs">{errors.newPassword.message}</p>
         ) : (
-          <p className="text-muted-foreground text-xs">Minimum 10 characters</p>
+          <p className="text-warm-ink-mid text-xs">Minimum 10 characters</p>
         )}
       </div>
 
@@ -125,7 +128,11 @@ function ResetPasswordForm() {
         )}
       </div>
 
-      <Button type="submit" className="w-full" disabled={isSubmitting}>
+      <Button
+        type="submit"
+        className="h-12 w-full rounded-full bg-warm-ink text-warm-cream hover:bg-warm-ink/90"
+        disabled={isSubmitting}
+      >
         {isSubmitting ? 'Resetting...' : 'Reset password'}
       </Button>
     </form>
@@ -134,27 +141,23 @@ function ResetPasswordForm() {
 
 export default function ResetPasswordPage() {
   return (
-    <main className="flex min-h-screen items-center justify-center px-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="text-center">
-          <CardTitle className="text-3xl font-bold tracking-tight">
-            {APP_NAME}
-          </CardTitle>
-          <CardDescription>Set your new password</CardDescription>
-        </CardHeader>
+    <div className="w-full max-w-md">
+      <div className="rounded-2xl border border-warm-ink/10 bg-warm-surface p-8 shadow-[0_1px_0_rgba(0,0,0,0.04)]">
+        <div className="mb-6 flex flex-col items-center text-center">
+          <Wordmark size={36} />
+          <p className="mt-3 text-sm text-warm-ink-mid">Set your new password</p>
+        </div>
 
-        <CardContent>
-          <Suspense fallback={
-            <div className="space-y-4">
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-10 w-full" />
-            </div>
-          }>
-            <ResetPasswordForm />
-          </Suspense>
-        </CardContent>
-      </Card>
-    </main>
+        <Suspense fallback={
+          <div className="space-y-4">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+        }>
+          <ResetPasswordForm />
+        </Suspense>
+      </div>
+    </div>
   );
 }
