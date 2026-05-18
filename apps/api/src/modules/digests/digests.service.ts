@@ -5,10 +5,13 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { Queue } from 'bullmq';
 
+import { PaywallException } from '../../common/exceptions/paywall.exception';
+import { RedisService } from '../../common/services/redis.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   AssignReviewerDto,
@@ -30,6 +33,9 @@ const CONFIDENCE_THRESHOLD = 0.7;
 /** Source origins that come from user scans — always private visibility */
 const USER_SCAN_ORIGINS = ['user_scan', 'user_upload', 'camera_capture'];
 
+const PREVIEW_DIGEST_CACHE_KEY = 'cache:digest-preview-id';
+const PREVIEW_DIGEST_CACHE_TTL = 60;
+
 @Injectable()
 export class DigestsService {
   private readonly logger = new Logger(DigestsService.name);
@@ -37,7 +43,59 @@ export class DigestsService {
   constructor(
     private readonly prisma: PrismaService,
     @InjectQueue('digests') private readonly digestQueue: Queue,
+    @Optional() private readonly redis?: RedisService,
   ) {}
+
+  /**
+   * Single newest public_editorial+approved digest id, used as the
+   * free-plan preview. Cached 60s in Redis.
+   */
+  async getFreePreviewDigestId(): Promise<string | null> {
+    if (this.redis) {
+      try {
+        const cached = await this.redis.get(PREVIEW_DIGEST_CACHE_KEY);
+        if (cached !== null) {
+          // Empty string sentinel means "no rows match" — distinguish from
+          // cache miss so we don't re-query on every request.
+          return cached === '' ? null : cached;
+        }
+      } catch (err) {
+        this.logger.warn(
+          `Digest preview-id cache read failed: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    const row = await this.prisma.digest.findFirst({
+      where: { visibility: 'public_editorial', reviewStatus: 'approved' },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    });
+    const id = row?.id ?? null;
+
+    if (this.redis) {
+      try {
+        await this.redis.set(
+          PREVIEW_DIGEST_CACHE_KEY,
+          id ?? '',
+          PREVIEW_DIGEST_CACHE_TTL,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Digest preview-id cache write failed: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    return id;
+  }
+
+  private async assertDigestPreviewAllowed(id: string): Promise<void> {
+    const previewId = await this.getFreePreviewDigestId();
+    if (previewId !== id) {
+      throw new PaywallException({ corpus: 'digests' });
+    }
+  }
 
   /**
    * Create a digest manually (from user action or admin).
@@ -103,8 +161,18 @@ export class DigestsService {
 
   /**
    * Get a digest by ID. Enforces user/org access for private digests.
+   * When `previewOnly` is true, only the single preview digest id is
+   * accessible; other ids 402.
    */
-  async findById(digestId: string, userId: string, organizationId: string) {
+  async findById(
+    digestId: string,
+    userId: string,
+    organizationId: string,
+    previewOnly = false,
+  ) {
+    if (previewOnly) {
+      await this.assertDigestPreviewAllowed(digestId);
+    }
     const digest = await this.prisma.digest.findUnique({
       where: { id: digestId },
       include: {
@@ -158,9 +226,56 @@ export class DigestsService {
   /**
    * List digests with cursor-based pagination and filters.
    * Scoped to user's organization for private/org digests.
+   * When `previewOnly` is true, returns at most the single newest
+   * public_editorial+approved digest with meta.previewMode/lockedCount.
    */
-  async list(userId: string, organizationId: string, query: ListDigestsQueryDto) {
+  async list(
+    userId: string,
+    organizationId: string,
+    query: ListDigestsQueryDto,
+    previewOnly = false,
+  ) {
     const limit = query.limit ?? 20;
+
+    if (previewOnly) {
+      const previewId = await this.getFreePreviewDigestId();
+      const totalApproved = await this.prisma.digest.count({
+        where: { visibility: 'public_editorial', reviewStatus: 'approved' },
+      });
+      const lockedCount = Math.max(0, totalApproved - (previewId ? 1 : 0));
+
+      const items = previewId
+        ? await this.prisma.digest.findMany({
+            where: { id: previewId },
+            include: {
+              legalDocument: {
+                select: {
+                  id: true,
+                  title: true,
+                  shortTitle: true,
+                  citationText: true,
+                  grNo: true,
+                  court: true,
+                  decisionDate: true,
+                  documentType: true,
+                },
+              },
+            },
+          })
+        : [];
+
+      return {
+        items,
+        meta: {
+          hasNext: false,
+          nextCursor: undefined as string | undefined,
+          limit,
+          previewMode: true,
+          lockedCount,
+          upgradeRequired: true,
+        },
+      };
+    }
 
     const where: Prisma.DigestWhereInput = {
       OR: [
@@ -1106,13 +1221,59 @@ export class DigestsService {
    * whose title / GR number matches the query, so the client can surface a
    * "Generate this digest" CTA without a second round-trip.
    */
-  async search(query: {
-    q?: string;
-    cursor?: string;
-    limit?: number;
-  }) {
+  async search(
+    query: {
+      q?: string;
+      cursor?: string;
+      limit?: number;
+    },
+    previewOnly = false,
+  ) {
     const limit = query.limit ?? 20;
     const needle = (query.q ?? '').trim();
+
+    if (previewOnly) {
+      const previewId = await this.getFreePreviewDigestId();
+      const totalApproved = await this.prisma.digest.count({
+        where: { visibility: 'public_editorial', reviewStatus: 'approved' },
+      });
+      const lockedCount = Math.max(0, totalApproved - (previewId ? 1 : 0));
+
+      const results = previewId
+        ? await this.prisma.digest.findMany({
+            where: { id: previewId },
+            include: {
+              legalDocument: {
+                select: {
+                  id: true,
+                  title: true,
+                  shortTitle: true,
+                  citationText: true,
+                  grNo: true,
+                  court: true,
+                  decisionDate: true,
+                  documentType: true,
+                },
+              },
+            },
+          })
+        : [];
+
+      return {
+        results,
+        hasMore: false,
+        cursor: null as string | null,
+        matchedDocuments: [] as Array<{
+          id: string;
+          title: string;
+          grNo: string | null;
+          citationText: string | null;
+        }>,
+        previewMode: true,
+        lockedCount,
+        upgradeRequired: true,
+      };
+    }
 
     const where: Prisma.DigestWhereInput = {
       visibility: 'public_editorial',

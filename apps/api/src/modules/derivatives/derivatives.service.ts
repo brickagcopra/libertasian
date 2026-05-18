@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
+import { PaywallException } from '../../common/exceptions/paywall.exception';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../common/services/redis.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
@@ -15,6 +16,9 @@ const GATED_DERIVATIVE_TYPES = new Set([
 const UPGRADE_TIER = 'edu';
 
 const SUBJECT_SUMMARY_TTL_SECONDS = 300;
+
+const PREVIEW_IDS_CACHE_KEY = 'cache:derivative-preview-ids';
+const PREVIEW_IDS_CACHE_TTL = 60;
 
 export interface DerivativeListItem {
   id: string;
@@ -105,12 +109,24 @@ export class DerivativesService {
     userId: string,
     organizationId: string,
     query: ListDerivativesQueryDto,
+    previewOnly = false,
   ): Promise<{
     items: DerivativeListItem[];
-    meta: { hasNext: boolean; nextCursor?: string; limit: number };
+    meta: {
+      hasNext: boolean;
+      nextCursor?: string;
+      limit: number;
+      previewMode?: boolean;
+      lockedCount?: number;
+      upgradeRequired?: boolean;
+    };
   }> {
     if (query.derivativeType === 'case_digest') {
       return this.listCaseDigests(query);
+    }
+
+    if (previewOnly) {
+      return this.listForPreview(organizationId, query);
     }
 
     const limit = query.limit ?? 20;
@@ -238,7 +254,17 @@ export class DerivativesService {
     id: string,
     userId: string,
     organizationId: string,
+    previewOnly = false,
   ): Promise<DerivativeDetail> {
+    if (previewOnly) {
+      const previewIds = await this.getFreePreviewIds();
+      if (!previewIds.has(id)) {
+        // Throw BEFORE the tenant lookup so the existence of the row is
+        // never leaked across tenants for free-tier callers.
+        throw new PaywallException({ corpus: 'derivatives' });
+      }
+    }
+
     const row = await this.prisma.derivativeArtifact.findFirst({
       where: {
         id,
@@ -513,6 +539,169 @@ export class DerivativesService {
     return {
       visibility: 'public_editorial',
       reviewStatus: { in: ['approved', 'ai_generated'] },
+    };
+  }
+
+  /**
+   * One approved, non-deleted artifact id per `derivativeType`, ordered by
+   * `published_at DESC NULLS LAST, id ASC`. Used by the free-plan preview
+   * cap. Cached 60s.
+   */
+  async getFreePreviewIds(): Promise<Set<string>> {
+    if (this.redis) {
+      try {
+        const cached = await this.redis.get(PREVIEW_IDS_CACHE_KEY);
+        if (cached) {
+          return new Set(JSON.parse(cached) as string[]);
+        }
+      } catch (err) {
+        this.logger.warn(
+          `Derivative preview-ids cache read failed: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    const rows = await this.prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT DISTINCT ON (derivative_type) id
+      FROM derivative_artifacts
+      WHERE review_status = 'approved' AND deleted_at IS NULL
+      ORDER BY derivative_type, published_at DESC NULLS LAST, id ASC
+    `;
+    const ids = rows.map((r) => r.id);
+
+    if (this.redis) {
+      try {
+        await this.redis.set(
+          PREVIEW_IDS_CACHE_KEY,
+          JSON.stringify(ids),
+          PREVIEW_IDS_CACHE_TTL,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Derivative preview-ids cache write failed: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    return new Set(ids);
+  }
+
+  private async listForPreview(
+    organizationId: string,
+    query: ListDerivativesQueryDto,
+  ): Promise<{
+    items: DerivativeListItem[];
+    meta: {
+      hasNext: boolean;
+      nextCursor?: string;
+      limit: number;
+      previewMode: boolean;
+      lockedCount: number;
+      upgradeRequired: boolean;
+    };
+  }> {
+    const limit = query.limit ?? 20;
+    const previewIds = await this.getFreePreviewIds();
+    const previewIdList = Array.from(previewIds);
+
+    const baseWhere: Prisma.DerivativeArtifactWhereInput = {
+      deletedAt: null,
+      reviewStatus: 'approved',
+      visibility: 'public_editorial',
+    };
+    if (query.derivativeType) {
+      baseWhere.derivativeType = query.derivativeType;
+    }
+
+    const lockedCount = previewIdList.length === 0
+      ? 0
+      : await this.prisma.derivativeArtifact.count({
+          where: { ...baseWhere, id: { notIn: previewIdList } },
+        });
+
+    const rows = previewIdList.length === 0
+      ? []
+      : await this.prisma.derivativeArtifact.findMany({
+          where: { ...baseWhere, id: { in: previewIdList } },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          include: {
+            sourceDocument: {
+              select: {
+                id: true,
+                title: true,
+                shortTitle: true,
+                citationText: true,
+                court: true,
+                decisionDate: true,
+              },
+            },
+            subjectAssignments: {
+              include: {
+                subject: {
+                  select: { code: true, name: true, taxonomyVersion: true },
+                },
+              },
+            },
+            contentDisclaimer: {
+              select: { id: true, contentClass: true, version: true },
+            },
+          },
+        });
+
+    const planCode = await this.subscriptions.getPlanCode(organizationId);
+    const meetsEdu = SubscriptionsService.meetsMinimumTier(planCode, UPGRADE_TIER);
+
+    const items: DerivativeListItem[] = rows.map((row) => {
+      // KEEP the existing GATED_DERIVATIVE_TYPES logic — preview cap is
+      // additive. A free user sees ≤1 per type AND those items remain
+      // isGated when they're MCQ/essay (need edu+ to read answers).
+      const gated = GATED_DERIVATIVE_TYPES.has(row.derivativeType) && !meetsEdu;
+      return {
+        id: row.id,
+        title: row.title,
+        derivativeType: row.derivativeType,
+        confidenceScore: row.confidenceScore,
+        createdAt: row.createdAt,
+        publishedAt: row.publishedAt,
+        audience: row.audience,
+        language: row.language,
+        sourceDocument: row.sourceDocument
+          ? {
+              id: row.sourceDocument.id,
+              title: row.sourceDocument.title,
+              shortTitle: row.sourceDocument.shortTitle,
+              citationText: row.sourceDocument.citationText,
+              court: row.sourceDocument.court,
+              decisionDate: row.sourceDocument.decisionDate,
+            }
+          : null,
+        subjects: row.subjectAssignments.map((a) => ({
+          code: a.subject.code,
+          name: a.subject.name,
+          taxonomyVersion: a.subject.taxonomyVersion,
+          isPrimary: a.isPrimary,
+        })),
+        disclaimer: row.contentDisclaimer
+          ? {
+              id: row.contentDisclaimer.id,
+              contentClass: row.contentDisclaimer.contentClass,
+              version: row.contentDisclaimer.version,
+            }
+          : null,
+        isGated: gated,
+        upgradeTier: gated ? UPGRADE_TIER : null,
+      };
+    });
+
+    return {
+      items,
+      meta: {
+        hasNext: false,
+        limit,
+        previewMode: true,
+        lockedCount,
+        upgradeRequired: true,
+      },
     };
   }
 

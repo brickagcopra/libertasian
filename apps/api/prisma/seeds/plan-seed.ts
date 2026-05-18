@@ -74,6 +74,7 @@ const PLAN_SEEDS: PlanSeedData[] = [
       { key: 'contradictionDetectionPerMonth', valueType: 'numeric', numericValue: 0, description: 'Contradiction detections per month' },
       { key: 'maxResearchWorkspaces', valueType: 'numeric', numericValue: 0, description: 'Maximum research workspaces' },
       { key: 'maxApiKeys', valueType: 'numeric', numericValue: 0, description: 'Maximum API keys' },
+      { key: 'previewOnly', valueType: 'boolean', booleanValue: true, description: 'Public read endpoints return one item per corpus type' },
     ],
   },
   {
@@ -120,6 +121,7 @@ const PLAN_SEEDS: PlanSeedData[] = [
       { key: 'codalReader', valueType: 'boolean', booleanValue: true, description: 'Codal reader with offline access' },
       { key: 'flashcardGeneration', valueType: 'boolean', booleanValue: true, description: 'Flashcard generation' },
       { key: 'studyProgressTracking', valueType: 'boolean', booleanValue: true, description: 'Study progress tracking' },
+      { key: 'previewOnly', valueType: 'boolean', booleanValue: false, description: 'Public read endpoints return one item per corpus type' },
     ],
   },
   {
@@ -163,6 +165,7 @@ const PLAN_SEEDS: PlanSeedData[] = [
       { key: 'contradictionDetectionPerMonth', valueType: 'numeric', numericValue: 0, description: 'Contradiction detections per month' },
       { key: 'maxResearchWorkspaces', valueType: 'numeric', numericValue: 3, description: 'Maximum research workspaces' },
       { key: 'maxApiKeys', valueType: 'numeric', numericValue: 0, description: 'Maximum API keys' },
+      { key: 'previewOnly', valueType: 'boolean', booleanValue: false, description: 'Public read endpoints return one item per corpus type' },
     ],
   },
   {
@@ -206,6 +209,7 @@ const PLAN_SEEDS: PlanSeedData[] = [
       { key: 'contradictionDetectionPerMonth', valueType: 'numeric', numericValue: 5, description: 'Contradiction detections per month' },
       { key: 'maxResearchWorkspaces', valueType: 'numeric', numericValue: 20, description: 'Maximum research workspaces' },
       { key: 'maxApiKeys', valueType: 'numeric', numericValue: 0, description: 'Maximum API keys' },
+      { key: 'previewOnly', valueType: 'boolean', booleanValue: false, description: 'Public read endpoints return one item per corpus type' },
     ],
   },
   {
@@ -251,6 +255,7 @@ const PLAN_SEEDS: PlanSeedData[] = [
       { key: 'maxApiKeys', valueType: 'numeric', numericValue: 10, description: 'API access (up to 10 keys)' },
       { key: 'dedicatedSupport', valueType: 'boolean', booleanValue: true, description: 'Dedicated support' },
       { key: 'customIntegrations', valueType: 'boolean', booleanValue: true, description: 'Custom integrations' },
+      { key: 'previewOnly', valueType: 'boolean', booleanValue: false, description: 'Public read endpoints return one item per corpus type' },
     ],
   },
 ];
