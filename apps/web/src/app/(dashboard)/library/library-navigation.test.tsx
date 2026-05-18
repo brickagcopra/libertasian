@@ -5,6 +5,16 @@ import type { ReactNode } from 'react';
 
 vi.mock('@/lib/api-client', () => ({
   apiClient: { get: vi.fn() },
+  ApiClientError: class ApiClientError extends Error {
+    constructor(
+      message: string,
+      public statusCode: number,
+      public body?: unknown,
+    ) {
+      super(message);
+      this.name = 'ApiClientError';
+    }
+  },
 }));
 
 const navigationMocks = vi.hoisted(() => ({
@@ -21,11 +31,15 @@ vi.mock('next/navigation', () => ({
   notFound: navigationMocks.notFound,
 }));
 
-import { apiClient } from '@/lib/api-client';
+import { apiClient, ApiClientError } from '@/lib/api-client';
 import LibraryHubPage from './page';
 import LibraryTypePage from './[type]/page';
 import LibrarySubjectPage from './[type]/[subject]/page';
 import LibraryDetailPage from './[type]/[subject]/[id]/page';
+
+vi.mock('@/hooks/use-analytics', () => ({
+  useTrack: () => vi.fn(),
+}));
 
 const mockGet = vi.mocked(apiClient.get);
 
@@ -193,6 +207,53 @@ describe('Library subject page', () => {
     navigationMocks.useParams.mockReturnValue({ type: 'mcqs', subject: 'not-a-subject' });
     expect(() => render(withProviders(<LibrarySubjectPage />))).toThrow(/NEXT_NOT_FOUND/);
   });
+
+  it('renders inline UpgradeBanner AFTER data cards when meta.previewMode is true', async () => {
+    navigationMocks.useParams.mockReturnValue({ type: 'mcqs', subject: 'criminal-law' });
+    mockGet.mockResolvedValueOnce({
+      success: true,
+      data: [
+        {
+          id: 'art-1',
+          title: 'Sample MCQ 1',
+          derivativeType: 'mcq_question',
+          confidenceScore: 0.9,
+          createdAt: '2026-04-20T10:00:00Z',
+          publishedAt: null,
+          audience: 'both',
+          language: 'en',
+          sourceDocument: null,
+          subjects: [
+            {
+              code: 'criminal_law',
+              name: 'Criminal Law',
+              taxonomyVersion: 'study_8',
+              isPrimary: true,
+            },
+          ],
+          disclaimer: null,
+          isGated: false,
+          upgradeTier: null,
+        },
+      ],
+      meta: {
+        hasNext: false,
+        limit: 20,
+        previewMode: true,
+        lockedCount: 17,
+        upgradeRequired: true,
+      },
+    });
+
+    render(withProviders(<LibrarySubjectPage />));
+
+    const card = await screen.findByText('Sample MCQ 1');
+    const banner = await screen.findByTestId('upgrade-banner-inline');
+
+    expect(banner.textContent).toContain('17 more items available');
+    const relation = card.compareDocumentPosition(banner);
+    expect(relation & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
 });
 
 describe('Library detail page', () => {
@@ -259,5 +320,32 @@ describe('Library detail page', () => {
         }),
       ]),
     );
+  });
+
+  it('renders the modal UpgradeBanner when GET /derivatives/:id throws 402 subscription_required', async () => {
+    navigationMocks.useParams.mockReturnValue({
+      type: 'mcqs',
+      subject: 'criminal-law',
+      id: 'art-locked',
+    });
+    mockGet.mockRejectedValueOnce(
+      new ApiClientError('Payment required', 402, {
+        code: 'subscription_required',
+        corpus: 'derivatives',
+        previewItemId: 'art-preview',
+        message: 'An active subscription is required.',
+      }),
+    );
+
+    render(withProviders(<LibraryDetailPage />));
+
+    const modal = await screen.findByTestId('upgrade-banner-modal');
+    expect(modal).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: /view plans & upgrade/i }),
+    ).toHaveAttribute('href', '/pricing');
+    expect(
+      screen.getByRole('link', { name: /read free preview instead/i }),
+    ).toHaveAttribute('href', '/library/mcqs/criminal-law/art-preview');
   });
 });

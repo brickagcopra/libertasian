@@ -30,9 +30,14 @@ export interface Digest {
   } | null;
 }
 
-interface DigestsListMeta {
+export interface DigestsListMeta {
   hasNext: boolean;
-  cursor: string | null;
+  cursor?: string | null;
+  nextCursor?: string | null;
+  limit?: number;
+  previewMode?: boolean;
+  lockedCount?: number;
+  upgradeRequired?: boolean;
 }
 
 export function useDigests(params?: {
@@ -96,6 +101,9 @@ export interface DigestSearchResponse {
   hasMore: boolean;
   cursor: string | null;
   matchedDocuments: MatchedDocument[];
+  previewMode?: boolean;
+  lockedCount?: number;
+  upgradeRequired?: boolean;
 }
 
 export function useSearchDigests(query: string, enabled: boolean = true) {

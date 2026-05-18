@@ -5,6 +5,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { useSearch } from '@/features/search/hooks/use-search';
 import { SearchTabs } from '@/features/search/components/search-tabs';
 import type { SearchFilters } from '@/features/search/types';
+import { UpgradeBanner, extractSearchQuota403 } from '@/components/paywall/upgrade-banner';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -66,6 +67,8 @@ export default function SearchPage() {
 
   const results = data?.data ?? [];
   const meta = data?.meta;
+
+  const searchQuota = extractSearchQuota403(error);
 
   // Deduplicate document IDs from search results
   const documentIds = useMemo(() => {
@@ -196,6 +199,15 @@ export default function SearchPage() {
           page={page}
           onPageChange={handlePageChange}
           documentIds={documentIds}
+        />
+      )}
+
+      {searchQuota && (
+        <UpgradeBanner
+          variant="modal"
+          corpus="search"
+          quota={searchQuota}
+          surface="search/results"
         />
       )}
     </div>

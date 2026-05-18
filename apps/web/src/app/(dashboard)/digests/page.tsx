@@ -10,6 +10,7 @@ import {
   type MatchedDocument,
 } from '@/features/digests/hooks/use-digests';
 import { ApiClientError } from '@/lib/api-client';
+import { UpgradeBanner } from '@/components/paywall/upgrade-banner';
 import { DigestListSkeleton } from '@/components/ui/skeleton';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -96,6 +97,13 @@ export default function DigestsPage() {
   const matchedDocuments: MatchedDocument[] = isSearching
     ? (searchData?.matchedDocuments ?? [])
     : [];
+
+  const previewMode = isSearching
+    ? searchData?.previewMode === true
+    : browseData?.meta?.previewMode === true;
+  const lockedCount = isSearching
+    ? (searchData?.lockedCount ?? 0)
+    : (browseData?.meta?.lockedCount ?? 0);
 
   const handleGenerate = async (doc: MatchedDocument) => {
     setToast(null);
@@ -274,6 +282,15 @@ export default function DigestsPage() {
             </CardContent>
           </Card>
         ))}
+
+        {previewMode && (
+          <UpgradeBanner
+            variant="inline"
+            corpus="digests"
+            lockedCount={lockedCount}
+            surface={isSearching ? 'digests/search' : 'digests/list'}
+          />
+        )}
       </div>
     </div>
   );

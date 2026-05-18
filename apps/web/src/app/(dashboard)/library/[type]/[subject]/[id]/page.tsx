@@ -8,6 +8,7 @@ import { AlertCircleIcon, LockIcon, SparklesIcon } from 'lucide-react';
 
 import { LibraryBreadcrumb } from '@/features/derivatives/components/library-breadcrumb';
 import { useDerivative } from '@/features/derivatives/hooks/use-derivatives';
+import { UpgradeBanner, extractPaywall402 } from '@/components/paywall/upgrade-banner';
 import {
   DigestRenderer,
   DoctrineRenderer,
@@ -57,6 +58,24 @@ export default function LibraryDetailPage() {
         <div className="h-8 w-2/3 animate-pulse rounded bg-muted" />
         <div className="h-64 w-full animate-pulse rounded bg-muted" />
       </div>
+    );
+  }
+
+  const paywall = extractPaywall402(error);
+  if (paywall) {
+    return (
+      <UpgradeBanner
+        variant="modal"
+        corpus={paywall.corpus}
+        previewItemId={paywall.previewItemId}
+        previewHref={
+          paywall.previewItemId
+            ? `/library/${typeMeta.slug}/${subjectMeta.slug}/${paywall.previewItemId}`
+            : undefined
+        }
+        message={paywall.message}
+        surface={`library/${typeMeta.slug}/${subjectMeta.slug}/detail`}
+      />
     );
   }
 
