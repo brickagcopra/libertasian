@@ -1,15 +1,16 @@
 import { PublicFooter } from '@/components/layout/public-footer';
 import { PublicHeader } from '@/components/layout/public-header';
 
-// The (public) routes (blog/pricing/privacy/terms) keep their existing white
-// content backgrounds; only the chrome (header + footer) carries the new warm
-// editorial styling. The homepage at app/page.tsx wraps itself in `.public-warm`
-// because it is fully redesigned around the bundle.
+// The (public) routes — blog / pricing / privacy / terms — render inside the
+// `.public-warm` scope so every shadcn `Card` / `Input` / `Button` /
+// `Badge` / `Separator` automatically picks up the warm-editorial palette
+// via overridden CSS variables. The homepage (app/page.tsx) also wraps in
+// `public-warm`; the double class is harmless.
 export default function PublicLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <div className="min-h-screen bg-white">
+    <div className="public-warm min-h-screen">
       <PublicHeader />
 
       <main>{children}</main>

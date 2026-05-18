@@ -43,6 +43,20 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+
+  /* Warm Editorial palette — registered as Tailwind utilities so
+     bg-warm-cream / text-warm-ink / border-warm-ink etc. resolve. */
+  --color-warm-cream: var(--warm-cream);
+  --color-warm-cream-2: var(--warm-cream-2);
+  --color-warm-cream-3: var(--warm-cream-3);
+  --color-warm-ink: var(--warm-ink);
+  --color-warm-ink-soft: var(--warm-ink-soft);
+  --color-warm-ink-mid: var(--warm-ink-mid);
+  --color-warm-ink-faint: var(--warm-ink-faint);
+  --color-warm-accent: var(--warm-accent);
+  --color-warm-accent-deep: var(--warm-accent-deep);
+  --color-warm-accent-soft: var(--warm-accent-soft);
+  --color-warm-surface: var(--warm-surface);
 }
 
 :root {
@@ -156,12 +170,32 @@
     letter-spacing: -0.01em;
   }
 
-  /* Warm Editorial scope — applied to (public) routes and the homepage.
-     Resets headings to the design-bundle weights so Fraunces lands at 500. */
+  /* Warm Editorial scope — applied to (public) and (auth) routes plus the
+     homepage. The block redefines the shadcn token variables so every
+     `Card`/`Input`/`Button`/`Badge`/`Separator` inside picks up warm
+     palette colors automatically — no per-component overrides needed. */
   .public-warm {
     background: var(--warm-cream);
     color: var(--warm-ink);
     font-family: var(--font-sans);
+
+    --background: var(--warm-cream);
+    --foreground: var(--warm-ink);
+    --card: var(--warm-surface);
+    --card-foreground: var(--warm-ink);
+    --popover: var(--warm-surface);
+    --popover-foreground: var(--warm-ink);
+    --primary: var(--warm-ink);
+    --primary-foreground: var(--warm-cream);
+    --secondary: var(--warm-cream-2);
+    --secondary-foreground: var(--warm-ink);
+    --muted: var(--warm-cream-2);
+    --muted-foreground: var(--warm-ink-mid);
+    --accent: var(--warm-accent-soft);
+    --accent-foreground: var(--warm-ink);
+    --border: var(--warm-line);
+    --input: var(--warm-line);
+    --ring: var(--warm-accent);
   }
   .public-warm h1,
   .public-warm h2,

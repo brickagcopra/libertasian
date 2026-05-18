@@ -117,7 +117,7 @@ export function PricingPageClient({
         couponCode={couponCode}
         setCouponCode={setCouponCode}
       >
-        <div className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="mt-12 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           {PLANS.map((plan) => (
             <StaticPlanCard key={plan.code} plan={plan} billingPeriod={billingPeriod} />
           ))}
@@ -139,7 +139,7 @@ export function PricingPageClient({
         couponCode={couponCode}
         setCouponCode={setCouponCode}
       >
-        <div className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="mt-12 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           {PLANS.map((plan) => (
             <StaticPlanCard key={plan.code} plan={plan} billingPeriod={billingPeriod} />
           ))}
@@ -161,15 +161,21 @@ export function PricingPageClient({
         setCouponCode={setCouponCode}
       >
         <div className="mt-12 flex justify-center">
-          <div className="max-w-md rounded-xl border border-amber-200 bg-amber-50 p-8 text-center">
-            <h3 className="text-lg font-semibold text-amber-900">
+          <div
+            className="max-w-md rounded-2xl border p-8 text-center"
+            style={{
+              background: 'var(--warm-accent-soft)',
+              borderColor: 'var(--warm-accent)',
+            }}
+          >
+            <h3 className="text-lg font-semibold text-warm-ink">
               Pricing temporarily unavailable
             </h3>
-            <p className="mt-2 text-sm text-amber-700">
+            <p className="mt-2 text-sm text-warm-ink-mid">
               Please contact{' '}
               <a
                 href="mailto:support@libertasian.com"
-                className="underline hover:text-amber-900"
+                className="underline hover:text-warm-accent-deep"
               >
                 support@libertasian.com
               </a>{' '}
@@ -193,7 +199,7 @@ export function PricingPageClient({
       {plansLoading ? (
         <PlanCardsSkeleton />
       ) : isFromApi && plans ? (
-        <div className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="mt-12 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           {plans.map((plan) => (
             <DynamicPlanCard
               key={plan.id}
@@ -205,7 +211,7 @@ export function PricingPageClient({
           ))}
         </div>
       ) : (
-        <div className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="mt-12 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           {PLANS.map((plan) => (
             <StaticPlanCard key={plan.code} plan={plan} billingPeriod={billingPeriod} />
           ))}
@@ -260,28 +266,32 @@ function PricingShell({
         <PromotionBanner promotions={promotions} billingPeriod={billingPeriod} />
       )}
 
-      {/* Billing Toggle */}
-      <div className="mt-10 flex items-center justify-center gap-3">
+      {/* Billing Toggle — sticky so it stays in view while scrolling the
+          comparison table further down the page. */}
+      <div
+        className="sticky top-16 z-20 -mx-6 mt-10 flex items-center justify-center gap-3 px-6 py-3 backdrop-blur"
+        style={{ background: 'rgba(246, 241, 232, 0.9)' }}
+      >
         <button
           onClick={() => setBillingPeriod('monthly')}
-          className={`rounded-md px-4 py-2 text-sm font-medium transition ${
+          className={`rounded-full px-4 py-2 text-sm font-medium transition ${
             billingPeriod === 'monthly'
-              ? 'bg-gray-900 text-white'
-              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              ? 'bg-warm-ink text-warm-cream'
+              : 'bg-warm-cream-2 text-warm-ink-mid hover:bg-warm-cream-3'
           }`}
         >
           Monthly
         </button>
         <button
           onClick={() => setBillingPeriod('annual')}
-          className={`rounded-md px-4 py-2 text-sm font-medium transition ${
+          className={`rounded-full px-4 py-2 text-sm font-medium transition ${
             billingPeriod === 'annual'
-              ? 'bg-gray-900 text-white'
-              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              ? 'bg-warm-ink text-warm-cream'
+              : 'bg-warm-cream-2 text-warm-ink-mid hover:bg-warm-cream-3'
           }`}
         >
           Annual
-          <span className="ml-1.5 text-xs text-green-600">(Save ~17%)</span>
+          <span className="ml-1.5 text-xs text-warm-accent-deep">(Save ~17%)</span>
         </button>
       </div>
 
@@ -404,8 +414,8 @@ function DynamicPlanCard({
 
   return (
     <div
-      className={`relative flex flex-col rounded-xl border p-6 ${
-        isHighlight ? highlightClasses.border : 'border-gray-200'
+      className={`relative flex flex-col rounded-2xl border p-6 ${
+        isHighlight ? highlightClasses.border : 'border-warm-ink/10 bg-warm-surface'
       }`}
     >
       {isHighlight && (
@@ -429,11 +439,18 @@ function DynamicPlanCard({
       )}
 
       <div className="mt-4">
-        <span className="text-3xl font-bold text-gray-900">
+        <span
+          className="font-medium text-warm-ink"
+          style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: 'clamp(28px, 4vw, 40px)',
+            lineHeight: 1.1,
+          }}
+        >
           {formatPHP(priceCentavos)}
         </span>
         {priceCentavos > 0 && (
-          <span className="text-sm text-gray-500">
+          <span className="ml-1 text-sm text-gray-500">
             /{billingPeriod === 'monthly' ? 'mo' : 'yr'}
           </span>
         )}
@@ -471,10 +488,10 @@ function DynamicPlanCard({
 
       <Link
         href={ctaHref}
-        className={`mt-6 block w-full rounded-md px-4 py-2.5 text-center text-sm font-semibold transition ${
+        className={`mt-6 block w-full rounded-full px-4 py-2.5 text-center text-sm font-semibold transition ${
           isHighlight
             ? highlightClasses.cta
-            : 'border border-gray-300 text-gray-700 hover:bg-gray-50'
+            : 'bg-warm-ink text-warm-cream hover:bg-warm-ink-soft'
         }`}
       >
         {ctaText}
@@ -500,14 +517,14 @@ function StaticPlanCard({
 
   return (
     <div
-      className={`relative flex flex-col rounded-xl border p-6 ${
+      className={`relative flex flex-col rounded-2xl border p-6 ${
         plan.highlight
-          ? 'border-gray-900 ring-2 ring-gray-900'
-          : 'border-gray-200'
+          ? 'border-warm-ink ring-2 ring-warm-ink bg-warm-surface'
+          : 'border-warm-ink/10 bg-warm-surface'
       }`}
     >
       {plan.highlight && (
-        <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-gray-900 px-3 py-1 text-xs font-semibold text-white">
+        <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-warm-ink px-3 py-1 text-xs font-semibold text-warm-cream">
           Most Popular
         </span>
       )}
@@ -515,11 +532,18 @@ function StaticPlanCard({
       <h3 className="text-lg font-semibold text-gray-900">{plan.name}</h3>
 
       <div className="mt-4">
-        <span className="text-3xl font-bold text-gray-900">
+        <span
+          className="font-medium text-warm-ink"
+          style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: 'clamp(28px, 4vw, 40px)',
+            lineHeight: 1.1,
+          }}
+        >
           {price === 0 ? 'Free' : `₱${price.toLocaleString()}`}
         </span>
         {price > 0 && (
-          <span className="text-sm text-gray-500">
+          <span className="ml-1 text-sm text-gray-500">
             /{billingPeriod === 'monthly' ? 'mo' : 'yr'}
           </span>
         )}
@@ -549,12 +573,10 @@ function StaticPlanCard({
 
       <Link
         href={ctaHref}
-        className={`mt-6 block w-full rounded-md px-4 py-2.5 text-center text-sm font-semibold transition ${
+        className={`mt-6 block w-full rounded-full px-4 py-2.5 text-center text-sm font-semibold transition ${
           plan.highlight
-            ? 'bg-gray-900 text-white hover:bg-gray-800'
-            : plan.code === 'enterprise'
-              ? 'border border-gray-300 text-gray-700 hover:bg-gray-50'
-              : 'border border-gray-300 text-gray-700 hover:bg-gray-50'
+            ? 'bg-warm-accent text-warm-cream hover:bg-warm-accent-deep'
+            : 'bg-warm-ink text-warm-cream hover:bg-warm-ink-soft'
         }`}
       >
         {isFree ? 'Get Started Free' : plan.code === 'enterprise' ? 'Contact Sales' : 'Start Now'}
@@ -574,18 +596,24 @@ function CouponCodeInput({
 }) {
   return (
     <div className="mt-8 flex items-center justify-center">
-      <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-4 py-2.5">
-        <TagIcon className="h-4 w-4 text-gray-400" />
+      <div
+        className="flex items-center gap-2 bg-warm-surface px-[18px] py-[14px]"
+        style={{
+          border: '1.5px solid var(--warm-ink)',
+          borderRadius: 16,
+        }}
+      >
+        <TagIcon className="h-4 w-4 text-warm-ink-mid" />
         <input
           type="text"
           value={couponCode}
           onChange={(e) => onChange(e.target.value)}
           placeholder="Have a coupon code?"
-          className="w-48 bg-transparent text-sm text-gray-700 placeholder:text-gray-400 focus:outline-none"
+          className="w-48 bg-transparent text-sm text-warm-ink placeholder:text-warm-ink-faint focus:outline-none"
           maxLength={50}
         />
         {couponCode && (
-          <span className="text-xs text-green-600">Applied at checkout</span>
+          <span className="text-xs text-warm-accent-deep">Applied at checkout</span>
         )}
       </div>
     </div>
@@ -596,11 +624,11 @@ function CouponCodeInput({
 
 function PlanCardsSkeleton() {
   return (
-    <div className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-5">
+    <div className="mt-12 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
       {Array.from({ length: 5 }).map((_, i) => (
         <div
           key={i}
-          className="flex flex-col rounded-xl border border-gray-200 p-6 animate-pulse"
+          className="flex flex-col rounded-2xl border border-warm-ink/10 bg-warm-surface p-6 animate-pulse"
         >
           <div className="h-5 w-16 rounded bg-gray-200" />
           <div className="mt-4 h-8 w-24 rounded bg-gray-200" />
@@ -668,7 +696,7 @@ function DynamicFeatureComparison({ plans }: { plans: PlanDetail[] }) {
         <table className="w-full min-w-[700px] border-collapse">
           <thead>
             <tr className="border-b border-gray-200">
-              <th className="py-3 pr-4 text-left text-sm font-medium text-gray-500">
+              <th className="sticky left-0 z-10 bg-warm-cream-2 py-3 pr-4 pl-3 text-left text-sm font-medium text-gray-500">
                 Feature
               </th>
               {plans.map((plan) => (
@@ -696,7 +724,7 @@ function DynamicFeatureComparison({ plans }: { plans: PlanDetail[] }) {
                 </tr>
                 {category.features.map((feature) => (
                   <tr key={feature.key} className="border-b border-gray-100">
-                    <td className="py-2.5 pr-4 text-sm text-gray-700">
+                    <td className="sticky left-0 z-10 bg-warm-cream-2 py-2.5 pr-4 pl-3 text-sm text-gray-700">
                       {feature.label}
                     </td>
                     {plans.map((plan) => {
@@ -831,7 +859,9 @@ function StaticFeatureComparison() {
         <table className="w-full min-w-[700px] border-collapse">
           <thead>
             <tr className="border-b border-gray-200">
-              <th className="py-3 pr-4 text-left text-sm font-medium text-gray-500">Feature</th>
+              <th className="sticky left-0 z-10 bg-warm-cream-2 py-3 pr-4 pl-3 text-left text-sm font-medium text-gray-500">
+                Feature
+              </th>
               {PLANS.map((plan) => (
                 <th
                   key={plan.code}
@@ -857,7 +887,9 @@ function StaticFeatureComparison() {
                 </tr>
                 {category.features.map((feature) => (
                   <tr key={feature.name} className="border-b border-gray-100">
-                    <td className="py-2.5 pr-4 text-sm text-gray-700">{feature.name}</td>
+                    <td className="sticky left-0 z-10 bg-warm-cream-2 py-2.5 pr-4 pl-3 text-sm text-gray-700">
+                      {feature.name}
+                    </td>
                     {(['free', 'edu', 'pro', 'team', 'enterprise'] as const).map((planCode) => {
                       const value = feature[planCode];
                       return (

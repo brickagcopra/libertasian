@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 import { useAuthStore } from '@/stores/auth-store';
-import { Logo } from '@/components/brand/logo';
+import { Wordmark } from '@/components/brand/wordmark';
 import { useSubscription, meetsMinimumTier } from '@/features/billing/hooks/use-subscription';
 import { useHasPermission } from '@/features/settings/hooks/use-rbac';
 import { cn } from '@/lib/utils';
@@ -204,15 +204,18 @@ export function SidebarContent() {
   const renderNavItem = (item: NavItem) => {
     const locked = item.minTier && !meetsMinimumTier(currentPlan, item.minTier);
     const Icon = item.icon;
+    const active = isActive(item.href, item.exact);
 
     return (
       <Link
         key={item.href}
         href={item.href}
         className={cn(
-          'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-          'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
-          isActive(item.href, item.exact) && 'bg-accent text-accent-foreground',
+          'relative flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+          // Inactive — muted ink against the warm sidebar
+          'text-warm-ink-mid hover:bg-warm-cream-2 hover:text-warm-ink',
+          // Active — ink bg + cream text + amber left border
+          active && 'bg-warm-ink text-warm-cream hover:bg-warm-ink hover:text-warm-cream',
           locked && 'opacity-50',
         )}
         title={
@@ -221,19 +224,55 @@ export function SidebarContent() {
             : undefined
         }
       >
+        {active && (
+          <span
+            aria-hidden
+            className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-sm bg-warm-accent"
+          />
+        )}
         <Icon className="size-4 shrink-0" />
         <span className="flex-1 truncate">{item.label}</span>
-        {locked && <LockIcon className="size-3.5 shrink-0 text-muted-foreground" />}
+        {locked && <LockIcon className="size-3.5 shrink-0" />}
+      </Link>
+    );
+  };
+
+  // Eyebrow label — JetBrains Mono, 11px, uppercase, faint ink
+  const eyebrowClass =
+    'mb-2 px-3 font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-warm-ink-faint';
+
+  const renderSettingsLink = (
+    href: string,
+    label: string,
+    Icon: React.ElementType,
+    exact?: boolean,
+  ) => {
+    const active = isActive(href, exact);
+    return (
+      <Link
+        href={href}
+        className={cn(
+          'relative flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+          'text-warm-ink-mid hover:bg-warm-cream-2 hover:text-warm-ink',
+          active && 'bg-warm-ink text-warm-cream hover:bg-warm-ink hover:text-warm-cream',
+        )}
+      >
+        {active && (
+          <span
+            aria-hidden
+            className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-sm bg-warm-accent"
+          />
+        )}
+        <Icon className="size-4 shrink-0" />
+        <span>{label}</span>
       </Link>
     );
   };
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex h-14 items-center border-b px-4">
-        <Link href="/">
-          <Logo width={160} height={36} animated={false} />
-        </Link>
+    <div className="flex h-full flex-col bg-warm-cream-2">
+      <div className="flex h-14 items-center border-b border-warm-ink/10 px-4">
+        <Wordmark size={32} />
       </div>
 
       <ScrollArea className="flex-1 px-3 py-4">
@@ -241,103 +280,38 @@ export function SidebarContent() {
           {NAV_ITEMS.map(renderNavItem)}
         </nav>
 
-        <Separator className="my-4" />
+        <Separator className="my-4 bg-warm-ink/10" />
 
         <div>
-          <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Workspace
-          </p>
+          <p className={eyebrowClass}>Workspace</p>
           <nav className="space-y-1">
             {WORKSPACE_ITEMS.map(renderNavItem)}
           </nav>
         </div>
 
-        <Separator className="my-4" />
+        <Separator className="my-4 bg-warm-ink/10" />
 
         <nav className="space-y-1">
-          <Link
-            href="/settings"
-            className={cn(
-              'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-              'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
-              isActive('/settings', true) && 'bg-accent text-accent-foreground',
-            )}
-          >
-            <SettingsIcon className="size-4 shrink-0" />
-            <span>Settings</span>
-          </Link>
-          <Link
-            href="/settings/usage"
-            className={cn(
-              'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-              'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
-              isActive('/settings/usage') && 'bg-accent text-accent-foreground',
-            )}
-          >
-            <BarChart3Icon className="size-4 shrink-0" />
-            <span>Usage &amp; Quotas</span>
-          </Link>
-          {canViewMembers && (
-            <Link
-              href="/settings/members"
-              className={cn(
-                'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
-                isActive('/settings/members') && 'bg-accent text-accent-foreground',
-              )}
-            >
-              <ShieldCheckIcon className="size-4 shrink-0" />
-              <span>Members &amp; Roles</span>
-            </Link>
-          )}
-          {canViewRoles && (
-            <Link
-              href="/settings/roles"
-              className={cn(
-                'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
-                isActive('/settings/roles') && 'bg-accent text-accent-foreground',
-              )}
-            >
-              <LockIcon className="size-4 shrink-0" />
-              <span>Roles &amp; Permissions</span>
-            </Link>
-          )}
-          {canViewAuditLogs && (
-            <Link
-              href="/settings/audit-logs"
-              className={cn(
-                'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
-                isActive('/settings/audit-logs') && 'bg-accent text-accent-foreground',
-              )}
-            >
-              <ScrollTextIcon className="size-4 shrink-0" />
-              <span>Audit Logs</span>
-            </Link>
-          )}
-          <Link
-            href="/settings/analytics"
-            className={cn(
-              'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-              'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
-              isActive('/settings/analytics') && 'bg-accent text-accent-foreground',
-            )}
-          >
-            <BarChart3Icon className="size-4 shrink-0" />
-            <span>Org Analytics</span>
-          </Link>
+          {renderSettingsLink('/settings', 'Settings', SettingsIcon, true)}
+          {renderSettingsLink('/settings/usage', 'Usage & Quotas', BarChart3Icon)}
+          {canViewMembers && renderSettingsLink('/settings/members', 'Members & Roles', ShieldCheckIcon)}
+          {canViewRoles && renderSettingsLink('/settings/roles', 'Roles & Permissions', LockIcon)}
+          {canViewAuditLogs && renderSettingsLink('/settings/audit-logs', 'Audit Logs', ScrollTextIcon)}
+          {renderSettingsLink('/settings/analytics', 'Org Analytics', BarChart3Icon)}
         </nav>
 
         {showAdmin && (
           <>
-            <Separator className="my-4" />
+            <Separator className="my-4 bg-warm-ink/10" />
             <div>
               <div className="mb-2 flex items-center gap-2 px-3">
-                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <p className="font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-warm-ink-faint">
                   Admin
                 </p>
-                <Badge variant="secondary" className="text-[10px]">
+                <Badge
+                  variant="secondary"
+                  className="border border-warm-ink/15 bg-warm-cream text-[10px] text-warm-ink-soft"
+                >
                   {user.role}
                 </Badge>
               </div>
@@ -354,7 +328,7 @@ export function SidebarContent() {
 
 export function AppSidebar() {
   return (
-    <aside className="hidden w-64 border-r bg-background md:block">
+    <aside className="hidden w-64 border-r border-warm-ink/10 md:block">
       <SidebarContent />
     </aside>
   );

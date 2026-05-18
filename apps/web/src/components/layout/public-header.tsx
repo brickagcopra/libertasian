@@ -5,6 +5,7 @@ import { LogOutIcon, SettingsIcon, UserIcon } from 'lucide-react';
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
+import { Wordmark } from '@/components/brand/wordmark';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -45,29 +46,8 @@ export function PublicHeader() {
       }}
     >
       <div className="mx-auto flex max-w-[1320px] items-center gap-7 px-6 py-4 sm:px-10">
-        <Link
-          href="/"
-          aria-label="LIBERTASIAN"
-          className="flex items-center gap-2.5"
-        >
-          <span
-            className="flex h-9 w-9 items-center justify-center rounded-[10px] text-[22px] font-medium leading-none"
-            style={{
-              background: 'var(--warm-ink)',
-              color: 'var(--warm-cream)',
-              fontFamily: 'var(--font-display)',
-              letterSpacing: '-0.5px',
-            }}
-          >
-            L
-          </span>
-          <span
-            className="text-[22px] font-medium tracking-[-0.6px] sm:text-2xl"
-            style={{ fontFamily: 'var(--font-display)', color: 'var(--warm-ink)' }}
-          >
-            libertasian
-          </span>
-        </Link>
+        <Wordmark size={36} />
+
 
         <div className="flex-1" />
 
