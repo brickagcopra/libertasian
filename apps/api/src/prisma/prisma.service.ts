@@ -161,16 +161,13 @@ export function addTenantFilter(organizationId: string) {
   };
 }
 
-// Strip organizationId from an update-shaped data object so callers cannot
-// move a row to another tenant. Only strips plain scalar assignments —
-// Prisma update-expression values like { set: x } are left alone.
+// Strip organizationId from update-shaped data unconditionally so callers
+// cannot move a row to another tenant — applies to plain scalar assignments
+// AND Prisma update-expression shapes like { set: x }.
 function stripOrgIdFromUpdateData(data: unknown): void {
   if (!data || typeof data !== 'object' || Array.isArray(data)) return;
   const obj = data as Record<string, unknown>;
-  if (!('organizationId' in obj)) return;
-  const val = obj['organizationId'];
-  const isUpdateExpression = val !== null && typeof val === 'object';
-  if (!isUpdateExpression) {
+  if ('organizationId' in obj) {
     delete obj['organizationId'];
   }
 }

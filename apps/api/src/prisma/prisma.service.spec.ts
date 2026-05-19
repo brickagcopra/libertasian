@@ -161,7 +161,7 @@ describe('addTenantFilter', () => {
       expect(passed['data']).toEqual({ textContent: 'x' });
     });
 
-    it('update: skips strip when value is a Prisma update-expression like { set: x }', async () => {
+    it('update: strips organizationId even when value is a Prisma update-expression like { set: x }', async () => {
       const args: Record<string, unknown> = {
         where: { id: 'row-1' },
         data: { textContent: 'x', organizationId: { set: 'attacker-org' } },
@@ -172,9 +172,11 @@ describe('addTenantFilter', () => {
 
       const passed = query.mock.calls[0]![0] as Record<string, unknown>;
       const data = passed['data'] as Record<string, unknown>;
-      // Update-expression form left in place (won't reach DB in practice for
-      // an org-scoped row because the where filter pins it to org-1 anyway).
-      expect(data['organizationId']).toEqual({ set: 'attacker-org' });
+      // `{ set: 'attacker-org' }` is the canonical Prisma way to set a UUID
+      // column on update, so it MUST be stripped — otherwise it is a
+      // tenant-hop primitive. Unrelated fields survive.
+      expect(data['organizationId']).toBeUndefined();
+      expect(data['textContent']).toBe('x');
     });
   });
 
