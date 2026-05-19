@@ -63,8 +63,8 @@ export class PleadingsService {
 
     // Validate matter if provided
     if (dto.matterId) {
-      const matter = await this.prisma.matter.findFirst({
-        where: { id: dto.matterId, organizationId },
+      const matter = await this.prisma.forTenant(organizationId).matter.findFirst({
+        where: { id: dto.matterId },
       });
       if (!matter) {
         throw new NotFoundException('Matter not found');

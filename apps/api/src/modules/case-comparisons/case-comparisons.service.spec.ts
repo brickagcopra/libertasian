@@ -13,6 +13,7 @@ describe('CaseComparisonsService', () => {
     caseComparison: { create: jest.Mock; findUnique: jest.Mock; findMany: jest.Mock; update: jest.Mock; delete: jest.Mock };
     legalDocument: { findMany: jest.Mock };
     matter: { findFirst: jest.Mock };
+    forTenant: jest.Mock;
   };
   let usageQuota: { checkAndIncrement: jest.Mock };
   let queue: { add: jest.Mock };
@@ -52,7 +53,9 @@ describe('CaseComparisonsService', () => {
       matter: {
         findFirst: jest.fn(),
       },
+      forTenant: jest.fn(),
     };
+    prisma.forTenant.mockReturnValue(prisma);
 
     usageQuota = {
       checkAndIncrement: jest.fn(),
@@ -143,8 +146,9 @@ describe('CaseComparisonsService', () => {
       await expect(
         service.triggerGeneration(dtoWithMatter as never, userId, organizationId),
       ).rejects.toThrow(NotFoundException);
+      expect(prisma.forTenant).toHaveBeenCalledWith(organizationId);
       expect(prisma.matter.findFirst).toHaveBeenCalledWith({
-        where: { id: 'matter-1', organizationId },
+        where: { id: 'matter-1' },
       });
     });
   });
