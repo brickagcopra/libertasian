@@ -74,6 +74,7 @@ describe('WorkspaceService', () => {
       update: jest.Mock;
       delete: jest.Mock;
     };
+    forTenant: jest.Mock;
   };
   let eventEmitter: {
     emit: jest.Mock;
@@ -207,6 +208,7 @@ describe('WorkspaceService', () => {
               update: jest.fn(),
               delete: jest.fn(),
             },
+            forTenant: jest.fn(),
           },
         },
         {
@@ -220,6 +222,7 @@ describe('WorkspaceService', () => {
 
     service = module.get<WorkspaceService>(WorkspaceService);
     prisma = module.get(PrismaService) as unknown as typeof prisma;
+    prisma.forTenant.mockReturnValue(prisma);
     eventEmitter = module.get(EventEmitter2) as unknown as typeof eventEmitter;
   });
 
@@ -268,9 +271,10 @@ describe('WorkspaceService', () => {
 
       await service.listMatters(orgId, { status: 'active' });
 
+      expect(prisma.forTenant).toHaveBeenCalledWith(orgId);
       expect(prisma.matter.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { organizationId: orgId, status: 'active' },
+          where: { status: 'active' },
         }),
       );
     });
@@ -307,9 +311,10 @@ describe('WorkspaceService', () => {
       const result = await service.getMatter('matter-1', orgId);
 
       expect(result).toEqual(mockMatter);
+      expect(prisma.forTenant).toHaveBeenCalledWith(orgId);
       expect(prisma.matter.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: 'matter-1', organizationId: orgId },
+          where: { id: 'matter-1' },
         }),
       );
     });
