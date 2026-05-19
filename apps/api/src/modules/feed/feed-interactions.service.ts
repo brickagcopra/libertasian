@@ -105,7 +105,7 @@ export class FeedInteractionsService {
 
     // Validate parent if provided (must belong to same post, max 1 level deep)
     if (dto.parentId) {
-      const parent = await this.prisma.feedComment.findUnique({
+      const parent = await this.prisma.forTenant(viewerOrgId).feedComment.findUnique({
         where: { id: dto.parentId },
       });
       if (!parent) {
@@ -119,8 +119,14 @@ export class FeedInteractionsService {
       }
     }
 
-    const comment = await this.prisma.feedComment.create({
+    // `organizationId` is duplicated here because Prisma's generated
+    // `FeedCommentCreateInput` type requires it (the column is NOT NULL).
+    // `forTenant()` enforces tenant scoping on reads/updates; for writes,
+    // we pass the same viewer org explicitly so the row lands in the
+    // correct tenant.
+    const comment = await this.prisma.forTenant(viewerOrgId).feedComment.create({
       data: {
+        organizationId: viewerOrgId,
         postId,
         authorId: userId,
         textContent: dto.textContent,
@@ -139,8 +145,13 @@ export class FeedInteractionsService {
     return this.formatComment(comment);
   }
 
-  async updateComment(commentId: string, dto: { textContent: string }, userId: string) {
-    const comment = await this.prisma.feedComment.findUnique({
+  async updateComment(
+    commentId: string,
+    dto: { textContent: string },
+    userId: string,
+    viewerOrgId: string,
+  ) {
+    const comment = await this.prisma.forTenant(viewerOrgId).feedComment.findUnique({
       where: { id: commentId },
     });
 
@@ -154,7 +165,7 @@ export class FeedInteractionsService {
       throw new NotFoundException('Comment not found');
     }
 
-    const updated = await this.prisma.feedComment.update({
+    const updated = await this.prisma.forTenant(viewerOrgId).feedComment.update({
       where: { id: commentId },
       data: {
         textContent: dto.textContent,
@@ -168,8 +179,8 @@ export class FeedInteractionsService {
     return this.formatComment(updated);
   }
 
-  async deleteComment(commentId: string, userId: string) {
-    const comment = await this.prisma.feedComment.findUnique({
+  async deleteComment(commentId: string, userId: string, viewerOrgId: string) {
+    const comment = await this.prisma.forTenant(viewerOrgId).feedComment.findUnique({
       where: { id: commentId },
     });
 
@@ -183,7 +194,7 @@ export class FeedInteractionsService {
       throw new NotFoundException('Comment not found');
     }
 
-    await this.prisma.feedComment.update({
+    await this.prisma.forTenant(viewerOrgId).feedComment.update({
       where: { id: commentId },
       data: {
         deletedAt: new Date(),
@@ -197,11 +208,16 @@ export class FeedInteractionsService {
     });
   }
 
-  async getComments(postId: string, query: FeedQueryDto, userId: string) {
+  async getComments(
+    postId: string,
+    query: FeedQueryDto,
+    userId: string,
+    viewerOrgId: string,
+  ) {
     const limit = query.limit ?? 20;
 
     // Get top-level comments
-    const comments = await this.prisma.feedComment.findMany({
+    const comments = await this.prisma.forTenant(viewerOrgId).feedComment.findMany({
       take: limit + 1,
       ...(query.cursor && { skip: 1, cursor: { id: query.cursor } }),
       where: {
@@ -236,14 +252,14 @@ export class FeedInteractionsService {
 
     const items = await Promise.all(
       results.map(async (comment) => {
-        const isLikedByMe = await this.isCommentLikedByUser(comment.id, userId);
+        const isLikedByMe = await this.isCommentLikedByUser(comment.id, userId, viewerOrgId);
         return {
           ...this.formatComment(comment),
           isLikedByMe,
           replies: await Promise.all(
             comment.replies.map(async (reply) => ({
               ...this.formatComment(reply),
-              isLikedByMe: await this.isCommentLikedByUser(reply.id, userId),
+              isLikedByMe: await this.isCommentLikedByUser(reply.id, userId, viewerOrgId),
             })),
           ),
           totalReplyCount: comment._count.replies,
@@ -262,8 +278,8 @@ export class FeedInteractionsService {
   // Likes (Comments)
   // =========================================================================
 
-  async likeComment(commentId: string, userId: string) {
-    const comment = await this.prisma.feedComment.findUnique({
+  async likeComment(commentId: string, userId: string, viewerOrgId: string) {
+    const comment = await this.prisma.forTenant(viewerOrgId).feedComment.findUnique({
       where: { id: commentId },
     });
     if (!comment || comment.deletedAt) {
@@ -271,10 +287,10 @@ export class FeedInteractionsService {
     }
 
     try {
-      await this.prisma.feedCommentLike.create({
+      await this.prisma.forTenant(viewerOrgId).feedCommentLike.create({
         data: { commentId, userId },
       });
-      await this.prisma.feedComment.update({
+      await this.prisma.forTenant(viewerOrgId).feedComment.update({
         where: { id: commentId },
         data: { likeCount: { increment: 1 } },
       });
@@ -284,17 +300,17 @@ export class FeedInteractionsService {
     }
   }
 
-  async unlikeComment(commentId: string, userId: string) {
-    const like = await this.prisma.feedCommentLike.findUnique({
+  async unlikeComment(commentId: string, userId: string, viewerOrgId: string) {
+    const like = await this.prisma.forTenant(viewerOrgId).feedCommentLike.findUnique({
       where: { commentId_userId: { commentId, userId } },
     });
 
     if (!like) return;
 
-    await this.prisma.feedCommentLike.delete({
+    await this.prisma.forTenant(viewerOrgId).feedCommentLike.delete({
       where: { id: like.id },
     });
-    await this.prisma.feedComment.update({
+    await this.prisma.forTenant(viewerOrgId).feedComment.update({
       where: { id: commentId },
       data: { likeCount: { decrement: 1 } },
     });
@@ -464,8 +480,12 @@ export class FeedInteractionsService {
     }
   }
 
-  private async isCommentLikedByUser(commentId: string, userId: string): Promise<boolean> {
-    const like = await this.prisma.feedCommentLike.findUnique({
+  private async isCommentLikedByUser(
+    commentId: string,
+    userId: string,
+    viewerOrgId: string,
+  ): Promise<boolean> {
+    const like = await this.prisma.forTenant(viewerOrgId).feedCommentLike.findUnique({
       where: { commentId_userId: { commentId, userId } },
     });
     return !!like;

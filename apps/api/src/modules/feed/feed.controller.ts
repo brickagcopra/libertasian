@@ -398,7 +398,12 @@ export class FeedController {
     @Param('postId', ParseUUIDPipe) postId: string,
     @Query() query: FeedQueryDto,
   ) {
-    const result = await this.interactionsService.getComments(postId, query, user.sub);
+    const result = await this.interactionsService.getComments(
+      postId,
+      query,
+      user.sub,
+      user.organizationId,
+    );
     return { success: true, data: result.items, meta: { hasNext: result.hasNext, nextCursor: result.nextCursor } };
   }
 
@@ -438,7 +443,12 @@ export class FeedController {
     @Param('commentId', ParseUUIDPipe) commentId: string,
     @Body() dto: UpdateCommentDto,
   ) {
-    const data = await this.interactionsService.updateComment(commentId, dto, user.sub);
+    const data = await this.interactionsService.updateComment(
+      commentId,
+      dto,
+      user.sub,
+      user.organizationId,
+    );
     await this.auditService.log({
       actorUserId: user.sub,
       actorType: 'user',
@@ -459,7 +469,7 @@ export class FeedController {
     @CurrentUser() user: JwtPayload,
     @Param('commentId', ParseUUIDPipe) commentId: string,
   ) {
-    await this.interactionsService.deleteComment(commentId, user.sub);
+    await this.interactionsService.deleteComment(commentId, user.sub, user.organizationId);
     await this.auditService.log({
       actorUserId: user.sub,
       actorType: 'user',
@@ -479,7 +489,7 @@ export class FeedController {
     @CurrentUser() user: JwtPayload,
     @Param('commentId', ParseUUIDPipe) commentId: string,
   ) {
-    await this.interactionsService.likeComment(commentId, user.sub);
+    await this.interactionsService.likeComment(commentId, user.sub, user.organizationId);
   }
 
   @Delete('comments/:commentId/like')
@@ -491,6 +501,6 @@ export class FeedController {
     @CurrentUser() user: JwtPayload,
     @Param('commentId', ParseUUIDPipe) commentId: string,
   ) {
-    await this.interactionsService.unlikeComment(commentId, user.sub);
+    await this.interactionsService.unlikeComment(commentId, user.sub, user.organizationId);
   }
 }
