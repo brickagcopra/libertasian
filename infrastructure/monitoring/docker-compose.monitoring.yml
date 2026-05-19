@@ -6,6 +6,8 @@
 #   docker compose -f docker-compose.prod.yml -f infrastructure/monitoring/docker-compose.monitoring.yml up -d
 # ==========================================================================
 
+name: libertasian-monitoring
+
 services:
   # ====================
   # Prometheus
@@ -174,8 +176,6 @@ services:
       - "127.0.0.1:9187:9187"
     environment:
       DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-libertasian}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-libertasian}?sslmode=disable"
-    depends_on:
-      - postgres
     deploy:
       resources:
         limits:
@@ -194,8 +194,6 @@ services:
     environment:
       REDIS_ADDR: "redis://redis:6379"
       REDIS_PASSWORD: "${REDIS_PASSWORD}"
-    depends_on:
-      - redis
     deploy:
       resources:
         limits:
@@ -204,6 +202,14 @@ services:
 
 volumes:
   prometheus_data:
+    external: true
+    name: libertasian_prometheus_data
   grafana_data:
+    external: true
+    name: libertasian_grafana_data
   alertmanager_data:
+    external: true
+    name: libertasian_alertmanager_data
   loki_data:
+    external: true
+    name: libertasian_loki_data
