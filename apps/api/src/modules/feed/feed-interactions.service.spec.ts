@@ -16,6 +16,7 @@ const OTHER_USER_ID = 'user-2';
 const POST_ID = 'post-1';
 const COMMENT_ID = 'comment-1';
 const ORG_ID = 'org-1';
+const OTHER_ORG_ID = 'org-2';
 
 // `validatePostReadable` now runs a `findFirst` with a visibility
 // OR-filter (BYPASS #2 fix). The unit tests only need a row with an
@@ -42,7 +43,15 @@ const mockComment = {
 
 // ─── Mock Prisma ──────────────────────────────────────────────────────────────
 
-const mockPrisma = {
+const mockPrisma: {
+  feedPost: { findUnique: jest.Mock; findFirst: jest.Mock; update: jest.Mock };
+  feedPostLike: { create: jest.Mock; findUnique: jest.Mock; delete: jest.Mock };
+  feedPostBookmark: { create: jest.Mock; findUnique: jest.Mock; delete: jest.Mock };
+  feedComment: { create: jest.Mock; findUnique: jest.Mock; findMany: jest.Mock; update: jest.Mock };
+  feedCommentLike: { create: jest.Mock; findUnique: jest.Mock; delete: jest.Mock };
+  feedPostReport: { create: jest.Mock; findUnique: jest.Mock; findMany: jest.Mock; update: jest.Mock };
+  forTenant: jest.Mock;
+} = {
   feedPost: {
     findUnique: jest.fn(),
     findFirst: jest.fn(),
@@ -75,7 +84,15 @@ const mockPrisma = {
     findMany: jest.fn(),
     update: jest.fn(),
   },
+  forTenant: jest.fn(),
 };
+
+// `forTenant(orgId).feedComment.findUnique(...)` chains back to the same
+// mock so test setups can keep using `mockPrisma.feedComment.*` directly.
+// Cross-tenant behavior is simulated per-test by having the mocked
+// findUnique/findMany return null/[] when the caller's org wouldn't see
+// the row.
+mockPrisma.forTenant.mockReturnValue(mockPrisma);
 
 describe('FeedInteractionsService', () => {
   let service: FeedInteractionsService;
@@ -274,6 +291,7 @@ describe('FeedInteractionsService', () => {
         COMMENT_ID,
         { textContent: 'Updated' },
         USER_ID,
+        ORG_ID,
       );
 
       expect(result.textContent).toBe('Updated');
@@ -283,7 +301,7 @@ describe('FeedInteractionsService', () => {
       mockPrisma.feedComment.findUnique.mockResolvedValue(mockComment);
 
       await expect(
-        service.updateComment(COMMENT_ID, { textContent: 'Hack' }, OTHER_USER_ID),
+        service.updateComment(COMMENT_ID, { textContent: 'Hack' }, OTHER_USER_ID, ORG_ID),
       ).rejects.toThrow(ForbiddenException);
     });
   });
@@ -292,7 +310,7 @@ describe('FeedInteractionsService', () => {
     it('should soft-delete own comment and decrement count', async () => {
       mockPrisma.feedComment.findUnique.mockResolvedValue(mockComment);
 
-      await service.deleteComment(COMMENT_ID, USER_ID);
+      await service.deleteComment(COMMENT_ID, USER_ID, ORG_ID);
 
       expect(mockPrisma.feedComment.update).toHaveBeenCalledWith({
         where: { id: COMMENT_ID },
@@ -311,7 +329,7 @@ describe('FeedInteractionsService', () => {
       mockPrisma.feedComment.findUnique.mockResolvedValue(mockComment);
 
       await expect(
-        service.deleteComment(COMMENT_ID, OTHER_USER_ID),
+        service.deleteComment(COMMENT_ID, OTHER_USER_ID, ORG_ID),
       ).rejects.toThrow(ForbiddenException);
     });
   });
@@ -354,7 +372,7 @@ describe('FeedInteractionsService', () => {
       mockPrisma.feedCommentLike.create.mockResolvedValue({ id: 'cl-1' });
       mockPrisma.feedComment.update.mockResolvedValue({});
 
-      await service.likeComment(COMMENT_ID, USER_ID);
+      await service.likeComment(COMMENT_ID, USER_ID, ORG_ID);
 
       expect(mockPrisma.feedCommentLike.create).toHaveBeenCalledWith({
         data: { commentId: COMMENT_ID, userId: USER_ID },
@@ -366,11 +384,77 @@ describe('FeedInteractionsService', () => {
       mockPrisma.feedCommentLike.delete.mockResolvedValue({});
       mockPrisma.feedComment.update.mockResolvedValue({});
 
-      await service.unlikeComment(COMMENT_ID, USER_ID);
+      await service.unlikeComment(COMMENT_ID, USER_ID, ORG_ID);
 
       expect(mockPrisma.feedCommentLike.delete).toHaveBeenCalledWith({
         where: { id: 'cl-1' },
       });
+    });
+  });
+
+  // ─── Cross-Tenant Isolation (DF-2) ────────────────────────────────────────
+  //
+  // FeedComment carries organization_id and reads/writes flow through
+  // `forTenant(viewerOrgId)`. When org B's user references an org A
+  // comment by id, the tenant-scoped `feedComment.findUnique` returns
+  // null and the service surfaces NotFoundException — never
+  // ForbiddenException (which would leak existence cross-tenant).
+
+  describe('cross-tenant isolation', () => {
+    it('updateComment from a different org throws NotFoundException', async () => {
+      // org A owns the comment; org B caller does not see it.
+      mockPrisma.feedComment.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.updateComment(
+          COMMENT_ID,
+          { textContent: 'cross-tenant edit' },
+          OTHER_USER_ID,
+          OTHER_ORG_ID,
+        ),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(mockPrisma.forTenant).toHaveBeenCalledWith(OTHER_ORG_ID);
+    });
+
+    it('deleteComment from a different org throws NotFoundException', async () => {
+      mockPrisma.feedComment.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.deleteComment(COMMENT_ID, OTHER_USER_ID, OTHER_ORG_ID),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(mockPrisma.forTenant).toHaveBeenCalledWith(OTHER_ORG_ID);
+    });
+
+    it('likeComment from a different org throws NotFoundException', async () => {
+      mockPrisma.feedComment.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.likeComment(COMMENT_ID, OTHER_USER_ID, OTHER_ORG_ID),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(mockPrisma.forTenant).toHaveBeenCalledWith(OTHER_ORG_ID);
+      // No like should be persisted on the cross-tenant attempt.
+      expect(mockPrisma.feedCommentLike.create).not.toHaveBeenCalled();
+    });
+
+    it('getComments from a different org returns no items', async () => {
+      // Post id belongs to org A; org B caller sees no comments
+      // (the tenant-scoped findMany filters them out).
+      mockPrisma.feedComment.findMany.mockResolvedValue([]);
+
+      const result = await service.getComments(
+        POST_ID,
+        {},
+        OTHER_USER_ID,
+        OTHER_ORG_ID,
+      );
+
+      expect(result.items).toEqual([]);
+      expect(result.hasNext).toBe(false);
+      expect(result.nextCursor).toBeNull();
+      expect(mockPrisma.forTenant).toHaveBeenCalledWith(OTHER_ORG_ID);
     });
   });
 });

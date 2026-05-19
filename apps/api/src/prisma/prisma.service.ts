@@ -9,6 +9,12 @@ const isDev = process.env['NODE_ENV'] === 'development';
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PrismaService.name);
 
+  private static readonly TENANT_CLIENT_CACHE_MAX = 1024;
+  private readonly tenantClientCache = new Map<
+    string,
+    ReturnType<PrismaService['buildTenantClient']>
+  >();
+
   constructor() {
     super({
       log: isDev
@@ -44,8 +50,28 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
    * Returns a tenant-scoped Prisma client that automatically filters
    * queries by organizationId (per CLAUDE.md security standards).
    * Use this in services that need tenant isolation.
+   *
+   * Extended clients are memoized per organization (FIFO LRU, cap 1024)
+   * so the $extends middleware tree is built once per tenant rather than
+   * on every call.
    */
   forTenant(organizationId: string) {
+    const cached = this.tenantClientCache.get(organizationId);
+    if (cached) return cached;
+
+    if (this.tenantClientCache.size >= PrismaService.TENANT_CLIENT_CACHE_MAX) {
+      const oldestKey = this.tenantClientCache.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.tenantClientCache.delete(oldestKey);
+      }
+    }
+
+    const client = this.buildTenantClient(organizationId);
+    this.tenantClientCache.set(organizationId, client);
+    return client;
+  }
+
+  private buildTenantClient(organizationId: string) {
     return this.$extends({
       query: {
         matter: { $allOperations: addTenantFilter(organizationId) },
@@ -56,6 +82,8 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         annotation: { $allOperations: addTenantFilter(organizationId) },
         feedPost: { $allOperations: addTenantFilter(organizationId) },
         feedPostMedia: { $allOperations: addTenantFilter(organizationId) },
+        feedComment: { $allOperations: addTenantFilter(organizationId) },
+        feedCommentLike: { $allOperations: addTenantFilter(organizationId) },
       },
     });
   }

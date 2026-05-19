@@ -219,6 +219,7 @@ model Organization {
   promotionRedemptions        PromotionRedemption[]
   checkoutPriceSnapshots      CheckoutPriceSnapshot[]
   feedPosts                   FeedPost[]
+  feedComments                FeedComment[]
   feedPostMedia               FeedPostMedia[]
   exportJobs                  ExportJob[]
   // Accounting relations
@@ -2721,29 +2722,32 @@ model FeedMediaProcessingJob {
 }
 
 model FeedComment {
-  id          String    @id @default(uuid()) @db.Uuid
-  postId      String    @map("post_id") @db.Uuid
-  authorId    String    @map("author_id") @db.Uuid
-  parentId    String?   @map("parent_id") @db.Uuid
-  textContent String    @map("text_content")
-  likeCount   Int       @default(0) @map("like_count")
-  status      String    @default("published") @db.VarChar(20)
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  postId         String    @map("post_id") @db.Uuid
+  authorId       String    @map("author_id") @db.Uuid
+  parentId       String?   @map("parent_id") @db.Uuid
+  textContent    String    @map("text_content")
+  likeCount      Int       @default(0) @map("like_count")
+  status         String    @default("published") @db.VarChar(20)
   // status: published, hidden, removed_by_admin, removed_by_author
-  editedAt    DateTime? @map("edited_at") @db.Timestamptz
-  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
-  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz
+  editedAt       DateTime? @map("edited_at") @db.Timestamptz
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz
 
   // Relations
-  post    FeedPost          @relation(fields: [postId], references: [id], onDelete: Cascade)
-  author  User              @relation("FeedCommentAuthor", fields: [authorId], references: [id], onDelete: Cascade)
-  parent  FeedComment?      @relation("FeedCommentThread", fields: [parentId], references: [id], onDelete: Cascade)
-  replies FeedComment[]     @relation("FeedCommentThread")
-  likes   FeedCommentLike[]
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  post         FeedPost          @relation(fields: [postId], references: [id], onDelete: Cascade)
+  author       User              @relation("FeedCommentAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  parent       FeedComment?      @relation("FeedCommentThread", fields: [parentId], references: [id], onDelete: Cascade)
+  replies      FeedComment[]     @relation("FeedCommentThread")
+  likes        FeedCommentLike[]
 
   @@index([postId, createdAt(sort: Desc)], map: "idx_feed_comment_post_created")
   @@index([authorId], map: "idx_feed_comment_author")
   @@index([parentId], map: "idx_feed_comment_parent")
+  @@index([organizationId, postId], map: "idx_feed_comments_org_post")
   @@map("feed_comments")
 }
 
