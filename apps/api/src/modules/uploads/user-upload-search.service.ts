@@ -20,6 +20,7 @@ export class UserUploadSearchService {
    * Fetches OCR text from S3, builds payload, calls OpenSearch indexer.
    */
   async indexUpload(uploadId: string): Promise<void> {
+    // Intentional system-level: bootstrap lookup called from worker without org context (uploads.processor.ts:148). Tenant boundary is enforced upstream when the upload row was created.
     const upload = await this.prisma.userUpload.findUnique({
       where: { id: uploadId },
       select: {
@@ -138,9 +139,8 @@ export class UserUploadSearchService {
    * Processes in batches to avoid overwhelming OpenSearch.
    */
   async bulkIndexOrganizationUploads(organizationId: string): Promise<{ indexed: number; skipped: number; errors: number }> {
-    const uploads = await this.prisma.userUpload.findMany({
+    const uploads = await this.prisma.forTenant(organizationId).userUpload.findMany({
       where: {
-        organizationId,
         ocrStatus: 'completed',
         ocrTextObjectKey: { not: null },
       },

@@ -107,6 +107,7 @@ describe('UploadsService', () => {
               aggregate: jest.fn(),
             },
             $transaction: jest.fn(),
+            forTenant: jest.fn(),
           },
         },
         {
@@ -140,6 +141,7 @@ describe('UploadsService', () => {
 
     service = module.get<UploadsService>(UploadsService);
     prisma = module.get(PrismaService);
+    (prisma.forTenant as jest.Mock).mockReturnValue(prisma);
     s3 = module.get(S3Service);
     digestsService = module.get(DigestsService);
   });
@@ -428,9 +430,10 @@ describe('UploadsService', () => {
 
       await service.list(orgId);
 
+      expect(prisma.forTenant).toHaveBeenCalledWith(orgId);
       expect(prisma.userUpload.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ organizationId: orgId }),
+          where: expect.objectContaining({}),
         }),
       );
     });
@@ -449,8 +452,9 @@ describe('UploadsService', () => {
       const result = await service.findById('upload-1', orgId);
 
       expect(result.id).toBe('upload-1');
+      expect(prisma.forTenant).toHaveBeenCalledWith(orgId);
       expect(prisma.userUpload.findFirst).toHaveBeenCalledWith({
-        where: { id: 'upload-1', organizationId: orgId },
+        where: { id: 'upload-1' },
         include: expect.objectContaining({
           cameraCaptures: true,
           processingJobs: expect.any(Object),
