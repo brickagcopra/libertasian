@@ -16,6 +16,7 @@ describe('PleadingsService', () => {
     pleading: { create: jest.Mock; findUnique: jest.Mock; findMany: jest.Mock; update: jest.Mock; delete: jest.Mock };
     pleadingTemplate: { findUnique: jest.Mock; findMany: jest.Mock };
     matter: { findFirst: jest.Mock };
+    forTenant: jest.Mock;
   };
   let usageQuota: { checkAndIncrement: jest.Mock };
   let queue: { add: jest.Mock };
@@ -71,7 +72,9 @@ describe('PleadingsService', () => {
       matter: {
         findFirst: jest.fn(),
       },
+      forTenant: jest.fn(),
     };
+    prisma.forTenant.mockReturnValue(prisma);
 
     usageQuota = { checkAndIncrement: jest.fn() };
     queue = { add: jest.fn() };
