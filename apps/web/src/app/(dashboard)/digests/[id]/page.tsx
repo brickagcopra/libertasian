@@ -6,6 +6,7 @@ import { useParams } from 'next/navigation';
 import { useDigest } from '@/features/digests/hooks/use-digests';
 import { sanitizeRulingText } from '@/features/digests/lib/sanitize-ruling';
 import { ROUTES } from '@/lib/constants';
+import { UpgradeBanner, extractPaywall402 } from '@/components/paywall/upgrade-banner';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
@@ -43,6 +44,22 @@ export default function DigestDetailPage() {
           ))}
         </div>
       </div>
+    );
+  }
+
+  const paywall = extractPaywall402(error);
+  if (paywall) {
+    return (
+      <UpgradeBanner
+        variant="modal"
+        corpus={paywall.corpus}
+        previewItemId={paywall.previewItemId}
+        previewHref={
+          paywall.previewItemId ? `/digests/${paywall.previewItemId}` : undefined
+        }
+        message={paywall.message}
+        surface="digests/detail"
+      />
     );
   }
 

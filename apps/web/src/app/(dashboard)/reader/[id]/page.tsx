@@ -22,6 +22,7 @@ import { useAnnotations, useCreateAnnotation, useDeleteAnnotation } from '@/feat
 import { ReaderSkeleton } from '@/components/ui/skeleton';
 import { ApiClientError } from '@/lib/api-client';
 import { ROUTES } from '@/lib/constants';
+import { UpgradeBanner, extractPaywall402 } from '@/components/paywall/upgrade-banner';
 import type { Annotation, AnnotationColor, CreateAnnotationInput } from '@/features/workspace/types';
 
 import { Button } from '@/components/ui/button';
@@ -116,6 +117,22 @@ export default function ReaderPage() {
 
   if (docLoading || sectionsLoading) {
     return <ReaderSkeleton />;
+  }
+
+  const paywall = extractPaywall402(docError);
+  if (paywall) {
+    return (
+      <UpgradeBanner
+        variant="modal"
+        corpus={paywall.corpus}
+        previewItemId={paywall.previewItemId}
+        previewHref={
+          paywall.previewItemId ? `/reader/${paywall.previewItemId}` : undefined
+        }
+        message={paywall.message}
+        surface="reader/detail"
+      />
+    );
   }
 
   if (docError || !document) {

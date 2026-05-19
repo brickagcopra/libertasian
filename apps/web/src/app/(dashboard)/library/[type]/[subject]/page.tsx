@@ -12,6 +12,7 @@ import { DerivativeCard } from '@/features/derivatives/components/derivative-car
 import { LibraryBreadcrumb } from '@/features/derivatives/components/library-breadcrumb';
 import { useDerivatives } from '@/features/derivatives/hooks/use-derivatives';
 import { subjectFromSlug, typeFromSlug } from '@/features/derivatives/taxonomy';
+import { UpgradeBanner } from '@/components/paywall/upgrade-banner';
 
 export default function LibrarySubjectPage() {
   const params = useParams<{ type: string; subject: string }>();
@@ -48,6 +49,10 @@ export default function LibrarySubjectPage() {
     () => data?.pages.flatMap((p) => p.data) ?? [],
     [data],
   );
+
+  const lastPageMeta = data?.pages[data.pages.length - 1]?.meta;
+  const showUpgradeBanner = lastPageMeta?.previewMode === true;
+  const lockedCount = lastPageMeta?.lockedCount ?? 0;
 
   return (
     <div className="space-y-6">
@@ -115,6 +120,15 @@ export default function LibrarySubjectPage() {
             <DerivativeCard key={item.id} item={item} />
           ))}
         </div>
+      )}
+
+      {showUpgradeBanner && (
+        <UpgradeBanner
+          variant="inline"
+          corpus="derivatives"
+          lockedCount={lockedCount}
+          surface={`library/${typeMeta.slug}/${subjectMeta.slug}`}
+        />
       )}
 
       {hasNextPage && (

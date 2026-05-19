@@ -77,6 +77,9 @@ export interface DerivativeListMeta {
   hasNext: boolean;
   nextCursor?: string;
   limit: number;
+  previewMode?: boolean;
+  lockedCount?: number;
+  upgradeRequired?: boolean;
 }
 
 export const DERIVATIVE_TYPE_LABELS: Record<DerivativeType, string> = {
