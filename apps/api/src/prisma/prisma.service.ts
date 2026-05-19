@@ -78,21 +78,96 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         note: { $allOperations: addTenantFilter(organizationId) },
         userUpload: { $allOperations: addTenantFilter(organizationId) },
         digest: { $allOperations: addTenantFilter(organizationId) },
-        bookmark: { $allOperations: addTenantFilter(organizationId) },
-        annotation: { $allOperations: addTenantFilter(organizationId) },
         feedPost: { $allOperations: addTenantFilter(organizationId) },
         feedPostMedia: { $allOperations: addTenantFilter(organizationId) },
         feedComment: { $allOperations: addTenantFilter(organizationId) },
-        feedCommentLike: { $allOperations: addTenantFilter(organizationId) },
+        // bookmark, annotation, feedCommentLike intentionally omitted.
+        // User-scoped/junction tables — no organization_id column. Tenant
+        // guard happens at the parent (matter / digest / feedComment)
+        // lookup, not here.
       },
     });
   }
 }
 
-function addTenantFilter(organizationId: string) {
-  return async ({ args, query }: { args: Record<string, unknown>; query: (args: Record<string, unknown>) => unknown }) => {
-    const where = (args['where'] as Record<string, unknown> | undefined) ?? {};
-    args['where'] = { ...where, organizationId };
+// Nested writes (data.child.create / connectOrCreate) are NOT traversed —
+// middleware applies to the root operation only.
+export function addTenantFilter(organizationId: string) {
+  return async ({
+    operation,
+    args,
+    query,
+  }: {
+    operation: string;
+    args: Record<string, unknown>;
+    query: (args: Record<string, unknown>) => unknown;
+  }) => {
+    switch (operation) {
+      case 'findUnique':
+      case 'findUniqueOrThrow':
+      case 'findFirst':
+      case 'findFirstOrThrow':
+      case 'findMany':
+      case 'count':
+      case 'aggregate':
+      case 'groupBy':
+      case 'delete':
+      case 'deleteMany': {
+        const where = (args['where'] as Record<string, unknown> | undefined) ?? {};
+        args['where'] = { ...where, organizationId };
+        break;
+      }
+      case 'create': {
+        const data = (args['data'] as Record<string, unknown> | undefined) ?? {};
+        args['data'] = { ...data, organizationId };
+        break;
+      }
+      case 'createMany':
+      case 'createManyAndReturn': {
+        const data = args['data'];
+        if (Array.isArray(data)) {
+          args['data'] = data.map((entry) =>
+            entry && typeof entry === 'object'
+              ? { ...(entry as Record<string, unknown>), organizationId }
+              : entry,
+          );
+        } else if (data && typeof data === 'object') {
+          args['data'] = { ...(data as Record<string, unknown>), organizationId };
+        } else {
+          args['data'] = { organizationId };
+        }
+        break;
+      }
+      case 'update':
+      case 'updateMany':
+      case 'updateManyAndReturn': {
+        const where = (args['where'] as Record<string, unknown> | undefined) ?? {};
+        args['where'] = { ...where, organizationId };
+        stripOrgIdFromUpdateData(args['data']);
+        break;
+      }
+      case 'upsert': {
+        const where = (args['where'] as Record<string, unknown> | undefined) ?? {};
+        args['where'] = { ...where, organizationId };
+        const create = (args['create'] as Record<string, unknown> | undefined) ?? {};
+        args['create'] = { ...create, organizationId };
+        stripOrgIdFromUpdateData(args['update']);
+        break;
+      }
+      default:
+        break;
+    }
     return query(args);
   };
+}
+
+// Strip organizationId from update-shaped data unconditionally so callers
+// cannot move a row to another tenant — applies to plain scalar assignments
+// AND Prisma update-expression shapes like { set: x }.
+function stripOrgIdFromUpdateData(data: unknown): void {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return;
+  const obj = data as Record<string, unknown>;
+  if ('organizationId' in obj) {
+    delete obj['organizationId'];
+  }
 }

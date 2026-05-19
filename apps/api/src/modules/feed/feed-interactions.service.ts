@@ -119,11 +119,7 @@ export class FeedInteractionsService {
       }
     }
 
-    // `organizationId` is duplicated here because Prisma's generated
-    // `FeedCommentCreateInput` type requires it (the column is NOT NULL).
-    // `forTenant()` enforces tenant scoping on reads/updates; for writes,
-    // we pass the same viewer org explicitly so the row lands in the
-    // correct tenant.
+    // Helper also injects this on create; explicit pass kept for TS compile-time NOT NULL.
     const comment = await this.prisma.forTenant(viewerOrgId).feedComment.create({
       data: {
         organizationId: viewerOrgId,
@@ -287,7 +283,9 @@ export class FeedInteractionsService {
     }
 
     try {
-      await this.prisma.forTenant(viewerOrgId).feedCommentLike.create({
+      // feedCommentLike has no organization_id column — direct prisma.
+      // Cross-tenant access is gated by the parent feedComment lookup above.
+      await this.prisma.feedCommentLike.create({
         data: { commentId, userId },
       });
       await this.prisma.forTenant(viewerOrgId).feedComment.update({
@@ -301,13 +299,14 @@ export class FeedInteractionsService {
   }
 
   async unlikeComment(commentId: string, userId: string, viewerOrgId: string) {
-    const like = await this.prisma.forTenant(viewerOrgId).feedCommentLike.findUnique({
+    // feedCommentLike has no organization_id column — direct prisma.
+    const like = await this.prisma.feedCommentLike.findUnique({
       where: { commentId_userId: { commentId, userId } },
     });
 
     if (!like) return;
 
-    await this.prisma.forTenant(viewerOrgId).feedCommentLike.delete({
+    await this.prisma.feedCommentLike.delete({
       where: { id: like.id },
     });
     await this.prisma.forTenant(viewerOrgId).feedComment.update({
@@ -483,9 +482,12 @@ export class FeedInteractionsService {
   private async isCommentLikedByUser(
     commentId: string,
     userId: string,
-    viewerOrgId: string,
+    // viewerOrgId kept in signature: parent comment readability is gated
+    // by callers via forTenant() on feedComment before reaching here;
+    // feedCommentLike itself has no organization_id column.
+    _viewerOrgId: string,
   ): Promise<boolean> {
-    const like = await this.prisma.forTenant(viewerOrgId).feedCommentLike.findUnique({
+    const like = await this.prisma.feedCommentLike.findUnique({
       where: { commentId_userId: { commentId, userId } },
     });
     return !!like;
