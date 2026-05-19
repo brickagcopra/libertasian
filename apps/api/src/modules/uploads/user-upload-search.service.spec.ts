@@ -53,6 +53,7 @@ describe('UserUploadSearchService', () => {
               findUnique: jest.fn(),
               findMany: jest.fn(),
             },
+            forTenant: jest.fn(),
           },
         },
         {
@@ -74,6 +75,7 @@ describe('UserUploadSearchService', () => {
 
     service = module.get<UserUploadSearchService>(UserUploadSearchService);
     prisma = module.get(PrismaService);
+    (prisma.forTenant as jest.Mock).mockReturnValue(prisma);
     opensearch = module.get(OpenSearchService);
     s3 = module.get(S3Service);
   });
@@ -346,10 +348,10 @@ describe('UserUploadSearchService', () => {
 
       expect(result.indexed).toBe(2);
       expect(result.errors).toBe(0);
+      expect(prisma.forTenant).toHaveBeenCalledWith(orgId);
       expect(prisma.userUpload.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            organizationId: orgId,
             ocrStatus: 'completed',
           }),
         }),

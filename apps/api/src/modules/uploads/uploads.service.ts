@@ -95,7 +95,8 @@ export class UploadsService {
     await this.s3.upload(objectKey, file.buffer, detectedMime, file.originalname);
 
     // Create DB record
-    const upload = await this.prisma.userUpload.create({
+    // Helper also injects this on create; explicit pass kept for TS NOT NULL.
+    const upload = await this.prisma.forTenant(organizationId).userUpload.create({
       data: {
         organizationId,
         userId,
@@ -187,7 +188,7 @@ export class UploadsService {
     // Per CLAUDE.md: all scans default to private
     const privacyLevel = options.privacyLevel ?? 'private';
 
-    const upload = await this.prisma.userUpload.create({
+    const upload = await this.prisma.forTenant(organizationId).userUpload.create({
       data: {
         organizationId,
         userId,
@@ -250,7 +251,7 @@ export class UploadsService {
     } = {},
   ) {
     const limit = options.limit ?? 20;
-    const where: Record<string, unknown> = { organizationId };
+    const where: Record<string, unknown> = {};
 
     if (options.uploadType) {
       where['uploadType'] = options.uploadType;
@@ -259,7 +260,7 @@ export class UploadsService {
       where['processingStatus'] = options.processingStatus;
     }
 
-    const uploads = await this.prisma.userUpload.findMany({
+    const uploads = await this.prisma.forTenant(organizationId).userUpload.findMany({
       where,
       take: limit + 1,
       ...(options.cursor && { skip: 1, cursor: { id: options.cursor } }),
@@ -293,8 +294,8 @@ export class UploadsService {
    * Get upload details by ID, org-scoped.
    */
   async findById(id: string, organizationId: string) {
-    const upload = await this.prisma.userUpload.findFirst({
-      where: { id, organizationId },
+    const upload = await this.prisma.forTenant(organizationId).userUpload.findFirst({
+      where: { id },
       include: {
         cameraCaptures: true,
         processingJobs: {
@@ -315,8 +316,8 @@ export class UploadsService {
    * Get processing status for an upload, org-scoped.
    */
   async getStatus(id: string, organizationId: string) {
-    const upload = await this.prisma.userUpload.findFirst({
-      where: { id, organizationId },
+    const upload = await this.prisma.forTenant(organizationId).userUpload.findFirst({
+      where: { id },
       select: {
         id: true,
         processingStatus: true,
@@ -347,8 +348,8 @@ export class UploadsService {
    * Delete upload (S3 + DB), org-scoped.
    */
   async delete(id: string, organizationId: string): Promise<void> {
-    const upload = await this.prisma.userUpload.findFirst({
-      where: { id, organizationId },
+    const upload = await this.prisma.forTenant(organizationId).userUpload.findFirst({
+      where: { id },
     });
 
     if (!upload) {
@@ -365,7 +366,7 @@ export class UploadsService {
     }
 
     // Delete from DB (cascade deletes processing jobs and camera captures)
-    await this.prisma.userUpload.delete({
+    await this.prisma.forTenant(organizationId).userUpload.delete({
       where: { id: upload.id },
     });
   }
@@ -377,8 +378,8 @@ export class UploadsService {
    * Returns per-page OCR data (quality, confidence, word count, text preview).
    */
   async getOcrResults(id: string, organizationId: string) {
-    const upload = await this.prisma.userUpload.findFirst({
-      where: { id, organizationId },
+    const upload = await this.prisma.forTenant(organizationId).userUpload.findFirst({
+      where: { id },
       select: {
         id: true,
         ocrStatus: true,
@@ -438,8 +439,8 @@ export class UploadsService {
     userId: string,
     privacyLevel: string,
   ) {
-    const upload = await this.prisma.userUpload.findFirst({
-      where: { id, organizationId },
+    const upload = await this.prisma.forTenant(organizationId).userUpload.findFirst({
+      where: { id },
     });
 
     if (!upload) {
@@ -451,7 +452,7 @@ export class UploadsService {
       throw new ForbiddenException('Only the uploader can change privacy level');
     }
 
-    return this.prisma.userUpload.update({
+    return this.prisma.forTenant(organizationId).userUpload.update({
       where: { id },
       data: { privacyLevel },
       select: {
@@ -473,8 +474,8 @@ export class UploadsService {
     userId: string,
     digestType: string = 'case_digest',
   ) {
-    const upload = await this.prisma.userUpload.findFirst({
-      where: { id, organizationId },
+    const upload = await this.prisma.forTenant(organizationId).userUpload.findFirst({
+      where: { id },
       include: { ocrResults: true },
     });
 
@@ -531,7 +532,7 @@ export class UploadsService {
     );
 
     // Link digest to upload
-    await this.prisma.userUpload.update({
+    await this.prisma.forTenant(organizationId).userUpload.update({
       where: { id },
       data: { digestId: digest.id },
     });
@@ -572,8 +573,8 @@ export class UploadsService {
     role: string = 'reference',
   ) {
     // Verify upload exists and belongs to org
-    const upload = await this.prisma.userUpload.findFirst({
-      where: { id: uploadId, organizationId },
+    const upload = await this.prisma.forTenant(organizationId).userUpload.findFirst({
+      where: { id: uploadId },
     });
 
     if (!upload) {
@@ -581,8 +582,8 @@ export class UploadsService {
     }
 
     // Verify matter exists and belongs to the same org
-    const matter = await this.prisma.matter.findFirst({
-      where: { id: matterId, organizationId },
+    const matter = await this.prisma.forTenant(organizationId).matter.findFirst({
+      where: { id: matterId },
     });
 
     if (!matter) {
@@ -637,8 +638,8 @@ export class UploadsService {
     options: { cardType?: string; count?: number; barSubject?: string } = {},
   ) {
     // Verify upload exists, org-scoped, and OCR is complete
-    const upload = await this.prisma.userUpload.findFirst({
-      where: { id: uploadId, organizationId },
+    const upload = await this.prisma.forTenant(organizationId).userUpload.findFirst({
+      where: { id: uploadId },
     });
 
     if (!upload) {
@@ -800,8 +801,8 @@ export class UploadsService {
     outlineType: string = 'topic_outline',
   ) {
     // Verify upload exists, org-scoped, and OCR is complete
-    const upload = await this.prisma.userUpload.findFirst({
-      where: { id: uploadId, organizationId },
+    const upload = await this.prisma.forTenant(organizationId).userUpload.findFirst({
+      where: { id: uploadId },
     });
 
     if (!upload) {
