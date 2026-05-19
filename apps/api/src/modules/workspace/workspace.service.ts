@@ -56,7 +56,8 @@ export class WorkspaceService {
     organizationId: string,
     userId: string,
   ) {
-    return this.prisma.matter.create({
+    // Helper also injects this on create; explicit pass kept for TS NOT NULL.
+    return this.prisma.forTenant(organizationId).matter.create({
       data: {
         organizationId,
         ownerUserId: userId,
@@ -71,7 +72,7 @@ export class WorkspaceService {
   async listMatters(organizationId: string, query: ListMattersQueryDto) {
     const limit = query.limit ?? 20;
 
-    const where: Prisma.MatterWhereInput = { organizationId };
+    const where: Prisma.MatterWhereInput = {};
     if (query.status) {
       where.status = query.status;
     }
@@ -79,7 +80,7 @@ export class WorkspaceService {
       where.title = { contains: query.search, mode: 'insensitive' };
     }
 
-    const matters = await this.prisma.matter.findMany({
+    const matters = await this.prisma.forTenant(organizationId).matter.findMany({
       where,
       take: limit + 1,
       ...(query.cursor && { skip: 1, cursor: { id: query.cursor } }),
@@ -101,8 +102,8 @@ export class WorkspaceService {
   }
 
   async getMatter(matterId: string, organizationId: string) {
-    const matter = await this.prisma.matter.findFirst({
-      where: { id: matterId, organizationId },
+    const matter = await this.prisma.forTenant(organizationId).matter.findFirst({
+      where: { id: matterId },
       include: {
         owner: { select: { id: true, fullName: true, email: true } },
         documents: {
@@ -137,8 +138,8 @@ export class WorkspaceService {
     organizationId: string,
     dto: UpdateMatterDto,
   ) {
-    const matter = await this.prisma.matter.findFirst({
-      where: { id: matterId, organizationId },
+    const matter = await this.prisma.forTenant(organizationId).matter.findFirst({
+      where: { id: matterId },
     });
 
     if (!matter) {
@@ -152,22 +153,22 @@ export class WorkspaceService {
     if (dto.court !== undefined) data.court = dto.court.trim();
     if (dto.status !== undefined) data.status = dto.status;
 
-    return this.prisma.matter.update({
+    return this.prisma.forTenant(organizationId).matter.update({
       where: { id: matterId },
       data,
     });
   }
 
   async deleteMatter(matterId: string, organizationId: string) {
-    const matter = await this.prisma.matter.findFirst({
-      where: { id: matterId, organizationId },
+    const matter = await this.prisma.forTenant(organizationId).matter.findFirst({
+      where: { id: matterId },
     });
 
     if (!matter) {
       throw new NotFoundException('Matter not found');
     }
 
-    await this.prisma.matter.delete({ where: { id: matterId } });
+    await this.prisma.forTenant(organizationId).matter.delete({ where: { id: matterId } });
   }
 
   // ==========================================================================
@@ -180,8 +181,8 @@ export class WorkspaceService {
     dto: AddMatterDocumentDto,
   ) {
     // Verify matter belongs to org
-    const matter = await this.prisma.matter.findFirst({
-      where: { id: matterId, organizationId },
+    const matter = await this.prisma.forTenant(organizationId).matter.findFirst({
+      where: { id: matterId },
     });
     if (!matter) {
       throw new NotFoundException('Matter not found');
@@ -205,8 +206,8 @@ export class WorkspaceService {
     }
 
     if (dto.userUploadId) {
-      const count = await this.prisma.userUpload.count({
-        where: { id: dto.userUploadId, organizationId },
+      const count = await this.prisma.forTenant(organizationId).userUpload.count({
+        where: { id: dto.userUploadId },
       });
       if (count === 0) {
         throw new NotFoundException('User upload not found');
@@ -234,8 +235,8 @@ export class WorkspaceService {
 
   async listMatterDocuments(matterId: string, organizationId: string) {
     // Verify matter belongs to org
-    const matter = await this.prisma.matter.findFirst({
-      where: { id: matterId, organizationId },
+    const matter = await this.prisma.forTenant(organizationId).matter.findFirst({
+      where: { id: matterId },
     });
     if (!matter) {
       throw new NotFoundException('Matter not found');
@@ -261,8 +262,8 @@ export class WorkspaceService {
     organizationId: string,
   ) {
     // Verify matter belongs to org
-    const matter = await this.prisma.matter.findFirst({
-      where: { id: matterId, organizationId },
+    const matter = await this.prisma.forTenant(organizationId).matter.findFirst({
+      where: { id: matterId },
     });
     if (!matter) {
       throw new NotFoundException('Matter not found');
@@ -289,15 +290,15 @@ export class WorkspaceService {
   ) {
     // Verify matter belongs to org if provided
     if (dto.matterId) {
-      const matter = await this.prisma.matter.findFirst({
-        where: { id: dto.matterId, organizationId },
+      const matter = await this.prisma.forTenant(organizationId).matter.findFirst({
+        where: { id: dto.matterId },
       });
       if (!matter) {
         throw new NotFoundException('Matter not found');
       }
     }
 
-    return this.prisma.note.create({
+    return this.prisma.forTenant(organizationId).note.create({
       data: {
         organizationId,
         userId,
@@ -313,7 +314,6 @@ export class WorkspaceService {
     const limit = query.limit ?? 20;
 
     const where: Prisma.NoteWhereInput = {
-      organizationId,
       // User sees: their own notes + org-visible notes from others
       OR: [
         { userId },
@@ -336,7 +336,7 @@ export class WorkspaceService {
       where.title = { contains: query.search, mode: 'insensitive' };
     }
 
-    const notes = await this.prisma.note.findMany({
+    const notes = await this.prisma.forTenant(organizationId).note.findMany({
       where,
       take: limit + 1,
       ...(query.cursor && { skip: 1, cursor: { id: query.cursor } }),
@@ -358,10 +358,9 @@ export class WorkspaceService {
   }
 
   async getNote(noteId: string, organizationId: string, userId: string) {
-    const note = await this.prisma.note.findFirst({
+    const note = await this.prisma.forTenant(organizationId).note.findFirst({
       where: {
         id: noteId,
-        organizationId,
         OR: [{ userId }, { visibility: 'org' }],
       },
       include: {
@@ -384,8 +383,8 @@ export class WorkspaceService {
     dto: UpdateNoteDto,
   ) {
     // Only the note owner can edit
-    const note = await this.prisma.note.findFirst({
-      where: { id: noteId, organizationId, userId },
+    const note = await this.prisma.forTenant(organizationId).note.findFirst({
+      where: { id: noteId, userId },
     });
 
     if (!note) {
@@ -394,8 +393,8 @@ export class WorkspaceService {
 
     // Verify matter belongs to org if changing
     if (dto.matterId) {
-      const matter = await this.prisma.matter.findFirst({
-        where: { id: dto.matterId, organizationId },
+      const matter = await this.prisma.forTenant(organizationId).matter.findFirst({
+        where: { id: dto.matterId },
       });
       if (!matter) {
         throw new NotFoundException('Matter not found');
@@ -408,7 +407,7 @@ export class WorkspaceService {
     if (dto.matterId !== undefined) data.matter = dto.matterId ? { connect: { id: dto.matterId } } : { disconnect: true };
     if (dto.visibility !== undefined) data.visibility = dto.visibility;
 
-    return this.prisma.note.update({
+    return this.prisma.forTenant(organizationId).note.update({
       where: { id: noteId },
       data,
       include: {
@@ -419,15 +418,15 @@ export class WorkspaceService {
   }
 
   async deleteNote(noteId: string, organizationId: string, userId: string) {
-    const note = await this.prisma.note.findFirst({
-      where: { id: noteId, organizationId, userId },
+    const note = await this.prisma.forTenant(organizationId).note.findFirst({
+      where: { id: noteId, userId },
     });
 
     if (!note) {
       throw new NotFoundException('Note not found');
     }
 
-    await this.prisma.note.delete({ where: { id: noteId } });
+    await this.prisma.forTenant(organizationId).note.delete({ where: { id: noteId } });
   }
 
   // ==========================================================================
@@ -511,8 +510,8 @@ export class WorkspaceService {
   ) {
     // Verify matter belongs to org if provided
     if (dto.matterId) {
-      const matter = await this.prisma.matter.findFirst({
-        where: { id: dto.matterId, organizationId },
+      const matter = await this.prisma.forTenant(organizationId).matter.findFirst({
+        where: { id: dto.matterId },
       });
       if (!matter) {
         throw new NotFoundException('Matter not found');
@@ -644,8 +643,8 @@ export class WorkspaceService {
 
     // Verify matter belongs to org if changing
     if (dto.matterId) {
-      const matter = await this.prisma.matter.findFirst({
-        where: { id: dto.matterId, organizationId },
+      const matter = await this.prisma.forTenant(organizationId).matter.findFirst({
+        where: { id: dto.matterId },
       });
       if (!matter) {
         throw new NotFoundException('Matter not found');
@@ -832,8 +831,8 @@ export class WorkspaceService {
     dto: CreateMatterCommentDto,
   ) {
     // Verify matter belongs to org
-    const matter = await this.prisma.matter.findFirst({
-      where: { id: matterId, organizationId },
+    const matter = await this.prisma.forTenant(organizationId).matter.findFirst({
+      where: { id: matterId },
     });
     if (!matter) {
       throw new NotFoundException('Matter not found');
@@ -869,8 +868,8 @@ export class WorkspaceService {
 
   async listMatterComments(matterId: string, organizationId: string) {
     // Verify matter belongs to org
-    const matter = await this.prisma.matter.findFirst({
-      where: { id: matterId, organizationId },
+    const matter = await this.prisma.forTenant(organizationId).matter.findFirst({
+      where: { id: matterId },
     });
     if (!matter) {
       throw new NotFoundException('Matter not found');
@@ -1191,8 +1190,8 @@ export class WorkspaceService {
     organizationId: string,
   ) {
     if (entityType === 'matter') {
-      const matter = await this.prisma.matter.findFirst({
-        where: { id: entityId, organizationId },
+      const matter = await this.prisma.forTenant(organizationId).matter.findFirst({
+        where: { id: entityId },
       });
       if (!matter) {
         throw new NotFoundException('Matter not found');
@@ -1225,6 +1224,7 @@ export class WorkspaceService {
     matterId: string,
     permission: string,
   ): Promise<Record<string, unknown>> {
+    // Intentional cross-tenant: share token resolution. Auth gate is the share record (validated in accessSharedContent), not an org context.
     const matter = await this.prisma.matter.findUnique({
       where: { id: matterId },
       include: {
