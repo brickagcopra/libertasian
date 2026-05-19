@@ -82,6 +82,7 @@ export class UploadsProcessor extends WorkerHost {
       await this.updateJobStatus(jobId, 'processing');
       await this.updateUploadStatus(uploadId, 'processing');
 
+      // Intentional bootstrap: no organizationId in scope yet. The row read provides upload.organizationId for subsequent tenanted calls below.
       const upload = await this.prisma.userUpload.findUnique({
         where: { id: uploadId },
         include: { cameraCaptures: true },
@@ -106,7 +107,7 @@ export class UploadsProcessor extends WorkerHost {
         );
 
         // Mark as quarantined
-        await this.prisma.userUpload.update({
+        await this.prisma.forTenant(upload.organizationId).userUpload.update({
           where: { id: uploadId },
           data: { processingStatus: 'quarantined' },
         });
@@ -141,7 +142,7 @@ export class UploadsProcessor extends WorkerHost {
 
       // Mark completed
       await this.updateJobStatus(jobId, 'completed');
-      await this.updateUploadStatus(uploadId, 'completed');
+      await this.updateUploadStatus(uploadId, 'completed', upload.organizationId);
 
       // Index OCR text for full-text search (non-blocking per plan)
       try {
@@ -191,7 +192,7 @@ export class UploadsProcessor extends WorkerHost {
     await this.processImage(upload.objectKey, buffer);
 
     // Step 2: Update OCR status to processing
-    await this.prisma.userUpload.update({
+    await this.prisma.forTenant(upload.organizationId).userUpload.update({
       where: { id: upload.id },
       data: { ocrStatus: 'processing' },
     });
@@ -216,7 +217,7 @@ export class UploadsProcessor extends WorkerHost {
           wordCount: 0,
         });
 
-        await this.prisma.userUpload.update({
+        await this.prisma.forTenant(upload.organizationId).userUpload.update({
           where: { id: upload.id },
           data: {
             ocrStatus: 'failed',
@@ -287,7 +288,7 @@ export class UploadsProcessor extends WorkerHost {
         `OCR extraction failed for ${upload.id}: ${err instanceof Error ? err.message : 'Unknown'}`,
       );
 
-      await this.prisma.userUpload.update({
+      await this.prisma.forTenant(upload.organizationId).userUpload.update({
         where: { id: upload.id },
         data: { ocrStatus: 'failed' },
       });
@@ -348,7 +349,7 @@ export class UploadsProcessor extends WorkerHost {
     }
 
     // Step 9: Update the UserUpload with all results
-    await this.prisma.userUpload.update({
+    await this.prisma.forTenant(upload.organizationId).userUpload.update({
       where: { id: upload.id },
       data: {
         ocrStatus: 'completed',
@@ -434,7 +435,7 @@ export class UploadsProcessor extends WorkerHost {
     const filename = upload.originalFilename ?? 'document.pdf';
 
     // Step 1: Update OCR status to processing
-    await this.prisma.userUpload.update({
+    await this.prisma.forTenant(upload.organizationId).userUpload.update({
       where: { id: upload.id },
       data: { ocrStatus: 'processing' },
     });
@@ -452,7 +453,7 @@ export class UploadsProcessor extends WorkerHost {
       this.logger.error(
         `PDF extraction failed for ${upload.id}: ${err instanceof Error ? err.message : 'Unknown'}`,
       );
-      await this.prisma.userUpload.update({
+      await this.prisma.forTenant(upload.organizationId).userUpload.update({
         where: { id: upload.id },
         data: { ocrStatus: 'failed' },
       });
@@ -514,7 +515,7 @@ export class UploadsProcessor extends WorkerHost {
     }
 
     // Step 7: Update the UserUpload with all results
-    await this.prisma.userUpload.update({
+    await this.prisma.forTenant(upload.organizationId).userUpload.update({
       where: { id: upload.id },
       data: {
         ocrStatus: 'completed',
@@ -573,11 +574,20 @@ export class UploadsProcessor extends WorkerHost {
   private async updateUploadStatus(
     uploadId: string,
     status: string,
+    organizationId?: string,
   ): Promise<void> {
-    await this.prisma.userUpload.update({
-      where: { id: uploadId },
-      data: { processingStatus: status },
-    });
+    if (organizationId) {
+      await this.prisma.forTenant(organizationId).userUpload.update({
+        where: { id: uploadId },
+        data: { processingStatus: status },
+      });
+    } else {
+      // Bootstrap path: called before the row's organizationId has been read.
+      await this.prisma.userUpload.update({
+        where: { id: uploadId },
+        data: { processingStatus: status },
+      });
+    }
   }
 
   /**
@@ -594,7 +604,7 @@ export class UploadsProcessor extends WorkerHost {
 
     try {
       // Mark digest as generating
-      await this.prisma.digest.update({
+      await this.prisma.forTenant(job.data.organizationId).digest.update({
         where: { id: digestId },
         data: { reviewStatus: 'generating' },
       });
@@ -633,7 +643,7 @@ export class UploadsProcessor extends WorkerHost {
           : 'needs_human_review';
 
       // Update digest with generated content
-      await this.prisma.digest.update({
+      await this.prisma.forTenant(job.data.organizationId).digest.update({
         where: { id: digestId },
         data: {
           facts: ragResponse.facts,
@@ -656,7 +666,7 @@ export class UploadsProcessor extends WorkerHost {
         `Upload digest ${digestId} generation failed: ${errorMessage}`,
       );
 
-      await this.prisma.digest.update({
+      await this.prisma.forTenant(job.data.organizationId).digest.update({
         where: { id: digestId },
         data: { reviewStatus: 'failed' },
       });
