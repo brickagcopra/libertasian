@@ -52,6 +52,7 @@ export class DoctrinesService {
     }
 
     if (dto.digestId) {
+      // CARVE-OUT: digest existence-check spans visibility='public_editorial'; forTenant() would miscount
       const digestCount = await this.prisma.digest.count({
         where: { id: dto.digestId },
       });

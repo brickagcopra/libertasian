@@ -187,6 +187,7 @@ export class SourcesService {
       },
     });
 
+    // CARVE-OUT: admin review-queue count/list is cross-tenant by design
     const pendingReviewDigests = await this.prisma.digest.count({
       where: { reviewStatus: 'needs_human_review' },
     });
@@ -289,6 +290,7 @@ export class SourcesService {
   // ---- Editorial Review Queue ----
 
   async getReviewQueue(cursor?: string, limit = 20) {
+    // CARVE-OUT: admin review-queue count/list is cross-tenant by design
     const digests = await this.prisma.digest.findMany({
       where: { reviewStatus: { in: ['ai_generated', 'needs_human_review'] } },
       take: limit + 1,
@@ -311,10 +313,12 @@ export class SourcesService {
   }
 
   async approveDigest(digestId: string, reviewerUserId: string, notes?: string) {
+    // CARVE-OUT: admin approve/reject is cross-tenant by design
     const digest = await this.prisma.digest.findUnique({ where: { id: digestId } });
     if (!digest) throw new NotFoundException('Digest not found');
 
     return this.prisma.$transaction([
+      // CARVE-OUT: admin approve/reject is cross-tenant by design
       this.prisma.digest.update({
         where: { id: digestId },
         data: { reviewStatus: 'approved' },
@@ -331,10 +335,12 @@ export class SourcesService {
   }
 
   async rejectDigest(digestId: string, reviewerUserId: string, notes?: string) {
+    // CARVE-OUT: admin approve/reject is cross-tenant by design
     const digest = await this.prisma.digest.findUnique({ where: { id: digestId } });
     if (!digest) throw new NotFoundException('Digest not found');
 
     return this.prisma.$transaction([
+      // CARVE-OUT: admin approve/reject is cross-tenant by design
       this.prisma.digest.update({
         where: { id: digestId },
         data: { reviewStatus: 'rejected' },

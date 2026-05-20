@@ -132,6 +132,7 @@ describe('ExportsService', () => {
             note: {
               findUnique: jest.fn(),
             },
+            forTenant: jest.fn(),
           },
         },
         {
@@ -184,6 +185,9 @@ describe('ExportsService', () => {
     s3 = module.get(S3Service);
     generator = module.get(ExportGeneratorService);
     audit = module.get(AuditService);
+
+    // forTenant returns the same mock so existing model mocks keep firing
+    (prisma.forTenant as jest.Mock).mockReturnValue(prisma);
   });
 
   // =========================================================================
@@ -258,6 +262,7 @@ describe('ExportsService', () => {
 
       await service.createExport('note', 'note-1', 'docx', userId, orgId, ip);
 
+      expect(prisma.forTenant).toHaveBeenCalledWith(orgId);
       expect(generator.generateNoteDocx).toHaveBeenCalled();
     });
 
@@ -695,15 +700,13 @@ describe('ExportsService', () => {
       ).resolves.toBeDefined();
     });
 
-    it('should throw ForbiddenException when org does not match for note', async () => {
-      (prisma.note.findUnique as jest.Mock).mockResolvedValueOnce({
-        ...mockNote,
-        organizationId: 'other-org',
-      });
+    it('should throw NotFoundException when note belongs to another org (forTenant filters it out)', async () => {
+      // forTenant(orgId).note.findUnique returns null for cross-org rows
+      (prisma.note.findUnique as jest.Mock).mockResolvedValueOnce(null);
 
       await expect(
         service.createExport('note', 'note-1', 'pdf', userId, orgId, ip),
-      ).rejects.toThrow(ForbiddenException);
+      ).rejects.toThrow(NotFoundException);
     });
 
     it('should throw ForbiddenException when user does not match for note', async () => {

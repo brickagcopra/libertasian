@@ -201,6 +201,7 @@ export class DerivativesReviewService {
     let digestCandidateCount = 0;
     let digestCandidateIds: string[] = [];
     if (includeDigests) {
+      // CARVE-OUT: admin bulk-approve spans all orgs by design
       const digestCandidates = await this.prisma.digest.findMany({
         where: {
           reviewStatus: 'needs_human_review',

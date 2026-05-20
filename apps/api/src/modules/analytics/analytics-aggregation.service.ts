@@ -273,6 +273,7 @@ export class AnalyticsAggregationService {
     await this.upsertAggregate(date, 'digests_saved', digestsSaved, 0);
 
     // Review queue depth (current, not daily — but snapshot at aggregation time)
+    // CARVE-OUT: global metric (digest_review_queue_depth) counts all orgs by design
     const reviewQueueDepth = await this.prisma.digest.count({
       where: { reviewStatus: 'needs_human_review' },
     });
