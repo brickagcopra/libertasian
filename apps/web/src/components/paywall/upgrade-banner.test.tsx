@@ -14,9 +14,19 @@ vi.mock('@/hooks/use-analytics', () => ({
   useTrack: () => trackMock,
 }));
 
+// useCanAccessPaidFeature is the new admin/paywall short-circuit consulted
+// at the top of UpgradeBanner. Default to `free` so the banner renders;
+// admin-bypass test below overrides this.
+const accessMock = vi.fn(() => ({ canAccess: false, reason: 'free' as const }));
+vi.mock('@/hooks/useCanAccessPaidFeature', () => ({
+  useCanAccessPaidFeature: () => accessMock(),
+}));
+
 describe('UpgradeBanner', () => {
   beforeEach(() => {
     trackMock.mockReset();
+    accessMock.mockReset();
+    accessMock.mockReturnValue({ canAccess: false, reason: 'free' });
   });
 
   describe('inline variant', () => {
@@ -53,6 +63,7 @@ describe('UpgradeBanner', () => {
         corpus: 'digests',
         variant: 'inline',
         surface: 'digests/list',
+        access_reason: 'free',
       });
     });
 
@@ -141,7 +152,27 @@ describe('UpgradeBanner', () => {
         corpus: 'digests',
         variant: 'modal',
         surface: 'digests/detail',
+        access_reason: 'free',
       });
+    });
+
+    it('renders nothing for platform admins even when previewMode is true', () => {
+      // Defense-in-depth: a parent that forgot to gate must not be able to
+      // show paywall UI to an admin. The hook short-circuits to canAccess.
+      accessMock.mockReturnValue({ canAccess: true, reason: 'admin' });
+
+      const { container } = render(
+        <UpgradeBanner
+          variant="modal"
+          corpus="documents"
+          previewItemId="doc-1"
+          previewHref="/reader/doc-1"
+        />,
+      );
+
+      expect(container.firstChild).toBeNull();
+      expect(screen.queryByTestId('upgrade-banner-modal')).not.toBeInTheDocument();
+      expect(trackMock).not.toHaveBeenCalled();
     });
   });
 

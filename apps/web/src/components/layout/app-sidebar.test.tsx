@@ -7,6 +7,15 @@ let mockUser: unknown = {
   role: 'member',
 };
 let mockSubscription: unknown = { planCode: 'free' };
+// Override the global useCanAccessPaidFeature mock so individual tests can
+// flip between the free/admin paths and verify the tier-lock behavior.
+let mockAccess: { canAccess: boolean; reason: string } = {
+  canAccess: false,
+  reason: 'free',
+};
+vi.mock('@/hooks/useCanAccessPaidFeature', () => ({
+  useCanAccessPaidFeature: () => mockAccess,
+}));
 
 vi.mock('next/link', () => ({
   default: ({ children, ...props }: { children: React.ReactNode; [key: string]: unknown }) => <a {...props}>{children}</a>,
@@ -49,6 +58,7 @@ describe('SidebarContent', () => {
       role: 'member',
     };
     mockSubscription = { planCode: 'free' };
+    mockAccess = { canAccess: false, reason: 'free' };
   });
 
   it('renders the warm-editorial wordmark', () => {
@@ -117,6 +127,17 @@ describe('SidebarContent', () => {
 
   it('does not lock pro features on pro plan', () => {
     mockSubscription = { planCode: 'pro' };
+    render(<SidebarContent />);
+    const memosLink = screen.getByText('Memos').closest('a');
+    expect(memosLink).not.toHaveClass('opacity-50');
+  });
+
+  it('does not lock pro features for platform admins on the free plan', () => {
+    // Regression: admins were seeing locked icons on tier-gated nav even
+    // though the backend gives them full access. The hook now short-
+    // circuits the tier check.
+    mockSubscription = { planCode: 'free' };
+    mockAccess = { canAccess: true, reason: 'admin' };
     render(<SidebarContent />);
     const memosLink = screen.getByText('Memos').closest('a');
     expect(memosLink).not.toHaveClass('opacity-50');

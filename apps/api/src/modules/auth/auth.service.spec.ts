@@ -7,6 +7,7 @@ import * as crypto from 'crypto';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { PermissionsService } from '../rbac/permissions.service';
 import { UsersService } from '../users/users.service';
 import { AuthService } from './auth.service';
 import { LoginEventService } from './login-event.service';
@@ -220,6 +221,16 @@ describe('AuthService', () => {
             record: jest.fn().mockResolvedValue(undefined),
           },
         },
+        {
+          provide: PermissionsService,
+          useValue: {
+            // Default: no admin:* permissions — non-admin user. Individual
+            // tests that exercise the admin-bypass response can override
+            // getEffectivePermissions to return ['admin:billing', ...].
+            getEffectivePermissions: jest.fn().mockResolvedValue([]),
+            resolveMemberId: jest.fn().mockResolvedValue(null),
+          },
+        },
       ],
     }).compile();
 
@@ -339,8 +350,12 @@ describe('AuthService', () => {
         expect.any(String),
       );
 
-      // Verify result
-      expect(result.user).toEqual(usersService.sanitize(mockUser));
+      // Verify result — register attaches isPlatformAdmin=false for a fresh
+      // user (no admin:* permissions on the just-created membership).
+      expect(result.user).toEqual({
+        ...usersService.sanitize(mockUser),
+        isPlatformAdmin: false,
+      });
     });
   });
 
@@ -400,7 +415,12 @@ describe('AuthService', () => {
       expect(result.mfaRequired).toBe(true);
       expect(result.tokens.accessToken).toBe('');
       expect(result.tokens.refreshToken).toBe('');
-      expect(result.user).toEqual(usersService.sanitize(mfaUser));
+      // MFA challenge response omits the admin flag (no membership resolved
+      // yet) — always false until the second login call with mfaCode.
+      expect(result.user).toEqual({
+        ...usersService.sanitize(mfaUser),
+        isPlatformAdmin: false,
+      });
     });
 
     it('should successfully login with valid credentials', async () => {
@@ -427,7 +447,10 @@ describe('AuthService', () => {
       expect(result.mfaRequired).toBe(false);
       expect(result.tokens.accessToken).toBe('access-token-jwt');
       expect(result.tokens.refreshToken).toEqual(expect.any(String));
-      expect(result.user).toEqual(usersService.sanitize(mockUser));
+      expect(result.user).toEqual({
+        ...usersService.sanitize(mockUser),
+        isPlatformAdmin: false,
+      });
 
       // Verify JWT payload
       expect(jwtService.sign).toHaveBeenCalledWith(
@@ -452,6 +475,47 @@ describe('AuthService', () => {
             expiresAt: expect.any(Date),
           }),
         }),
+      );
+    });
+
+    it('should set isPlatformAdmin=true on login response when member has admin:* permissions', async () => {
+      usersService.findByEmail.mockResolvedValue(mockUser as unknown as ReturnType<UsersService['findByEmail']>);
+      usersService.sanitize.mockReturnValue({
+        id: mockUser.id,
+        email: mockUser.email,
+        fullName: mockUser.fullName,
+        status: mockUser.status,
+        emailVerified: mockUser.emailVerified,
+        mfaEnabled: mockUser.mfaEnabled,
+        createdAt: mockUser.createdAt,
+        updatedAt: mockUser.updatedAt,
+      });
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+
+      prismaService.organizationMember.findFirst.mockResolvedValue(
+        mockMembership as unknown as ReturnType<typeof prismaService.organizationMember.findFirst>,
+      );
+      jwtService.sign.mockReturnValue('access-token-jwt');
+      prismaService.refreshToken.create.mockResolvedValue(
+        {} as unknown as ReturnType<typeof prismaService.refreshToken.create>,
+      );
+
+      const permissions = (await import('../rbac/permissions.service'))
+        .PermissionsService.prototype;
+      // Re-resolve the PermissionsService instance from the testing module so
+      // we can override getEffectivePermissions for this single test.
+      const permsInstance = (service as unknown as { permissions: typeof permissions })
+        .permissions as unknown as { getEffectivePermissions: jest.Mock };
+      permsInstance.getEffectivePermissions.mockResolvedValueOnce([
+        'documents:read',
+        'admin:billing',
+      ]);
+
+      const result = await service.login(loginDto, deviceFingerprint);
+
+      expect(result.user.isPlatformAdmin).toBe(true);
+      expect(permsInstance.getEffectivePermissions).toHaveBeenCalledWith(
+        mockMembership.id,
       );
     });
   });

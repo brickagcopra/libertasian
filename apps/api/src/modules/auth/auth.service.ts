@@ -17,6 +17,7 @@ import type { JwtPayload, TokenPair, UserRole } from '@libertasian/types';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { PermissionsService } from '../rbac/permissions.service';
 import { UsersService } from '../users/users.service';
 import { RegisterDto, LoginDto } from './dto';
 import { LoginEventService, type LoginEventType } from './login-event.service';
@@ -38,6 +39,7 @@ export class AuthService {
     private readonly config: ConfigService,
     private readonly notificationsService: NotificationsService,
     private readonly loginEvents: LoginEventService,
+    private readonly permissions: PermissionsService,
   ) {
     this.accessTtl = this.config.get<number>('JWT_ACCESS_TTL', 900);
     this.refreshTtl = this.config.get<number>('JWT_REFRESH_TTL', 604800);
@@ -75,7 +77,7 @@ export class AuthService {
   async register(
     dto: RegisterDto,
     req: Request | null = null,
-  ): Promise<{ user: ReturnType<UsersService['sanitize']> }> {
+  ): Promise<{ user: ReturnType<UsersService['sanitize']> & { isPlatformAdmin: boolean } }> {
     const existing = await this.usersService.findByEmail(dto.email);
     if (existing) {
       throw new ConflictException('Email already registered');
@@ -150,7 +152,20 @@ export class AuthService {
     // Login" column reflects the user's first known network context.
     this.emitLoginEvent('login_success', user.id, req);
 
-    return { user: this.usersService.sanitize(user) };
+    // Newly-registered owner of a personal org never has admin:* permissions
+    // (those are only granted to platform staff via RBAC). Compute anyway so
+    // the response shape stays consistent — fail-closed if anything errors.
+    const member = await this.prisma.organizationMember.findFirst({
+      where: { userId: user.id, organizationId: org.id, status: 'active' },
+      select: { id: true },
+    });
+    const isPlatformAdmin = member
+      ? await this.computeIsPlatformAdmin(member.id)
+      : false;
+
+    return {
+      user: { ...this.usersService.sanitize(user), isPlatformAdmin },
+    };
   }
 
   // ---- Login ----
@@ -159,7 +174,11 @@ export class AuthService {
     dto: LoginDto,
     deviceFingerprint: string,
     req: Request | null = null,
-  ): Promise<{ tokens: TokenPair; user: ReturnType<UsersService['sanitize']>; mfaRequired: boolean }> {
+  ): Promise<{
+    tokens: TokenPair;
+    user: ReturnType<UsersService['sanitize']> & { isPlatformAdmin: boolean };
+    mfaRequired: boolean;
+  }> {
     const user = await this.usersService.findByEmail(dto.email);
     if (!user || !user.passwordHash) {
       throw new UnauthorizedException('Invalid email or password');
@@ -177,9 +196,12 @@ export class AuthService {
     // Check MFA if enabled
     if (user.mfaEnabled && user.mfaSecret) {
       if (!dto.mfaCode) {
+        // MFA challenge — no membership resolved yet, so omit the admin flag
+        // entirely. The web client only persists user after a non-MFA login
+        // anyway, and the next call (with mfaCode) returns the full payload.
         return {
           tokens: { accessToken: '', refreshToken: '' },
-          user: this.usersService.sanitize(user),
+          user: { ...this.usersService.sanitize(user), isPlatformAdmin: false },
           mfaRequired: true,
         };
       }
@@ -211,7 +233,13 @@ export class AuthService {
 
     this.emitLoginEvent('login_success', user.id, req, { deviceFingerprint });
 
-    return { tokens, user: this.usersService.sanitize(user), mfaRequired: false };
+    const isPlatformAdmin = await this.computeIsPlatformAdmin(membership.id);
+
+    return {
+      tokens,
+      user: { ...this.usersService.sanitize(user), isPlatformAdmin },
+      mfaRequired: false,
+    };
   }
 
   // ---- Google OAuth Login ----
@@ -220,7 +248,11 @@ export class AuthService {
     googleProfile: { googleId: string; email: string; fullName: string },
     deviceFingerprint: string,
     req: Request | null = null,
-  ): Promise<{ tokens: TokenPair; user: ReturnType<UsersService['sanitize']>; isNewUser: boolean }> {
+  ): Promise<{
+    tokens: TokenPair;
+    user: ReturnType<UsersService['sanitize']> & { isPlatformAdmin: boolean };
+    isNewUser: boolean;
+  }> {
     // 1. Try to find user by Google ID
     let user = await this.usersService.findByGoogleId(googleProfile.googleId);
     let isNewUser = false;
@@ -309,7 +341,13 @@ export class AuthService {
 
     this.emitLoginEvent('google_login', user.id, req, { deviceFingerprint });
 
-    return { tokens, user: this.usersService.sanitize(user), isNewUser };
+    const isPlatformAdmin = await this.computeIsPlatformAdmin(membership.id);
+
+    return {
+      tokens,
+      user: { ...this.usersService.sanitize(user), isPlatformAdmin },
+      isNewUser,
+    };
   }
 
   // ---- Refresh Token ----
@@ -828,6 +866,27 @@ export class AuthService {
 
   private hashToken(token: string): string {
     return crypto.createHash('sha256').update(token).digest('hex');
+  }
+
+  /**
+   * Resolve platform-admin status from the member's effective permissions
+   * (any `admin:*` code) at token-issuance time. JwtAuthGuard has not run
+   * yet on login/register/refresh, so the JWT-strategy lookup is not in
+   * play — we resolve directly here. Fail-closed on error: the frontend
+   * uses this to decide whether to render paywall UI, so a transient RBAC
+   * failure should bias toward showing the upsell rather than unlocking
+   * features we cannot prove the user is entitled to.
+   */
+  private async computeIsPlatformAdmin(memberId: string): Promise<boolean> {
+    try {
+      const perms = await this.permissions.getEffectivePermissions(memberId);
+      return perms.some((p) => p.startsWith('admin:'));
+    } catch (err) {
+      this.logger.warn(
+        `Failed to compute isPlatformAdmin for member ${memberId}: ${(err as Error).message}`,
+      );
+      return false;
+    }
   }
 
   private generateSlug(name: string): string {

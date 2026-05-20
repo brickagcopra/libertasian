@@ -6,6 +6,7 @@ import { LockIcon, SparklesIcon } from 'lucide-react';
 
 import { Card, CardContent } from '@/components/ui/card';
 import { useTrack } from '@/hooks/use-analytics';
+import { useCanAccessPaidFeature } from '@/hooks/useCanAccessPaidFeature';
 import { ApiClientError } from '@/lib/api-client';
 
 export type PaywallCorpus = 'documents' | 'digests' | 'derivatives' | 'search';
@@ -99,16 +100,31 @@ function formatResetsAt(resetsAt: string): string {
 
 export function UpgradeBanner(props: UpgradeBannerProps) {
   const track = useTrack();
+  const { canAccess, reason } = useCanAccessPaidFeature();
 
   useEffect(() => {
+    // Defense in depth: even if a parent forgot to gate, admins should
+    // never see the upsell, so don't fire the analytics event either.
+    if (canAccess) return;
     track('paywall_shown', {
       corpus: props.corpus,
       variant: props.variant,
       surface: props.surface ?? null,
+      // Differentiate organic upsells (`free`) from the rare race where
+      // a parent rendered the banner before the subscription resolved.
+      access_reason: reason,
     });
     // Track once per mount keyed on identity of corpus/variant/surface.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [canAccess]);
+
+  // Hard gate: platform admins (and any genuinely-paid user a parent
+  // misrendered to) get nothing. The 'loading' branch falls through and
+  // continues to render the banner — that branch only happens for non-
+  // admin users whose subscription query is in flight, and the existing
+  // surfaces already render the banner from a backend signal that has
+  // also already resolved by that point.
+  if (canAccess) return null;
 
   if (props.variant === 'inline') {
     return <InlineBanner {...props} />;

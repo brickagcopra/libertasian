@@ -17,6 +17,12 @@ interface AuthUser {
   emailVerified: boolean;
   onboardingCompletedAt: string | null;
   userRole: string | null;
+  /**
+   * Trust signal exposed by /auth/login, /auth/register, and /users/me.
+   * When true the user bypasses every subscription/tier gate on the
+   * frontend — see useCanAccessPaidFeature.
+   */
+  isPlatformAdmin: boolean;
 }
 
 interface LoginResponse {

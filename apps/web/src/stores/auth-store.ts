@@ -25,6 +25,13 @@ export interface User {
   emailVerified: boolean;
   onboardingCompletedAt: string | null;
   userRole: string | null;
+  /**
+   * Resolved server-side from the member's effective permissions (any
+   * `admin:*` code). Trust signal that ALL paywall UI must consult — when
+   * true, the user bypasses every subscription/tier gate. Fail-closed:
+   * default to false during hydration before the server confirms.
+   */
+  isPlatformAdmin: boolean;
 }
 
 interface AuthState {

@@ -19,19 +19,20 @@ vi.mock('@/lib/api-client', () => ({
   },
 }));
 
-// Configurable subscription mock for AI-answer gating tests. Each test
-// resets `mockSubscriptionState` to control what useSubscription() returns,
+// Configurable access mock for AI-answer gating tests. Each test resets
+// `mockAccessState` to control what useCanAccessPaidFeature() returns,
 // driving the locked/loading/accordion branches in the sitting page.
-const mockSubscriptionState: {
-  data: { planCode: string; status: string } | null;
-  isLoading: boolean;
-} = { data: null, isLoading: false };
+// We mock the hook directly (rather than its inputs) because plenty of
+// tests need to assert behavior at specific {canAccess, reason} tuples,
+// and routing through useSubscription + useAuthStore added needless
+// brittleness when the hook's input shape changes.
+const mockAccessState: { canAccess: boolean; reason: string } = {
+  canAccess: false,
+  reason: 'free',
+};
 
-vi.mock('@/features/billing/hooks/use-subscription', () => ({
-  useSubscription: () => ({
-    data: mockSubscriptionState.data,
-    isLoading: mockSubscriptionState.isLoading,
-  }),
+vi.mock('@/hooks/useCanAccessPaidFeature', () => ({
+  useCanAccessPaidFeature: () => ({ ...mockAccessState }),
 }));
 
 const navigationMocks = vi.hoisted(() => ({
@@ -69,8 +70,8 @@ beforeEach(() => {
   navigationMocks.useParams.mockReset();
   navigationMocks.useSearchParams.mockReturnValue(new URLSearchParams());
   navigationMocks.notFound.mockClear();
-  mockSubscriptionState.data = null;
-  mockSubscriptionState.isLoading = false;
+  mockAccessState.canAccess = false;
+  mockAccessState.reason = 'free';
 });
 
 describe('bar-exams subject helpers', () => {
@@ -305,7 +306,8 @@ describe('bar-exams sitting page', () => {
 
     it('renders the accordion closed and does NOT fetch the answer until opened', async () => {
       process.env['NEXT_PUBLIC_FEATURE_BAR_EXAM_ANSWERS_PUBLIC'] = 'true';
-      mockSubscriptionState.data = { planCode: 'pro', status: 'active' };
+      mockAccessState.canAccess = true;
+      mockAccessState.reason = 'paid';
       navigationMocks.useParams.mockReturnValue({
         year: '2018',
         subjectCode: 'civil_law',
@@ -326,7 +328,8 @@ describe('bar-exams sitting page', () => {
 
     it('renders the structured answer when the accordion is opened (200)', async () => {
       process.env['NEXT_PUBLIC_FEATURE_BAR_EXAM_ANSWERS_PUBLIC'] = 'true';
-      mockSubscriptionState.data = { planCode: 'pro', status: 'active' };
+      mockAccessState.canAccess = true;
+      mockAccessState.reason = 'paid';
       navigationMocks.useParams.mockReturnValue({
         year: '2018',
         subjectCode: 'civil_law',
@@ -381,7 +384,8 @@ describe('bar-exams sitting page', () => {
 
     it('shows quota-exceeded message when the answer endpoint returns 429', async () => {
       process.env['NEXT_PUBLIC_FEATURE_BAR_EXAM_ANSWERS_PUBLIC'] = 'true';
-      mockSubscriptionState.data = { planCode: 'pro', status: 'active' };
+      mockAccessState.canAccess = true;
+      mockAccessState.reason = 'paid';
       navigationMocks.useParams.mockReturnValue({
         year: '2018',
         subjectCode: 'civil_law',
@@ -416,7 +420,7 @@ describe('bar-exams sitting page', () => {
 
     it('renders locked upsell card for free plan (no clickable accordion)', async () => {
       process.env['NEXT_PUBLIC_FEATURE_BAR_EXAM_ANSWERS_PUBLIC'] = 'true';
-      mockSubscriptionState.data = { planCode: 'free', status: 'active' };
+      // Default `free` state — leave mockAccessState at its beforeEach default.
       navigationMocks.useParams.mockReturnValue({
         year: '2018',
         subjectCode: 'civil_law',
@@ -440,7 +444,9 @@ describe('bar-exams sitting page', () => {
 
     it('renders locked upsell card for canceled paid plan', async () => {
       process.env['NEXT_PUBLIC_FEATURE_BAR_EXAM_ANSWERS_PUBLIC'] = 'true';
-      mockSubscriptionState.data = { planCode: 'pro', status: 'canceled' };
+      // Canceled subscription rolls back to `free` in the hook.
+      mockAccessState.canAccess = false;
+      mockAccessState.reason = 'free';
       navigationMocks.useParams.mockReturnValue({
         year: '2018',
         subjectCode: 'civil_law',
@@ -459,7 +465,7 @@ describe('bar-exams sitting page', () => {
 
     it('renders locked upsell card when no subscription exists', async () => {
       process.env['NEXT_PUBLIC_FEATURE_BAR_EXAM_ANSWERS_PUBLIC'] = 'true';
-      mockSubscriptionState.data = null;
+      // No subscription resolves to `free` in the hook.
       navigationMocks.useParams.mockReturnValue({
         year: '2018',
         subjectCode: 'civil_law',
@@ -476,10 +482,34 @@ describe('bar-exams sitting page', () => {
       ).not.toBeInTheDocument();
     });
 
+    it('platform admins see the answer accordion even on a free plan', async () => {
+      // Regression test for the systemic paywall bug: admins were stuck on
+      // the locked upsell because the page consulted subscription state
+      // alone. With useCanAccessPaidFeature the admin flag short-circuits.
+      process.env['NEXT_PUBLIC_FEATURE_BAR_EXAM_ANSWERS_PUBLIC'] = 'true';
+      mockAccessState.canAccess = true;
+      mockAccessState.reason = 'admin';
+      navigationMocks.useParams.mockReturnValue({
+        year: '2018',
+        subjectCode: 'civil_law',
+      });
+      mockGet.mockResolvedValueOnce(SITTING_PAYLOAD);
+
+      render(withProviders(<BarExamSittingPage />));
+
+      await waitFor(() =>
+        expect(screen.getByText(/AI Answer \(preview\)/i)).toBeInTheDocument(),
+      );
+      expect(screen.queryByTestId('answer-locked-1')).not.toBeInTheDocument();
+      expect(
+        screen.queryByText(/Subscribe to a plan to view AI-generated answers/i),
+      ).not.toBeInTheDocument();
+    });
+
     it('renders loading skeleton while subscription is loading', async () => {
       process.env['NEXT_PUBLIC_FEATURE_BAR_EXAM_ANSWERS_PUBLIC'] = 'true';
-      mockSubscriptionState.data = null;
-      mockSubscriptionState.isLoading = true;
+      mockAccessState.canAccess = false;
+      mockAccessState.reason = 'loading';
       navigationMocks.useParams.mockReturnValue({
         year: '2018',
         subjectCode: 'civil_law',

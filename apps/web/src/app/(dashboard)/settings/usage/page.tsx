@@ -14,6 +14,7 @@ import {
 
 import { useQuotaUsage } from '@/features/billing/hooks/use-quotas';
 import { useSubscription } from '@/features/billing/hooks/use-subscription';
+import { useCanAccessPaidFeature } from '@/hooks/useCanAccessPaidFeature';
 import {
   PLAN_LABELS,
   ENTITLEMENT_LABELS,
@@ -35,6 +36,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 export default function UsagePage() {
   const { data: usageData, isLoading: usageLoading, error: usageError } = useQuotaUsage();
   const { data: subscription, isLoading: subLoading } = useSubscription();
+  const { canAccess } = useCanAccessPaidFeature();
 
   const isLoading = usageLoading || subLoading;
 
@@ -78,8 +80,11 @@ export default function UsagePage() {
             <ActiveBonusesSection bonuses={usageData.activeBonuses} />
           )}
 
-          {/* Upgrade CTA */}
-          {subscription?.planCode &&
+          {/* Upgrade CTA — suppressed entirely for platform admins, who
+              bypass paywalls and would otherwise see a "upgrade to Pro"
+              card they cannot actually act on. */}
+          {!canAccess &&
+            subscription?.planCode &&
             ['free', 'edu'].includes(subscription.planCode) && (
               <UpgradeCard currentPlan={subscription.planCode} />
             )}

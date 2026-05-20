@@ -36,6 +36,10 @@ export class UsersController {
         ...this.usersService.sanitize(user),
         organizationRole: payload.role,
         organizationId: payload.organizationId,
+        // Resolved per-request by JwtStrategy from effective permissions
+        // (any `admin:*`). Frontend uses this as the trust signal that
+        // gates the paywall UI — fail-closed if absent.
+        isPlatformAdmin: payload.isPlatformAdmin ?? false,
       },
     };
   }
