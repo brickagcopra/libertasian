@@ -154,6 +154,7 @@ export class DerivativesAdminService {
       );
     }
 
+    // CARVE-OUT: admin jobId-based digest lookup is cross-tenant by design
     const digest = await this.prisma.digest.findFirst({
       where: { derivativeGenerationJobId: jobId },
       include: {
@@ -797,6 +798,7 @@ export class DerivativesAdminService {
     }
 
     if (job.derivativeType === 'case_digest') {
+      // CARVE-OUT: admin delete is cross-tenant by design
       const digest = await this.prisma.digest.findFirst({
         where: { derivativeGenerationJobId: jobId },
       });
@@ -817,6 +819,7 @@ export class DerivativesAdminService {
 
       // Digest model has no deletedAt — hard delete (admin reviewer rejection;
       // the source of truth is the legal_document).
+      // CARVE-OUT: admin delete is cross-tenant by design
       await this.prisma.digest.delete({ where: { id: digest.id } });
       await this.prisma.derivativeGenerationJob.delete({ where: { id: jobId } });
 

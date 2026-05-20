@@ -226,6 +226,7 @@ export class ExportsService {
     userId: string,
     organizationId: string,
   ): Promise<DigestExportData> {
+    // CARVE-OUT: assertAccess permits visibility='public_editorial' (line 328); forTenant() would 404 cross-org public digests
     const digest = await this.prisma.digest.findUnique({
       where: { id },
       include: {
@@ -294,7 +295,7 @@ export class ExportsService {
     userId: string,
     organizationId: string,
   ): Promise<NoteExportData> {
-    const note = await this.prisma.note.findUnique({
+    const note = await this.prisma.forTenant(organizationId).note.findUnique({
       where: { id },
       include: {
         matter: { select: { title: true } },
@@ -302,9 +303,6 @@ export class ExportsService {
     });
     if (!note) throw new NotFoundException('Note not found');
 
-    if (note.organizationId !== organizationId) {
-      throw new ForbiddenException('You do not have access to this note');
-    }
     if (note.userId !== userId) {
       throw new ForbiddenException('You do not have access to this note');
     }

@@ -152,6 +152,7 @@ export class HomeService {
     // todaysBrief: 1 most-recent approved editorial digest (any type). The
     // visibility='public_editorial' + reviewStatus='approved' clause is the
     // editorial gate; the OR with org-scoped digests keeps tenant isolation.
+    // CARVE-OUT: publicOrOrgDigestWhere() spans cross-org visibility='public_editorial'; forTenant() would filter them out
     const briefRows = await this.prisma.digest.findMany({
       where: this.publicOrOrgDigestWhere(organizationId),
       take: 1,
@@ -165,6 +166,7 @@ export class HomeService {
     const cursorDate = cursor ? new Date(cursor) : null;
 
     const [digestRows, documentRows] = await Promise.all([
+      // CARVE-OUT: publicOrOrgDigestWhere() spans cross-org visibility='public_editorial'; forTenant() would filter them out
       this.prisma.digest.findMany({
         where: {
           ...this.publicOrOrgDigestWhere(organizationId),

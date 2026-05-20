@@ -396,6 +396,7 @@ export class DerivativesService {
     if (type === 'case_digest') {
       const digestCounts = await Promise.all(
         subjects.map((s) =>
+          // CARVE-OUT: count under caseDigestVisibilityWhere() (visibility='public_editorial', reviewStatus in approved/ai_generated); forTenant() would miscount
           this.prisma.digest.count({
             where: {
               ...this.caseDigestVisibilityWhere(),
@@ -498,6 +499,7 @@ export class DerivativesService {
       }),
       Promise.all(
         subjects.map((s) =>
+          // CARVE-OUT: count under caseDigestVisibilityWhere() (visibility='public_editorial', reviewStatus in approved/ai_generated); forTenant() would miscount
           this.prisma.digest.count({
             where: {
               ...this.caseDigestVisibilityWhere(),
@@ -731,6 +733,7 @@ export class DerivativesService {
       where.title = { contains: query.search, mode: 'insensitive' };
     }
 
+    // CARVE-OUT: read under caseDigestVisibilityWhere() (visibility='public_editorial'); forTenant() would 404 cross-org
     const rows = await this.prisma.digest.findMany({
       where,
       take: limit + 1,
@@ -771,6 +774,7 @@ export class DerivativesService {
   }
 
   private async findCaseDigestById(id: string): Promise<DerivativeDetail | null> {
+    // CARVE-OUT: read under caseDigestVisibilityWhere() (visibility='public_editorial'); forTenant() would 404 cross-org
     const row = await this.prisma.digest.findFirst({
       where: { id, ...this.caseDigestVisibilityWhere() },
       include: {

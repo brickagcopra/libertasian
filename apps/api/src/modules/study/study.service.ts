@@ -1130,6 +1130,7 @@ export class StudyService {
         count = await this.prisma.legalDocument.count({ where: { id: resourceId } });
         break;
       case 'digest':
+        // CARVE-OUT: digest reference existence-check (syllabus/reviewer-pack) spans visibility='public_editorial'; forTenant() would miscount
         count = await this.prisma.digest.count({ where: { id: resourceId } });
         break;
       case 'flashcard_set':
@@ -1498,6 +1499,7 @@ export class StudyService {
         throw new NotFoundException('Referenced legal document not found');
       }
     } else if (dto.itemType === 'digest' && dto.digestId) {
+      // CARVE-OUT: digest reference existence-check (syllabus/reviewer-pack) spans visibility='public_editorial'; forTenant() would miscount
       const count = await this.prisma.digest.count({
         where: { id: dto.digestId },
       });

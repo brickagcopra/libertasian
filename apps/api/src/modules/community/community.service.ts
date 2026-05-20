@@ -56,6 +56,7 @@ export class CommunityService {
         });
         break;
       case 'digest':
+        // CARVE-OUT: cross-org visibility='public_editorial' digest read; forTenant() would 404 them
         entity = await this.prisma.digest.findUnique({
           where: { id: entityId },
           select: { visibility: true },
@@ -246,6 +247,7 @@ export class CommunityService {
       }),
     };
 
+    // CARVE-OUT: cross-org visibility='public_editorial' digest read; forTenant() would 404 them
     const items = await this.prisma.digest.findMany({
       take: limit + 1,
       ...(query.cursor && { skip: 1, cursor: { id: query.cursor } }),
@@ -333,6 +335,7 @@ export class CommunityService {
           creator: this.creatorInclude,
         },
       }),
+      // CARVE-OUT: cross-org visibility='public_editorial' digest read; forTenant() would 404 them
       this.prisma.digest.findMany({
         where: { visibility: 'public_editorial', ratingCount: { gt: 0 } },
         orderBy: { avgRating: 'desc' },
@@ -438,6 +441,7 @@ export class CommunityService {
         this.prisma.reviewerPack.count({
           where: { creatorUserId: userId, visibility: 'public_editorial' },
         }),
+        // CARVE-OUT: cross-org visibility='public_editorial' digest read; forTenant() would 404 them
         this.prisma.digest.count({
           where: { userId, visibility: 'public_editorial' },
         }),
@@ -472,6 +476,7 @@ export class CommunityService {
               {
                 entityType: 'digest',
                 entityId: {
+                  // CARVE-OUT: cross-org visibility='public_editorial' digest read; forTenant() would 404 them
                   in: await this.prisma.digest
                     .findMany({
                       where: { userId, visibility: 'public_editorial' },
@@ -648,6 +653,7 @@ export class CommunityService {
         });
         break;
       case 'digest':
+        // CARVE-OUT: aggregate write on public_editorial digest (avgRating/voteScore); forTenant() would inject viewerOrgId into WHERE and silently drop the update for cross-org rows
         await this.prisma.digest.update({
           where: { id: entityId },
           data: { avgRating, ratingCount },
@@ -719,6 +725,7 @@ export class CommunityService {
       }),
     ]);
 
+    // CARVE-OUT: aggregate write on public_editorial digest (avgRating/voteScore); forTenant() would inject viewerOrgId into WHERE and silently drop the update for cross-org rows
     await this.prisma.digest.update({
       where: { id: entityId },
       data: { voteScore: upCount - downCount },
