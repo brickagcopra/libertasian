@@ -38,6 +38,7 @@ describe('useAuthStore', () => {
       emailVerified: true,
       onboardingCompletedAt: null,
       userRole: null,
+      isPlatformAdmin: false,
     };
 
     useAuthStore.getState().setUser(user);
@@ -60,6 +61,7 @@ describe('useAuthStore', () => {
       emailVerified: true,
       onboardingCompletedAt: null,
       userRole: null,
+      isPlatformAdmin: false,
     });
 
     // Verify state is set
@@ -121,6 +123,7 @@ describe('useAuthStore', () => {
       emailVerified: true,
       onboardingCompletedAt: null,
       userRole: null,
+      isPlatformAdmin: false,
     };
 
     useAuthStore.getState().setUser(user);

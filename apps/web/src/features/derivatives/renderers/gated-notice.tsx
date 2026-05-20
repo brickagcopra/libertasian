@@ -1,7 +1,10 @@
+'use client';
+
 import Link from 'next/link';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useCanAccessPaidFeature } from '@/hooks/useCanAccessPaidFeature';
 import { LockIcon } from 'lucide-react';
 
 interface GatedNoticeProps {
@@ -10,6 +13,14 @@ interface GatedNoticeProps {
 }
 
 export function GatedNotice({ typeLabel, upgradeTier }: GatedNoticeProps) {
+  // Defense-in-depth: even though the backend already sets isGated=false
+  // for platform admins (PR #160), the renderers still consult this notice
+  // and we want a single chokepoint that admins cannot accidentally land
+  // on. If the user can access paid features, render nothing — callers
+  // already render the unlocked content path in parallel.
+  const { canAccess } = useCanAccessPaidFeature();
+  if (canAccess) return null;
+
   const tier = upgradeTier ?? 'edu';
   return (
     <Card className="border-amber-200 bg-amber-50/50">

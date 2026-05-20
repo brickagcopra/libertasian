@@ -14,7 +14,7 @@ import {
 import { EmptyState } from '@/components/empty-states/empty-state';
 import { useBarExamAnswer } from '@/features/bar-exams/hooks/use-bar-exam-answer';
 import type { BarExamAnswer } from '@/features/bar-exams/types';
-import { useSubscription } from '@/features/billing/hooks/use-subscription';
+import { useCanAccessPaidFeature } from '@/hooks/useCanAccessPaidFeature';
 import { ApiClientError, apiClient } from '@/lib/api-client';
 import { subjectLabelWithPart, type SittingDetail } from '../../subjects';
 
@@ -24,11 +24,9 @@ function isAnswersPublicEnabled(): boolean {
 
 export default function BarExamSittingPage() {
   const featureEnabled = isAnswersPublicEnabled();
-  const { data: sub, isLoading: subLoading } = useSubscription();
-  const hasPaidPlan =
-    !!sub &&
-    sub.planCode !== 'free' &&
-    (sub.status === 'active' || sub.status === 'trialing');
+  const access = useCanAccessPaidFeature();
+  const subLoading = access.reason === 'loading';
+  const canAccessAnswers = access.canAccess;
   const params = useParams<{ year: string; subjectCode: string }>();
   const searchParams = useSearchParams();
   const yearParam = params?.year ?? '';
@@ -190,7 +188,7 @@ export default function BarExamSittingPage() {
                 >
                   <div className="h-9 w-48 animate-pulse rounded bg-gray-100" />
                 </div>
-              ) : hasPaidPlan ? (
+              ) : canAccessAnswers ? (
                 <div className="mt-4 border-t border-gray-100 pt-2">
                   <Accordion
                     type="single"

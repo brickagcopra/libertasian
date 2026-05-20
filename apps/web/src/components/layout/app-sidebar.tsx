@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 import { useAuthStore } from '@/stores/auth-store';
 import { Wordmark } from '@/components/brand/wordmark';
 import { useSubscription, meetsMinimumTier } from '@/features/billing/hooks/use-subscription';
+import { useCanAccessPaidFeature } from '@/hooks/useCanAccessPaidFeature';
 import { useHasPermission } from '@/features/settings/hooks/use-rbac';
 import { cn } from '@/lib/utils';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -171,6 +172,10 @@ export function SidebarContent() {
   const pathname = usePathname();
   const { data: subscription } = useSubscription();
   const currentPlan = subscription?.planCode;
+  // Platform admins bypass the per-item tier gate so the sidebar never
+  // renders padlock icons for them. Source-of-truth hook — the same one
+  // every other paywall surface consults.
+  const { canAccess: bypassTierGate } = useCanAccessPaidFeature();
 
   // Compute the single most-specific nav href for the current pathname so
   // that hierarchical entries (`/admin` → `/admin/blog`,
@@ -203,7 +208,10 @@ export function SidebarContent() {
   };
 
   const renderNavItem = (item: NavItem) => {
-    const locked = item.minTier && !meetsMinimumTier(currentPlan, item.minTier);
+    const locked =
+      !bypassTierGate &&
+      item.minTier &&
+      !meetsMinimumTier(currentPlan, item.minTier);
     const Icon = item.icon;
     const active = isActive(item.href, item.exact);
 

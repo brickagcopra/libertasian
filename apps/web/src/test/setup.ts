@@ -24,6 +24,18 @@ vi.mock('next/link', () => {
   };
 });
 
+// Default-mock the paywall short-circuit hook so component tests that
+// render UpgradeBanner / GatedNotice / paywall surfaces don't need to
+// stand up a QueryClient + auth store to exercise the locked-by-default
+// path. The default is `{ canAccess: false, reason: 'free' }` — which
+// matches how the existing tests construct fixtures (isGated: true,
+// previewMode: true). Test files that need to assert variations (admin
+// bypass, paid, loading) declare their own `vi.mock` for this hook,
+// which takes precedence over this setup-level mock.
+vi.mock('@/hooks/useCanAccessPaidFeature', () => ({
+  useCanAccessPaidFeature: () => ({ canAccess: false, reason: 'free' }),
+}));
+
 // Suppress console.error in tests unless explicitly testing error states
 const originalError = console.error;
 beforeAll(() => {
