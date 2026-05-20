@@ -79,7 +79,24 @@ describe('LoginEventService', () => {
       data: expect.objectContaining({
         lastLoginIp: '203.0.113.5',
         lastLoginCountry: 'PH',
+        lastLoginCity: 'Manila',
+        lastLoginRegion: 'NCR',
         lastLoginAt: expect.any(Date),
+      }),
+    });
+  });
+
+  it('writes null lastLoginCity + lastLoginRegion when geo lookup misses', async () => {
+    geoip.lookup.mockReturnValueOnce(null);
+
+    await service.record('login_success', 'user-1', buildReq());
+
+    expect(prisma.user.update).toHaveBeenCalledWith({
+      where: { id: 'user-1' },
+      data: expect.objectContaining({
+        lastLoginCountry: null,
+        lastLoginCity: null,
+        lastLoginRegion: null,
       }),
     });
   });

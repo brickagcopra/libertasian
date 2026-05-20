@@ -81,6 +81,8 @@ export class UsersAdminService {
         lastLoginAt: true,
         lastLoginIp: true,
         lastLoginCountry: true,
+        lastLoginCity: true,
+        lastLoginRegion: true,
       },
     });
 
@@ -190,6 +192,8 @@ export class UsersAdminService {
         lifetimeValueCentavos,
         lastLoginAt: u.lastLoginAt,
         lastLoginCountry: u.lastLoginCountry,
+        lastLoginCity: u.lastLoginCity,
+        lastLoginRegion: u.lastLoginRegion,
         lastLoginIp: u.lastLoginIp,
       };
     });
@@ -220,6 +224,8 @@ export class UsersAdminService {
         lastLoginAt: true,
         lastLoginIp: true,
         lastLoginCountry: true,
+        lastLoginCity: true,
+        lastLoginRegion: true,
         memberships: {
           orderBy: { createdAt: 'asc' },
           select: {
@@ -525,6 +531,8 @@ export class UsersAdminService {
         : null,
       lastLoginAt: user.lastLoginAt,
       lastLoginCountry: user.lastLoginCountry,
+      lastLoginCity: user.lastLoginCity,
+      lastLoginRegion: user.lastLoginRegion,
       lastLoginIp: user.lastLoginIp,
       loginHistory: loginHistory.map((e) => ({
         id: e.id,

@@ -92,6 +92,28 @@ function countryFlag(code: string | null | undefined): string {
   );
 }
 
+/**
+ * Compose a single-line "City, Region, ZZ" location string from the
+ * denormalized lastLogin* columns. Skips blank components so we never render
+ * a stray ", ," when only country is known. Returns '' when nothing is set,
+ * letting callers decide between hide-vs-show-dash.
+ */
+function formatLoginLocation(
+  city: string | null | undefined,
+  region: string | null | undefined,
+  country: string | null | undefined,
+): string {
+  const parts = [city, region, country?.toUpperCase()].filter(
+    (p): p is string => !!p && p.trim().length > 0,
+  );
+  return parts.join(', ');
+}
+
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return `${s.slice(0, Math.max(0, max - 1))}…`;
+}
+
 const loginEventTypeColors: Record<string, string> = {
   login_success: 'bg-green-100 text-green-700',
   google_login: 'bg-green-100 text-green-700',
@@ -274,13 +296,27 @@ export default function AdminUsersPage() {
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {u.lastLoginAt ? (
-                        <span className="inline-flex items-center gap-1.5">
-                          <span aria-hidden>{countryFlag(u.lastLoginCountry)}</span>
-                          <span>{formatDate(u.lastLoginAt)}</span>
-                          {u.lastLoginCountry && (
-                            <span className="text-xs uppercase">{u.lastLoginCountry}</span>
-                          )}
-                        </span>
+                        <div className="flex flex-col leading-tight">
+                          <span className="inline-flex items-center gap-1.5">
+                            <span aria-hidden>{countryFlag(u.lastLoginCountry)}</span>
+                            <span>{formatDate(u.lastLoginAt)}</span>
+                          </span>
+                          {(() => {
+                            const loc = formatLoginLocation(
+                              u.lastLoginCity,
+                              u.lastLoginRegion,
+                              u.lastLoginCountry,
+                            );
+                            return loc ? (
+                              <span
+                                className="text-xs text-muted-foreground/80"
+                                title={loc}
+                              >
+                                {truncate(loc, 35)}
+                              </span>
+                            ) : null;
+                          })()}
+                        </div>
                       ) : (
                         <span>—</span>
                       )}
@@ -420,17 +456,27 @@ function UserDetailSheet({
                   <FactRow label="Updated" value={formatDate(user.updatedAt)} />
                   <FactRow
                     label="Last login"
-                    value={
-                      user.lastLoginAt
-                        ? `${formatDateTime(user.lastLoginAt)}${
-                            user.lastLoginCountry
-                              ? ` · ${countryFlag(user.lastLoginCountry)} ${user.lastLoginCountry}`
-                              : ''
-                          }`
-                        : '—'
-                    }
+                    value={(() => {
+                      if (!user.lastLoginAt) return '—';
+                      const loc = formatLoginLocation(
+                        user.lastLoginCity,
+                        user.lastLoginRegion,
+                        user.lastLoginCountry,
+                      );
+                      const flag = countryFlag(user.lastLoginCountry);
+                      // Date+time is the primary signal; location is the
+                      // detail that PR #160's feedback wanted surfaced
+                      // (city/region was previously buried in the IP).
+                      return `${formatDateTime(user.lastLoginAt)}${
+                        loc ? ` · ${flag ? `${flag} ` : ''}${loc}` : ''
+                      }`;
+                    })()}
                   />
-                  <FactRow label="Last login IP" value={user.lastLoginIp ?? '—'} />
+                  <FactRow
+                    label="From IP"
+                    value={user.lastLoginIp ?? '—'}
+                    subtle
+                  />
                   {user.expertVerification && (
                     <FactRow
                       label="Expert verification"
@@ -735,11 +781,33 @@ function UserDetailSheet({
   );
 }
 
-function FactRow({ label, value }: { label: string; value: string }) {
+function FactRow({
+  label,
+  value,
+  subtle = false,
+}: {
+  label: string;
+  value: string;
+  subtle?: boolean;
+}) {
   return (
     <div className="flex items-baseline justify-between gap-4">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="text-right font-medium">{value}</span>
+      <span
+        className={
+          subtle ? 'text-xs text-muted-foreground/80' : 'text-muted-foreground'
+        }
+      >
+        {label}
+      </span>
+      <span
+        className={
+          subtle
+            ? 'text-right text-xs text-muted-foreground/80'
+            : 'text-right font-medium'
+        }
+      >
+        {value}
+      </span>
     </div>
   );
 }
