@@ -50,6 +50,7 @@ export class FeedMediaProcessor extends WorkerHost {
       await this.updateJobStatus(jobId, 'processing');
       await this.updateMediaStatus(mediaId, 'processing');
 
+      // Intentional bootstrap: no organizationId in scope yet. The row read provides media.organizationId for subsequent tenanted calls below.
       const media = await this.prisma.feedPostMedia.findUnique({
         where: { id: mediaId },
       });
@@ -74,7 +75,7 @@ export class FeedMediaProcessor extends WorkerHost {
         await this.s3.upload(quarantineKey, buffer, media.mimeType, 'quarantined');
         await this.s3.delete(media.originalObjectKey);
 
-        await this.prisma.feedPostMedia.update({
+        await this.prisma.forTenant(media.organizationId).feedPostMedia.update({
           where: { id: mediaId },
           data: {
             processingStatus: 'quarantined',
@@ -132,7 +133,7 @@ export class FeedMediaProcessor extends WorkerHost {
       await this.s3.delete(media.originalObjectKey);
 
       // 8. Update FeedPostMedia record
-      await this.prisma.feedPostMedia.update({
+      await this.prisma.forTenant(media.organizationId).feedPostMedia.update({
         where: { id: mediaId },
         data: {
           processedObjectKey: processedKey,
@@ -156,6 +157,8 @@ export class FeedMediaProcessor extends WorkerHost {
       this.logger.error(`Feed media ${mediaId} processing failed: ${errorMessage}`);
 
       await this.updateJobStatus(jobId, 'failed', errorMessage);
+      // Bootstrap path: the const `media` from the try block is out of scope
+      // here, so we cannot know organizationId. Stays on direct prisma.
       await this.prisma.feedPostMedia.update({
         where: { id: mediaId },
         data: {
@@ -181,10 +184,22 @@ export class FeedMediaProcessor extends WorkerHost {
     });
   }
 
-  private async updateMediaStatus(mediaId: string, status: string) {
-    await this.prisma.feedPostMedia.update({
-      where: { id: mediaId },
-      data: { processingStatus: status },
-    });
+  private async updateMediaStatus(
+    mediaId: string,
+    status: string,
+    organizationId?: string,
+  ) {
+    if (organizationId) {
+      await this.prisma.forTenant(organizationId).feedPostMedia.update({
+        where: { id: mediaId },
+        data: { processingStatus: status },
+      });
+    } else {
+      // Bootstrap path: called before the row's organizationId has been read.
+      await this.prisma.feedPostMedia.update({
+        where: { id: mediaId },
+        data: { processingStatus: status },
+      });
+    }
   }
 }

@@ -66,6 +66,7 @@ const mockPrisma = {
   feedPost: {
     findUnique: jest.fn(),
   },
+  forTenant: jest.fn(),
 };
 
 const mockS3 = {
@@ -102,6 +103,8 @@ describe('FeedMediaService', () => {
 
     service = module.get<FeedMediaService>(FeedMediaService);
     jest.clearAllMocks();
+    // forTenant returns the same mock so existing model mocks keep firing
+    mockPrisma.forTenant.mockReturnValue(mockPrisma);
   });
 
   // ─── Upload ───────────────────────────────────────────────────────────────
@@ -166,6 +169,7 @@ describe('FeedMediaService', () => {
       expect(result.processingStatus).toBe('pending');
       expect(mockS3.upload).toHaveBeenCalledTimes(1);
       expect(mockS3.computeChecksum).toHaveBeenCalledWith(JPEG_HEADER);
+      expect(mockPrisma.forTenant).toHaveBeenCalledWith(ORG_ID);
       expect(mockQueue.add).toHaveBeenCalledWith(
         'process-feed-media',
         { mediaId: MEDIA_ID, jobId: 'job-1' },
@@ -179,17 +183,18 @@ describe('FeedMediaService', () => {
     it('should return status for owned media', async () => {
       mockPrisma.feedPostMedia.findUnique.mockResolvedValue(mockMedia);
 
-      const result = await service.getMediaStatus(MEDIA_ID, USER_ID);
+      const result = await service.getMediaStatus(MEDIA_ID, USER_ID, ORG_ID);
 
       expect(result.processingStatus).toBe('ready');
       expect(result.processedObjectKey).toBe(mockMedia.processedObjectKey);
+      expect(mockPrisma.forTenant).toHaveBeenCalledWith(ORG_ID);
     });
 
     it('should reject access to other user\'s media', async () => {
       mockPrisma.feedPostMedia.findUnique.mockResolvedValue(mockMedia);
 
       await expect(
-        service.getMediaStatus(MEDIA_ID, OTHER_USER_ID),
+        service.getMediaStatus(MEDIA_ID, OTHER_USER_ID, ORG_ID),
       ).rejects.toThrow(ForbiddenException);
     });
   });
@@ -201,10 +206,11 @@ describe('FeedMediaService', () => {
       mockPrisma.feedPostMedia.findUnique.mockResolvedValue(mockMedia);
       mockPrisma.feedPost.findUnique.mockResolvedValue(null); // not attached
 
-      await service.deleteMedia(MEDIA_ID, USER_ID);
+      await service.deleteMedia(MEDIA_ID, USER_ID, ORG_ID);
 
       expect(mockS3.delete).toHaveBeenCalledTimes(3); // original + processed + thumb
       expect(mockPrisma.feedPostMedia.delete).toHaveBeenCalledWith({ where: { id: MEDIA_ID } });
+      expect(mockPrisma.forTenant).toHaveBeenCalledWith(ORG_ID);
     });
 
     it('should reject deleting media attached to a post', async () => {
@@ -212,7 +218,7 @@ describe('FeedMediaService', () => {
       mockPrisma.feedPost.findUnique.mockResolvedValue({ id: 'post-1' });
 
       await expect(
-        service.deleteMedia(MEDIA_ID, USER_ID),
+        service.deleteMedia(MEDIA_ID, USER_ID, ORG_ID),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -220,7 +226,7 @@ describe('FeedMediaService', () => {
       mockPrisma.feedPostMedia.findUnique.mockResolvedValue(mockMedia);
 
       await expect(
-        service.deleteMedia(MEDIA_ID, OTHER_USER_ID),
+        service.deleteMedia(MEDIA_ID, OTHER_USER_ID, ORG_ID),
       ).rejects.toThrow(ForbiddenException);
     });
   });
