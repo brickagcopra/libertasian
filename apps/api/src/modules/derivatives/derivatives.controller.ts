@@ -8,14 +8,17 @@ import {
   Param,
   ParseUUIDPipe,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
+import type { Request } from 'express';
 import type { JwtPayload } from '@libertasian/types';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { AdminBypassAuditService } from '../../common/services/admin-bypass-audit.service';
 import { EntitlementService } from '../subscriptions/entitlement.service';
 import { DerivativesService } from './derivatives.service';
 import {
@@ -47,11 +50,29 @@ export class DerivativesController {
   constructor(
     private readonly service: DerivativesService,
     private readonly entitlementService: EntitlementService,
+    private readonly adminBypassAudit: AdminBypassAuditService,
   ) {}
 
-  private async resolvePreviewOnly(organizationId: string): Promise<boolean> {
+  /**
+   * Platform admins (any `admin:*` permission) bypass the previewOnly cap.
+   * The bypass is audited (throttled per userId+route) for compliance.
+   */
+  private async resolvePreviewOnly(
+    user: JwtPayload,
+    req: Request,
+    documentId?: string,
+  ): Promise<boolean> {
+    if (user.isPlatformAdmin === true) {
+      this.adminBypassAudit.record({
+        userId: user.sub,
+        organizationId: user.organizationId,
+        route: `${req.method} ${req.route?.path ?? req.path}`,
+        documentId,
+      });
+      return false;
+    }
     const ent = await this.entitlementService.resolveEffectiveEntitlements(
-      organizationId,
+      user.organizationId,
     );
     return ent.previewOnly === true;
   }
@@ -62,8 +83,9 @@ export class DerivativesController {
   async list(
     @Query() query: ListDerivativesQueryDto,
     @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
   ) {
-    const previewOnly = await this.resolvePreviewOnly(user.organizationId);
+    const previewOnly = await this.resolvePreviewOnly(user, req);
     const result = await this.service.list(
       user.sub,
       user.organizationId,
@@ -112,8 +134,9 @@ export class DerivativesController {
   async findOne(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
   ) {
-    const previewOnly = await this.resolvePreviewOnly(user.organizationId);
+    const previewOnly = await this.resolvePreviewOnly(user, req, id);
     const data = await this.service.findOne(
       id,
       user.sub,

@@ -96,7 +96,7 @@ describe('TimelinesService', () => {
 
       expect(result).toEqual(mockTimeline);
       expect(usageQuota.checkAndIncrement).toHaveBeenCalledWith(
-        organizationId, userId, 'timelineGenerationPerMonth',
+        organizationId, userId, 'timelineGenerationPerMonth', { isPlatformAdmin: false },
       );
       expect(queue.add).toHaveBeenCalledWith(
         'generate-timeline',

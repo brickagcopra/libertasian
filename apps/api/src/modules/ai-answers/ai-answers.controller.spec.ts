@@ -124,6 +124,7 @@ describe('AiAnswersController', () => {
         'org-1',
         'user-1',
         'aiAnswers',
+        { isPlatformAdmin: false },
       );
     });
 
@@ -411,6 +412,7 @@ describe('AiAnswersController', () => {
         'org-1',
         'user-1',
         'aiAnswers',
+        { isPlatformAdmin: false },
       );
     });
   });

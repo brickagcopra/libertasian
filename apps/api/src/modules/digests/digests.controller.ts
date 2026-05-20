@@ -12,14 +12,17 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import type { Request } from 'express';
 import type { JwtPayload } from '@libertasian/types';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { AdminBypassAuditService } from '../../common/services/admin-bypass-audit.service';
 import { TrackEvent } from '../analytics';
 import { AuditService } from '../audit/audit.service';
 import { EntitlementService } from '../subscriptions/entitlement.service';
@@ -52,11 +55,30 @@ export class DigestsController {
     private readonly auditService: AuditService,
     private readonly usageQuota: UsageQuotaService,
     private readonly entitlementService: EntitlementService,
+    private readonly adminBypassAudit: AdminBypassAuditService,
   ) {}
 
-  private async resolvePreviewOnly(organizationId: string): Promise<boolean> {
+  /**
+   * Platform admins (any `admin:*` permission) always see the full corpus
+   * regardless of org subscription. The bypass is audited (throttled per
+   * userId+route) for compliance.
+   */
+  private async resolvePreviewOnly(
+    user: JwtPayload,
+    req: Request,
+    documentId?: string,
+  ): Promise<boolean> {
+    if (user.isPlatformAdmin === true) {
+      this.adminBypassAudit.record({
+        userId: user.sub,
+        organizationId: user.organizationId,
+        route: `${req.method} ${req.route?.path ?? req.path}`,
+        documentId,
+      });
+      return false;
+    }
     const ent = await this.entitlementService.resolveEffectiveEntitlements(
-      organizationId,
+      user.organizationId,
     );
     return ent.previewOnly === true;
   }
@@ -156,8 +178,9 @@ export class DigestsController {
   async list(
     @Query() query: ListDigestsQueryDto,
     @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
   ) {
-    const previewOnly = await this.resolvePreviewOnly(user.organizationId);
+    const previewOnly = await this.resolvePreviewOnly(user, req);
     const result = await this.digestsService.list(
       user.sub,
       user.organizationId,
@@ -175,8 +198,9 @@ export class DigestsController {
   async search(
     @Query() query: SearchDigestsQueryDto,
     @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
   ) {
-    const previewOnly = await this.resolvePreviewOnly(user.organizationId);
+    const previewOnly = await this.resolvePreviewOnly(user, req);
     const searchResult = await this.digestsService.search(query, previewOnly);
     return {
       success: true,
@@ -220,6 +244,7 @@ export class DigestsController {
       user.organizationId,
       user.sub,
       'digestsPerMonth',
+      { isPlatformAdmin: user.isPlatformAdmin === true },
     );
 
     if (!quota.allowed) {
@@ -277,8 +302,9 @@ export class DigestsController {
   async findById(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
   ) {
-    const previewOnly = await this.resolvePreviewOnly(user.organizationId);
+    const previewOnly = await this.resolvePreviewOnly(user, req, id);
     const digest = await this.digestsService.findById(
       id,
       user.sub,
@@ -339,8 +365,9 @@ export class DigestsController {
   async getProvenance(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
   ) {
-    const previewOnly = await this.resolvePreviewOnly(user.organizationId);
+    const previewOnly = await this.resolvePreviewOnly(user, req, id);
     // Verify access to the digest first — also enforces the preview cap
     // when the caller is on a free plan.
     await this.digestsService.findById(id, user.sub, user.organizationId, previewOnly);

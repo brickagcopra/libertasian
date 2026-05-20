@@ -151,6 +151,7 @@ export class UploadsController {
       user.organizationId,
       user.sub,
       'cameraScansPerMonth',
+      { isPlatformAdmin: user.isPlatformAdmin === true },
     );
     if (!quota.allowed) {
       throw new ForbiddenException({
@@ -254,6 +255,7 @@ export class UploadsController {
       user.organizationId,
       user.sub,
       'digestsPerMonth',
+      { isPlatformAdmin: user.isPlatformAdmin === true },
     );
     if (!quota.allowed) {
       throw new ForbiddenException({

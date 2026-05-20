@@ -1,13 +1,18 @@
 import { ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 
+import { AdminBypassAuditService } from '../services/admin-bypass-audit.service';
 import { SubscriptionsService } from '../../modules/subscriptions/subscriptions.service';
 import { SubscriptionGuard, SUBSCRIPTION_KEY } from './subscription.guard';
 
-function createMockContext(user?: Record<string, unknown>): ExecutionContext {
+function createMockContext(
+  user?: Record<string, unknown>,
+  method = 'GET',
+  path = '/documents',
+): ExecutionContext {
   return {
     switchToHttp: () => ({
-      getRequest: () => ({ user }),
+      getRequest: () => ({ user, method, path }),
     }),
     getHandler: () => jest.fn(),
     getClass: () => jest.fn(),
@@ -18,14 +23,18 @@ describe('SubscriptionGuard', () => {
   let guard: SubscriptionGuard;
   let reflector: Reflector;
   let subscriptionsService: jest.Mocked<SubscriptionsService>;
+  let adminBypassAudit: jest.Mocked<AdminBypassAuditService>;
 
   beforeEach(() => {
     reflector = new Reflector();
     subscriptionsService = {
       getPlanCode: jest.fn(),
     } as unknown as jest.Mocked<SubscriptionsService>;
+    adminBypassAudit = {
+      record: jest.fn(),
+    } as unknown as jest.Mocked<AdminBypassAuditService>;
 
-    guard = new SubscriptionGuard(reflector, subscriptionsService);
+    guard = new SubscriptionGuard(reflector, subscriptionsService, adminBypassAudit);
   });
 
   describe('no subscription metadata', () => {
@@ -124,6 +133,50 @@ describe('SubscriptionGuard', () => {
   describe('SUBSCRIPTION_KEY export', () => {
     it('should export the correct metadata key', () => {
       expect(SUBSCRIPTION_KEY).toBe('subscription_tier');
+    });
+  });
+
+  describe('platform-admin bypass', () => {
+    it('should allow platform admins regardless of plan and not consult subscriptions service', async () => {
+      jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue('enterprise');
+      const context = createMockContext(
+        { sub: 'admin-1', organizationId: 'org-1', isPlatformAdmin: true },
+        'GET',
+        '/documents/abc',
+      );
+
+      await expect(guard.canActivate(context)).resolves.toBe(true);
+      expect(subscriptionsService.getPlanCode).not.toHaveBeenCalled();
+      expect(adminBypassAudit.record).toHaveBeenCalledWith({
+        userId: 'admin-1',
+        organizationId: 'org-1',
+        route: 'GET /documents/abc',
+      });
+    });
+
+    it('should still 403 non-admin users on free plan when tier required', async () => {
+      jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue('pro');
+      subscriptionsService.getPlanCode.mockResolvedValue('free');
+      const context = createMockContext({
+        sub: 'user-1',
+        organizationId: 'org-1',
+        isPlatformAdmin: false,
+      });
+
+      await expect(guard.canActivate(context)).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(adminBypassAudit.record).not.toHaveBeenCalled();
+    });
+
+    it('should still 403 when user has no organizationId even if flagged admin (auth check runs first)', async () => {
+      jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue('pro');
+      const context = createMockContext({ sub: 'admin-1', isPlatformAdmin: true });
+
+      await expect(guard.canActivate(context)).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(adminBypassAudit.record).not.toHaveBeenCalled();
     });
   });
 });

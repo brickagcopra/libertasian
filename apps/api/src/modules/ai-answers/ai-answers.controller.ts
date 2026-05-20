@@ -46,6 +46,7 @@ export class AiAnswersController {
       user.organizationId,
       user.sub,
       'aiAnswers',
+      { isPlatformAdmin: user.isPlatformAdmin === true },
     );
     if (!quota.allowed) {
       throw new ForbiddenException({
@@ -95,6 +96,7 @@ export class AiAnswersController {
       user.organizationId,
       user.sub,
       'aiAnswers',
+      { isPlatformAdmin: user.isPlatformAdmin === true },
     );
     if (!quota.allowed) {
       res.status(403).json({

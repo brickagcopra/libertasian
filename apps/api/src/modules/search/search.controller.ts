@@ -68,6 +68,7 @@ export class SearchController {
       user.organizationId,
       user.sub,
       'searchQueries',
+      { isPlatformAdmin: user.isPlatformAdmin === true },
     );
     if (!quota.allowed) {
       throw new ForbiddenException({

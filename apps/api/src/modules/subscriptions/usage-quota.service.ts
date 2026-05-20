@@ -62,12 +62,30 @@ export class UsageQuotaService {
   /**
    * Check the quota and increment usage if allowed.
    * Uses billing-cycle-aware Redis keys when a subscription has billing period dates.
+   *
+   * When `opts.isPlatformAdmin` is true, returns unlimited and skips the
+   * Redis counter entirely — platform admins must not consume real-user
+   * quota so a single admin scrolling the corpus cannot starve customers.
+   * Callers are still expected to write an audit-log row for the bypass
+   * (the guard does this; non-guarded call sites should pass the flag and
+   * the controller can record manually if needed).
    */
   async checkAndIncrement(
     organizationId: string,
     userId: string,
     quotaType: QuotaType,
+    opts?: { isPlatformAdmin?: boolean },
   ): Promise<QuotaCheckResult> {
+    if (opts?.isPlatformAdmin) {
+      return {
+        allowed: true,
+        used: 0,
+        limit: -1,
+        remaining: -1,
+        resetsAt: '',
+      };
+    }
+
     const entitlements = await this.entitlementService.resolveEffectiveEntitlements(organizationId);
     const limit = this.getLimit(entitlements, quotaType);
 

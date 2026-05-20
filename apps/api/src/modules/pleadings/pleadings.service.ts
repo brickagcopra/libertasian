@@ -40,12 +40,14 @@ export class PleadingsService {
     dto: GeneratePleadingDto,
     userId: string,
     organizationId: string,
+    opts?: { isPlatformAdmin?: boolean },
   ) {
     // Check usage quota
     const quota = await this.usageQuota.checkAndIncrement(
       organizationId,
       userId,
       'pleadingAssistancePerMonth',
+      { isPlatformAdmin: opts?.isPlatformAdmin === true },
     );
     if (!quota.allowed) {
       throw new ForbiddenException(

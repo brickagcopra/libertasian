@@ -8,11 +8,14 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import type { JwtPayload } from '@libertasian/types';
+
+import type { Request } from 'express';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequiredPermissions } from '../../common/decorators/permissions.decorator';
@@ -21,6 +24,7 @@ import { MfaGuard } from '../../common/guards/mfa.guard';
 import { OptionalJwtAuthGuard } from '../../common/guards/optional-jwt-auth.guard';
 import { TenantGuard } from '../../common/guards/tenant.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { AdminBypassAuditService } from '../../common/services/admin-bypass-audit.service';
 import { AuditService } from '../audit/audit.service';
 import { EntitlementService } from '../subscriptions/entitlement.service';
 import { DocumentsService } from './documents.service';
@@ -46,9 +50,31 @@ export class DocumentsController {
     private readonly documentsService: DocumentsService,
     private readonly auditService: AuditService,
     private readonly entitlementService: EntitlementService,
+    private readonly adminBypassAudit: AdminBypassAuditService,
   ) {}
 
-  private async resolvePreviewOnly(user: JwtPayload | null): Promise<boolean> {
+  /**
+   * Resolve whether the caller sees only the free-plan preview cap.
+   *
+   * Platform admins (any `admin:*` permission) always see the full corpus
+   * regardless of their org's subscription state. The bypass is audited
+   * (throttled per userId+route) so admin reads of paid content remain
+   * traceable for compliance.
+   */
+  private async resolvePreviewOnly(
+    user: JwtPayload | null,
+    req: Request,
+    documentId?: string,
+  ): Promise<boolean> {
+    if (user?.isPlatformAdmin === true) {
+      this.adminBypassAudit.record({
+        userId: user.sub,
+        organizationId: user.organizationId,
+        route: `${req.method} ${req.route?.path ?? req.path}`,
+        documentId,
+      });
+      return false;
+    }
     if (!user) return true;
     const ent = await this.entitlementService.resolveEffectiveEntitlements(
       user.organizationId,
@@ -65,8 +91,9 @@ export class DocumentsController {
   async list(
     @Query() query: ListDocumentsQueryDto,
     @CurrentUser() user: JwtPayload | null,
+    @Req() req: Request,
   ) {
-    const previewOnly = await this.resolvePreviewOnly(user);
+    const previewOnly = await this.resolvePreviewOnly(user, req);
     const result = await this.documentsService.list(query, previewOnly);
     return { success: true, data: result.items, meta: result.meta };
   }
@@ -78,8 +105,9 @@ export class DocumentsController {
   async findById(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: JwtPayload | null,
+    @Req() req: Request,
   ) {
-    const previewOnly = await this.resolvePreviewOnly(user);
+    const previewOnly = await this.resolvePreviewOnly(user, req, id);
     const doc = await this.documentsService.findById(id, previewOnly);
     return { success: true, data: doc };
   }
@@ -91,8 +119,9 @@ export class DocumentsController {
   async listSections(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: JwtPayload | null,
+    @Req() req: Request,
   ) {
-    const previewOnly = await this.resolvePreviewOnly(user);
+    const previewOnly = await this.resolvePreviewOnly(user, req, id);
     const sections = await this.documentsService.listSections(id, previewOnly);
     return { success: true, data: sections };
   }
@@ -105,8 +134,9 @@ export class DocumentsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Param('sectionId', ParseUUIDPipe) sectionId: string,
     @CurrentUser() user: JwtPayload | null,
+    @Req() req: Request,
   ) {
-    const previewOnly = await this.resolvePreviewOnly(user);
+    const previewOnly = await this.resolvePreviewOnly(user, req, id);
     const section = await this.documentsService.getSection(id, sectionId, previewOnly);
     return { success: true, data: section };
   }
@@ -118,8 +148,9 @@ export class DocumentsController {
   async listCitations(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: JwtPayload | null,
+    @Req() req: Request,
   ) {
-    const previewOnly = await this.resolvePreviewOnly(user);
+    const previewOnly = await this.resolvePreviewOnly(user, req, id);
     const citations = await this.documentsService.listCitations(id, previewOnly);
     return { success: true, data: citations };
   }
@@ -131,8 +162,9 @@ export class DocumentsController {
   async listRelated(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: JwtPayload | null,
+    @Req() req: Request,
   ) {
-    const previewOnly = await this.resolvePreviewOnly(user);
+    const previewOnly = await this.resolvePreviewOnly(user, req, id);
     const related = await this.documentsService.listRelated(id, previewOnly);
     return { success: true, data: related };
   }

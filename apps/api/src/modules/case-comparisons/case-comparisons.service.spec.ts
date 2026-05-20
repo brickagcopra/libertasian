@@ -97,7 +97,7 @@ describe('CaseComparisonsService', () => {
 
       expect(result).toEqual(mockComparison);
       expect(usageQuota.checkAndIncrement).toHaveBeenCalledWith(
-        organizationId, userId, 'caseComparisonPerMonth',
+        organizationId, userId, 'caseComparisonPerMonth', { isPlatformAdmin: false },
       );
       expect(prisma.legalDocument.findMany).toHaveBeenCalledWith({
         where: { id: { in: dto.documentIds } },
