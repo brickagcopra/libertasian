@@ -66,6 +66,7 @@ export class DigestsService {
       }
     }
 
+    // CARVE-OUT: public_editorial cross-org read; forTenant() would filter out cross-org rows
     const row = await this.prisma.digest.findFirst({
       where: { visibility: 'public_editorial', reviewStatus: 'approved' },
       orderBy: { createdAt: 'desc' },
@@ -123,7 +124,7 @@ export class DigestsService {
       dto.sourceOrigin,
     );
 
-    return this.prisma.digest.create({
+    return this.prisma.forTenant(organizationId).digest.create({
       data: {
         legalDocumentId: dto.legalDocumentId,
         organizationId,
@@ -173,6 +174,7 @@ export class DigestsService {
     if (previewOnly) {
       await this.assertDigestPreviewAllowed(digestId);
     }
+    // CARVE-OUT: assertDigestAccess (line 1198) permits visibility='public_editorial' cross-org; forTenant() would 404 those
     const digest = await this.prisma.digest.findUnique({
       where: { id: digestId },
       include: {
@@ -239,12 +241,14 @@ export class DigestsService {
 
     if (previewOnly) {
       const previewId = await this.getFreePreviewDigestId();
+      // CARVE-OUT: public_editorial cross-org read; forTenant() would filter out cross-org rows
       const totalApproved = await this.prisma.digest.count({
         where: { visibility: 'public_editorial', reviewStatus: 'approved' },
       });
       const lockedCount = Math.max(0, totalApproved - (previewId ? 1 : 0));
 
       const items = previewId
+        // CARVE-OUT: public_editorial cross-org read; forTenant() would filter out cross-org rows
         ? await this.prisma.digest.findMany({
             where: { id: previewId },
             include: {
@@ -305,6 +309,7 @@ export class DigestsService {
       where.visibility = query.visibility;
     }
 
+    // CARVE-OUT: public_editorial cross-org read; forTenant() would filter out cross-org rows
     const digests = await this.prisma.digest.findMany({
       where,
       take: limit + 1,
@@ -342,6 +347,7 @@ export class DigestsService {
    * Enforces visibility rules for user-scan origins.
    */
   async update(digestId: string, dto: UpdateDigestDto, userId: string, organizationId: string) {
+    // CARVE-OUT: assertDigestAccess (line 1198) permits visibility='public_editorial' cross-org; forTenant() would 404 those
     const digest = await this.prisma.digest.findUnique({
       where: { id: digestId },
     });
@@ -377,6 +383,7 @@ export class DigestsService {
     if (dto.reviewStatus !== undefined) data.reviewStatus = dto.reviewStatus;
     if (dto.visibility !== undefined) data.visibility = dto.visibility;
 
+    // CARVE-OUT: paired with cross-org-public find above; forTenant() update would inject viewerOrgId into WHERE and silently no-op for cross-org rows
     return this.prisma.digest.update({
       where: { id: digestId },
       data,
@@ -398,6 +405,7 @@ export class DigestsService {
    * Delete a digest. Only owner can delete their own digests.
    */
   async delete(digestId: string, userId: string, organizationId: string) {
+    // CARVE-OUT: assertDigestAccess (line 1198) permits visibility='public_editorial' cross-org; forTenant() would 404 those
     const digest = await this.prisma.digest.findUnique({
       where: { id: digestId },
     });
@@ -413,6 +421,7 @@ export class DigestsService {
       throw new ForbiddenException('Only the digest creator can delete it');
     }
 
+    // CARVE-OUT: paired with cross-org-public find above; forTenant() update would inject viewerOrgId into WHERE and silently no-op for cross-org rows
     await this.prisma.digest.delete({ where: { id: digestId } });
   }
 
@@ -445,7 +454,7 @@ export class DigestsService {
     }
 
     // Check if a digest already exists for this document by this user
-    const existing = await this.prisma.digest.findFirst({
+    const existing = await this.prisma.forTenant(organizationId).digest.findFirst({
       where: {
         legalDocumentId: dto.legalDocumentId,
         userId,
@@ -467,7 +476,7 @@ export class DigestsService {
       : 'official_pipeline';
 
     // Create the digest in draft status — actual AI content will be filled by worker
-    const digest = await this.prisma.digest.create({
+    const digest = await this.prisma.forTenant(organizationId).digest.create({
       data: {
         legalDocumentId: document.id,
         organizationId,
@@ -569,6 +578,7 @@ export class DigestsService {
    * Per CLAUDE.md: score = source coverage + citation mapping + OCR quality.
    */
   async updateConfidenceScore(digestId: string) {
+    // CARVE-OUT: background job — no orgId in scope (called from worker/processor)
     const digest = await this.prisma.digest.findUnique({
       where: { id: digestId },
       select: {
@@ -625,6 +635,7 @@ export class DigestsService {
     // Determine review status
     const reviewStatus = this.determineReviewStatus(roundedScore, digest.sourceOrigin);
 
+    // CARVE-OUT: background job — no orgId in scope (called from worker/processor)
     return this.prisma.digest.update({
       where: { id: digestId },
       data: { confidenceScore: roundedScore, reviewStatus },
@@ -640,6 +651,7 @@ export class DigestsService {
     userId: string,
     organizationId: string,
   ) {
+    // CARVE-OUT: public_editorial cross-org read; forTenant() would filter out cross-org rows
     return this.prisma.digest.findMany({
       where: {
         legalDocumentId: { in: documentIds },
@@ -672,6 +684,7 @@ export class DigestsService {
     userId: string,
     organizationId: string,
   ): Promise<number> {
+    // CARVE-OUT: public_editorial cross-org read; forTenant() would filter out cross-org rows
     return this.prisma.digest.count({
       where: {
         legalDocumentId: { in: documentIds },
@@ -689,6 +702,7 @@ export class DigestsService {
    * Authorization is handled by controller guards (RequiredPermissions).
    */
   async findByIdAdmin(digestId: string) {
+    // CARVE-OUT: admin operation — cross-tenant by design
     const digest = await this.prisma.digest.findUnique({
       where: { id: digestId },
       include: {
@@ -790,6 +804,7 @@ export class DigestsService {
       }
     }
 
+    // CARVE-OUT: admin operation — cross-tenant by design
     const digests = await this.prisma.digest.findMany({
       where,
       take: limit + 1,
@@ -832,6 +847,7 @@ export class DigestsService {
    * Assign a reviewer to a digest. Validates the reviewer has an appropriate role.
    */
   async assignReviewer(digestId: string, dto: AssignReviewerDto) {
+    // CARVE-OUT: admin operation — cross-tenant by design
     const digest = await this.prisma.digest.findUnique({
       where: { id: digestId },
     });
@@ -841,6 +857,7 @@ export class DigestsService {
 
     await this.validateReviewerRole(dto.reviewerUserId);
 
+    // CARVE-OUT: admin operation — cross-tenant by design
     return this.prisma.digest.update({
       where: { id: digestId },
       data: { assignedReviewerUserId: dto.reviewerUserId },
@@ -856,6 +873,7 @@ export class DigestsService {
    * Remove reviewer assignment from a digest.
    */
   async unassignReviewer(digestId: string) {
+    // CARVE-OUT: admin operation — cross-tenant by design
     const digest = await this.prisma.digest.findUnique({
       where: { id: digestId },
     });
@@ -863,6 +881,7 @@ export class DigestsService {
       throw new NotFoundException('Digest not found');
     }
 
+    // CARVE-OUT: admin operation — cross-tenant by design
     return this.prisma.digest.update({
       where: { id: digestId },
       data: { assignedReviewerUserId: null },
@@ -878,6 +897,7 @@ export class DigestsService {
     reviewerUserId: string,
     dto: SubmitReviewDto,
   ) {
+    // CARVE-OUT: admin operation — cross-tenant by design
     const digest = await this.prisma.digest.findUnique({
       where: { id: digestId },
     });
@@ -915,6 +935,7 @@ export class DigestsService {
           citationAccuracyScore: dto.citationAccuracyScore,
         },
       }),
+      // CARVE-OUT: admin operation — cross-tenant by design
       this.prisma.digest.update({
         where: { id: digestId },
         data: updateData,
@@ -937,6 +958,7 @@ export class DigestsService {
     dto: BatchApproveDto,
     reviewerUserId: string,
   ) {
+    // CARVE-OUT: admin batch — cross-tenant by design
     const digests = await this.prisma.digest.findMany({
       where: { id: { in: dto.digestIds } },
       select: { id: true, sourceOrigin: true, visibility: true, userId: true },
@@ -966,6 +988,7 @@ export class DigestsService {
           notes: dto.notes ?? null,
         })),
       }),
+      // CARVE-OUT: admin batch — cross-tenant by design
       this.prisma.digest.updateMany({
         where: { id: { in: foundIds } },
         data: { reviewStatus: 'approved' },
@@ -974,6 +997,7 @@ export class DigestsService {
 
     if (promotableIds.length > 0) {
       txOps.push(
+        // CARVE-OUT: admin batch — cross-tenant by design
         this.prisma.digest.updateMany({
           where: { id: { in: promotableIds } },
           data: { visibility: 'public_editorial' },
@@ -993,6 +1017,7 @@ export class DigestsService {
     dto: BatchRejectDto,
     reviewerUserId: string,
   ) {
+    // CARVE-OUT: admin batch — cross-tenant by design
     const digests = await this.prisma.digest.findMany({
       where: { id: { in: dto.digestIds } },
       select: { id: true },
@@ -1014,6 +1039,7 @@ export class DigestsService {
           notes,
         })),
       }),
+      // CARVE-OUT: admin batch — cross-tenant by design
       this.prisma.digest.updateMany({
         where: { id: { in: foundIds } },
         data: { reviewStatus: 'rejected' },
@@ -1029,6 +1055,7 @@ export class DigestsService {
   async batchAssign(dto: BatchAssignDto) {
     await this.validateReviewerRole(dto.reviewerUserId);
 
+    // CARVE-OUT: admin batch — cross-tenant by design
     const result = await this.prisma.digest.updateMany({
       where: { id: { in: dto.digestIds } },
       data: { assignedReviewerUserId: dto.reviewerUserId },
@@ -1050,26 +1077,31 @@ export class DigestsService {
       perReviewer,
     ] = await Promise.all([
       // Total digests
+      // CARVE-OUT: global metric — counts all orgs by design
       this.prisma.digest.count(),
 
       // Count by review status
+      // CARVE-OUT: global metric — counts all orgs by design
       this.prisma.digest.groupBy({
         by: ['reviewStatus'],
         _count: { _all: true },
       }),
 
       // Count by source origin
+      // CARVE-OUT: global metric — counts all orgs by design
       this.prisma.digest.groupBy({
         by: ['sourceOrigin'],
         _count: { _all: true },
       }),
 
       // Unassigned count
+      // CARVE-OUT: global metric — counts all orgs by design
       this.prisma.digest.count({
         where: { assignedReviewerUserId: null },
       }),
 
       // Average confidence score
+      // CARVE-OUT: global metric — counts all orgs by design
       this.prisma.digest.aggregate({
         _avg: { confidenceScore: true },
       }),
@@ -1234,12 +1266,14 @@ export class DigestsService {
 
     if (previewOnly) {
       const previewId = await this.getFreePreviewDigestId();
+      // CARVE-OUT: public_editorial cross-org read; forTenant() would filter out cross-org rows
       const totalApproved = await this.prisma.digest.count({
         where: { visibility: 'public_editorial', reviewStatus: 'approved' },
       });
       const lockedCount = Math.max(0, totalApproved - (previewId ? 1 : 0));
 
       const results = previewId
+        // CARVE-OUT: public_editorial cross-org read; forTenant() would filter out cross-org rows
         ? await this.prisma.digest.findMany({
             where: { id: previewId },
             include: {
@@ -1289,6 +1323,7 @@ export class DigestsService {
       ];
     }
 
+    // CARVE-OUT: public_editorial cross-org read; forTenant() would filter out cross-org rows
     const digests = await this.prisma.digest.findMany({
       where,
       take: limit + 1,

@@ -32,6 +32,7 @@ describe('DigestsService', () => {
     organizationMember: { findFirst: jest.Mock };
     $transaction: jest.Mock;
     $queryRaw: jest.Mock;
+    forTenant: jest.Mock;
   };
   let digestQueue: { add: jest.Mock };
 
@@ -98,6 +99,7 @@ describe('DigestsService', () => {
       },
       $transaction: jest.fn(),
       $queryRaw: jest.fn(),
+      forTenant: jest.fn(),
     };
 
     const mockDigestQueue = {
@@ -121,6 +123,7 @@ describe('DigestsService', () => {
     service = module.get<DigestsService>(DigestsService);
     prismaService = module.get(PrismaService);
     digestQueue = module.get(getQueueToken('digests'));
+    mockPrismaService.forTenant.mockReturnValue(mockPrismaService as unknown as PrismaService);
   });
 
   afterEach(() => {
@@ -183,6 +186,7 @@ describe('DigestsService', () => {
           },
         },
       });
+      expect(prismaService.forTenant).toHaveBeenCalledWith('org-1');
       expect(result).toEqual({
         ...mockDigest,
         legalDocument: mockLegalDocument,
