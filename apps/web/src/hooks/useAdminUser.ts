@@ -96,6 +96,18 @@ export interface AdminUserEmailPreferences {
   blogNotifications: boolean;
 }
 
+export interface AdminUserLoginEvent {
+  id: string;
+  eventType: string;
+  ipAddress: string | null;
+  userAgent: string | null;
+  country: string | null;
+  region: string | null;
+  city: string | null;
+  failureReason: string | null;
+  createdAt: string;
+}
+
 export interface AdminUserDetail {
   id: string;
   email: string;
@@ -118,6 +130,10 @@ export interface AdminUserDetail {
   entitlementOverrides: AdminUserEntitlementOverride[];
   expertVerification: AdminUserExpertVerification | null;
   emailPreferences: AdminUserEmailPreferences | null;
+  lastLoginAt: string | null;
+  lastLoginCountry: string | null;
+  lastLoginIp: string | null;
+  loginHistory: AdminUserLoginEvent[];
 }
 
 export interface AdminUserDetailResponse {

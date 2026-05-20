@@ -210,6 +210,35 @@ export class AdminUserEmailPreferencesDto {
   blogNotifications!: boolean;
 }
 
+export class AdminUserLoginEventDto {
+  @ApiProperty()
+  id!: string;
+
+  @ApiProperty({ description: 'login_success | login_failed | google_login | token_refresh | logout | password_reset_used | mfa_challenge_passed | mfa_challenge_failed' })
+  eventType!: string;
+
+  @ApiPropertyOptional()
+  ipAddress!: string | null;
+
+  @ApiPropertyOptional()
+  userAgent!: string | null;
+
+  @ApiPropertyOptional({ description: 'ISO 3166-1 alpha-2 country code' })
+  country!: string | null;
+
+  @ApiPropertyOptional()
+  region!: string | null;
+
+  @ApiPropertyOptional()
+  city!: string | null;
+
+  @ApiPropertyOptional()
+  failureReason!: string | null;
+
+  @ApiProperty()
+  createdAt!: Date;
+}
+
 export class AdminUserDetailDto {
   @ApiProperty()
   id!: string;
@@ -273,6 +302,18 @@ export class AdminUserDetailDto {
 
   @ApiPropertyOptional({ type: AdminUserEmailPreferencesDto })
   emailPreferences!: AdminUserEmailPreferencesDto | null;
+
+  @ApiPropertyOptional({ description: 'Most recent successful login timestamp' })
+  lastLoginAt!: Date | null;
+
+  @ApiPropertyOptional({ description: 'ISO 3166-1 alpha-2 country code from last login IP' })
+  lastLoginCountry!: string | null;
+
+  @ApiPropertyOptional({ description: 'IP address of last successful login' })
+  lastLoginIp!: string | null;
+
+  @ApiProperty({ type: [AdminUserLoginEventDto], description: 'Last 20 login events, newest first' })
+  loginHistory!: AdminUserLoginEventDto[];
 }
 
 export class AdminUserDetailResponseDto {

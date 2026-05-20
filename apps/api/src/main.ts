@@ -1,5 +1,6 @@
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
@@ -9,7 +10,11 @@ import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { PerformanceInterceptor } from './common/interceptors/performance.interceptor';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { rawBody: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
+
+  // Trust the single nginx hop in front of the API so req.ip / X-Forwarded-For
+  // resolve to the real client address (used for login event capture + geo).
+  app.set('trust proxy', 1);
 
   // Security headers
   app.use(helmet());

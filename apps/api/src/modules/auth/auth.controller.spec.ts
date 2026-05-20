@@ -167,7 +167,11 @@ describe('AuthController — mobile transport branch', () => {
 
       const result = await controller.refresh(req, '1.2.3.4', 'ua', res);
 
-      expect(authService.refreshTokens).toHaveBeenCalledWith('old-RT', expect.any(String));
+      expect(authService.refreshTokens).toHaveBeenCalledWith(
+        'old-RT',
+        expect.any(String),
+        req,
+      );
       expect(res.cookie).toHaveBeenCalledWith(
         'libertasian-refresh',
         'RT2',
@@ -185,7 +189,11 @@ describe('AuthController — mobile transport branch', () => {
 
       const result = await controller.refresh(req, '1.2.3.4', 'ua', res);
 
-      expect(authService.refreshTokens).toHaveBeenCalledWith('old-RT', expect.any(String));
+      expect(authService.refreshTokens).toHaveBeenCalledWith(
+        'old-RT',
+        expect.any(String),
+        req,
+      );
       expect(res.cookie).not.toHaveBeenCalled();
       expect(result.data).toEqual({ accessToken: 'AT2', refreshToken: 'RT2' });
     });
@@ -210,7 +218,7 @@ describe('AuthController — mobile transport branch', () => {
 
       await controller.logout(req, user, '1.2.3.4', res);
 
-      expect(authService.logout).toHaveBeenCalledWith('RT');
+      expect(authService.logout).toHaveBeenCalledWith('RT', req);
       // clearRefreshCookie also calls res.cookie (with empty value, maxAge: 0)
       expect(res.cookie).toHaveBeenCalledTimes(1);
       const [, value, opts] = res.cookie.mock.calls[0];
@@ -227,7 +235,7 @@ describe('AuthController — mobile transport branch', () => {
 
       await controller.logout(req, user, '1.2.3.4', res);
 
-      expect(authService.logout).toHaveBeenCalledWith('RT');
+      expect(authService.logout).toHaveBeenCalledWith('RT', req);
       expect(res.cookie).not.toHaveBeenCalled();
     });
 

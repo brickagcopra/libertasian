@@ -110,8 +110,8 @@ export class AuthController {
   @TrackEvent('user_signed_up', () => ({
     method: 'email',
   }))
-  async register(@Body() dto: RegisterDto, @Ip() ip: string) {
-    const result = await this.authService.register(dto);
+  async register(@Body() dto: RegisterDto, @Req() req: Request, @Ip() ip: string) {
+    const result = await this.authService.register(dto, req);
     await this.auditService.log({
       actorUserId: result.user.id,
       actorType: 'user',
@@ -144,7 +144,7 @@ export class AuthController {
     const googleProfile = req.user as GoogleProfile;
     const fingerprint = this.buildDeviceFingerprint(userAgent || '', ip);
 
-    const result = await this.authService.loginWithGoogle(googleProfile, fingerprint);
+    const result = await this.authService.loginWithGoogle(googleProfile, fingerprint, req);
 
     await this.auditService.log({
       actorUserId: result.user.id,
@@ -179,7 +179,7 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const fingerprint = this.buildDeviceFingerprint(userAgent, ip);
-    const result = await this.authService.login(dto, fingerprint);
+    const result = await this.authService.login(dto, fingerprint, req);
     const isMobile = this.isMobileClient(req);
 
     if (!result.mfaRequired) {
@@ -237,7 +237,7 @@ export class AuthController {
     const fingerprint = this.buildDeviceFingerprint(userAgent, ip);
 
     try {
-      const tokens = await this.authService.refreshTokens(refreshToken, fingerprint);
+      const tokens = await this.authService.refreshTokens(refreshToken, fingerprint, req);
 
       // Rotate: web sets new refresh token as httpOnly cookie; mobile gets it in body.
       if (!isMobile) {
@@ -285,7 +285,7 @@ export class AuthController {
       ? bodyRefreshToken
       : (req.cookies as Record<string, string>)?.[REFRESH_COOKIE];
     if (refreshToken) {
-      await this.authService.logout(refreshToken);
+      await this.authService.logout(refreshToken, req);
     }
 
     // Web: clear the httpOnly refresh cookie. Mobile has no cookie to clear.

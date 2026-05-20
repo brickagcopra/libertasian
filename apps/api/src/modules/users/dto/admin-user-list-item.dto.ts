@@ -45,6 +45,15 @@ export class AdminUserListItemDto {
 
   @ApiProperty({ description: 'Sum of all succeeded Payment.amount across user\'s orgs (centavos)' })
   lifetimeValueCentavos!: number;
+
+  @ApiPropertyOptional({ description: 'Timestamp of the user\'s most recent successful login (or signup)' })
+  lastLoginAt!: Date | null;
+
+  @ApiPropertyOptional({ description: 'ISO 3166-1 alpha-2 country code geo-resolved from the last login IP' })
+  lastLoginCountry!: string | null;
+
+  @ApiPropertyOptional({ description: 'IP address of the user\'s last successful login' })
+  lastLoginIp!: string | null;
 }
 
 export class AdminUserListResponseDto {
