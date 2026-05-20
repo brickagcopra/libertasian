@@ -132,6 +132,7 @@ export const PERMISSIONS: PermissionSeed[] = [
   { code: 'admin:settings', resource: 'admin', action: 'settings', category: 'admin', description: 'Manage platform settings (derivatives, backfill, site content)' },
   { code: 'admin:documents', resource: 'admin', action: 'documents', category: 'admin', description: 'Manage document classification and metadata' },
   { code: 'admin:billing', resource: 'admin', action: 'billing', category: 'admin', description: 'Manage billing, subscriptions, coupons, and promotions' },
+  { code: 'admin:users', resource: 'admin', action: 'users', category: 'admin', description: 'View users across organizations (admin user management)' },
   { code: 'admin:ai-settings', resource: 'admin', action: 'ai-settings', category: 'admin', description: 'Manage AI model settings and budgets' },
   { code: 'users:read', resource: 'users', action: 'read', category: 'admin', description: 'View organization members' },
   { code: 'users:update', resource: 'users', action: 'update', category: 'admin', description: 'Update user profiles' },
