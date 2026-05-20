@@ -54,12 +54,38 @@ export class DigestsProcessor extends WorkerHost {
       `Processing digest generation: digestId=${digestId}, documentId=${documentId}`,
     );
 
+    // Declared outside the try so the catch-block fallback can branch on
+    // whether the bootstrap findUnique completed before the error.
+    let orgId: string | undefined;
+
     try {
-      // Mark as generating
+      // Bootstrap: pre-tenant-load — org is discovered via the next findUnique.
       await this.prisma.digest.update({
         where: { id: digestId },
         data: { reviewStatus: 'generating' },
       });
+
+      // Intentional bootstrap: no organizationId in scope yet. The row read
+      // provides orgId for subsequent tenanted calls below. DigestJobData
+      // carries only { digestId, documentId } — the org is not on the payload,
+      // intentionally, so in-flight jobs enqueued before this PR remain compatible.
+      const initial = await this.prisma.digest.findUnique({
+        where: { id: digestId },
+        select: { organizationId: true },
+      });
+      if (!initial) {
+        throw new Error(`Digest ${digestId} not found`);
+      }
+      // Digest.organizationId is String? in schema (editorial-origin digests
+      // can be null), but the producer at digests.service.ts:473 always
+      // sets it for digests enqueued on this queue. Refuse to process a
+      // null-org row rather than silently bypassing the tenant guard.
+      if (!initial.organizationId) {
+        throw new Error(
+          `Digest ${digestId} has no organization — refusing to process`,
+        );
+      }
+      orgId = initial.organizationId;
 
       // Fetch document sections to send to RAG service
       const sections = await this.prisma.legalDocumentSection.findMany({
@@ -97,7 +123,7 @@ export class DigestsProcessor extends WorkerHost {
           : 'needs_human_review';
 
       // Update digest with generated content (DFIR+ gold standard)
-      await this.prisma.digest.update({
+      await this.prisma.forTenant(orgId).digest.update({
         where: { id: digestId },
         data: {
           summary: ragResponse.summary,
@@ -136,10 +162,19 @@ export class DigestsProcessor extends WorkerHost {
         `Digest ${digestId} generation failed: ${errorMessage}`,
       );
 
-      await this.prisma.digest.update({
-        where: { id: digestId },
-        data: { reviewStatus: 'failed' },
-      });
+      if (orgId) {
+        await this.prisma.forTenant(orgId).digest.update({
+          where: { id: digestId },
+          data: { reviewStatus: 'failed' },
+        });
+      } else {
+        // Bootstrap-path failure: error happened before orgId could be
+        // discovered from the row, so we have no tenant context to scope on.
+        await this.prisma.digest.update({
+          where: { id: digestId },
+          data: { reviewStatus: 'failed' },
+        });
+      }
 
       throw err; // Let BullMQ handle retries
     }
