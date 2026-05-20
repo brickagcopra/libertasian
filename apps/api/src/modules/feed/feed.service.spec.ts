@@ -73,6 +73,7 @@ const mockPrisma = {
     findUnique: jest.fn(),
     findMany: jest.fn(),
   },
+  forTenant: jest.fn(),
 };
 
 describe('FeedService', () => {
@@ -90,6 +91,9 @@ describe('FeedService', () => {
 
     // Reset all mocks
     jest.clearAllMocks();
+
+    // forTenant returns the same mock so existing model mocks keep firing
+    mockPrisma.forTenant.mockReturnValue(mockPrisma);
 
     // Default: no like/bookmark for requesting user
     mockPrisma.feedPostLike.findUnique.mockResolvedValue(null);
@@ -114,6 +118,7 @@ describe('FeedService', () => {
       expect(result.author.id).toBe(USER_ID);
       expect(result.isLikedByMe).toBe(false);
       expect(result.isBookmarkedByMe).toBe(false);
+      expect(mockPrisma.forTenant).toHaveBeenCalledWith(ORG_ID);
       expect(mockPrisma.feedPost.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
@@ -272,10 +277,16 @@ describe('FeedService', () => {
         editedAt: new Date(),
       });
 
-      const result = await service.updatePost(POST_ID, { textContent: 'Updated content' }, USER_ID);
+      const result = await service.updatePost(
+        POST_ID,
+        { textContent: 'Updated content' },
+        USER_ID,
+        ORG_ID,
+      );
 
       expect(result.textContent).toBe('Updated content');
       expect(result.editedAt).not.toBeNull();
+      expect(mockPrisma.forTenant).toHaveBeenCalledWith(ORG_ID);
     });
 
     it('should reject update on another user\'s post (collapsed to NotFoundException)', async () => {
@@ -283,7 +294,7 @@ describe('FeedService', () => {
       mockPrisma.feedPost.updateMany.mockResolvedValue({ count: 0 });
 
       await expect(
-        service.updatePost(POST_ID, { textContent: 'Hijack' }, OTHER_USER_ID),
+        service.updatePost(POST_ID, { textContent: 'Hijack' }, OTHER_USER_ID, ORG_ID),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -291,7 +302,7 @@ describe('FeedService', () => {
       mockPrisma.feedPost.updateMany.mockResolvedValue({ count: 0 });
 
       await expect(
-        service.updatePost('non-existent', { textContent: 'Test' }, USER_ID),
+        service.updatePost('non-existent', { textContent: 'Test' }, USER_ID, ORG_ID),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -300,7 +311,7 @@ describe('FeedService', () => {
       mockPrisma.feedPost.updateMany.mockResolvedValue({ count: 0 });
 
       await expect(
-        service.updatePost(POST_ID, { textContent: 'Test' }, USER_ID),
+        service.updatePost(POST_ID, { textContent: 'Test' }, USER_ID, ORG_ID),
       ).rejects.toThrow(NotFoundException);
     });
   });
@@ -311,8 +322,9 @@ describe('FeedService', () => {
     it('should soft-delete own post', async () => {
       mockPrisma.feedPost.updateMany.mockResolvedValue({ count: 1 });
 
-      await service.deletePost(POST_ID, USER_ID);
+      await service.deletePost(POST_ID, USER_ID, ORG_ID);
 
+      expect(mockPrisma.forTenant).toHaveBeenCalledWith(ORG_ID);
       expect(mockPrisma.feedPost.updateMany).toHaveBeenCalledWith({
         where: { id: POST_ID, authorId: USER_ID, deletedAt: null },
         data: {
@@ -327,7 +339,7 @@ describe('FeedService', () => {
       mockPrisma.feedPost.updateMany.mockResolvedValue({ count: 0 });
 
       await expect(
-        service.deletePost(POST_ID, OTHER_USER_ID),
+        service.deletePost(POST_ID, OTHER_USER_ID, ORG_ID),
       ).rejects.toThrow(NotFoundException);
     });
   });

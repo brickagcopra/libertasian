@@ -148,7 +148,7 @@ export class FeedController {
     @Param('postId', ParseUUIDPipe) postId: string,
     @Body() dto: UpdatePostDto,
   ) {
-    const data = await this.feedService.updatePost(postId, dto, user.sub);
+    const data = await this.feedService.updatePost(postId, dto, user.sub, user.organizationId);
     await this.auditService.log({
       actorUserId: user.sub,
       actorType: 'user',
@@ -170,7 +170,7 @@ export class FeedController {
     @CurrentUser() user: JwtPayload,
     @Param('postId', ParseUUIDPipe) postId: string,
   ) {
-    await this.feedService.deletePost(postId, user.sub);
+    await this.feedService.deletePost(postId, user.sub, user.organizationId);
     await this.auditService.log({
       actorUserId: user.sub,
       actorType: 'user',
@@ -232,7 +232,7 @@ export class FeedController {
     @CurrentUser() user: JwtPayload,
     @Param('mediaId', ParseUUIDPipe) mediaId: string,
   ) {
-    const data = await this.feedMediaService.getMediaStatus(mediaId, user.sub);
+    const data = await this.feedMediaService.getMediaStatus(mediaId, user.sub, user.organizationId);
     return { success: true, data };
   }
 
@@ -271,7 +271,7 @@ export class FeedController {
     @CurrentUser() user: JwtPayload,
     @Param('mediaId', ParseUUIDPipe) mediaId: string,
   ) {
-    await this.feedMediaService.deleteMedia(mediaId, user.sub);
+    await this.feedMediaService.deleteMedia(mediaId, user.sub, user.organizationId);
     await this.auditService.log({
       actorUserId: user.sub,
       actorType: 'user',

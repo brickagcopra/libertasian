@@ -88,7 +88,8 @@ export class FeedMediaService {
     await this.s3.upload(rawObjectKey, file.buffer, file.mimetype, `raw.${ext}`);
 
     // 7. Create FeedPostMedia record
-    const media = await this.prisma.feedPostMedia.create({
+    // Helper also injects this on create; explicit pass kept for TS NOT NULL.
+    const media = await this.prisma.forTenant(organizationId).feedPostMedia.create({
       data: {
         id: mediaId,
         ownerUserId: userId,
@@ -129,8 +130,8 @@ export class FeedMediaService {
   /**
    * Get media processing status + URLs if ready.
    */
-  async getMediaStatus(mediaId: string, userId: string) {
-    const media = await this.prisma.feedPostMedia.findUnique({
+  async getMediaStatus(mediaId: string, userId: string, organizationId: string) {
+    const media = await this.prisma.forTenant(organizationId).feedPostMedia.findUnique({
       where: { id: mediaId },
     });
 
@@ -172,6 +173,9 @@ export class FeedMediaService {
     userId: string,
     viewerOrgId: string,
   ) {
+    // CARVE-OUT: cross-org public read — forTenant() would break visibility: 'public'.
+    // A viewer in org B legitimately needs to read media bytes from an org A
+    // public post. The downstream parent-post lookup is the tenant gate.
     const media = await this.prisma.feedPostMedia.findUnique({
       where: { id: mediaId },
     });
@@ -184,6 +188,7 @@ export class FeedMediaService {
     // published post the viewer is entitled to read (public, or
     // organization-scoped and the viewer is in that organization).
     if (media.ownerUserId !== userId) {
+      // CARVE-OUT: cross-org public read — forTenant() would break visibility: 'public'
       const post = await this.prisma.feedPost.findFirst({
         where: {
           mediaId,
@@ -220,8 +225,8 @@ export class FeedMediaService {
   /**
    * Delete unattached media (cleanup).
    */
-  async deleteMedia(mediaId: string, userId: string) {
-    const media = await this.prisma.feedPostMedia.findUnique({
+  async deleteMedia(mediaId: string, userId: string, organizationId: string) {
+    const media = await this.prisma.forTenant(organizationId).feedPostMedia.findUnique({
       where: { id: mediaId },
     });
 
@@ -233,7 +238,7 @@ export class FeedMediaService {
     }
 
     // Check if attached to a post
-    const post = await this.prisma.feedPost.findUnique({
+    const post = await this.prisma.forTenant(organizationId).feedPost.findUnique({
       where: { mediaId },
     });
     if (post) {
@@ -250,6 +255,6 @@ export class FeedMediaService {
     }
 
     // Delete DB records (cascade deletes processing jobs)
-    await this.prisma.feedPostMedia.delete({ where: { id: mediaId } });
+    await this.prisma.forTenant(organizationId).feedPostMedia.delete({ where: { id: mediaId } });
   }
 }

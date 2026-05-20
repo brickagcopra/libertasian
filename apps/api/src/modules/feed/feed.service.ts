@@ -60,7 +60,7 @@ export class FeedService {
 
     // Validate media if provided
     if (dto.mediaId) {
-      const media = await this.prisma.feedPostMedia.findUnique({
+      const media = await this.prisma.forTenant(organizationId).feedPostMedia.findUnique({
         where: { id: dto.mediaId },
       });
 
@@ -75,7 +75,7 @@ export class FeedService {
       }
 
       // Check if media is already attached to another post (unique constraint on FeedPost.mediaId)
-      const existingPost = await this.prisma.feedPost.findUnique({
+      const existingPost = await this.prisma.forTenant(organizationId).feedPost.findUnique({
         where: { mediaId: dto.mediaId },
       });
       if (existingPost) {
@@ -83,7 +83,8 @@ export class FeedService {
       }
     }
 
-    const post = await this.prisma.feedPost.create({
+    // Helper also injects this on create; explicit pass kept for TS NOT NULL.
+    const post = await this.prisma.forTenant(organizationId).feedPost.create({
       data: {
         organizationId,
         authorId: userId,
@@ -97,7 +98,12 @@ export class FeedService {
     return this.formatPost(post, userId);
   }
 
-  async updatePost(postId: string, dto: UpdatePostDto, userId: string) {
+  async updatePost(
+    postId: string,
+    dto: UpdatePostDto,
+    userId: string,
+    organizationId: string,
+  ) {
     // Authorship scoping enforced at the DB layer via updateMany with a
     // compound where clause: { id, authorId, deletedAt: null }. A zero
     // affected-rows result collapses to a single NotFoundException,
@@ -107,7 +113,7 @@ export class FeedService {
     // distinguish "post doesn't exist" (404) from "post exists but
     // belongs to another user" (403). Collapsing both into 404 matches
     // getPost's shape and forces would-be enumerators to guess blindly.
-    const { count } = await this.prisma.feedPost.updateMany({
+    const { count } = await this.prisma.forTenant(organizationId).feedPost.updateMany({
       where: { id: postId, authorId: userId, deletedAt: null },
       data: {
         ...(dto.textContent !== undefined && { textContent: dto.textContent }),
@@ -120,7 +126,7 @@ export class FeedService {
       throw new NotFoundException('Post not found');
     }
 
-    const updated = await this.prisma.feedPost.findUniqueOrThrow({
+    const updated = await this.prisma.forTenant(organizationId).feedPost.findUniqueOrThrow({
       where: { id: postId },
       select: POST_SELECT,
     });
@@ -128,11 +134,11 @@ export class FeedService {
     return this.formatPost(updated, userId);
   }
 
-  async deletePost(postId: string, userId: string) {
+  async deletePost(postId: string, userId: string, organizationId: string) {
     // Same DF-1 collapse as updatePost: soft-delete via updateMany so
     // the authorship + not-already-deleted check happens atomically in
     // the WHERE clause, with a single NotFoundException on miss.
-    const { count } = await this.prisma.feedPost.updateMany({
+    const { count } = await this.prisma.forTenant(organizationId).feedPost.updateMany({
       where: { id: postId, authorId: userId, deletedAt: null },
       data: {
         deletedAt: new Date(),
@@ -151,6 +157,7 @@ export class FeedService {
     // "non-published", and "not readable from viewer's org". Keeping one
     // exception shape prevents an attacker from fingerprinting the
     // existence or org membership of a post via error type. (E14)
+    // CARVE-OUT: cross-org public read — forTenant() would break visibility: 'public'
     const post = await this.prisma.feedPost.findFirst({
       where: {
         id: postId,
@@ -172,6 +179,7 @@ export class FeedService {
   }
 
   async getPublicFeed(query: FeedQueryDto, userId: string) {
+    // CARVE-OUT: cross-org public read — forTenant() would break visibility: 'public'
     return this.queryFeed(
       {
         visibility: 'public',
@@ -184,6 +192,10 @@ export class FeedService {
   }
 
   async getOrganizationFeed(query: FeedQueryDto, organizationId: string, userId: string) {
+    // The existing `organizationId` predicate in this WHERE clause is
+    // the tenant guard. Kept on raw `this.prisma.*` because queryFeed
+    // is shared with the cross-org public/profile readers below, which
+    // CANNOT be forTenant()-wrapped without breaking visibility: 'public'.
     return this.queryFeed(
       {
         organizationId,
@@ -199,6 +211,7 @@ export class FeedService {
   async getUserProfileFeed(query: FeedQueryDto, profileUserId: string, requesterId: string) {
     const isSelf = profileUserId === requesterId;
 
+    // CARVE-OUT: cross-org public read — forTenant() would break visibility: 'public'
     return this.queryFeed(
       {
         authorId: profileUserId,
@@ -230,6 +243,8 @@ export class FeedService {
     // `updatedAt` instead of `deletedAt` and was always truthy —
     // folded into this same fix as a side effect of moving the filter
     // into the query.
+    // CARVE-OUT: cross-org public read — forTenant() would break visibility: 'public'.
+    // feedPostBookmark is also user-scoped and not in the forTenant model map.
     const bookmarks = await this.prisma.feedPostBookmark.findMany({
       take: limit + 1,
       ...(query.cursor && { skip: 1, cursor: { id: query.cursor } }),
@@ -275,6 +290,8 @@ export class FeedService {
   ) {
     const limit = query.limit ?? 20;
 
+    // CARVE-OUT: cross-org public read — forTenant() would break visibility: 'public'.
+    // Callers pass heterogeneous where clauses including cross-org public predicates.
     const posts = await this.prisma.feedPost.findMany({
       take: limit + 1,
       ...(query.cursor && { skip: 1, cursor: { id: query.cursor } }),
@@ -327,6 +344,8 @@ export class FeedService {
     requestingUserId: string,
   ) {
     // Batch check like + bookmark status
+    // CARVE-OUT: feedPostLike + feedPostBookmark are user-scoped junction
+    // tables and are intentionally NOT in the forTenant model map.
     const [like, bookmark] = await Promise.all([
       this.prisma.feedPostLike.findUnique({
         where: { postId_userId: { postId: post.id, userId: requestingUserId } },

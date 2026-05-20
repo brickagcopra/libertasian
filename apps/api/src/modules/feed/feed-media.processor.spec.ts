@@ -55,6 +55,7 @@ const mockPrisma = {
   feedMediaProcessingJob: {
     update: jest.fn(),
   },
+  forTenant: jest.fn(),
 };
 
 const mockS3 = {
@@ -103,6 +104,8 @@ describe('FeedMediaProcessor', () => {
 
     processor = module.get<FeedMediaProcessor>(FeedMediaProcessor);
     jest.clearAllMocks();
+    // forTenant returns the same mock so existing model mocks keep firing
+    mockPrisma.forTenant.mockReturnValue(mockPrisma);
   });
 
   it('should process a clean image successfully', async () => {
@@ -146,6 +149,9 @@ describe('FeedMediaProcessor', () => {
         }),
       }),
     );
+
+    // Tenant scoping: success-path updates use forTenant(media.organizationId)
+    expect(mockPrisma.forTenant).toHaveBeenCalledWith(ORG_ID);
   });
 
   it('should quarantine malware-infected files', async () => {
@@ -178,6 +184,9 @@ describe('FeedMediaProcessor', () => {
         }),
       }),
     );
+
+    // Tenant scoping: quarantine update uses forTenant(media.organizationId)
+    expect(mockPrisma.forTenant).toHaveBeenCalledWith(ORG_ID);
   });
 
   it('should handle processing failure gracefully', async () => {
