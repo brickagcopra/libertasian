@@ -18,6 +18,9 @@ export interface AdminUserListItem {
   subscriptionStatus: string | null;
   subscriptionStartedAt: string | null;
   lifetimeValueCentavos: number;
+  lastLoginAt: string | null;
+  lastLoginCountry: string | null;
+  lastLoginIp: string | null;
 }
 
 export interface AdminUserListResponse {

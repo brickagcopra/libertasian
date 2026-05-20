@@ -9,6 +9,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { UsersService } from '../users/users.service';
 import { AuthService } from './auth.service';
+import { LoginEventService } from './login-event.service';
 import type { RegisterDto, LoginDto } from './dto';
 
 // Mock uuid (ESM-only package, cannot be transformed by ts-jest)
@@ -88,6 +89,7 @@ describe('AuthService', () => {
   let jwtService: jest.Mocked<JwtService>;
   let configService: jest.Mocked<ConfigService>;
   let notificationsService: jest.Mocked<NotificationsService>;
+  let loginEventService: { record: jest.Mock };
 
   const mockUser = {
     id: 'user-123',
@@ -212,6 +214,12 @@ describe('AuthService', () => {
             sendPasswordResetEmail: jest.fn(),
           },
         },
+        {
+          provide: LoginEventService,
+          useValue: {
+            record: jest.fn().mockResolvedValue(undefined),
+          },
+        },
       ],
     }).compile();
 
@@ -221,6 +229,7 @@ describe('AuthService', () => {
     jwtService = module.get(JwtService) as jest.Mocked<JwtService>;
     configService = module.get(ConfigService) as jest.Mocked<ConfigService>;
     notificationsService = module.get(NotificationsService) as jest.Mocked<NotificationsService>;
+    loginEventService = module.get(LoginEventService) as unknown as { record: jest.Mock };
 
     // Default mock implementations
     (bcrypt.hash as jest.Mock).mockResolvedValue('$2b$12$hashedpassword');
@@ -680,6 +689,184 @@ describe('AuthService', () => {
 
       await expect(service.loginWithGoogle(googleProfile, deviceFingerprint)).rejects.toThrow(UnauthorizedException);
       await expect(service.loginWithGoogle(googleProfile, deviceFingerprint)).rejects.toThrow('Account is suspended or deactivated');
+    });
+  });
+
+  // ─── login event hook coverage (Phase 2) ─────────────────
+  describe('login event capture', () => {
+    /** Helper: wait one macrotask so the fire-and-forget `void record(...)` runs */
+    const flushMicrotasks = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+    const sanitized = {
+      id: mockUser.id,
+      email: mockUser.email,
+      fullName: mockUser.fullName,
+      status: mockUser.status,
+      emailVerified: mockUser.emailVerified,
+      mfaEnabled: mockUser.mfaEnabled,
+      createdAt: mockUser.createdAt,
+      updatedAt: mockUser.updatedAt,
+    };
+
+    it('register records exactly one login_success event', async () => {
+      usersService.findByEmail.mockResolvedValue(null);
+      usersService.create.mockResolvedValue(mockUser as unknown as ReturnType<UsersService['create']>);
+      usersService.sanitize.mockReturnValue(sanitized);
+      prismaService.organization.create.mockResolvedValue(mockOrganization as unknown as ReturnType<typeof prismaService.organization.create>);
+      prismaService.organizationMember.create.mockResolvedValue(mockMembership as unknown as ReturnType<typeof prismaService.organizationMember.create>);
+      prismaService.subscription.create.mockResolvedValue({} as unknown as ReturnType<typeof prismaService.subscription.create>);
+      prismaService.user.update.mockResolvedValue(mockUser as unknown as ReturnType<typeof prismaService.user.update>);
+
+      await service.register({
+        email: 'new@example.com',
+        password: 'StrongPassword123!',
+        fullName: 'New User',
+      } as RegisterDto);
+      await flushMicrotasks();
+
+      expect(loginEventService.record).toHaveBeenCalledTimes(1);
+      expect(loginEventService.record).toHaveBeenCalledWith(
+        'login_success',
+        mockUser.id,
+        null,
+        {},
+      );
+    });
+
+    it('login records exactly one login_success event with deviceFingerprint', async () => {
+      usersService.findByEmail.mockResolvedValue(mockUser as unknown as ReturnType<UsersService['findByEmail']>);
+      usersService.sanitize.mockReturnValue(sanitized);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+      prismaService.organizationMember.findFirst.mockResolvedValue(mockMembership as unknown as ReturnType<typeof prismaService.organizationMember.findFirst>);
+      jwtService.sign.mockReturnValue('jwt');
+      prismaService.refreshToken.create.mockResolvedValue({} as unknown as ReturnType<typeof prismaService.refreshToken.create>);
+
+      await service.login(
+        { email: mockUser.email, password: 'correct' } as LoginDto,
+        'fp-1',
+      );
+      await flushMicrotasks();
+
+      expect(loginEventService.record).toHaveBeenCalledTimes(1);
+      expect(loginEventService.record).toHaveBeenCalledWith(
+        'login_success',
+        mockUser.id,
+        null,
+        { deviceFingerprint: 'fp-1' },
+      );
+    });
+
+    it('loginWithGoogle records exactly one google_login event', async () => {
+      const googleUser = { ...mockUser, googleId: 'g-1', emailVerified: true };
+      usersService.findByGoogleId.mockResolvedValue(googleUser as unknown as ReturnType<UsersService['findByGoogleId']>);
+      usersService.sanitize.mockReturnValue(sanitized);
+      prismaService.organizationMember.findFirst.mockResolvedValue(mockMembership as unknown as ReturnType<typeof prismaService.organizationMember.findFirst>);
+      jwtService.sign.mockReturnValue('jwt');
+      prismaService.refreshToken.create.mockResolvedValue({} as unknown as ReturnType<typeof prismaService.refreshToken.create>);
+
+      await service.loginWithGoogle(
+        { googleId: 'g-1', email: googleUser.email, fullName: googleUser.fullName },
+        'fp-2',
+      );
+      await flushMicrotasks();
+
+      expect(loginEventService.record).toHaveBeenCalledTimes(1);
+      expect(loginEventService.record).toHaveBeenCalledWith(
+        'google_login',
+        mockUser.id,
+        null,
+        { deviceFingerprint: 'fp-2' },
+      );
+    });
+
+    it('refreshTokens records exactly one token_refresh event', async () => {
+      const rawRefreshToken = 'raw-token';
+      const tokenHash = (originalCrypto as typeof import('crypto')).createHash('sha256').update(rawRefreshToken).digest('hex');
+      const storedToken = {
+        id: 'token-1',
+        userId: mockUser.id,
+        tokenHash,
+        familyId: 'family-1',
+        deviceFingerprint: 'fp-3',
+        isRevoked: false,
+        expiresAt: new Date(Date.now() + 86_400_000),
+        createdAt: new Date(),
+        user: mockUser,
+      };
+
+      prismaService.refreshToken.updateMany.mockResolvedValueOnce({ count: 1 });
+      prismaService.refreshToken.findFirst
+        .mockResolvedValueOnce(storedToken)
+        .mockResolvedValueOnce(null);
+      prismaService.organizationMember.findFirst.mockResolvedValue(mockMembership as unknown as ReturnType<typeof prismaService.organizationMember.findFirst>);
+      prismaService.refreshToken.update.mockResolvedValue({} as unknown as ReturnType<typeof prismaService.refreshToken.update>);
+      prismaService.refreshToken.create.mockResolvedValue({} as unknown as ReturnType<typeof prismaService.refreshToken.create>);
+      jwtService.sign.mockReturnValue('jwt');
+
+      await service.refreshTokens(rawRefreshToken, 'fp-3');
+      await flushMicrotasks();
+
+      expect(loginEventService.record).toHaveBeenCalledTimes(1);
+      expect(loginEventService.record).toHaveBeenCalledWith(
+        'token_refresh',
+        mockUser.id,
+        null,
+        { deviceFingerprint: 'fp-3' },
+      );
+    });
+
+    it('logout records exactly one logout event when the token is found', async () => {
+      const storedToken = {
+        id: 'token-2',
+        userId: mockUser.id,
+        tokenHash: 'hash',
+        familyId: 'family-2',
+        deviceFingerprint: 'fp-4',
+        isRevoked: false,
+        expiresAt: new Date(Date.now() + 86_400_000),
+        createdAt: new Date(),
+      };
+      prismaService.refreshToken.findFirst.mockResolvedValueOnce(storedToken);
+      prismaService.refreshToken.updateMany.mockResolvedValueOnce({ count: 1 });
+
+      await service.logout('some-refresh-token');
+      await flushMicrotasks();
+
+      expect(loginEventService.record).toHaveBeenCalledTimes(1);
+      expect(loginEventService.record).toHaveBeenCalledWith(
+        'logout',
+        mockUser.id,
+        null,
+        {},
+      );
+    });
+
+    it('logout records no event when refresh token does not match a row', async () => {
+      prismaService.refreshToken.findFirst.mockResolvedValueOnce(null);
+
+      await service.logout('unknown-token');
+      await flushMicrotasks();
+
+      expect(loginEventService.record).not.toHaveBeenCalled();
+    });
+
+    it('does not throw when login event recording rejects (fire-and-forget)', async () => {
+      loginEventService.record.mockRejectedValueOnce(new Error('db down'));
+      usersService.findByEmail.mockResolvedValue(mockUser as unknown as ReturnType<UsersService['findByEmail']>);
+      usersService.sanitize.mockReturnValue(sanitized);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+      prismaService.organizationMember.findFirst.mockResolvedValue(mockMembership as unknown as ReturnType<typeof prismaService.organizationMember.findFirst>);
+      jwtService.sign.mockReturnValue('jwt');
+      prismaService.refreshToken.create.mockResolvedValue({} as unknown as ReturnType<typeof prismaService.refreshToken.create>);
+
+      const result = await service.login(
+        { email: mockUser.email, password: 'correct' } as LoginDto,
+        'fp-err',
+      );
+      await flushMicrotasks();
+
+      expect(result.mfaRequired).toBe(false);
+      expect(result.tokens.accessToken).toBe('jwt');
     });
   });
 });

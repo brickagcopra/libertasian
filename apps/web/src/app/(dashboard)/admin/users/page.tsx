@@ -76,6 +76,33 @@ function formatDate(value: string | Date | null | undefined): string {
   return d.toLocaleDateString();
 }
 
+function formatDateTime(value: string | Date | null | undefined): string {
+  if (!value) return '—';
+  const d = typeof value === 'string' ? new Date(value) : value;
+  return d.toLocaleString();
+}
+
+/** ISO 3166-1 alpha-2 → flag emoji (paired regional-indicator code points). */
+function countryFlag(code: string | null | undefined): string {
+  if (!code || code.length !== 2) return '';
+  const upper = code.toUpperCase();
+  return String.fromCodePoint(
+    0x1f1e6 + upper.charCodeAt(0) - 65,
+    0x1f1e6 + upper.charCodeAt(1) - 65,
+  );
+}
+
+const loginEventTypeColors: Record<string, string> = {
+  login_success: 'bg-green-100 text-green-700',
+  google_login: 'bg-green-100 text-green-700',
+  login_failed: 'bg-red-100 text-red-700',
+  mfa_challenge_failed: 'bg-red-100 text-red-700',
+  mfa_challenge_passed: 'bg-blue-100 text-blue-700',
+  token_refresh: 'bg-gray-100 text-gray-700',
+  logout: 'bg-gray-100 text-gray-700',
+  password_reset_used: 'bg-amber-100 text-amber-700',
+};
+
 export default function AdminUsersPage() {
   const [filters, setFilters] = useState<ListAdminUsersQuery>({});
   const [searchInput, setSearchInput] = useState('');
@@ -209,6 +236,7 @@ export default function AdminUsersPage() {
                 <TableHead>Email</TableHead>
                 <TableHead>Name</TableHead>
                 <TableHead>Registered</TableHead>
+                <TableHead>Last login</TableHead>
                 <TableHead>Plan</TableHead>
                 <TableHead>Sub status</TableHead>
                 <TableHead>LTV</TableHead>
@@ -219,7 +247,7 @@ export default function AdminUsersPage() {
             <TableBody>
               {users.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
+                  <TableCell colSpan={9} className="py-8 text-center text-muted-foreground">
                     No users found.
                   </TableCell>
                 </TableRow>
@@ -243,6 +271,19 @@ export default function AdminUsersPage() {
                     <TableCell>{u.fullName}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {formatDate(u.createdAt)}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {u.lastLoginAt ? (
+                        <span className="inline-flex items-center gap-1.5">
+                          <span aria-hidden>{countryFlag(u.lastLoginCountry)}</span>
+                          <span>{formatDate(u.lastLoginAt)}</span>
+                          {u.lastLoginCountry && (
+                            <span className="text-xs uppercase">{u.lastLoginCountry}</span>
+                          )}
+                        </span>
+                      ) : (
+                        <span>—</span>
+                      )}
                     </TableCell>
                     <TableCell>
                       {u.currentPlanCode ? (
@@ -351,13 +392,14 @@ function UserDetailSheet({
 
             {user && (
               <Tabs defaultValue="profile" className="mt-6">
-                <TabsList className="grid w-full grid-cols-6">
+                <TabsList className="grid w-full grid-cols-7">
                   <TabsTrigger value="profile">Profile</TabsTrigger>
                   <TabsTrigger value="orgs">Orgs</TabsTrigger>
                   <TabsTrigger value="subs">Subscriptions</TabsTrigger>
                   <TabsTrigger value="payments">Payments</TabsTrigger>
                   <TabsTrigger value="coupons">Coupons</TabsTrigger>
                   <TabsTrigger value="entitlements">Entitlements</TabsTrigger>
+                  <TabsTrigger value="activity">Activity</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="profile" className="space-y-3 pt-4 text-sm">
@@ -376,6 +418,19 @@ function UserDetailSheet({
                   />
                   <FactRow label="Created" value={formatDate(user.createdAt)} />
                   <FactRow label="Updated" value={formatDate(user.updatedAt)} />
+                  <FactRow
+                    label="Last login"
+                    value={
+                      user.lastLoginAt
+                        ? `${formatDateTime(user.lastLoginAt)}${
+                            user.lastLoginCountry
+                              ? ` · ${countryFlag(user.lastLoginCountry)} ${user.lastLoginCountry}`
+                              : ''
+                          }`
+                        : '—'
+                    }
+                  />
+                  <FactRow label="Last login IP" value={user.lastLoginIp ?? '—'} />
                   {user.expertVerification && (
                     <FactRow
                       label="Expert verification"
@@ -612,6 +667,64 @@ function UserDetailSheet({
                       </div>
                     )}
                   </div>
+                </TabsContent>
+
+                <TabsContent value="activity" className="pt-4">
+                  {user.loginHistory.length === 0 ? (
+                    <Empty>No login events captured yet.</Empty>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>When</TableHead>
+                          <TableHead>Event</TableHead>
+                          <TableHead>IP</TableHead>
+                          <TableHead>Location</TableHead>
+                          <TableHead>Device</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {user.loginHistory.map((e) => (
+                          <TableRow key={e.id}>
+                            <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                              {formatDateTime(e.createdAt)}
+                            </TableCell>
+                            <TableCell>
+                              <Badge
+                                variant="secondary"
+                                className={loginEventTypeColors[e.eventType] ?? ''}
+                              >
+                                {e.eventType}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="font-mono text-xs">
+                              {e.ipAddress ?? '—'}
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              {e.country ? (
+                                <span className="inline-flex items-center gap-1">
+                                  <span aria-hidden>{countryFlag(e.country)}</span>
+                                  <span>
+                                    {[e.city, e.region, e.country]
+                                      .filter(Boolean)
+                                      .join(', ')}
+                                  </span>
+                                </span>
+                              ) : (
+                                '—'
+                              )}
+                            </TableCell>
+                            <TableCell
+                              className="max-w-[240px] truncate text-xs text-muted-foreground"
+                              title={e.userAgent ?? ''}
+                            >
+                              {e.userAgent ?? '—'}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
                 </TabsContent>
               </Tabs>
             )}

@@ -34,11 +34,15 @@ model User {
   updatedAt                 DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   onboardingCompletedAt     DateTime? @map("onboarding_completed_at") @db.Timestamptz
   userRole                  String?   @map("user_role") @db.VarChar(30)
+  lastLoginAt               DateTime? @map("last_login_at") @db.Timestamptz
+  lastLoginIp               String?   @map("last_login_ip") @db.VarChar(64)
+  lastLoginCountry          String?   @map("last_login_country") @db.VarChar(8)
 
   // Relations
   ownedOrganizations         Organization[]            @relation("BillingOwner")
   memberships                OrganizationMember[]
   refreshTokens              RefreshToken[]
+  loginEvents                LoginEvent[]
   passwordResets             PasswordReset[]
   digests                    Digest[]
   notes                      Note[]
@@ -155,6 +159,31 @@ model RefreshToken {
   @@index([userId], map: "idx_refresh_token_user")
   @@index([familyId], map: "idx_refresh_token_family")
   @@map("refresh_tokens")
+}
+
+model LoginEvent {
+  id                String   @id @default(uuid()) @db.Uuid
+  userId            String   @map("user_id") @db.Uuid
+  // login_success | login_failed | google_login | token_refresh | logout
+  // | password_reset_used | mfa_challenge_passed | mfa_challenge_failed
+  eventType         String   @map("event_type") @db.VarChar(40)
+  ipAddress         String?  @map("ip_address") @db.VarChar(64)
+  userAgent         String?  @map("user_agent") @db.Text
+  country           String?  @db.VarChar(8)
+  region            String?  @db.VarChar(64)
+  city              String?  @db.VarChar(128)
+  latitude          Float?
+  longitude         Float?
+  deviceFingerprint String?  @map("device_fingerprint") @db.VarChar(500)
+  failureReason     String?  @map("failure_reason") @db.VarChar(255)
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)], map: "idx_login_event_user_created")
+  @@index([createdAt], map: "idx_login_event_created")
+  @@index([ipAddress], map: "idx_login_event_ip")
+  @@map("login_events")
 }
 
 model PasswordReset {

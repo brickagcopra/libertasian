@@ -8,6 +8,7 @@ import { OrganizationsModule } from '../organizations/organizations.module';
 import { UsersModule } from '../users/users.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { LoginEventService } from './login-event.service';
 import { GoogleStrategy } from './strategies/google.strategy';
 import { JwtStrategy } from './strategies/jwt.strategy';
 
@@ -66,7 +67,7 @@ const googleStrategyProvider = {
     UsersModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, GoogleStrategy],
-  exports: [AuthService],
+  providers: [AuthService, LoginEventService, JwtStrategy, GoogleStrategy],
+  exports: [AuthService, LoginEventService],
 })
 export class AuthModule {}

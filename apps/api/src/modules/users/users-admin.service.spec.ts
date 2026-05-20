@@ -37,6 +37,9 @@ describe('UsersAdminService', () => {
       entitlementOverride: {
         findMany: jest.fn(),
       },
+      loginEvent: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -62,6 +65,9 @@ describe('UsersAdminService', () => {
     emailVerified: true,
     mfaEnabled: false,
     createdAt: new Date('2026-01-01T00:00:00Z'),
+    lastLoginAt: null,
+    lastLoginIp: null,
+    lastLoginCountry: null,
     ...overrides,
   });
 
@@ -294,6 +300,9 @@ describe('UsersAdminService', () => {
         onboardingCompletedAt: new Date('2026-01-01'),
         createdAt: new Date('2026-01-01'),
         updatedAt: new Date('2026-01-02'),
+        lastLoginAt: new Date('2026-05-01T12:00:00Z'),
+        lastLoginIp: '203.0.113.10',
+        lastLoginCountry: 'PH',
         memberships: [
           {
             organizationId: 'org-A',
@@ -345,6 +354,10 @@ describe('UsersAdminService', () => {
       expect(prisma.payment.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ take: 50 }),
       );
+      expect(result.lastLoginAt).toEqual(new Date('2026-05-01T12:00:00Z'));
+      expect(result.lastLoginCountry).toBe('PH');
+      expect(result.lastLoginIp).toBe('203.0.113.10');
+      expect(result.loginHistory).toEqual([]);
     });
 
     it('returns signupSource=password when googleId is null', async () => {
@@ -361,6 +374,9 @@ describe('UsersAdminService', () => {
         onboardingCompletedAt: null,
         createdAt: new Date('2026-01-01'),
         updatedAt: new Date('2026-01-01'),
+        lastLoginAt: null,
+        lastLoginIp: null,
+        lastLoginCountry: null,
         memberships: [],
         expertVerification: null,
         emailPreference: null,
@@ -377,6 +393,69 @@ describe('UsersAdminService', () => {
       expect(prisma.payment.findMany).not.toHaveBeenCalled();
       expect(prisma.complimentaryAccess.findMany).not.toHaveBeenCalled();
       expect(prisma.entitlementOverride.findMany).not.toHaveBeenCalled();
+    });
+
+    it('returns loginHistory ordered desc by createdAt and capped at 20', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: 'user-3',
+        email: 'h@example.com',
+        fullName: 'Hist',
+        phone: null,
+        status: 'active',
+        emailVerified: true,
+        mfaEnabled: false,
+        userRole: null,
+        googleId: null,
+        onboardingCompletedAt: null,
+        createdAt: new Date('2026-01-01'),
+        updatedAt: new Date('2026-01-01'),
+        lastLoginAt: new Date('2026-05-10'),
+        lastLoginIp: '198.51.100.7',
+        lastLoginCountry: 'US',
+        memberships: [],
+        expertVerification: null,
+        emailPreference: null,
+      });
+      prisma.couponRedemption.findMany.mockResolvedValue([]);
+      prisma.promotionRedemption.findMany.mockResolvedValue([]);
+      prisma.loginEvent.findMany.mockResolvedValue([
+        {
+          id: 'ev-2',
+          eventType: 'login_success',
+          ipAddress: '198.51.100.7',
+          userAgent: 'Mozilla/5.0',
+          country: 'US',
+          region: 'CA',
+          city: 'San Francisco',
+          failureReason: null,
+          createdAt: new Date('2026-05-10T08:00:00Z'),
+        },
+        {
+          id: 'ev-1',
+          eventType: 'login_success',
+          ipAddress: '198.51.100.7',
+          userAgent: 'Mozilla/5.0',
+          country: 'US',
+          region: 'CA',
+          city: 'San Francisco',
+          failureReason: null,
+          createdAt: new Date('2026-05-09T08:00:00Z'),
+        },
+      ]);
+
+      const result = await service.getUserDetail('user-3');
+
+      expect(prisma.loginEvent.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { userId: 'user-3' },
+          orderBy: { createdAt: 'desc' },
+          take: 20,
+        }),
+      );
+      expect(result.loginHistory).toHaveLength(2);
+      expect(result.loginHistory[0]!.id).toBe('ev-2');
+      expect(result.loginHistory[0]!.country).toBe('US');
+      expect(result.loginHistory[1]!.id).toBe('ev-1');
     });
   });
 });

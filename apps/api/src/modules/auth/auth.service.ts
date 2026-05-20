@@ -10,6 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
+import type { Request } from 'express';
 import * as fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import type { JwtPayload, TokenPair, UserRole } from '@libertasian/types';
@@ -18,6 +19,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { UsersService } from '../users/users.service';
 import { RegisterDto, LoginDto } from './dto';
+import { LoginEventService, type LoginEventType } from './login-event.service';
 
 const BCRYPT_COST = 12;
 
@@ -35,6 +37,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
     private readonly notificationsService: NotificationsService,
+    private readonly loginEvents: LoginEventService,
   ) {
     this.accessTtl = this.config.get<number>('JWT_ACCESS_TTL', 900);
     this.refreshTtl = this.config.get<number>('JWT_REFRESH_TTL', 604800);
@@ -69,7 +72,10 @@ export class AuthService {
 
   // ---- Registration ----
 
-  async register(dto: RegisterDto): Promise<{ user: ReturnType<UsersService['sanitize']> }> {
+  async register(
+    dto: RegisterDto,
+    req: Request | null = null,
+  ): Promise<{ user: ReturnType<UsersService['sanitize']> }> {
     const existing = await this.usersService.findByEmail(dto.email);
     if (existing) {
       throw new ConflictException('Email already registered');
@@ -140,6 +146,10 @@ export class AuthService {
       verifyCode,
     );
 
+    // Capture signup IP/UA/geo as a login_success event so the admin "Last
+    // Login" column reflects the user's first known network context.
+    this.emitLoginEvent('login_success', user.id, req);
+
     return { user: this.usersService.sanitize(user) };
   }
 
@@ -148,6 +158,7 @@ export class AuthService {
   async login(
     dto: LoginDto,
     deviceFingerprint: string,
+    req: Request | null = null,
   ): Promise<{ tokens: TokenPair; user: ReturnType<UsersService['sanitize']>; mfaRequired: boolean }> {
     const user = await this.usersService.findByEmail(dto.email);
     if (!user || !user.passwordHash) {
@@ -198,6 +209,8 @@ export class AuthService {
       deviceFingerprint,
     );
 
+    this.emitLoginEvent('login_success', user.id, req, { deviceFingerprint });
+
     return { tokens, user: this.usersService.sanitize(user), mfaRequired: false };
   }
 
@@ -206,6 +219,7 @@ export class AuthService {
   async loginWithGoogle(
     googleProfile: { googleId: string; email: string; fullName: string },
     deviceFingerprint: string,
+    req: Request | null = null,
   ): Promise<{ tokens: TokenPair; user: ReturnType<UsersService['sanitize']>; isNewUser: boolean }> {
     // 1. Try to find user by Google ID
     let user = await this.usersService.findByGoogleId(googleProfile.googleId);
@@ -293,6 +307,8 @@ export class AuthService {
       deviceFingerprint,
     );
 
+    this.emitLoginEvent('google_login', user.id, req, { deviceFingerprint });
+
     return { tokens, user: this.usersService.sanitize(user), isNewUser };
   }
 
@@ -301,6 +317,7 @@ export class AuthService {
   async refreshTokens(
     refreshToken: string,
     deviceFingerprint: string,
+    req: Request | null = null,
   ): Promise<TokenPair> {
     const tokenHash = this.hashToken(refreshToken);
 
@@ -396,12 +413,14 @@ export class AuthService {
       });
     }
 
+    this.emitLoginEvent('token_refresh', storedToken.userId, req, { deviceFingerprint });
+
     return tokens;
   }
 
   // ---- Logout ----
 
-  async logout(refreshToken: string): Promise<void> {
+  async logout(refreshToken: string, req: Request | null = null): Promise<void> {
     const tokenHash = this.hashToken(refreshToken);
     const storedToken = await this.prisma.refreshToken.findFirst({
       where: { tokenHash },
@@ -413,6 +432,8 @@ export class AuthService {
         where: { familyId: storedToken.familyId },
         data: { isRevoked: true },
       });
+
+      this.emitLoginEvent('logout', storedToken.userId, req);
     }
   }
 
@@ -816,6 +837,22 @@ export class AuthService {
       .replace(/^-+|-+$/g, '');
     const suffix = crypto.randomBytes(4).toString('hex');
     return `${base}-${suffix}`;
+  }
+
+  /**
+   * Fire-and-forget login event capture. Never awaited from auth flows so
+   * geo lookup / DB pressure cannot regress login latency (per Phase 2 spec).
+   */
+  private emitLoginEvent(
+    eventType: LoginEventType,
+    userId: string,
+    req: Request | null,
+    extra?: { failureReason?: string; deviceFingerprint?: string },
+  ): void {
+    void this.loginEvents.record(eventType, userId, req, extra ?? {}).catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`login_event ${eventType} dropped for user ${userId}: ${message}`);
+    });
   }
 
   // ---- AES-256-GCM Encryption (for MFA secrets at rest per CLAUDE.md) ----

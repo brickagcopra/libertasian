@@ -78,6 +78,9 @@ export class UsersAdminService {
         emailVerified: true,
         mfaEnabled: true,
         createdAt: true,
+        lastLoginAt: true,
+        lastLoginIp: true,
+        lastLoginCountry: true,
       },
     });
 
@@ -185,6 +188,9 @@ export class UsersAdminService {
         subscriptionStatus: bestSub?.status ?? null,
         subscriptionStartedAt: bestSub?.createdAt ?? null,
         lifetimeValueCentavos,
+        lastLoginAt: u.lastLoginAt,
+        lastLoginCountry: u.lastLoginCountry,
+        lastLoginIp: u.lastLoginIp,
       };
     });
 
@@ -211,6 +217,9 @@ export class UsersAdminService {
         onboardingCompletedAt: true,
         createdAt: true,
         updatedAt: true,
+        lastLoginAt: true,
+        lastLoginIp: true,
+        lastLoginCountry: true,
         memberships: {
           orderBy: { createdAt: 'asc' },
           select: {
@@ -256,6 +265,7 @@ export class UsersAdminService {
       promotionRedemptions,
       complimentaryAccess,
       entitlementOverrides,
+      loginHistory,
     ] = await Promise.all([
       orgIds.length === 0
         ? Promise.resolve([] as Array<{
@@ -394,6 +404,24 @@ export class UsersAdminService {
               isActive: true,
             },
           }),
+      // Last 20 login events for the Login Activity tab. Indexed scan via
+      // idx_login_event_user_created.
+      this.prisma.loginEvent.findMany({
+        where: { userId: id },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+        select: {
+          id: true,
+          eventType: true,
+          ipAddress: true,
+          userAgent: true,
+          country: true,
+          region: true,
+          city: true,
+          failureReason: true,
+          createdAt: true,
+        },
+      }),
     ]);
 
     return {
@@ -495,6 +523,20 @@ export class UsersAdminService {
             blogNotifications: user.emailPreference.blogNotifications,
           }
         : null,
+      lastLoginAt: user.lastLoginAt,
+      lastLoginCountry: user.lastLoginCountry,
+      lastLoginIp: user.lastLoginIp,
+      loginHistory: loginHistory.map((e) => ({
+        id: e.id,
+        eventType: e.eventType,
+        ipAddress: e.ipAddress,
+        userAgent: e.userAgent,
+        country: e.country,
+        region: e.region,
+        city: e.city,
+        failureReason: e.failureReason,
+        createdAt: e.createdAt,
+      })),
     };
   }
 }
