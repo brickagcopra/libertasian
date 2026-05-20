@@ -52,6 +52,12 @@ export class AdminUserListItemDto {
   @ApiPropertyOptional({ description: 'ISO 3166-1 alpha-2 country code geo-resolved from the last login IP' })
   lastLoginCountry!: string | null;
 
+  @ApiPropertyOptional({ description: 'City geo-resolved from the last login IP' })
+  lastLoginCity!: string | null;
+
+  @ApiPropertyOptional({ description: 'Region/state geo-resolved from the last login IP' })
+  lastLoginRegion!: string | null;
+
   @ApiPropertyOptional({ description: 'IP address of the user\'s last successful login' })
   lastLoginIp!: string | null;
 }

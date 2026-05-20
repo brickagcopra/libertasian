@@ -68,6 +68,8 @@ describe('UsersAdminService', () => {
     lastLoginAt: null,
     lastLoginIp: null,
     lastLoginCountry: null,
+    lastLoginCity: null,
+    lastLoginRegion: null,
     ...overrides,
   });
 
@@ -242,6 +244,37 @@ describe('UsersAdminService', () => {
       expect(result.data[0]!.primaryOrgName).toBe('Acme');
     });
 
+    it('returns lastLoginCity + lastLoginRegion in list rows', async () => {
+      prisma.user.findMany.mockResolvedValue([
+        baseUserSelect({
+          lastLoginAt: new Date('2026-05-01T12:00:00Z'),
+          lastLoginIp: '203.0.113.10',
+          lastLoginCountry: 'PH',
+          lastLoginCity: 'Manila',
+          lastLoginRegion: 'NCR',
+        }),
+      ]);
+      prisma.organizationMember.findMany.mockResolvedValue([]);
+      prisma.payment.groupBy.mockResolvedValue([]);
+
+      const result = await service.listUsers({});
+
+      expect(result.data[0]).toMatchObject({
+        lastLoginCountry: 'PH',
+        lastLoginCity: 'Manila',
+        lastLoginRegion: 'NCR',
+      });
+      // Service must request the new columns in the select so Prisma populates them.
+      expect(prisma.user.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: expect.objectContaining({
+            lastLoginCity: true,
+            lastLoginRegion: true,
+          }),
+        }),
+      );
+    });
+
     it('picks the active subscription as currentPlanCode over inactive ones', async () => {
       prisma.user.findMany.mockResolvedValue([baseUserSelect()]);
       prisma.organizationMember.findMany.mockResolvedValue([
@@ -303,6 +336,8 @@ describe('UsersAdminService', () => {
         lastLoginAt: new Date('2026-05-01T12:00:00Z'),
         lastLoginIp: '203.0.113.10',
         lastLoginCountry: 'PH',
+        lastLoginCity: 'Manila',
+        lastLoginRegion: 'NCR',
         memberships: [
           {
             organizationId: 'org-A',
@@ -356,6 +391,8 @@ describe('UsersAdminService', () => {
       );
       expect(result.lastLoginAt).toEqual(new Date('2026-05-01T12:00:00Z'));
       expect(result.lastLoginCountry).toBe('PH');
+      expect(result.lastLoginCity).toBe('Manila');
+      expect(result.lastLoginRegion).toBe('NCR');
       expect(result.lastLoginIp).toBe('203.0.113.10');
       expect(result.loginHistory).toEqual([]);
     });
@@ -377,6 +414,8 @@ describe('UsersAdminService', () => {
         lastLoginAt: null,
         lastLoginIp: null,
         lastLoginCountry: null,
+        lastLoginCity: null,
+        lastLoginRegion: null,
         memberships: [],
         expertVerification: null,
         emailPreference: null,

@@ -37,6 +37,8 @@ model User {
   lastLoginAt               DateTime? @map("last_login_at") @db.Timestamptz
   lastLoginIp               String?   @map("last_login_ip") @db.VarChar(64)
   lastLoginCountry          String?   @map("last_login_country") @db.VarChar(8)
+  lastLoginCity             String?   @map("last_login_city") @db.VarChar(128)
+  lastLoginRegion           String?   @map("last_login_region") @db.VarChar(64)
 
   // Relations
   ownedOrganizations         Organization[]            @relation("BillingOwner")

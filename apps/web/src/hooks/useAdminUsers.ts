@@ -20,6 +20,8 @@ export interface AdminUserListItem {
   lifetimeValueCentavos: number;
   lastLoginAt: string | null;
   lastLoginCountry: string | null;
+  lastLoginCity: string | null;
+  lastLoginRegion: string | null;
   lastLoginIp: string | null;
 }
 

@@ -309,6 +309,12 @@ export class AdminUserDetailDto {
   @ApiPropertyOptional({ description: 'ISO 3166-1 alpha-2 country code from last login IP' })
   lastLoginCountry!: string | null;
 
+  @ApiPropertyOptional({ description: 'City geo-resolved from last login IP' })
+  lastLoginCity!: string | null;
+
+  @ApiPropertyOptional({ description: 'Region/state geo-resolved from last login IP' })
+  lastLoginRegion!: string | null;
+
   @ApiPropertyOptional({ description: 'IP address of last successful login' })
   lastLoginIp!: string | null;
 

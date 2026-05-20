@@ -132,6 +132,8 @@ export interface AdminUserDetail {
   emailPreferences: AdminUserEmailPreferences | null;
   lastLoginAt: string | null;
   lastLoginCountry: string | null;
+  lastLoginCity: string | null;
+  lastLoginRegion: string | null;
   lastLoginIp: string | null;
   loginHistory: AdminUserLoginEvent[];
 }

@@ -101,6 +101,8 @@ export class LoginEventService {
             lastLoginAt: new Date(),
             lastLoginIp: ipAddress,
             lastLoginCountry: geo.country,
+            lastLoginCity: geo.city,
+            lastLoginRegion: geo.region,
           },
         });
       }
