@@ -69,6 +69,7 @@ export class BarExamAnswersPublicController {
       user.organizationId,
       user.sub,
       'aiAnswers',
+      { isPlatformAdmin: user.isPlatformAdmin === true },
     );
     if (!quota.allowed) {
       // limit=0 means the user's plan has no aiAnswers entitlement at all —

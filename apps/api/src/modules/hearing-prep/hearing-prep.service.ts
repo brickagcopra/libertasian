@@ -39,12 +39,14 @@ export class HearingPrepService {
     dto: GenerateHearingPrepDto,
     userId: string,
     organizationId: string,
+    opts?: { isPlatformAdmin?: boolean },
   ) {
     // Check usage quota
     const quota = await this.usageQuota.checkAndIncrement(
       organizationId,
       userId,
       'hearingPrepPerMonth',
+      { isPlatformAdmin: opts?.isPlatformAdmin === true },
     );
     if (!quota.allowed) {
       throw new ForbiddenException(

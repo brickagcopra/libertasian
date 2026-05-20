@@ -37,12 +37,14 @@ export class TimelinesService {
     dto: GenerateTimelineDto,
     userId: string,
     organizationId: string,
+    opts?: { isPlatformAdmin?: boolean },
   ) {
     // Check usage quota
     const quota = await this.usageQuota.checkAndIncrement(
       organizationId,
       userId,
       'timelineGenerationPerMonth',
+      { isPlatformAdmin: opts?.isPlatformAdmin === true },
     );
     if (!quota.allowed) {
       throw new ForbiddenException(

@@ -118,6 +118,45 @@ describe('UsageQuotaService', () => {
       expect(redis.incr).not.toHaveBeenCalled();
     });
 
+    describe('platform-admin bypass', () => {
+      it('should return unlimited and skip entitlement + redis when isPlatformAdmin=true', async () => {
+        const result = await service.checkAndIncrement(
+          'org-1',
+          'user-1',
+          'aiAnswers',
+          { isPlatformAdmin: true },
+        );
+
+        expect(result).toEqual({
+          allowed: true,
+          used: 0,
+          limit: -1,
+          remaining: -1,
+          resetsAt: '',
+        });
+        expect(
+          entitlementService.resolveEffectiveEntitlements,
+        ).not.toHaveBeenCalled();
+        expect(redis.get).not.toHaveBeenCalled();
+        expect(redis.incr).not.toHaveBeenCalled();
+        expect(redisClient.set).not.toHaveBeenCalled();
+      });
+
+      it('should still gate non-admins even if opts is passed explicitly false', async () => {
+        redis.get.mockResolvedValue('15'); // exhausted
+        const result = await service.checkAndIncrement(
+          'org-1',
+          'user-1',
+          'aiAnswers',
+          { isPlatformAdmin: false },
+        );
+
+        expect(result.allowed).toBe(false);
+        expect(result.limit).toBe(15);
+        expect(redis.incr).not.toHaveBeenCalled();
+      });
+    });
+
     it('should atomically seed key with TTL via SET NX before INCR on first increment', async () => {
       redis.get.mockResolvedValue(null);
       redis.incr.mockResolvedValue(1);

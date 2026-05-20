@@ -41,12 +41,14 @@ export class ContradictionsService {
     dto: GenerateContradictionReportDto,
     userId: string,
     organizationId: string,
+    opts?: { isPlatformAdmin?: boolean },
   ) {
     // Check usage quota (team+ subscription)
     const quota = await this.usageQuota.checkAndIncrement(
       organizationId,
       userId,
       'contradictionDetectionPerMonth',
+      { isPlatformAdmin: opts?.isPlatformAdmin === true },
     );
     if (!quota.allowed) {
       throw new ForbiddenException(

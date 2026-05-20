@@ -83,7 +83,7 @@ describe('MemosService', () => {
 
       expect(result).toEqual(mockMemo);
       expect(usageQuota.checkAndIncrement).toHaveBeenCalledWith(
-        organizationId, userId, 'memoDraftingPerMonth',
+        organizationId, userId, 'memoDraftingPerMonth', { isPlatformAdmin: false },
       );
       expect(queue.add).toHaveBeenCalledWith(
         'generate-memo',

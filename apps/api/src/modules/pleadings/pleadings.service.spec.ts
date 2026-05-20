@@ -108,7 +108,7 @@ describe('PleadingsService', () => {
 
       expect(result).toEqual(mockPleading);
       expect(usageQuota.checkAndIncrement).toHaveBeenCalledWith(
-        organizationId, userId, 'pleadingAssistancePerMonth',
+        organizationId, userId, 'pleadingAssistancePerMonth', { isPlatformAdmin: false },
       );
       expect(queue.add).toHaveBeenCalledWith(
         'generate-pleading',

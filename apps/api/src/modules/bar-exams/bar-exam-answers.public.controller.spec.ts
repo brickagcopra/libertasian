@@ -114,6 +114,7 @@ describe('BarExamAnswersPublicController', () => {
         USER.organizationId,
         USER.sub,
         'aiAnswers',
+        { isPlatformAdmin: false },
       );
     });
 
@@ -209,6 +210,7 @@ describe('BarExamAnswersPublicController', () => {
         USER.organizationId,
         USER.sub,
         'aiAnswers',
+        { isPlatformAdmin: false },
       );
     });
   });

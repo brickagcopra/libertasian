@@ -45,6 +45,14 @@ export interface JwtPayload {
   mfaVerified: boolean;
   iat: number;
   exp: number;
+  /**
+   * Resolved per-request from the member's effective permissions
+   * (any `admin:*`). NOT a JWT claim — populated by JwtStrategy.validate()
+   * so revoking the role takes effect on the next request.
+   */
+  isPlatformAdmin?: boolean;
+  /** Org member id resolved per-request by JwtStrategy/PermissionsGuard. */
+  memberId?: string;
 }
 
 export interface TokenPair {

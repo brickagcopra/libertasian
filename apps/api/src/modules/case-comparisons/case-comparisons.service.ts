@@ -37,12 +37,14 @@ export class CaseComparisonsService {
     dto: GenerateCaseComparisonDto,
     userId: string,
     organizationId: string,
+    opts?: { isPlatformAdmin?: boolean },
   ) {
     // Check usage quota
     const quota = await this.usageQuota.checkAndIncrement(
       organizationId,
       userId,
       'caseComparisonPerMonth',
+      { isPlatformAdmin: opts?.isPlatformAdmin === true },
     );
     if (!quota.allowed) {
       throw new ForbiddenException(

@@ -36,12 +36,14 @@ export class MemosService {
     dto: GenerateMemoDto,
     userId: string,
     organizationId: string,
+    opts?: { isPlatformAdmin?: boolean },
   ) {
     // Check usage quota
     const quota = await this.usageQuota.checkAndIncrement(
       organizationId,
       userId,
       'memoDraftingPerMonth',
+      { isPlatformAdmin: opts?.isPlatformAdmin === true },
     );
     if (!quota.allowed) {
       throw new ForbiddenException(

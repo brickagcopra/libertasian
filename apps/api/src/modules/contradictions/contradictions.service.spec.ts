@@ -81,7 +81,7 @@ describe('ContradictionsService', () => {
 
       expect(result).toEqual(mockReport);
       expect(usageQuota.checkAndIncrement).toHaveBeenCalledWith(
-        organizationId, userId, 'contradictionDetectionPerMonth',
+        organizationId, userId, 'contradictionDetectionPerMonth', { isPlatformAdmin: false },
       );
       expect(queue.add).toHaveBeenCalledWith(
         'generate-contradiction-report',

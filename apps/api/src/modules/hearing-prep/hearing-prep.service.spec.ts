@@ -92,7 +92,7 @@ describe('HearingPrepService', () => {
 
       expect(result).toEqual(mockPack);
       expect(usageQuota.checkAndIncrement).toHaveBeenCalledWith(
-        organizationId, userId, 'hearingPrepPerMonth',
+        organizationId, userId, 'hearingPrepPerMonth', { isPlatformAdmin: false },
       );
       expect(queue.add).toHaveBeenCalledWith(
         'generate-hearing-prep',

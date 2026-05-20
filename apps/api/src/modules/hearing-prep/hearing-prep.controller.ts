@@ -46,6 +46,7 @@ export class HearingPrepController {
       dto,
       user.sub,
       user.organizationId,
+      { isPlatformAdmin: user.isPlatformAdmin === true },
     );
     await this.auditService.log({
       organizationId: user.organizationId,
