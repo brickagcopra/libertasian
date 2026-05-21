@@ -50,15 +50,15 @@ _BAD_PONENTE_SQL = """
     ponente IS NOT NULL
     AND (
         LENGTH(ponente) > 40
-        OR ponente ILIKE '%DECISION%'
-        OR ponente ILIKE '%RESOLUTION%'
-        OR ponente ILIKE '%D E C I S I O N%'
-        OR ponente ILIKE '%R E S O L U T I O N%'
-        OR ponente ILIKE '% VS %'
-        OR ponente ILIKE '% VS. %'
-        OR ponente ILIKE '% V. %'
-        OR ponente ILIKE '%PETITIONER%'
-        OR ponente ILIKE '%RESPONDENT%'
+        OR ponente ILIKE '%%DECISION%%'
+        OR ponente ILIKE '%%RESOLUTION%%'
+        OR ponente ILIKE '%%D E C I S I O N%%'
+        OR ponente ILIKE '%%R E S O L U T I O N%%'
+        OR ponente ILIKE '%% VS %%'
+        OR ponente ILIKE '%% VS. %%'
+        OR ponente ILIKE '%% V. %%'
+        OR ponente ILIKE '%%PETITIONER%%'
+        OR ponente ILIKE '%%RESPONDENT%%'
     )
 """
 
