@@ -101,40 +101,51 @@ export function FeaturedSection() {
   const featured = data?.data;
   if (!featured) return null;
 
+  // Skip the whole block (heading included) when no section has items —
+  // avoids orphaning a "Featured" heading above empty space.
+  const hasAnyItems = SECTIONS.some((section) => {
+    const items = featured[section.key];
+    return items && items.length > 0;
+  });
+  if (!hasAnyItems) return null;
+
   return (
-    <div className="grid gap-4 md:grid-cols-3">
-      {SECTIONS.map((section) => {
-        const items = featured[section.key];
-        if (!items || items.length === 0) return null;
+    <div>
+      <h2 className="mb-4 text-lg font-semibold">Featured</h2>
+      <div className="grid gap-4 md:grid-cols-3">
+        {SECTIONS.map((section) => {
+          const items = featured[section.key];
+          if (!items || items.length === 0) return null;
 
-        const Icon = section.icon;
+          const Icon = section.icon;
 
-        return (
-          <Card key={section.key}>
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-sm">
-                <Icon className="size-4 text-muted-foreground" />
-                {section.title}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {items.slice(0, 3).map((item) => (
-                <FeaturedItem
-                  key={item.id}
-                  item={item}
-                  href={section.itemHref(item.id)}
-                />
-              ))}
-              <Link
-                href={section.href}
-                className="mt-2 block text-center text-xs font-medium text-muted-foreground hover:text-foreground"
-              >
-                Browse all
-              </Link>
-            </CardContent>
-          </Card>
-        );
-      })}
+          return (
+            <Card key={section.key}>
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  <Icon className="size-4 text-muted-foreground" />
+                  {section.title}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {items.slice(0, 3).map((item) => (
+                  <FeaturedItem
+                    key={item.id}
+                    item={item}
+                    href={section.itemHref(item.id)}
+                  />
+                ))}
+                <Link
+                  href={section.href}
+                  className="mt-2 block text-center text-xs font-medium text-muted-foreground hover:text-foreground"
+                >
+                  Browse all
+                </Link>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
     </div>
   );
 }
