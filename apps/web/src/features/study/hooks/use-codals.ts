@@ -5,11 +5,18 @@ import { useQuery } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api-client';
 import type { CodalListItem, CodalListMeta } from '../types';
 
+export type CodalTabGroup =
+  | 'constitutions'
+  | 'statutes'
+  | 'executive_issuances'
+  | 'rules';
+
 export function useCodals(
   subject: string,
   params?: {
     cursor?: string;
     documentType?: string;
+    tabGroup?: CodalTabGroup;
     search?: string;
   },
 ) {
@@ -19,6 +26,7 @@ export function useCodals(
       const queryParams: Record<string, string> = { limit: '20' };
       if (params?.cursor) queryParams['cursor'] = params.cursor;
       if (params?.documentType) queryParams['documentType'] = params.documentType;
+      if (params?.tabGroup) queryParams['tabGroup'] = params.tabGroup;
       if (params?.search) queryParams['search'] = params.search;
       const res = await apiClient.get<{
         success: boolean;
