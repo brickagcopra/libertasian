@@ -10,28 +10,48 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useInfiniteCodals, useOfflineCodals as useOfflineFallback } from '../../../features/study/hooks/use-codals';
+import {
+  useInfiniteCodals,
+  useOfflineCodals as useOfflineFallback,
+  type CodalTabGroup,
+} from '../../../features/study/hooks/use-codals';
 import { useOfflineCodals } from '../../../features/study/hooks/use-offline-codals';
 import { useNetworkState } from '../../../hooks/use-network-state';
 import { OfflineBanner } from '../../../components/offline-banner';
 import { CodalCard } from '../../../features/study/components/codal-card';
 import type { CodalListItem } from '../../../features/study/types';
 
-const DOC_TYPE_FILTERS = [
-  { label: 'All', value: '' },
-  { label: 'Republic Act', value: 'republic_act' },
-  { label: 'Executive Order', value: 'executive_order' },
-  { label: 'Presidential Decree', value: 'presidential_decree' },
-  { label: 'Batas Pambansa', value: 'batas_pambansa' },
-  { label: 'Other', value: 'administrative_order' },
+interface TabConfig {
+  key: CodalTabGroup;
+  label: string;
+}
+
+const TABS: TabConfig[] = [
+  { key: 'statutes', label: 'Statutes' },
+  { key: 'constitutions', label: 'Constitutions' },
+  { key: 'executive_issuances', label: 'Executive Issuances' },
+  { key: 'rules', label: 'Rules' },
 ];
+
+function emptyCopyFor(tabGroup: CodalTabGroup, subjectLabel: string): string {
+  switch (tabGroup) {
+    case 'statutes':
+      return `No statutes yet for ${subjectLabel}.`;
+    case 'constitutions':
+      return `No constitutional documents yet for ${subjectLabel}.`;
+    case 'executive_issuances':
+      return 'Executive issuances are not yet in the library. Coming soon.';
+    case 'rules':
+      return `No rules yet for ${subjectLabel}.`;
+  }
+}
 
 export default function CodalListScreen() {
   const { subject } = useLocalSearchParams<{ subject: string }>();
   const subjectCode = subject ?? '';
 
   const [search, setSearch] = useState('');
-  const [docType, setDocType] = useState('');
+  const [tabGroup, setTabGroup] = useState<CodalTabGroup>('statutes');
   const [searchQuery, setSearchQuery] = useState('');
 
   const { isConnected, isInternetReachable } = useNetworkState();
@@ -49,14 +69,14 @@ export default function CodalListScreen() {
     fetchNextPage,
   } = useInfiniteCodals({
     subject: subjectCode,
-    documentType: docType || undefined,
+    tabGroup,
     search: searchQuery || undefined,
   });
 
   // Offline: fall back to SQLite cache
   const { data: offlineData, isLoading: offlineLoading } = useOfflineFallback({
     subject: subjectCode,
-    documentType: docType || undefined,
+    tabGroup,
     search: searchQuery || undefined,
     enabled: !isOnline,
   });
@@ -95,12 +115,14 @@ export default function CodalListScreen() {
   );
 
   const subjectName = subjectCode.replace(/_/g, ' ');
+  const subjectLabel =
+    subjectName.charAt(0).toUpperCase() + subjectName.slice(1);
 
   return (
     <>
       <Stack.Screen
         options={{
-          title: subjectName.charAt(0).toUpperCase() + subjectName.slice(1),
+          title: subjectLabel,
           headerBackTitle: 'Subjects',
         }}
       />
@@ -134,27 +156,31 @@ export default function CodalListScreen() {
           </View>
         </View>
 
-        {/* Document Type Filter */}
-        <View style={styles.filterRow}>
-          {DOC_TYPE_FILTERS.map((filter) => (
-            <TouchableOpacity
-              key={filter.value}
-              style={[
-                styles.filterChip,
-                docType === filter.value && styles.filterChipActive,
-              ]}
-              onPress={() => setDocType(filter.value)}
-            >
-              <Text
-                style={[
-                  styles.filterChipText,
-                  docType === filter.value && styles.filterChipTextActive,
-                ]}
+        {/* Tab Bar — 4 codal groups */}
+        <View style={styles.tabBar}>
+          {TABS.map((tab) => {
+            const isActive = tabGroup === tab.key;
+            return (
+              <TouchableOpacity
+                key={tab.key}
+                style={[styles.tab, isActive ? styles.tabActive : null]}
+                onPress={() => setTabGroup(tab.key)}
+                activeOpacity={0.7}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: isActive }}
               >
-                {filter.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
+                <Text
+                  style={[
+                    styles.tabLabel,
+                    isActive ? styles.tabLabelActive : null,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {tab.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
         </View>
 
         {isLoading ? (
@@ -169,14 +195,14 @@ export default function CodalListScreen() {
               color="#d1d5db"
             />
             <Text style={styles.emptyTitle}>
-              {isOnline ? 'No codals found' : 'No cached codals'}
+              {isOnline ? 'Nothing here yet' : 'No cached codals'}
             </Text>
             <Text style={styles.emptyText}>
               {!isOnline
                 ? 'Download codals while online to read them offline'
                 : searchQuery
                   ? `No results for "${searchQuery}"`
-                  : 'No codals available for this subject'}
+                  : emptyCopyFor(tabGroup, subjectLabel)}
             </Text>
           </View>
         ) : (
@@ -226,32 +252,35 @@ const styles = StyleSheet.create({
     color: '#111827',
     padding: 0,
   },
-  filterRow: {
+  tabBar: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  filterChip: {
     backgroundColor: '#fff',
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
+    marginTop: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+    paddingHorizontal: 4,
   },
-  filterChipActive: {
-    backgroundColor: '#1a56db',
-    borderColor: '#1a56db',
+  tab: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
   },
-  filterChipText: {
+  tabActive: {
+    borderBottomColor: '#1a56db',
+  },
+  tabLabel: {
     fontSize: 12,
     fontWeight: '500',
     color: '#6b7280',
+    textAlign: 'center',
   },
-  filterChipTextActive: {
-    color: '#fff',
+  tabLabelActive: {
+    color: '#1a56db',
+    fontWeight: '600',
   },
   loadingState: {
     flex: 1,

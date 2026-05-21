@@ -536,29 +536,32 @@ export function DocumentReaderScreen({
         ) : null}
       </ScrollView>
 
-      {/* Floating action */}
-      <Pressable
-        onPress={onAdd}
-        accessibilityLabel="Add note"
-        style={{
-          position: 'absolute',
-          right: 18,
-          bottom: 28,
-          width: 56,
-          height: 56,
-          borderRadius: 28,
-          backgroundColor: theme.accent,
-          alignItems: 'center',
-          justifyContent: 'center',
-          shadowColor: '#000',
-          shadowOpacity: 0.22,
-          shadowRadius: 28,
-          shadowOffset: { width: 0, height: 12 },
-          elevation: 12,
-        }}
-      >
-        <Ionicons name="add" size={26} color={theme.accentInk} />
-      </Pressable>
+      {/* Floating action — rendered only when an onAdd handler is provided.
+          Reader hides this for codal-class documents (no digest generation). */}
+      {onAdd ? (
+        <Pressable
+          onPress={onAdd}
+          accessibilityLabel="Add note"
+          style={{
+            position: 'absolute',
+            right: 18,
+            bottom: 28,
+            width: 56,
+            height: 56,
+            borderRadius: 28,
+            backgroundColor: theme.accent,
+            alignItems: 'center',
+            justifyContent: 'center',
+            shadowColor: '#000',
+            shadowOpacity: 0.22,
+            shadowRadius: 28,
+            shadowOffset: { width: 0, height: 12 },
+            elevation: 12,
+          }}
+        >
+          <Ionicons name="add" size={26} color={theme.accentInk} />
+        </Pressable>
+      ) : null}
     </View>
   );
 }
