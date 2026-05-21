@@ -32,6 +32,7 @@ import {
   LoginDto,
   ForgotPasswordDto,
   ResetPasswordDto,
+  ChangePasswordDto,
   VerifyEmailDto,
   ResendVerificationDto,
   MfaVerifyDto,
@@ -328,6 +329,41 @@ export class AuthController {
       metadata: { ip },
     });
     return { success: true, data: { message: 'Password reset successfully' } };
+  }
+
+  @Post('change-password')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'Change password (authenticated). Revokes all sessions including current — client must sign in again.',
+  })
+  async changePassword(
+    @Body() dto: ChangePasswordDto,
+    @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Ip() ip: string,
+  ) {
+    await this.authService.changePassword(user.sub, dto.currentPassword, dto.newPassword);
+    this.clearRefreshCookie(res);
+
+    // Best-effort side effects — do not block the response
+    void this.authService.recordPasswordChangedSideEffects(user.sub, req, ip);
+
+    await this.auditService.log({
+      actorUserId: user.sub,
+      actorType: 'user',
+      action: 'auth.change_password',
+      entityType: 'user',
+      entityId: user.sub,
+      metadata: { ip },
+    });
+
+    return {
+      success: true,
+      data: { message: 'Password changed successfully. Please sign in again.' },
+    };
   }
 
   // ---- Email Verification ----

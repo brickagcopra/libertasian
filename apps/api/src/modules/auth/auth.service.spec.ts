@@ -1,4 +1,4 @@
-import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -753,6 +753,77 @@ describe('AuthService', () => {
 
       await expect(service.loginWithGoogle(googleProfile, deviceFingerprint)).rejects.toThrow(UnauthorizedException);
       await expect(service.loginWithGoogle(googleProfile, deviceFingerprint)).rejects.toThrow('Account is suspended or deactivated');
+    });
+  });
+
+  describe('changePassword', () => {
+    const userId = mockUser.id;
+
+    beforeEach(() => {
+      // Fresh transaction stub: resolves with array of update results.
+      prismaService.$transaction.mockImplementation(async (ops: unknown[]) => {
+        return ops.map(() => ({}));
+      });
+    });
+
+    it('throws UnauthorizedException when current password is wrong', async () => {
+      usersService.findById.mockResolvedValue(mockUser as unknown as ReturnType<UsersService['findById']>);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+
+      await expect(
+        service.changePassword(userId, 'wrong-current', 'BrandNewStrongPass!'),
+      ).rejects.toThrow(UnauthorizedException);
+
+      expect(prismaService.$transaction).not.toHaveBeenCalled();
+      expect(prismaService.user.update).not.toHaveBeenCalled();
+    });
+
+    it('throws BadRequestException when newPassword equals currentPassword', async () => {
+      usersService.findById.mockResolvedValue(mockUser as unknown as ReturnType<UsersService['findById']>);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+
+      await expect(
+        service.changePassword(userId, 'SamePassword12', 'SamePassword12'),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(prismaService.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('throws BadRequestException when user has no passwordHash (Google-only)', async () => {
+      const googleOnly = { ...mockUser, passwordHash: null };
+      usersService.findById.mockResolvedValue(googleOnly as unknown as ReturnType<UsersService['findById']>);
+
+      await expect(
+        service.changePassword(userId, 'anything', 'BrandNewStrongPass!'),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(bcrypt.compare).not.toHaveBeenCalled();
+      expect(prismaService.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('hashes the new password and revokes all active refresh tokens on success', async () => {
+      usersService.findById.mockResolvedValue(mockUser as unknown as ReturnType<UsersService['findById']>);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+      (bcrypt.hash as jest.Mock).mockResolvedValue('$2b$12$newhashedpassword');
+      prismaService.user.update.mockResolvedValue({} as unknown as ReturnType<typeof prismaService.user.update>);
+      prismaService.refreshToken.updateMany.mockResolvedValue({ count: 3 } as unknown as ReturnType<typeof prismaService.refreshToken.updateMany>);
+
+      await service.changePassword(userId, 'OldPasswordOk!', 'BrandNewStrongPass!');
+
+      expect(bcrypt.hash).toHaveBeenCalledWith('BrandNewStrongPass!', 12);
+      expect(prismaService.$transaction).toHaveBeenCalledTimes(1);
+      // Inspect the operations passed to $transaction by re-invoking the
+      // captured mocks — they are jest.fn() instances on the Prisma mock,
+      // so prismaService.user.update and refreshToken.updateMany record
+      // the calls the service builds inside the transaction array.
+      expect(prismaService.user.update).toHaveBeenCalledWith({
+        where: { id: userId },
+        data: { passwordHash: '$2b$12$newhashedpassword' },
+      });
+      expect(prismaService.refreshToken.updateMany).toHaveBeenCalledWith({
+        where: { userId, isRevoked: false },
+        data: { isRevoked: true },
+      });
     });
   });
 

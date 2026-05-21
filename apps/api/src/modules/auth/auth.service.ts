@@ -538,6 +538,84 @@ export class AuthService {
     ]);
   }
 
+  // ---- Change Password (authenticated) ----
+
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<void> {
+    const user = await this.usersService.findById(userId);
+
+    if (!user.passwordHash) {
+      throw new BadRequestException(
+        'No password set on this account. Use the password reset flow.',
+      );
+    }
+
+    const ok = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!ok) {
+      throw new UnauthorizedException('Current password is incorrect');
+    }
+
+    if (currentPassword === newPassword) {
+      throw new BadRequestException(
+        'New password must differ from current password',
+      );
+    }
+
+    await this.checkBreachedPassword(newPassword);
+
+    const passwordHash = await bcrypt.hash(newPassword, BCRYPT_COST);
+
+    await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: userId },
+        data: { passwordHash },
+      }),
+      this.prisma.refreshToken.updateMany({
+        where: { userId, isRevoked: false },
+        data: { isRevoked: true },
+      }),
+    ]);
+  }
+
+  /**
+   * Best-effort post-change side effects: notification email + login event.
+   * Runs after the password change succeeds and the response has been sent,
+   * so a queue/DB hiccup here cannot regress the user-facing flow. Errors
+   * are logged and swallowed.
+   */
+  async recordPasswordChangedSideEffects(
+    userId: string,
+    req: Request | null,
+    ip: string,
+  ): Promise<void> {
+    try {
+      const user = await this.usersService.findById(userId);
+      await this.notificationsService.sendPasswordChangedEmail(
+        user.email,
+        user.fullName ?? 'User',
+        ip,
+        new Date(),
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(
+        `password_changed notification dropped for user ${userId}: ${message}`,
+      );
+    }
+
+    try {
+      await this.loginEvents.record('password_changed', userId, req);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(
+        `password_changed login_event dropped for user ${userId}: ${message}`,
+      );
+    }
+  }
+
   // ---- Email Verification ----
 
   async verifyEmail(email: string, code: string): Promise<void> {

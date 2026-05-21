@@ -3,6 +3,7 @@ export { LoginDto } from './login.dto';
 export { RefreshTokenDto } from './refresh-token.dto';
 export { ForgotPasswordDto } from './forgot-password.dto';
 export { ResetPasswordDto } from './reset-password.dto';
+export { ChangePasswordDto } from './change-password.dto';
 export { VerifyEmailDto, ResendVerificationDto } from './verify-email.dto';
 export { MfaVerifyDto } from './mfa-verify.dto';
 export { MfaDisableDto } from './mfa-disable.dto';

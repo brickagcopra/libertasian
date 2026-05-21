@@ -5,9 +5,11 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   BellIcon,
   CreditCardIcon,
+  KeyIcon,
   KeyRoundIcon,
   UserPlusIcon,
   ShieldCheckIcon,
@@ -29,6 +31,7 @@ import {
   useEnrollMfa,
   useConfirmMfa,
   useDisableMfa,
+  useChangePassword,
   useSessions,
   useRevokeSession,
   useRevokeAllSessions,
@@ -505,9 +508,134 @@ function OrgMembersPanel({ orgId }: { orgId: string }) {
 function SecurityTab() {
   return (
     <div className="max-w-lg space-y-8">
+      <PasswordSection />
       <MfaSection />
       <SessionsSection />
     </div>
+  );
+}
+
+const passwordSchema = z
+  .object({
+    currentPassword: z.string().min(1, 'Required'),
+    newPassword: z.string().min(10, 'Min 10 characters'),
+    confirmPassword: z.string(),
+  })
+  .refine((d) => d.newPassword === d.confirmPassword, {
+    path: ['confirmPassword'],
+    message: 'Passwords do not match',
+  })
+  .refine((d) => d.newPassword !== d.currentPassword, {
+    path: ['newPassword'],
+    message: 'New password must differ from current',
+  });
+
+type PasswordFormData = z.infer<typeof passwordSchema>;
+
+function PasswordSection() {
+  const router = useRouter();
+  const changePassword = useChangePassword();
+  const [successMsg, setSuccessMsg] = useState('');
+
+  const {
+    register,
+    handleSubmit,
+    formState: { errors, isSubmitting },
+    setError,
+    reset,
+  } = useForm<PasswordFormData>({
+    resolver: zodResolver(passwordSchema),
+  });
+
+  const onSubmit = async (data: PasswordFormData) => {
+    try {
+      setSuccessMsg('');
+      await changePassword.mutateAsync({
+        currentPassword: data.currentPassword,
+        newPassword: data.newPassword,
+      });
+      reset();
+      setSuccessMsg('Password updated. Signing you out…');
+      setTimeout(() => router.replace('/login'), 1200);
+    } catch (error) {
+      if (error instanceof ApiClientError) {
+        if (error.statusCode === 401) {
+          setError('currentPassword', { message: 'Current password is incorrect' });
+        } else {
+          setError('root', { message: error.message });
+        }
+      } else {
+        setError('root', { message: 'Failed to change password' });
+      }
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <KeyIcon className="h-5 w-5" />
+          Password
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          {errors.root && (
+            <Alert variant="destructive">
+              <AlertDescription>{errors.root.message}</AlertDescription>
+            </Alert>
+          )}
+          {successMsg && (
+            <Alert>
+              <AlertDescription>{successMsg}</AlertDescription>
+            </Alert>
+          )}
+
+          <div className="space-y-2">
+            <Label htmlFor="current-password">Current password</Label>
+            <Input
+              id="current-password"
+              type="password"
+              autoComplete="current-password"
+              {...register('currentPassword')}
+            />
+            {errors.currentPassword && (
+              <p className="text-xs text-destructive">{errors.currentPassword.message}</p>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="new-password">New password</Label>
+            <Input
+              id="new-password"
+              type="password"
+              autoComplete="new-password"
+              {...register('newPassword')}
+            />
+            {errors.newPassword && (
+              <p className="text-xs text-destructive">{errors.newPassword.message}</p>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="confirm-password">Confirm new password</Label>
+            <Input
+              id="confirm-password"
+              type="password"
+              autoComplete="new-password"
+              {...register('confirmPassword')}
+            />
+            {errors.confirmPassword && (
+              <p className="text-xs text-destructive">{errors.confirmPassword.message}</p>
+            )}
+          </div>
+
+          <Button type="submit" disabled={isSubmitting}>
+            {isSubmitting ? 'Updating…' : 'Update password'}
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
   );
 }
 

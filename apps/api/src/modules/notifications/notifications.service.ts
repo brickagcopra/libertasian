@@ -6,6 +6,7 @@ import { Queue } from 'bullmq';
 import { PrismaService } from '../../prisma/prisma.service';
 import { verifyEmailTemplate } from './templates/verify-email';
 import { resetPasswordTemplate } from './templates/reset-password';
+import { passwordChangedTemplate } from './templates/password-changed';
 import { memberInviteTemplate } from './templates/member-invite';
 import { subscriptionConfirmationTemplate } from './templates/subscription-confirmation';
 import { paymentReceiptTemplate } from './templates/payment-receipt';
@@ -50,6 +51,24 @@ export class NotificationsService {
 
     await this.enqueue({ to: email, subject, html });
     this.logger.log(`Password reset email enqueued for ${this.redactEmail(email)}`);
+  }
+
+  async sendPasswordChangedEmail(
+    email: string,
+    fullName: string,
+    ip: string,
+    when: Date,
+  ): Promise<void> {
+    const resetUrl = `${this.appUrl}/auth/forgot-password`;
+    const { subject, html } = passwordChangedTemplate({
+      fullName,
+      whenIso: when.toISOString(),
+      ip: ip || 'unknown',
+      resetUrl,
+    });
+
+    await this.enqueue({ to: email, subject, html });
+    this.logger.log(`Password changed notice enqueued for ${this.redactEmail(email)}`);
   }
 
   async sendMemberInviteEmail(
