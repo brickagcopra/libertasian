@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useCallback, useState } from 'react';
 
-import { useCodals } from '@/features/study/hooks/use-codals';
+import { useCodals, type CodalTabGroup } from '@/features/study/hooks/use-codals';
 import { ROUTES } from '@/lib/constants';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,24 +12,28 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SearchIcon, AlertCircleIcon } from 'lucide-react';
+
+const DEFAULT_TAB: CodalTabGroup = 'statutes';
+
+const EMPTY_COPY: Record<CodalTabGroup, (subjectLabel: string) => string> = {
+  constitutions: (s) => `No constitutional documents yet for ${s}.`,
+  statutes: (s) => `No statutes yet for ${s}.`,
+  executive_issuances: () =>
+    'Executive issuances are not yet in the library. Coming soon.',
+  rules: (s) => `No rules yet for ${s}.`,
+};
 
 export default function CodalSubjectPage() {
   const params = useParams();
   const subject = params['subject'] as string;
-  const [documentType, setDocumentType] = useState('all');
+  const [tabGroup, setTabGroup] = useState<CodalTabGroup>(DEFAULT_TAB);
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
 
   const { data, isLoading, error } = useCodals(subject, {
-    documentType: documentType !== 'all' ? documentType : undefined,
+    tabGroup,
     search: search || undefined,
   });
 
@@ -66,7 +70,18 @@ export default function CodalSubjectPage() {
         </p>
       </div>
 
-      {/* Search and Filter */}
+      <Tabs
+        value={tabGroup}
+        onValueChange={(value) => setTabGroup(value as CodalTabGroup)}
+      >
+        <TabsList>
+          <TabsTrigger value="statutes">Statutes</TabsTrigger>
+          <TabsTrigger value="constitutions">Constitutions</TabsTrigger>
+          <TabsTrigger value="executive_issuances">Executive Issuances</TabsTrigger>
+          <TabsTrigger value="rules">Rules</TabsTrigger>
+        </TabsList>
+      </Tabs>
+
       <div className="flex flex-wrap gap-3">
         <form onSubmit={handleSearch} className="flex gap-2">
           <Input
@@ -81,18 +96,6 @@ export default function CodalSubjectPage() {
             Search
           </Button>
         </form>
-        <Select value={documentType} onValueChange={setDocumentType}>
-          <SelectTrigger className="w-[180px]">
-            <SelectValue placeholder="All types" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All types</SelectItem>
-            <SelectItem value="statute">Statute</SelectItem>
-            <SelectItem value="republic_act">Republic Act</SelectItem>
-            <SelectItem value="presidential_decree">Presidential Decree</SelectItem>
-            <SelectItem value="executive_order">Executive Order</SelectItem>
-          </SelectContent>
-        </Select>
       </div>
 
       {error && (
@@ -114,7 +117,9 @@ export default function CodalSubjectPage() {
 
       {!isLoading && codals.length === 0 && (
         <p className="py-12 text-center text-sm text-muted-foreground">
-          No codals found{search ? ` matching "${search}"` : ''} for this subject.
+          {search
+            ? `No codals found matching "${search}" in ${tabGroup.replace(/_/g, ' ')}.`
+            : EMPTY_COPY[tabGroup](subjectLabel)}
         </p>
       )}
 

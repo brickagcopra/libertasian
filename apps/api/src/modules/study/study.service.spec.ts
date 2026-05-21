@@ -247,6 +247,65 @@ describe('StudyService', () => {
         }),
       );
     });
+
+    describe('tabGroup filter', () => {
+      const cases: Array<{
+        tabGroup: 'constitutions' | 'statutes' | 'executive_issuances' | 'rules';
+        expected: string[];
+      }> = [
+        { tabGroup: 'constitutions', expected: ['constitution'] },
+        {
+          tabGroup: 'statutes',
+          expected: ['statute', 'codal', 'republic_act', 'commonwealth_act', 'batas_pambansa'],
+        },
+        {
+          tabGroup: 'executive_issuances',
+          expected: [
+            'executive_order',
+            'presidential_decree',
+            'proclamation',
+            'administrative_order',
+          ],
+        },
+        { tabGroup: 'rules', expected: ['rules_of_court', 'rule'] },
+      ];
+
+      it.each(cases)(
+        'should map tabGroup=$tabGroup to documentType IN $expected',
+        async ({ tabGroup, expected }) => {
+          (prisma.legalMetadataTag.findFirst as jest.Mock).mockResolvedValue(mockBarTag);
+          (prisma.legalDocument.findMany as jest.Mock).mockResolvedValue([]);
+
+          await service.listCodalsBySubject('civil', { tabGroup });
+
+          expect(prisma.legalDocument.findMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+              where: expect.objectContaining({
+                documentType: { in: expected },
+              }),
+            }),
+          );
+        },
+      );
+
+      it('should let tabGroup override documentType when both are provided', async () => {
+        (prisma.legalMetadataTag.findFirst as jest.Mock).mockResolvedValue(mockBarTag);
+        (prisma.legalDocument.findMany as jest.Mock).mockResolvedValue([]);
+
+        await service.listCodalsBySubject('civil', {
+          tabGroup: 'constitutions',
+          documentType: 'statute',
+        });
+
+        expect(prisma.legalDocument.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({
+              documentType: { in: ['constitution'] },
+            }),
+          }),
+        );
+      });
+    });
   });
 
   // =========================================================================

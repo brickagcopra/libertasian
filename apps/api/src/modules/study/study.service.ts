@@ -33,6 +33,26 @@ import {
   SyllabusTopicProgressDto,
 } from './dto';
 
+/**
+ * Maps each codal tab to the list of document_type values it surfaces.
+ * Order within a tab is irrelevant — Prisma `in:` is a set match.
+ *
+ * Phase 1: executive_issuances tab is intentionally left with types that
+ * have no seeded documents yet, so the tab renders as "Coming soon" until
+ * Phase 2 ships the PD/EO/Proclamation crawler.
+ */
+const TAB_GROUP_TO_TYPES: Record<string, string[]> = {
+  constitutions: ['constitution'],
+  statutes: ['statute', 'codal', 'republic_act', 'commonwealth_act', 'batas_pambansa'],
+  executive_issuances: [
+    'executive_order',
+    'presidential_decree',
+    'proclamation',
+    'administrative_order',
+  ],
+  rules: ['rules_of_court', 'rule'],
+};
+
 interface RagFlashcardResponse {
   flashcards: {
     front: string;
@@ -106,7 +126,10 @@ export class StudyService {
       status: 'published',
     };
 
-    if (query.documentType) {
+    if (query.tabGroup) {
+      // tabGroup overrides any single documentType filter.
+      where.documentType = { in: TAB_GROUP_TO_TYPES[query.tabGroup] };
+    } else if (query.documentType) {
       where.documentType = query.documentType;
     }
 
