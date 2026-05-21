@@ -307,6 +307,85 @@ describe('Auth (E2E)', () => {
     });
   });
 
+  // ---- Change Password ----
+
+  describe('Change password', () => {
+    it('returns 401 when no auth header is provided', async () => {
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/change-password')
+        .send({
+          currentPassword: 'TestPass123!secure',
+          newPassword: 'BrandNewStrongPass!',
+        })
+        .expect(401);
+    });
+
+    it('returns 401 when currentPassword is wrong', async () => {
+      const { accessToken } = await createAuthenticatedUser(app);
+
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/change-password')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          currentPassword: 'WrongPassword!9',
+          newPassword: 'BrandNewStrongPass!',
+        })
+        .expect(401);
+    });
+
+    it('returns 400 when newPassword is shorter than 10 chars (validation pipe)', async () => {
+      const { accessToken, password } = await createAuthenticatedUser(app);
+
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/change-password')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          currentPassword: password,
+          newPassword: 'short',
+        })
+        .expect(400);
+    });
+
+    it('returns 400 when newPassword equals currentPassword', async () => {
+      const { accessToken, password } = await createAuthenticatedUser(app);
+
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/change-password')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          currentPassword: password,
+          newPassword: password,
+        })
+        .expect(400);
+    });
+
+    it('succeeds: old password no longer works, new password does', async () => {
+      const { accessToken, email, password } = await createAuthenticatedUser(app);
+      const newPassword = `Rotated-${Date.now()}!ab`;
+
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/change-password')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          currentPassword: password,
+          newPassword,
+        })
+        .expect(201);
+
+      // Old password is dead
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email, password })
+        .expect(401);
+
+      // New password works
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email, password: newPassword })
+        .expect(201);
+    });
+  });
+
   // ---- Session Management ----
 
   describe('Session management', () => {

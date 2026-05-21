@@ -19,6 +19,7 @@ export type LoginEventType =
   | 'token_refresh'
   | 'logout'
   | 'password_reset_used'
+  | 'password_changed'
   | 'mfa_challenge_passed'
   | 'mfa_challenge_failed';
 

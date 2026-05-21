@@ -176,6 +176,16 @@ export function useDisableMfa() {
   });
 }
 
+// ---- Password ----
+
+export function useChangePassword() {
+  return useMutation({
+    mutationFn: async (data: { currentPassword: string; newPassword: string }) => {
+      return apiClient.post('/auth/change-password', data);
+    },
+  });
+}
+
 // ---- Sessions ----
 
 export function useSessions() {
