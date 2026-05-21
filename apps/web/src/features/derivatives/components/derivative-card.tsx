@@ -7,28 +7,72 @@ import { Card, CardContent } from '@/components/ui/card';
 import { LockIcon, SparklesIcon } from 'lucide-react';
 
 import { subjectFromCode, typeFromEnum } from '../taxonomy';
-import { DERIVATIVE_TYPE_LABELS, type DerivativeListItem } from '../types';
+import {
+  DERIVATIVE_TYPE_LABELS,
+  type DerivativeListItem,
+  type DerivativeSubject,
+} from '../types';
 
 interface DerivativeCardProps {
   item: DerivativeListItem;
+  /** Subject slug of the URL the card is rendered under (e.g. "civil-law"
+   *  on `/library/mcqs/civil-law`). When provided, the detail link uses
+   *  this subject if the item has a matching assignment — keeping the
+   *  user inside the filter context they navigated from. */
+  pageSubjectSlug?: string;
+  /** Subject code form of the same selector — preferred over the slug
+   *  because `DerivativeSubject.code` is the canonical join key. */
+  pageSubjectCode?: string;
 }
 
-function buildDetailHref(item: DerivativeListItem): string {
+function pickSubjectForUrl(
+  item: DerivativeListItem,
+  pageSubjectSlug?: string,
+  pageSubjectCode?: string,
+): DerivativeSubject | undefined {
+  // Prefer a subject that matches the URL filter context, so a card on
+  // /library/mcqs/civil-law never links to /library/mcqs/criminal-law.
+  if (pageSubjectCode) {
+    const byCode = item.subjects.find((s) => s.code === pageSubjectCode);
+    if (byCode) return byCode;
+  }
+  if (pageSubjectSlug) {
+    const bySlug = item.subjects.find(
+      (s) => subjectFromCode(s.code)?.slug === pageSubjectSlug,
+    );
+    if (bySlug) return bySlug;
+  }
+  return item.subjects.find((s) => s.isPrimary) ?? item.subjects[0];
+}
+
+function buildDetailHref(
+  item: DerivativeListItem,
+  pageSubjectSlug?: string,
+  pageSubjectCode?: string,
+): string {
   const typeMeta = typeFromEnum(item.derivativeType);
-  const primarySubject = item.subjects.find((s) => s.isPrimary) ?? item.subjects[0];
-  const subjectMeta = primarySubject ? subjectFromCode(primarySubject.code) : undefined;
+  const chosenSubject = pickSubjectForUrl(item, pageSubjectSlug, pageSubjectCode);
+  const subjectMeta = chosenSubject ? subjectFromCode(chosenSubject.code) : undefined;
   if (typeMeta && subjectMeta) {
     return `/library/${typeMeta.slug}/${subjectMeta.slug}/${item.id}`;
   }
   return `/library/${item.id}`;
 }
 
-export function DerivativeCard({ item }: DerivativeCardProps) {
-  const primarySubject = item.subjects.find((s) => s.isPrimary) ?? item.subjects[0];
+export function DerivativeCard({
+  item,
+  pageSubjectSlug,
+  pageSubjectCode,
+}: DerivativeCardProps) {
+  const primarySubject =
+    pickSubjectForUrl(item, pageSubjectSlug, pageSubjectCode);
   const typeLabel = DERIVATIVE_TYPE_LABELS[item.derivativeType] ?? item.derivativeType;
 
   return (
-    <Link href={buildDetailHref(item)} className="block">
+    <Link
+      href={buildDetailHref(item, pageSubjectSlug, pageSubjectCode)}
+      className="block"
+    >
       <Card className="h-full transition hover:shadow-md">
         <CardContent className="flex flex-col gap-3 p-4">
           <div className="flex flex-wrap items-center gap-2">

@@ -193,6 +193,79 @@ describe('ApiClient', () => {
       });
     });
 
+    it('calls onUnauthorized exactly once when refresh attempt fails', async () => {
+      const onUnauthorized = vi.fn();
+      const refreshFn = vi.fn().mockResolvedValue(null); // refresh fails
+      apiClient.configure({
+        getAccessToken: () => 'expired',
+        onUnauthorized,
+        refreshAccessToken: refreshFn,
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: () => Promise.resolve({ message: 'Expired' }),
+      });
+
+      await expect(apiClient.get('/needs-auth')).rejects.toThrow(ApiClientError);
+
+      expect(refreshFn).toHaveBeenCalledTimes(1);
+      expect(onUnauthorized).toHaveBeenCalledTimes(1);
+      // No retry attempted since refresh returned null
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+
+      apiClient.configure({
+        getAccessToken: () => null,
+        onUnauthorized: vi.fn(),
+        refreshAccessToken: vi.fn(),
+      });
+    });
+
+    it('does NOT call onUnauthorized when refresh succeeds but retried request still returns 401', async () => {
+      const onUnauthorized = vi.fn();
+      const refreshFn = vi.fn().mockResolvedValue('fresh-token');
+      apiClient.configure({
+        getAccessToken: () => 'expired',
+        onUnauthorized,
+        refreshAccessToken: refreshFn,
+      });
+
+      // Initial 401 → triggers refresh → retry returns 401 again
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 401,
+          json: () => Promise.resolve({ message: 'Unauthorized' }),
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 401,
+          json: () => Promise.resolve({ message: 'Unauthorized' }),
+        });
+
+      let thrown: { statusCode?: number; name?: string } | null = null;
+      try {
+        await apiClient.get('/resource-denied');
+      } catch (err) {
+        thrown = err as { statusCode?: number; name?: string };
+      }
+
+      expect(thrown).toBeInstanceOf(ApiClientError);
+      // Resource-level denial surfaces as 403, NOT a session-expiry 401
+      expect(thrown?.statusCode).toBe(403);
+      expect(refreshFn).toHaveBeenCalledTimes(1);
+      // Critical: session must NOT have been blown away
+      expect(onUnauthorized).not.toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+
+      apiClient.configure({
+        getAccessToken: () => null,
+        onUnauthorized: vi.fn(),
+        refreshAccessToken: vi.fn(),
+      });
+    });
+
     it('deduplicates apiClient.refresh() with concurrent 401 interceptor', async () => {
       let resolveRefresh: (value: string) => void;
       const refreshPromise = new Promise<string>((resolve) => {

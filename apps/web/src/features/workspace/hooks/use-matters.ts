@@ -22,7 +22,10 @@ interface UseMattersParams {
   limit?: number;
 }
 
-export function useMatters(params?: UseMattersParams) {
+export function useMatters(
+  params?: UseMattersParams,
+  options?: { enabled?: boolean },
+) {
   return useQuery({
     queryKey: ['matters', params],
     queryFn: async () => {
@@ -35,6 +38,7 @@ export function useMatters(params?: UseMattersParams) {
 
       return apiClient.get<MatterListResponse>('/matters', { params: queryParams });
     },
+    enabled: options?.enabled ?? true,
   });
 }
 

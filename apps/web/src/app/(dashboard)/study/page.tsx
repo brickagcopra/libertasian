@@ -231,7 +231,8 @@ export default function StudyPage() {
                 <p className="text-sm font-semibold text-indigo-900">Bar Exam Readiness</p>
                 <p className="mt-0.5 text-xs text-indigo-700/70">
                   {readiness
-                    ? `${readiness.completedTopics} of ${readiness.totalTopics} topics across 9 subjects`
+                    ? // study_8 taxonomy
+                      `${readiness.completedTopics} of ${readiness.totalTopics} topics across 8 subjects`
                     : 'Track your progress across all bar exam subjects'}
                 </p>
               </div>

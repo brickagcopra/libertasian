@@ -292,7 +292,23 @@ export class SearchService {
         score,
       }));
 
-    return fused;
+    // Per-document dedup: a single legal document can have multiple
+    // matching sections — keep only the highest-scoring section per
+    // document. Preserves original ordering after dedup (the sort above
+    // ensured the kept entry is the highest-scoring one for its doc).
+    const deduped: SearchResultItem[] = [];
+    const seenDocIds = new Set<string>();
+    for (const item of fused) {
+      const docId =
+        typeof item.source['document_id'] === 'string'
+          ? (item.source['document_id'] as string)
+          : item.id;
+      if (seenDocIds.has(docId)) continue;
+      seenDocIds.add(docId);
+      deduped.push(item);
+    }
+
+    return deduped;
   }
 
   private buildCacheKey(dto: SearchQueryDto): string {

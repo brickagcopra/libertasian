@@ -117,7 +117,12 @@ export default function LibrarySubjectPage() {
       {items.length > 0 && (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {items.map((item) => (
-            <DerivativeCard key={item.id} item={item} />
+            <DerivativeCard
+              key={item.id}
+              item={item}
+              pageSubjectSlug={subjectMeta.slug}
+              pageSubjectCode={subjectMeta.code}
+            />
           ))}
         </div>
       )}

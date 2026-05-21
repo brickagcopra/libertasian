@@ -1,5 +1,6 @@
 """Digest generation service — produces DFIR+ structured digests from document sections."""
 
+import ast
 import json
 import logging
 import uuid
@@ -22,17 +23,57 @@ logger = logging.getLogger(__name__)
 _PROVENANCE_PLACEHOLDERS = frozenset({"section-uuid", "doc-uuid"})
 
 
+def _flatten_dict_values(value: dict[Any, Any]) -> str | None:
+    """Flatten a dict's values into a paragraph-joined string.
+
+    Only flattens one level deep — nested dicts inside the values are
+    str()-coerced. Drops falsy values so empty placeholders don't bloat
+    the output.
+    """
+    parts: list[str] = []
+    for v in value.values():
+        if v is None:
+            continue
+        text = str(v).strip()
+        if text:
+            parts.append(text)
+    if not parts:
+        return None
+    return "\n\n".join(parts)
+
+
 def _coerce_text(value: Any) -> str | None:
     """Coerce a digest field value to str or None.
 
-    LLMs sometimes return list[str] instead of str for DFIR+ fields like
-    ``issues`` or ``facts``.  This normalises the value at the service
-    boundary so downstream code always sees ``str | None``.
+    LLMs sometimes return list[str] or dict[str, str] instead of str for
+    DFIR+ fields like ``issues`` or ``ruling``. Worse, models occasionally
+    emit a stringified Python dict literal (e.g. ``"{'issue_1': '...'}"``)
+    which previously fell through the str-branch and rendered as raw dict
+    syntax to users (Bug: 7,541 of 10,923 digests showed ruling as
+    ``"{'issue_1': ..., 'issue_2': ...}"``). This normalises the value at
+    the service boundary so downstream code always sees readable prose
+    or ``None``.
     """
     if value is None:
         return None
+    if isinstance(value, dict):
+        return _flatten_dict_values(value)
     if isinstance(value, str):
-        return value if value.strip() else None
+        stripped = value.strip()
+        if not stripped:
+            return None
+        # Detect dict-as-string outputs from prompt drift and flatten.
+        # Only attempt ast.literal_eval on values that *look* like a dict
+        # literal to avoid spurious parsing of normal prose that happens
+        # to start with a brace.
+        if stripped.startswith(("{'", '{"')):
+            try:
+                parsed = ast.literal_eval(stripped)
+            except (ValueError, SyntaxError, MemoryError, TypeError):
+                return stripped
+            if isinstance(parsed, dict):
+                return _flatten_dict_values(parsed)
+        return stripped
     if isinstance(value, list):
         items = [str(item).strip() for item in value if item]
         if not items:

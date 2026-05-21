@@ -12,7 +12,10 @@ import type {
   GenerateComparisonInput,
 } from '../types';
 
-export function useComparisons(params?: ComparisonFilters) {
+export function useComparisons(
+  params?: ComparisonFilters,
+  options?: { enabled?: boolean },
+) {
   return useQuery({
     queryKey: ['case-comparisons', params],
     queryFn: async () => {
@@ -26,6 +29,7 @@ export function useComparisons(params?: ComparisonFilters) {
 
       return apiClient.get<ComparisonListResponse>('/case-comparisons', { params: queryParams });
     },
+    enabled: options?.enabled ?? true,
   });
 }
 
