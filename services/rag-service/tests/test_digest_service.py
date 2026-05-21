@@ -131,6 +131,82 @@ class TestCoerceText:
         result = _coerce_text(42)
         assert result == "42"
 
+    def test_dict_flattened_to_paragraphs(self) -> None:
+        """LLMs sometimes return dict[str, str] for narrative fields like ruling.
+
+        Bug fix: 7,541 of 10,923 digests rendered ruling as raw dict syntax
+        (e.g. ``"{'issue_1': ...}"``). The coercer now flattens the values
+        into paragraph-joined prose."""
+        result = _coerce_text(
+            {
+                "issue_1": "The court ruled that A.",
+                "issue_2": "It further ruled that B.",
+            }
+        )
+        assert result is not None
+        assert "The court ruled that A." in result
+        assert "It further ruled that B." in result
+        assert "\n\n" in result
+        # The raw dict syntax must NOT leak through to the user
+        assert "'issue_1'" not in result
+        assert "{" not in result
+
+    def test_dict_with_empty_values_filtered(self) -> None:
+        result = _coerce_text(
+            {
+                "a": "kept",
+                "b": "",
+                "c": None,
+                "d": "  ",
+            }
+        )
+        assert result == "kept"
+
+    def test_dict_all_empty_returns_none(self) -> None:
+        assert _coerce_text({"a": "", "b": None}) is None
+        assert _coerce_text({}) is None
+
+    def test_dict_as_string_literal_flattened(self) -> None:
+        """When the model emits the dict as a stringified Python literal
+        (prompt-drift artifact that previously fell through the str branch
+        and rendered to users verbatim), parse and flatten."""
+        raw = "{'issue_1': 'The court ruled A.', 'issue_2': 'Then B.'}"
+        result = _coerce_text(raw)
+        assert result is not None
+        assert "The court ruled A." in result
+        assert "Then B." in result
+        assert "'issue_1'" not in result
+
+    def test_dict_as_string_double_quoted_flattened(self) -> None:
+        raw = '{"r1": "Granted.", "r2": "With costs."}'
+        result = _coerce_text(raw)
+        assert result is not None
+        assert "Granted." in result
+        assert "With costs." in result
+
+    def test_malformed_dict_string_returns_original(self) -> None:
+        """A string that looks like a dict but fails to parse must NOT crash;
+        return the original string unchanged so the digest still renders."""
+        raw = "{'unclosed': 'value"
+        result = _coerce_text(raw)
+        assert result == raw
+
+    def test_normal_prose_with_brace_not_misparsed(self) -> None:
+        """Regular prose starting with text that includes braces must not
+        accidentally be treated as a dict literal."""
+        prose = "The court held the contract was void."
+        assert _coerce_text(prose) == prose
+        # Even a stray opening brace mid-sentence shouldn't trigger parsing
+        prose_with_brace = "The court { interpreted the statute."
+        assert _coerce_text(prose_with_brace) == prose_with_brace
+
+    def test_mixed_dict_values_handled(self) -> None:
+        """Non-string values in dicts get str()-coerced one level deep."""
+        result = _coerce_text({"a": "text", "b": 42, "c": ["nested", "list"]})
+        assert result is not None
+        assert "text" in result
+        assert "42" in result
+
 
 # ---------------------------------------------------------------------------
 # _format_sections

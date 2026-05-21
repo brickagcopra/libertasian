@@ -82,4 +82,61 @@ describe('DerivativeCard', () => {
     const link = screen.getByRole('link');
     expect(link.getAttribute('href')).toBe('/library/a-1');
   });
+
+  it('keeps the user inside the URL filter context when the item has a matching subject', () => {
+    // The item's PRIMARY subject is criminal-law, but the page is the
+    // civil-law MCQ list. The card must link to civil-law, not criminal-law.
+    render(
+      <DerivativeCard
+        item={{
+          ...baseItem,
+          derivativeType: 'mcq_question',
+          subjects: [
+            { code: 'criminal_law', name: 'Criminal Law', taxonomyVersion: 'study_8', isPrimary: true },
+            { code: 'civil_law', name: 'Civil Law', taxonomyVersion: 'study_8', isPrimary: false },
+          ],
+        }}
+        pageSubjectSlug="civil-law"
+        pageSubjectCode="civil_law"
+      />,
+    );
+    const link = screen.getByRole('link');
+    expect(link.getAttribute('href')).toBe('/library/mcqs/civil-law/a-1');
+  });
+
+  it('falls back to the primary subject when the URL filter has no matching assignment', () => {
+    render(
+      <DerivativeCard
+        item={{
+          ...baseItem,
+          derivativeType: 'mcq_question',
+          subjects: [
+            { code: 'criminal_law', name: 'Criminal Law', taxonomyVersion: 'study_8', isPrimary: true },
+          ],
+        }}
+        pageSubjectSlug="taxation-law"
+        pageSubjectCode="taxation_law"
+      />,
+    );
+    const link = screen.getByRole('link');
+    expect(link.getAttribute('href')).toBe('/library/mcqs/criminal-law/a-1');
+  });
+
+  it('uses pageSubjectCode even when subjects is a single-element array (deterministic over primary)', () => {
+    render(
+      <DerivativeCard
+        item={{
+          ...baseItem,
+          derivativeType: 'mcq_question',
+          subjects: [
+            { code: 'civil_law', name: 'Civil Law', taxonomyVersion: 'study_8', isPrimary: true },
+          ],
+        }}
+        pageSubjectSlug="civil-law"
+        pageSubjectCode="civil_law"
+      />,
+    );
+    const link = screen.getByRole('link');
+    expect(link.getAttribute('href')).toBe('/library/mcqs/civil-law/a-1');
+  });
 });

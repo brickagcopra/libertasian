@@ -15,7 +15,10 @@ import type {
   PleadingTemplateDetail,
 } from '../types';
 
-export function usePleadings(params?: PleadingFilters) {
+export function usePleadings(
+  params?: PleadingFilters,
+  options?: { enabled?: boolean },
+) {
   return useQuery({
     queryKey: ['pleadings', params],
     queryFn: async () => {
@@ -30,6 +33,7 @@ export function usePleadings(params?: PleadingFilters) {
 
       return apiClient.get<PleadingListResponse>('/pleadings', { params: queryParams });
     },
+    enabled: options?.enabled ?? true,
   });
 }
 

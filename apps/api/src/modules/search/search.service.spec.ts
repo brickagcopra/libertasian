@@ -347,6 +347,48 @@ describe('SearchService', () => {
       await expect(service.search(searchDto)).rejects.toThrow('Search temporarily unavailable');
     });
 
+    // Two sections from the same document MUST collapse into one result
+    // after RRF fusion. Without dedup the user sees the same case repeated
+    // (each row a different section) which was the bug.
+    it('dedupes per-document so two sections of the same document collapse', async () => {
+      const docId = 'shared-doc-1';
+      const sectionA: SearchResultItem = {
+        id: 'section-a',
+        score: 0.9,
+        source: { document_id: docId, title: 'Negligence Case' },
+        highlights: { plain_text: ['<em>negligence</em>'] },
+      };
+      const sectionB: SearchResultItem = {
+        id: 'section-b',
+        score: 0.8,
+        source: { document_id: docId, title: 'Negligence Case' },
+      };
+
+      redisService.get.mockResolvedValue(null);
+      openSearchService.searchKeyword.mockResolvedValue({
+        items: [sectionA, sectionB],
+        total: 2,
+        maxScore: 0.9,
+        timedOut: false,
+      });
+      embeddingClientService.embed.mockResolvedValue([0.1, 0.2, 0.3]);
+      openSearchService.searchVector.mockResolvedValue({
+        items: [sectionB, sectionA],
+        total: 2,
+        maxScore: 0.85,
+        timedOut: false,
+      });
+      redisService.set.mockResolvedValue(undefined);
+
+      const result = await service.search(searchDto);
+
+      expect(result.items).toHaveLength(1);
+      const item = result.items[0] as SearchResultItem;
+      expect(item.source['document_id']).toBe(docId);
+      // The kept section is the one whose fused RRF score is higher.
+      expect(['section-a', 'section-b']).toContain(item.id);
+    });
+
     // ── Dedup suppression filter ────────────────────────────────────────
     describe('dedup filter', () => {
       it('forwards suppressed doc IDs to keyword + vector queries when flag is on (default)', async () => {

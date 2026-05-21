@@ -11,24 +11,51 @@ import {
   PLEADING_STATUS_COLORS,
 } from '@/features/pleadings/types';
 import type { PleadingListItem } from '@/features/pleadings/types';
+import { UpgradeBanner } from '@/components/paywall/upgrade-banner';
+import { useCanAccessPaidFeature } from '@/hooks/useCanAccessPaidFeature';
 
 export default function PleadingsPage() {
   const [category, setCategory] = useState('');
   const [status, setStatus] = useState('');
   const [showGenerate, setShowGenerate] = useState(false);
 
-  const { data, isLoading, error } = usePleadings({
-    category: category || undefined,
-    status: status || undefined,
-  });
+  const { canAccess } = useCanAccessPaidFeature();
 
-  const { data: mattersData } = useMatters({ limit: 100 });
+  const { data, isLoading, error } = usePleadings(
+    {
+      category: category || undefined,
+      status: status || undefined,
+    },
+    { enabled: canAccess },
+  );
+
+  const { data: mattersData } = useMatters({ limit: 100 }, { enabled: canAccess });
   const matters = (mattersData?.data ?? []).map((m) => ({
     id: m.id,
     title: m.title,
   }));
 
   const pleadings = data?.data ?? [];
+
+  if (!canAccess) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold">Pleading Assistance</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            AI-assisted pleading drafts with template-guided generation and
+            citations
+          </p>
+        </div>
+        <UpgradeBanner
+          variant="modal"
+          corpus="derivatives"
+          surface="workspace/pleadings"
+          message="Pleading templates are included on paid plans. Upgrade to draft pleadings from templates."
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

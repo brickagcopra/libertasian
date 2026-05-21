@@ -70,9 +70,22 @@ PONENTE_PATTERN = re.compile(
     r"([A-Z][A-Za-z\s,.\-']+?)(?:\s*,\s*J\.?)?(?:\s*[:;\n])",
 )
 
-# Alternative: "CARPIO, J.:" at start of opinion
+# Alternative: "CARPIO, J.:" at start of opinion.
+# Loosened from [A-Z][A-Z\s,.\-'] to [A-Z][A-Za-z\s,.\-'] so mixed-case
+# names like "Velasco, Jr." match.
 JUSTICE_PATTERN = re.compile(
-    r"(?:^|\n)\s*([A-Z][A-Z\s,.\-']+?)\s*,\s*J\.?\s*[:\s]*(?:\n|$)",
+    r"(?:^|\n)\s*([A-Z][A-Za-z\s,.\-']+?)\s*,\s*J\.?\s*[:\s]*(?:\n|$)",
+)
+
+# Spaced-out "D E C I S I O N" / "R E S O L U T I O N" header followed by
+# the justice's name on the same or following line. Decisions in the prod
+# corpus routinely use this layout — and the previous extractor returned
+# strings like "D E C I S I O N PERALTA" verbatim because no header
+# pattern recognised it (~834 affected rows on prod, plus full-caption
+# false positives that bled into the title).
+DECISION_HEADER_PATTERN = re.compile(
+    r"(?i)(?:D\s*E\s*C\s*I\s*S\s*I\s*O\s*N|R\s*E\s*S\s*O\s*L\s*U\s*T\s*I\s*O\s*N)\s*"
+    r"[\n\s]+([A-Z][A-Z .'\-]+(?:,\s*J[Rr]\.?)?(?:,\s*S[Rr]\.?)?)\s*(?:,\s*J\.?)?\s*(?:[:;\n]|$)",
 )
 
 # ─── Court Patterns ──────────────────────────────────────────────────────
@@ -214,26 +227,94 @@ def _extract_ponente(text: str) -> str | None:
     """Extract the ponente (writing Justice) from document header."""
     match = PONENTE_PATTERN.search(text)
     if match:
-        name = match.group(1).strip()
-        return _clean_justice_name(name)
+        cleaned = _clean_justice_name(match.group(1).strip())
+        if cleaned:
+            return cleaned
+
+    # The "D E C I S I O N <NAME>" header is common in lawphil dumps and
+    # is checked before the bare-name JUSTICE_PATTERN because the latter
+    # tends to match the full case caption when the spaced-out decision
+    # header is in the way.
+    match = DECISION_HEADER_PATTERN.search(text)
+    if match:
+        cleaned = _clean_justice_name(match.group(1).strip())
+        if cleaned:
+            return cleaned
 
     match = JUSTICE_PATTERN.search(text)
     if match:
-        name = match.group(1).strip()
-        return _clean_justice_name(name)
+        cleaned = _clean_justice_name(match.group(1).strip())
+        if cleaned:
+            return cleaned
 
     return None
 
 
-def _clean_justice_name(name: str) -> str:
-    """Clean up a justice name extracted from text."""
+# Tokens that indicate the captured "name" is actually a case caption
+# (petitioner-vs-respondent) and not a justice name. When any of these
+# appear, _clean_justice_name returns None so the bad string is dropped
+# instead of persisted to the legal_documents.ponente column.
+_CAPTION_REJECT_TOKENS = (
+    " VS ",
+    " VS. ",
+    " V. ",
+    " V ",
+    " VERSUS ",
+    "PETITIONER",
+    "RESPONDENT",
+    "PEOPLE OF THE PHILIPPINES",
+    "REPUBLIC OF THE PHILIPPINES",
+)
+
+# A "D E C I S I O N" / "R E S O L U T I O N" header that slipped through
+# the upstream extractor — never a valid ponente name.
+_HEADER_NOISE_PATTERN = re.compile(
+    r"(?i)D\s*E\s*C\s*I\s*S\s*I\s*O\s*N|R\s*E\s*S\s*O\s*L\s*U\s*T\s*I\s*O\s*N"
+)
+
+
+def _clean_justice_name(name: str) -> str | None:
+    """Clean up a justice name extracted from text.
+
+    Returns ``None`` when the input is clearly NOT a ponente name (case
+    captions, decision/resolution headers, overlong strings). This guard
+    prevents the ~834 prod rows where ponente was persisted as
+    "D E C I S I O N PERALTA" / "PEOPLE OF THE PHILIPPINES, ... DECISION".
+    """
     # Remove common prefixes
     name = re.sub(r"(?i)^(?:Chief\s+)?Justice\s+", "", name)
+
+    # Strip a trailing justice suffix that the regex left in: ", J.",
+    # ", J", ", JR.", ", JR", ", SR.", ", SR".
+    name = re.sub(r"(?i),\s*J\.?$", "", name)
+    suffix = ""
+    suffix_match = re.search(r"(?i),\s*(J[Rr]|S[Rr])\.?$", name)
+    if suffix_match:
+        # Preserve "JR." / "SR." in the canonical form but normalise.
+        suffix = ", " + suffix_match.group(1).upper() + "."
+        name = name[: suffix_match.start()]
+
     # Remove trailing punctuation
     name = name.rstrip(".,;:")
     # Collapse whitespace
-    name = re.sub(r"\s+", " ", name)
-    return name.strip()[:255]  # Respect DB VarChar(255)
+    name = re.sub(r"\s+", " ", name).strip()
+
+    if not name:
+        return None
+
+    upper = name.upper()
+    # Reject case captions and decision/resolution header noise.
+    if any(token in upper for token in _CAPTION_REJECT_TOKENS):
+        return None
+    if _HEADER_NOISE_PATTERN.search(upper):
+        return None
+    # A real ponente surname (or "FIRSTNAME LASTNAME, JR.") is short.
+    # Anything over 60 chars is almost certainly a caption fragment.
+    if len(name) + len(suffix) > 60:
+        return None
+
+    cleaned = (name + suffix).strip()
+    return cleaned[:255] if cleaned else None  # Respect DB VarChar(255)
 
 
 def _extract_court(text: str) -> str | None:

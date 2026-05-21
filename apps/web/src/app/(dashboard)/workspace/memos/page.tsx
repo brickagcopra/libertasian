@@ -10,24 +10,50 @@ import {
   MEMO_TYPE_LABELS,
   MEMO_STATUS_COLORS,
 } from '@/features/memos/types';
+import { UpgradeBanner } from '@/components/paywall/upgrade-banner';
+import { useCanAccessPaidFeature } from '@/hooks/useCanAccessPaidFeature';
 
 export default function MemosPage() {
   const [memoType, setMemoType] = useState('');
   const [status, setStatus] = useState('');
   const [showGenerate, setShowGenerate] = useState(false);
 
-  const { data, isLoading, error } = useMemos({
-    memoType: memoType || undefined,
-    status: status || undefined,
-  });
+  const { canAccess } = useCanAccessPaidFeature();
 
-  const { data: mattersData } = useMatters({ limit: 100 });
+  const { data, isLoading, error } = useMemos(
+    {
+      memoType: memoType || undefined,
+      status: status || undefined,
+    },
+    { enabled: canAccess },
+  );
+
+  const { data: mattersData } = useMatters({ limit: 100 }, { enabled: canAccess });
   const matters = (mattersData?.data ?? []).map((m) => ({
     id: m.id,
     title: m.title,
   }));
 
   const memos = data?.data ?? [];
+
+  if (!canAccess) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold">Legal Memos</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            AI-generated legal memos with structured citations
+          </p>
+        </div>
+        <UpgradeBanner
+          variant="modal"
+          corpus="derivatives"
+          surface="workspace/memos"
+          message="Memo drafting is included on paid plans. Upgrade to draft AI-generated legal memos."
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

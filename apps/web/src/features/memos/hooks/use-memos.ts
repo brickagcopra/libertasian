@@ -12,7 +12,7 @@ import type {
   GenerateMemoInput,
 } from '../types';
 
-export function useMemos(params?: MemoFilters) {
+export function useMemos(params?: MemoFilters, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ['memos', params],
     queryFn: async () => {
@@ -26,6 +26,7 @@ export function useMemos(params?: MemoFilters) {
 
       return apiClient.get<MemoListResponse>('/memos', { params: queryParams });
     },
+    enabled: options?.enabled ?? true,
   });
 }
 

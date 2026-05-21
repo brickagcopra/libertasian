@@ -11,24 +11,50 @@ import {
   COMPARISON_STATUS_COLORS,
 } from '@/features/case-comparisons/types';
 import type { CaseComparisonListItem } from '@/features/case-comparisons/types';
+import { UpgradeBanner } from '@/components/paywall/upgrade-banner';
+import { useCanAccessPaidFeature } from '@/hooks/useCanAccessPaidFeature';
 
 export default function ComparisonsPage() {
   const [comparisonType, setComparisonType] = useState('');
   const [status, setStatus] = useState('');
   const [showGenerate, setShowGenerate] = useState(false);
 
-  const { data, isLoading, error } = useComparisons({
-    comparisonType: comparisonType || undefined,
-    status: status || undefined,
-  });
+  const { canAccess } = useCanAccessPaidFeature();
 
-  const { data: mattersData } = useMatters({ limit: 100 });
+  const { data, isLoading, error } = useComparisons(
+    {
+      comparisonType: comparisonType || undefined,
+      status: status || undefined,
+    },
+    { enabled: canAccess },
+  );
+
+  const { data: mattersData } = useMatters({ limit: 100 }, { enabled: canAccess });
   const matters = (mattersData?.data ?? []).map((m) => ({
     id: m.id,
     title: m.title,
   }));
 
   const comparisons = data?.data ?? [];
+
+  if (!canAccess) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold">Case Comparisons</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            Compare legal cases side-by-side across facts, doctrine, and rulings
+          </p>
+        </div>
+        <UpgradeBanner
+          variant="modal"
+          corpus="derivatives"
+          surface="workspace/comparisons"
+          message="Case comparison is included on paid plans. Upgrade to compare cases side-by-side."
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

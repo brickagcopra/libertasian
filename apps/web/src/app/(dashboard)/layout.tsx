@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 import { DashboardShell } from './dashboard-shell';
 
 export const metadata: Metadata = {
-  title: 'Admin',
+  title: { default: 'Dashboard', template: '%s — LIBERTASIAN' },
 };
 
 export default function DashboardLayout({

@@ -81,13 +81,16 @@ class ApiClient {
       if (newToken) {
         return this.request<T>(endpoint, options, true);
       }
+      // Refresh itself failed → genuine session expiry
       this.onUnauthorized?.();
       throw new ApiClientError('Session expired. Please log in again.', 401);
     }
 
     if (response.status === 401) {
-      this.onUnauthorized?.();
-      throw new ApiClientError('Session expired. Please log in again.', 401);
+      // Refresh succeeded but the retried request still returned 401.
+      // This is a resource-level denial (e.g. a guard returning 401 instead
+      // of 403), NOT a session expiry — do NOT trigger global logout.
+      throw new ApiClientError('Forbidden', 403);
     }
 
     if (!response.ok) {
@@ -139,6 +142,7 @@ class ApiClient {
     endpoint: string,
     formData: FormData,
     options?: { onProgress?: (percent: number) => void },
+    isRetry = false,
   ): Promise<T> {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
@@ -161,9 +165,26 @@ class ApiClient {
       }
 
       xhr.onload = () => {
+        if (xhr.status === 401 && !isRetry) {
+          // First 401 — try a silent refresh, then retry once.
+          this.tryRefresh().then((newToken) => {
+            if (newToken) {
+              this.uploadMultipart<T>(endpoint, formData, options, true).then(resolve, reject);
+              return;
+            }
+            this.onUnauthorized?.();
+            reject(new ApiClientError('Session expired. Please log in again.', 401));
+          }, () => {
+            this.onUnauthorized?.();
+            reject(new ApiClientError('Session expired. Please log in again.', 401));
+          });
+          return;
+        }
+
         if (xhr.status === 401) {
-          this.onUnauthorized?.();
-          reject(new ApiClientError('Session expired. Please log in again.', 401));
+          // Refresh succeeded but retried upload still 401 → resource-level
+          // denial, not session expiry. Do NOT trigger global logout.
+          reject(new ApiClientError('Forbidden', 403));
           return;
         }
 
