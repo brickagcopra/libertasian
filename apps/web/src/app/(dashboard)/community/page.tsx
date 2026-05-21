@@ -96,10 +96,7 @@ export default function CommunityPage() {
       </Card>
 
       {/* Featured section */}
-      <div>
-        <h2 className="mb-4 text-lg font-semibold">Featured</h2>
-        <FeaturedSection />
-      </div>
+      <FeaturedSection />
     </div>
   );
 }

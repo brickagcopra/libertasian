@@ -403,9 +403,12 @@ function DynamicPlanCard({
     ? getPromotionDiscountLabel(firstPromo, billingPeriod)
     : null;
 
-  // Build feature list from entitlements
+  // Build feature list from entitlements. Drop entitlements with a numeric
+  // value of 0 — those represent "not included" (e.g. premium features in the
+  // Free plan) and would otherwise render as plain bullets, making premium
+  // features look included.
   const features = plan.entitlements
-    .filter((e) => e.description)
+    .filter((e) => e.description && !(e.valueType === 'numeric' && e.numericValue === 0))
     .map((e) => e.description as string);
 
   // Resolve CTA text
@@ -792,11 +795,8 @@ function EntitlementCell({ entitlement }: { entitlement: PlanEntitlementDetail |
   }
 
   if (entitlement.valueType === 'numeric' && entitlement.numericValue !== null) {
-    return (
-      <span className="text-gray-600">
-        {entitlement.numericValue.toLocaleString()}
-      </span>
-    );
+    if (entitlement.numericValue === 0) return <span className="text-gray-300">&mdash;</span>;
+    return <span className="text-gray-600">{entitlement.numericValue.toLocaleString()}</span>;
   }
 
   return <span className="text-gray-300">&mdash;</span>;
