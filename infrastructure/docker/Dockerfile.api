@@ -42,6 +42,7 @@ COPY --from=builder /app/deployed/node_modules ./node_modules
 COPY --from=builder /app/apps/api/dist ./dist
 COPY --from=builder /app/apps/api/prisma ./prisma
 COPY --from=builder /app/deployed/package.json ./package.json
+COPY --from=builder /app/apps/api/scripts ./scripts
 
 # Non-root user
 RUN addgroup -g 1001 -S nodejs && adduser -S nestjs -u 1001
