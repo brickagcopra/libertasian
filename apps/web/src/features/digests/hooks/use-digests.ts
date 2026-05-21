@@ -40,12 +40,15 @@ export interface DigestsListMeta {
   upgradeRequired?: boolean;
 }
 
-export function useDigests(params?: {
-  digestType?: string;
-  reviewStatus?: string;
-  legalDocumentId?: string;
-  cursor?: string;
-}) {
+export function useDigests(
+  params?: {
+    digestType?: string;
+    reviewStatus?: string;
+    legalDocumentId?: string;
+    cursor?: string;
+  },
+  options?: { enabled?: boolean },
+) {
   return useQuery({
     queryKey: ['digests', params],
     queryFn: async () => {
@@ -61,6 +64,7 @@ export function useDigests(params?: {
       }>('/digests', { params: queryParams });
       return res;
     },
+    enabled: options?.enabled ?? true,
   });
 }
 

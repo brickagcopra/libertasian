@@ -65,6 +65,25 @@ const COLOR_LABELS: { value: AnnotationColor; label: string; dot: string }[] = [
   { value: 'purple', label: 'Purple', dot: 'bg-purple-400' },
 ];
 
+// Codal-class document types — these are not case law, so the
+// case-digest UI (Generate Digest button, Digests tab, inline editorial
+// digest card) is hidden on the reader. Keep this list in sync with
+// TAB_GROUP_TO_TYPES in apps/api/src/modules/study/study.service.ts.
+const CODAL_DOCUMENT_TYPES = new Set<string>([
+  'constitution',
+  'codal',
+  'statute',
+  'republic_act',
+  'commonwealth_act',
+  'batas_pambansa',
+  'executive_order',
+  'presidential_decree',
+  'proclamation',
+  'administrative_order',
+  'rules_of_court',
+  'rule',
+]);
+
 // -- Page Component -----------------------------------------------------------
 
 export default function ReaderPage() {
@@ -80,7 +99,13 @@ export default function ReaderPage() {
   const [showBookmarkForm, setShowBookmarkForm] = useState(false);
   const [bookmarkMsg, setBookmarkMsg] = useState('');
 
-  const { data: digestsData } = useDigests({ legalDocumentId: id });
+  const isCodalDoc = document ? CODAL_DOCUMENT_TYPES.has(document.documentType) : false;
+  const showDigestUI = !isCodalDoc;
+
+  const { data: digestsData } = useDigests(
+    { legalDocumentId: id },
+    { enabled: showDigestUI },
+  );
   const generateDigest = useGenerateDigest();
   const [digestMsg, setDigestMsg] = useState('');
 
@@ -273,38 +298,42 @@ export default function ReaderPage() {
             )}
 
             {/* Digest Generation */}
-            {digestsData?.data?.[0] ? (
-              <Button variant="outline" size="sm" asChild>
-                <Link href={ROUTES.DIGEST(digestsData.data[0].id)}>
-                  <FileTextIcon className="mr-1.5 h-3.5 w-3.5" />
-                  View Digest
-                </Link>
-              </Button>
-            ) : (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={async () => {
-                  try {
-                    setDigestMsg('');
-                    await generateDigest.mutateAsync({ legalDocumentId: id });
-                    setDigestMsg('Digest generated!');
-                  } catch (error) {
-                    if (error instanceof ApiClientError) {
-                      setDigestMsg(error.message);
-                    } else {
-                      setDigestMsg('Failed to generate digest');
-                    }
-                  }
-                }}
-                disabled={generateDigest.isPending}
-              >
-                <FileTextIcon className="mr-1.5 h-3.5 w-3.5" />
-                {generateDigest.isPending ? 'Generating...' : 'Generate Digest'}
-              </Button>
-            )}
-            {digestMsg && (
-              <span className="text-xs text-muted-foreground">{digestMsg}</span>
+            {showDigestUI && (
+              <>
+                {digestsData?.data?.[0] ? (
+                  <Button variant="outline" size="sm" asChild>
+                    <Link href={ROUTES.DIGEST(digestsData.data[0].id)}>
+                      <FileTextIcon className="mr-1.5 h-3.5 w-3.5" />
+                      View Digest
+                    </Link>
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={async () => {
+                      try {
+                        setDigestMsg('');
+                        await generateDigest.mutateAsync({ legalDocumentId: id });
+                        setDigestMsg('Digest generated!');
+                      } catch (error) {
+                        if (error instanceof ApiClientError) {
+                          setDigestMsg(error.message);
+                        } else {
+                          setDigestMsg('Failed to generate digest');
+                        }
+                      }
+                    }}
+                    disabled={generateDigest.isPending}
+                  >
+                    <FileTextIcon className="mr-1.5 h-3.5 w-3.5" />
+                    {generateDigest.isPending ? 'Generating...' : 'Generate Digest'}
+                  </Button>
+                )}
+                {digestMsg && (
+                  <span className="text-xs text-muted-foreground">{digestMsg}</span>
+                )}
+              </>
             )}
 
             {/* Annotation Toggle */}
@@ -338,14 +367,16 @@ export default function ReaderPage() {
           <TabsList>
             <TabsTrigger value="fulltext">Full Text</TabsTrigger>
             <TabsTrigger value="summary">AI Summary</TabsTrigger>
-            <TabsTrigger value="digests">
-              Digests{digestsData?.data?.length ? ` (${digestsData.data.length})` : ''}
-            </TabsTrigger>
+            {showDigestUI && (
+              <TabsTrigger value="digests">
+                Digests{digestsData?.data?.length ? ` (${digestsData.data.length})` : ''}
+              </TabsTrigger>
+            )}
           </TabsList>
 
           <TabsContent value="fulltext" className="mt-4">
             {/* Inline editorial digest */}
-            {editorialDigest && (
+            {showDigestUI && editorialDigest && (
               <Card className="mb-6 border-blue-200 bg-blue-50/30">
                 <CardContent className="pt-5">
                   <div className="mb-3 flex items-center gap-2">
@@ -390,9 +421,11 @@ export default function ReaderPage() {
             <AiSummaryTab documentId={id} />
           </TabsContent>
 
-          <TabsContent value="digests" className="mt-4">
-            <DigestsTab documentId={id} />
-          </TabsContent>
+          {showDigestUI && (
+            <TabsContent value="digests" className="mt-4">
+              <DigestsTab documentId={id} />
+            </TabsContent>
+          )}
         </Tabs>
       </div>
     </div>

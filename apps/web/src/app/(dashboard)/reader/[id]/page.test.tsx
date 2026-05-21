@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { ReactNode } from 'react';
 
 /**
  * Reader Page integration tests.
@@ -8,6 +11,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@/lib/api-client', () => ({
   apiClient: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() },
+  ApiClientError: class ApiClientError extends Error {
+    constructor(message: string, public statusCode: number, public body?: unknown) {
+      super(message);
+      this.name = 'ApiClientError';
+    }
+  },
 }));
 
 vi.mock('next/navigation', () => ({
@@ -24,6 +33,73 @@ vi.mock('@/stores/auth-store', () => ({
     isAuthenticated: true,
   }),
 }));
+
+const docMocks = vi.hoisted(() => ({
+  useDocument: vi.fn(),
+  useDocumentSections: vi.fn(),
+}));
+vi.mock('@/features/documents/hooks/use-document', () => ({
+  useDocument: docMocks.useDocument,
+  useDocumentSections: docMocks.useDocumentSections,
+}));
+
+const bookmarkMocks = vi.hoisted(() => ({
+  useBookmarks: vi.fn(() => ({ data: { data: [] } })),
+  useCreateBookmark: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+}));
+vi.mock('@/features/bookmarks/hooks/use-bookmarks', () => ({
+  useBookmarks: bookmarkMocks.useBookmarks,
+  useCreateBookmark: bookmarkMocks.useCreateBookmark,
+}));
+
+const annotationMocks = vi.hoisted(() => ({
+  useAnnotations: vi.fn(() => ({ data: { data: [] } })),
+  useCreateAnnotation: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useDeleteAnnotation: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+}));
+vi.mock('@/features/workspace/hooks/use-annotations', () => ({
+  useAnnotations: annotationMocks.useAnnotations,
+  useCreateAnnotation: annotationMocks.useCreateAnnotation,
+  useDeleteAnnotation: annotationMocks.useDeleteAnnotation,
+}));
+
+const digestMocks = vi.hoisted(() => ({
+  useDigests: vi.fn(() => ({ data: { data: [] } })),
+  useGenerateDigest: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+}));
+vi.mock('@/features/digests/hooks/use-digests', () => ({
+  useDigests: digestMocks.useDigests,
+  useGenerateDigest: digestMocks.useGenerateDigest,
+}));
+
+function withProviders(children: ReactNode) {
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
+  return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
+}
+
+function setDocumentType(documentType: string) {
+  docMocks.useDocument.mockReturnValue({
+    data: {
+      id: 'doc-1',
+      title: 'Test Document',
+      documentType,
+      court: null,
+      grNo: null,
+      ponente: null,
+      decisionDate: null,
+      isOfficial: false,
+      citationText: null,
+    },
+    isLoading: false,
+    error: null,
+  });
+  docMocks.useDocumentSections.mockReturnValue({
+    data: [],
+    isLoading: false,
+  });
+}
 
 describe('Reader Page', () => {
   beforeEach(() => {
@@ -116,6 +192,88 @@ describe('Reader Page', () => {
     it('should validate ETag header format', () => {
       const etag = '"abc123def456"';
       expect(etag).toMatch(/^"[a-zA-Z0-9]+"$/);
+    });
+  });
+});
+
+describe('Reader Page — case-digest UI gating by documentType', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    digestMocks.useDigests.mockReturnValue({ data: { data: [] } });
+    digestMocks.useGenerateDigest.mockReturnValue({
+      mutateAsync: vi.fn(),
+      isPending: false,
+    });
+    bookmarkMocks.useBookmarks.mockReturnValue({ data: { data: [] } });
+    bookmarkMocks.useCreateBookmark.mockReturnValue({
+      mutateAsync: vi.fn(),
+      isPending: false,
+    });
+    annotationMocks.useAnnotations.mockReturnValue({ data: { data: [] } });
+    annotationMocks.useCreateAnnotation.mockReturnValue({
+      mutateAsync: vi.fn(),
+      isPending: false,
+    });
+    annotationMocks.useDeleteAnnotation.mockReturnValue({
+      mutateAsync: vi.fn(),
+      isPending: false,
+    });
+  });
+
+  describe.each([
+    ['constitution'],
+    ['codal'],
+    ['statute'],
+    ['republic_act'],
+    ['commonwealth_act'],
+    ['batas_pambansa'],
+    ['executive_order'],
+    ['presidential_decree'],
+    ['proclamation'],
+    ['administrative_order'],
+    ['rules_of_court'],
+    ['rule'],
+  ])('codal-class type "%s"', (documentType) => {
+    it('hides Digests tab, Generate Digest button, and calls useDigests with enabled:false', async () => {
+      setDocumentType(documentType);
+      const ReaderPage = (await import('./page')).default;
+
+      render(withProviders(<ReaderPage />));
+
+      expect(screen.queryByRole('tab', { name: /Digests/i })).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: /Generate Digest/i }),
+      ).not.toBeInTheDocument();
+
+      expect(digestMocks.useDigests).toHaveBeenCalledWith(
+        { legalDocumentId: 'doc-1' },
+        { enabled: false },
+      );
+    });
+  });
+
+  describe.each([
+    ['decision'],
+    ['supreme_court_decision'],
+    ['administrative_matter'],
+    ['administrative_case'],
+    ['bar_exam_questions'],
+  ])('non-codal type "%s"', (documentType) => {
+    it('shows Digests tab, Generate Digest button, and calls useDigests with enabled:true', async () => {
+      setDocumentType(documentType);
+      const ReaderPage = (await import('./page')).default;
+
+      render(withProviders(<ReaderPage />));
+
+      expect(screen.getByRole('tab', { name: /Digests/i })).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: /Generate Digest/i }),
+      ).toBeInTheDocument();
+
+      expect(digestMocks.useDigests).toHaveBeenCalledWith(
+        { legalDocumentId: 'doc-1' },
+        { enabled: true },
+      );
     });
   });
 });
