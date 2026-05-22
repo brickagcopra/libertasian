@@ -20,8 +20,9 @@ jest.mock('@/features/bookmarks/hooks/use-bookmarks', () => ({
   useCreateBookmark: () => ({ mutateAsync: jest.fn(), isPending: false }),
 }));
 
+const mockUseDigests = jest.fn();
 jest.mock('@/features/digests/hooks/use-digests', () => ({
-  useDigests: () => ({ data: { data: [] } }),
+  useDigests: (...args: unknown[]) => mockUseDigests(...args),
   useGenerateDigest: () => ({ mutateAsync: jest.fn(), isPending: false }),
 }));
 
@@ -65,7 +66,35 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockUseBookmarks.mockReturnValue({ data: { data: [] } });
   mockUseDocumentSections.mockReturnValue({ data: null, isLoading: false });
+  mockUseDigests.mockReturnValue({ data: { data: [] } });
 });
+
+function baseDoc(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: 'doc-1',
+    title: 'Test',
+    shortTitle: null,
+    documentType: 'case_decision',
+    grNo: null,
+    ponente: null,
+    decisionDate: null,
+    court: null,
+    citationText: null,
+    docketNo: null,
+    agency: null,
+    jurisdiction: 'PH',
+    language: 'en',
+    promulgationDate: null,
+    publicationDate: null,
+    status: 'published',
+    isOfficial: false,
+    isPublished: true,
+    truthfulnessStatus: 'verified',
+    versionNo: 1,
+    createdAt: '2024-01-15T00:00:00Z',
+    ...overrides,
+  };
+}
 
 describe('ReaderRoute (Phase 3 DocumentReaderScreen)', () => {
   it('shows the not-found state when the document fails to load', () => {
@@ -167,4 +196,82 @@ describe('ReaderRoute (Phase 3 DocumentReaderScreen)', () => {
     expect(getByText('Para one.')).toBeTruthy();
     expect(getByText('Para two.')).toBeTruthy();
   });
+});
+
+describe('ReaderRoute — codal-class digest UI gating', () => {
+  describe.each([
+    'codal',
+    'constitution',
+    'rules_of_court',
+    'republic_act',
+  ])('documentType=%s (codal-class)', (docType) => {
+    it('disables useDigests and hides Generate Digest FAB + Digest-available link', () => {
+      mockUseDocument.mockReturnValue({
+        data: baseDoc({ id: 'doc-1', documentType: docType, isOfficial: true }),
+        isLoading: false,
+        error: null,
+      });
+      // Even if a digest existed server-side, the hook would be disabled.
+      mockUseDigests.mockReturnValue({
+        data: { data: [{ id: 'pre-existing-digest' }] },
+      });
+
+      const { queryByLabelText, queryByText } = render(<ReaderRoute />, {
+        wrapper: createWrapper(),
+      });
+
+      // useDigests should be called with enabled:false for codal-class docs.
+      expect(mockUseDigests).toHaveBeenCalled();
+      const lastCall = mockUseDigests.mock.calls.at(-1) as unknown[];
+      expect(lastCall[1]).toEqual({ enabled: false });
+
+      // FAB is gated by the onAdd prop — DocumentReaderScreen renders nothing
+      // when onAdd is undefined.
+      expect(queryByLabelText('Add note')).toBeNull();
+      // The "Digest available" link is also hidden.
+      expect(queryByText('Digest available')).toBeNull();
+    });
+  });
+
+  describe.each(['decision', 'administrative_matter', 'case_decision'])(
+    'documentType=%s (non-codal)',
+    (docType) => {
+      it('enables useDigests and renders the Generate Digest FAB', () => {
+        mockUseDocument.mockReturnValue({
+          data: baseDoc({ id: 'doc-1', documentType: docType }),
+          isLoading: false,
+          error: null,
+        });
+        mockUseDigests.mockReturnValue({ data: { data: [] } });
+
+        const { queryByLabelText } = render(<ReaderRoute />, {
+          wrapper: createWrapper(),
+        });
+
+        expect(mockUseDigests).toHaveBeenCalled();
+        const lastCall = mockUseDigests.mock.calls.at(-1) as unknown[];
+        // Either no options arg (legacy) or enabled:true.
+        const opts = lastCall[1] as { enabled?: boolean } | undefined;
+        expect(opts?.enabled ?? true).toBe(true);
+
+        expect(queryByLabelText('Add note')).toBeTruthy();
+      });
+
+      it('renders the Digest-available link when a digest exists', () => {
+        mockUseDocument.mockReturnValue({
+          data: baseDoc({ id: 'doc-1', documentType: docType }),
+          isLoading: false,
+          error: null,
+        });
+        mockUseDigests.mockReturnValue({
+          data: { data: [{ id: 'digest-7' }] },
+        });
+
+        const { getByText } = render(<ReaderRoute />, {
+          wrapper: createWrapper(),
+        });
+        expect(getByText('Digest available')).toBeTruthy();
+      });
+    },
+  );
 });

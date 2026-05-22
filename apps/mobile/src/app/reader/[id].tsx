@@ -47,6 +47,26 @@ const DOC_TYPE_LABELS: Record<string, string> = {
   resolution: 'Resolution',
 };
 
+// Codal-class document types — these are not case law, so the
+// case-digest UI is hidden on the reader. KEEP IN SYNC with the
+// web copy at apps/web/src/app/(dashboard)/reader/[id]/page.tsx
+// and the server taxonomy in apps/api/src/modules/study/study.service.ts
+// (TAB_GROUP_TO_TYPES).
+const CODAL_DOCUMENT_TYPES = new Set<string>([
+  'constitution',
+  'codal',
+  'statute',
+  'republic_act',
+  'commonwealth_act',
+  'batas_pambansa',
+  'executive_order',
+  'presidential_decree',
+  'proclamation',
+  'administrative_order',
+  'rules_of_court',
+  'rule',
+]);
+
 function eyebrowFor(doc: LegalDocument): string {
   return DOC_TYPE_LABELS[doc.documentType] ?? doc.documentType.replace(/_/g, ' ');
 }
@@ -126,9 +146,15 @@ export default function ReaderRoute() {
     enableExtras,
   );
 
+  const isCodalDoc = doc ? CODAL_DOCUMENT_TYPES.has(doc.documentType) : false;
+  const showDigestUI = !isCodalDoc;
+
   const { data: bookmarksData } = useBookmarks({ legalDocumentId: documentId });
   const createBookmark = useCreateBookmark();
-  const { data: existingDigests } = useDigests({ legalDocumentId: documentId, limit: 1 });
+  const { data: existingDigests } = useDigests(
+    { legalDocumentId: documentId, limit: 1 },
+    { enabled: showDigestUI },
+  );
   const existingDigestId =
     existingDigests?.data && existingDigests.data.length > 0 ? existingDigests.data[0].id : null;
   const generateDigest = useGenerateDigest();
@@ -283,7 +309,7 @@ export default function ReaderRoute() {
     },
   ];
 
-  const belowMetaSlot = existingDigestId ? (
+  const belowMetaSlot = showDigestUI && existingDigestId ? (
     <Pressable
       onPress={() => router.push(`/digest/${existingDigestId}`)}
       style={{
@@ -330,7 +356,7 @@ export default function ReaderRoute() {
         isBookmarked={isBookmarked}
         onBack={() => router.back()}
         onBookmark={handleBookmark}
-        onAdd={handleGenerateDigest}
+        onAdd={showDigestUI ? handleGenerateDigest : undefined}
       />
 
       {/* Bookmark-with-note sheet */}

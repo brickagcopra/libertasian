@@ -2,7 +2,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../../../lib/api-client';
 import type { Digest, DigestFilters, DigestsResponse } from '../types';
 
-export function useDigests(filters: DigestFilters = {}) {
+export function useDigests(
+  filters: DigestFilters = {},
+  options?: { enabled?: boolean },
+) {
   const params: Record<string, string> = {};
   if (filters.cursor) params['cursor'] = filters.cursor;
   if (filters.limit) params['limit'] = String(filters.limit);
@@ -22,6 +25,7 @@ export function useDigests(filters: DigestFilters = {}) {
     queryKey: ['digests', filters],
     queryFn: () => apiClient.get<DigestsResponse>('/digests', { params }),
     staleTime: 2 * 60 * 1000,
+    enabled: options?.enabled ?? true,
   });
 }
 

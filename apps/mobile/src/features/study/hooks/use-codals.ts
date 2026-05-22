@@ -9,9 +9,30 @@ interface CodalsResponse {
   meta: CodalListMeta;
 }
 
+export type CodalTabGroup =
+  | 'constitutions'
+  | 'statutes'
+  | 'executive_issuances'
+  | 'rules';
+
+// Mirror of TAB_GROUP_TO_TYPES in apps/api/src/modules/study/study.service.ts.
+// Used for client-side filtering when offline (server applies it online).
+const TAB_GROUP_TO_TYPES: Record<CodalTabGroup, string[]> = {
+  constitutions: ['constitution'],
+  statutes: ['statute', 'codal', 'republic_act', 'commonwealth_act', 'batas_pambansa'],
+  executive_issuances: [
+    'executive_order',
+    'presidential_decree',
+    'proclamation',
+    'administrative_order',
+  ],
+  rules: ['rules_of_court', 'rule'],
+};
+
 interface CodalFilters {
   subject: string;
   documentType?: string;
+  tabGroup?: CodalTabGroup;
   search?: string;
   limit?: number;
 }
@@ -21,6 +42,7 @@ export function useCodals(filters: CodalFilters & { cursor?: string }) {
   if (filters.cursor) params['cursor'] = filters.cursor;
   if (filters.limit) params['limit'] = String(filters.limit);
   if (filters.documentType) params['documentType'] = filters.documentType;
+  if (filters.tabGroup) params['tabGroup'] = filters.tabGroup;
   if (filters.search) params['search'] = filters.search;
 
   return useQuery({
@@ -42,6 +64,7 @@ export function useInfiniteCodals(filters: Omit<CodalFilters, 'limit'>) {
       if (pageParam) params['cursor'] = pageParam as string;
       params['limit'] = '20';
       if (filters.documentType) params['documentType'] = filters.documentType;
+      if (filters.tabGroup) params['tabGroup'] = filters.tabGroup;
       if (filters.search) params['search'] = filters.search;
 
       return apiClient.get<CodalsResponse>(
@@ -65,6 +88,7 @@ export function useInfiniteCodals(filters: Omit<CodalFilters, 'limit'>) {
 export function useOfflineCodals(filters: {
   subject: string;
   documentType?: string;
+  tabGroup?: CodalTabGroup;
   search?: string;
   enabled: boolean;
 }) {
@@ -89,8 +113,12 @@ export function useOfflineCodals(filters: {
         sectionCount: c.sectionCount,
       }));
 
-      // Client-side filtering
-      if (filters.documentType) {
+      // Client-side filtering. tabGroup overrides single documentType match
+      // to mirror the server (see study.service.ts).
+      if (filters.tabGroup) {
+        const allowed = new Set(TAB_GROUP_TO_TYPES[filters.tabGroup]);
+        items = items.filter((i) => allowed.has(i.documentType));
+      } else if (filters.documentType) {
         items = items.filter((i) => i.documentType === filters.documentType);
       }
 
@@ -109,7 +137,13 @@ export function useOfflineCodals(filters: {
     } finally {
       setIsLoading(false);
     }
-  }, [filters.enabled, filters.subject, filters.documentType, filters.search]);
+  }, [
+    filters.enabled,
+    filters.subject,
+    filters.documentType,
+    filters.tabGroup,
+    filters.search,
+  ]);
 
   useEffect(() => {
     loadCached();

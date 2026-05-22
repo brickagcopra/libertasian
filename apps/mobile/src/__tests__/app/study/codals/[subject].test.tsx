@@ -82,7 +82,7 @@ describe('CodalListScreen', () => {
     expect(UNSAFE_root).toBeTruthy();
   });
 
-  it('shows empty state when no codals found online', () => {
+  it('shows empty state when no codals found online (default Statutes tab)', () => {
     mockUseNetworkState.mockReturnValue({ isConnected: true, isInternetReachable: true, type: 'wifi' });
     mockUseInfiniteCodals.mockReturnValue({
       data: { pages: [{ data: [] }] },
@@ -92,10 +92,10 @@ describe('CodalListScreen', () => {
       isFetchingNextPage: false,
     });
     const { getByText } = render(<CodalListScreen />, { wrapper: createWrapper() });
-    expect(getByText(/No codals found/i)).toBeTruthy();
+    expect(getByText(/No statutes yet for Civil law/i)).toBeTruthy();
   });
 
-  it('renders filter chips', () => {
+  it('renders the 4 codal tabs and defaults to Statutes', () => {
     mockUseNetworkState.mockReturnValue({ isConnected: true, isInternetReachable: true, type: 'wifi' });
     mockUseInfiniteCodals.mockReturnValue({
       data: { pages: [{ data: [] }] },
@@ -104,8 +104,46 @@ describe('CodalListScreen', () => {
       fetchNextPage: jest.fn(),
       isFetchingNextPage: false,
     });
-    const { getAllByText } = render(<CodalListScreen />, { wrapper: createWrapper() });
-    expect(getAllByText('All')[0]).toBeTruthy();
+    const { getByText } = render(<CodalListScreen />, { wrapper: createWrapper() });
+    expect(getByText('Statutes')).toBeTruthy();
+    expect(getByText('Constitutions')).toBeTruthy();
+    expect(getByText('Executive Issuances')).toBeTruthy();
+    expect(getByText('Rules')).toBeTruthy();
+
+    // Defaults to the statutes tabGroup on first render.
+    const lastCall = mockUseInfiniteCodals.mock.calls.at(-1) as unknown[];
+    expect((lastCall[0] as { tabGroup: string }).tabGroup).toBe('statutes');
+  });
+
+  it('switches tabGroup when a tab is pressed', () => {
+    mockUseNetworkState.mockReturnValue({ isConnected: true, isInternetReachable: true, type: 'wifi' });
+    mockUseInfiniteCodals.mockReturnValue({
+      data: { pages: [{ data: [] }] },
+      isLoading: false,
+      hasNextPage: false,
+      fetchNextPage: jest.fn(),
+      isFetchingNextPage: false,
+    });
+    const { getByText } = render(<CodalListScreen />, { wrapper: createWrapper() });
+
+    fireEvent.press(getByText('Rules'));
+
+    const lastCall = mockUseInfiniteCodals.mock.calls.at(-1) as unknown[];
+    expect((lastCall[0] as { tabGroup: string }).tabGroup).toBe('rules');
+  });
+
+  it('shows the "Coming soon" copy for the Executive Issuances tab when empty', () => {
+    mockUseNetworkState.mockReturnValue({ isConnected: true, isInternetReachable: true, type: 'wifi' });
+    mockUseInfiniteCodals.mockReturnValue({
+      data: { pages: [{ data: [] }] },
+      isLoading: false,
+      hasNextPage: false,
+      fetchNextPage: jest.fn(),
+      isFetchingNextPage: false,
+    });
+    const { getByText } = render(<CodalListScreen />, { wrapper: createWrapper() });
+    fireEvent.press(getByText('Executive Issuances'));
+    expect(getByText(/Coming soon/i)).toBeTruthy();
   });
 
   it('renders codal items when online', () => {

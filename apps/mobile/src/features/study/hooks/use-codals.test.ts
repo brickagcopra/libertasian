@@ -75,6 +75,32 @@ describe('useInfiniteCodals', () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(mockGet).toHaveBeenCalledWith('/study/codals/civil_law', { params: { limit: '20' } });
   });
+
+  it('passes tabGroup to the server', async () => {
+    mockGet.mockResolvedValueOnce(mockResponse);
+    renderHook(
+      () => useInfiniteCodals({ subject: 'civil_law', tabGroup: 'constitutions' }),
+      { wrapper: createWrapper() },
+    );
+    await waitFor(() => expect(mockGet).toHaveBeenCalled());
+    expect(mockGet).toHaveBeenCalledWith('/study/codals/civil_law', {
+      params: { limit: '20', tabGroup: 'constitutions' },
+    });
+  });
+});
+
+describe('useCodals — tabGroup param', () => {
+  it('passes tabGroup as a query param', async () => {
+    mockGet.mockResolvedValueOnce(mockResponse);
+    renderHook(
+      () => useCodals({ subject: 'civil_law', tabGroup: 'statutes' }),
+      { wrapper: createWrapper() },
+    );
+    await waitFor(() => expect(mockGet).toHaveBeenCalled());
+    expect(mockGet).toHaveBeenCalledWith('/study/codals/civil_law', {
+      params: { tabGroup: 'statutes' },
+    });
+  });
 });
 
 describe('useOfflineCodals (fallback)', () => {
@@ -150,6 +176,90 @@ describe('useOfflineCodals (fallback)', () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(result.current.data).toHaveLength(1);
     expect(result.current.data[0].title).toBe('Family Code');
+  });
+
+  it('filters cached codals by tabGroup (statutes)', async () => {
+    mockGetCachedBySubject.mockResolvedValueOnce([
+      {
+        id: 'c1', subject: 'civil_law', title: 'Civil Code', shortTitle: null,
+        documentType: 'statute', citationText: 'RA 386', promulgationDate: null,
+        isOfficial: true, sectionCount: 10, cachedAt: '2026-03-01T00:00:00Z',
+      },
+      {
+        id: 'c2', subject: 'civil_law', title: 'Family Code', shortTitle: null,
+        documentType: 'republic_act', citationText: 'EO 209', promulgationDate: null,
+        isOfficial: true, sectionCount: 8, cachedAt: '2026-03-01T00:00:00Z',
+      },
+      {
+        id: 'c3', subject: 'civil_law', title: '1987 Constitution', shortTitle: null,
+        documentType: 'constitution', citationText: null, promulgationDate: null,
+        isOfficial: true, sectionCount: 12, cachedAt: '2026-03-01T00:00:00Z',
+      },
+      {
+        id: 'c4', subject: 'civil_law', title: 'PD 1083', shortTitle: null,
+        documentType: 'presidential_decree', citationText: null, promulgationDate: null,
+        isOfficial: true, sectionCount: 5, cachedAt: '2026-03-01T00:00:00Z',
+      },
+    ]);
+
+    const { result } = renderHook(() =>
+      useOfflineCodals({ subject: 'civil_law', tabGroup: 'statutes', enabled: true }),
+    );
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.data.map((d) => d.id).sort()).toEqual(['c1', 'c2']);
+  });
+
+  it('filters cached codals by tabGroup (constitutions)', async () => {
+    mockGetCachedBySubject.mockResolvedValueOnce([
+      {
+        id: 'c1', subject: 'civil_law', title: 'Civil Code', shortTitle: null,
+        documentType: 'statute', citationText: null, promulgationDate: null,
+        isOfficial: true, sectionCount: 10, cachedAt: '2026-03-01T00:00:00Z',
+      },
+      {
+        id: 'c2', subject: 'civil_law', title: '1987 Constitution', shortTitle: null,
+        documentType: 'constitution', citationText: null, promulgationDate: null,
+        isOfficial: true, sectionCount: 12, cachedAt: '2026-03-01T00:00:00Z',
+      },
+    ]);
+
+    const { result } = renderHook(() =>
+      useOfflineCodals({ subject: 'civil_law', tabGroup: 'constitutions', enabled: true }),
+    );
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.data).toHaveLength(1);
+    expect(result.current.data[0].id).toBe('c2');
+  });
+
+  it('tabGroup overrides single documentType filter', async () => {
+    mockGetCachedBySubject.mockResolvedValueOnce([
+      {
+        id: 'c1', subject: 'civil_law', title: 'Civil Code', shortTitle: null,
+        documentType: 'statute', citationText: null, promulgationDate: null,
+        isOfficial: true, sectionCount: 10, cachedAt: '2026-03-01T00:00:00Z',
+      },
+      {
+        id: 'c2', subject: 'civil_law', title: 'Family Code', shortTitle: null,
+        documentType: 'republic_act', citationText: null, promulgationDate: null,
+        isOfficial: true, sectionCount: 8, cachedAt: '2026-03-01T00:00:00Z',
+      },
+    ]);
+
+    // documentType:'statute' would normally narrow to c1; tabGroup:'statutes'
+    // should override and include both because both ∈ TAB_GROUP_TO_TYPES.statutes.
+    const { result } = renderHook(() =>
+      useOfflineCodals({
+        subject: 'civil_law',
+        documentType: 'statute',
+        tabGroup: 'statutes',
+        enabled: true,
+      }),
+    );
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.data.map((d) => d.id).sort()).toEqual(['c1', 'c2']);
   });
 
   it('handles SQLite errors gracefully', async () => {
