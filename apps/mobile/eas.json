@@ -39,12 +39,18 @@
   "submit": {
     "production": {
       "android": {
+        // TODO: Replace with Play Console service account JSON.
+        // Get from: Play Console -> Setup -> API access -> service account -> create key (JSON) -> download.
+        // File should be saved at apps/mobile/google-services.json (gitignored).
         "serviceAccountKeyPath": "./google-services.json",
         "track": "internal"
       },
       "ios": {
+        // TODO: Replace with the Apple ID email used to sign in to App Store Connect.
         "appleId": "YOUR_APPLE_ID",
+        // TODO: Replace with App Store Connect App ID. Created when the app is registered in App Store Connect -> My Apps -> + -> New App. Shown in app's App Information page.
         "ascAppId": "YOUR_APP_STORE_CONNECT_APP_ID",
+        // TODO: Replace with Apple Developer Team ID. Found at developer.apple.com -> Account -> Membership details.
         "appleTeamId": "YOUR_TEAM_ID"
       }
     }
