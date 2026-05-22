@@ -128,6 +128,14 @@ export default function SearchPage() {
                     <SelectItem value="republic_act">Republic Act</SelectItem>
                     <SelectItem value="executive_order">Executive Order</SelectItem>
                     <SelectItem value="presidential_decree">Presidential Decree</SelectItem>
+                    <SelectItem value="constitution">Constitution</SelectItem>
+                    <SelectItem value="codal">Codal</SelectItem>
+                    <SelectItem value="statute">Statute</SelectItem>
+                    <SelectItem value="commonwealth_act">Commonwealth Act</SelectItem>
+                    <SelectItem value="batas_pambansa">Batas Pambansa</SelectItem>
+                    <SelectItem value="proclamation">Proclamation</SelectItem>
+                    <SelectItem value="rules_of_court">Rules of Court</SelectItem>
+                    <SelectItem value="rule">Rule</SelectItem>
                     <SelectItem value="administrative_order">Administrative Order</SelectItem>
                     <SelectItem value="administrative_circular">Administrative Circular</SelectItem>
                     <SelectItem value="resolution">Resolution</SelectItem>

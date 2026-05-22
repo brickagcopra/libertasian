@@ -20,9 +20,49 @@ export class SearchQueryDto {
 
   @ApiPropertyOptional({
     description: 'Filter by document class',
-    enum: ['case', 'statute', 'codal', 'article', 'outline'],
+    enum: [
+      // Legacy "class" values (kept; see note below).
+      'case',
+      'statute',
+      'codal',
+      'article',
+      'outline',
+      // Codal-class document_type values (mirror server taxonomy in
+      // apps/api/src/modules/study/study.service.ts TAB_GROUP_TO_TYPES).
+      'constitution',
+      'republic_act',
+      'commonwealth_act',
+      'batas_pambansa',
+      'executive_order',
+      'presidential_decree',
+      'proclamation',
+      'administrative_order',
+      'rules_of_court',
+      'rule',
+    ],
   })
-  @IsIn(['case', 'statute', 'codal', 'article', 'outline'])
+  // NOTE: this enum mixes two namespaces — legacy abstract "classes"
+  // ('case'/'article'/'outline'/'statute'/'codal') and concrete document_type
+  // values matching the legal_documents.document_type column. Reconciling
+  // these is tracked separately; this PR only adds codal-class values so the
+  // /search filter UI can surface Constitution/Codal/Statute/etc.
+  @IsIn([
+    'case',
+    'statute',
+    'codal',
+    'article',
+    'outline',
+    'constitution',
+    'republic_act',
+    'commonwealth_act',
+    'batas_pambansa',
+    'executive_order',
+    'presidential_decree',
+    'proclamation',
+    'administrative_order',
+    'rules_of_court',
+    'rule',
+  ])
   @IsOptional()
   documentType?: string;
 
