@@ -51,6 +51,8 @@ docker-compose.override.yml
 *.key
 credentials.json
 secrets/
+apps/mobile/google-services.json
+apps/mobile/AuthKey_*.p8
 
 # Logs
 *.log
