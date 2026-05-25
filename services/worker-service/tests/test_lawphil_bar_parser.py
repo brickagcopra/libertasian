@@ -11,7 +11,11 @@ from pathlib import Path
 
 import pytest
 
-from src.parsers.lawphil_bar_html import ParsedBarQuestion, parse
+from src.parsers.lawphil_bar_html import (
+    ParsedBarQuestion,
+    _count_sub_parts,
+    parse,
+)
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "lawphil_bar"
 
@@ -133,3 +137,73 @@ def test_question_numbers_are_unique_within_a_sitting() -> None:
         assert len(numbers) == len(set(numbers)), (
             f"{fixture}: duplicate question numbers: {numbers}"
         )
+
+
+# ---------------------------------------------------------------------------
+# _count_sub_parts: explicit "[This item has N questions]" marker overrides
+# the inline-letter heuristic. See 2022 Civil Law Q6 (lease terms i/ii/iii
+# inside the fact pattern, but only TWO genuine sub-questions).
+# ---------------------------------------------------------------------------
+
+
+def test_count_sub_parts_explicit_marker_overrides_inline_roman_lowercase() -> None:
+    """Bracketed declaration ('[This item has two questions.]') beats the
+    inline ``(i)/(ii)/(iii)`` markers that LawPhil sometimes uses to
+    enumerate facts (lease terms, contract clauses, etc.) inside a question
+    body. The examiner's explicit count is ground truth.
+    """
+    body = (
+        "Pedro leased his property to Juan under the following terms: "
+        "(i) monthly rent of P10,000; (ii) a two-year fixed term; and "
+        "(iii) automatic renewal absent thirty days' written notice. "
+        "[This item has two questions.] "
+        "(a) Is the renewal clause enforceable? "
+        "(b) May Pedro unilaterally raise the rent during the term?"
+    )
+    assert _count_sub_parts(body, []) == 2
+
+
+def test_count_sub_parts_explicit_marker_with_digit_form() -> None:
+    """The marker also accepts a digit, e.g. '[This item has 3 questions.]'."""
+    body = (
+        "Facts: A, B, and C are co-owners of a parcel of land. "
+        "[This item has 3 questions.] "
+        "Discuss the rights of each co-owner."
+    )
+    assert _count_sub_parts(body, []) == 3
+
+
+def test_count_sub_parts_explicit_marker_is_case_insensitive() -> None:
+    """Match regardless of the casing LawPhil happens to use."""
+    body = (
+        "Facts: D borrowed money from E. "
+        "[THIS ITEM HAS FOUR QUESTIONS.] "
+        "Sub-parts follow."
+    )
+    assert _count_sub_parts(body, []) == 4
+
+
+def test_count_sub_parts_no_marker_falls_through_to_heuristic() -> None:
+    """Regression: with no bracket declaration, the existing (a)/(b)
+    heuristic still produces the correct count for legitimately
+    multi-part questions.
+    """
+    body = (
+        "Facts: ABC Corp. dismissed its general manager without notice. "
+        "(a) Was the dismissal valid? "
+        "(b) What damages, if any, may the manager recover?"
+    )
+    assert _count_sub_parts(body, []) == 2
+
+
+def test_count_sub_parts_no_marker_inline_roman_enumeration_still_counted() -> None:
+    """Without an explicit marker, an inline ``(a)/(b)`` set is still the
+    signal we have — preserve the pre-existing behaviour so the fix is
+    strictly additive.
+    """
+    body = (
+        "Facts: X executed a will with the following clauses: "
+        "(a) bequest to spouse; (b) bequest to son. "
+        "Discuss the validity of each clause."
+    )
+    assert _count_sub_parts(body, []) == 2
