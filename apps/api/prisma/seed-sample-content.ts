@@ -358,7 +358,7 @@ async function seedFlashcardSets(authorId: string, orgId: string): Promise<void>
         description: set.description,
         barSubject: set.barSubject,
         topic: set.topic,
-        visibility: 'public',
+        visibility: 'public_editorial',
         cardCount: set.cards.length,
         ratingCount: 0,
       },
