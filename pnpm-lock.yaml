@@ -94,6 +94,9 @@ importers:
       '@types/pdfkit':
         specifier: ^0.17.5
         version: 0.17.5
+      '@willsoto/nestjs-prometheus':
+        specifier: ^6.1.0
+        version: 6.1.0(@nestjs/common@11.1.17(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(prom-client@15.1.3)
       bcrypt:
         specifier: ^6.0.0
         version: 6.0.0
@@ -145,6 +148,9 @@ importers:
       pdfkit:
         specifier: ^0.18.0
         version: 0.18.0
+      prom-client:
+        specifier: ^15.1.3
+        version: 15.1.3
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2
@@ -485,7 +491,10 @@ importers:
         version: 0.577.0(react@19.2.4)
       next:
         specifier: ^15.1.0
-        version: 15.5.13(@babel/core@7.29.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+        version: 15.5.13(@babel/core@7.29.0)(@opentelemetry/api@1.9.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      prom-client:
+        specifier: ^15.1.3
+        version: 15.1.3
       react:
         specifier: ^19.0.0
         version: 19.2.4
@@ -2720,6 +2729,10 @@ packages:
     resolution: {integrity: sha512-6bf+HcuERzAtHZxrm6phjref54ABse39BpkDie/YO3AUFMCBrb3SK5okKSdT5n3+nDRuEEQLhQCl0RQV3s1qpA==}
     engines: {node: '>=14', yarn: ^1.22.10}
 
+  '@opentelemetry/api@1.9.1':
+    resolution: {integrity: sha512-gLyJlPHPZYdAk1JENA9LeHejZe1Ti77/pTeFm/nMXmQH/HFZlcS/O2XJB+L8fkbrNSqhdtlvjBVjxwUYanNH5Q==}
+    engines: {node: '>=8.0.0'}
+
   '@otplib/core@13.3.0':
     resolution: {integrity: sha512-pnQDOuCmFVeF/XnboJq9TOJgLoo2idNPJKMymOF8vGqJJ+ReKRYM9bUGjNPRWC0tHjMwu1TXbnzyBp494JgRag==}
 
@@ -4820,6 +4833,12 @@ packages:
   '@webassemblyjs/wast-printer@1.14.1':
     resolution: {integrity: sha512-kPSSXE6De1XOR820C90RIo2ogvZG+c3KiHzqUoO/F34Y2shGzesfqv7o57xrxovZJH/MetF5UjroJ/R/3isoiw==}
 
+  '@willsoto/nestjs-prometheus@6.1.0':
+    resolution: {integrity: sha512-lrCEnJBBSzUIYWGR+PsZw1YXs1B9jzxFEuNAa3RzTxuFAFdI+sW7Fp52il/U/dX2MWoHc32x06OS0nm56QwyzQ==}
+    peerDependencies:
+      '@nestjs/common': ^7.0.0 || ^8.0.0 || ^9.0.0 || ^10.0.0 || ^11.0.0
+      prom-client: ^15.0.0
+
   '@xmldom/xmldom@0.7.13':
     resolution: {integrity: sha512-lm2GW5PkosIzccsaZIz7tp8cPADSIlIHWDFTR1N0SzfinhhYgeIQjFMz4rYzanCScr3DqQLeomUDArp6MWKm+g==}
     engines: {node: '>=10.0.0'}
@@ -5226,6 +5245,9 @@ packages:
   binary-extensions@2.3.0:
     resolution: {integrity: sha512-Ceh+7ox5qe7LJuLHoY0feh3pHuUDHAcRUeyL2VYghZwfpkNIy/+8Ocg0a3UuSoYzavmylwuLWQOf3hl0jjMMIw==}
     engines: {node: '>=8'}
+
+  bintrees@1.0.2:
+    resolution: {integrity: sha512-VOMgTMwjAaUG580SXn3LacVgjurrbMme7ZZNYGSSV7mmtY6QQRh0Eg3pwIcntQ77DErK1L0NxkbetjcoXzVwKw==}
 
   bl@4.1.0:
     resolution: {integrity: sha512-1W07cM9gS6DcLperZfFSj+bWLtaPGSOHWhPiGzXmvVJbRLdG82sH/Kn8EtW1VqWVA54AKf2h5k5BbnIbwF3h6w==}
@@ -8888,6 +8910,10 @@ packages:
     resolution: {integrity: sha512-7PiHtLll5LdnKIMw100I+8xJXR5gW2QwWYkT6iJva0bXitZKa/XMrSbdmg3r2Xnaidz9Qumd0VPaMrZlF9V9sA==}
     engines: {node: '>=0.4.0'}
 
+  prom-client@15.1.3:
+    resolution: {integrity: sha512-6ZiOBfCywsD4k1BN9IX0uZhF+tJkV8q8llP64G5Hajs4JOeVLPCwpPVcpXy3BwYiUGgyJzsJJQeOIv7+hDSq8g==}
+    engines: {node: ^16 || ^18 || >=20}
+
   promise@7.3.1:
     resolution: {integrity: sha512-nolQXZ/4L+bP/UGlkfaIujX9BKxGwmQ9OT4mOt5yvy8iK1h3wqTEJCijzGANTCCl9nWjY41juyAn2K3Q1hLLTg==}
 
@@ -9881,6 +9907,9 @@ packages:
   tar@7.5.13:
     resolution: {integrity: sha512-tOG/7GyXpFevhXVh8jOPJrmtRpOTsYqUIkVdVooZYJS/z8WhfQUX8RJILmeuJNinGAMSu1veBr4asSHFt5/hng==}
     engines: {node: '>=18'}
+
+  tdigest@0.1.2:
+    resolution: {integrity: sha512-+G0LLgjjo9BZX2MfdvPfH+MKLCrxlXSYec5DaPYP1fe6Iyhf0/fSmJ0bFiZ1F8BT6cGXl2LpltQptzjXKWEkKA==}
 
   temp-dir@2.0.0:
     resolution: {integrity: sha512-aoBAniQmmwtcKp/7BzsH8Cxzv8OL736p7v1ihGb5e9DJ9kTwGWHrQrVB5+lfVDzfGrdRzXch+ig7LHaY1JTOrg==}
@@ -13531,6 +13560,8 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  '@opentelemetry/api@1.9.1': {}
+
   '@otplib/core@13.3.0': {}
 
   '@otplib/hotp@13.3.0':
@@ -15957,6 +15988,11 @@ snapshots:
       '@webassemblyjs/ast': 1.14.1
       '@xtuc/long': 4.2.2
 
+  '@willsoto/nestjs-prometheus@6.1.0(@nestjs/common@11.1.17(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(prom-client@15.1.3)':
+    dependencies:
+      '@nestjs/common': 11.1.17(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2)
+      prom-client: 15.1.3
+
   '@xmldom/xmldom@0.7.13': {}
 
   '@xmldom/xmldom@0.8.11': {}
@@ -16402,6 +16438,8 @@ snapshots:
   big-integer@1.6.52: {}
 
   binary-extensions@2.3.0: {}
+
+  bintrees@1.0.2: {}
 
   bl@4.1.0:
     dependencies:
@@ -20431,7 +20469,7 @@ snapshots:
 
   nested-error-stacks@2.0.1: {}
 
-  next@15.5.13(@babel/core@7.29.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4):
+  next@15.5.13(@babel/core@7.29.0)(@opentelemetry/api@1.9.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4):
     dependencies:
       '@next/env': 15.5.13
       '@swc/helpers': 0.5.15
@@ -20449,6 +20487,7 @@ snapshots:
       '@next/swc-linux-x64-musl': 15.5.13
       '@next/swc-win32-arm64-msvc': 15.5.13
       '@next/swc-win32-x64-msvc': 15.5.13
+      '@opentelemetry/api': 1.9.1
       sharp: 0.34.5
     transitivePeerDependencies:
       - '@babel/core'
@@ -20936,6 +20975,11 @@ snapshots:
   process@0.11.10: {}
 
   progress@2.0.3: {}
+
+  prom-client@15.1.3:
+    dependencies:
+      '@opentelemetry/api': 1.9.1
+      tdigest: 0.1.2
 
   promise@7.3.1:
     dependencies:
@@ -22216,6 +22260,10 @@ snapshots:
       minipass: 7.1.3
       minizlib: 3.1.0
       yallist: 5.0.0
+
+  tdigest@0.1.2:
+    dependencies:
+      bintrees: 1.0.2
 
   temp-dir@2.0.0: {}
 
