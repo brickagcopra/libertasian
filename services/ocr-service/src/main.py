@@ -1,6 +1,7 @@
 """LIBERTASIAN OCR Service — FastAPI application entry point."""
 
 from fastapi import FastAPI
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from .config import settings
 from .quality.router import router as quality_router
@@ -21,6 +22,8 @@ app.include_router(ocr_router)
 app.include_router(classify_router)
 app.include_router(citations_router)
 app.include_router(pdf_router)
+
+Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
 
 @app.get("/health", response_model=HealthResponse)

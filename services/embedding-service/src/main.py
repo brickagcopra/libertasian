@@ -3,6 +3,7 @@
 import logging
 
 from fastapi import FastAPI
+from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel
 
 from .config import settings
@@ -20,6 +21,8 @@ app = FastAPI(
 )
 
 app.include_router(embed_router)
+
+Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
 
 class HealthResponse(BaseModel):
