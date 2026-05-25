@@ -12,6 +12,8 @@ from urllib.parse import urlparse
 
 from src.tasks.seed_codals_task import (
     SEED_CODALS,
+    _filter_codals_by_document_types,
+    _parse_document_types_arg,
     _parse_sections,
     _SECTION_MARKER_RE,
 )
@@ -90,6 +92,63 @@ def test_parse_sections_fallback_to_single_section_on_unstructured_html() -> Non
     assert len(sections) == 1
     assert sections[0].section_label == "Full Text"
     assert "Some random codal text" in sections[0].plain_text
+
+
+def test_filter_by_document_types_selects_eo_and_pd_entries() -> None:
+    """``--document-types executive_order,presidential_decree`` must yield
+    exactly the EO + PD entries from the live seed list.
+
+    This guards the targeted-crawl path used to import only the
+    executive issuances added in feature/codal-executive-issuances
+    without touching pre-existing constitution / codal / RA /
+    rules_of_court rows.
+    """
+    document_types = _parse_document_types_arg(
+        "executive_order,presidential_decree",
+    )
+    assert document_types == {"executive_order", "presidential_decree"}
+
+    filtered = _filter_codals_by_document_types(SEED_CODALS, document_types)
+    # The pre-existing Family Code (EO 209) and Labor Code (PD 442)
+    # entries use document_type="codal", NOT executive_order/
+    # presidential_decree — so they MUST NOT appear in the filtered
+    # result. The filter is on document_type, not on the citation prefix.
+    actual_pairs = {(c.document_type, c.citation_text) for c in filtered}
+    expected_pairs = {
+        ("executive_order", "Exec. Order No. 292 (1987)"),
+        ("executive_order", "Exec. Order No. 226 (1987)"),
+        ("presidential_decree", "Pres. Decree No. 1529"),
+        ("presidential_decree", "Pres. Decree No. 957"),
+        ("presidential_decree", "Pres. Decree No. 1083"),
+        ("presidential_decree", "Pres. Decree No. 968"),
+    }
+    assert actual_pairs == expected_pairs, (
+        f"unexpected filter result — extra: {actual_pairs - expected_pairs}, "
+        f"missing: {expected_pairs - actual_pairs}"
+    )
+    # No other document_types must leak through.
+    assert {c.document_type for c in filtered} == {
+        "executive_order",
+        "presidential_decree",
+    }
+    # And the existing codal-typed EO 209 / PD 442 entries are correctly
+    # NOT included — the filter is exact-match on document_type.
+    assert all(
+        c.citation_text not in {"Exec. Order No. 209 (1987)", "Pres. Decree No. 442"}
+        for c in filtered
+    )
+
+
+def test_filter_by_document_types_none_returns_full_list_unchanged() -> None:
+    """No filter ⇒ identical list (preserves default seeder behavior)."""
+    assert _parse_document_types_arg(None) is None
+    assert _filter_codals_by_document_types(SEED_CODALS, None) is SEED_CODALS
+
+
+def test_filter_by_document_types_blank_string_returns_full_list() -> None:
+    """Whitespace-only / empty CSV ⇒ no filter (no accidental empty run)."""
+    assert _parse_document_types_arg("") is None
+    assert _parse_document_types_arg("   ,  ,") is None
 
 
 def test_parse_sections_splits_on_bold_marker() -> None:

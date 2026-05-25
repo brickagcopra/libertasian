@@ -159,6 +159,61 @@ SEED_CODALS: list[CodalSeed] = [
         citation_text="Rules of Court",
         primary_subject="remedial_law",
     ),
+    # ------------------------------------------------------------------
+    # Executive issuances (2026-05-25). URLs verified 200 via curl -sI -L
+    # against lawphil.net before commit. The Admin Code and Omnibus
+    # Investments Code are EO 292 / EO 226 — the same ``execord/eo1987/``
+    # directory the Family Code lives in (NOT ``execorders/``, which
+    # does not exist on lawphil). The four PDs sit under
+    # ``statutes/presdecs/pd<year>/`` per Lawphil's nested layout.
+    CodalSeed(
+        title="Administrative Code of 1987",
+        short_title="Admin Code (EO 292)",
+        url="https://lawphil.net/executive/execord/eo1987/eo_292_1987.html",
+        document_type="executive_order",
+        citation_text="Exec. Order No. 292 (1987)",
+        primary_subject="political_law",
+    ),
+    CodalSeed(
+        title="Omnibus Investments Code of 1987",
+        short_title="Omnibus Investments Code (EO 226)",
+        url="https://lawphil.net/executive/execord/eo1987/eo_226_1987.html",
+        document_type="executive_order",
+        citation_text="Exec. Order No. 226 (1987)",
+        primary_subject="commercial_law",
+    ),
+    CodalSeed(
+        title="Property Registration Decree",
+        short_title="PD 1529",
+        url="https://lawphil.net/statutes/presdecs/pd1978/pd_1529_1978.html",
+        document_type="presidential_decree",
+        citation_text="Pres. Decree No. 1529",
+        primary_subject="civil_law",
+    ),
+    CodalSeed(
+        title="Subdivision and Condominium Buyers' Protective Decree",
+        short_title="PD 957",
+        url="https://lawphil.net/statutes/presdecs/pd1976/pd_957_1976.html",
+        document_type="presidential_decree",
+        citation_text="Pres. Decree No. 957",
+        primary_subject="civil_law",
+    ),
+    CodalSeed(
+        title="Code of Muslim Personal Laws",
+        short_title="PD 1083",
+        url="https://lawphil.net/statutes/presdecs/pd1977/pd_1083_1977.html",
+        document_type="presidential_decree",
+        citation_text="Pres. Decree No. 1083",
+        primary_subject="civil_law",
+    ),
+    CodalSeed(
+        title="Probation Law of 1976",
+        short_title="PD 968",
+        url="https://lawphil.net/statutes/presdecs/pd1976/pd_968_1976.html",
+        document_type="presidential_decree",
+        citation_text="Pres. Decree No. 968",
+        primary_subject="criminal_law",
+    ),
 ]
 
 
@@ -614,21 +669,54 @@ def _process_codal(
 # ---------------------------------------------------------------------------
 
 
+def _parse_document_types_arg(value: str | None) -> set[str] | None:
+    """Parse a comma-separated ``--document-types`` value into a set.
+
+    Returns ``None`` when unset/blank so callers can treat that as
+    "no filter" (process every entry). Empty tokens are dropped.
+    """
+    if value is None:
+        return None
+    tokens = {t.strip() for t in value.split(",") if t.strip()}
+    return tokens or None
+
+
+def _filter_codals_by_document_types(
+    codals: list[CodalSeed],
+    document_types: set[str] | None,
+) -> list[CodalSeed]:
+    """Keep only entries whose ``document_type`` is in ``document_types``.
+
+    ``None`` means "no filter" — return the list unchanged. Order is
+    preserved so the processing log matches the source-list order.
+    """
+    if document_types is None:
+        return codals
+    return [c for c in codals if c.document_type in document_types]
+
+
 def run_seed(
     *,
     dry_run: bool,
     limit: int | None = None,
+    codals: list[CodalSeed] | None = None,
 ) -> dict[str, int]:
     """Iterate ``SEED_CODALS`` and import each. Returns counters.
 
     ``--batch`` is accepted on the CLI for parity with
     ``backfill_ponente_task`` but is a no-op here: the seed list is
-    bounded at 8 entries and is small enough to run in a single pass.
+    bounded and small enough to run in a single pass.
+
+    When ``codals`` is provided, it overrides ``SEED_CODALS`` — used by
+    the CLI to apply the ``--document-types`` filter without mutating
+    module-level state. Defaults to the full seed list.
     """
     counters = {"processed": 0, "inserted": 0, "skipped": 0, "failed": 0}
     fetcher = LawphilFetcher()
 
-    for codal in SEED_CODALS:
+    seed_list = codals if codals is not None else SEED_CODALS
+
+    for codal in seed_list:
         if limit is not None and counters["processed"] >= limit:
             break
         counters["processed"] += 1
@@ -672,6 +760,15 @@ def _cli() -> int:
     parser.add_argument("--commit", action="store_true", default=False)
     parser.add_argument("--batch", type=int, default=None, help="no-op (kept for CLI parity)")
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument(
+        "--document-types",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated document_type allow-list (e.g. "
+            "'executive_order,presidential_decree'). Default: process all."
+        ),
+    )
     args = parser.parse_args()
 
     dry_run = True
@@ -682,7 +779,16 @@ def _cli() -> int:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    counters = run_seed(dry_run=dry_run, limit=args.limit)
+
+    document_types = _parse_document_types_arg(args.document_types)
+    codals = _filter_codals_by_document_types(SEED_CODALS, document_types)
+    if document_types is not None:
+        logger.info(
+            "Filtering to document_types=%s — %d/%d entries selected",
+            sorted(document_types), len(codals), len(SEED_CODALS),
+        )
+
+    counters = run_seed(dry_run=dry_run, limit=args.limit, codals=codals)
     print("counters:", counters)
     if dry_run:
         print("Dry run only — re-run with --commit to apply.")
