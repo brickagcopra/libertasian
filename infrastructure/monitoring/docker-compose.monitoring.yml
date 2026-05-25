@@ -27,6 +27,11 @@ services:
       - "--storage.tsdb.path=/prometheus"
       - "--storage.tsdb.retention.time=30d"
       - "--web.enable-lifecycle"
+    networks:
+      - default
+      - libertasian_backend
+      - libertasian_frontend
+      - libertasian_ai
     deploy:
       resources:
         limits:
@@ -213,3 +218,12 @@ volumes:
   loki_data:
     external: true
     name: libertasian_loki_data
+
+networks:
+  default:
+  libertasian_backend:
+    external: true
+  libertasian_frontend:
+    external: true
+  libertasian_ai:
+    external: true
