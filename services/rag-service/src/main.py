@@ -4,6 +4,7 @@ import logging
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel
 
 from .answer.router import router as answer_router
@@ -67,6 +68,8 @@ app.include_router(hearing_prep_router)
 app.include_router(answer_router)
 app.include_router(digests_router)
 app.include_router(completions_router)
+
+Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
 
 class HealthResponse(BaseModel):
