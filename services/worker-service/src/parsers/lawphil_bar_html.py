@@ -62,6 +62,31 @@ _END_MARKER_RE = re.compile(r"NOTHING\s+FOLLOWS", re.IGNORECASE)
 # Roman → integer (handles up to XXXIX; bar papers don't exceed ~25 items).
 _ROMAN_VALUES = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
 
+# Number-word → integer for the explicit "[This item has N questions.]"
+# declaration that LawPhil sometimes embeds in the question body. Bar papers
+# never enumerate more than ten sub-questions in a single item, so one..ten
+# is sufficient coverage.
+_WORD_TO_INT: dict[str, int] = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+}
+
+# Explicit sub-part count declaration, e.g. "[This item has two questions.]"
+# or "[This item has 3 questions]". Bracket characters are optional so that
+# we still match if LawPhil drops them in a future edit. Case-insensitive.
+_EXPLICIT_SUBPART_RE = re.compile(
+    r"this item has\s+(?P<count>\w+)\s+questions?",
+    re.IGNORECASE,
+)
+
 
 @dataclass(frozen=True)
 class ParsedBarQuestion:
@@ -412,7 +437,28 @@ def _count_sub_parts(body: str, blocks: list[_Block]) -> int:
     - Legacy ``<ol>`` lists for 2006-style numbered sub-parts (no inline
       ``(a)`` text — the markers are rendered by the browser).
     - 2022 inline ``(a)``/``(b)`` markers without an enclosing list.
+
+    Explicit override: if the body contains a ``[This item has N questions.]``
+    declaration (case-insensitive, with ``N`` as a digit or a number word
+    one..ten), trust the declaration and return ``N`` immediately. This
+    prevents inline ``(i)/(ii)/(iii)`` enumeration *inside* the fact pattern
+    (e.g. 2022 Civil Law Q6's three lease terms) from inflating the count
+    above the genuine sub-question total declared by the examiner.
     """
+    # Authoritative marker wins over the heuristic. We only honour the first
+    # match — multiple declarations in a single question body are not a
+    # pattern we have observed in the LawPhil corpus.
+    explicit = _EXPLICIT_SUBPART_RE.search(body)
+    if explicit is not None:
+        token = explicit.group("count").lower()
+        if token.isdigit():
+            return int(token)
+        word_value = _WORD_TO_INT.get(token)
+        if word_value is not None:
+            return word_value
+        # Marker present but the count token is unrecognised — fall through
+        # to the heuristic rather than returning 0.
+
     # Inline letter markers — collect distinct lowercase letters.
     letters = {m.group(1).lower() for m in re.finditer(r"\(([a-z])\)", body)}
     letter_count = len(letters)
