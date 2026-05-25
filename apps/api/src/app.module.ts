@@ -29,6 +29,7 @@ import { DuplicatesModule } from './modules/duplicates/duplicates.module';
 import { HealthModule } from './modules/health/health.module';
 import { KnowledgeGraphModule } from './modules/knowledge-graph/knowledge-graph.module';
 import { MemosModule } from './modules/memos/memos.module';
+import { MetricsModule } from './modules/metrics/metrics.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { PleadingsModule } from './modules/pleadings/pleadings.module';
 import { ResearchWorkspacesModule } from './modules/research-workspaces/research-workspaces.module';
@@ -193,6 +194,7 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
     AnalyticsModule,
     AiAnswersModule,
     HealthModule,
+    MetricsModule,
     AuthModule,
     UsersModule,
     OrganizationsModule,
