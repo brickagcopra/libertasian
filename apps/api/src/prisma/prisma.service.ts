@@ -119,6 +119,7 @@ export function addTenantFilter(organizationId: string) {
       }
       case 'create': {
         const data = (args['data'] as Record<string, unknown> | undefined) ?? {};
+        assertNoNestedTenantWrite(data);
         args['data'] = { ...data, organizationId };
         break;
       }
@@ -143,6 +144,7 @@ export function addTenantFilter(organizationId: string) {
       case 'updateManyAndReturn': {
         const where = (args['where'] as Record<string, unknown> | undefined) ?? {};
         args['where'] = { ...where, organizationId };
+        assertNoNestedTenantWrite(args['data']);
         stripOrgIdFromUpdateData(args['data']);
         break;
       }
@@ -150,6 +152,8 @@ export function addTenantFilter(organizationId: string) {
         const where = (args['where'] as Record<string, unknown> | undefined) ?? {};
         args['where'] = { ...where, organizationId };
         const create = (args['create'] as Record<string, unknown> | undefined) ?? {};
+        assertNoNestedTenantWrite(create);
+        assertNoNestedTenantWrite(args['update']);
         args['create'] = { ...create, organizationId };
         stripOrgIdFromUpdateData(args['update']);
         break;
@@ -169,5 +173,32 @@ function stripOrgIdFromUpdateData(data: unknown): void {
   const obj = data as Record<string, unknown>;
   if ('organizationId' in obj) {
     delete obj['organizationId'];
+  }
+}
+
+// A Prisma relation write that CREATES rows (create/createMany/connectOrCreate)
+// is not traversed by this root-level middleware, so a nested tenant-model row
+// would skip organizationId injection. Detect and reject it. The subset check
+// (every key is a Prisma relation operator) avoids false positives on JSONB
+// scalar fields. Scalar-list ops ({ set: [...] }) are intentionally NOT flagged.
+const RELATION_OPS = new Set([
+  'create', 'createMany', 'connectOrCreate', 'connect', 'disconnect',
+  'set', 'update', 'updateMany', 'upsert', 'delete', 'deleteMany',
+]);
+const CREATE_OPS = ['create', 'createMany', 'connectOrCreate'];
+function assertNoNestedTenantWrite(data: unknown): void {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return;
+  for (const value of Object.values(data as Record<string, unknown>)) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+    const keys = Object.keys(value as Record<string, unknown>);
+    if (keys.length === 0) continue;
+    const allRelationOps = keys.every((k) => RELATION_OPS.has(k));
+    const hasCreate = keys.some((k) => CREATE_OPS.includes(k));
+    if (allRelationOps && hasCreate) {
+      throw new Error(
+        'Nested relation creates are not tenant-scoped — perform child ' +
+          'tenant-model writes as separate forTenant() operations.',
+      );
+    }
   }
 }

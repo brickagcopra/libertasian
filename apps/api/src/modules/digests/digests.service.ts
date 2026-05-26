@@ -358,6 +358,17 @@ export class DigestsService {
 
     this.assertDigestAccess(digest, userId, organizationId);
 
+    // SECURITY: assertDigestAccess permits visibility='public_editorial' for READ
+    // (the editorial corpus is world-readable). It must NOT authorize WRITES.
+    // Editorial digests are mutated only by their owner, or by editors/reviewers
+    // through DigestsAdminController (permission-gated). delete() already enforces
+    // owner-only; update() must match or any authenticated user can edit the corpus.
+    if (digest.visibility === 'public_editorial' && digest.userId !== userId) {
+      throw new ForbiddenException(
+        'Editorial digests can only be modified by their owner or an editor',
+      );
+    }
+
     // Prevent changing visibility to non-private for user-scan origins
     if (
       dto.visibility &&
