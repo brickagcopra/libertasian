@@ -226,8 +226,9 @@ services:
     container_name: libertasian-opensearch-exporter
     restart: always
     environment:
-      ES_URI: "https://admin:${OPENSEARCH_PASSWORD}@opensearch:9200"
-    command: ["--es.ssl-skip-verify", "--es.all", "--es.indices"]
+      ES_USERNAME: "admin"
+      ES_PASSWORD: "${OPENSEARCH_PASSWORD}"
+    command: ["--es.uri=https://opensearch:9200", "--es.ssl-skip-verify", "--es.all", "--es.indices"]
     ports: ["127.0.0.1:9114:9114"]
     networks: [default, libertasian_ai]
     deploy:
