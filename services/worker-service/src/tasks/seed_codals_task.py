@@ -230,6 +230,18 @@ _SECTION_MARKER_RE = re.compile(
     r"SECTION|Section|RULE|Rule|BOOK|Book)\s+([\dIVXLC]+)",
 )
 
+# END-anchored variant for the text-line fallback. The whole line must
+# be ONLY a marker + numeral (with optional trailing punctuation), so
+# running-prose cross-references like "Section 16 of this Code." do NOT
+# match and are not treated as section boundaries. Pages like Lawphil's
+# EO 292 carry their markers in plain <p>/<br> text (no heading or bold
+# tag), so the tag-driven pass in ``_parse_sections`` misses them — this
+# regex is the boundary detector for the fallback pass below.
+_TEXT_SECTION_MARKER_RE = re.compile(
+    r"^\s*(ARTICLE|Article|TITLE|Title|CHAPTER|Chapter|"
+    r"SECTION|Section|RULE|Rule|BOOK|Book)\s+([\dIVXLC]+)\s*[.:)]?\s*$",
+)
+
 _SECTION_TYPE_BY_KEYWORD: dict[str, str] = {
     "article": "article",
     "title": "title",
@@ -327,10 +339,24 @@ def _parse_sections(html: str) -> list[ParsedSection]:
     flush()
 
     if not sections:
+        # Pages like Lawphil's EO 292 carry markers (BOOK I, CHAPTER 1,
+        # Section 1.) in plain <p>/<br> text — not in heading or bold
+        # tags — so the descendant walk above never opens a section.
+        # Try a text-line pass before collapsing to a single "Full Text"
+        # blob, and only accept it if it actually found structure
+        # (>= 2 sections). Otherwise fall through to the single-section
+        # fallback so genuinely unstructured pages still import.
+        text_sections = _parse_sections_by_text(html)
+        if len(text_sections) >= 2:
+            logger.info(
+                "No tag markers; text-line pass found %d sections.",
+                len(text_sections),
+            )
+            return text_sections
         full_text = body.get_text("\n", strip=True)
         logger.warning(
-            "No structural markers found — falling back to single-section "
-            "import (length=%d chars)", len(full_text),
+            "No structural markers found — single-section import (length=%d).",
+            len(full_text),
         )
         sections.append(
             ParsedSection(
@@ -340,6 +366,47 @@ def _parse_sections(html: str) -> list[ParsedSection]:
             ),
         )
 
+    return sections
+
+
+def _parse_sections_by_text(html: str) -> list[ParsedSection]:
+    """Fallback segmentation for pages whose markers are NOT in heading
+    or bold tags (e.g. Lawphil's EO 292, which places BOOK I, CHAPTER 1,
+    Section 1. inside plain <p> text). Splits the body's plain text on
+    lines that are exactly a structural marker
+    (BOOK/TITLE/CHAPTER/SECTION/RULE/ARTICLE + numeral)."""
+    soup = BeautifulSoup(html, "lxml")
+    body = soup.body or soup
+
+    sections: list[ParsedSection] = []
+    current_label: str | None = None
+    current_type: str = "section"
+    buffer: list[str] = []
+
+    def flush() -> None:
+        if current_label is None:
+            return
+        text = "\n".join(b for b in buffer if b).strip()
+        sections.append(
+            ParsedSection(
+                section_type=current_type,
+                section_label=current_label,
+                plain_text=text,
+            ),
+        )
+
+    for raw_line in body.get_text("\n", strip=True).split("\n"):
+        line = raw_line.strip()
+        if not line:
+            continue
+        if _TEXT_SECTION_MARKER_RE.match(line):
+            flush()
+            current_label = line[:255]
+            current_type = _classify_marker(line)
+            buffer = []
+            continue
+        buffer.append(line)
+    flush()
     return sections
 
 
