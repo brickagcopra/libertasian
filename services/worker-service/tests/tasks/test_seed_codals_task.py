@@ -11,13 +11,13 @@ from __future__ import annotations
 from urllib.parse import urlparse
 
 from src.tasks.seed_codals_task import (
+    _SECTION_MARKER_RE,
+    _TEXT_SECTION_MARKER_RE,
     SEED_CODALS,
     _filter_codals_by_document_types,
     _parse_document_types_arg,
     _parse_sections,
-    _SECTION_MARKER_RE,
 )
-
 
 # Bar subject codes from apps/api/prisma/seed-bar-subjects.ts. If this
 # list ever drifts from the TS seed, the prod tag-map lookup will fail
@@ -166,3 +166,76 @@ def test_parse_sections_splits_on_bold_marker() -> None:
     assert sections[0].section_label.startswith("ARTICLE 1")
     assert "article one body" in sections[0].plain_text
     assert "article two body" in sections[1].plain_text
+
+
+def test_parse_sections_text_line_fallback_when_markers_only_in_plain_paragraphs() -> None:
+    """Lawphil's EO 292 page carries BOOK I / CHAPTER 1 / Section 1. as
+    plain <p> text — no heading or <b>/<strong> tags. The tag-driven
+    pass misses every marker, so the text-line fallback must step in
+    and segment instead of collapsing to one 800KB "Full Text" blob."""
+    html = (
+        "<html><body>"
+        "<p>BOOK I</p><p>Sovereignty and General Principles</p>"
+        "<p>Section 1.</p><p>Title.</p>"
+        "<p>- text of section one.</p>"
+        "<p>Section 2.</p>"
+        "<p>- text of section two.</p>"
+        "</body></html>"
+    )
+    sections = _parse_sections(html)
+    labels = [s.section_label for s in sections]
+    # The single-section "Full Text" fallback would yield exactly one
+    # section — assert we got real structure instead.
+    assert len(sections) >= 3, f"expected >=3 sections, got {labels}"
+    assert any("BOOK I" in label for label in labels), labels
+    assert any(label.startswith("Section 1") for label in labels), labels
+    assert any(label.startswith("Section 2") for label in labels), labels
+    # And the "Full Text" sentinel must NOT appear when real markers were found.
+    assert "Full Text" not in labels
+
+
+def test_text_section_marker_regex_rejects_running_prose_cross_references() -> None:
+    """``Section 16 of this Code provides …`` is a cross-reference, not
+    a heading. The end-anchored regex MUST NOT match it — otherwise
+    every appellate codal that quotes a section would shatter the body
+    into nonsense at each citation."""
+    cross_refs = [
+        "Section 16 of this Code provides the rule.",
+        "Article 100 was repealed by RA 8424.",
+        "See CHAPTER 2 below for details.",
+    ]
+    for line in cross_refs:
+        assert _TEXT_SECTION_MARKER_RE.match(line) is None, (
+            f"running-prose cross-reference must NOT match as a marker: {line!r}"
+        )
+
+    # And the bare-marker lines that LawPhil uses MUST still match.
+    bare_markers = [
+        "BOOK I",
+        "CHAPTER 1",
+        "Section 1.",
+        "Section 2",
+        "ARTICLE 100",
+        "TITLE III",
+        "RULE 14:",
+    ]
+    for line in bare_markers:
+        assert _TEXT_SECTION_MARKER_RE.match(line) is not None, line
+
+
+def test_parse_sections_keeps_single_section_fallback_when_no_markers_at_all() -> None:
+    """A page with absolutely no markers (no tag-based, no text-based)
+    must still produce the single ``Full Text`` fallback section — the
+    text-line pass should yield <2 sections and fall through. This
+    pairs with ``test_parse_sections_fallback_to_single_section_on_unstructured_html``
+    but specifically guards the *interaction* between the two passes
+    after the fix landed."""
+    html = (
+        "<html><body>"
+        "<p>This is paragraph one with no marker line.</p>"
+        "<p>And another paragraph.</p>"
+        "</body></html>"
+    )
+    sections = _parse_sections(html)
+    assert len(sections) == 1, [s.section_label for s in sections]
+    assert sections[0].section_label == "Full Text"
