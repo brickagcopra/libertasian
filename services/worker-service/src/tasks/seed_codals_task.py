@@ -246,14 +246,6 @@ SEED_CODALS: list[CodalSeed] = [
         citation_text="Rules of Court, Rule 141",
         primary_subject="remedial_law",
     ),
-    CodalSeed(
-        title="Rules of Court — Rules 142-143",
-        short_title="Rules 142-143",
-        url="https://lawphil.net/courts/rules/rc_142-143_cost.html",
-        document_type="rules_of_court",
-        citation_text="Rules of Court, Rules 142-143",
-        primary_subject="remedial_law",
-    ),
     # ------------------------------------------------------------------
     # Executive issuances (2026-05-25). URLs verified 200 via curl -sI -L
     # against lawphil.net before commit. The Admin Code and Omnibus
