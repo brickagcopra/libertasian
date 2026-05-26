@@ -620,8 +620,7 @@ async function seedSyllabi() {
     let topicCount = 0;
 
     // Seed top-level topics
-    for (let i = 0; i < syllabusSeed.topics.length; i++) {
-      const topLevel = syllabusSeed.topics[i];
+    for (const [i, topLevel] of syllabusSeed.topics.entries()) {
       const parentTopic = await prisma.syllabusTopic.upsert({
         where: {
           syllabusId_slug: { syllabusId: syllabus.id, slug: topLevel.slug },
@@ -644,8 +643,7 @@ async function seedSyllabi() {
 
       // Seed child topics
       if (topLevel.children) {
-        for (let j = 0; j < topLevel.children.length; j++) {
-          const child = topLevel.children[j];
+        for (const [j, child] of topLevel.children.entries()) {
           await prisma.syllabusTopic.upsert({
             where: {
               syllabusId_slug: { syllabusId: syllabus.id, slug: child.slug },
