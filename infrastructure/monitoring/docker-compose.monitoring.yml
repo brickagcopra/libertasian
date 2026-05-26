@@ -181,6 +181,7 @@ services:
       - "127.0.0.1:9187:9187"
     environment:
       DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-libertasian}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-libertasian}?sslmode=disable"
+    networks: [default, libertasian_backend]
     deploy:
       resources:
         limits:
@@ -199,6 +200,7 @@ services:
     environment:
       REDIS_ADDR: "redis://redis:6379"
       REDIS_PASSWORD: "${REDIS_PASSWORD}"
+    networks: [default, libertasian_backend]
     deploy:
       resources:
         limits:
