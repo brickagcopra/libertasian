@@ -223,17 +223,18 @@ def test_text_section_marker_regex_rejects_running_prose_cross_references() -> N
         assert _TEXT_SECTION_MARKER_RE.match(line) is not None, line
 
 
-def test_rules_of_court_split_into_twelve_per_topic_subpages() -> None:
+def test_rules_of_court_split_into_eleven_per_topic_subpages() -> None:
     """The Rules of Court entry was previously a single CodalSeed pointing
     at the TOC index page ``rc.html``, which has no rule text. It is now
-    split into exactly 12 ``document_type="rules_of_court"`` entries —
+    split into exactly 11 ``document_type="rules_of_court"`` entries —
     one per LawPhil topic sub-page — so the text-line parser can section
-    each by ``RULE N``. Guard the split here so a refactor can't
-    silently regress to the un-importable TOC entry.
+    each by ``RULE N``. (Rules 142-143 was dropped after LawPhil began
+    404'ing its ``rc_142-143_cost.html`` page.) Guard the split here so a
+    refactor can't silently regress to the un-importable TOC entry.
     """
     roc_entries = [c for c in SEED_CODALS if c.document_type == "rules_of_court"]
-    assert len(roc_entries) == 12, (
-        f"expected exactly 12 rules_of_court entries, got {len(roc_entries)}: "
+    assert len(roc_entries) == 11, (
+        f"expected exactly 11 rules_of_court entries, got {len(roc_entries)}: "
         f"{[c.short_title for c in roc_entries]}"
     )
 
