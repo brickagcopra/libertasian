@@ -223,6 +223,33 @@ def test_text_section_marker_regex_rejects_running_prose_cross_references() -> N
         assert _TEXT_SECTION_MARKER_RE.match(line) is not None, line
 
 
+def test_rules_of_court_split_into_twelve_per_topic_subpages() -> None:
+    """The Rules of Court entry was previously a single CodalSeed pointing
+    at the TOC index page ``rc.html``, which has no rule text. It is now
+    split into exactly 12 ``document_type="rules_of_court"`` entries —
+    one per LawPhil topic sub-page — so the text-line parser can section
+    each by ``RULE N``. Guard the split here so a refactor can't
+    silently regress to the un-importable TOC entry.
+    """
+    roc_entries = [c for c in SEED_CODALS if c.document_type == "rules_of_court"]
+    assert len(roc_entries) == 12, (
+        f"expected exactly 12 rules_of_court entries, got {len(roc_entries)}: "
+        f"{[c.short_title for c in roc_entries]}"
+    )
+
+    citations = [c.citation_text for c in roc_entries]
+    assert len(citations) == len(set(citations)), (
+        f"citation_text values must be unique within rules_of_court entries: {citations}"
+    )
+
+    # The old TOC index URL must NOT appear — that page has no rule text.
+    old_toc_url = "https://lawphil.net/courts/rules/rc.html"
+    assert all(c.url != old_toc_url for c in roc_entries), (
+        f"old rc.html TOC URL must not be in SEED_CODALS: "
+        f"{[c.url for c in roc_entries if c.url == old_toc_url]}"
+    )
+
+
 def test_parse_sections_keeps_single_section_fallback_when_no_markers_at_all() -> None:
     """A page with absolutely no markers (no tag-based, no text-based)
     must still produce the single ``Full Text`` fallback section — the
