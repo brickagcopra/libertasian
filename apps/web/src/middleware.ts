@@ -87,6 +87,6 @@ export const config = {
      * - API routes (handled by NestJS)
      * - Public assets
      */
-    '/((?!_next/static|_next/image|favicon\\.ico|sitemap\\.xml|robots\\.txt|api/).*)',
+    '/((?!_next/static|_next/image|favicon\\.ico|sitemap\\.xml|robots\\.txt|api/|metrics).*)',
   ],
 };
