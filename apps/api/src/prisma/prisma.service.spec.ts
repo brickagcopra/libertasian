@@ -229,6 +229,146 @@ describe('addTenantFilter', () => {
       expect(passed).toEqual({ foo: 'bar' });
     });
   });
+
+  // Prisma nested relation writes (data.child.create / connectOrCreate) are
+  // NOT traversed by this root-level middleware, so a nested tenant-model row
+  // would skip organizationId injection. The guard rejects that shape.
+  describe('nested tenant-write guard', () => {
+    it('create: throws when a relation value is { create: {...} }', async () => {
+      const args: Record<string, unknown> = {
+        data: { title: 'parent', child: { create: { name: 'kid' } } },
+      };
+      const query = makeQuery();
+
+      await expect(invoke({ operation: 'create', args, query })).rejects.toThrow(
+        /Nested relation creates are not tenant-scoped/,
+      );
+      expect(query).not.toHaveBeenCalled();
+    });
+
+    it('create: throws when a relation value is { connectOrCreate: {...} }', async () => {
+      const args: Record<string, unknown> = {
+        data: {
+          title: 'parent',
+          tag: { connectOrCreate: { where: { id: 't-1' }, create: { id: 't-1' } } },
+        },
+      };
+      const query = makeQuery();
+
+      await expect(invoke({ operation: 'create', args, query })).rejects.toThrow(
+        /Nested relation creates are not tenant-scoped/,
+      );
+    });
+
+    it('create: throws when a relation value is { createMany: { data: [...] } }', async () => {
+      const args: Record<string, unknown> = {
+        data: { title: 'parent', kids: { createMany: { data: [{ a: 1 }] } } },
+      };
+      const query = makeQuery();
+
+      await expect(invoke({ operation: 'create', args, query })).rejects.toThrow(
+        /Nested relation creates are not tenant-scoped/,
+      );
+    });
+
+    it('create: does NOT throw when JSONB scalar field happens to contain a `create` key', async () => {
+      // JSONB value object has unrelated keys → not all are relation ops → not flagged.
+      const args: Record<string, unknown> = {
+        data: { title: 'p', payload: { foo: 1, create: { x: 1 } } },
+      };
+      const query = makeQuery();
+
+      await invoke({ operation: 'create', args, query });
+
+      const passed = query.mock.calls[0]![0] as Record<string, unknown>;
+      const data = passed['data'] as Record<string, unknown>;
+      expect(data['organizationId']).toBe('org-1');
+      // Payload is untouched
+      expect(data['payload']).toEqual({ foo: 1, create: { x: 1 } });
+    });
+
+    it('create: plain scalar create still succeeds (no false positive)', async () => {
+      const args: Record<string, unknown> = {
+        data: { title: 'p', count: 3, flag: true },
+      };
+      const query = makeQuery();
+
+      await invoke({ operation: 'create', args, query });
+
+      const passed = query.mock.calls[0]![0] as Record<string, unknown>;
+      expect(passed['data']).toEqual({
+        title: 'p',
+        count: 3,
+        flag: true,
+        organizationId: 'org-1',
+      });
+    });
+
+    it('create: connect-only (no create) is NOT flagged — relation link without row creation', async () => {
+      const args: Record<string, unknown> = {
+        data: { title: 'p', author: { connect: { id: 'u-1' } } },
+      };
+      const query = makeQuery();
+
+      await invoke({ operation: 'create', args, query });
+
+      const passed = query.mock.calls[0]![0] as Record<string, unknown>;
+      const data = passed['data'] as Record<string, unknown>;
+      expect(data['organizationId']).toBe('org-1');
+      expect(data['author']).toEqual({ connect: { id: 'u-1' } });
+    });
+
+    it('create: scalar-list set ({ set: [...] }) is NOT flagged', async () => {
+      const args: Record<string, unknown> = {
+        data: { title: 'p', tags: { set: ['a', 'b'] } },
+      };
+      const query = makeQuery();
+
+      await invoke({ operation: 'create', args, query });
+
+      const passed = query.mock.calls[0]![0] as Record<string, unknown>;
+      const data = passed['data'] as Record<string, unknown>;
+      expect(data['organizationId']).toBe('org-1');
+    });
+
+    it('update: throws when data contains a nested relation create', async () => {
+      const args: Record<string, unknown> = {
+        where: { id: 'row-1' },
+        data: { title: 'p', child: { create: { name: 'kid' } } },
+      };
+      const query = makeQuery();
+
+      await expect(invoke({ operation: 'update', args, query })).rejects.toThrow(
+        /Nested relation creates are not tenant-scoped/,
+      );
+    });
+
+    it('upsert: throws when create branch contains a nested relation create', async () => {
+      const args: Record<string, unknown> = {
+        where: { id: 'row-1' },
+        create: { title: 'p', child: { create: { name: 'kid' } } },
+        update: { title: 'x' },
+      };
+      const query = makeQuery();
+
+      await expect(invoke({ operation: 'upsert', args, query })).rejects.toThrow(
+        /Nested relation creates are not tenant-scoped/,
+      );
+    });
+
+    it('upsert: throws when update branch contains a nested relation create', async () => {
+      const args: Record<string, unknown> = {
+        where: { id: 'row-1' },
+        create: { title: 'p' },
+        update: { title: 'x', child: { create: { name: 'kid' } } },
+      };
+      const query = makeQuery();
+
+      await expect(invoke({ operation: 'upsert', args, query })).rejects.toThrow(
+        /Nested relation creates are not tenant-scoped/,
+      );
+    });
+  });
 });
 
 describe('PrismaService.forTenant cache', () => {

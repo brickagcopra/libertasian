@@ -661,6 +661,58 @@ describe('DigestsService', () => {
         service.update('digest-1', updateDto, 'user-1', 'org-1'),
       ).rejects.toThrow(ForbiddenException);
     });
+
+    // assertDigestAccess permits visibility='public_editorial' for READS so the
+    // editorial corpus is world-readable. WRITES must NOT inherit that — admin
+    // mutations go through DigestsAdminController (permission-gated), and
+    // owner mutations are still allowed on this path.
+    it('should throw ForbiddenException for non-owner editing a public_editorial digest', async () => {
+      const publicDigest = {
+        ...mockDigest,
+        userId: 'other-user',
+        visibility: 'public_editorial',
+      };
+
+      prismaService.digest.findUnique.mockResolvedValue(publicDigest);
+
+      await expect(
+        service.update('digest-1', updateDto, 'user-1', 'org-1'),
+      ).rejects.toThrow(ForbiddenException);
+      await expect(
+        service.update('digest-1', updateDto, 'user-1', 'org-1'),
+      ).rejects.toThrow(
+        'Editorial digests can only be modified by their owner or an editor',
+      );
+      expect(prismaService.digest.update).not.toHaveBeenCalled();
+    });
+
+    it('should allow owner to edit their own public_editorial digest', async () => {
+      const ownedPublicDigest = {
+        ...mockDigest,
+        userId: 'user-1',
+        visibility: 'public_editorial',
+        sourceOrigin: 'official_pipeline',
+      };
+
+      prismaService.digest.findUnique.mockResolvedValue(ownedPublicDigest);
+      prismaService.digest.update.mockResolvedValue({
+        ...ownedPublicDigest,
+        title: 'Updated Title',
+        legalDocument: mockLegalDocument,
+      });
+
+      // Pass an update that doesn't try to change visibility so the
+      // user-scan/private-promotion guard doesn't fire.
+      const ownerUpdate: UpdateDigestDto = {
+        title: 'Updated Title',
+        facts: 'Updated facts',
+      };
+
+      const result = await service.update('digest-1', ownerUpdate, 'user-1', 'org-1');
+
+      expect(prismaService.digest.update).toHaveBeenCalledTimes(1);
+      expect(result.title).toBe('Updated Title');
+    });
   });
 
   describe('delete', () => {
