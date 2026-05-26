@@ -7,9 +7,45 @@
   "links": [],
   "panels": [
     {
-      "title": "AI Query Volume",
+      "title": "AI Service Request Rate",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total{job=~\"rag-service|ocr-service|embedding-service\"}[5m])) by (job)",
+          "legendFormat": "{{job}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps" } }
+    },
+    {
+      "title": "AI Service Latency (P95)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=~\"rag-service|ocr-service|embedding-service\"}[5m])) by (le, job))",
+          "legendFormat": "{{job}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "title": "AI Service Error Rate (4xx/5xx)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total{job=~\"rag-service|ocr-service|embedding-service\",status=~\"4xx|5xx\"}[5m])) by (job, status)",
+          "legendFormat": "{{job}} {{status}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps" } }
+    },
+    {
+      "title": "AI Query Volume — Path B (not yet instrumented)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
       "targets": [
         {
           "expr": "sum(rate(rag_queries_total{job=\"rag-service\"}[5m])) by (intent_type)",
@@ -19,9 +55,9 @@
       "fieldConfig": { "defaults": { "unit": "reqps" } }
     },
     {
-      "title": "Generation Latency (P50 / P95)",
+      "title": "Generation Latency (P50 / P95) — Path B (not yet instrumented)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
       "targets": [
         {
           "expr": "histogram_quantile(0.50, sum(rate(rag_generation_duration_seconds_bucket{job=\"rag-service\"}[5m])) by (le))",
@@ -35,9 +71,9 @@
       "fieldConfig": { "defaults": { "unit": "s" } }
     },
     {
-      "title": "Token Usage",
+      "title": "Token Usage — Path B (not yet instrumented)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
       "targets": [
         {
           "expr": "sum(rate(rag_tokens_input_total{job=\"rag-service\"}[5m]))",
@@ -51,9 +87,9 @@
       "fieldConfig": { "defaults": { "unit": "short" } }
     },
     {
-      "title": "Abstention Rate",
+      "title": "Abstention Rate — Path B (not yet instrumented)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
       "targets": [
         {
           "expr": "sum(rate(rag_abstention_total{job=\"rag-service\"}[5m])) / sum(rate(rag_queries_total{job=\"rag-service\"}[5m])) * 100",
@@ -63,9 +99,9 @@
       "fieldConfig": { "defaults": { "unit": "percent" } }
     },
     {
-      "title": "Confidence Score Distribution",
+      "title": "Confidence Score Distribution — Path B (not yet instrumented)",
       "type": "histogram",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
       "targets": [
         {
           "expr": "sum(rate(rag_confidence_score_bucket{job=\"rag-service\"}[5m])) by (le)",
@@ -74,9 +110,9 @@
       ]
     },
     {
-      "title": "OCR Processing",
+      "title": "OCR Processing — Path B (not yet instrumented)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
       "targets": [
         {
           "expr": "sum(rate(ocr_pages_processed_total{job=\"ocr-service\"}[5m]))",
@@ -89,9 +125,9 @@
       ]
     },
     {
-      "title": "Embedding Generation Rate",
+      "title": "Embedding Generation Rate — Path B (not yet instrumented)",
       "type": "timeseries",
-      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 24 },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 40 },
       "targets": [
         {
           "expr": "sum(rate(embedding_vectors_generated_total{job=\"embedding-service\"}[5m]))",
@@ -100,9 +136,9 @@
       ]
     },
     {
-      "title": "Ingestion Pipeline",
+      "title": "Ingestion Pipeline — Path B (not yet instrumented)",
       "type": "timeseries",
-      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 24 },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 40 },
       "targets": [
         {
           "expr": "sum(rate(ingestion_job_total{job=\"worker\"}[1h])) by (status)",
@@ -111,9 +147,9 @@
       ]
     },
     {
-      "title": "Review Queue Depth",
+      "title": "Review Queue Depth — Path B (not yet instrumented)",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 30 },
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 46 },
       "targets": [
         {
           "expr": "review_queue_pending_count",
@@ -127,9 +163,9 @@
       }
     },
     {
-      "title": "Corpus Size",
+      "title": "Corpus Size — Path B (not yet instrumented)",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 30 },
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 46 },
       "targets": [
         {
           "expr": "libertasian_corpus_document_count",
@@ -138,9 +174,9 @@
       ]
     },
     {
-      "title": "Search Relevance (MRR@10)",
+      "title": "Search Relevance (MRR@10) — Path B (not yet instrumented)",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 30 },
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 46 },
       "targets": [
         {
           "expr": "rag_search_mrr_at_10",

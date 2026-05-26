@@ -7,9 +7,64 @@
   "links": [],
   "panels": [
     {
-      "title": "Request Rate (req/s)",
+      "title": "Event Loop Lag (P50/P99)",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "libertasian_api_nodejs_eventloop_lag_p50_seconds",
+          "legendFormat": "P50"
+        },
+        {
+          "expr": "libertasian_api_nodejs_eventloop_lag_p99_seconds",
+          "legendFormat": "P99"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "title": "Heap Memory",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "libertasian_api_nodejs_heap_size_used_bytes",
+          "legendFormat": "Used"
+        },
+        {
+          "expr": "libertasian_api_nodejs_heap_size_total_bytes",
+          "legendFormat": "Total"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" } }
+    },
+    {
+      "title": "Process CPU",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 18, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "rate(libertasian_api_process_cpu_seconds_total[5m])",
+          "legendFormat": "CPU cores"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" } }
+    },
+    {
+      "title": "Open File Descriptors",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 8 },
+      "targets": [
+        {
+          "expr": "libertasian_api_process_open_fds",
+          "legendFormat": "Open FDs"
+        }
+      ]
+    },
+    {
+      "title": "Request Rate (req/s) — Path B (not yet instrumented)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
       "targets": [
         {
           "expr": "sum(rate(http_requests_total{job=\"nestjs-api\"}[5m])) by (method)",
@@ -19,9 +74,9 @@
       "fieldConfig": { "defaults": { "unit": "reqps" } }
     },
     {
-      "title": "Response Latency (P50 / P95 / P99)",
+      "title": "Response Latency (P50 / P95 / P99) — Path B (not yet instrumented)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
       "targets": [
         {
           "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket{job=\"nestjs-api\"}[5m])) by (le))",
@@ -39,9 +94,9 @@
       "fieldConfig": { "defaults": { "unit": "s" } }
     },
     {
-      "title": "Error Rate by Status Code",
+      "title": "Error Rate by Status Code — Path B (not yet instrumented)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
       "targets": [
         {
           "expr": "sum(rate(http_requests_total{job=\"nestjs-api\",status=~\"4..\"}[5m])) by (status)",
@@ -55,9 +110,9 @@
       "fieldConfig": { "defaults": { "unit": "reqps" } }
     },
     {
-      "title": "Latency by Endpoint (P95)",
+      "title": "Latency by Endpoint (P95) — Path B (not yet instrumented)",
       "type": "table",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
       "targets": [
         {
           "expr": "topk(10, histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=\"nestjs-api\"}[5m])) by (le, route)))",
@@ -68,9 +123,9 @@
       ]
     },
     {
-      "title": "Rate Limit Hits",
+      "title": "Rate Limit Hits — Path B (not yet instrumented)",
       "type": "timeseries",
-      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 16 },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 32 },
       "targets": [
         {
           "expr": "sum(rate(http_requests_total{job=\"nestjs-api\",status=\"429\"}[5m])) by (route)",
@@ -80,9 +135,9 @@
       "fieldConfig": { "defaults": { "unit": "reqps" } }
     },
     {
-      "title": "Active WebSocket Connections",
+      "title": "Active WebSocket Connections — Path B (not yet instrumented)",
       "type": "stat",
-      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 16 },
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 32 },
       "targets": [
         {
           "expr": "nestjs_websocket_connections_active",
@@ -91,9 +146,9 @@
       ]
     },
     {
-      "title": "BullMQ Queue Depth",
+      "title": "BullMQ Queue Depth — Path B (not yet instrumented)",
       "type": "timeseries",
-      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 16 },
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 32 },
       "targets": [
         {
           "expr": "bullmq_queue_waiting_count",
