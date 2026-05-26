@@ -103,9 +103,8 @@ scrape_configs:
   # OpenSearch (via node stats API)
   # ====================
   - job_name: "opensearch"
-    metrics_path: /_prometheus/metrics
     static_configs:
-      - targets: ["opensearch:9200"]
+      - targets: ["opensearch-exporter:9114"]
         labels:
           service: opensearch
           app: libertasian

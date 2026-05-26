@@ -205,6 +205,34 @@ services:
           cpus: "0.25"
           memory: 128M
 
+  # ====================
+  # Nginx Exporter
+  # ====================
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:1.3.0
+    container_name: libertasian-nginx-exporter
+    restart: always
+    command: ["--nginx.scrape-uri=http://nginx:8080/stub_status"]
+    ports: ["127.0.0.1:9113:9113"]
+    networks: [default, libertasian_frontend]
+    deploy:
+      resources: { limits: { cpus: "0.25", memory: 64M } }
+
+  # ====================
+  # OpenSearch Exporter
+  # ====================
+  opensearch-exporter:
+    image: quay.io/prometheuscommunity/elasticsearch-exporter:v1.7.0
+    container_name: libertasian-opensearch-exporter
+    restart: always
+    environment:
+      ES_URI: "https://admin:${OPENSEARCH_PASSWORD}@opensearch:9200"
+    command: ["--es.ssl-skip-verify", "--es.all", "--es.indices"]
+    ports: ["127.0.0.1:9114:9114"]
+    networks: [default, libertasian_ai]
+    deploy:
+      resources: { limits: { cpus: "0.25", memory: 128M } }
+
 volumes:
   prometheus_data:
     external: true
