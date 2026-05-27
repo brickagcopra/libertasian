@@ -53,6 +53,11 @@ credentials.json
 secrets/
 apps/mobile/google-services.json
 apps/mobile/AuthKey_*.p8
+# Mobile signing material — never commit
+*.keystore
+*.jks
+*.p12
+*.mobileprovision
 
 # Logs
 *.log
