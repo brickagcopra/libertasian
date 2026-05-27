@@ -49,8 +49,105 @@ account password. Acceptable storage:
 - 1Password / Bitwarden / GitHub Actions secret store for CI.
 - Maestro Cloud's encrypted env-var UI for cloud runs.
 
-The test account must be a dedicated, low-privilege user on the **staging**
-environment. Do not point E2E at production.
+The test account must be a dedicated, low-privilege user on the **isolated
+e2e** backend (see next section). Do not point E2E at dev or production.
+
+## E2E backend via ngrok
+
+The Maestro flows create CRUD data on the way through (sign in writes a refresh
+token; tab nav primes per-user state). That data **must not** land in the dev
+or prod database. The repeatable setup is: spin up a throwaway Postgres DB,
+seed exactly one test account, run the API locally, and expose port `3001`
+through a reserved ngrok static domain so the installed APK can reach it.
+
+`EXPO_PUBLIC_API_URL` is **baked into the APK at build time** (Metro inlines
+`process.env.EXPO_PUBLIC_*`), so the ngrok hostname has to be stable across
+runs — use a reserved static domain, not the rotating free URL.
+
+Minimum services for the login + tab-nav flows: **api + postgres + redis**.
+opensearch / minio / the Python services only matter once a flow exercises
+search results or scan ingestion.
+
+### 1. Create an isolated test database
+
+```bash
+# From the repo root, against the docker-compose Postgres instance.
+docker compose exec postgres createdb -U postgres libertasian_e2e
+```
+
+(Adjust the role/host if your local Postgres lives elsewhere. Any empty
+Postgres 16 database the API can connect to works.)
+
+### 2. Migrate + seed the test account
+
+```bash
+# Export DATABASE_URL in this shell so it overrides the .env loaded by the
+# pnpm scripts. The trailing component (libertasian_e2e) is the new DB.
+export DATABASE_URL='postgresql://postgres:postgres@localhost:5432/libertasian_e2e'
+
+# Apply migrations to the empty DB.
+pnpm --filter api prisma migrate deploy
+
+# Seed the lone E2E account. The script throws if either env var is missing.
+export E2E_TEST_EMAIL='e2e+maestro@libertasian.test'
+export E2E_TEST_PASSWORD='…from-secret-store…'
+pnpm --filter api seed:e2e
+```
+
+The seed (`apps/api/prisma/seed-e2e.ts`) is idempotent and upserts:
+
+- One `Organization` (slug `libertasian-e2e`)
+- One `User` (bcrypt cost 12, `emailVerified: true`)
+- One `OrganizationMember` (role `member`, status `active`) — mandatory for
+  tenant scoping
+- A `MemberRole` row linking to the system `member` `RoleDefinition` **if**
+  it exists in this DB. If RBAC-permission-gated endpoints later 403,
+  run `pnpm --filter api seed:rbac` against the same DB first, then re-seed.
+
+### 3. Start the API against the test DB
+
+```bash
+# DATABASE_URL from step 2 is still exported in this shell.
+pnpm --filter api dev
+# API listens on http://localhost:3001 with global prefix /api/v1.
+```
+
+### 4. Expose port 3001 via your reserved ngrok static domain
+
+```bash
+ngrok http 3001 --domain=<your-static>.ngrok-free.app
+```
+
+Then update `apps/mobile/eas.json` → the `e2e` profile's `EXPO_PUBLIC_API_URL`
+(and `API_URL`) by replacing the `CHANGEME.ngrok-free.app` placeholder with
+your reserved domain. Keep this change local — do **not** commit the real
+hostname.
+
+### 5. Build, install, and run
+
+```bash
+cd apps/mobile
+
+# Rebuild the APK so the new EXPO_PUBLIC_API_URL is baked in.
+eas build --profile e2e --platform android --local --output ./build/libertasian-e2e.apk
+adb install -r ./build/libertasian-e2e.apk
+
+# Flows pick up creds from the same env vars used by seed:e2e.
+maestro test .maestro \
+  -e MAESTRO_TEST_EMAIL="$E2E_TEST_EMAIL" \
+  -e MAESTRO_TEST_PASSWORD="$E2E_TEST_PASSWORD"
+```
+
+### Gotcha: ngrok browser-warning interstitial
+
+On the free tier, ngrok serves an HTML interstitial on the first browser-like
+request to a tunnel. Mobile API calls don't trigger it on every request, but
+they do hit it occasionally — manifesting as JSON parse errors against an HTML
+body. The mobile API client (`apps/mobile/src/lib/api-client.ts`) detects an
+ngrok hostname in `EXPO_PUBLIC_API_URL` and automatically attaches the header
+`ngrok-skip-browser-warning: 1` to every request (and multipart upload). No
+manual flag toggling is required — pointing the e2e profile at an
+`*.ngrok-free.app` URL is enough.
 
 ## Run locally — Android emulator
 
@@ -108,9 +205,10 @@ into a recurring run.
 
 - **`clearState: true`** in `auth/login.yaml` wipes app storage on every run,
   so MMKV-cached tokens never leak between runs.
-- The `e2e` EAS profile sets `EXPO_PUBLIC_API_URL` to the staging API. Update
-  that placeholder in [`eas.json`](../eas.json) when a stable staging/tunnel
-  host is provisioned (see the `# TODO` comment in the file).
+- The `e2e` EAS profile sets `EXPO_PUBLIC_API_URL` to an ngrok static-domain
+  placeholder (`CHANGEME.ngrok-free.app`). Swap in your reserved domain in
+  [`eas.json`](../eas.json) before building. See "E2E backend via ngrok"
+  above for the full runbook.
 - The flows are deliberately tolerant of the auth landing screen — if the
   app boots straight to `(auth)/login`, the "Sign in" tap is skipped; if it
   boots to the marketing landing, the tap runs first.

@@ -28,6 +28,27 @@ function resolveApiBaseUrl(): string {
 
 const API_BASE_URL = resolveApiBaseUrl();
 
+/**
+ * ngrok's free tier serves an HTML browser-interstitial on the first request
+ * unless `ngrok-skip-browser-warning` is present on the request. We only need
+ * the header for the Maestro E2E build (which points EXPO_PUBLIC_API_URL at a
+ * static ngrok domain — see eas.json "e2e" profile), so detect by hostname
+ * rather than threading a build flag through. Other builds (dev loopback,
+ * staging, prod) leave the header off.
+ */
+function isNgrokHost(url: string): boolean {
+  try {
+    const { hostname } = new URL(url);
+    return /\.ngrok(-free)?\.(app|io|dev)$/i.test(hostname);
+  } catch {
+    return false;
+  }
+}
+
+const NGROK_HEADERS: Record<string, string> = isNgrokHost(API_BASE_URL)
+  ? { 'ngrok-skip-browser-warning': '1' }
+  : {};
+
 interface RequestOptions extends RequestInit {
   params?: Record<string, string>;
   skipAuth?: boolean;
@@ -47,6 +68,7 @@ interface ApiError {
 const DEFAULT_HEADERS: Record<string, string> = {
   'Content-Type': 'application/json',
   'X-Client': 'mobile',
+  ...NGROK_HEADERS,
 };
 
 export class ApiClientError extends Error {
@@ -296,6 +318,10 @@ class ApiClient {
 
       // Note: do not set Content-Type — XHR/FormData manages multipart boundary.
       xhr.setRequestHeader('X-Client', 'mobile');
+
+      for (const [key, value] of Object.entries(NGROK_HEADERS)) {
+        xhr.setRequestHeader(key, value);
+      }
 
       for (const [key, value] of Object.entries(authHeaders)) {
         xhr.setRequestHeader(key, value);

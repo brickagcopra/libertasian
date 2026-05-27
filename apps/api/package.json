@@ -22,6 +22,7 @@
     "seed:sources": "dotenv -e ../../.env -- ts-node prisma/seed-sources.ts",
     "seed:syllabus": "dotenv -e ../../.env -- ts-node prisma/seed-syllabus.ts",
     "seed:dev": "dotenv -e ../../.env -- ts-node prisma/seed-dev-data.ts",
+    "seed:e2e": "dotenv -e ../../.env -- ts-node prisma/seed-e2e.ts",
     "seed:rbac": "dotenv -e ../../.env -- ts-node prisma/seed-rbac.ts",
     "seed:all": "pnpm seed && pnpm seed:sources && pnpm seed:bar-subjects && pnpm seed:pleading-templates && pnpm seed:syllabus && pnpm seed:dev",
     "seed": "dotenv -e ../../.env -- ts-node prisma/seed.ts",

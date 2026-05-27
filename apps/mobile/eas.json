@@ -31,9 +31,12 @@
         }
       }
     },
-    // Maestro E2E profile — Android APK, points at the staging API so flows
-    // never hit production. Built via `eas build -p android --profile e2e`,
-    // then installed on an emulator with `adb install`. See .maestro/README.md.
+    // Maestro E2E profile — Android APK pointed at an isolated test backend
+    // exposed through ngrok. The CRUD-heavy flows MUST NOT hit dev or prod;
+    // operators run a local API against a libertasian_e2e database seeded by
+    // `pnpm --filter api seed:e2e` and tunnel port 3001 via a reserved static
+    // ngrok domain. See apps/mobile/.maestro/README.md → "E2E backend via
+    // ngrok" for the full runbook.
     "e2e": {
       "extends": "preview",
       "distribution": "internal",
@@ -41,17 +44,17 @@
       "node": "22.13.0",
       "pnpm": "10.30.3",
       "env": {
-        // TODO: point at staging/tunnel once a stable E2E backend is provisioned.
-        "API_URL": "https://staging.libertasian.com/api/v1",
-        "EXPO_PUBLIC_API_URL": "https://staging.libertasian.com/api/v1"
+        // TODO: brick — replace CHANGEME with your reserved ngrok static domain.
+        "API_URL": "https://CHANGEME.ngrok-free.app/api/v1",
+        "EXPO_PUBLIC_API_URL": "https://CHANGEME.ngrok-free.app/api/v1"
       },
       "android": {
         "node": "22.13.0",
         "pnpm": "10.30.3",
         "buildType": "apk",
         "env": {
-          // TODO: point at staging/tunnel once a stable E2E backend is provisioned.
-          "EXPO_PUBLIC_API_URL": "https://staging.libertasian.com/api/v1"
+          // TODO: brick — replace CHANGEME with your reserved ngrok static domain.
+          "EXPO_PUBLIC_API_URL": "https://CHANGEME.ngrok-free.app/api/v1"
         }
       }
     },
