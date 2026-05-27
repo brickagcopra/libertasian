@@ -1,0 +1,54 @@
+appId: com.libertasian.app
+name: auth/login — email + password sign-in smoke
+tags:
+  - auth
+  - smoke
+env:
+  # Provided at runtime via `-e MAESTRO_TEST_EMAIL=... -e MAESTRO_TEST_PASSWORD=...`
+  # or the env block in a workspace config. Never commit real credentials.
+  MAESTRO_TEST_EMAIL: ${MAESTRO_TEST_EMAIL}
+  MAESTRO_TEST_PASSWORD: ${MAESTRO_TEST_PASSWORD}
+---
+# Cold launch with a clean slate so we always start unauthenticated.
+- launchApp:
+    appId: com.libertasian.app
+    clearState: true
+    clearKeychain: true
+    stopApp: true
+
+# The marketing/auth landing routes to (auth)/login; if the app starts on a
+# pre-login screen with a "Sign in" CTA, tap it. Tolerate either path.
+- runFlow:
+    when:
+      visible: "Sign in"
+    commands:
+      - tapOn: "Sign in"
+
+# Assert we're on the login screen — the redesigned form headline.
+- assertVisible: "Welcome back."
+- assertVisible:
+    id: "login-email"
+- assertVisible:
+    id: "login-password"
+- assertVisible:
+    id: "login-submit"
+
+# Fill credentials and submit.
+- tapOn:
+    id: "login-email"
+- inputText: ${MAESTRO_TEST_EMAIL}
+- hideKeyboard
+- tapOn:
+    id: "login-password"
+- inputText: ${MAESTRO_TEST_PASSWORD}
+- hideKeyboard
+- tapOn:
+    id: "login-submit"
+
+# Post-auth we land on either (tabs) or (onboarding). Either way, at least one
+# tab button should mount once the user reaches the main app. Allow generous
+# wait for network + onboarding skip flows.
+- extendedWaitUntil:
+    visible:
+      id: "tab-home"
+    timeout: 30000

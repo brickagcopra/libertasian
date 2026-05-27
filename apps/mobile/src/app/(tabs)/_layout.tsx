@@ -37,6 +37,7 @@ export default function TabsLayout() {
           title: 'Home',
           headerShown: false,
           tabBarStyle: { display: 'none' },
+          tabBarButtonTestID: 'tab-home',
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="home-outline" size={size} color={color} />
           ),
@@ -48,6 +49,7 @@ export default function TabsLayout() {
           title: 'Search',
           headerShown: false,
           tabBarStyle: { display: 'none' },
+          tabBarButtonTestID: 'tab-search',
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="search-outline" size={size} color={color} />
           ),
@@ -57,6 +59,7 @@ export default function TabsLayout() {
         name="digests"
         options={{
           title: 'Digests',
+          tabBarButtonTestID: 'tab-digests',
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="document-text-outline" size={size} color={color} />
           ),
@@ -67,6 +70,7 @@ export default function TabsLayout() {
         options={{
           title: 'Library',
           headerShown: false,
+          tabBarButtonTestID: 'tab-library',
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="library-outline" size={size} color={color} />
           ),
@@ -76,6 +80,7 @@ export default function TabsLayout() {
         name="study"
         options={{
           title: 'Study',
+          tabBarButtonTestID: 'tab-study',
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="school-outline" size={size} color={color} />
           ),
@@ -85,6 +90,7 @@ export default function TabsLayout() {
         name="scan"
         options={{
           title: 'Scan',
+          tabBarButtonTestID: 'tab-scan',
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="camera-outline" size={size} color={color} />
           ),
@@ -95,6 +101,7 @@ export default function TabsLayout() {
         options={{
           title: 'Feed',
           headerShown: false,
+          tabBarButtonTestID: 'tab-feed',
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="newspaper-outline" size={size} color={color} />
           ),
@@ -104,6 +111,7 @@ export default function TabsLayout() {
         name="workspace"
         options={{
           title: 'Workspace',
+          tabBarButtonTestID: 'tab-workspace',
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="briefcase-outline" size={size} color={color} />
           ),

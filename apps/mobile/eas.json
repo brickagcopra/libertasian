@@ -31,6 +31,30 @@
         }
       }
     },
+    // Maestro E2E profile — Android APK, points at the staging API so flows
+    // never hit production. Built via `eas build -p android --profile e2e`,
+    // then installed on an emulator with `adb install`. See .maestro/README.md.
+    "e2e": {
+      "extends": "preview",
+      "distribution": "internal",
+      "developmentClient": false,
+      "node": "22.13.0",
+      "pnpm": "10.30.3",
+      "env": {
+        // TODO: point at staging/tunnel once a stable E2E backend is provisioned.
+        "API_URL": "https://staging.libertasian.com/api/v1",
+        "EXPO_PUBLIC_API_URL": "https://staging.libertasian.com/api/v1"
+      },
+      "android": {
+        "node": "22.13.0",
+        "pnpm": "10.30.3",
+        "buildType": "apk",
+        "env": {
+          // TODO: point at staging/tunnel once a stable E2E backend is provisioned.
+          "EXPO_PUBLIC_API_URL": "https://staging.libertasian.com/api/v1"
+        }
+      }
+    },
     "production": {
       "node": "22.13.0",
       "pnpm": "10.30.3",

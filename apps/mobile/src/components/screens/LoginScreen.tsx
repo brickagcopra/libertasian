@@ -108,6 +108,7 @@ export function LoginScreen({
           autoComplete="email"
           error={emailError}
           leading={<Ionicons name="mail-outline" size={18} color={theme.inkFaint} />}
+          testID="login-email"
         />
         <Input
           label="Password"
@@ -119,6 +120,7 @@ export function LoginScreen({
           error={passwordError}
           leading={<Ionicons name="lock-closed-outline" size={18} color={theme.inkFaint} />}
           trailing={<Ionicons name="eye-outline" size={18} color={theme.inkFaint} />}
+          testID="login-password"
         />
       </View>
 
@@ -181,6 +183,7 @@ export function LoginScreen({
         full
         disabled={loading}
         onPress={() => onSubmit?.(email, password, keep)}
+        testID="login-submit"
       />
 
       <View

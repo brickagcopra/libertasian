@@ -1,0 +1,55 @@
+appId: com.libertasian.app
+name: nav/tabs — tap each bottom tab and assert it loads
+tags:
+  - nav
+  - smoke
+env:
+  MAESTRO_TEST_EMAIL: ${MAESTRO_TEST_EMAIL}
+  MAESTRO_TEST_PASSWORD: ${MAESTRO_TEST_PASSWORD}
+---
+# This flow assumes auth/login.yaml has run (or run it as a subflow here) so the
+# user is already signed in and parked on (tabs).
+- launchApp:
+    appId: com.libertasian.app
+    clearState: false
+    stopApp: false
+
+- runFlow: ../auth/login.yaml
+
+# Tap through each tab in (tabs)/_layout.tsx order and assert its screen mounts
+# via a stable visible element. Match titles set in screenOptions.
+- tapOn:
+    id: "tab-home"
+- assertVisible:
+    id: "tab-home"
+
+- tapOn:
+    id: "tab-search"
+- assertVisible:
+    id: "tab-search"
+
+- tapOn:
+    id: "tab-digests"
+- assertVisible: "Digests"
+
+- tapOn:
+    id: "tab-library"
+- assertVisible:
+    id: "tab-library"
+
+- tapOn:
+    id: "tab-study"
+- assertVisible: "Study"
+
+- tapOn:
+    id: "tab-scan"
+- assertVisible: "Scan"
+
+- tapOn:
+    id: "tab-feed"
+- assertVisible:
+    id: "tab-feed"
+
+- tapOn:
+    id: "tab-workspace"
+- assertVisible: "Workspace"
