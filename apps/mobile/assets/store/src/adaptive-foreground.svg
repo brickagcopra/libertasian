@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Android adaptive icon — FOREGROUND layer.
+
+  Android's launcher mask can be a circle, squircle, rounded square, or
+  teardrop, and it clips the outer 33 % of the canvas. Content must live
+  inside a centred circle whose diameter is 66 % of the canvas (about
+  676 px on a 1024 px canvas).
+
+  We achieve that by drawing the same owl mark but inside a viewBox that
+  effectively scales the owl down to ~66 % of the 1024 frame. The owl is
+  re-centred within the inner safe zone — no clipping, no edge bleed.
+
+  Background is transparent; the solid colour is supplied by app.json's
+  android.adaptiveIcon.backgroundColor (#f6f1e8).
+-->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="1024"
+  height="1024"
+  viewBox="0 0 1024 1024"
+  fill="none"
+  role="img"
+  aria-label="LIBERTASIAN adaptive icon foreground"
+>
+  <!-- Translate to canvas centre, scale to 0.66, translate back so the
+       owl ends up centred inside the inner 66 % safe circle. -->
+  <g transform="translate(512 512) scale(0.66) translate(-512 -512)">
+    <path
+      d="
+        M 220 460
+        C 220 360, 252 280, 304 232
+        L 332 188
+        Q 348 178, 358 196
+        L 368 264
+        Q 432 224, 512 224
+        Q 592 224, 656 264
+        L 666 196
+        Q 676 178, 692 188
+        L 720 232
+        C 772 280, 804 360, 804 460
+        C 804 600, 778 720, 700 788
+        Q 620 836, 512 836
+        Q 404 836, 324 788
+        C 246 720, 220 600, 220 460
+        Z
+      "
+      fill="#1c1a14"
+    />
+
+    <circle cx="424" cy="436" r="92" fill="#d87b2a" />
+    <circle cx="424" cy="436" r="72" fill="#faefd9" />
+    <circle cx="424" cy="436" r="34" fill="#1c1a14" />
+    <circle cx="412" cy="424" r="10" fill="#ffffff" />
+
+    <circle cx="600" cy="436" r="92" fill="#d87b2a" />
+    <circle cx="600" cy="436" r="72" fill="#faefd9" />
+    <circle cx="600" cy="436" r="34" fill="#1c1a14" />
+    <circle cx="588" cy="424" r="10" fill="#ffffff" />
+
+    <path d="M 512 552 L 488 510 L 536 510 Z" fill="#b65e13" />
+
+    <path d="M 452 660 L 572 660" stroke="#d87b2a" stroke-width="10" stroke-linecap="round" />
+    <path d="M 452 696 L 572 696" stroke="#d87b2a" stroke-width="10" stroke-linecap="round" />
+    <path d="M 452 732 L 572 732" stroke="#d87b2a" stroke-width="10" stroke-linecap="round" />
+  </g>
+</svg>
