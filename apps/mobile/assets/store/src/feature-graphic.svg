@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Google Play feature graphic — 1024 x 500, no alpha required by Play.
+
+  Layout: owl mark on the left, wordmark + tagline on the right, against
+  the warm-cream brand background. The tagline matches the short
+  description in store/PLAY_LISTING.md so listing copy and the feature
+  graphic stay in sync.
+
+  Wordmark uses an SVG text element with a serif fallback. Sharp /
+  librsvg renders it with the host system's serif font (Georgia on
+  Windows, DejaVu Serif on most Linux build hosts, Times on macOS) —
+  all acceptable. If a build environment lacks any serif, run
+  `pnpm filter=mobile generate:assets` on a host with the Inter or
+  Georgia family installed and re-commit the PNG.
+-->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="1024"
+  height="500"
+  viewBox="0 0 1024 500"
+  role="img"
+  aria-label="LIBERTASIAN feature graphic"
+>
+  <!-- Solid warm-cream background; no alpha. -->
+  <rect x="0" y="0" width="1024" height="500" fill="#f6f1e8" />
+
+  <!-- Subtle amber accent strip along the bottom for warmth. -->
+  <rect x="0" y="488" width="1024" height="12" fill="#d87b2a" />
+
+  <!-- Owl mark on the left, scaled to fit the 500 px-tall canvas with
+       padding. Source coordinates are 1024 x 1024; the transform maps
+       the owl bbox (~220..804 wide, ~188..836 tall) into a roughly
+       360 x 360 region centred at (210, 250). -->
+  <g transform="translate(40 40) scale(0.36)">
+    <path
+      d="
+        M 220 460
+        C 220 360, 252 280, 304 232
+        L 332 188
+        Q 348 178, 358 196
+        L 368 264
+        Q 432 224, 512 224
+        Q 592 224, 656 264
+        L 666 196
+        Q 676 178, 692 188
+        L 720 232
+        C 772 280, 804 360, 804 460
+        C 804 600, 778 720, 700 788
+        Q 620 836, 512 836
+        Q 404 836, 324 788
+        C 246 720, 220 600, 220 460
+        Z
+      "
+      fill="#1c1a14"
+    />
+    <circle cx="424" cy="436" r="92" fill="#d87b2a" />
+    <circle cx="424" cy="436" r="72" fill="#faefd9" />
+    <circle cx="424" cy="436" r="34" fill="#1c1a14" />
+    <circle cx="412" cy="424" r="10" fill="#ffffff" />
+    <circle cx="600" cy="436" r="92" fill="#d87b2a" />
+    <circle cx="600" cy="436" r="72" fill="#faefd9" />
+    <circle cx="600" cy="436" r="34" fill="#1c1a14" />
+    <circle cx="588" cy="424" r="10" fill="#ffffff" />
+    <path d="M 512 552 L 488 510 L 536 510 Z" fill="#b65e13" />
+    <path d="M 452 660 L 572 660" stroke="#d87b2a" stroke-width="10" stroke-linecap="round" />
+    <path d="M 452 696 L 572 696" stroke="#d87b2a" stroke-width="10" stroke-linecap="round" />
+    <path d="M 452 732 L 572 732" stroke="#d87b2a" stroke-width="10" stroke-linecap="round" />
+  </g>
+
+  <!-- Wordmark. Serif fallback chain; deep ink colour against cream.
+       font-size chosen so "LIBERTASIAN" (11 chars) fits the available
+       canvas width (1024 - 380 - 40 = 604 px) at Georgia bold without
+       clipping on hosts whose serif renders slightly wider than Georgia. -->
+  <text
+    x="380"
+    y="220"
+    font-family="Georgia, 'Times New Roman', 'DejaVu Serif', serif"
+    font-weight="700"
+    font-size="64"
+    fill="#1c1a14"
+  >LIBERTASIAN</text>
+
+  <!-- Tagline — verbatim from store/PLAY_LISTING.md short description. -->
+  <text
+    x="380"
+    y="282"
+    font-family="Georgia, 'Times New Roman', 'DejaVu Serif', serif"
+    font-style="italic"
+    font-size="26"
+    fill="#3a352b"
+  >Philippine legal research:</text>
+  <text
+    x="380"
+    y="322"
+    font-family="Georgia, 'Times New Roman', 'DejaVu Serif', serif"
+    font-style="italic"
+    font-size="26"
+    fill="#3a352b"
+  >case digests, codals, and bar drills —</text>
+  <text
+    x="380"
+    y="362"
+    font-family="Georgia, 'Times New Roman', 'DejaVu Serif', serif"
+    font-style="italic"
+    font-size="26"
+    fill="#3a352b"
+  >for law students and lawyers.</text>
+</svg>

@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Splash screen owl mark.
+
+  Expo composes splash-icon over splash.backgroundColor at runtime, so
+  this asset is transparent. The splash backgroundColor is set to the
+  warm-cream brand colour (#f6f1e8) in app.json.
+
+  Sized to 1024 x 1024 (replaces the 200 x 200 Expo default) with the
+  owl at full canvas size — Expo's resizeMode: "contain" handles
+  per-device scaling.
+-->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="1024"
+  height="1024"
+  viewBox="0 0 1024 1024"
+  fill="none"
+  role="img"
+  aria-label="LIBERTASIAN splash mark"
+>
+  <path
+    d="
+      M 220 460
+      C 220 360, 252 280, 304 232
+      L 332 188
+      Q 348 178, 358 196
+      L 368 264
+      Q 432 224, 512 224
+      Q 592 224, 656 264
+      L 666 196
+      Q 676 178, 692 188
+      L 720 232
+      C 772 280, 804 360, 804 460
+      C 804 600, 778 720, 700 788
+      Q 620 836, 512 836
+      Q 404 836, 324 788
+      C 246 720, 220 600, 220 460
+      Z
+    "
+    fill="#1c1a14"
+  />
+
+  <circle cx="424" cy="436" r="92" fill="#d87b2a" />
+  <circle cx="424" cy="436" r="72" fill="#faefd9" />
+  <circle cx="424" cy="436" r="34" fill="#1c1a14" />
+  <circle cx="412" cy="424" r="10" fill="#ffffff" />
+
+  <circle cx="600" cy="436" r="92" fill="#d87b2a" />
+  <circle cx="600" cy="436" r="72" fill="#faefd9" />
+  <circle cx="600" cy="436" r="34" fill="#1c1a14" />
+  <circle cx="588" cy="424" r="10" fill="#ffffff" />
+
+  <path d="M 512 552 L 488 510 L 536 510 Z" fill="#b65e13" />
+
+  <path d="M 452 660 L 572 660" stroke="#d87b2a" stroke-width="10" stroke-linecap="round" />
+  <path d="M 452 696 L 572 696" stroke="#d87b2a" stroke-width="10" stroke-linecap="round" />
+  <path d="M 452 732 L 572 732" stroke="#d87b2a" stroke-width="10" stroke-linecap="round" />
+</svg>

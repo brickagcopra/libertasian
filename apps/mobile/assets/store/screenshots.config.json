@@ -1,0 +1,99 @@
+{
+  "$comment": [
+    "LIBERTASIAN — screenshot capture + framing config.",
+    "",
+    "Each entry in `screens` is one screenshot the user navigates to in the app",
+    "before running `pnpm filter=mobile screenshots:capture`. The capture script",
+    "saves raw frames to assets/store/screenshots/raw/<slug>.<platform>.png and",
+    "frame-screenshots.mjs composites them into store-ready images per platform.",
+    "",
+    "Captions are drafted from store/PLAY_LISTING.md + store.config.json — each",
+    "highlights one of the app's six listed features. Keep them under ~70 chars",
+    "so they wrap to two lines max at the framing font size."
+  ],
+  "screens": [
+    {
+      "slug": "01-past-bar-exams",
+      "title": "Past Bar Exams",
+      "caption": "1,500+ Philippine Bar questions, 1953 to 2024.",
+      "navHint": "Open the Bar Exams tab and land on the year/subject browser."
+    },
+    {
+      "slug": "02-case-digests",
+      "title": "Case Digests",
+      "caption": "Supreme Court digests with provenance to the source.",
+      "navHint": "Open a case digest from the library and scroll to the facts section."
+    },
+    {
+      "slug": "03-codal-reader",
+      "title": "Codal Reader",
+      "caption": "1987 Constitution, Rules of Court, Republic Acts.",
+      "navHint": "Open the Codals tab and pick the 1987 Constitution, Article III."
+    },
+    {
+      "slug": "04-ai-assistant",
+      "title": "AI Study Assistant",
+      "caption": "Grounded answers with citations — never fabricated.",
+      "navHint": "Open the AI chat, send a sample query, wait for the answer with citations."
+    },
+    {
+      "slug": "05-camera-scan",
+      "title": "Camera Scan-to-Digest",
+      "caption": "Scan a printout. Get a structured digest.",
+      "navHint": "Open the camera scanner and frame a sample case printout."
+    },
+    {
+      "slug": "06-offline-sync",
+      "title": "Offline + Sync",
+      "caption": "Offline codal cache. Syncs with libertasian.com on web.",
+      "navHint": "Open Settings → Sync to show the last-synced timestamp and offline toggle."
+    }
+  ],
+  "platforms": {
+    "iphone-6-7": {
+      "label": "iPhone 6.7\"",
+      "width": 1290,
+      "height": 2796,
+      "required": true,
+      "store": "apple",
+      "framePadding": { "top": 380, "bottom": 80, "left": 60, "right": 60 },
+      "captionFontSize": 64
+    },
+    "ipad-12-9": {
+      "label": "iPad Pro 12.9\"",
+      "width": 2048,
+      "height": 2732,
+      "required": true,
+      "store": "apple",
+      "framePadding": { "top": 400, "bottom": 100, "left": 120, "right": 120 },
+      "captionFontSize": 78
+    },
+    "android-phone": {
+      "label": "Android phone",
+      "width": 1080,
+      "height": 1920,
+      "required": true,
+      "store": "play",
+      "framePadding": { "top": 320, "bottom": 60, "left": 50, "right": 50 },
+      "captionFontSize": 56
+    },
+    "android-tablet-7": {
+      "label": "Android 7\" tablet",
+      "width": 1200,
+      "height": 1920,
+      "required": false,
+      "store": "play",
+      "framePadding": { "top": 320, "bottom": 60, "left": 60, "right": 60 },
+      "captionFontSize": 60
+    },
+    "android-tablet-10": {
+      "label": "Android 10\" tablet",
+      "width": 1600,
+      "height": 2560,
+      "required": false,
+      "store": "play",
+      "framePadding": { "top": 380, "bottom": 80, "left": 80, "right": 80 },
+      "captionFontSize": 72
+    }
+  }
+}
