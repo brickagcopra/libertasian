@@ -116,6 +116,24 @@ export default function StudyTab() {
         </TouchableOpacity>
       ) : null}
 
+      {/* Past Bar Exams */}
+      <TouchableOpacity
+        style={styles.barExamsBanner}
+        onPress={() => router.push('/bar-exams')}
+        activeOpacity={0.7}
+      >
+        <View style={styles.barExamsIconBox}>
+          <Ionicons name="school-outline" size={20} color="#1a56db" />
+        </View>
+        <View style={styles.barExamsContent}>
+          <Text style={styles.barExamsTitle}>Past Bar Exams</Text>
+          <Text style={styles.barExamsDesc}>
+            Browse past questions with AI model answers
+          </Text>
+        </View>
+        <Ionicons name="chevron-forward" size={16} color="#9ca3af" />
+      </TouchableOpacity>
+
       {/* Study Stats */}
       {studyStats ? (
         <View style={styles.studyStatsCard}>
@@ -421,6 +439,41 @@ const styles = StyleSheet.create({
     color: '#111827',
   },
   documentsDesc: {
+    fontSize: 11,
+    color: '#6b7280',
+    marginTop: 1,
+  },
+  barExamsBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 12,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  barExamsIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: '#eff6ff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  barExamsContent: { flex: 1 },
+  barExamsTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  barExamsDesc: {
     fontSize: 11,
     color: '#6b7280',
     marginTop: 1,
