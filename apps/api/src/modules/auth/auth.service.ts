@@ -877,7 +877,10 @@ export class AuthService {
         ? this.decryptAes256Gcm(encryptedSecret, encryptionKey)
         : encryptedSecret;
       return this.verifyTotpRaw(secret, code);
-    } catch {
+    } catch (err) {
+      this.logger.warn(
+        `verifyTotp threw — TOTP rejected: ${err instanceof Error ? err.message : String(err)}`,
+      );
       return false;
     }
   }
