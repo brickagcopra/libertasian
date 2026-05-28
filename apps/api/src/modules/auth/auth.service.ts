@@ -887,7 +887,10 @@ export class AuthService {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const otplib = require('otplib');
       return (otplib.authenticator.check as (token: string, secret: string) => boolean)(code, plaintextSecret);
-    } catch {
+    } catch (err) {
+      this.logger.warn(
+        `verifyTotpRaw threw — TOTP rejected: ${err instanceof Error ? err.message : String(err)}`,
+      );
       return false;
     }
   }
