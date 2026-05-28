@@ -1,4 +1,4 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Logger, Post, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
 
@@ -59,6 +59,8 @@ class CreateModelRunDto {
 @Controller('internal/model-runs')
 @UseGuards(InternalApiGuard)
 export class ModelRunsController {
+  private readonly logger = new Logger(ModelRunsController.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly aiSettings: AiSettingsService,
@@ -84,7 +86,11 @@ export class ModelRunsController {
 
     // Check budget thresholds after recording usage
     // Fire-and-forget — don't block the response
-    this.aiSettings.checkBudgetThresholds().catch(() => {});
+    this.aiSettings.checkBudgetThresholds().catch((err: unknown) => {
+      this.logger.warn(
+        `checkBudgetThresholds failed (alerts may be dropped): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
 
     return { success: true, id: modelRun.id };
   }

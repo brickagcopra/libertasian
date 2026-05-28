@@ -192,7 +192,10 @@ export class IngestionSchedulerService {
       const cost = costRaw ? parseFloat(costRaw) : 0;
 
       return cost >= budget;
-    } catch {
+    } catch (err) {
+      this.logger.warn(
+        `isBudgetExceeded check failed (failing open): ${err instanceof Error ? err.message : String(err)}`,
+      );
       return false;
     }
   }

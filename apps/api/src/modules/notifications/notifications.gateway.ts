@@ -127,7 +127,10 @@ export class NotificationsGateway
       }
 
       return payload;
-    } catch {
+    } catch (err) {
+      this.logger.warn(
+        `WS JWT verify failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
       return null;
     }
   }
