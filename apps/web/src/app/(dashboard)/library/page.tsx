@@ -57,7 +57,9 @@ export default function LibraryHubPage() {
                     <div className="flex h-10 w-10 flex-none items-center justify-center rounded-md bg-primary/10 text-primary">
                       <Icon className="h-5 w-5" />
                     </div>
-                    <h2 className="text-base font-semibold">{t.label}</h2>
+                    <h2 className="text-base font-semibold">
+                      {t.enum === 'case_digest' ? `${t.label} (corpus)` : t.label}
+                    </h2>
                   </div>
                   <p className="line-clamp-2 text-sm text-muted-foreground">
                     {t.description}
@@ -70,7 +72,13 @@ export default function LibraryHubPage() {
                         <span className="font-semibold text-foreground">
                           {approvedTotal}
                         </span>{' '}
-                        {approvedTotal === 1 ? 'item' : 'items'}
+                        {(() => {
+                          // Flashcards count individual cards (Study counts
+                          // sets), so label them "cards" to avoid implying the
+                          // two screens contradict each other.
+                          const unit = t.enum === 'flashcard' ? 'card' : 'item';
+                          return approvedTotal === 1 ? unit : `${unit}s`;
+                        })()}
                       </span>
                     )}
                   </div>
