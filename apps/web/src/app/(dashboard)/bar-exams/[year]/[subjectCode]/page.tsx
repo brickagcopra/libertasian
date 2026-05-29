@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { notFound, useParams, useSearchParams } from 'next/navigation';
+import * as React from 'react';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
@@ -57,24 +58,6 @@ export default function BarExamSittingPage() {
       return true;
     },
   });
-
-  // Per-question lazy fetch tracking. A questionId is added the first time the
-  // user opens its accordion and is NEVER removed — closing then re-opening
-  // serves from React Query cache without re-firing the network call (and
-  // crucially without re-consuming the aiAnswers quota).
-  const [openedQuestions, setOpenedQuestions] = useState<Set<string>>(
-    () => new Set(),
-  );
-
-  const handleAccordionChange = (questionId: string) => (value: string) => {
-    if (value === 'answer' && !openedQuestions.has(questionId)) {
-      setOpenedQuestions((prev) => {
-        const next = new Set(prev);
-        next.add(questionId);
-        return next;
-      });
-    }
-  };
 
   if (isError && error instanceof ApiClientError && error.statusCode === 404) {
     notFound();
@@ -161,86 +144,120 @@ export default function BarExamSittingPage() {
 
       <ol className="space-y-8">
         {questions.map((q) => (
-          <li
+          <QuestionRow
             key={q.id}
-            id={`q-${q.number}`}
-            className="rounded-xl border border-gray-200 bg-white p-6"
-          >
-            <div className="mb-3 flex items-baseline justify-between">
-              <h2 className="text-lg font-semibold text-gray-900">
-                Question {q.number}
-              </h2>
-              {q.subPartsCount > 0 && (
-                <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600">
-                  {q.subPartsCount} sub-part{q.subPartsCount === 1 ? '' : 's'}
-                </span>
-              )}
-            </div>
-            <div className="whitespace-pre-wrap text-sm leading-relaxed text-gray-800">
-              {q.text}
-            </div>
-
-            {featureEnabled && (
-              subLoading ? (
-                <div
-                  className="mt-4 border-t border-gray-100 pt-2"
-                  data-testid="answer-access-loading"
-                >
-                  <div className="h-9 w-48 animate-pulse rounded bg-gray-100" />
-                </div>
-              ) : canAccessAnswers ? (
-                <div className="mt-4 border-t border-gray-100 pt-2">
-                  <Accordion
-                    type="single"
-                    collapsible
-                    onValueChange={handleAccordionChange(q.id)}
-                  >
-                    <AccordionItem value="answer" className="border-b-0">
-                      <AccordionTrigger
-                        className="py-2 text-sm font-medium text-gray-700"
-                        data-testid={`answer-trigger-${q.number}`}
-                      >
-                        AI Answer (preview)
-                      </AccordionTrigger>
-                      <AccordionContent>
-                        <BarExamAnswerSection
-                          questionId={q.id}
-                          enabled={openedQuestions.has(q.id)}
-                        />
-                      </AccordionContent>
-                    </AccordionItem>
-                  </Accordion>
-                </div>
-              ) : (
-                <div
-                  className="mt-4 border-t border-gray-100 pt-2"
-                  data-testid={`answer-locked-${q.number}`}
-                >
-                  <div className="flex items-center justify-between gap-3 py-2">
-                    <div>
-                      <p className="text-sm font-medium text-gray-700">
-                        AI Answer
-                      </p>
-                      <p className="text-xs text-gray-500">
-                        Subscribe to a plan to view AI-generated answers.
-                      </p>
-                    </div>
-                    <Link
-                      href="/pricing"
-                      className="text-sm font-medium text-indigo-600 hover:underline whitespace-nowrap"
-                    >
-                      See plans →
-                    </Link>
-                  </div>
-                </div>
-              )
-            )}
-          </li>
+            q={q}
+            featureEnabled={featureEnabled}
+            subLoading={subLoading}
+            canAccessAnswers={canAccessAnswers}
+          />
         ))}
       </ol>
     </div>
   );
 }
+
+type SittingQuestion = SittingDetail['questions'][number];
+
+interface QuestionRowProps {
+  q: SittingQuestion;
+  featureEnabled: boolean;
+  subLoading: boolean;
+  canAccessAnswers: boolean;
+}
+
+// Memoized so toggling one question's accordion never re-renders sibling rows.
+// Open-state is row-local: opening the accordion flips `opened` to true and it
+// is NEVER set back to false on collapse. That keeps `enabled` latched so the
+// answer fetch fires once per question and re-opening serves from the React
+// Query cache without re-firing the network call (and crucially without
+// re-consuming the aiAnswers quota).
+const QuestionRow = React.memo(function QuestionRow({
+  q,
+  featureEnabled,
+  subLoading,
+  canAccessAnswers,
+}: QuestionRowProps) {
+  const [opened, setOpened] = useState(false);
+
+  const handleValueChange = (value: string) => {
+    if (value === 'answer') setOpened(true);
+  };
+
+  return (
+    <li
+      id={`q-${q.number}`}
+      className="rounded-xl border border-gray-200 bg-white p-6"
+    >
+      <div className="mb-3 flex items-baseline justify-between">
+        <h2 className="text-lg font-semibold text-gray-900">
+          Question {q.number}
+        </h2>
+        {q.subPartsCount > 0 && (
+          <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600">
+            {q.subPartsCount} sub-part{q.subPartsCount === 1 ? '' : 's'}
+          </span>
+        )}
+      </div>
+      <div className="whitespace-pre-wrap text-sm leading-relaxed text-gray-800">
+        {q.text}
+      </div>
+
+      {featureEnabled && (
+        subLoading ? (
+          <div
+            className="mt-4 border-t border-gray-100 pt-2"
+            data-testid="answer-access-loading"
+          >
+            <div className="h-9 w-48 animate-pulse rounded bg-gray-100" />
+          </div>
+        ) : canAccessAnswers ? (
+          <div className="mt-4 border-t border-gray-100 pt-2">
+            <Accordion
+              type="single"
+              collapsible
+              onValueChange={handleValueChange}
+            >
+              <AccordionItem value="answer" className="border-b-0">
+                <AccordionTrigger
+                  className="py-2 text-sm font-medium text-gray-700"
+                  data-testid={`answer-trigger-${q.number}`}
+                >
+                  AI Answer (preview)
+                </AccordionTrigger>
+                <AccordionContent>
+                  <BarExamAnswerSection questionId={q.id} enabled={opened} />
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
+          </div>
+        ) : (
+          <div
+            className="mt-4 border-t border-gray-100 pt-2"
+            data-testid={`answer-locked-${q.number}`}
+          >
+            <div className="flex items-center justify-between gap-3 py-2">
+              <div>
+                <p className="text-sm font-medium text-gray-700">
+                  AI Answer
+                </p>
+                <p className="text-xs text-gray-500">
+                  Subscribe to a plan to view AI-generated answers.
+                </p>
+              </div>
+              <Link
+                href="/pricing"
+                className="text-sm font-medium text-indigo-600 hover:underline whitespace-nowrap"
+              >
+                See plans →
+              </Link>
+            </div>
+          </div>
+        )
+      )}
+    </li>
+  );
+});
 
 interface AnswerErrorBody {
   code?: string;
