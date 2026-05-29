@@ -40,7 +40,7 @@ function formatDuration(totalSecs: number): string {
 
 const BAR_SUBJECT_LABELS: Record<string, string> = {
   civil: 'Civil Law',
-  commercial: 'Commercial Law',
+  commercial: 'Mercantile Law',
   criminal: 'Criminal Law',
   labor: 'Labor Law',
   political: 'Political Law',
