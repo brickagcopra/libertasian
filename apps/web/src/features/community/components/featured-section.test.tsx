@@ -46,10 +46,12 @@ describe('FeaturedSection', () => {
     expect(screen.getByText('Failed to load featured content.')).toBeInTheDocument();
   });
 
-  it('renders nothing when data is null', () => {
+  it('renders the empty state when there are no featured items', () => {
     mockData = { data: null };
-    const { container } = render(<FeaturedSection />);
-    expect(container.innerHTML).toBe('');
+    render(<FeaturedSection />);
+    expect(
+      screen.getByText(/No community materials yet/i),
+    ).toBeInTheDocument();
   });
 
   it('renders featured sections with items', () => {

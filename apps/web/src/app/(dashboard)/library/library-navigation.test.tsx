@@ -63,7 +63,8 @@ describe('Library hub page', () => {
     render(withProviders(<LibraryHubPage />));
 
     for (const label of [
-      'Case Digests',
+      // P5-B: the case_digest card heading is special-cased to "<label> (corpus)".
+      'Case Digests (corpus)',
       'Doctrine Extracts',
       'MCQs',
       'Essay Prompts',
