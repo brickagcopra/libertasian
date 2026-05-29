@@ -101,12 +101,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!isAuthenticated) return;
     const id = setInterval(() => {
-      apiClient.refresh().catch(() => {
-        // Intentional no-op: a failed proactive refresh is benign (e.g. an
-        // offline tab). Genuine expiry is handled by the reactive 401 →
-        // onUnauthorized flow in api-client; we don't surface this to the user
-        // or force a logout from the timer.
-      });
+      const run = () =>
+        apiClient.refresh().catch(() => {
+          // Intentional no-op: a failed proactive refresh is benign (e.g. an
+          // offline tab). Genuine expiry is handled by the reactive 401 →
+          // onUnauthorized flow in api-client; we don't surface it or force logout.
+        });
+      // Serialize across tabs: only one tab proactively refreshes per tick. A
+      // tab that can't acquire the lock skips — its reactive 401 path still
+      // covers genuine expiry. This avoids two tabs presenting the same refresh
+      // token concurrently, which the API treats as reuse and revokes the whole
+      // session family. Older browsers without the API just run it.
+      if (typeof navigator !== 'undefined' && navigator.locks?.request) {
+        void navigator.locks.request(
+          'libertasian-proactive-refresh',
+          { ifAvailable: true },
+          (lock) => {
+            if (!lock) return; // another tab holds it → skip this tick
+            return run();
+          },
+        );
+      } else {
+        void run();
+      }
     }, PROACTIVE_REFRESH_INTERVAL_MS);
     return () => clearInterval(id);
   }, [isAuthenticated]);
