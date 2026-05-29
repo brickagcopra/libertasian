@@ -154,7 +154,7 @@ export const SUBJECTS: readonly SubjectMeta[] = [
   },
   {
     code: 'mercantile_law',
-    name: 'Mercantile (Commercial) Law',
+    name: 'Mercantile Law',
     slug: 'mercantile-law',
     icon: LibraryBigIcon,
   },

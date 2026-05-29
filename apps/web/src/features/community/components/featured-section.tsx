@@ -84,6 +84,17 @@ function FeaturedSkeleton() {
   );
 }
 
+function FeaturedEmpty() {
+  return (
+    <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-16 text-center">
+      <p className="text-sm text-muted-foreground">
+        No community materials yet — featured flashcard sets, reviewer packs, and
+        digests will appear here soon.
+      </p>
+    </div>
+  );
+}
+
 export function FeaturedSection() {
   const { data, isLoading, error } = useMarketplaceFeatured();
 
@@ -99,15 +110,16 @@ export function FeaturedSection() {
   }
 
   const featured = data?.data;
-  if (!featured) return null;
+  const hasAnyItems = featured
+    ? SECTIONS.some((section) => {
+        const items = featured[section.key];
+        return items !== undefined && items.length > 0;
+      })
+    : false;
 
-  // Skip the whole block (heading included) when no section has items —
-  // avoids orphaning a "Featured" heading above empty space.
-  const hasAnyItems = SECTIONS.some((section) => {
-    const items = featured[section.key];
-    return items && items.length > 0;
-  });
-  if (!hasAnyItems) return null;
+  // No featured content yet — show a muted empty state instead of nothing,
+  // consistent with the Feed/Blog empty states, so the page doesn't look broken.
+  if (!hasAnyItems) return <FeaturedEmpty />;
 
   return (
     <div>

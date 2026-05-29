@@ -65,7 +65,7 @@ const BAR_SUBJECTS = [
   'Labor Law',
   'Civil Law',
   'Taxation',
-  'Commercial Law',
+  'Mercantile Law',
   'Criminal Law',
   'Remedial Law',
   'Legal Ethics',
