@@ -281,4 +281,44 @@ describe('PricingPageClient', () => {
     expect(screen.getByText('Unlimited AI answers')).toBeInTheDocument();
     expect(screen.getByText('Up to 20 active matters')).toBeInTheDocument();
   });
+
+  // Card feature list MUST match the comparison table's truth: every
+  // entitlement the table renders as a "✓"/number appears as a card bullet,
+  // and every entitlement the table renders as "—" is absent from the card.
+  it('card feature list matches the comparison table (no false-boolean / zero-numeric features)', () => {
+    const plans = [
+      mockPlan({
+        entitlements: [
+          // table-✓ → MUST appear on the card
+          { id: 'b-true', key: 'offlineReading', valueType: 'boolean', numericValue: null, booleanValue: true, description: 'Offline reading' },
+          { id: 'unl', key: 'aiAnswers', valueType: 'unlimited', numericValue: null, booleanValue: null, description: 'Unlimited AI answers' },
+          { id: 'n-pos', key: 'maxMatters', valueType: 'numeric', numericValue: 20, booleanValue: null, description: 'Up to 20 active matters' },
+          // table-— → MUST NOT appear on the card
+          { id: 'b-false', key: 'teamCollaboration', valueType: 'boolean', numericValue: null, booleanValue: false, description: 'Team collaboration features' },
+          { id: 'n-zero', key: 'auditLogs', valueType: 'numeric', numericValue: 0, booleanValue: null, description: 'Audit log access' },
+        ],
+      }),
+    ];
+    vi.mocked(usePlans).mockReturnValue({
+      data: plans,
+      isLoading: false,
+      isSuccess: true,
+      isError: false,
+    } as ReturnType<typeof usePlans>);
+
+    const Wrapper = createWrapper();
+    render(
+      <Wrapper>
+        <PricingPageClient initialPlans={plans} dynamicEnabled={true} fetchError={false} />
+      </Wrapper>,
+    );
+
+    // (a) all "table-✓" descriptions render as card features
+    expect(screen.getByText('Offline reading')).toBeInTheDocument();
+    expect(screen.getByText('Unlimited AI answers')).toBeInTheDocument();
+    expect(screen.getByText('Up to 20 active matters')).toBeInTheDocument();
+    // (b) none of the "table-—" descriptions appear on the card
+    expect(screen.queryByText('Team collaboration features')).not.toBeInTheDocument();
+    expect(screen.queryByText('Audit log access')).not.toBeInTheDocument();
+  });
 });

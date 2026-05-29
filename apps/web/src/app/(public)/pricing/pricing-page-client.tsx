@@ -403,12 +403,19 @@ function DynamicPlanCard({
     ? getPromotionDiscountLabel(firstPromo, billingPeriod)
     : null;
 
-  // Build feature list from entitlements. Drop entitlements with a numeric
-  // value of 0 — those represent "not included" (e.g. premium features in the
-  // Free plan) and would otherwise render as plain bullets, making premium
-  // features look included.
+  // Build feature list from entitlements. Drop entitlements that the
+  // comparison table renders as "not included" so the card and table agree:
+  //   - numeric === 0    (e.g. "0 active matters")
+  //   - boolean === false (e.g. team collaboration off for this tier)
+  // Otherwise a false boolean renders with a green check, making a premium
+  // feature look included when the table correctly shows "—".
   const features = plan.entitlements
-    .filter((e) => e.description && !(e.valueType === 'numeric' && e.numericValue === 0))
+    .filter(
+      (e) =>
+        e.description &&
+        !(e.valueType === 'numeric' && e.numericValue === 0) &&
+        !(e.valueType === 'boolean' && e.booleanValue === false),
+    )
     .map((e) => e.description as string);
 
   // Resolve CTA text
