@@ -389,6 +389,39 @@ describe('SearchService', () => {
       expect(['section-a', 'section-b']).toContain(item.id);
     });
 
+    // Regression: the keyword_only fallback (embedding null) must de-dup
+    // per document like the RRF path. 3 sections of one doc + 1 distinct doc
+    // → 2 results, total 2.
+    it('dedupes the keyword_only fallback so duplicate-document sections collapse', async () => {
+      const docId = 'kw-doc-1';
+      const section = (id: string): SearchResultItem => ({
+        id,
+        score: 1,
+        source: { document_id: docId, title: 'Theft Case' },
+      });
+      const distinct: SearchResultItem = {
+        id: 'other-section',
+        score: 0.5,
+        source: { document_id: 'kw-doc-2', title: 'Other Case' },
+      };
+
+      redisService.get.mockResolvedValue(null);
+      redisService.set.mockResolvedValue(undefined);
+      openSearchService.searchKeyword.mockResolvedValue({
+        items: [section('sec-1'), section('sec-2'), section('sec-3'), distinct],
+        total: 4,
+        maxScore: 1,
+        timedOut: false,
+      });
+      embeddingClientService.embed.mockResolvedValue(null); // forces keyword_only
+
+      const result = await service.search(searchDto);
+
+      expect(result.meta.searchType).toBe('keyword_only');
+      expect(result.items).toHaveLength(2);
+      expect(result.meta.total).toBe(2);
+    });
+
     // ── Dedup suppression filter ────────────────────────────────────────
     describe('dedup filter', () => {
       it('forwards suppressed doc IDs to keyword + vector queries when flag is on (default)', async () => {

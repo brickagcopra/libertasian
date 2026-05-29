@@ -174,15 +174,15 @@ export class SearchService {
     const queryVector = await this.embeddingClient.embed(dto.query);
 
     if (!queryVector) {
-      // Embedding service unavailable — fall back to BM25 only
+      // Embedding service unavailable — fall back to BM25 only.
+      // De-dup per document BEFORE paginating so section duplicates don't
+      // surface the same case multiple times (matches the RRF path).
       const bm25Result = await bm25Promise;
-      const paginatedItems = bm25Result.items.slice(
-        page * limit,
-        (page + 1) * limit,
-      );
+      const deduped = this.dedupeByDocumentId(bm25Result.items);
+      const paginatedItems = deduped.slice(page * limit, (page + 1) * limit);
       return {
         items: paginatedItems,
-        total: bm25Result.total,
+        total: deduped.length,
         maxScore: bm25Result.maxScore,
         timedOut: bm25Result.timedOut,
         searchType: 'keyword_only',
@@ -208,14 +208,13 @@ export class SearchService {
     ]);
 
     if (!knnResult) {
-      // kNN failed — fall back to BM25 only
-      const paginatedItems = bm25Result.items.slice(
-        page * limit,
-        (page + 1) * limit,
-      );
+      // kNN failed — fall back to BM25 only. De-dup per document before
+      // paginating (matches the RRF path and the embedding-null fallback).
+      const deduped = this.dedupeByDocumentId(bm25Result.items);
+      const paginatedItems = deduped.slice(page * limit, (page + 1) * limit);
       return {
         items: paginatedItems,
-        total: bm25Result.total,
+        total: deduped.length,
         maxScore: bm25Result.maxScore,
         timedOut: bm25Result.timedOut,
         searchType: 'keyword_only',
@@ -234,7 +233,10 @@ export class SearchService {
 
     return {
       items: paginatedItems,
-      total: Math.max(bm25Result.total, totalFused),
+      // totalFused already reflects the de-duped fused list (one entry per
+      // document), so it is the correct count — bm25Result.total includes
+      // raw section duplicates and would over-count.
+      total: totalFused,
       maxScore: paginatedItems.length > 0 ? paginatedItems[0]!.score : null,
       timedOut: bm25Result.timedOut || knnResult.timedOut,
       searchType: 'hybrid',
@@ -292,13 +294,25 @@ export class SearchService {
         score,
       }));
 
-    // Per-document dedup: a single legal document can have multiple
-    // matching sections — keep only the highest-scoring section per
-    // document. Preserves original ordering after dedup (the sort above
-    // ensured the kept entry is the highest-scoring one for its doc).
+    // Per-document dedup: a single legal document can have multiple matching
+    // sections — keep only the highest-scoring section per document. The sort
+    // above ensures the kept entry is the highest-scoring one for its doc.
+    return this.dedupeByDocumentId(fused);
+  }
+
+  /**
+   * Collapse multiple hits for the same legal document into one. A document is
+   * indexed once as full-text and once per section, so OpenSearch returns
+   * several hits per document; without this the user sees the same case 2–3×.
+   * Keeps the FIRST occurrence per `document_id` — callers pre-sort by score,
+   * so the first is the highest-scoring. Falls back to the item id when
+   * `document_id` is absent. Used by both the RRF path and the keyword_only
+   * fallbacks so dedup is consistent on every code path.
+   */
+  private dedupeByDocumentId(items: SearchResultItem[]): SearchResultItem[] {
     const deduped: SearchResultItem[] = [];
     const seenDocIds = new Set<string>();
-    for (const item of fused) {
+    for (const item of items) {
       const docId =
         typeof item.source['document_id'] === 'string'
           ? (item.source['document_id'] as string)
@@ -307,7 +321,6 @@ export class SearchService {
       seenDocIds.add(docId);
       deduped.push(item);
     }
-
     return deduped;
   }
 
