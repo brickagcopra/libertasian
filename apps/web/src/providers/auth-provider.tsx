@@ -6,12 +6,20 @@ import { apiClient } from '@/lib/api-client';
 import { useAuthStore, type User } from '@/stores/auth-store';
 
 /**
+ * Proactively refresh the in-memory access token shortly before its 15-min
+ * TTL (JWT_ACCESS_TTL=900). Firing at ~13 min keeps a valid token in memory
+ * so navigation after idle browsing doesn't hit a 401 → /login bounce.
+ */
+const PROACTIVE_REFRESH_INTERVAL_MS = 13 * 60 * 1000;
+
+/**
  * Wires the apiClient singleton to the Zustand auth store so that
  * every request automatically includes the Bearer token, 401 responses
  * trigger a silent refresh via httpOnly cookie, and hard failures trigger logout.
  */
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = useAuthStore((s) => s.logout);
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
 
   useEffect(() => {
     apiClient.configure({
@@ -86,6 +94,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     bootstrap();
     return () => { cancelled = true; };
   }, [logout]);
+
+  // Proactive silent-refresh timer. Uses the SAME single-flight refresh path
+  // as the 401 interceptor (apiClient.refresh). Cleared on unmount, on logout,
+  // and whenever isAuthenticated becomes false.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const id = setInterval(() => {
+      apiClient.refresh().catch(() => {
+        // Intentional no-op: a failed proactive refresh is benign (e.g. an
+        // offline tab). Genuine expiry is handled by the reactive 401 →
+        // onUnauthorized flow in api-client; we don't surface this to the user
+        // or force a logout from the timer.
+      });
+    }, PROACTIVE_REFRESH_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [isAuthenticated]);
 
   return <>{children}</>;
 }
