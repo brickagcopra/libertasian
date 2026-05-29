@@ -528,6 +528,214 @@ describe('bar-exams sitting page', () => {
     });
   });
 
+  // Regression coverage for the per-row re-render cascade fix: open-state is
+  // now row-local (each QuestionRow owns its own `opened`), so toggling one
+  // question must never refetch or re-toggle another. The quota-gated answer
+  // fetch must fire exactly once per opened question and never on re-open.
+  describe('per-question answer fetch isolation', () => {
+    const TWO_QUESTION_PAYLOAD = {
+      success: true,
+      data: {
+        sitting: {
+          id: 'sitting-id',
+          year: 2018,
+          part: null,
+          subjectStudyCode: 'civil_law',
+          subjectBarAdminCode: 'civil_land_titles',
+          chairperson: 'Bersamin',
+          sourceUrl: 'https://lawphil.net/courts/bm/barQ/2018/civilQ.html',
+          sourceDocumentId: 'doc-id',
+          questionCount: 2,
+        },
+        questions: [
+          {
+            id: 'q1',
+            number: 1,
+            text: 'Discuss the doctrine of res ipsa loquitur.',
+            subPartsCount: 0,
+            sourceSectionAnchor: null,
+          },
+          {
+            id: 'q2',
+            number: 2,
+            text: 'Explain the concept of solutio indebiti.',
+            subPartsCount: 0,
+            sourceSectionAnchor: null,
+          },
+        ],
+      },
+    };
+
+    function answerPayload(questionId: string, questionNumber: number) {
+      return {
+        success: true,
+        data: {
+          id: `ans-${questionId}`,
+          answerText: `Answer for ${questionId}.`,
+          structuredAnswerJson: {
+            answer: `Structured answer for ${questionId}.`,
+            law: 'Article 2176 of the Civil Code.',
+            analysis: 'Analysis text.',
+            conclusion: 'Conclusion text.',
+          },
+          modelRun: {
+            modelName: 'gpt-4o-mini',
+            promptTemplateVersion: 'bar_exam_alac.v1',
+          },
+          reviewedAt: '2026-05-14T10:00:00Z',
+          question: {
+            id: questionId,
+            questionNumber,
+            sittingId: 'sitting-id',
+          },
+        },
+      };
+    }
+
+    // A cache-preserving provider: unlike `withProviders` (gcTime: 0), this
+    // keeps cached answers alive across the unmount that Radix triggers when
+    // an accordion collapses, mirroring the production 5-minute gcTime so the
+    // re-open path serves from cache instead of refetching.
+    function withCacheProviders(children: ReactNode) {
+      const qc = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      return (
+        <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+      );
+    }
+
+    type FetchCounts = { q1: number; q2: number };
+
+    function routedGet(counts: FetchCounts) {
+      return (url: string) => {
+        if (url === '/bar-exams/2018/civil_law') {
+          return Promise.resolve(TWO_QUESTION_PAYLOAD);
+        }
+        if (url === '/bar-exams/questions/q1/answer') {
+          counts.q1 += 1;
+          return Promise.resolve(answerPayload('q1', 1));
+        }
+        if (url === '/bar-exams/questions/q2/answer') {
+          counts.q2 += 1;
+          return Promise.resolve(answerPayload('q2', 2));
+        }
+        return Promise.reject(new Error(`unexpected GET ${url}`));
+      };
+    }
+
+    function enableAnswers() {
+      process.env['NEXT_PUBLIC_FEATURE_BAR_EXAM_ANSWERS_PUBLIC'] = 'true';
+      mockAccessState.canAccess = true;
+      mockAccessState.reason = 'paid';
+      navigationMocks.useParams.mockReturnValue({
+        year: '2018',
+        subjectCode: 'civil_law',
+      });
+    }
+
+    afterEach(() => {
+      delete process.env['NEXT_PUBLIC_FEATURE_BAR_EXAM_ANSWERS_PUBLIC'];
+    });
+
+    it('opening Q1 fires Q1 answer fetch exactly once', async () => {
+      enableAnswers();
+      const counts: FetchCounts = { q1: 0, q2: 0 };
+      mockGet.mockImplementation(routedGet(counts));
+
+      render(withCacheProviders(<BarExamSittingPage />));
+
+      const q1Trigger = await screen.findByTestId('answer-trigger-1');
+      await act(async () => {
+        await userEvent.click(q1Trigger);
+      });
+
+      await waitFor(() =>
+        expect(
+          screen.getByText('Structured answer for q1.'),
+        ).toBeInTheDocument(),
+      );
+      expect(counts.q1).toBe(1);
+      expect(counts.q2).toBe(0);
+    });
+
+    it('opening Q2 fetches Q2 once and does not refetch Q1', async () => {
+      enableAnswers();
+      const counts: FetchCounts = { q1: 0, q2: 0 };
+      mockGet.mockImplementation(routedGet(counts));
+
+      render(withCacheProviders(<BarExamSittingPage />));
+
+      const q1Trigger = await screen.findByTestId('answer-trigger-1');
+      await act(async () => {
+        await userEvent.click(q1Trigger);
+      });
+      await waitFor(() =>
+        expect(
+          screen.getByText('Structured answer for q1.'),
+        ).toBeInTheDocument(),
+      );
+      expect(counts.q1).toBe(1);
+
+      const q2Trigger = screen.getByTestId('answer-trigger-2');
+      await act(async () => {
+        await userEvent.click(q2Trigger);
+      });
+      await waitFor(() =>
+        expect(
+          screen.getByText('Structured answer for q2.'),
+        ).toBeInTheDocument(),
+      );
+
+      // Q2 fired once; opening Q2 did NOT re-fire Q1's quota-gated fetch.
+      expect(counts.q2).toBe(1);
+      expect(counts.q1).toBe(1);
+    });
+
+    it('collapsing then re-opening Q1 does not refetch', async () => {
+      enableAnswers();
+      const counts: FetchCounts = { q1: 0, q2: 0 };
+      mockGet.mockImplementation(routedGet(counts));
+
+      render(withCacheProviders(<BarExamSittingPage />));
+
+      const q1Trigger = await screen.findByTestId('answer-trigger-1');
+      // Open
+      await act(async () => {
+        await userEvent.click(q1Trigger);
+      });
+      await waitFor(() =>
+        expect(
+          screen.getByText('Structured answer for q1.'),
+        ).toBeInTheDocument(),
+      );
+      expect(counts.q1).toBe(1);
+
+      // Collapse (single + collapsible → clicking the open trigger closes it)
+      await act(async () => {
+        await userEvent.click(q1Trigger);
+      });
+      await waitFor(() =>
+        expect(
+          screen.queryByText('Structured answer for q1.'),
+        ).not.toBeInTheDocument(),
+      );
+
+      // Re-open: served from React Query cache, no second network call.
+      await act(async () => {
+        await userEvent.click(q1Trigger);
+      });
+      await waitFor(() =>
+        expect(
+          screen.getByText('Structured answer for q1.'),
+        ).toBeInTheDocument(),
+      );
+
+      expect(counts.q1).toBe(1);
+      expect(counts.q2).toBe(0);
+    });
+  });
+
   it('forwards the ?part query parameter to the API', async () => {
     navigationMocks.useParams.mockReturnValue({
       year: '2022',
