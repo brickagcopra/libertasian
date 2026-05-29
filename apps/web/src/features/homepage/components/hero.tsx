@@ -38,6 +38,9 @@ export function Hero({ hero }: HeroProps) {
               fontWeight: 500,
               letterSpacing: '-5.2px',
               zIndex: 2,
+              // Headlines now paint over the owl (owl dropped to zIndex 1); a
+              // soft shadow keeps the cream words crisp against the illustration.
+              textShadow: '0 2px 18px rgba(28, 26, 20, 0.28)',
             }}
           >
             {warm.headlineTop.split(' ').slice(0, 1).join(' ')}
@@ -76,7 +79,10 @@ export function Hero({ hero }: HeroProps) {
               top: 30,
               left: '50%',
               transform: 'translateX(-50%)',
-              zIndex: 3,
+              // Below the headlines (zIndex 2) so the full phrase
+              // "LAW YOU CAN, … ACTUALLY READ!" stays legible. The speech
+              // bubble keeps zIndex 4 and stays above the owl.
+              zIndex: 1,
             }}
           >
             <Owl size={560} />
@@ -111,6 +117,8 @@ export function Hero({ hero }: HeroProps) {
               fontWeight: 500,
               letterSpacing: '-5px',
               zIndex: 2,
+              // Soft shadow keeps the cream words crisp where they overlap the owl.
+              textShadow: '0 2px 18px rgba(28, 26, 20, 0.28)',
             }}
           >
             {warm.headlineBottom.split(' ').slice(0, 1).join(' ')}
