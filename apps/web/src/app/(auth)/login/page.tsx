@@ -17,6 +17,7 @@ import { ApiClientError } from '@/lib/api-client';
 import { Wordmark } from '@/components/brand/wordmark';
 import { Owl } from '@/components/brand/owl';
 import { ROUTES } from '@/lib/constants';
+import { resolveSafeRedirect } from '@/features/auth/safe-redirect';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -39,7 +40,17 @@ export default function LoginPage() {
         setMfaRequired(true);
         return;
       }
-      router.push(result.user.onboardingCompletedAt ? ROUTES.SEARCH : ROUTES.ONBOARDING);
+      const onboarded = Boolean(result.user.onboardingCompletedAt);
+      const fallback = onboarded ? ROUTES.SEARCH : ROUTES.ONBOARDING;
+      // Honor a middleware-supplied ?from= deep link, but only after onboarding
+      // is complete and only when it passes same-origin validation (no open
+      // redirects). Read from window so we avoid Next's useSearchParams Suspense
+      // requirement — this runs client-side as a post-login action.
+      const from =
+        typeof window !== 'undefined'
+          ? new URLSearchParams(window.location.search).get('from')
+          : null;
+      router.push(onboarded ? resolveSafeRedirect(from, fallback) : fallback);
     } catch (error) {
       if (error instanceof ApiClientError) {
         setError('root', { message: error.message });
