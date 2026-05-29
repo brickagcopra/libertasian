@@ -48,10 +48,15 @@ export default function LibraryHubPage() {
             0,
           );
           const isLoading = result?.isLoading ?? false;
+          // After loading, categories with no approved items are part of the
+          // roadmap — show a de-emphasized "Coming soon" instead of "0 items".
+          const isEmpty = !isLoading && approvedTotal === 0;
           const Icon = t.icon;
           return (
             <Link key={t.enum} href={`/library/${t.slug}`} className="block">
-              <Card className="h-full transition hover:shadow-md">
+              <Card
+                className={`h-full transition hover:shadow-md${isEmpty ? ' opacity-60' : ''}`}
+              >
                 <CardContent className="flex h-full flex-col gap-3 p-5">
                   <div className="flex items-center gap-3">
                     <div className="flex h-10 w-10 flex-none items-center justify-center rounded-md bg-primary/10 text-primary">
@@ -67,6 +72,8 @@ export default function LibraryHubPage() {
                   <div className="mt-auto text-xs text-muted-foreground">
                     {isLoading ? (
                       <span className="inline-block h-3 w-16 animate-pulse rounded bg-muted" />
+                    ) : isEmpty ? (
+                      <span className="italic">Coming soon</span>
                     ) : (
                       <span>
                         <span className="font-semibold text-foreground">
