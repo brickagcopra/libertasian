@@ -328,7 +328,10 @@ export class PromotionRuleEngineService {
       const resolved = await this.pricingEngine.resolvePlanPrice(planCode, billingPeriod, organizationId);
       originalAmount = resolved.amount;
       currency = resolved.currency;
-    } catch {
+    } catch (err) {
+      this.logger.warn(
+        `Discount-preview price resolution failed for planCode=${planCode} billingPeriod=${billingPeriod} (no preview returned): ${err instanceof Error ? err.message : String(err)}`,
+      );
       return undefined;
     }
     let totalDiscount = 0;

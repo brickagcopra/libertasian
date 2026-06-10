@@ -28,7 +28,7 @@ For each hit, read 8–15 lines of context to see what's inside the `try` and wh
 | Risk class | Count | Logged in this PR | Deferred / Accepted |
 |---|---|---|---|
 | HIGH (auth, MFA, JWT, RBAC, tenant, billing, AES, upload) | 4 | 4 | 0 |
-| MEDIUM (DB / external service / background job) | 2 | 0 | 2 deferred |
+| MEDIUM (DB / external service / background job) | 2 | 2 (logged in follow-up PR — see below) | 0 |
 | LOW (deliberate fallback or already logged at debug+) | 15 | 0 | 15 accepted |
 | **Total silent-catch sites in `apps/api/src` (non-test)** | **21** | **4** | **17** |
 
@@ -132,12 +132,14 @@ this.aiSettings.checkBudgetThresholds().catch(() => {});
 
 ---
 
-## MEDIUM findings — deferred
+## MEDIUM findings — logged (follow-up PR `chore/api-silent-catch-medium-followups`)
 
-| Site | Inside `try` | Catch shape | Suggested follow-up |
+Both MEDIUM sites were deferred from the original PR (`8212edd`) and are now logged in the follow-up PR, mirroring the HIGH-site `warn`-with-error-context pattern. Visibility-only — no return-value changes, no rethrows. Per the no-PII rule, logs include `planCode`/`billingPeriod` only (no emails/tokens/`organizationId` in the message text).
+
+| Site | Inside `try` | Catch shape | Action |
 |---|---|---|---|
-| `apps/api/src/modules/subscriptions/subscription-lifecycle.service.ts:485` | `plansService.findByCode(planCode)` for trial duration lookup | `} catch { /* Use default */ }` | Add `warn` log; falling back to the hard-coded 14-day default silently hides plan-mismatch bugs |
-| `apps/api/src/modules/promotions/promotion-rule-engine.service.ts:331` | `pricingEngine.resolvePlanPrice(planCode, billingPeriod, organizationId)` | `} catch { return undefined; }` | Add `warn` log; discount-preview disappears with no signal when pricing resolution fails |
+| `apps/api/src/modules/subscriptions/subscription-lifecycle.service.ts:485` | `plansService.findByCode(planCode)` for trial duration lookup | `} catch { /* Use default */ }` | Added `warn` log including `planCode` + error; still falls back to the hard-coded 14-day default |
+| `apps/api/src/modules/promotions/promotion-rule-engine.service.ts:331` | `pricingEngine.resolvePlanPrice(planCode, billingPeriod, organizationId)` | `} catch { return undefined; }` | Added `warn` log including `planCode`/`billingPeriod` + error; still returns `undefined` |
 
 ---
 

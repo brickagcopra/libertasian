@@ -482,7 +482,10 @@ export class SubscriptionLifecycleService {
         if (plan.trialDurationDays > 0) {
           trialDurationDays = plan.trialDurationDays;
         }
-      } catch {
+      } catch (err) {
+        this.logger.warn(
+          `Trial-duration plan lookup failed for planCode=${planCode} (using 14-day default): ${err instanceof Error ? err.message : String(err)}`,
+        );
         // Use default
       }
 
