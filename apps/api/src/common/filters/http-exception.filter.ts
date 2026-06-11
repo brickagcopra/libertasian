@@ -29,6 +29,13 @@ export class HttpExceptionFilter implements ExceptionFilter {
       }
     }
 
+    // Surface a `retryAfter` (seconds) carried on the exception body as the
+    // standard Retry-After HTTP header (e.g. LoginThrottleService 429 locks).
+    const retryAfter = customFields['retryAfter'];
+    if (typeof retryAfter === 'number' && Number.isFinite(retryAfter)) {
+      response.setHeader('Retry-After', String(Math.max(0, Math.ceil(retryAfter))));
+    }
+
     // Never expose stack traces or internal details in production
     response.status(status).json({
       ...customFields,

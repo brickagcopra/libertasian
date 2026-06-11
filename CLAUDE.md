@@ -168,11 +168,14 @@ Use `helmet` in NestJS for most of these. Override CSP per route if the reader U
 
 ### Rate Limiting
 
-Implement via Redis sliding window at the NestJS gateway level:
+Two distinct mechanisms. Do not conflate them: a coarse per-IP request throttle
+(abuse backstop) and a failures-only brute-force model for password login.
+
+#### General request throttle (Redis sliding window, NestJS gateway)
 
 | Route Category | Limit | Window |
 |---|---|---|
-| Auth (login, register, reset) | 10 requests | 15 minutes per IP |
+| Auth backstop (register, forgot/reset password, verify/resend email) | 60 requests | 15 minutes per IP |
 | AI answers / digest generation | Plan-based (free: 15/day, pro: 200/day) | 24 hours per user |
 | Search queries | Plan-based (free: 50/day, pro: unlimited) | 24 hours per user |
 | File uploads | 20 files | 1 hour per user |
@@ -181,6 +184,44 @@ Implement via Redis sliding window at the NestJS gateway level:
 | General API | 300 requests | 1 minute per user |
 
 Return `429 Too Many Requests` with `Retry-After` header. Log rate limit hits for abuse detection.
+
+**Why the auth backstop is 60, not 10, and counts every request:** our users sit
+behind CGNAT and office NAT, so an entire firm shares one egress IP. A tight
+IP-keyed, success-counting throttle on the whole auth surface locks out whole
+firms. The class-level `@Throttle` on `AuthController` is therefore only a coarse
+abuse backstop for the low-volume public endpoints above. **`login` is NOT
+defended by this bucket** — it uses the two-layer brute-force model below. **`refresh`
+is `@SkipThrottle()`** so background token rotation never consumes the auth budget
+(it is already protected by refresh-token-reuse detection).
+
+#### Login brute-force protection (Auth0/OWASP/NIST two-layer model)
+
+`LoginThrottleService` (Redis-backed, injected into `AuthService.login`) counts
+**failures only** — successful logins never increment any counter, so shared-NAT
+egress IPs are never locked out by normal sign-ins. Both layers fail OPEN: every
+Redis call is wrapped in try/catch and a Redis outage logs a structured warning
+and allows the attempt. Thresholds come from `ConfigService` (see env vars below).
+
+- **Layer 1 — per-account.** Key `auth:fail:acct:{sha256(lowercased email)}` =
+  consecutive failure count, 15-min sliding TTL. At count ≥ `AUTH_LOCK_ACCOUNT_THRESHOLD`
+  (default 10), arm a companion `auth:lock:acct:{hash}` lock for
+  `min(AUTH_LOCK_MAX_MIN, 2^(count − threshold))` minutes (exponential backoff, capped
+  at 30 min). A fully successful login DELETEs this counter (and clears the lock).
+- **Layer 2 — per-IP velocity.** Key `auth:fail:ip:{ip}`, 15-min TTL. At count ≥
+  `AUTH_LOCK_IP_THRESHOLD` (default 100), set `auth:lock:ip:{ip}` for 15 min. Per NIST
+  SP 800-63B, an accepted secret (successful login) does **not** reset this velocity
+  counter — only the per-account counter clears on success.
+
+Call order in `AuthService.login`: `assertNotLocked(email, ip)` runs FIRST (before
+`bcrypt.compare`) and throws `429` with `Retry-After` (seconds) if either layer is
+tripped; `recordFailure(email, ip)` runs on every failed credential check (bad
+password AND bad MFA), incrementing both counters and emitting a `login_failed`
+event (email redacted in logs); `recordSuccess(email, ip)` runs after a fully
+successful login and clears only the per-account counter.
+
+Env vars (all optional, Joi defaults in `app.module.ts`):
+`AUTH_LOCK_ACCOUNT_THRESHOLD=10`, `AUTH_LOCK_IP_THRESHOLD=100`,
+`AUTH_LOCK_WINDOW_SEC=900`, `AUTH_LOCK_MAX_MIN=30`.
 
 ### Secrets Management
 

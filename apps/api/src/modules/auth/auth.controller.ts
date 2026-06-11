@@ -16,7 +16,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { Throttle } from '@nestjs/throttler';
+import { SkipThrottle, Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import type { JwtPayload } from '@libertasian/types';
 
@@ -52,13 +52,19 @@ const REFRESH_COOKIE = 'libertasian-refresh';
 const PERSIST_COOKIE = 'libertasian-persist';
 
 /**
- * Auth controller — rate limited to 10 requests per 15 minutes per IP
- * for public auth endpoints (login, register, forgot-password, reset-password)
- * per CLAUDE.md security standards.
+ * Auth controller.
+ *
+ * The class-level @Throttle is now only a COARSE per-IP backstop for the
+ * low-volume public endpoints (register / forgot-password / verify-email /
+ * resend-verification). Real brute-force defense for `login` is handled by the
+ * failures-only, per-account + per-IP LoginThrottleService — so this IP bucket
+ * is intentionally generous (60 / 15 min) to stay safe behind CGNAT / office
+ * NAT where a whole firm shares one egress IP. `refresh` opts out entirely via
+ * @SkipThrottle (it is protected by refresh-token-reuse detection).
  */
 @ApiTags('Auth')
 @Controller('auth')
-@Throttle({ default: { ttl: 900000, limit: 10 } }) // 10 requests per 15 min (auth routes)
+@Throttle({ default: { ttl: 900000, limit: 60 } }) // coarse per-IP backstop (NAT-safe)
 export class AuthController {
   private readonly googleEnabled: boolean;
   private readonly appUrl: string;
@@ -241,6 +247,7 @@ export class AuthController {
   }
 
   @Post('refresh')
+  @SkipThrottle() // background token refresh must never consume the auth bucket
   @ApiOperation({ summary: 'Refresh access token (web: httpOnly cookie; mobile: request body)' })
   async refresh(
     @Req() req: Request,
