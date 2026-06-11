@@ -4,9 +4,10 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -26,11 +27,13 @@ export default function LoginPage() {
 
   const {
     register,
+    control,
     handleSubmit,
     formState: { errors, isSubmitting },
     setError,
   } = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
+    defaultValues: { rememberMe: true },
   });
 
   const onSubmit = async (data: LoginFormData) => {
@@ -134,6 +137,23 @@ export default function LoginPage() {
                 </p>
               </div>
             )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Controller
+              control={control}
+              name="rememberMe"
+              render={({ field }) => (
+                <Checkbox
+                  id="rememberMe"
+                  checked={field.value ?? true}
+                  onCheckedChange={(checked) => field.onChange(checked === true)}
+                />
+              )}
+            />
+            <Label htmlFor="rememberMe" className="text-warm-ink-mid text-sm font-normal">
+              Keep me signed in
+            </Label>
           </div>
 
           <Button

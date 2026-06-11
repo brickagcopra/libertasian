@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsEmail, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsEmail, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export class LoginDto {
   @ApiProperty({ example: 'juan@example.com' })
@@ -16,4 +16,15 @@ export class LoginDto {
   @IsOptional()
   @IsString()
   mfaCode?: string;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'Keep me signed in. Checked/omitted (default) issues a persistent 7-day refresh cookie; ' +
+      'false issues a session cookie cleared on browser close. The server-side refresh-token ' +
+      'TTL is unchanged either way — only browser cookie persistence differs.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  rememberMe?: boolean;
 }

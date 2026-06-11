@@ -44,6 +44,14 @@ import {
 const REFRESH_COOKIE = 'libertasian-refresh';
 
 /**
+ * Companion cookie recording whether the user opted into "keep me signed in".
+ * '1' = persistent, '0' = session-only. Carried alongside the refresh cookie so
+ * token rotation in `refresh` can replicate the original persistence choice
+ * (cookies sent on rotation don't otherwise know how the login set them).
+ */
+const PERSIST_COOKIE = 'libertasian-persist';
+
+/**
  * Auth controller.
  *
  * The class-level @Throttle is now only a COARSE per-IP backstop for the
@@ -90,26 +98,41 @@ export class AuthController {
     return typeof value === 'string' && value.toLowerCase() === 'mobile';
   }
 
-  /** Set httpOnly cookie with the refresh token */
-  private setRefreshCookie(res: Response, refreshToken: string): void {
-    res.cookie(REFRESH_COOKIE, refreshToken, {
+  /**
+   * Set the httpOnly refresh cookie plus its `libertasian-persist` companion.
+   *
+   * When `persistent` (the "keep me signed in" choice), both cookies carry
+   * `maxAge` so they survive a browser restart (current 7-day behavior). When
+   * not persistent, `maxAge`/`expires` are omitted so both become session
+   * cookies that the browser drops on close — protecting shared/public
+   * computers. Either way the server-side refresh-token TTL is unchanged; only
+   * browser cookie persistence differs.
+   */
+  private setRefreshCookie(res: Response, refreshToken: string, persistent: boolean): void {
+    const base = {
       httpOnly: true,
       secure: this.isProduction,
-      sameSite: 'strict',
+      sameSite: 'strict' as const,
       path: '/api/v1/auth',
-      maxAge: this.refreshTtl * 1000,
-    });
+    };
+    const options = persistent ? { ...base, maxAge: this.refreshTtl * 1000 } : base;
+
+    res.cookie(REFRESH_COOKIE, refreshToken, options);
+    // Same flags/path and same maxAge logic so refresh can replicate the choice.
+    res.cookie(PERSIST_COOKIE, persistent ? '1' : '0', options);
   }
 
-  /** Clear the httpOnly refresh cookie */
+  /** Clear the httpOnly refresh cookie and its persistence companion */
   private clearRefreshCookie(res: Response): void {
-    res.cookie(REFRESH_COOKIE, '', {
+    const expired = {
       httpOnly: true,
       secure: this.isProduction,
-      sameSite: 'strict',
+      sameSite: 'strict' as const,
       path: '/api/v1/auth',
       maxAge: 0,
-    });
+    };
+    res.cookie(REFRESH_COOKIE, '', expired);
+    res.cookie(PERSIST_COOKIE, '', expired);
   }
 
   @Post('register')
@@ -162,8 +185,9 @@ export class AuthController {
       metadata: { ip, provider: 'google' },
     });
 
-    // Set refresh token as httpOnly cookie — never exposed to JS
-    this.setRefreshCookie(res, result.tokens.refreshToken);
+    // Set refresh token as httpOnly cookie — never exposed to JS.
+    // OAuth has no "keep me signed in" prompt; default to persistent.
+    this.setRefreshCookie(res, result.tokens.refreshToken, true);
 
     // Only pass accessToken as query param (short-lived, consumed immediately)
     const params = new URLSearchParams({
@@ -192,8 +216,9 @@ export class AuthController {
     if (!result.mfaRequired) {
       // Web clients store the refresh token in an httpOnly cookie.
       // Mobile clients receive it in the response body (no cookie jar).
+      // rememberMe omitted → persistent (backward-compat for existing clients).
       if (!isMobile) {
-        this.setRefreshCookie(res, result.tokens.refreshToken);
+        this.setRefreshCookie(res, result.tokens.refreshToken, dto.rememberMe !== false);
       }
 
       await this.auditService.log({
@@ -248,8 +273,12 @@ export class AuthController {
       const tokens = await this.authService.refreshTokens(refreshToken, fingerprint, req);
 
       // Rotate: web sets new refresh token as httpOnly cookie; mobile gets it in body.
+      // Replicate the original "keep me signed in" choice from the companion
+      // cookie so rotation never silently upgrades a session cookie to persistent
+      // (absent → persistent, preserving pre-feature behavior).
       if (!isMobile) {
-        this.setRefreshCookie(res, tokens.refreshToken);
+        const persistent = (req.cookies as Record<string, string>)?.[PERSIST_COOKIE] !== '0';
+        this.setRefreshCookie(res, tokens.refreshToken, persistent);
         return { success: true, data: { accessToken: tokens.accessToken } };
       }
 
