@@ -250,3 +250,29 @@ describe('AuthController — mobile transport branch', () => {
     });
   });
 });
+
+// @nestjs/throttler stores decorator config as reflect-metadata keyed by
+// `<CONSTANT><throttler-name>` (the default throttler's name is 'default').
+// These keys are part of the package's stable metadata contract.
+const THROTTLER_LIMIT_DEFAULT = 'THROTTLER:LIMITdefault';
+const THROTTLER_TTL_DEFAULT = 'THROTTLER:TTLdefault';
+const THROTTLER_SKIP_DEFAULT = 'THROTTLER:SKIPdefault';
+
+describe('AuthController — rate-limit configuration', () => {
+  it('class-level @Throttle is the coarse per-IP backstop: 60 requests / 15 min', () => {
+    expect(Reflect.getMetadata(THROTTLER_LIMIT_DEFAULT, AuthController)).toBe(60);
+    expect(Reflect.getMetadata(THROTTLER_TTL_DEFAULT, AuthController)).toBe(900000);
+  });
+
+  it('refresh handler opts out of the auth bucket via @SkipThrottle', () => {
+    expect(
+      Reflect.getMetadata(THROTTLER_SKIP_DEFAULT, AuthController.prototype.refresh),
+    ).toBe(true);
+  });
+
+  it('login handler is NOT skipped (still subject to the coarse backstop)', () => {
+    expect(
+      Reflect.getMetadata(THROTTLER_SKIP_DEFAULT, AuthController.prototype.login),
+    ).toBeUndefined();
+  });
+});

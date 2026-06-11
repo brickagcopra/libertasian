@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, HttpException, HttpStatus, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -11,6 +11,7 @@ import { PermissionsService } from '../rbac/permissions.service';
 import { UsersService } from '../users/users.service';
 import { AuthService } from './auth.service';
 import { LoginEventService } from './login-event.service';
+import { LoginThrottleService } from './login-throttle.service';
 import type { RegisterDto, LoginDto } from './dto';
 
 // Mock uuid (ESM-only package, cannot be transformed by ts-jest)
@@ -91,6 +92,11 @@ describe('AuthService', () => {
   let configService: jest.Mocked<ConfigService>;
   let notificationsService: jest.Mocked<NotificationsService>;
   let loginEventService: { record: jest.Mock };
+  let loginThrottle: {
+    assertNotLocked: jest.Mock;
+    recordFailure: jest.Mock;
+    recordSuccess: jest.Mock;
+  };
 
   const mockUser = {
     id: 'user-123',
@@ -222,6 +228,14 @@ describe('AuthService', () => {
           },
         },
         {
+          provide: LoginThrottleService,
+          useValue: {
+            assertNotLocked: jest.fn().mockResolvedValue(undefined),
+            recordFailure: jest.fn().mockResolvedValue(undefined),
+            recordSuccess: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
           provide: PermissionsService,
           useValue: {
             // Default: no admin:* permissions — non-admin user. Individual
@@ -241,6 +255,11 @@ describe('AuthService', () => {
     configService = module.get(ConfigService) as jest.Mocked<ConfigService>;
     notificationsService = module.get(NotificationsService) as jest.Mocked<NotificationsService>;
     loginEventService = module.get(LoginEventService) as unknown as { record: jest.Mock };
+    loginThrottle = module.get(LoginThrottleService) as unknown as {
+      assertNotLocked: jest.Mock;
+      recordFailure: jest.Mock;
+      recordSuccess: jest.Mock;
+    };
 
     // Default mock implementations
     (bcrypt.hash as jest.Mock).mockResolvedValue('$2b$12$hashedpassword');
@@ -517,6 +536,101 @@ describe('AuthService', () => {
       expect(permsInstance.getEffectivePermissions).toHaveBeenCalledWith(
         mockMembership.id,
       );
+    });
+
+    // ─── brute-force throttle wiring (LoginThrottleService) ───────────
+    it('calls assertNotLocked BEFORE comparing credentials', async () => {
+      const order: string[] = [];
+      loginThrottle.assertNotLocked.mockImplementation(async () => {
+        order.push('assertNotLocked');
+      });
+      usersService.findByEmail.mockImplementation(async () => {
+        order.push('findByEmail');
+        return mockUser as unknown as ReturnType<UsersService['findByEmail']>;
+      });
+      usersService.sanitize.mockReturnValue({} as never);
+      (bcrypt.compare as jest.Mock).mockImplementation(async () => {
+        order.push('bcrypt.compare');
+        return true;
+      });
+      prismaService.organizationMember.findFirst.mockResolvedValue(
+        mockMembership as unknown as ReturnType<typeof prismaService.organizationMember.findFirst>,
+      );
+      jwtService.sign.mockReturnValue('jwt');
+      prismaService.refreshToken.create.mockResolvedValue({} as never);
+
+      await service.login(loginDto, deviceFingerprint);
+
+      expect(order[0]).toBe('assertNotLocked');
+      expect(order.indexOf('assertNotLocked')).toBeLessThan(order.indexOf('bcrypt.compare'));
+    });
+
+    it('propagates the 429 from assertNotLocked and never reaches bcrypt.compare', async () => {
+      const locked = new HttpException(
+        { statusCode: 429, message: 'locked', retryAfter: 120 },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+      loginThrottle.assertNotLocked.mockRejectedValueOnce(locked);
+
+      await expect(service.login(loginDto, deviceFingerprint)).rejects.toMatchObject({
+        status: HttpStatus.TOO_MANY_REQUESTS,
+      });
+      expect(usersService.findByEmail).not.toHaveBeenCalled();
+      expect(bcrypt.compare).not.toHaveBeenCalled();
+      expect(loginThrottle.recordFailure).not.toHaveBeenCalled();
+    });
+
+    it('records a failure (both layers) and emits login_failed on a bad password', async () => {
+      usersService.findByEmail.mockResolvedValue(mockUser as unknown as ReturnType<UsersService['findByEmail']>);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+
+      await expect(service.login(loginDto, deviceFingerprint)).rejects.toThrow(UnauthorizedException);
+
+      expect(loginThrottle.recordFailure).toHaveBeenCalledTimes(1);
+      expect(loginThrottle.recordFailure).toHaveBeenCalledWith(loginDto.email, 'unknown');
+      expect(loginThrottle.recordSuccess).not.toHaveBeenCalled();
+      expect(loginEventService.record).toHaveBeenCalledWith(
+        'login_failed',
+        mockUser.id,
+        null,
+        { failureReason: 'invalid_password', deviceFingerprint },
+      );
+    });
+
+    it('records a failure and emits login_failed on a bad MFA code', async () => {
+      const mfaUser = { ...mockUser, mfaEnabled: true, mfaSecret: 'encrypted-secret' };
+      usersService.findByEmail.mockResolvedValue(mfaUser as unknown as ReturnType<UsersService['findByEmail']>);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+      jest.spyOn(service, 'verifyTotp').mockReturnValue(false);
+
+      await expect(
+        service.login({ ...loginDto, mfaCode: '000000' }, deviceFingerprint),
+      ).rejects.toThrow('Invalid MFA code');
+
+      expect(loginThrottle.recordFailure).toHaveBeenCalledTimes(1);
+      expect(loginEventService.record).toHaveBeenCalledWith(
+        'login_failed',
+        mfaUser.id,
+        null,
+        { failureReason: 'invalid_mfa', deviceFingerprint },
+      );
+    });
+
+    it('clears the per-account counter via recordSuccess after a successful login', async () => {
+      usersService.findByEmail.mockResolvedValue(mockUser as unknown as ReturnType<UsersService['findByEmail']>);
+      usersService.sanitize.mockReturnValue({} as never);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+      prismaService.organizationMember.findFirst.mockResolvedValue(
+        mockMembership as unknown as ReturnType<typeof prismaService.organizationMember.findFirst>,
+      );
+      jwtService.sign.mockReturnValue('jwt');
+      prismaService.refreshToken.create.mockResolvedValue({} as never);
+
+      await service.login(loginDto, deviceFingerprint);
+
+      expect(loginThrottle.recordSuccess).toHaveBeenCalledTimes(1);
+      expect(loginThrottle.recordSuccess).toHaveBeenCalledWith(loginDto.email, 'unknown');
+      expect(loginThrottle.recordFailure).not.toHaveBeenCalled();
     });
   });
 

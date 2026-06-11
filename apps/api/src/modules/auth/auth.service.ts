@@ -21,6 +21,7 @@ import { PermissionsService } from '../rbac/permissions.service';
 import { UsersService } from '../users/users.service';
 import { RegisterDto, LoginDto } from './dto';
 import { LoginEventService, type LoginEventType } from './login-event.service';
+import { LoginThrottleService } from './login-throttle.service';
 
 const BCRYPT_COST = 12;
 
@@ -40,6 +41,7 @@ export class AuthService {
     private readonly notificationsService: NotificationsService,
     private readonly loginEvents: LoginEventService,
     private readonly permissions: PermissionsService,
+    private readonly loginThrottle: LoginThrottleService,
   ) {
     this.accessTtl = this.config.get<number>('JWT_ACCESS_TTL', 900);
     this.refreshTtl = this.config.get<number>('JWT_REFRESH_TTL', 604800);
@@ -179,6 +181,13 @@ export class AuthService {
     user: ReturnType<UsersService['sanitize']> & { isPlatformAdmin: boolean };
     mfaRequired: boolean;
   }> {
+    const ip = this.clientIp(req);
+
+    // Two-layer brute-force gate: throws 429 (with Retry-After) if either the
+    // per-account or per-IP layer is locked. Runs BEFORE bcrypt.compare so a
+    // locked account/IP never reaches the (expensive) credential check.
+    await this.loginThrottle.assertNotLocked(dto.email, ip);
+
     const user = await this.usersService.findByEmail(dto.email);
     if (!user || !user.passwordHash) {
       throw new UnauthorizedException('Invalid email or password');
@@ -190,6 +199,11 @@ export class AuthService {
 
     const passwordValid = await bcrypt.compare(dto.password, user.passwordHash);
     if (!passwordValid) {
+      await this.loginThrottle.recordFailure(dto.email, ip);
+      this.emitLoginEvent('login_failed', user.id, req, {
+        failureReason: 'invalid_password',
+        deviceFingerprint,
+      });
       throw new UnauthorizedException('Invalid email or password');
     }
 
@@ -207,6 +221,11 @@ export class AuthService {
       }
       const mfaValid = this.verifyTotp(user.mfaSecret, dto.mfaCode);
       if (!mfaValid) {
+        await this.loginThrottle.recordFailure(dto.email, ip);
+        this.emitLoginEvent('login_failed', user.id, req, {
+          failureReason: 'invalid_mfa',
+          deviceFingerprint,
+        });
         throw new UnauthorizedException('Invalid MFA code');
       }
     }
@@ -232,6 +251,10 @@ export class AuthService {
     );
 
     this.emitLoginEvent('login_success', user.id, req, { deviceFingerprint });
+
+    // Clear the per-account failure counter on a fully successful login. The
+    // per-IP velocity counter is deliberately preserved (NIST SP 800-63B).
+    await this.loginThrottle.recordSuccess(dto.email, ip);
 
     const isPlatformAdmin = await this.computeIsPlatformAdmin(membership.id);
 
@@ -950,6 +973,18 @@ export class AuthService {
 
   private hashToken(token: string): string {
     return crypto.createHash('sha256').update(token).digest('hex');
+  }
+
+  /**
+   * Resolve the client IP for brute-force throttling. Mirrors
+   * LoginEventService.extractIp: strips the IPv4-mapped IPv6 prefix so the
+   * per-IP key matches across transports. Returns 'unknown' when no request
+   * context is available (e.g. service-level callers in tests).
+   */
+  private clientIp(req: Request | null): string {
+    const ip = req?.ip;
+    if (!ip) return 'unknown';
+    return ip.startsWith('::ffff:') ? ip.slice(7) : ip;
   }
 
   /**
