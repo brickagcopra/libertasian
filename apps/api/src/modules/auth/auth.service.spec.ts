@@ -6,6 +6,7 @@ import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import type { RedisService } from '../../common/services/redis.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PermissionsService } from '../rbac/permissions.service';
 import { UsersService } from '../users/users.service';
@@ -632,6 +633,48 @@ describe('AuthService', () => {
       expect(loginThrottle.recordSuccess).toHaveBeenCalledWith(loginDto.email, 'unknown');
       expect(loginThrottle.recordFailure).not.toHaveBeenCalled();
     });
+
+    // ---- Layer-2 gap: failures must count on the early-return paths too ----
+
+    it('records a failure (per-IP velocity) but emits NO login_failed for an unknown email', async () => {
+      usersService.findByEmail.mockResolvedValue(null);
+
+      await expect(service.login(loginDto, deviceFingerprint)).rejects.toThrow(
+        'Invalid email or password',
+      );
+
+      // Per-IP counter must still increment so credential-stuffing across
+      // unknown addresses is caught by Layer 2.
+      expect(loginThrottle.recordFailure).toHaveBeenCalledTimes(1);
+      expect(loginThrottle.recordFailure).toHaveBeenCalledWith(loginDto.email, 'unknown');
+      // No user.id to attach; emitting here would also leak an enumeration oracle.
+      expect(loginEventService.record).not.toHaveBeenCalled();
+      expect(loginThrottle.recordSuccess).not.toHaveBeenCalled();
+      expect(bcrypt.compare).not.toHaveBeenCalled();
+    });
+
+    it('records a failure and emits login_failed (account_inactive) for a suspended account', async () => {
+      const inactiveUser = { ...mockUser, status: 'suspended' };
+      usersService.findByEmail.mockResolvedValue(
+        inactiveUser as unknown as ReturnType<UsersService['findByEmail']>,
+      );
+
+      await expect(service.login(loginDto, deviceFingerprint)).rejects.toThrow(
+        'Account is suspended or deactivated',
+      );
+
+      expect(loginThrottle.recordFailure).toHaveBeenCalledTimes(1);
+      expect(loginThrottle.recordFailure).toHaveBeenCalledWith(loginDto.email, 'unknown');
+      // Here we DO have user.id, so the failure is attributable.
+      expect(loginEventService.record).toHaveBeenCalledWith(
+        'login_failed',
+        inactiveUser.id,
+        null,
+        { failureReason: 'account_inactive', deviceFingerprint },
+      );
+      // Gate is before the credential check.
+      expect(bcrypt.compare).not.toHaveBeenCalled();
+    });
   });
 
   describe('refreshTokens', () => {
@@ -1117,5 +1160,102 @@ describe('AuthService', () => {
       expect(result.mfaRequired).toBe(false);
       expect(result.tokens.accessToken).toBe('jwt');
     });
+  });
+});
+
+/**
+ * Integration: drive the REAL LoginThrottleService (backed by an in-memory
+ * Redis) through AuthService.login to prove the Layer-2 gap is closed — failed
+ * logins against UNKNOWN emails from one IP now feed the per-IP velocity counter
+ * and trip the lock, exactly as a credential-stuffing run would be caught.
+ */
+describe('AuthService — Layer-2 per-IP velocity on unknown-email failures', () => {
+  /** Minimal in-memory RedisService stand-in (counter + TTL per key). */
+  class FakeRedis {
+    readonly store = new Map<string, { value: number; ttl: number }>();
+    async incr(key: string): Promise<number> {
+      const existing = this.store.get(key);
+      const value = (existing ? existing.value : 0) + 1;
+      this.store.set(key, { value, ttl: existing ? existing.ttl : -1 });
+      return value;
+    }
+    async expire(key: string, ttlSeconds: number): Promise<number> {
+      const existing = this.store.get(key);
+      if (!existing) return 0;
+      existing.ttl = ttlSeconds;
+      return 1;
+    }
+    async set(key: string, _value: string, ttlSeconds?: number): Promise<void> {
+      this.store.set(key, { value: 1, ttl: ttlSeconds ?? -1 });
+    }
+    async del(key: string): Promise<number> {
+      return this.store.delete(key) ? 1 : 0;
+    }
+    async ttl(key: string): Promise<number> {
+      const existing = this.store.get(key);
+      return existing ? existing.ttl : -2;
+    }
+  }
+
+  const IP_THRESHOLD = 100;
+  const configStub = {
+    get: <T>(_key: string, def?: T): T => def as T,
+  } as unknown as ConfigService;
+
+  let svc: AuthService;
+  let usersStub: { findByEmail: jest.Mock };
+
+  beforeEach(() => {
+    // Use real sha256 hashing for the per-account layer so distinct unknown
+    // emails are correctly isolated (each hits its own account counter once,
+    // never locking Layer 1 — only the shared per-IP counter accumulates).
+    mockCreateHash.mockImplementation((algorithm: string) =>
+      originalCrypto.createHash(algorithm),
+    );
+
+    const throttle = new LoginThrottleService(
+      new FakeRedis() as unknown as RedisService,
+      configStub,
+    );
+    usersStub = { findByEmail: jest.fn().mockResolvedValue(null) };
+
+    svc = new AuthService(
+      {} as unknown as PrismaService,
+      usersStub as unknown as UsersService,
+      {} as unknown as JwtService,
+      configStub,
+      {} as unknown as NotificationsService,
+      { record: jest.fn().mockResolvedValue(undefined) } as unknown as LoginEventService,
+      {} as unknown as PermissionsService,
+      throttle,
+    );
+  });
+
+  afterEach(() => {
+    mockCreateHash.mockReset();
+  });
+
+  it('trips the per-IP lock after AUTH_LOCK_IP_THRESHOLD unknown-email failures; a fresh attempt is 429', async () => {
+    // Credential-stuffing simulation: distinct unknown addresses, one shared IP
+    // (req=null → clientIp resolves to "unknown"). Each is an invalid-credential
+    // rejection that must still bump the per-IP velocity counter.
+    for (let i = 0; i < IP_THRESHOLD; i++) {
+      await expect(
+        svc.login({ email: `nobody${i}@example.com`, password: 'x' } as LoginDto, 'fp'),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+    }
+
+    // The IP is now locked: a brand-new attempt is rejected at the gate with 429,
+    // before any credential check.
+    let thrown: unknown;
+    try {
+      await svc.login({ email: 'fresh@example.com', password: 'x' } as LoginDto, 'fp');
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(HttpException);
+    expect((thrown as HttpException).getStatus()).toBe(HttpStatus.TOO_MANY_REQUESTS);
+    const body = (thrown as HttpException).getResponse() as { retryAfter: number };
+    expect(body.retryAfter).toBe(900); // 15-min per-IP lock
   });
 });

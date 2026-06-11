@@ -190,10 +190,21 @@ export class AuthService {
 
     const user = await this.usersService.findByEmail(dto.email);
     if (!user || !user.passwordHash) {
+      // Count unknown-account failures too — Layer 2 (per-IP velocity) exists to
+      // catch credential stuffing, which sprays many addresses we don't know.
+      // No login_failed event here: there's no user.id to attach. recordFailure
+      // hashes the email itself, so bumping the per-account counter for a
+      // non-existent address is harmless and removes an enumeration oracle.
+      await this.loginThrottle.recordFailure(dto.email, ip);
       throw new UnauthorizedException('Invalid email or password');
     }
 
     if (user.status !== 'active') {
+      await this.loginThrottle.recordFailure(dto.email, ip);
+      this.emitLoginEvent('login_failed', user.id, req, {
+        failureReason: 'account_inactive',
+        deviceFingerprint,
+      });
       throw new UnauthorizedException('Account is suspended or deactivated');
     }
 
