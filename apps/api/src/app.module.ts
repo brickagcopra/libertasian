@@ -90,6 +90,12 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
         JWT_PUBLIC_KEY: Joi.string().optional().allow(''),
         JWT_ACCESS_TTL: Joi.number().default(900),
         JWT_REFRESH_TTL: Joi.number().default(604800),
+        // Two-layer brute-force protection (LoginThrottleService) — failures-only,
+        // per-account + per-IP velocity. All optional with NAT-safe defaults.
+        AUTH_LOCK_ACCOUNT_THRESHOLD: Joi.number().default(10),
+        AUTH_LOCK_IP_THRESHOLD: Joi.number().default(100),
+        AUTH_LOCK_WINDOW_SEC: Joi.number().default(900),
+        AUTH_LOCK_MAX_MIN: Joi.number().default(30),
         // Google OAuth (optional — enable by setting client ID and secret)
         GOOGLE_CLIENT_ID: Joi.string().optional().allow(''),
         GOOGLE_CLIENT_SECRET: Joi.string().optional().allow(''),

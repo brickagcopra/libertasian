@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, HttpException, HttpStatus, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -6,11 +6,13 @@ import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import type { RedisService } from '../../common/services/redis.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PermissionsService } from '../rbac/permissions.service';
 import { UsersService } from '../users/users.service';
 import { AuthService } from './auth.service';
 import { LoginEventService } from './login-event.service';
+import { LoginThrottleService } from './login-throttle.service';
 import type { RegisterDto, LoginDto } from './dto';
 
 // Mock uuid (ESM-only package, cannot be transformed by ts-jest)
@@ -91,6 +93,11 @@ describe('AuthService', () => {
   let configService: jest.Mocked<ConfigService>;
   let notificationsService: jest.Mocked<NotificationsService>;
   let loginEventService: { record: jest.Mock };
+  let loginThrottle: {
+    assertNotLocked: jest.Mock;
+    recordFailure: jest.Mock;
+    recordSuccess: jest.Mock;
+  };
 
   const mockUser = {
     id: 'user-123',
@@ -222,6 +229,14 @@ describe('AuthService', () => {
           },
         },
         {
+          provide: LoginThrottleService,
+          useValue: {
+            assertNotLocked: jest.fn().mockResolvedValue(undefined),
+            recordFailure: jest.fn().mockResolvedValue(undefined),
+            recordSuccess: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
           provide: PermissionsService,
           useValue: {
             // Default: no admin:* permissions — non-admin user. Individual
@@ -241,6 +256,11 @@ describe('AuthService', () => {
     configService = module.get(ConfigService) as jest.Mocked<ConfigService>;
     notificationsService = module.get(NotificationsService) as jest.Mocked<NotificationsService>;
     loginEventService = module.get(LoginEventService) as unknown as { record: jest.Mock };
+    loginThrottle = module.get(LoginThrottleService) as unknown as {
+      assertNotLocked: jest.Mock;
+      recordFailure: jest.Mock;
+      recordSuccess: jest.Mock;
+    };
 
     // Default mock implementations
     (bcrypt.hash as jest.Mock).mockResolvedValue('$2b$12$hashedpassword');
@@ -517,6 +537,143 @@ describe('AuthService', () => {
       expect(permsInstance.getEffectivePermissions).toHaveBeenCalledWith(
         mockMembership.id,
       );
+    });
+
+    // ─── brute-force throttle wiring (LoginThrottleService) ───────────
+    it('calls assertNotLocked BEFORE comparing credentials', async () => {
+      const order: string[] = [];
+      loginThrottle.assertNotLocked.mockImplementation(async () => {
+        order.push('assertNotLocked');
+      });
+      usersService.findByEmail.mockImplementation(async () => {
+        order.push('findByEmail');
+        return mockUser as unknown as ReturnType<UsersService['findByEmail']>;
+      });
+      usersService.sanitize.mockReturnValue({} as never);
+      (bcrypt.compare as jest.Mock).mockImplementation(async () => {
+        order.push('bcrypt.compare');
+        return true;
+      });
+      prismaService.organizationMember.findFirst.mockResolvedValue(
+        mockMembership as unknown as ReturnType<typeof prismaService.organizationMember.findFirst>,
+      );
+      jwtService.sign.mockReturnValue('jwt');
+      prismaService.refreshToken.create.mockResolvedValue({} as never);
+
+      await service.login(loginDto, deviceFingerprint);
+
+      expect(order[0]).toBe('assertNotLocked');
+      expect(order.indexOf('assertNotLocked')).toBeLessThan(order.indexOf('bcrypt.compare'));
+    });
+
+    it('propagates the 429 from assertNotLocked and never reaches bcrypt.compare', async () => {
+      const locked = new HttpException(
+        { statusCode: 429, message: 'locked', retryAfter: 120 },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+      loginThrottle.assertNotLocked.mockRejectedValueOnce(locked);
+
+      await expect(service.login(loginDto, deviceFingerprint)).rejects.toMatchObject({
+        status: HttpStatus.TOO_MANY_REQUESTS,
+      });
+      expect(usersService.findByEmail).not.toHaveBeenCalled();
+      expect(bcrypt.compare).not.toHaveBeenCalled();
+      expect(loginThrottle.recordFailure).not.toHaveBeenCalled();
+    });
+
+    it('records a failure (both layers) and emits login_failed on a bad password', async () => {
+      usersService.findByEmail.mockResolvedValue(mockUser as unknown as ReturnType<UsersService['findByEmail']>);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+
+      await expect(service.login(loginDto, deviceFingerprint)).rejects.toThrow(UnauthorizedException);
+
+      expect(loginThrottle.recordFailure).toHaveBeenCalledTimes(1);
+      expect(loginThrottle.recordFailure).toHaveBeenCalledWith(loginDto.email, 'unknown');
+      expect(loginThrottle.recordSuccess).not.toHaveBeenCalled();
+      expect(loginEventService.record).toHaveBeenCalledWith(
+        'login_failed',
+        mockUser.id,
+        null,
+        { failureReason: 'invalid_password', deviceFingerprint },
+      );
+    });
+
+    it('records a failure and emits login_failed on a bad MFA code', async () => {
+      const mfaUser = { ...mockUser, mfaEnabled: true, mfaSecret: 'encrypted-secret' };
+      usersService.findByEmail.mockResolvedValue(mfaUser as unknown as ReturnType<UsersService['findByEmail']>);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+      jest.spyOn(service, 'verifyTotp').mockReturnValue(false);
+
+      await expect(
+        service.login({ ...loginDto, mfaCode: '000000' }, deviceFingerprint),
+      ).rejects.toThrow('Invalid MFA code');
+
+      expect(loginThrottle.recordFailure).toHaveBeenCalledTimes(1);
+      expect(loginEventService.record).toHaveBeenCalledWith(
+        'login_failed',
+        mfaUser.id,
+        null,
+        { failureReason: 'invalid_mfa', deviceFingerprint },
+      );
+    });
+
+    it('clears the per-account counter via recordSuccess after a successful login', async () => {
+      usersService.findByEmail.mockResolvedValue(mockUser as unknown as ReturnType<UsersService['findByEmail']>);
+      usersService.sanitize.mockReturnValue({} as never);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+      prismaService.organizationMember.findFirst.mockResolvedValue(
+        mockMembership as unknown as ReturnType<typeof prismaService.organizationMember.findFirst>,
+      );
+      jwtService.sign.mockReturnValue('jwt');
+      prismaService.refreshToken.create.mockResolvedValue({} as never);
+
+      await service.login(loginDto, deviceFingerprint);
+
+      expect(loginThrottle.recordSuccess).toHaveBeenCalledTimes(1);
+      expect(loginThrottle.recordSuccess).toHaveBeenCalledWith(loginDto.email, 'unknown');
+      expect(loginThrottle.recordFailure).not.toHaveBeenCalled();
+    });
+
+    // ---- Layer-2 gap: failures must count on the early-return paths too ----
+
+    it('records a failure (per-IP velocity) but emits NO login_failed for an unknown email', async () => {
+      usersService.findByEmail.mockResolvedValue(null);
+
+      await expect(service.login(loginDto, deviceFingerprint)).rejects.toThrow(
+        'Invalid email or password',
+      );
+
+      // Per-IP counter must still increment so credential-stuffing across
+      // unknown addresses is caught by Layer 2.
+      expect(loginThrottle.recordFailure).toHaveBeenCalledTimes(1);
+      expect(loginThrottle.recordFailure).toHaveBeenCalledWith(loginDto.email, 'unknown');
+      // No user.id to attach; emitting here would also leak an enumeration oracle.
+      expect(loginEventService.record).not.toHaveBeenCalled();
+      expect(loginThrottle.recordSuccess).not.toHaveBeenCalled();
+      expect(bcrypt.compare).not.toHaveBeenCalled();
+    });
+
+    it('records a failure and emits login_failed (account_inactive) for a suspended account', async () => {
+      const inactiveUser = { ...mockUser, status: 'suspended' };
+      usersService.findByEmail.mockResolvedValue(
+        inactiveUser as unknown as ReturnType<UsersService['findByEmail']>,
+      );
+
+      await expect(service.login(loginDto, deviceFingerprint)).rejects.toThrow(
+        'Account is suspended or deactivated',
+      );
+
+      expect(loginThrottle.recordFailure).toHaveBeenCalledTimes(1);
+      expect(loginThrottle.recordFailure).toHaveBeenCalledWith(loginDto.email, 'unknown');
+      // Here we DO have user.id, so the failure is attributable.
+      expect(loginEventService.record).toHaveBeenCalledWith(
+        'login_failed',
+        inactiveUser.id,
+        null,
+        { failureReason: 'account_inactive', deviceFingerprint },
+      );
+      // Gate is before the credential check.
+      expect(bcrypt.compare).not.toHaveBeenCalled();
     });
   });
 
@@ -1003,5 +1160,102 @@ describe('AuthService', () => {
       expect(result.mfaRequired).toBe(false);
       expect(result.tokens.accessToken).toBe('jwt');
     });
+  });
+});
+
+/**
+ * Integration: drive the REAL LoginThrottleService (backed by an in-memory
+ * Redis) through AuthService.login to prove the Layer-2 gap is closed — failed
+ * logins against UNKNOWN emails from one IP now feed the per-IP velocity counter
+ * and trip the lock, exactly as a credential-stuffing run would be caught.
+ */
+describe('AuthService — Layer-2 per-IP velocity on unknown-email failures', () => {
+  /** Minimal in-memory RedisService stand-in (counter + TTL per key). */
+  class FakeRedis {
+    readonly store = new Map<string, { value: number; ttl: number }>();
+    async incr(key: string): Promise<number> {
+      const existing = this.store.get(key);
+      const value = (existing ? existing.value : 0) + 1;
+      this.store.set(key, { value, ttl: existing ? existing.ttl : -1 });
+      return value;
+    }
+    async expire(key: string, ttlSeconds: number): Promise<number> {
+      const existing = this.store.get(key);
+      if (!existing) return 0;
+      existing.ttl = ttlSeconds;
+      return 1;
+    }
+    async set(key: string, _value: string, ttlSeconds?: number): Promise<void> {
+      this.store.set(key, { value: 1, ttl: ttlSeconds ?? -1 });
+    }
+    async del(key: string): Promise<number> {
+      return this.store.delete(key) ? 1 : 0;
+    }
+    async ttl(key: string): Promise<number> {
+      const existing = this.store.get(key);
+      return existing ? existing.ttl : -2;
+    }
+  }
+
+  const IP_THRESHOLD = 100;
+  const configStub = {
+    get: <T>(_key: string, def?: T): T => def as T,
+  } as unknown as ConfigService;
+
+  let svc: AuthService;
+  let usersStub: { findByEmail: jest.Mock };
+
+  beforeEach(() => {
+    // Use real sha256 hashing for the per-account layer so distinct unknown
+    // emails are correctly isolated (each hits its own account counter once,
+    // never locking Layer 1 — only the shared per-IP counter accumulates).
+    mockCreateHash.mockImplementation((algorithm: string) =>
+      originalCrypto.createHash(algorithm),
+    );
+
+    const throttle = new LoginThrottleService(
+      new FakeRedis() as unknown as RedisService,
+      configStub,
+    );
+    usersStub = { findByEmail: jest.fn().mockResolvedValue(null) };
+
+    svc = new AuthService(
+      {} as unknown as PrismaService,
+      usersStub as unknown as UsersService,
+      {} as unknown as JwtService,
+      configStub,
+      {} as unknown as NotificationsService,
+      { record: jest.fn().mockResolvedValue(undefined) } as unknown as LoginEventService,
+      {} as unknown as PermissionsService,
+      throttle,
+    );
+  });
+
+  afterEach(() => {
+    mockCreateHash.mockReset();
+  });
+
+  it('trips the per-IP lock after AUTH_LOCK_IP_THRESHOLD unknown-email failures; a fresh attempt is 429', async () => {
+    // Credential-stuffing simulation: distinct unknown addresses, one shared IP
+    // (req=null → clientIp resolves to "unknown"). Each is an invalid-credential
+    // rejection that must still bump the per-IP velocity counter.
+    for (let i = 0; i < IP_THRESHOLD; i++) {
+      await expect(
+        svc.login({ email: `nobody${i}@example.com`, password: 'x' } as LoginDto, 'fp'),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+    }
+
+    // The IP is now locked: a brand-new attempt is rejected at the gate with 429,
+    // before any credential check.
+    let thrown: unknown;
+    try {
+      await svc.login({ email: 'fresh@example.com', password: 'x' } as LoginDto, 'fp');
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(HttpException);
+    expect((thrown as HttpException).getStatus()).toBe(HttpStatus.TOO_MANY_REQUESTS);
+    const body = (thrown as HttpException).getResponse() as { retryAfter: number };
+    expect(body.retryAfter).toBe(900); // 15-min per-IP lock
   });
 });
