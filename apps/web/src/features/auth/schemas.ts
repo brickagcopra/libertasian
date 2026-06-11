@@ -4,6 +4,9 @@ export const loginSchema = z.object({
   email: z.string().min(1, 'Email is required').email('Invalid email address'),
   password: z.string().min(1, 'Password is required'),
   mfaCode: z.string().optional(),
+  // "Keep me signed in" — checked (default) keeps a persistent 7-day refresh
+  // cookie; unchecked makes it a session cookie cleared on browser close.
+  rememberMe: z.boolean().optional(),
 });
 
 export type LoginFormData = z.infer<typeof loginSchema>;

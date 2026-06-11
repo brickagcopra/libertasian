@@ -93,10 +93,11 @@ describe('AuthController — mobile transport branch', () => {
 
       const result = await controller.login(loginDto, req, '1.2.3.4', 'ua', res);
 
-      // Cookie set with the refresh token
-      expect(res.cookie).toHaveBeenCalledTimes(1);
-      const [cookieName, cookieValue, cookieOpts] = res.cookie.mock.calls[0];
-      expect(cookieName).toBe('libertasian-refresh');
+      // Refresh cookie + companion persist cookie are both set
+      expect(res.cookie).toHaveBeenCalledTimes(2);
+      const refreshCall = res.cookie.mock.calls.find((c) => c[0] === 'libertasian-refresh');
+      expect(refreshCall).toBeDefined();
+      const [, cookieValue, cookieOpts] = refreshCall!;
       expect(cookieValue).toBe('RT');
       expect(cookieOpts).toMatchObject({
         httpOnly: true,
@@ -109,6 +110,58 @@ describe('AuthController — mobile transport branch', () => {
       expect(result.data.tokens).toEqual({ accessToken: 'AT' });
       expect((result.data.tokens as Record<string, unknown>)['refreshToken']).toBeUndefined();
       expect(result.data.mfaRequired).toBe(false);
+    });
+
+    // ---- "Keep me signed in" — persistent vs session cookie ----
+
+    function findCookie(res: ReturnType<typeof buildResponse>, name: string) {
+      const call = res.cookie.mock.calls.find((c) => c[0] === name);
+      expect(call).toBeDefined();
+      return { value: call![1], opts: call![2] as Record<string, unknown> };
+    }
+
+    it('(a) rememberMe:true → persistent refresh cookie with maxAge + persist=1', async () => {
+      const req = buildRequest({ headers: {} });
+      const res = buildResponse();
+
+      await controller.login({ ...loginDto, rememberMe: true }, req, '1.2.3.4', 'ua', res);
+
+      const refresh = findCookie(res, 'libertasian-refresh');
+      expect(refresh.value).toBe('RT');
+      expect(refresh.opts['maxAge']).toBe(604800 * 1000);
+
+      const persist = findCookie(res, 'libertasian-persist');
+      expect(persist.value).toBe('1');
+      expect(persist.opts['maxAge']).toBe(604800 * 1000);
+    });
+
+    it('(b) rememberMe:false → session refresh cookie with no maxAge/expires + persist=0', async () => {
+      const req = buildRequest({ headers: {} });
+      const res = buildResponse();
+
+      await controller.login({ ...loginDto, rememberMe: false }, req, '1.2.3.4', 'ua', res);
+
+      const refresh = findCookie(res, 'libertasian-refresh');
+      expect(refresh.value).toBe('RT');
+      expect(refresh.opts).not.toHaveProperty('maxAge');
+      expect(refresh.opts).not.toHaveProperty('expires');
+
+      const persist = findCookie(res, 'libertasian-persist');
+      expect(persist.value).toBe('0');
+      expect(persist.opts).not.toHaveProperty('maxAge');
+      expect(persist.opts).not.toHaveProperty('expires');
+    });
+
+    it('(c) rememberMe omitted → persistent (backward-compat)', async () => {
+      const req = buildRequest({ headers: {} });
+      const res = buildResponse();
+
+      await controller.login(loginDto, req, '1.2.3.4', 'ua', res);
+
+      const refresh = findCookie(res, 'libertasian-refresh');
+      expect(refresh.opts['maxAge']).toBe(604800 * 1000);
+      const persist = findCookie(res, 'libertasian-persist');
+      expect(persist.value).toBe('1');
     });
 
     it('mobile client (X-Client: mobile): no Set-Cookie, refreshToken returned in body', async () => {
@@ -180,6 +233,49 @@ describe('AuthController — mobile transport branch', () => {
       expect(result.data).toEqual({ accessToken: 'AT2' });
     });
 
+    function refreshCookieOpts(res: ReturnType<typeof buildResponse>, name: string) {
+      const call = res.cookie.mock.calls.find((c) => c[0] === name);
+      expect(call).toBeDefined();
+      return call![2] as Record<string, unknown>;
+    }
+
+    it('(d) refresh with libertasian-persist="0" rotates as session cookie (no maxAge)', async () => {
+      const req = buildRequest({
+        cookies: { 'libertasian-refresh': 'old-RT', 'libertasian-persist': '0' },
+      });
+      const res = buildResponse();
+
+      await controller.refresh(req, '1.2.3.4', 'ua', res);
+
+      expect(refreshCookieOpts(res, 'libertasian-refresh')).not.toHaveProperty('maxAge');
+      const persist = res.cookie.mock.calls.find((c) => c[0] === 'libertasian-persist');
+      expect(persist![1]).toBe('0');
+      expect(persist![2]).not.toHaveProperty('maxAge');
+    });
+
+    it('(e) refresh with libertasian-persist="1" rotates as persistent cookie (maxAge present)', async () => {
+      const req = buildRequest({
+        cookies: { 'libertasian-refresh': 'old-RT', 'libertasian-persist': '1' },
+      });
+      const res = buildResponse();
+
+      await controller.refresh(req, '1.2.3.4', 'ua', res);
+
+      expect(refreshCookieOpts(res, 'libertasian-refresh')['maxAge']).toBe(604800 * 1000);
+      const persist = res.cookie.mock.calls.find((c) => c[0] === 'libertasian-persist');
+      expect(persist![1]).toBe('1');
+      expect(persist![2]).toMatchObject({ maxAge: 604800 * 1000 });
+    });
+
+    it('refresh with persist cookie absent → persistent (backward-compat)', async () => {
+      const req = buildRequest({ cookies: { 'libertasian-refresh': 'old-RT' } });
+      const res = buildResponse();
+
+      await controller.refresh(req, '1.2.3.4', 'ua', res);
+
+      expect(refreshCookieOpts(res, 'libertasian-refresh')['maxAge']).toBe(604800 * 1000);
+    });
+
     it('mobile client: reads refresh token from request body, returns both tokens in body, no cookie', async () => {
       const req = buildRequest({
         headers: { 'x-client': 'mobile' },
@@ -212,18 +308,23 @@ describe('AuthController — mobile transport branch', () => {
   describe('logout', () => {
     const user = { sub: 'user-1' } as never;
 
-    it('web client: revokes from cookie + clears cookie', async () => {
+    it('(f) web client: revokes from cookie + clears both refresh and persist cookies', async () => {
       const req = buildRequest({ cookies: { 'libertasian-refresh': 'RT' } });
       const res = buildResponse();
 
       await controller.logout(req, user, '1.2.3.4', res);
 
       expect(authService.logout).toHaveBeenCalledWith('RT', req);
-      // clearRefreshCookie also calls res.cookie (with empty value, maxAge: 0)
-      expect(res.cookie).toHaveBeenCalledTimes(1);
-      const [, value, opts] = res.cookie.mock.calls[0];
-      expect(value).toBe('');
-      expect(opts).toMatchObject({ maxAge: 0 });
+      // clearRefreshCookie clears both cookies (empty value, maxAge: 0)
+      expect(res.cookie).toHaveBeenCalledTimes(2);
+
+      const refresh = res.cookie.mock.calls.find((c) => c[0] === 'libertasian-refresh');
+      expect(refresh![1]).toBe('');
+      expect(refresh![2]).toMatchObject({ maxAge: 0 });
+
+      const persist = res.cookie.mock.calls.find((c) => c[0] === 'libertasian-persist');
+      expect(persist![1]).toBe('');
+      expect(persist![2]).toMatchObject({ maxAge: 0 });
     });
 
     it('mobile client: revokes from body + does not clear cookie', async () => {

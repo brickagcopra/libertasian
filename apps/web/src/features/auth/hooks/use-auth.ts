@@ -53,7 +53,12 @@ export function useLogin() {
   const { setAccessToken, setUser } = useAuthStore();
 
   return useMutation({
-    mutationFn: async (data: { email: string; password: string; mfaCode?: string }) => {
+    mutationFn: async (data: {
+      email: string;
+      password: string;
+      mfaCode?: string;
+      rememberMe?: boolean;
+    }) => {
       const res = await apiClient.post<LoginResponse>('/auth/login', data);
       return res.data;
     },
