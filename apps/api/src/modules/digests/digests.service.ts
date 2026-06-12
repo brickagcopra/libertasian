@@ -1087,9 +1087,12 @@ export class DigestsService {
       avgConfidenceResult,
       perReviewer,
     ] = await Promise.all([
-      // Total digests
+      // Digests still pending review (excludes terminal states).
+      // "Total in Queue" must shrink as digests are approved/rejected.
       // CARVE-OUT: global metric — counts all orgs by design
-      this.prisma.digest.count(),
+      this.prisma.digest.count({
+        where: { reviewStatus: { notIn: ['approved', 'rejected'] } },
+      }),
 
       // Count by review status
       // CARVE-OUT: global metric — counts all orgs by design

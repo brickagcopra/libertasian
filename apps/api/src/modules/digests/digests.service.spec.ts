@@ -1410,5 +1410,26 @@ describe('DigestsService', () => {
         expect(id).toBeNull();
       });
     });
+
+    describe('getReviewStats', () => {
+      it('counts only pending-review digests for total (excludes approved + rejected)', async () => {
+        prismaService.digest.count.mockResolvedValue(7);
+        prismaService.digest.groupBy.mockResolvedValue([]);
+        prismaService.digest.aggregate.mockResolvedValue({
+          _avg: { confidenceScore: null },
+        });
+        prismaService.$queryRaw.mockResolvedValue([]);
+
+        const stats = await service.getReviewStats();
+
+        expect(stats.total).toBe(7);
+        // First digest.count call computes the queue total; it must exclude
+        // the terminal review states so approving/rejecting decrements it.
+        const totalCountArgs = prismaService.digest.count.mock.calls[0][0];
+        expect(totalCountArgs).toEqual({
+          where: { reviewStatus: { notIn: ['approved', 'rejected'] } },
+        });
+      });
+    });
   });
 });
