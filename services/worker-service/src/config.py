@@ -87,6 +87,12 @@ class Settings(BaseSettings):
     # Derivative generation
     derivative_poll_batch_size: int = 10
 
+    # Subject-classifier per-document attempt cap. Defense-in-depth against the
+    # re-billing loop: once a doc has failed classification this many times it
+    # is skipped by the unclassified sweep (fail-open — a Redis outage falls
+    # back to dispatching, never blocks classification).
+    classify_max_attempts: int = 5
+
     # NestJS API (for internal service-to-service calls)
     nestjs_api_url: str = "http://localhost:3001/api/v1"
     internal_api_key: str = ""

@@ -18,6 +18,7 @@ import time
 from typing import Any
 
 import httpx
+import redis
 from celery import shared_task
 
 from ..clients import classification_db_client as class_db
@@ -31,6 +32,21 @@ logger = logging.getLogger(__name__)
 PROMPT_TEMPLATE_VERSION = "subject_classification.v1"
 
 MAX_SECTION_WORDS = 800
+
+# Per-document classify-failure counter (defense-in-depth attempt cap). Keyed
+# by document id; mirrors the Redis client construction in backfill_tasks.py.
+# 30-day TTL so a doc that keeps failing eventually ages out and is retried.
+CLASSIFY_FAIL_KEY_PREFIX = "cache:classify:fail:"
+CLASSIFY_FAIL_TTL_SEC = 2592000  # 30 days
+
+
+def _get_redis_client() -> redis.Redis:
+    """Create a Redis client from worker settings (decode_responses=True)."""
+    return redis.Redis.from_url(settings.redis_url, decode_responses=True)
+
+
+def _classify_fail_key(document_id: str) -> str:
+    return f"{CLASSIFY_FAIL_KEY_PREFIX}{document_id}"
 
 # ---------------------------------------------------------------------------
 # Prompt templates
@@ -209,6 +225,67 @@ def _adapt_flat_shape(output: dict[str, Any]) -> dict[str, Any]:
             )
 
     return {**output, "assignments": assignments}
+
+
+def _sanitize_topic_codes(
+    content: dict[str, Any],
+    valid_subject_codes: set[str],
+    valid_topic_codes: dict[str, set[str]],
+    document_id: str | None = None,
+) -> dict[str, Any]:
+    """Null out hallucinated subjectTopicCodes (valid subject, unseeded topic).
+
+    Root-cause fix for the re-billing loop: gpt-4o-mini routinely returns a
+    valid study_8 SUBJECT code paired with a hallucinated sub-topic that was
+    never seeded in ``subject_topics`` (e.g. ``mercantile_law.special_contracts``).
+    ``validate_classification_output`` would reject the whole classification over
+    that one bad topic, nothing got written, the doc stayed "unclassified", and
+    the beat sweep re-selected and re-billed it every cycle forever.
+
+    ``subjectTopicCode`` is explicitly optional/nullable in the prompt and is
+    accepted as ``null`` by the NestJS write endpoint, so dropping a bad topic to
+    ``None`` keeps the (otherwise valid) assignment instead of discarding it.
+
+    For each assignment whose ``subjectCode`` is valid but whose non-null
+    ``subjectTopicCode`` is not seeded under that subject: set the topic to
+    ``None`` and log a warning (doc id + dropped topic — taxonomy codes only,
+    no PII). Assignments with an *invalid* subject are left untouched so the
+    validator still rejects them downstream. Everything else is unchanged.
+
+    Mutates a copy, never the input. Returns the (possibly new) content dict.
+    """
+    assignments = content.get("assignments")
+    if not isinstance(assignments, list):
+        return content
+
+    new_assignments: list[Any] = []
+    changed = False
+    for assignment in assignments:
+        if not isinstance(assignment, dict):
+            new_assignments.append(assignment)
+            continue
+        subject_code = assignment.get("subjectCode")
+        topic_code = assignment.get("subjectTopicCode")
+        if (
+            subject_code in valid_subject_codes
+            and topic_code is not None
+            and topic_code not in valid_topic_codes.get(subject_code, set())
+        ):
+            logger.warning(
+                "classify_document_subjects doc=%s dropping hallucinated topic "
+                "'%s' under subject '%s' (not in seeded subject_topics)",
+                document_id,
+                topic_code,
+                subject_code,
+            )
+            new_assignments.append({**assignment, "subjectTopicCode": None})
+            changed = True
+        else:
+            new_assignments.append(assignment)
+
+    if not changed:
+        return content
+    return {**content, "assignments": new_assignments}
 
 
 def validate_classification_output(
@@ -412,6 +489,14 @@ def classify_document_subjects(
             )
             content = adapted
 
+            # Root-cause fix: null out hallucinated sub-topics (valid subject,
+            # unseeded topic) so a bogus topic no longer sinks the whole
+            # classification and re-bills the doc on every sweep. Runs after the
+            # shape adapter (so all assignments exist) and before validation.
+            content = _sanitize_topic_codes(
+                content, valid_subject_codes, valid_topic_codes, document_id,
+            )
+
         # Step 6: Validate
         is_valid, validation_errors = validate_classification_output(
             content, valid_subject_codes, valid_topic_codes,
@@ -481,6 +566,19 @@ def classify_document_subjects(
             len(result.get("assignmentIds", [])),
         )
 
+        # Defense-in-depth: a fully successful classification clears the
+        # per-doc failure counter so a doc that recovers isn't penalised by
+        # earlier failures. Fail-open — a Redis outage must never turn a
+        # successful classification into a failure.
+        try:
+            _get_redis_client().delete(_classify_fail_key(document_id))
+        except Exception:
+            logger.warning(
+                "classify_document_subjects doc=%s: could not clear fail "
+                "counter (non-blocking, fail-open)",
+                document_id,
+            )
+
         return {
             "status": "completed",
             "assignmentIds": result.get("assignmentIds", []),
@@ -521,21 +619,71 @@ def classify_unclassified_batch(
 
     Queries documents that have NO DocumentSubjectAssignment rows.
     Dispatches classify_document_subjects for each, up to limit.
+
+    Defense-in-depth against the re-billing loop: over-fetch candidates and skip
+    any doc that has already failed classification ``classify_max_attempts``
+    times (tracked in Redis). For each dispatched doc, increment its failure
+    counter (cleared on a later success). All Redis access is fail-open — on any
+    Redis error we fall back to the original behaviour (dispatch the first
+    ``limit`` docs) and never block classification, matching the auth-throttle
+    fail-open contract in CLAUDE.md.
     """
     logger.info("classify_unclassified_batch: limit=%d", limit)
 
     try:
-        doc_ids = class_db.get_unclassified_document_ids(limit=limit)
+        # Over-fetch so we still fill the dispatch budget after skipping
+        # attempt-capped docs.
+        candidates = class_db.get_unclassified_document_ids(limit=limit * 10)
 
-        if not doc_ids:
+        if not candidates:
             logger.info("No unclassified documents found")
             return {"status": "completed", "dispatched": 0}
 
-        for doc_id in doc_ids:
-            classify_document_subjects.delay(doc_id)
+        try:
+            redis_client = _get_redis_client()
+            dispatched: list[str] = []
+            skipped = 0
+            for doc_id in candidates:
+                if len(dispatched) >= limit:
+                    break
+                raw = redis_client.get(_classify_fail_key(doc_id))
+                # decode_responses=True → str | None; isinstance narrows away
+                # the redis-py stub's Awaitable union for mypy --strict.
+                attempts = int(raw) if isinstance(raw, str) else 0
+                if attempts >= settings.classify_max_attempts:
+                    skipped += 1
+                    continue
+                classify_document_subjects.delay(doc_id)
+                dispatched.append(doc_id)
+                key = _classify_fail_key(doc_id)
+                redis_client.incr(key)
+                redis_client.expire(key, CLASSIFY_FAIL_TTL_SEC)
 
-        logger.info("Dispatched %d classification tasks", len(doc_ids))
-        return {"status": "completed", "dispatched": len(doc_ids)}
+            logger.info(
+                "Dispatched %d classification tasks (%d skipped at attempt cap)",
+                len(dispatched),
+                skipped,
+            )
+            return {
+                "status": "completed",
+                "dispatched": len(dispatched),
+                "skipped": skipped,
+            }
+        except Exception:
+            # Fail-open: Redis unavailable / errored. Fall back to the original
+            # behaviour — dispatch the first `limit` docs, no attempt cap.
+            logger.warning(
+                "classify_unclassified_batch: Redis attempt-cap unavailable, "
+                "falling back to uncapped dispatch (fail-open)",
+                exc_info=True,
+            )
+            fallback = candidates[:limit]
+            for doc_id in fallback:
+                classify_document_subjects.delay(doc_id)
+            logger.info(
+                "Dispatched %d classification tasks (fail-open)", len(fallback),
+            )
+            return {"status": "completed", "dispatched": len(fallback)}
 
     except Exception as exc:
         logger.exception("Error in classify_unclassified_batch")

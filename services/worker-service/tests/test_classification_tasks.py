@@ -20,6 +20,7 @@ import pytest
 
 from src.tasks.classification_generation_tasks import (
     _adapt_flat_shape,
+    _sanitize_topic_codes,
     build_subject_registry,
     classify_document_subjects,
     classify_unclassified_batch,
@@ -480,22 +481,30 @@ class TestValidateClassificationOutput:
 
 
 class TestClassifyUnclassifiedBatch:
+    @patch("src.tasks.classification_generation_tasks._get_redis_client")
     @patch("src.tasks.classification_generation_tasks.classify_document_subjects")
     @patch("src.tasks.classification_generation_tasks.class_db")
     def test_12_dispatches_tasks_for_unclassified_docs(
         self,
         mock_class_db: MagicMock,
         mock_classify_task: MagicMock,
+        mock_get_redis: MagicMock,
     ) -> None:
         doc_ids = [make_uuid() for _ in range(5)]
         mock_class_db.get_unclassified_document_ids.return_value = doc_ids
+        mock_redis = MagicMock()
+        mock_redis.get.return_value = None  # no prior failures
+        mock_get_redis.return_value = mock_redis
 
         result = classify_unclassified_batch.run(limit=50)
 
         assert result["status"] == "completed"
         assert result["dispatched"] == 5
+        assert result["skipped"] == 0
         assert mock_classify_task.delay.call_count == 5
-        mock_class_db.get_unclassified_document_ids.assert_called_once_with(limit=50)
+        # Over-fetches limit * 10 candidates so the dispatch budget can still
+        # be filled after skipping attempt-capped docs.
+        mock_class_db.get_unclassified_document_ids.assert_called_once_with(limit=500)
 
 
 # ─── _adapt_flat_shape ───────────────────────────────────────────────────
@@ -823,3 +832,195 @@ class TestAdaptFlatShape:
         assert secondary["subjectCode"] == "political_law"
         assert primary["confidence"] == 0.9
         assert secondary["confidence"] == 0.9
+
+
+# ─── _sanitize_topic_codes ───────────────────────────────────────────────
+
+
+class TestSanitizeTopicCodes:
+    """Root-cause fix: null out hallucinated sub-topics instead of rejecting
+    the whole classification (the re-billing loop)."""
+
+    def test_valid_subject_invalid_topic_nulls_topic_keeps_assignment(self) -> None:
+        content = {
+            "assignments": [
+                {
+                    "subjectCode": "civil_law",
+                    "subjectTopicCode": "civil_law.special_contracts",  # not seeded
+                    "isPrimary": True,
+                    "confidence": 0.8,
+                },
+            ],
+        }
+        valid_subject_codes = {"civil_law"}
+        valid_topic_codes = {"civil_law": {"civil_law.property"}}
+
+        result = _sanitize_topic_codes(content, valid_subject_codes, valid_topic_codes)
+
+        assert len(result["assignments"]) == 1
+        assignment = result["assignments"][0]
+        assert assignment["subjectTopicCode"] is None
+        # Rest of the assignment untouched.
+        assert assignment["subjectCode"] == "civil_law"
+        assert assignment["isPrimary"] is True
+        assert assignment["confidence"] == 0.8
+
+    def test_valid_subject_valid_topic_unchanged(self) -> None:
+        content = {
+            "assignments": [
+                {
+                    "subjectCode": "civil_law",
+                    "subjectTopicCode": "civil_law.property",
+                    "isPrimary": True,
+                    "confidence": 0.9,
+                },
+            ],
+        }
+        valid_subject_codes = {"civil_law"}
+        valid_topic_codes = {"civil_law": {"civil_law.property"}}
+
+        result = _sanitize_topic_codes(content, valid_subject_codes, valid_topic_codes)
+
+        assert result["assignments"][0]["subjectTopicCode"] == "civil_law.property"
+        # No change → same object returned.
+        assert result is content
+
+    def test_invalid_subject_untouched_so_validator_still_rejects(self) -> None:
+        content = {
+            "assignments": [
+                {
+                    "subjectCode": "made_up_law",
+                    "subjectTopicCode": "made_up_law.whatever",
+                    "isPrimary": True,
+                    "confidence": 0.8,
+                },
+            ],
+        }
+        valid_subject_codes = {"civil_law"}
+        valid_topic_codes = {"civil_law": {"civil_law.property"}}
+
+        result = _sanitize_topic_codes(content, valid_subject_codes, valid_topic_codes)
+
+        # Invalid subject + its topic left as-is — the validator must reject it.
+        assert result["assignments"][0]["subjectCode"] == "made_up_law"
+        assert result["assignments"][0]["subjectTopicCode"] == "made_up_law.whatever"
+
+        is_valid, errors = validate_classification_output(
+            result, valid_subject_codes, valid_topic_codes,
+        )
+        assert is_valid is False
+        assert any("made_up_law" in e for e in errors)
+
+    def test_input_not_mutated(self) -> None:
+        content = {
+            "assignments": [
+                {
+                    "subjectCode": "civil_law",
+                    "subjectTopicCode": "civil_law.special_contracts",  # not seeded
+                    "isPrimary": True,
+                    "confidence": 0.8,
+                },
+            ],
+        }
+        valid_subject_codes = {"civil_law"}
+        valid_topic_codes = {"civil_law": {"civil_law.property"}}
+
+        result = _sanitize_topic_codes(content, valid_subject_codes, valid_topic_codes)
+
+        # Original input still carries the bad topic; only the copy was changed.
+        assert content["assignments"][0]["subjectTopicCode"] == "civil_law.special_contracts"
+        assert result is not content
+        assert result["assignments"][0]["subjectTopicCode"] is None
+
+    def test_end_to_end_real_failing_payload_now_validates(self) -> None:
+        """The exact prod payload that re-billed forever: valid subject
+        `mercantile_law`, hallucinated topic `mercantile_law.special_contracts`.
+        adapt → sanitize → validate now returns is_valid=True with topic None."""
+        llm_output = {
+            "primarySubject": "mercantile_law",
+            "subjectTopicCode": "mercantile_law.special_contracts",
+            "isPrimary": True,
+            "confidence": 0.8,
+            "secondarySubjects": [],
+        }
+        valid_subject_codes = {"mercantile_law"}
+        # The hallucinated topic is NOT seeded under the subject.
+        valid_topic_codes = {"mercantile_law": {"mercantile_law.negotiable_instruments"}}
+
+        adapted = _adapt_flat_shape(llm_output)
+        sanitized = _sanitize_topic_codes(
+            adapted, valid_subject_codes, valid_topic_codes,
+        )
+        is_valid, errors = validate_classification_output(
+            sanitized, valid_subject_codes, valid_topic_codes,
+        )
+
+        assert is_valid is True
+        assert errors == []
+        primary = sanitized["assignments"][0]
+        assert primary["subjectCode"] == "mercantile_law"
+        assert primary["subjectTopicCode"] is None
+
+
+# ─── classify_unclassified_batch — per-doc attempt cap ───────────────────
+
+
+class TestClassifyAttemptCap:
+    @patch("src.tasks.classification_generation_tasks._get_redis_client")
+    @patch("src.tasks.classification_generation_tasks.classify_document_subjects")
+    @patch("src.tasks.classification_generation_tasks.class_db")
+    def test_doc_at_attempt_cap_is_skipped(
+        self,
+        mock_class_db: MagicMock,
+        mock_classify_task: MagicMock,
+        mock_get_redis: MagicMock,
+    ) -> None:
+        capped = make_uuid()
+        fresh = make_uuid()
+        mock_class_db.get_unclassified_document_ids.return_value = [capped, fresh]
+
+        mock_redis = MagicMock()
+
+        def fake_get(key: str) -> str | None:
+            # classify_max_attempts default is 5 → capped doc is at the cap.
+            if key.endswith(capped):
+                return "5"
+            return None
+
+        mock_redis.get.side_effect = fake_get
+        mock_get_redis.return_value = mock_redis
+
+        result = classify_unclassified_batch.run(limit=10)
+
+        assert result["status"] == "completed"
+        assert result["dispatched"] == 1
+        assert result["skipped"] == 1
+        # Only the fresh doc was dispatched.
+        dispatched_ids = [c.args[0] for c in mock_classify_task.delay.call_args_list]
+        assert dispatched_ids == [fresh]
+        # Dispatched doc had its counter incremented + TTL set.
+        mock_redis.incr.assert_called_once()
+        mock_redis.expire.assert_called_once()
+
+    @patch("src.tasks.classification_generation_tasks._get_redis_client")
+    @patch("src.tasks.classification_generation_tasks.classify_document_subjects")
+    @patch("src.tasks.classification_generation_tasks.class_db")
+    def test_redis_error_is_fail_open_docs_still_dispatched(
+        self,
+        mock_class_db: MagicMock,
+        mock_classify_task: MagicMock,
+        mock_get_redis: MagicMock,
+    ) -> None:
+        doc_ids = [make_uuid() for _ in range(3)]
+        mock_class_db.get_unclassified_document_ids.return_value = doc_ids
+
+        mock_redis = MagicMock()
+        mock_redis.get.side_effect = RuntimeError("redis down")
+        mock_get_redis.return_value = mock_redis
+
+        result = classify_unclassified_batch.run(limit=10)
+
+        # Fail-open: Redis raised, so we fell back to uncapped dispatch.
+        assert result["status"] == "completed"
+        assert result["dispatched"] == 3
+        assert mock_classify_task.delay.call_count == 3
