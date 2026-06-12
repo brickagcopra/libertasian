@@ -200,7 +200,9 @@ describe('backfill_legacy_member_roles migration', () => {
       ];
       const inserted = runBackfill(members, roleDefs, []);
       expect(inserted).toHaveLength(1);
-      const ownerRoleId = inserted[0].roleDefinitionId; // 'rd-owner-sys'
+      const firstInserted = inserted[0];
+      if (!firstInserted) throw new Error('expected exactly one inserted row');
+      const ownerRoleId = firstInserted.roleDefinitionId; // 'rd-owner-sys'
 
       // 2. Resolve effective permissions through the REAL service, with Prisma
       //    mocked to reflect the post-backfill member_roles state. The owner
