@@ -519,9 +519,9 @@ function EnhancedDigestCard({
         id: item.id,
         verdict,
         notes: notes || undefined,
-        truthfulness: truthfulness / 100,
-        completeness: completeness / 100,
-        citationAccuracy: citationAccuracy / 100,
+        truthfulnessScore: truthfulness / 100,
+        completenessScore: completeness / 100,
+        citationAccuracyScore: citationAccuracy / 100,
       });
       // onSuccess invalidation refetches the authoritative list.
     } catch {
