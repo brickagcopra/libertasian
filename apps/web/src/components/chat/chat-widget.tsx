@@ -19,7 +19,7 @@ import { FAQ_ENTRIES, matchFaq } from './chat-knowledge-base';
 
 // TODO: wire to content.footer.contactEmail (server-only today). Keep in sync
 // with apps/web/src/features/homepage/server/homepage-content.ts.
-const SUPPORT_EMAIL = 'support@libertasian.com';
+const SUPPORT_EMAIL = 'info.libertasian@gmail.com';
 
 const FALLBACK_ANSWER = `I'm not sure about that one yet — our team can help: ${SUPPORT_EMAIL}.`;
 

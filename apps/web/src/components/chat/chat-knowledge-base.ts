@@ -102,7 +102,7 @@ export const FAQ_ENTRIES: FaqEntry[] = [
     keywords: ['contact', 'support', 'human', 'help', 'email', 'team', 'agent', 'talk', 'reach'],
     question: 'Talk to a human / support',
     answer:
-      `Happy to point you to the team — email us at ${'support@libertasian.com'} and a human will get back to you.`,
+      'Happy to point you to the team — email us at info.libertasian@gmail.com and a human will get back to you.',
   },
 ];
 
