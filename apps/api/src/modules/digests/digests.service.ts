@@ -314,7 +314,9 @@ export class DigestsService {
       where,
       take: limit + 1,
       ...(query.cursor && { skip: 1, cursor: { id: query.cursor } }),
-      orderBy: { createdAt: 'desc' },
+      // Order by updatedAt so freshly-approved digests (approval bumps updatedAt,
+      // not createdAt) surface at the top. id is a deterministic keyset tiebreaker.
+      orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
       include: {
         legalDocument: {
           select: {
@@ -1342,7 +1344,9 @@ export class DigestsService {
       where,
       take: limit + 1,
       ...(query.cursor && { skip: 1, cursor: { id: query.cursor } }),
-      orderBy: { createdAt: 'desc' },
+      // Order by updatedAt so freshly-approved digests (approval bumps updatedAt,
+      // not createdAt) surface at the top. id is a deterministic keyset tiebreaker.
+      orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
       include: {
         legalDocument: {
           select: {

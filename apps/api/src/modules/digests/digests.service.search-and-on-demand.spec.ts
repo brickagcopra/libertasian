@@ -72,6 +72,18 @@ describe('DigestsService — search + generateOnDemand (PR2)', () => {
       });
     });
 
+    it('orders by updatedAt desc so freshly-approved digests surface', async () => {
+      prisma.digest.findMany.mockResolvedValue([]);
+      prisma.legalDocument.findMany.mockResolvedValue([]);
+
+      await service.search({ q: 'velasco' });
+
+      const arg = prisma.digest.findMany.mock.calls[0]![0] as {
+        orderBy: unknown;
+      };
+      expect(arg.orderBy).toEqual([{ updatedAt: 'desc' }, { id: 'desc' }]);
+    });
+
     it('returns hasMore + cursor when more than limit rows exist', async () => {
       const rows = Array.from({ length: 21 }).map((_, i) => ({
         id: `d-${i}`,
