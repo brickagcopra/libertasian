@@ -54,9 +54,9 @@ app.conf.update(
         # in ingestion_tasks.chain_post_ingestion (e.g. backfill imports,
         # failed first run, or the inline task died). Small limit keeps
         # this a cleanup sweep rather than a replacement for inline.
-        "classify-unclassified-15min": {
+        "classify-unclassified-hourly": {
             "task": "classification.classify_unclassified_batch",
-            "schedule": 900.0,  # 15 minutes
+            "schedule": 3600.0,  # hourly (was 15min — attempt cap now bounds re-billing)
             "kwargs": {"limit": 10},
         },
         "poll-pending-derivative-jobs": {
