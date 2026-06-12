@@ -471,7 +471,7 @@ describe('DigestsService', () => {
           ],
         },
         take: 21,
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
         include: {
           legalDocument: {
             select: {
@@ -556,6 +556,15 @@ describe('DigestsService', () => {
           cursor: { id: 'digest-10' },
         }),
       );
+    });
+
+    it('should order by updatedAt desc so freshly-approved digests surface', async () => {
+      prismaService.digest.findMany.mockResolvedValue([]);
+
+      await service.list('user-1', 'org-1', listQuery);
+
+      const call = prismaService.digest.findMany.mock.calls[0][0];
+      expect(call?.orderBy).toEqual([{ updatedAt: 'desc' }, { id: 'desc' }]);
     });
   });
 
