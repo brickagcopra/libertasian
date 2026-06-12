@@ -12,7 +12,12 @@ vi.mock('@/lib/api-client', () => ({
 }));
 
 import { apiClient } from '@/lib/api-client';
-import { useDigests, useDigest, useGenerateDigest } from './use-digests';
+import {
+  useDigests,
+  useInfiniteDigests,
+  useDigest,
+  useGenerateDigest,
+} from './use-digests';
 
 const mockGet = vi.mocked(apiClient.get);
 const mockPost = vi.mocked(apiClient.post);
@@ -174,6 +179,85 @@ describe('useDigests', () => {
         cursor: 'cur-1',
       },
     });
+  });
+});
+
+// ─── useInfiniteDigests ──────────────────────────────────────────────
+
+describe('useInfiniteDigests', () => {
+  beforeEach(() => {
+    mockGet.mockReset();
+  });
+
+  it('fetches the first page with default params', async () => {
+    mockGet.mockResolvedValueOnce({
+      success: true,
+      data: [{ id: 'dig-1', title: 'Page 1' }],
+      meta: { hasNext: false, nextCursor: null },
+    });
+
+    const { result } = renderHook(() => useInfiniteDigests(), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+
+    expect(mockGet).toHaveBeenCalledWith('/digests', {
+      params: { limit: '20' },
+    });
+    expect(result.current.hasNextPage).toBe(false);
+    expect(result.current.data?.pages[0]?.data).toEqual([
+      { id: 'dig-1', title: 'Page 1' },
+    ]);
+  });
+
+  it('exposes hasNextPage and loads page 2, flattening both pages', async () => {
+    mockGet.mockResolvedValueOnce({
+      success: true,
+      data: [{ id: 'dig-1', title: 'Page 1' }],
+      meta: { hasNext: true, nextCursor: 'cursor-page-2' },
+    });
+
+    const { result } = renderHook(
+      () => useInfiniteDigests({ reviewStatus: 'approved' }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+
+    expect(result.current.hasNextPage).toBe(true);
+    expect(mockGet).toHaveBeenCalledWith('/digests', {
+      params: { limit: '20', reviewStatus: 'approved' },
+    });
+
+    mockGet.mockResolvedValueOnce({
+      success: true,
+      data: [{ id: 'dig-2', title: 'Page 2' }],
+      meta: { hasNext: false, nextCursor: null },
+    });
+
+    await act(async () => {
+      await result.current.fetchNextPage();
+    });
+
+    await waitFor(() => {
+      expect(result.current.hasNextPage).toBe(false);
+    });
+
+    // Page 2 request carries the cursor from page 1's meta.
+    expect(mockGet).toHaveBeenLastCalledWith('/digests', {
+      params: { limit: '20', reviewStatus: 'approved', cursor: 'cursor-page-2' },
+    });
+
+    const allDigests = result.current.data?.pages.flatMap((p) => p.data) ?? [];
+    expect(allDigests).toEqual([
+      { id: 'dig-1', title: 'Page 1' },
+      { id: 'dig-2', title: 'Page 2' },
+    ]);
   });
 });
 
