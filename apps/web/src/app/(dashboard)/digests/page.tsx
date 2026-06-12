@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
 import {
-  useDigests,
+  useInfiniteDigests,
   useGenerateOnDemand,
   useSearchDigests,
   type MatchedDocument,
@@ -73,7 +73,14 @@ export default function DigestsPage() {
   }, [searchInput]);
 
   // Default browsing path — no query typed yet.
-  const { data: browseData, isLoading: browseLoading, error: browseError } = useDigests({
+  const {
+    data: browseData,
+    isLoading: browseLoading,
+    error: browseError,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteDigests({
     digestType: digestType !== 'all' ? digestType : undefined,
     reviewStatus: reviewStatus !== 'all' ? reviewStatus : undefined,
   });
@@ -91,19 +98,20 @@ export default function DigestsPage() {
   const isLoading = isSearching ? searchLoading : browseLoading;
   const error = isSearching ? searchError : browseError;
 
+  const browseMeta = browseData?.pages[0]?.meta;
   const digests = isSearching
     ? (searchData?.results ?? [])
-    : (browseData?.data ?? []);
+    : (browseData?.pages.flatMap((p) => p.data) ?? []);
   const matchedDocuments: MatchedDocument[] = isSearching
     ? (searchData?.matchedDocuments ?? [])
     : [];
 
   const previewMode = isSearching
     ? searchData?.previewMode === true
-    : browseData?.meta?.previewMode === true;
+    : browseMeta?.previewMode === true;
   const lockedCount = isSearching
     ? (searchData?.lockedCount ?? 0)
-    : (browseData?.meta?.lockedCount ?? 0);
+    : (browseMeta?.lockedCount ?? 0);
 
   const handleGenerate = async (doc: MatchedDocument) => {
     setToast(null);
@@ -290,6 +298,18 @@ export default function DigestsPage() {
             lockedCount={lockedCount}
             surface={isSearching ? 'digests/search' : 'digests/list'}
           />
+        )}
+
+        {!isSearching && hasNextPage && (
+          <div className="flex justify-center pt-2">
+            <Button
+              variant="outline"
+              onClick={() => fetchNextPage()}
+              disabled={isFetchingNextPage}
+            >
+              {isFetchingNextPage ? 'Loading…' : 'Load more'}
+            </Button>
+          </div>
         )}
       </div>
     </div>

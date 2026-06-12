@@ -1,6 +1,11 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 
 import { apiClient } from '@/lib/api-client';
 
@@ -65,6 +70,37 @@ export function useDigests(
       return res;
     },
     enabled: options?.enabled ?? true,
+  });
+}
+
+interface DigestsListResponse {
+  success: boolean;
+  data: Digest[];
+  meta: DigestsListMeta;
+}
+
+export function useInfiniteDigests(params?: {
+  digestType?: string;
+  reviewStatus?: string;
+  legalDocumentId?: string;
+}) {
+  return useInfiniteQuery({
+    queryKey: ['digests', 'infinite', params],
+    queryFn: async ({ pageParam }) => {
+      const queryParams: Record<string, string> = { limit: '20' };
+      if (params?.digestType) queryParams['digestType'] = params.digestType;
+      if (params?.reviewStatus) queryParams['reviewStatus'] = params.reviewStatus;
+      if (params?.legalDocumentId)
+        queryParams['legalDocumentId'] = params.legalDocumentId;
+      if (pageParam) queryParams['cursor'] = pageParam;
+      const res = await apiClient.get<DigestsListResponse>('/digests', {
+        params: queryParams,
+      });
+      return res;
+    },
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) =>
+      lastPage.meta?.hasNext ? (lastPage.meta.nextCursor ?? undefined) : undefined,
   });
 }
 
