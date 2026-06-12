@@ -8,6 +8,7 @@ import { QueryProvider } from '@/providers/query-provider';
 import { ThemeProvider } from '@/providers/theme-provider';
 import { AdProvider } from '@/components/ads/AdProvider';
 import { AdRenderer } from '@/components/ads/AdRenderer';
+import { ChatWidget } from '@/components/chat/chat-widget';
 
 const inter = Inter({
   subsets: ['latin'],
@@ -61,6 +62,7 @@ export default function RootLayout({
                 <AdProvider>
                   {children}
                   <AdRenderer />
+                  <ChatWidget />
                 </AdProvider>
               </AnalyticsProvider>
             </AuthProvider>
