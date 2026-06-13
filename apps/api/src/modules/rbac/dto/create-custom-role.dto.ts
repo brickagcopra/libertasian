@@ -6,7 +6,6 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
-  IsUUID,
   Matches,
   MaxLength,
   Min,
@@ -45,7 +44,10 @@ export class CreateCustomRoleDto {
   })
   @IsArray()
   @ArrayMinSize(1)
-  @IsUUID('4', { each: true })
+  @Matches(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, {
+    each: true,
+    message: 'each permissionId must be a valid UUID',
+  })
   permissionIds!: string[];
 
   @ApiPropertyOptional({ description: 'Whether MFA is required for this role', default: false })
