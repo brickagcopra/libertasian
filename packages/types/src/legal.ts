@@ -48,6 +48,26 @@ export enum DigestStatus {
   PUBLISHED = 'published',
 }
 
+// Digests list/search filter contract — the single source of truth shared by the
+// web dropdowns and (mirrored, see below) the API DTO. The DigestStatus enum above
+// is a separate, stale concept; do not conflate it with the review-status filter.
+export const DIGEST_TYPE_VALUES = [
+  'case_digest',
+  'statute_summary',
+  'reviewer_note',
+  'study_digest',
+] as const;
+export type DigestType = (typeof DIGEST_TYPE_VALUES)[number];
+
+export const DIGEST_REVIEW_STATUS_VALUES = [
+  'draft',
+  'ai_generated',
+  'needs_human_review',
+  'approved',
+  'rejected',
+] as const;
+export type DigestReviewStatus = (typeof DIGEST_REVIEW_STATUS_VALUES)[number];
+
 export enum PrivacyLevel {
   PRIVATE = 'private',
   ORGANIZATION = 'organization',

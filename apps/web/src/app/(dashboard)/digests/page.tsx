@@ -4,6 +4,13 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
 import {
+  DIGEST_TYPE_VALUES,
+  DIGEST_REVIEW_STATUS_VALUES,
+  type DigestType,
+  type DigestReviewStatus,
+} from '@libertasian/types';
+
+import {
   useInfiniteDigests,
   useGenerateOnDemand,
   useSearchDigests,
@@ -32,12 +39,28 @@ import {
   SparklesIcon,
 } from 'lucide-react';
 
+// Dropdown labels — typed as Record<…, string> over the shared filter contract so
+// TS forces a label for every value the API accepts (and the maps can't drift).
+const DIGEST_TYPE_LABELS: Record<DigestType, string> = {
+  case_digest: 'Case Digest',
+  statute_summary: 'Statute Summary',
+  reviewer_note: 'Reviewer Note',
+  study_digest: 'Study Digest',
+};
+
+const REVIEW_STATUS_LABELS: Record<DigestReviewStatus, string> = {
+  draft: 'Draft',
+  ai_generated: 'AI Generated',
+  needs_human_review: 'Needs Review',
+  approved: 'Approved',
+  rejected: 'Rejected',
+};
+
 const REVIEW_STATUS_STYLES: Record<string, { variant: 'default' | 'secondary' | 'destructive' | 'outline'; className?: string }> = {
   draft: { variant: 'secondary' },
   ai_generated: { variant: 'outline', className: 'border-blue-200 bg-blue-50 text-blue-700' },
   needs_human_review: { variant: 'outline', className: 'border-yellow-200 bg-yellow-50 text-yellow-700' },
   approved: { variant: 'outline', className: 'border-green-200 bg-green-50 text-green-700' },
-  published: { variant: 'outline', className: 'border-green-300 bg-green-100 text-green-800' },
   rejected: { variant: 'destructive' },
 };
 
@@ -185,10 +208,11 @@ export default function DigestsPage() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All types</SelectItem>
-              <SelectItem value="case_digest">Case Digest</SelectItem>
-              <SelectItem value="statute_summary">Statute Summary</SelectItem>
-              <SelectItem value="reviewer_note">Reviewer Note</SelectItem>
-              <SelectItem value="study_digest">Study Digest</SelectItem>
+              {DIGEST_TYPE_VALUES.map((v) => (
+                <SelectItem key={v} value={v}>
+                  {DIGEST_TYPE_LABELS[v]}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
           <Select value={reviewStatus} onValueChange={setReviewStatus}>
@@ -197,11 +221,11 @@ export default function DigestsPage() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All statuses</SelectItem>
-              <SelectItem value="draft">Draft</SelectItem>
-              <SelectItem value="ai_generated">AI Generated</SelectItem>
-              <SelectItem value="needs_human_review">Needs Review</SelectItem>
-              <SelectItem value="approved">Approved</SelectItem>
-              <SelectItem value="rejected">Rejected</SelectItem>
+              {DIGEST_REVIEW_STATUS_VALUES.map((v) => (
+                <SelectItem key={v} value={v}>
+                  {REVIEW_STATUS_LABELS[v]}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>

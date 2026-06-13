@@ -33,6 +33,10 @@ ENV NEXT_PUBLIC_GOOGLE_AUTH_ENABLED=$NEXT_PUBLIC_GOOGLE_AUTH_ENABLED
 ARG NEXT_PUBLIC_FEATURE_BAR_EXAM_ANSWERS_PUBLIC=false
 ENV NEXT_PUBLIC_FEATURE_BAR_EXAM_ANSWERS_PUBLIC=$NEXT_PUBLIC_FEATURE_BAR_EXAM_ANSWERS_PUBLIC
 
+# Build shared workspace packages web imports at runtime (dist/ is gitignored
+# and NOT produced by `next build`). Must precede the web build.
+RUN pnpm --filter @libertasian/types build
+
 RUN pnpm --filter @libertasian/web build
 
 # Stage 3: Production
