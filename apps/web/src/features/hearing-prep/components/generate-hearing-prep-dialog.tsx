@@ -117,7 +117,7 @@ export function GenerateHearingPrepDialog({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50">
       <div className="mx-4 max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-lg bg-white p-6 shadow-xl">
         <h2 className="text-lg font-semibold text-gray-900">
           Generate Hearing Prep Pack

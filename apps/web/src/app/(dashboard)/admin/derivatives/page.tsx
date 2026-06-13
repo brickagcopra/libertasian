@@ -452,7 +452,7 @@ export default function DerivativesAdminPage() {
 
       {/* Confirm Generation Dialog */}
       {confirmGenerate && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50">
           <div className="mx-4 w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
             <h3 className="text-lg font-semibold">Confirm Generation</h3>
             <p className="mt-2 text-sm text-gray-600">
@@ -500,7 +500,7 @@ export default function DerivativesAdminPage() {
 
       {/* Auto-Promote Sweep Dialog */}
       {confirmAutoPromote && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50">
           <div className="mx-4 w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
             <h3 className="text-lg font-semibold">Confirm Auto-Promote Sweep</h3>
             <p className="mt-2 text-sm text-gray-600">
@@ -681,7 +681,7 @@ export default function DerivativesAdminPage() {
 
       {/* Delete Confirmation Dialog */}
       {deleteConfirmId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50">
           <div className="mx-4 w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
             <h3 className="text-lg font-semibold text-red-600">Delete Job Output</h3>
             <p className="mt-2 text-sm text-gray-600">
