@@ -1633,6 +1633,72 @@ def delete_pending_bar_exam_answer(
     return deleted
 
 
+def get_approved_bar_exam_answers(
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Fetch APPROVED bar_exam_answers joined with their question + sitting.
+
+    Drives the suggested-bar-answer Library projection: each row carries
+    everything the renderer contract needs (question text, answer body,
+    bar year, subject code) plus the sitting's ``source_document_id`` so
+    the derivative write can record provenance back to the official
+    LawPhil bar-question document.
+
+    Only ``review_status='approved'`` rows are returned — the projection
+    never republishes pending or rejected answers. Rows whose sitting has
+    no ``source_document_id`` are still returned; the caller decides how
+    to handle the missing provenance anchor.
+    """
+    sql = """SELECT a.id                       AS answer_id,
+                    a.bar_exam_question_id      AS question_id,
+                    a.answer_text               AS answer_text,
+                    a.structured_answer_json    AS structured_answer_json,
+                    a.confidence                AS confidence,
+                    q.question_text             AS question_text,
+                    s.year                      AS sitting_year,
+                    s.subject_study_code        AS subject_study_code,
+                    s.subject_bar_admin_code    AS subject_bar_admin_code,
+                    s.source_document_id        AS source_document_id,
+                    s.source_url                AS source_url
+             FROM bar_exam_answers a
+             JOIN bar_exam_questions q ON q.id = a.bar_exam_question_id
+             JOIN bar_exam_sittings s ON s.id = q.bar_exam_sitting_id
+             WHERE a.review_status = 'approved'
+             ORDER BY a.id ASC"""
+    params: tuple[Any, ...] = ()
+    if limit is not None:
+        sql += " LIMIT %s"
+        params = (limit,)
+
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(sql, params)
+        return [dict(row) for row in cur.fetchall()]
+
+
+def derivative_artifact_exists_by_content_hash(
+    content_hash: str,
+    derivative_type: str,
+) -> bool:
+    """Return True if a non-deleted derivative_artifacts row already exists
+    for ``(derivative_type, content_hash)``.
+
+    This is the idempotency guard for the suggested-bar-answer projection:
+    the content hash is deterministic from (bar year + subject + question
+    text), so a re-run skips any answer that has already been projected.
+    """
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT 1 FROM derivative_artifacts
+               WHERE derivative_type = %s
+                 AND content_hash = %s
+                 AND deleted_at IS NULL
+               LIMIT 1""",
+            (derivative_type, content_hash),
+        )
+        return cur.fetchone() is not None
+
+
 def create_bar_exam_answer(
     bar_exam_question_id: str,
     answer_text: str,
