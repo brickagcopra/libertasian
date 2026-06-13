@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Fraunces, Inter, JetBrains_Mono } from 'next/font/google';
+import { Toaster } from 'sonner';
 
 import '@/app/globals.css';
 import { AnalyticsProvider } from '@/providers/analytics-provider';
@@ -63,6 +64,7 @@ export default function RootLayout({
                   {children}
                   <AdRenderer />
                   <ChatWidget />
+                  <Toaster richColors position="top-right" closeButton />
                 </AdProvider>
               </AnalyticsProvider>
             </AuthProvider>

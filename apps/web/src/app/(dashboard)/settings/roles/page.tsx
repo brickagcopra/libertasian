@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useMemo } from 'react';
 import Link from 'next/link';
+import { toast } from 'sonner';
 import {
   ArrowLeft,
   PlusIcon,
@@ -628,9 +629,12 @@ function CreateEditRoleDialog({
           maxPerOrg: maxPerOrg ? parseInt(maxPerOrg, 10) : undefined,
         });
       }
+      toast.success(mode === 'create' ? 'Role created' : 'Role changes saved');
       onClose();
     } catch (err) {
-      setError(err instanceof ApiClientError ? err.message : 'Failed to save role');
+      const message = err instanceof ApiClientError ? err.message : 'Failed to save role';
+      setError(message);
+      toast.error(message);
     }
   }, [mode, name, slug, description, requiresMfa, maxPerOrg, selectedPermIds, role, createRole, updateRole, onClose]);
 
@@ -821,9 +825,12 @@ function DeleteRoleDialog({
     try {
       setError('');
       await deleteRole.mutateAsync(role.id);
+      toast.success('Role deleted');
       onClose();
     } catch (err) {
-      setError(err instanceof ApiClientError ? err.message : 'Failed to delete role');
+      const message = err instanceof ApiClientError ? err.message : 'Failed to delete role';
+      setError(message);
+      toast.error(message);
     }
   }, [role.id, deleteRole, onClose]);
 
