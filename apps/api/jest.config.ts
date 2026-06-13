@@ -12,7 +12,7 @@ const config: Config = {
   testEnvironment: 'node',
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/$1',
-    '^@libertasian/types$': '<rootDir>/../../packages/types/src/index.ts',
+    '^@libertasian/types$': '<rootDir>/../../../packages/types/src/index.ts',
   },
 };
 
