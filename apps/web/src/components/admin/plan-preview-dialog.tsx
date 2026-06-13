@@ -90,7 +90,7 @@ export function PlanPreviewDialog({
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
     >
       <div className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-lg bg-white shadow-xl">
         <div className="border-b px-6 py-4">

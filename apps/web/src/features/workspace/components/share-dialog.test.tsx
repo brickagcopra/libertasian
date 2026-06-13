@@ -129,7 +129,7 @@ describe('ShareDialog', () => {
 
   it('calls onClose when backdrop is clicked', () => {
     const { container } = render(<ShareDialog {...defaultProps} />);
-    const backdrop = container.querySelector('.fixed.inset-0.z-50');
+    const backdrop = container.querySelector('.fixed.inset-0.z-\\[100\\]');
     if (backdrop) fireEvent.click(backdrop);
     expect(defaultProps.onClose).toHaveBeenCalled();
   });

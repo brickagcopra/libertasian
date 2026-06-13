@@ -203,7 +203,7 @@ function ModalBanner({
       role="dialog"
       aria-modal="true"
       aria-labelledby="upgrade-banner-modal-heading"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-warm-ink/40 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-warm-ink/40 p-4 backdrop-blur-sm"
     >
       <Card className="w-full max-w-md border-warm-accent/30 bg-warm-surface shadow-2xl">
         <CardContent className="space-y-5 p-7">

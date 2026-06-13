@@ -178,7 +178,7 @@ function CreateWorkspaceDialog({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50">
       <div className="mx-4 w-full max-w-lg rounded-lg bg-white p-6 shadow-lg">
         <h2 className="text-lg font-semibold">New Research Workspace</h2>
         <p className="mt-1 text-sm text-gray-500">

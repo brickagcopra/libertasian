@@ -55,7 +55,7 @@ export function DispatchGenerationDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-md rounded-lg border bg-background p-6 shadow-lg">
         <h2 className="text-lg font-semibold">Generate AI answers</h2>
         <p className="mt-1 text-sm text-muted-foreground">
