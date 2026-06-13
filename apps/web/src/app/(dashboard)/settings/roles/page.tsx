@@ -638,15 +638,15 @@ function CreateEditRoleDialog({
 
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
+        <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-2">
             <ShieldIcon className="size-5" />
             {mode === 'create' ? 'Create Custom Role' : `Edit Role: ${role?.name}`}
           </DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4">
+        <div className="space-y-4 flex-1 min-h-0 overflow-y-auto pr-1">
           {error && (
             <Alert variant="destructive">
               <AlertDescription>{error}</AlertDescription>
@@ -735,7 +735,7 @@ function CreateEditRoleDialog({
             {permsLoading && <Skeleton className="h-40 w-full" />}
 
             {!permsLoading && allPermissions && (
-              <ScrollArea className="max-h-[340px]">
+              <div>
                 <div className="space-y-4">
                   {Object.entries(permsByCategory)
                     .sort(([a], [b]) => a.localeCompare(b))
@@ -784,19 +784,19 @@ function CreateEditRoleDialog({
                       );
                     })}
                 </div>
-              </ScrollArea>
+              </div>
             )}
           </div>
+        </div>
 
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button onClick={handleSubmit} disabled={isPending}>
-              {isPending && <Loader2Icon className="mr-1 size-4 animate-spin" />}
-              {mode === 'create' ? 'Create Role' : 'Save Changes'}
-            </Button>
-          </div>
+        <div className="flex justify-end gap-2 pt-4 border-t shrink-0">
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={handleSubmit} disabled={isPending}>
+            {isPending && <Loader2Icon className="mr-1 size-4 animate-spin" />}
+            {mode === 'create' ? 'Create Role' : 'Save Changes'}
+          </Button>
         </div>
       </DialogContent>
     </Dialog>
