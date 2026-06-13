@@ -183,6 +183,15 @@ def _project_one(
             "reviewStatus": "approved",
             "visibility": "public_editorial",
             "audience": "both",
+            # Artifact-level subject assignment so the Library hub counts
+            # this artifact under its bar subject. subject_study_code is a
+            # study_8 code, guaranteed present on every approved answer.
+            "subjectAssignments": [
+                {
+                    "subjectCode": answer["subject_study_code"],
+                    "isPrimary": True,
+                },
+            ],
             "provenanceRecords": [
                 {
                     "sourceDocumentId": source_document_id,

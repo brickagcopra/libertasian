@@ -96,6 +96,11 @@ class TestProjectApprovedBarAnswers:
             },
         ]
 
+        # Artifact-level subject assignment so the Library hub counts it
+        assert payload["subjectAssignments"] == [
+            {"subjectCode": "civil_law", "isPrimary": True},
+        ]
+
         # contentJson matches the renderer contract exactly
         content = payload["contentJson"]
         assert set(content.keys()) == {

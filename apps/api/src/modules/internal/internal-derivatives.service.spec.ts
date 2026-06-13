@@ -88,6 +88,14 @@ describe('InternalDerivativesService', () => {
     budgetLedger: { create: jest.Mock };
     derivativeReview: { create: jest.Mock };
     auditLog: { create: jest.Mock };
+    subject: { findUnique: jest.Mock };
+    subjectTopic: { findUnique: jest.Mock };
+    documentSubjectAssignment: {
+      findFirst: jest.Mock;
+      upsert: jest.Mock;
+      create: jest.Mock;
+      update: jest.Mock;
+    };
   };
 
   beforeEach(async () => {
@@ -145,6 +153,41 @@ describe('InternalDerivativesService', () => {
       },
       auditLog: {
         create: jest.fn().mockResolvedValue({ id: 'audit-001' }),
+      },
+      subject: {
+        findUnique: jest.fn().mockImplementation(
+          async (args: { where: { code_taxonomyVersion?: { code: string } } }) => {
+            const code = args.where.code_taxonomyVersion?.code;
+            const known = [
+              'political_law',
+              'civil_law',
+              'criminal_law',
+              'labor_law',
+              'mercantile_law',
+              'taxation',
+              'remedial_law',
+              'legal_ethics',
+            ];
+            return known.includes(code ?? '')
+              ? { id: `subj-${code}`, code }
+              : null;
+          },
+        ),
+      },
+      subjectTopic: {
+        findUnique: jest.fn().mockResolvedValue(null),
+      },
+      documentSubjectAssignment: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        upsert: jest.fn().mockImplementation(async (args: { create: { subjectId: string } }) => ({
+          id: `assign-${args.create.subjectId}`,
+        })),
+        create: jest.fn().mockImplementation(async (args: { data: { subjectId: string } }) => ({
+          id: `assign-${args.data.subjectId}`,
+        })),
+        update: jest.fn().mockImplementation(async (args: { where: { id: string } }) => ({
+          id: args.where.id,
+        })),
       },
     };
 
@@ -271,6 +314,101 @@ describe('InternalDerivativesService', () => {
           reviewStatus: 'draft',
         }),
       });
+    });
+
+    // ---- Optional artifact-level subject assignments ----
+
+    it('SA1. without subjectAssignments — no document_subject_assignment written', async () => {
+      const dto = makeWriteDto();
+
+      await service.writeDerivative(dto);
+
+      expect(txMocks.documentSubjectAssignment.create).not.toHaveBeenCalled();
+      expect(txMocks.documentSubjectAssignment.upsert).not.toHaveBeenCalled();
+      expect(txMocks.documentSubjectAssignment.update).not.toHaveBeenCalled();
+    });
+
+    it('SA2. with subjectAssignments — creates assignment carrying derivativeArtifactId (null-topic create path)', async () => {
+      const dto = makeWriteDto({
+        derivativeType: 'suggested_bar_answer',
+        subjectAssignments: [{ subjectCode: 'civil_law', isPrimary: true }],
+      });
+
+      const result = await service.writeDerivative(dto);
+
+      expect(result).toEqual({ artifactId: 'artifact-001' });
+      // No topic -> null-topic branch uses create (not upsert).
+      expect(txMocks.documentSubjectAssignment.create).toHaveBeenCalledTimes(1);
+      expect(txMocks.documentSubjectAssignment.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          derivativeArtifactId: 'artifact-001',
+          subjectId: 'subj-civil_law',
+          subjectTopicId: null,
+          isPrimary: true,
+          classifiedBy: 'projection',
+        }),
+      });
+      expect(txMocks.documentSubjectAssignment.upsert).not.toHaveBeenCalled();
+    });
+
+    it('SA3. idempotent — re-uses the existing NULL-topic row via update instead of duplicating', async () => {
+      txMocks.documentSubjectAssignment.findFirst.mockResolvedValueOnce({
+        id: 'existing-civil-null-topic',
+      });
+      const dto = makeWriteDto({
+        derivativeType: 'suggested_bar_answer',
+        subjectAssignments: [{ subjectCode: 'civil_law', isPrimary: true }],
+      });
+
+      await service.writeDerivative(dto);
+
+      expect(txMocks.documentSubjectAssignment.create).not.toHaveBeenCalled();
+      expect(txMocks.documentSubjectAssignment.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'existing-civil-null-topic' },
+          data: expect.objectContaining({ isPrimary: true, classifiedBy: 'projection' }),
+        }),
+      );
+    });
+
+    it('SA4. rejects unknown subjectCode with 400', async () => {
+      const dto = makeWriteDto({
+        derivativeType: 'suggested_bar_answer',
+        subjectAssignments: [{ subjectCode: 'made_up_law', isPrimary: true }],
+      });
+
+      await expect(service.writeDerivative(dto)).rejects.toThrow(BadRequestException);
+      await expect(service.writeDerivative(dto)).rejects.toThrow(
+        'Unknown subject code: made_up_law',
+      );
+      expect(txMocks.documentSubjectAssignment.create).not.toHaveBeenCalled();
+    });
+
+    it('SA5. rejects zero primaries with 400', async () => {
+      const dto = makeWriteDto({
+        derivativeType: 'suggested_bar_answer',
+        subjectAssignments: [{ subjectCode: 'civil_law', isPrimary: false }],
+      });
+
+      await expect(service.writeDerivative(dto)).rejects.toThrow(BadRequestException);
+      await expect(service.writeDerivative(dto)).rejects.toThrow(
+        'Exactly one primary subject assignment required, got 0',
+      );
+    });
+
+    it('SA6. rejects multiple primaries with 400', async () => {
+      const dto = makeWriteDto({
+        derivativeType: 'suggested_bar_answer',
+        subjectAssignments: [
+          { subjectCode: 'civil_law', isPrimary: true },
+          { subjectCode: 'criminal_law', isPrimary: true },
+        ],
+      });
+
+      await expect(service.writeDerivative(dto)).rejects.toThrow(BadRequestException);
+      await expect(service.writeDerivative(dto)).rejects.toThrow(
+        'Exactly one primary subject assignment required, got 2',
+      );
     });
 
     // ---- Auto-promote at confidence ≥ threshold ----

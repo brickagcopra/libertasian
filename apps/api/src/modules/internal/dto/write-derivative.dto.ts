@@ -5,7 +5,10 @@ import {
   IsUUID,
   IsObject,
   IsArray,
+  IsBoolean,
   IsNumber,
+  Max,
+  Min,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -52,6 +55,25 @@ export class BudgetLedgerEntryDto {
   @IsOptional()
   @IsString()
   modelRunId?: string;
+}
+
+export class SubjectAssignmentEntryDto {
+  @IsString()
+  @IsNotEmpty()
+  subjectCode!: string;
+
+  @IsBoolean()
+  isPrimary!: boolean;
+
+  @IsOptional()
+  @IsString()
+  subjectTopicCode?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(1)
+  confidence?: number;
 }
 
 export class WriteDerivativeDto {
@@ -121,6 +143,16 @@ export class WriteDerivativeDto {
   @IsOptional()
   @IsUUID()
   modelRunId?: string;
+
+  // Optional artifact-level subject assignments (written in the same
+  // transaction). Carries a derivativeArtifactId so the Library hub counts
+  // the artifact under each subject. Backward-compatible: when omitted, the
+  // writer behaves exactly as before.
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SubjectAssignmentEntryDto)
+  subjectAssignments?: SubjectAssignmentEntryDto[];
 
   // Provenance records (at least one required — enforced at service level)
   @IsArray()

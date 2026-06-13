@@ -7,7 +7,7 @@ import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { AutoPromoteService } from './auto-promote.service';
-import { WriteDerivativeDto, WriteDigestDto, WriteClassificationDto, WriteDoctrinesDto, WriteMcqBatchDto, WriteEssayDto, WriteFlashcardsDto } from './dto';
+import { WriteDerivativeDto, WriteDigestDto, WriteClassificationDto, WriteDoctrinesDto, WriteMcqBatchDto, WriteEssayDto, WriteFlashcardsDto, SubjectAssignmentEntryDto } from './dto';
 import { UpdateJobStatusDto } from './dto';
 
 /**
@@ -74,6 +74,18 @@ export class InternalDerivativesService {
         );
       }
 
+      // 1b. Optional artifact-level subject assignments. These carry a
+      // derivativeArtifactId so the Library hub counts the artifact under
+      // each subject (digests are counted differently). Written in the
+      // same tx so a failure rolls back the artifact too.
+      if (dto.subjectAssignments?.length) {
+        await this.createArtifactSubjectAssignments(
+          tx,
+          artifact.id,
+          dto.subjectAssignments,
+        );
+      }
+
       // 2. Create ProvenanceRecords
       for (const prov of dto.provenanceRecords) {
         await tx.provenanceRecord.create({
@@ -107,6 +119,115 @@ export class InternalDerivativesService {
     });
 
     return { artifactId: result.id };
+  }
+
+  /**
+   * Create (or refresh) artifact-level DocumentSubjectAssignment rows
+   * inside the caller's transaction. Each row carries a
+   * ``derivativeArtifactId`` rather than a ``legalDocumentId`` so the
+   * Library hub counts the artifact under its subject(s).
+   *
+   * Mirrors the NULL-subjectTopicId split in writeClassification():
+   * Prisma cannot match a composite unique through a NULL subjectTopicId
+   * (coercing it to '' raises `invalid input syntax for type uuid: ""`),
+   * so when there is no topic we findFirst + update-or-create against the
+   * NULL partial row. Idempotent on (derivativeArtifactId, subjectId,
+   * subjectTopicId) — a re-run updates the existing row instead of
+   * duplicating it.
+   */
+  private async createArtifactSubjectAssignments(
+    tx: Prisma.TransactionClient,
+    artifactId: string,
+    assignments: SubjectAssignmentEntryDto[],
+  ): Promise<void> {
+    const primaries = assignments.filter((a) => a.isPrimary);
+    if (primaries.length !== 1) {
+      throw new BadRequestException(
+        `Exactly one primary subject assignment required, got ${primaries.length}`,
+      );
+    }
+
+    for (const assignment of assignments) {
+      // 1. Resolve subject code -> id (study_8 taxonomy)
+      const subject = await tx.subject.findUnique({
+        where: {
+          code_taxonomyVersion: {
+            code: assignment.subjectCode,
+            taxonomyVersion: 'study_8',
+          },
+        },
+      });
+      if (!subject) {
+        throw new BadRequestException(
+          `Unknown subject code: ${assignment.subjectCode}`,
+        );
+      }
+
+      // 2. Resolve optional topic code -> id
+      let subjectTopicId: string | null = null;
+      if (assignment.subjectTopicCode) {
+        const topic = await tx.subjectTopic.findUnique({
+          where: {
+            subjectId_code: {
+              subjectId: subject.id,
+              code: assignment.subjectTopicCode,
+            },
+          },
+        });
+        if (!topic) {
+          throw new BadRequestException(
+            `Unknown topic code: ${assignment.subjectTopicCode} under subject ${assignment.subjectCode}`,
+          );
+        }
+        subjectTopicId = topic.id;
+      }
+
+      // 3. Upsert the assignment. classifiedBy is 'projection' (<=20 chars
+      // for the VarChar(20) column) to distinguish these from the 'ai'
+      // classifier writes.
+      const updateData = {
+        isPrimary: assignment.isPrimary,
+        confidence: assignment.confidence,
+        classifiedBy: 'projection',
+      };
+      const createData = {
+        derivativeArtifactId: artifactId,
+        subjectId: subject.id,
+        subjectTopicId,
+        ...updateData,
+      };
+
+      if (subjectTopicId !== null) {
+        await tx.documentSubjectAssignment.upsert({
+          where: {
+            derivativeArtifactId_subjectId_subjectTopicId: {
+              derivativeArtifactId: artifactId,
+              subjectId: subject.id,
+              subjectTopicId,
+            },
+          },
+          update: updateData,
+          create: createData,
+        });
+      } else {
+        const existingNullTopic =
+          await tx.documentSubjectAssignment.findFirst({
+            where: {
+              derivativeArtifactId: artifactId,
+              subjectId: subject.id,
+              subjectTopicId: null,
+            },
+          });
+        if (existingNullTopic) {
+          await tx.documentSubjectAssignment.update({
+            where: { id: existingNullTopic.id },
+            data: updateData,
+          });
+        } else {
+          await tx.documentSubjectAssignment.create({ data: createData });
+        }
+      }
+    }
   }
 
   async writeDigest(dto: WriteDigestDto): Promise<{ digestId: string }> {

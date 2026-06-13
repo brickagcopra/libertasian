@@ -1,4 +1,4 @@
-export { WriteDerivativeDto, ProvenanceRecordDto, BudgetLedgerEntryDto } from './write-derivative.dto';
+export { WriteDerivativeDto, ProvenanceRecordDto, BudgetLedgerEntryDto, SubjectAssignmentEntryDto } from './write-derivative.dto';
 export { WriteDigestDto } from './write-digest.dto';
 export { UpdateJobStatusDto } from './update-job-status.dto';
 export { WriteClassificationDto, ClassificationAssignmentDto } from './write-classification.dto';
