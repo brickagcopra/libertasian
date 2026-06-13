@@ -186,8 +186,9 @@ export default function DigestsPage() {
             <SelectContent>
               <SelectItem value="all">All types</SelectItem>
               <SelectItem value="case_digest">Case Digest</SelectItem>
-              <SelectItem value="legal_opinion">Legal Opinion</SelectItem>
-              <SelectItem value="legal_memo">Legal Memo</SelectItem>
+              <SelectItem value="statute_summary">Statute Summary</SelectItem>
+              <SelectItem value="reviewer_note">Reviewer Note</SelectItem>
+              <SelectItem value="study_digest">Study Digest</SelectItem>
             </SelectContent>
           </Select>
           <Select value={reviewStatus} onValueChange={setReviewStatus}>
@@ -200,7 +201,7 @@ export default function DigestsPage() {
               <SelectItem value="ai_generated">AI Generated</SelectItem>
               <SelectItem value="needs_human_review">Needs Review</SelectItem>
               <SelectItem value="approved">Approved</SelectItem>
-              <SelectItem value="published">Published</SelectItem>
+              <SelectItem value="rejected">Rejected</SelectItem>
             </SelectContent>
           </Select>
         </div>
