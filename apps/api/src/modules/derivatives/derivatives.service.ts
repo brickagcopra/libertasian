@@ -95,6 +95,23 @@ interface DigestRowForMapping {
   } | null;
 }
 
+interface BarAnswerRowForMapping {
+  id: string;
+  answerText: string;
+  structuredAnswerJson: Prisma.JsonValue | null;
+  confidence: number | null;
+  createdAt: Date;
+  question: {
+    questionNumber: number;
+    questionText: string;
+    barExamSitting: {
+      year: number;
+      subjectStudyCode: string | null;
+      taxonomyVersion: string;
+    };
+  };
+}
+
 @Injectable()
 export class DerivativesService {
   private readonly logger = new Logger(DerivativesService.name);
@@ -123,6 +140,10 @@ export class DerivativesService {
   }> {
     if (query.derivativeType === 'case_digest') {
       return this.listCaseDigests(query);
+    }
+
+    if (query.derivativeType === 'suggested_bar_answer') {
+      return this.listSuggestedBarAnswers(query);
     }
 
     if (previewOnly) {
@@ -312,6 +333,10 @@ export class DerivativesService {
       if (digest) {
         return digest;
       }
+      const barAnswer = await this.findSuggestedBarAnswerById(id);
+      if (barAnswer) {
+        return barAnswer;
+      }
       // Return 404 (not 403) to avoid leaking existence across tenants.
       throw new NotFoundException('Derivative artifact not found');
     }
@@ -417,6 +442,35 @@ export class DerivativesService {
       }));
     }
 
+    if (type === 'suggested_bar_answer') {
+      const answerCounts = await Promise.all(
+        subjects.map((s) =>
+          // CARVE-OUT: count under suggestedBarAnswerVisibilityWhere() (visibility='public_editorial', reviewStatus='approved') against the foreign bar_exam_answers table; forTenant() would miscount this cross-org public_editorial read
+          this.prisma.barExamAnswer.count({
+            where: {
+              ...this.suggestedBarAnswerVisibilityWhere(),
+              question: {
+                barExamSitting: {
+                  subjectStudyCode: s.code,
+                  taxonomyVersion,
+                },
+              },
+            },
+          }),
+        ),
+      );
+
+      // total === approved for suggested_bar_answer (single visibility-filter
+      // count serves both — only approved + public_editorial rows are surfaced).
+      return subjects.map((s, i) => ({
+        subjectCode: s.code,
+        subjectName: s.name,
+        taxonomyVersion: s.taxonomyVersion,
+        totalCount: answerCounts[i] ?? 0,
+        approvedCount: answerCounts[i] ?? 0,
+      }));
+    }
+
     const visibilityOr: Prisma.DerivativeArtifactWhereInput[] = [
       { createdByUserId: userId },
       { organizationId, visibility: { not: 'private' } },
@@ -484,7 +538,7 @@ export class DerivativesService {
       select: { id: true, code: true, name: true, taxonomyVersion: true },
     });
 
-    const [counts, digestCounts] = await Promise.all([
+    const [counts, digestCounts, barAnswerCounts] = await Promise.all([
       this.prisma.documentSubjectAssignment.groupBy({
         by: ['subjectId'],
         where: {
@@ -510,6 +564,22 @@ export class DerivativesService {
           }),
         ),
       ),
+      Promise.all(
+        subjects.map((s) =>
+          // CARVE-OUT: count under suggestedBarAnswerVisibilityWhere() (visibility='public_editorial', reviewStatus='approved') against the foreign bar_exam_answers table; forTenant() would miscount this cross-org public_editorial read
+          this.prisma.barExamAnswer.count({
+            where: {
+              ...this.suggestedBarAnswerVisibilityWhere(),
+              question: {
+                barExamSitting: {
+                  subjectStudyCode: s.code,
+                  taxonomyVersion,
+                },
+              },
+            },
+          }),
+        ),
+      ),
     ]);
 
     const countMap = new Map(counts.map((c) => [c.subjectId, c._count._all]));
@@ -518,7 +588,7 @@ export class DerivativesService {
       code: s.code,
       name: s.name,
       taxonomyVersion: s.taxonomyVersion,
-      count: (countMap.get(s.id) ?? 0) + (digestCounts[i] ?? 0),
+      count: (countMap.get(s.id) ?? 0) + (digestCounts[i] ?? 0) + (barAnswerCounts[i] ?? 0),
     }));
 
     if (this.redis) {
@@ -875,6 +945,187 @@ export class DerivativesService {
       doctrine: row.doctrine,
       dispositive: row.dispositive,
     } as Prisma.JsonValue;
+  }
+
+  /**
+   * Suggested bar answers live in the foreign `bar_exam_answers` table (one
+   * approved answer per past bar exam question). Only admin-approved,
+   * public_editorial answers are surfaced — the same public, cross-org read
+   * rationale as the case_digest bridge. Treated as public (never paid-gated).
+   */
+  private suggestedBarAnswerVisibilityWhere(): Prisma.BarExamAnswerWhereInput {
+    return {
+      reviewStatus: 'approved',
+      visibility: 'public_editorial',
+    };
+  }
+
+  /**
+   * Maps a taxonomy's subject `code` → its human name. `bar_exam_sittings`
+   * only stores the subject_study_code string, so we resolve display names via
+   * the Subject table for the requested taxonomy version.
+   */
+  private async subjectNameMap(
+    taxonomyVersion: string,
+  ): Promise<Map<string, { name: string; taxonomyVersion: string }>> {
+    const subjects = await this.prisma.subject.findMany({
+      where: { taxonomyVersion },
+      select: { code: true, name: true, taxonomyVersion: true },
+    });
+    return new Map(
+      subjects.map((s) => [s.code, { name: s.name, taxonomyVersion: s.taxonomyVersion }]),
+    );
+  }
+
+  private async listSuggestedBarAnswers(query: ListDerivativesQueryDto): Promise<{
+    items: DerivativeListItem[];
+    meta: { hasNext: boolean; nextCursor?: string; limit: number };
+  }> {
+    const limit = query.limit ?? 20;
+    const taxonomyVersion = query.taxonomyVersion ?? 'study_8';
+
+    const where: Prisma.BarExamAnswerWhereInput = this.suggestedBarAnswerVisibilityWhere();
+
+    const questionWhere: Prisma.BarExamQuestionWhereInput = {};
+    if (query.subjectCode) {
+      questionWhere.barExamSitting = {
+        subjectStudyCode: query.subjectCode,
+        taxonomyVersion,
+      };
+    }
+    if (query.search) {
+      questionWhere.questionText = { contains: query.search, mode: 'insensitive' };
+    }
+    if (Object.keys(questionWhere).length > 0) {
+      where.question = questionWhere;
+    }
+
+    // CARVE-OUT: read under suggestedBarAnswerVisibilityWhere() (visibility='public_editorial'); forTenant() would 404 these cross-org public reads
+    const rows = await this.prisma.barExamAnswer.findMany({
+      where,
+      take: limit + 1,
+      ...(query.cursor && { skip: 1, cursor: { id: query.cursor } }),
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      include: {
+        question: {
+          select: {
+            questionNumber: true,
+            questionText: true,
+            barExamSitting: {
+              select: { year: true, subjectStudyCode: true, taxonomyVersion: true },
+            },
+          },
+        },
+      },
+    });
+
+    const hasNext = rows.length > limit;
+    const pageRows = hasNext ? rows.slice(0, limit) : rows;
+    const lastRow = pageRows[pageRows.length - 1];
+    const nextCursor = hasNext && lastRow ? lastRow.id : undefined;
+
+    const subjectNameByCode = await this.subjectNameMap(taxonomyVersion);
+    const items: DerivativeListItem[] = pageRows.map((row) =>
+      this.mapBarAnswerToListItem(row, subjectNameByCode),
+    );
+
+    return { items, meta: { hasNext, nextCursor, limit } };
+  }
+
+  private async findSuggestedBarAnswerById(id: string): Promise<DerivativeDetail | null> {
+    // CARVE-OUT: read under suggestedBarAnswerVisibilityWhere() (visibility='public_editorial'); forTenant() would 404 these cross-org public reads
+    const row = await this.prisma.barExamAnswer.findFirst({
+      where: { id, ...this.suggestedBarAnswerVisibilityWhere() },
+      include: {
+        question: {
+          select: {
+            questionNumber: true,
+            questionText: true,
+            barExamSitting: {
+              select: { year: true, subjectStudyCode: true, taxonomyVersion: true },
+            },
+          },
+        },
+      },
+    });
+
+    if (!row) return null;
+
+    // Resolve subject display names against the sitting's own taxonomy version.
+    const subjectNameByCode = await this.subjectNameMap(
+      row.question.barExamSitting.taxonomyVersion,
+    );
+    const listItem = this.mapBarAnswerToListItem(row, subjectNameByCode);
+    const subjectName =
+      listItem.subjects[0]?.name ?? row.question.barExamSitting.subjectStudyCode ?? '';
+
+    return {
+      ...listItem,
+      contentJson: this.buildBarAnswerContentJson(row, subjectName),
+      contentPlainText: null,
+      disclaimerBody: null,
+      mcqQuestion: null,
+      essayPrompt: null,
+    };
+  }
+
+  private mapBarAnswerToListItem(
+    row: BarAnswerRowForMapping,
+    subjectNameByCode: Map<string, { name: string; taxonomyVersion: string }>,
+  ): DerivativeListItem {
+    const sitting = row.question.barExamSitting;
+    const code = sitting.subjectStudyCode ?? '';
+    const subjectMeta = code ? subjectNameByCode.get(code) : undefined;
+    const subjectName = subjectMeta?.name ?? code;
+    const taxonomyVersion = subjectMeta?.taxonomyVersion ?? sitting.taxonomyVersion;
+
+    const title = `${subjectName} — Bar ${sitting.year} Q${row.question.questionNumber}`;
+
+    return {
+      id: row.id,
+      title,
+      derivativeType: 'suggested_bar_answer',
+      confidenceScore: row.confidence,
+      createdAt: row.createdAt,
+      publishedAt: null,
+      audience: 'both',
+      language: 'en',
+      sourceDocument: null,
+      subjects: code
+        ? [{ code, name: subjectName, taxonomyVersion, isPrimary: true }]
+        : [],
+      disclaimer: null,
+      // Treated as public, exactly like case_digest — never paid-gated.
+      isGated: false,
+      upgradeTier: null,
+    };
+  }
+
+  private buildBarAnswerContentJson(
+    row: BarAnswerRowForMapping,
+    subjectName: string,
+  ): Prisma.JsonValue {
+    const content: Record<string, Prisma.JsonValue> = {
+      barYear: row.question.barExamSitting.year,
+      examSubject: subjectName,
+      questionText: row.question.questionText,
+      suggestedAnswer: row.answerText,
+    };
+
+    // annotations[] and sourceAttribution are optional renderer extras carried
+    // in structured_answer_json — surface them only when present.
+    const structured = row.structuredAnswerJson;
+    if (structured && typeof structured === 'object' && !Array.isArray(structured)) {
+      const obj = structured as Record<string, Prisma.JsonValue>;
+      if (Array.isArray(obj['annotations'])) {
+        content['annotations'] = obj['annotations'];
+      }
+      if (typeof obj['sourceAttribution'] === 'string') {
+        content['sourceAttribution'] = obj['sourceAttribution'];
+      }
+    }
+
+    return content as Prisma.JsonValue;
   }
 
   /**
