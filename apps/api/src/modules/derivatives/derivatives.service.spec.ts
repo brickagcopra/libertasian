@@ -933,10 +933,10 @@ describe('DerivativesService', () => {
         });
       });
 
-      it('maps answer rows to DerivativeListItem (synthesized title, never gated)', async () => {
+      it('maps answer rows to DerivativeListItem (synthesized title, ungated for edu tier)', async () => {
         prisma.barExamAnswer.findMany.mockResolvedValue([makeAnswerRow()]);
         prisma.subject.findMany.mockResolvedValue(fullTaxonomy);
-        subs.getPlanCode.mockResolvedValue('free');
+        subs.getPlanCode.mockResolvedValue('edu');
 
         const { items } = await service.list('user-1', 'org-1', {
           derivativeType: 'suggested_bar_answer',
@@ -960,6 +960,23 @@ describe('DerivativesService', () => {
         ]);
       });
 
+      it('gates list items for free-tier users with upgradeTier=edu', async () => {
+        prisma.barExamAnswer.findMany.mockResolvedValue([makeAnswerRow()]);
+        prisma.subject.findMany.mockResolvedValue(fullTaxonomy);
+        subs.getPlanCode.mockResolvedValue('free');
+
+        const { items } = await service.list('user-1', 'org-1', {
+          derivativeType: 'suggested_bar_answer',
+        });
+
+        const [first] = items;
+        expect(first).toBeDefined();
+        expect(first!.isGated).toBe(true);
+        expect(first!.upgradeTier).toBe('edu');
+        // Plan looked up once per call, not once per row.
+        expect(subs.getPlanCode).toHaveBeenCalledTimes(1);
+      });
+
       it('handles pagination with take=limit+1 and nextCursor', async () => {
         prisma.barExamAnswer.findMany.mockResolvedValue([
           makeAnswerRow({ id: 'ba1' }),
@@ -980,7 +997,7 @@ describe('DerivativesService', () => {
     });
 
     describe('findOne — suggested_bar_answer fallback', () => {
-      it('returns a detail with renderer-shaped contentJson', async () => {
+      it('returns full renderer-shaped contentJson to edu-tier users (ungated)', async () => {
         prisma.derivativeArtifact.findFirst.mockResolvedValue(null);
         prisma.digest.findFirst.mockResolvedValue(null);
         prisma.barExamAnswer.findFirst.mockResolvedValue(
@@ -992,6 +1009,7 @@ describe('DerivativesService', () => {
           }),
         );
         prisma.subject.findMany.mockResolvedValue(fullTaxonomy);
+        subs.getPlanCode.mockResolvedValue('edu');
 
         const result = await service.findOne('ba1', 'user-1', 'org-1');
 
@@ -1014,11 +1032,43 @@ describe('DerivativesService', () => {
         expect(content['sourceAttribution']).toBe('LawPhil 2019 Bar');
       });
 
+      it('gates the detail for free-tier users and redacts suggestedAnswer + annotations (keeps questionText)', async () => {
+        prisma.derivativeArtifact.findFirst.mockResolvedValue(null);
+        prisma.digest.findFirst.mockResolvedValue(null);
+        prisma.barExamAnswer.findFirst.mockResolvedValue(
+          makeAnswerRow({
+            structuredAnswerJson: {
+              annotations: [{ quote: 'Sec. 2, Art. III', commentary: 'Bill of Rights' }],
+              sourceAttribution: 'LawPhil 2019 Bar',
+            },
+          }),
+        );
+        prisma.subject.findMany.mockResolvedValue(fullTaxonomy);
+        subs.getPlanCode.mockResolvedValue('free');
+
+        const result = await service.findOne('ba1', 'user-1', 'org-1');
+
+        expect(result.isGated).toBe(true);
+        expect(result.upgradeTier).toBe('edu');
+
+        const content = result.contentJson as Record<string, unknown>;
+        // Answer-side content is stripped server-side — never reaches the client.
+        expect(content).not.toHaveProperty('suggestedAnswer');
+        expect(content).not.toHaveProperty('annotations');
+        // Preview metadata stays visible.
+        expect(content['questionText']).toBe(
+          'Discuss the validity of the warrantless search.',
+        );
+        expect(content['barYear']).toBe(2019);
+        expect(content['examSubject']).toBe('Criminal Law');
+      });
+
       it('omits annotations/sourceAttribution when structured_answer_json is absent', async () => {
         prisma.derivativeArtifact.findFirst.mockResolvedValue(null);
         prisma.digest.findFirst.mockResolvedValue(null);
         prisma.barExamAnswer.findFirst.mockResolvedValue(makeAnswerRow());
         prisma.subject.findMany.mockResolvedValue(fullTaxonomy);
+        subs.getPlanCode.mockResolvedValue('edu');
 
         const result = await service.findOne('ba1', 'user-1', 'org-1');
 

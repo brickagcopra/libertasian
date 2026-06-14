@@ -143,7 +143,7 @@ export class DerivativesService {
     }
 
     if (query.derivativeType === 'suggested_bar_answer') {
-      return this.listSuggestedBarAnswers(query);
+      return this.listSuggestedBarAnswers(query, organizationId);
     }
 
     if (previewOnly) {
@@ -333,7 +333,7 @@ export class DerivativesService {
       if (digest) {
         return digest;
       }
-      const barAnswer = await this.findSuggestedBarAnswerById(id);
+      const barAnswer = await this.findSuggestedBarAnswerById(id, organizationId);
       if (barAnswer) {
         return barAnswer;
       }
@@ -977,7 +977,10 @@ export class DerivativesService {
     );
   }
 
-  private async listSuggestedBarAnswers(query: ListDerivativesQueryDto): Promise<{
+  private async listSuggestedBarAnswers(
+    query: ListDerivativesQueryDto,
+    organizationId: string,
+  ): Promise<{
     items: DerivativeListItem[];
     meta: { hasNext: boolean; nextCursor?: string; limit: number };
   }> {
@@ -1024,15 +1027,25 @@ export class DerivativesService {
     const lastRow = pageRows[pageRows.length - 1];
     const nextCursor = hasNext && lastRow ? lastRow.id : undefined;
 
+    // suggested_bar_answer is an edu-tier paid feature (in GATED_DERIVATIVE_TYPES);
+    // gate it consistently with the dedicated /bar-exams paywall. One plan lookup
+    // per call — never N+1 across rows.
+    const planCode = await this.subscriptions.getPlanCode(organizationId);
+    const meetsEdu = SubscriptionsService.meetsMinimumTier(planCode, UPGRADE_TIER);
+    const gated = GATED_DERIVATIVE_TYPES.has('suggested_bar_answer') && !meetsEdu;
+
     const subjectNameByCode = await this.subjectNameMap(taxonomyVersion);
     const items: DerivativeListItem[] = pageRows.map((row) =>
-      this.mapBarAnswerToListItem(row, subjectNameByCode),
+      this.mapBarAnswerToListItem(row, subjectNameByCode, gated),
     );
 
     return { items, meta: { hasNext, nextCursor, limit } };
   }
 
-  private async findSuggestedBarAnswerById(id: string): Promise<DerivativeDetail | null> {
+  private async findSuggestedBarAnswerById(
+    id: string,
+    organizationId: string,
+  ): Promise<DerivativeDetail | null> {
     // CARVE-OUT: read under suggestedBarAnswerVisibilityWhere() (visibility='public_editorial'); forTenant() would 404 these cross-org public reads
     const row = await this.prisma.barExamAnswer.findFirst({
       where: { id, ...this.suggestedBarAnswerVisibilityWhere() },
@@ -1051,17 +1064,28 @@ export class DerivativesService {
 
     if (!row) return null;
 
+    // suggested_bar_answer is an edu-tier paid feature (in GATED_DERIVATIVE_TYPES);
+    // gate it consistently with the dedicated /bar-exams paywall.
+    const planCode = await this.subscriptions.getPlanCode(organizationId);
+    const meetsEdu = SubscriptionsService.meetsMinimumTier(planCode, UPGRADE_TIER);
+    const gated = GATED_DERIVATIVE_TYPES.has('suggested_bar_answer') && !meetsEdu;
+
     // Resolve subject display names against the sitting's own taxonomy version.
     const subjectNameByCode = await this.subjectNameMap(
       row.question.barExamSitting.taxonomyVersion,
     );
-    const listItem = this.mapBarAnswerToListItem(row, subjectNameByCode);
+    const listItem = this.mapBarAnswerToListItem(row, subjectNameByCode, gated);
     const subjectName =
       listItem.subjects[0]?.name ?? row.question.barExamSitting.subjectStudyCode ?? '';
 
+    const contentJson = this.buildBarAnswerContentJson(row, subjectName);
+
     return {
       ...listItem,
-      contentJson: this.buildBarAnswerContentJson(row, subjectName),
+      // Redact answer-side content (suggestedAnswer, annotations) server-side for
+      // gated tiers so it never reaches the client. questionText/barYear/
+      // examSubject remain visible for the preview.
+      contentJson: gated ? this.redactGatedContent(contentJson) : contentJson,
       contentPlainText: null,
       disclaimerBody: null,
       mcqQuestion: null,
@@ -1072,6 +1096,7 @@ export class DerivativesService {
   private mapBarAnswerToListItem(
     row: BarAnswerRowForMapping,
     subjectNameByCode: Map<string, { name: string; taxonomyVersion: string }>,
+    gated: boolean,
   ): DerivativeListItem {
     const sitting = row.question.barExamSitting;
     const code = sitting.subjectStudyCode ?? '';
@@ -1095,9 +1120,10 @@ export class DerivativesService {
         ? [{ code, name: subjectName, taxonomyVersion, isPrimary: true }]
         : [],
       disclaimer: null,
-      // Treated as public, exactly like case_digest — never paid-gated.
-      isGated: false,
-      upgradeTier: null,
+      // Paid-gated at edu tier, mirroring GATED_DERIVATIVE_TYPES and the
+      // dedicated /bar-exams paywall (NOT free like case_digest).
+      isGated: gated,
+      upgradeTier: gated ? UPGRADE_TIER : null,
     };
   }
 
@@ -1143,6 +1169,9 @@ export class DerivativesService {
       'answer',
       'modelAnswer',
       'suggestedAnswer',
+      // bar-answer-specific: annotations are answer-side commentary (renderer
+      // already hides them behind isGated; strip them server-side too).
+      'annotations',
       'explanation',
       'rationale',
       'solution',
