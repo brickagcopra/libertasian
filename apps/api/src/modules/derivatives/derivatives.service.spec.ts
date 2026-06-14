@@ -1106,4 +1106,268 @@ describe('DerivativesService', () => {
       });
     });
   });
+
+  describe('essay_model_answer bridge (projection of essay_prompt artifacts)', () => {
+    const fullTaxonomy = [
+      { id: 's1', code: 'political_law', name: 'Political Law', taxonomyVersion: 'study_8' },
+      { id: 's2', code: 'civil_law', name: 'Civil Law', taxonomyVersion: 'study_8' },
+      { id: 's3', code: 'criminal_law', name: 'Criminal Law', taxonomyVersion: 'study_8' },
+      { id: 's4', code: 'labor_law', name: 'Labor Law and Social Legislation', taxonomyVersion: 'study_8' },
+      { id: 's5', code: 'mercantile_law', name: 'Mercantile (Commercial) Law', taxonomyVersion: 'study_8' },
+      { id: 's6', code: 'taxation', name: 'Taxation', taxonomyVersion: 'study_8' },
+      { id: 's7', code: 'remedial_law', name: 'Remedial Law', taxonomyVersion: 'study_8' },
+      { id: 's8', code: 'legal_ethics', name: 'Legal and Judicial Ethics', taxonomyVersion: 'study_8' },
+    ];
+
+    const makeEssayRow = (overrides: Partial<Record<string, unknown>> = {}) => ({
+      id: 'essay-1',
+      title: 'Warrantless search — practice essay',
+      derivativeType: 'essay_prompt',
+      confidenceScore: 0.88,
+      createdAt: new Date('2026-05-12'),
+      publishedAt: null,
+      audience: 'both',
+      language: 'en',
+      contentJson: {
+        promptText: 'Discuss the validity of the warrantless search.',
+        modelAnswer: {
+          outlineSections: [
+            {
+              heading: 'Answer',
+              paragraphs: ['The search was invalid.'],
+              citedSectionIds: ['sec-1'],
+            },
+            {
+              heading: 'Law',
+              paragraphs: ['Art. III, Sec. 2 of the Constitution.'],
+              citedSectionIds: ['sec-2'],
+            },
+          ],
+        },
+      },
+      contentPlainText: 'full essay text',
+      sourceDocument: null,
+      subjectAssignments: [
+        {
+          isPrimary: true,
+          subject: {
+            code: 'criminal_law',
+            name: 'Criminal Law',
+            taxonomyVersion: 'study_8',
+          },
+        },
+      ],
+      contentDisclaimer: {
+        id: 'cd',
+        contentClass: 'essay',
+        version: 1,
+        bodyHtml: '<p>disc</p>',
+        bodyPlain: 'disc',
+      },
+      mcqQuestion: null,
+      essayPrompt: null,
+      ...overrides,
+    });
+
+    describe('subjectsSummaryByType', () => {
+      it('returns per-subject approved counts (total === approved) from essay_prompt artifacts', async () => {
+        prisma.subject.findMany.mockResolvedValue(fullTaxonomy);
+        prisma.documentSubjectAssignment.groupBy.mockResolvedValue([
+          { subjectId: 's3', _count: { _all: 7 } },
+          { subjectId: 's1', _count: { _all: 4 } },
+        ]);
+
+        const result = await service.subjectsSummaryByType(
+          'essay_model_answer',
+          'user-1',
+          'org-1',
+          'study_8',
+        );
+
+        expect(result).toHaveLength(8);
+
+        const criminal = result.find((r) => r.subjectCode === 'criminal_law');
+        expect(criminal).toEqual({
+          subjectCode: 'criminal_law',
+          subjectName: 'Criminal Law',
+          taxonomyVersion: 'study_8',
+          totalCount: 7,
+          approvedCount: 7,
+        });
+
+        const civil = result.find((r) => r.subjectCode === 'civil_law');
+        expect(civil?.totalCount).toBe(0);
+        expect(civil?.approvedCount).toBe(0);
+
+        // total === approved for the projection (single approved-visibility count).
+        for (const row of result) {
+          expect(row.totalCount).toBe(row.approvedCount);
+        }
+      });
+
+      it('counts under derivativeType=essay_prompt + public_editorial + approved (single groupBy)', async () => {
+        prisma.subject.findMany.mockResolvedValue(fullTaxonomy);
+        prisma.documentSubjectAssignment.groupBy.mockResolvedValue([]);
+
+        await service.subjectsSummaryByType(
+          'essay_model_answer',
+          'user-1',
+          'org-1',
+          'study_8',
+        );
+
+        expect(prisma.documentSubjectAssignment.groupBy).toHaveBeenCalledTimes(1);
+        const call = prisma.documentSubjectAssignment.groupBy.mock.calls[0][0];
+        expect(call.where.derivativeArtifact.deletedAt).toBeNull();
+        expect(call.where.derivativeArtifact.derivativeType).toBe('essay_prompt');
+        expect(call.where.derivativeArtifact.visibility).toBe('public_editorial');
+        expect(call.where.derivativeArtifact.reviewStatus).toBe('approved');
+      });
+    });
+
+    describe('list', () => {
+      it('queries essay_prompt artifacts and maps them to essay_model_answer items', async () => {
+        prisma.derivativeArtifact.findMany.mockResolvedValue([makeEssayRow()]);
+        subs.getPlanCode.mockResolvedValue('edu');
+
+        const { items } = await service.list('user-1', 'org-1', {
+          derivativeType: 'essay_model_answer',
+        });
+
+        const call = prisma.derivativeArtifact.findMany.mock.calls[0][0];
+        expect(call.where.derivativeType).toBe('essay_prompt');
+        expect(call.where.AND[0].OR).toEqual(
+          expect.arrayContaining([
+            { createdByUserId: 'user-1' },
+            { organizationId: 'org-1', visibility: { not: 'private' } },
+            { visibility: 'public_editorial', reviewStatus: 'approved' },
+          ]),
+        );
+
+        const [first] = items;
+        expect(first).toBeDefined();
+        expect(first!.id).toBe('essay-1');
+        expect(first!.derivativeType).toBe('essay_model_answer');
+        expect(first!.title).toBe('Model Answer — Warrantless search — practice essay');
+        // List items never carry contentJson.
+        expect(first as unknown as Record<string, unknown>).not.toHaveProperty(
+          'contentJson',
+        );
+      });
+
+      it('gates list items for free-tier users with upgradeTier=edu', async () => {
+        prisma.derivativeArtifact.findMany.mockResolvedValue([makeEssayRow()]);
+        subs.getPlanCode.mockResolvedValue('free');
+
+        const { items } = await service.list('user-1', 'org-1', {
+          derivativeType: 'essay_model_answer',
+        });
+
+        const [first] = items;
+        expect(first!.isGated).toBe(true);
+        expect(first!.upgradeTier).toBe('edu');
+        // Plan looked up once per call, not once per row.
+        expect(subs.getPlanCode).toHaveBeenCalledTimes(1);
+      });
+
+      it('does NOT gate list items for edu-tier users', async () => {
+        prisma.derivativeArtifact.findMany.mockResolvedValue([makeEssayRow()]);
+        subs.getPlanCode.mockResolvedValue('edu');
+
+        const { items } = await service.list('user-1', 'org-1', {
+          derivativeType: 'essay_model_answer',
+        });
+
+        const [first] = items;
+        expect(first!.isGated).toBe(false);
+        expect(first!.upgradeTier).toBeNull();
+      });
+
+      it('filters by subjectCode via subjectAssignments.some', async () => {
+        prisma.derivativeArtifact.findMany.mockResolvedValue([]);
+
+        await service.list('user-1', 'org-1', {
+          derivativeType: 'essay_model_answer',
+          subjectCode: 'criminal_law',
+          taxonomyVersion: 'study_8',
+        });
+
+        const call = prisma.derivativeArtifact.findMany.mock.calls[0][0];
+        expect(call.where.subjectAssignments).toEqual({
+          some: { subject: { code: 'criminal_law', taxonomyVersion: 'study_8' } },
+        });
+      });
+    });
+
+    describe('findOne — as=essay_model_answer projection', () => {
+      it('projects modelAnswer.outlineSections + promptRef for edu-tier users (ungated)', async () => {
+        prisma.derivativeArtifact.findFirst.mockResolvedValue(makeEssayRow());
+        subs.getPlanCode.mockResolvedValue('edu');
+
+        const result = await service.findOne(
+          'essay-1',
+          'user-1',
+          'org-1',
+          false,
+          'essay_model_answer',
+        );
+
+        expect(result.id).toBe('essay-1');
+        expect(result.derivativeType).toBe('essay_model_answer');
+        expect(result.isGated).toBe(false);
+        expect(result.upgradeTier).toBeNull();
+        expect(result.title).toBe('Model Answer — Warrantless search — practice essay');
+
+        const content = result.contentJson as Record<string, unknown>;
+        expect(content['promptRef']).toBe('Discuss the validity of the warrantless search.');
+        expect(content['format']).toBe('alac');
+        const answer = content['answer'] as { outlineSections: unknown[] };
+        expect(answer.outlineSections).toHaveLength(2);
+        expect(answer.outlineSections[0]).toEqual({
+          heading: 'Answer',
+          paragraphs: ['The search was invalid.'],
+          citedSectionIds: ['sec-1'],
+        });
+        // contentPlainText / essayPrompt are never leaked through the projection.
+        expect(result.contentPlainText).toBeNull();
+        expect(result.essayPrompt).toBeNull();
+        expect(result.disclaimerBody).toEqual({ bodyHtml: '<p>disc</p>', bodyPlain: 'disc' });
+      });
+
+      it('redacts answer/modelAnswer but keeps promptRef for free-tier users', async () => {
+        prisma.derivativeArtifact.findFirst.mockResolvedValue(makeEssayRow());
+        subs.getPlanCode.mockResolvedValue('free');
+
+        const result = await service.findOne(
+          'essay-1',
+          'user-1',
+          'org-1',
+          false,
+          'essay_model_answer',
+        );
+
+        expect(result.isGated).toBe(true);
+        expect(result.upgradeTier).toBe('edu');
+
+        const content = result.contentJson as Record<string, unknown>;
+        // Answer-side content stripped server-side — never reaches the client.
+        expect(content).not.toHaveProperty('answer');
+        expect(content).not.toHaveProperty('modelAnswer');
+        // Prompt reference stays visible for the preview.
+        expect(content['promptRef']).toBe('Discuss the validity of the warrantless search.');
+        expect(content['format']).toBe('alac');
+      });
+
+      it('returns the normal essay_prompt detail when as is omitted (no projection)', async () => {
+        prisma.derivativeArtifact.findFirst.mockResolvedValue(makeEssayRow());
+        subs.getPlanCode.mockResolvedValue('edu');
+
+        const result = await service.findOne('essay-1', 'user-1', 'org-1');
+
+        // Without ?as=, the row is returned as its real type, not projected.
+        expect(result.derivativeType).toBe('essay_prompt');
+        expect(result.title).toBe('Warrantless search — practice essay');
+      });
+    });
+  });
 });

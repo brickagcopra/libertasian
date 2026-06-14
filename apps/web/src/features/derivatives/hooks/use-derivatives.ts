@@ -44,13 +44,21 @@ export function useDerivatives(params: UseDerivativesParams = {}) {
   });
 }
 
-export function useDerivative(id: string | undefined) {
+export function useDerivative(id: string | undefined, asType?: string) {
   return useQuery({
-    queryKey: ['derivatives', 'detail', id],
+    queryKey: ['derivatives', 'detail', id, asType],
     queryFn: async () => {
-      const res = await apiClient.get<{ success: boolean; data: DerivativeDetail }>(
-        `/derivatives/${id}`,
-      );
+      // Bridged types (e.g. essay_model_answer) are projected from a foreign
+      // artifact; the detail id is that artifact's UUID, so request the
+      // projection via ?as=. Omit the param entirely for the normal path.
+      const res = asType
+        ? await apiClient.get<{ success: boolean; data: DerivativeDetail }>(
+            `/derivatives/${id}`,
+            { params: { as: asType } },
+          )
+        : await apiClient.get<{ success: boolean; data: DerivativeDetail }>(
+            `/derivatives/${id}`,
+          );
       return res.data;
     },
     enabled: !!id,

@@ -22,6 +22,7 @@ import { AdminBypassAuditService } from '../../common/services/admin-bypass-audi
 import { EntitlementService } from '../subscriptions/entitlement.service';
 import { DerivativesService } from './derivatives.service';
 import {
+  FindOneDerivativeQueryDto,
   ListDerivativesQueryDto,
   SubjectsSummaryByTypeParamDto,
   SubjectsSummaryByTypeQueryDto,
@@ -133,6 +134,7 @@ export class DerivativesController {
   @Throttle({ default: { ttl: 60_000, limit: 200 } })
   async findOne(
     @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: FindOneDerivativeQueryDto,
     @CurrentUser() user: JwtPayload,
     @Req() req: Request,
   ) {
@@ -142,6 +144,7 @@ export class DerivativesController {
       user.sub,
       user.organizationId,
       previewOnly,
+      query.as,
     );
     return { success: true, data };
   }
