@@ -15,6 +15,11 @@ function makePrisma() {
       findFirst: jest.fn().mockResolvedValue(null),
       count: jest.fn().mockResolvedValue(0),
     },
+    barExamAnswer: {
+      findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn().mockResolvedValue(null),
+      count: jest.fn().mockResolvedValue(0),
+    },
     subject: {
       findMany: jest.fn().mockResolvedValue([]),
     },
@@ -778,6 +783,276 @@ describe('DerivativesService', () => {
 
         const ids = await service.getFreePreviewIds();
         expect(Array.from(ids)).toEqual(['preview-mcq', 'preview-essay']);
+      });
+    });
+  });
+
+  describe('suggested_bar_answer bridge (foreign bar_exam_answers table)', () => {
+    const fullTaxonomy = [
+      { id: 's1', code: 'political_law', name: 'Political Law', taxonomyVersion: 'study_8' },
+      { id: 's2', code: 'civil_law', name: 'Civil Law', taxonomyVersion: 'study_8' },
+      { id: 's3', code: 'criminal_law', name: 'Criminal Law', taxonomyVersion: 'study_8' },
+      { id: 's4', code: 'labor_law', name: 'Labor Law and Social Legislation', taxonomyVersion: 'study_8' },
+      { id: 's5', code: 'mercantile_law', name: 'Mercantile (Commercial) Law', taxonomyVersion: 'study_8' },
+      { id: 's6', code: 'taxation', name: 'Taxation', taxonomyVersion: 'study_8' },
+      { id: 's7', code: 'remedial_law', name: 'Remedial Law', taxonomyVersion: 'study_8' },
+      { id: 's8', code: 'legal_ethics', name: 'Legal and Judicial Ethics', taxonomyVersion: 'study_8' },
+    ];
+
+    const makeAnswerRow = (overrides: Partial<Record<string, unknown>> = {}) => ({
+      id: 'ba1',
+      answerText: 'The search was unreasonable because no warrant issued...',
+      structuredAnswerJson: null,
+      confidence: 0.91,
+      createdAt: new Date('2026-05-11'),
+      question: {
+        questionNumber: 4,
+        questionText: 'Discuss the validity of the warrantless search.',
+        barExamSitting: {
+          year: 2019,
+          subjectStudyCode: 'criminal_law',
+          taxonomyVersion: 'study_8',
+        },
+      },
+      ...overrides,
+    });
+
+    describe('subjectsSummaryByType', () => {
+      it('returns non-zero approvedCount for the 8 subjects from bar_exam_answers', async () => {
+        prisma.subject.findMany.mockResolvedValue(fullTaxonomy);
+        // 8 subjects → 8 parallel barExamAnswer.count calls
+        prisma.barExamAnswer.count
+          .mockResolvedValueOnce(9) // political_law
+          .mockResolvedValueOnce(6) // civil_law
+          .mockResolvedValueOnce(8) // criminal_law
+          .mockResolvedValueOnce(5) // labor_law
+          .mockResolvedValueOnce(7) // mercantile_law
+          .mockResolvedValueOnce(4) // taxation
+          .mockResolvedValueOnce(10) // remedial_law
+          .mockResolvedValueOnce(4); // legal_ethics — sums to 53
+
+        const result = await service.subjectsSummaryByType(
+          'suggested_bar_answer',
+          'user-1',
+          'org-1',
+          'study_8',
+        );
+
+        expect(result).toHaveLength(8);
+        expect(result.reduce((sum, r) => sum + r.approvedCount, 0)).toBe(53);
+
+        const criminal = result.find((r) => r.subjectCode === 'criminal_law');
+        expect(criminal).toEqual({
+          subjectCode: 'criminal_law',
+          subjectName: 'Criminal Law',
+          taxonomyVersion: 'study_8',
+          totalCount: 8,
+          approvedCount: 8,
+        });
+
+        // total === approved for the bridge (single visibility-filter count).
+        for (const row of result) {
+          expect(row.totalCount).toBe(row.approvedCount);
+          expect(row.approvedCount).toBeGreaterThan(0);
+        }
+
+        // Sanity: artifact groupBy path NOT used for suggested_bar_answer
+        expect(prisma.documentSubjectAssignment.groupBy).not.toHaveBeenCalled();
+      });
+
+      it('counts only approved + public_editorial, joined via question→sitting→subjectStudyCode', async () => {
+        prisma.subject.findMany.mockResolvedValue(fullTaxonomy);
+        prisma.barExamAnswer.count.mockResolvedValue(0);
+
+        await service.subjectsSummaryByType(
+          'suggested_bar_answer',
+          'user-1',
+          'org-1',
+          'study_8',
+        );
+
+        for (const call of prisma.barExamAnswer.count.mock.calls) {
+          const where = call[0].where;
+          expect(where.reviewStatus).toBe('approved');
+          expect(where.visibility).toBe('public_editorial');
+        }
+
+        const firstCall = prisma.barExamAnswer.count.mock.calls[0][0];
+        expect(firstCall.where.question).toEqual({
+          barExamSitting: {
+            subjectStudyCode: 'political_law',
+            taxonomyVersion: 'study_8',
+          },
+        });
+      });
+    });
+
+    describe('list', () => {
+      it('queries bar_exam_answers (not derivative_artifacts) when derivativeType=suggested_bar_answer', async () => {
+        prisma.barExamAnswer.findMany.mockResolvedValue([makeAnswerRow()]);
+        prisma.subject.findMany.mockResolvedValue(fullTaxonomy);
+
+        const { items } = await service.list('user-1', 'org-1', {
+          derivativeType: 'suggested_bar_answer',
+        });
+
+        expect(prisma.barExamAnswer.findMany).toHaveBeenCalledTimes(1);
+        expect(prisma.derivativeArtifact.findMany).not.toHaveBeenCalled();
+        expect(items).toHaveLength(1);
+      });
+
+      it('applies the approved + public_editorial visibility filter', async () => {
+        prisma.barExamAnswer.findMany.mockResolvedValue([]);
+        prisma.subject.findMany.mockResolvedValue(fullTaxonomy);
+
+        await service.list('user-1', 'org-1', {
+          derivativeType: 'suggested_bar_answer',
+        });
+
+        const call = prisma.barExamAnswer.findMany.mock.calls[0][0];
+        expect(call.where.reviewStatus).toBe('approved');
+        expect(call.where.visibility).toBe('public_editorial');
+      });
+
+      it('filters by subjectCode via question.barExamSitting.subjectStudyCode + taxonomyVersion', async () => {
+        prisma.barExamAnswer.findMany.mockResolvedValue([]);
+        prisma.subject.findMany.mockResolvedValue(fullTaxonomy);
+
+        await service.list('user-1', 'org-1', {
+          derivativeType: 'suggested_bar_answer',
+          subjectCode: 'criminal_law',
+          taxonomyVersion: 'study_8',
+        });
+
+        const call = prisma.barExamAnswer.findMany.mock.calls[0][0];
+        expect(call.where.question).toEqual({
+          barExamSitting: {
+            subjectStudyCode: 'criminal_law',
+            taxonomyVersion: 'study_8',
+          },
+        });
+      });
+
+      it('maps answer rows to DerivativeListItem (synthesized title, never gated)', async () => {
+        prisma.barExamAnswer.findMany.mockResolvedValue([makeAnswerRow()]);
+        prisma.subject.findMany.mockResolvedValue(fullTaxonomy);
+        subs.getPlanCode.mockResolvedValue('free');
+
+        const { items } = await service.list('user-1', 'org-1', {
+          derivativeType: 'suggested_bar_answer',
+        });
+
+        const [first] = items;
+        expect(first).toBeDefined();
+        expect(first!.id).toBe('ba1');
+        expect(first!.derivativeType).toBe('suggested_bar_answer');
+        expect(first!.title).toBe('Criminal Law — Bar 2019 Q4');
+        expect(first!.isGated).toBe(false);
+        expect(first!.upgradeTier).toBeNull();
+        expect(first!.sourceDocument).toBeNull();
+        expect(first!.subjects).toEqual([
+          {
+            code: 'criminal_law',
+            name: 'Criminal Law',
+            taxonomyVersion: 'study_8',
+            isPrimary: true,
+          },
+        ]);
+      });
+
+      it('handles pagination with take=limit+1 and nextCursor', async () => {
+        prisma.barExamAnswer.findMany.mockResolvedValue([
+          makeAnswerRow({ id: 'ba1' }),
+          makeAnswerRow({ id: 'ba2' }),
+          makeAnswerRow({ id: 'ba3' }),
+        ]);
+        prisma.subject.findMany.mockResolvedValue(fullTaxonomy);
+
+        const result = await service.list('user-1', 'org-1', {
+          derivativeType: 'suggested_bar_answer',
+          limit: 2,
+        });
+
+        expect(result.items).toHaveLength(2);
+        expect(result.meta.hasNext).toBe(true);
+        expect(result.meta.nextCursor).toBe('ba2');
+      });
+    });
+
+    describe('findOne — suggested_bar_answer fallback', () => {
+      it('returns a detail with renderer-shaped contentJson', async () => {
+        prisma.derivativeArtifact.findFirst.mockResolvedValue(null);
+        prisma.digest.findFirst.mockResolvedValue(null);
+        prisma.barExamAnswer.findFirst.mockResolvedValue(
+          makeAnswerRow({
+            structuredAnswerJson: {
+              annotations: [{ quote: 'Sec. 2, Art. III', commentary: 'Bill of Rights' }],
+              sourceAttribution: 'LawPhil 2019 Bar',
+            },
+          }),
+        );
+        prisma.subject.findMany.mockResolvedValue(fullTaxonomy);
+
+        const result = await service.findOne('ba1', 'user-1', 'org-1');
+
+        expect(result.id).toBe('ba1');
+        expect(result.derivativeType).toBe('suggested_bar_answer');
+        expect(result.isGated).toBe(false);
+
+        const content = result.contentJson as Record<string, unknown>;
+        expect(content['barYear']).toBe(2019);
+        expect(content['examSubject']).toBe('Criminal Law');
+        expect(content['questionText']).toBe(
+          'Discuss the validity of the warrantless search.',
+        );
+        expect(content['suggestedAnswer']).toBe(
+          'The search was unreasonable because no warrant issued...',
+        );
+        expect(content['annotations']).toEqual([
+          { quote: 'Sec. 2, Art. III', commentary: 'Bill of Rights' },
+        ]);
+        expect(content['sourceAttribution']).toBe('LawPhil 2019 Bar');
+      });
+
+      it('omits annotations/sourceAttribution when structured_answer_json is absent', async () => {
+        prisma.derivativeArtifact.findFirst.mockResolvedValue(null);
+        prisma.digest.findFirst.mockResolvedValue(null);
+        prisma.barExamAnswer.findFirst.mockResolvedValue(makeAnswerRow());
+        prisma.subject.findMany.mockResolvedValue(fullTaxonomy);
+
+        const result = await service.findOne('ba1', 'user-1', 'org-1');
+
+        const content = result.contentJson as Record<string, unknown>;
+        expect(content).not.toHaveProperty('annotations');
+        expect(content).not.toHaveProperty('sourceAttribution');
+        expect(content['questionText']).toBe(
+          'Discuss the validity of the warrantless search.',
+        );
+      });
+
+      it('applies the approved + public_editorial filter on the fallback lookup', async () => {
+        prisma.derivativeArtifact.findFirst.mockResolvedValue(null);
+        prisma.digest.findFirst.mockResolvedValue(null);
+        prisma.barExamAnswer.findFirst.mockResolvedValue(null);
+
+        await expect(service.findOne('ba1', 'user-1', 'org-1')).rejects.toBeInstanceOf(
+          NotFoundException,
+        );
+
+        const call = prisma.barExamAnswer.findFirst.mock.calls[0][0];
+        expect(call.where.id).toBe('ba1');
+        expect(call.where.reviewStatus).toBe('approved');
+        expect(call.where.visibility).toBe('public_editorial');
+      });
+
+      it('throws NotFound when no artifact, digest, or bar answer matches', async () => {
+        prisma.derivativeArtifact.findFirst.mockResolvedValue(null);
+        prisma.digest.findFirst.mockResolvedValue(null);
+        prisma.barExamAnswer.findFirst.mockResolvedValue(null);
+
+        await expect(service.findOne('ba1', 'user-1', 'org-1')).rejects.toBeInstanceOf(
+          NotFoundException,
+        );
       });
     });
   });
