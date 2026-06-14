@@ -8,3 +8,5 @@ export {
   SubjectsSummaryByTypeParamDto,
   SubjectsSummaryByTypeQueryDto,
 } from './subjects-summary-by-type.query.dto';
+
+export { FindOneDerivativeQueryDto } from './find-one-derivative.query.dto';

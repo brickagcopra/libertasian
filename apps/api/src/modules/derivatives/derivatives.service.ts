@@ -112,6 +112,44 @@ interface BarAnswerRowForMapping {
   };
 }
 
+interface EssayPromptRowForListMapping {
+  id: string;
+  title: string;
+  confidenceScore: number | null;
+  createdAt: Date;
+  publishedAt: Date | null;
+  audience: string;
+  language: string;
+  sourceDocument: {
+    id: string;
+    title: string | null;
+    shortTitle: string | null;
+    citationText: string | null;
+    court: string | null;
+    decisionDate: Date | null;
+  } | null;
+  subjectAssignments: Array<{
+    isPrimary: boolean;
+    subject: { code: string; name: string; taxonomyVersion: string };
+  }>;
+  contentDisclaimer: {
+    id: string;
+    contentClass: string;
+    version: number;
+  } | null;
+}
+
+interface EssayPromptRowForDetailProjection extends EssayPromptRowForListMapping {
+  contentJson: Prisma.JsonValue | null;
+  contentDisclaimer: {
+    id: string;
+    contentClass: string;
+    version: number;
+    bodyHtml: string;
+    bodyPlain: string;
+  } | null;
+}
+
 @Injectable()
 export class DerivativesService {
   private readonly logger = new Logger(DerivativesService.name);
@@ -144,6 +182,10 @@ export class DerivativesService {
 
     if (query.derivativeType === 'suggested_bar_answer') {
       return this.listSuggestedBarAnswers(query, organizationId);
+    }
+
+    if (query.derivativeType === 'essay_model_answer') {
+      return this.listEssayModelAnswers(userId, query, organizationId);
     }
 
     if (previewOnly) {
@@ -276,6 +318,7 @@ export class DerivativesService {
     userId: string,
     organizationId: string,
     previewOnly = false,
+    asType?: string,
   ): Promise<DerivativeDetail> {
     if (previewOnly) {
       const previewIds = await this.getFreePreviewIds();
@@ -343,6 +386,16 @@ export class DerivativesService {
 
     const planCode = await this.subscriptions.getPlanCode(organizationId);
     const meetsEdu = SubscriptionsService.meetsMinimumTier(planCode, UPGRADE_TIER);
+
+    // CARVE-OUT: essay_model_answer is a read-only projection OF the loaded
+    // essay_prompt artifact (the id is the essay_prompt UUID; ParseUUIDPipe
+    // forbids synthetic ids, so the client passes ?as=essay_model_answer to
+    // request the projection). Project content_json.modelAnswer → the renderer
+    // contract and gate at edu tier exactly like suggested_bar_answer.
+    if (asType === 'essay_model_answer' && row.derivativeType === 'essay_prompt') {
+      return this.projectEssayModelAnswerDetail(row, !meetsEdu);
+    }
+
     const gated = GATED_DERIVATIVE_TYPES.has(row.derivativeType) && !meetsEdu;
 
     return {
@@ -468,6 +521,36 @@ export class DerivativesService {
         taxonomyVersion: s.taxonomyVersion,
         totalCount: answerCounts[i] ?? 0,
         approvedCount: answerCounts[i] ?? 0,
+      }));
+    }
+
+    if (type === 'essay_model_answer') {
+      // CARVE-OUT: essay_model_answer surfaces approved essay_prompt artifacts as
+      // a read-only projection, so count under derivativeType='essay_prompt' with
+      // the public_editorial + approved visibility filter. total === approved
+      // (only approved + public_editorial essay prompts are bridged).
+      const counts = await this.prisma.documentSubjectAssignment.groupBy({
+        by: ['subjectId'],
+        where: {
+          subjectId: { in: subjects.map((s) => s.id) },
+          derivativeArtifact: {
+            deletedAt: null,
+            derivativeType: 'essay_prompt',
+            visibility: 'public_editorial',
+            reviewStatus: 'approved',
+          },
+        },
+        _count: { _all: true },
+      });
+
+      const countMap = new Map(counts.map((c) => [c.subjectId, c._count._all]));
+
+      return subjects.map((s) => ({
+        subjectCode: s.code,
+        subjectName: s.name,
+        taxonomyVersion: s.taxonomyVersion,
+        totalCount: countMap.get(s.id) ?? 0,
+        approvedCount: countMap.get(s.id) ?? 0,
       }));
     }
 
@@ -1152,6 +1235,198 @@ export class DerivativesService {
     }
 
     return content as Prisma.JsonValue;
+  }
+
+  /**
+   * Essay model answers are a read-only projection of approved `essay_prompt`
+   * artifacts: every approved essay prompt already embeds its worked answer in
+   * `content_json.modelAnswer` (ALAC outline) plus `content_json.promptText`.
+   * No new rows are written — the Library simply surfaces that embedded answer
+   * under the `essay_model_answer` type. Edu-gated, mirroring suggested_bar_answer.
+   */
+  private async listEssayModelAnswers(
+    userId: string,
+    query: ListDerivativesQueryDto,
+    organizationId: string,
+  ): Promise<{
+    items: DerivativeListItem[];
+    meta: { hasNext: boolean; nextCursor?: string; limit: number };
+  }> {
+    const limit = query.limit ?? 20;
+    const taxonomyVersion = query.taxonomyVersion ?? 'study_8';
+
+    const where: Prisma.DerivativeArtifactWhereInput = {
+      deletedAt: null,
+      derivativeType: 'essay_prompt',
+      AND: [
+        {
+          OR: [
+            { createdByUserId: userId },
+            { organizationId, visibility: { not: 'private' } },
+            { visibility: 'public_editorial', reviewStatus: 'approved' },
+          ],
+        },
+      ],
+    };
+
+    if (query.subjectCode) {
+      where.subjectAssignments = {
+        some: {
+          subject: { code: query.subjectCode, taxonomyVersion },
+        },
+      };
+    }
+
+    if (query.search) {
+      where.title = { contains: query.search, mode: 'insensitive' };
+    }
+
+    const rows = await this.prisma.derivativeArtifact.findMany({
+      where,
+      take: limit + 1,
+      ...(query.cursor && { skip: 1, cursor: { id: query.cursor } }),
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      include: {
+        sourceDocument: {
+          select: {
+            id: true,
+            title: true,
+            shortTitle: true,
+            citationText: true,
+            court: true,
+            decisionDate: true,
+          },
+        },
+        subjectAssignments: {
+          include: {
+            subject: {
+              select: { code: true, name: true, taxonomyVersion: true },
+            },
+          },
+        },
+        contentDisclaimer: {
+          select: { id: true, contentClass: true, version: true },
+        },
+      },
+    });
+
+    const hasNext = rows.length > limit;
+    const pageRows = hasNext ? rows.slice(0, limit) : rows;
+    const lastRow = pageRows[pageRows.length - 1];
+    const nextCursor = hasNext && lastRow ? lastRow.id : undefined;
+
+    // essay_model_answer is an edu-tier paid feature (in GATED_DERIVATIVE_TYPES);
+    // gate consistently with suggested_bar_answer. One plan lookup per call.
+    const planCode = await this.subscriptions.getPlanCode(organizationId);
+    const meetsEdu = SubscriptionsService.meetsMinimumTier(planCode, UPGRADE_TIER);
+    const gated = GATED_DERIVATIVE_TYPES.has('essay_model_answer') && !meetsEdu;
+
+    const items: DerivativeListItem[] = pageRows.map((row) =>
+      this.mapEssayPromptToModelAnswerListItem(row, gated),
+    );
+
+    return { items, meta: { hasNext, nextCursor, limit } };
+  }
+
+  private essayModelAnswerTitle(promptTitle: string): string {
+    return `Model Answer — ${promptTitle}`;
+  }
+
+  private mapEssayPromptToModelAnswerListItem(
+    row: EssayPromptRowForListMapping,
+    gated: boolean,
+  ): DerivativeListItem {
+    return {
+      id: row.id,
+      title: this.essayModelAnswerTitle(row.title),
+      derivativeType: 'essay_model_answer',
+      confidenceScore: row.confidenceScore,
+      createdAt: row.createdAt,
+      publishedAt: row.publishedAt,
+      audience: row.audience,
+      language: row.language,
+      sourceDocument: row.sourceDocument
+        ? {
+            id: row.sourceDocument.id,
+            title: row.sourceDocument.title,
+            shortTitle: row.sourceDocument.shortTitle,
+            citationText: row.sourceDocument.citationText,
+            court: row.sourceDocument.court,
+            decisionDate: row.sourceDocument.decisionDate,
+          }
+        : null,
+      subjects: row.subjectAssignments.map((a) => ({
+        code: a.subject.code,
+        name: a.subject.name,
+        taxonomyVersion: a.subject.taxonomyVersion,
+        isPrimary: a.isPrimary,
+      })),
+      disclaimer: row.contentDisclaimer
+        ? {
+            id: row.contentDisclaimer.id,
+            contentClass: row.contentDisclaimer.contentClass,
+            version: row.contentDisclaimer.version,
+          }
+        : null,
+      // Paid-gated at edu tier, mirroring GATED_DERIVATIVE_TYPES (NOT free).
+      isGated: gated,
+      upgradeTier: gated ? UPGRADE_TIER : null,
+    };
+  }
+
+  private projectEssayModelAnswerDetail(
+    row: EssayPromptRowForDetailProjection,
+    gated: boolean,
+  ): DerivativeDetail {
+    const contentJson = this.buildEssayModelAnswerContentJson(row.contentJson);
+    const listItem = this.mapEssayPromptToModelAnswerListItem(row, gated);
+
+    return {
+      ...listItem,
+      // Redact answer-side content (answer.outlineSections + modelAnswer) server-side
+      // for gated tiers so the worked answer never reaches free clients. promptRef
+      // (the essay prompt text) stays visible for the preview.
+      contentJson: gated ? this.redactGatedContent(contentJson) : contentJson,
+      contentPlainText: null,
+      disclaimerBody: row.contentDisclaimer
+        ? {
+            bodyHtml: row.contentDisclaimer.bodyHtml,
+            bodyPlain: row.contentDisclaimer.bodyPlain,
+          }
+        : null,
+      mcqQuestion: null,
+      essayPrompt: null,
+    };
+  }
+
+  /**
+   * Project an `essay_prompt` artifact's embedded model answer into the
+   * EssayModelAnswerRenderer contract: `{ promptRef, format: 'alac',
+   * answer: { outlineSections } }`. The source carries no writingTips/
+   * commonPitfalls, so those are omitted (the renderer treats them as optional).
+   */
+  private buildEssayModelAnswerContentJson(
+    contentJson: Prisma.JsonValue | null,
+  ): Prisma.JsonValue {
+    const obj =
+      contentJson && typeof contentJson === 'object' && !Array.isArray(contentJson)
+        ? (contentJson as Record<string, Prisma.JsonValue>)
+        : {};
+
+    const promptText = typeof obj['promptText'] === 'string' ? obj['promptText'] : '';
+
+    const modelAnswer = obj['modelAnswer'];
+    const rawSections =
+      modelAnswer && typeof modelAnswer === 'object' && !Array.isArray(modelAnswer)
+        ? (modelAnswer as Record<string, Prisma.JsonValue>)['outlineSections']
+        : undefined;
+    const outlineSections: Prisma.JsonValue = Array.isArray(rawSections) ? rawSections : [];
+
+    return {
+      promptRef: promptText,
+      format: 'alac',
+      answer: { outlineSections },
+    } as Prisma.JsonValue;
   }
 
   /**

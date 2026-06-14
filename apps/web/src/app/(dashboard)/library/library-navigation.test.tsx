@@ -323,6 +323,70 @@ describe('Library detail page', () => {
     );
   });
 
+  it('sends ?as=essay_model_answer and dispatches to EssayModelAnswerRenderer for the essay-answers type', async () => {
+    navigationMocks.useParams.mockReturnValue({
+      type: 'essay-answers',
+      subject: 'criminal-law',
+      id: 'essay-1',
+    });
+    mockGet.mockResolvedValueOnce({
+      success: true,
+      data: {
+        id: 'essay-1',
+        title: 'Model Answer — Warrantless search essay',
+        derivativeType: 'essay_model_answer',
+        confidenceScore: 0.88,
+        createdAt: '2026-04-20T10:00:00Z',
+        publishedAt: null,
+        audience: 'both',
+        language: 'en',
+        sourceDocument: null,
+        subjects: [
+          {
+            code: 'criminal_law',
+            name: 'Criminal Law',
+            taxonomyVersion: 'study_8',
+            isPrimary: true,
+          },
+        ],
+        disclaimer: null,
+        isGated: false,
+        upgradeTier: null,
+        contentJson: {
+          promptRef: 'Discuss the validity of the warrantless search.',
+          format: 'alac',
+          answer: {
+            outlineSections: [
+              {
+                heading: 'Answer',
+                paragraphs: ['The search was invalid.'],
+                citedSectionIds: [],
+              },
+            ],
+          },
+        },
+        contentPlainText: null,
+        disclaimerBody: null,
+        mcqQuestion: null,
+        essayPrompt: null,
+      },
+    });
+
+    render(withProviders(<LibraryDetailPage />));
+
+    // Headings unique to EssayModelAnswerRenderer prove the dedicated renderer ran
+    // (GenericRenderer renders neither "Prompt Reference" nor the ALAC heading).
+    await waitFor(() =>
+      expect(screen.getByText('Prompt Reference')).toBeInTheDocument(),
+    );
+    expect(screen.getByText('Model Answer (ALAC Format)')).toBeInTheDocument();
+    expect(screen.getByText('The search was invalid.')).toBeInTheDocument();
+
+    expect(mockGet).toHaveBeenCalledWith('/derivatives/essay-1', {
+      params: { as: 'essay_model_answer' },
+    });
+  });
+
   it('renders the modal UpgradeBanner when GET /derivatives/:id throws 402 subscription_required', async () => {
     navigationMocks.useParams.mockReturnValue({
       type: 'mcqs',

@@ -12,11 +12,16 @@ import { UpgradeBanner, extractPaywall402 } from '@/components/paywall/upgrade-b
 import {
   DigestRenderer,
   DoctrineRenderer,
+  EssayModelAnswerRenderer,
   EssayRenderer,
   FlashcardRenderer,
   GenericRenderer,
   MCQRenderer,
+  OnePageSummaryRenderer,
   OutlineRenderer,
+  SampleContractRenderer,
+  SamplePleadingRenderer,
+  SuggestedBarAnswerRenderer,
 } from '@/features/derivatives/renderers';
 import { subjectFromSlug, typeFromSlug } from '@/features/derivatives/taxonomy';
 import type { DerivativeDetail } from '@/features/derivatives/types';
@@ -35,6 +40,16 @@ function renderByType(data: DerivativeDetail) {
       return <OutlineRenderer data={data} />;
     case 'flashcard':
       return <FlashcardRenderer data={data} />;
+    case 'essay_model_answer':
+      return <EssayModelAnswerRenderer data={data} />;
+    case 'suggested_bar_answer':
+      return <SuggestedBarAnswerRenderer data={data} />;
+    case 'sample_pleading':
+      return <SamplePleadingRenderer data={data} />;
+    case 'sample_contract':
+      return <SampleContractRenderer data={data} />;
+    case 'one_page_summary':
+      return <OnePageSummaryRenderer data={data} />;
     default:
       return <GenericRenderer data={data} />;
   }
@@ -50,7 +65,12 @@ export default function LibraryDetailPage() {
     notFound();
   }
 
-  const { data, isLoading, error } = useDerivative(id);
+  // essay_model_answer is projected from an essay_prompt artifact; the detail id
+  // is that artifact's UUID, so request the projection via ?as=. Hook is always
+  // called (no conditional hooks) — asType is undefined for every other type.
+  const asType =
+    typeMeta?.enum === 'essay_model_answer' ? 'essay_model_answer' : undefined;
+  const { data, isLoading, error } = useDerivative(id, asType);
 
   if (isLoading) {
     return (
