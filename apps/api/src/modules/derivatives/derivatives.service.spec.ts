@@ -23,6 +23,9 @@ function makePrisma() {
     subject: {
       findMany: jest.fn().mockResolvedValue([]),
     },
+    contentDisclaimer: {
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
     documentSubjectAssignment: {
       groupBy: jest.fn().mockResolvedValue([]),
     },
@@ -734,6 +737,166 @@ describe('DerivativesService', () => {
       await expect(service.findOne('d1', 'user-1', 'org-1')).rejects.toBeInstanceOf(
         NotFoundException,
       );
+    });
+  });
+
+  describe('one_page_summary bridge (digest projection, free)', () => {
+    const makeDigestRow = (overrides: Record<string, unknown> = {}) => ({
+      id: 'd1',
+      title: 'People v. Doe',
+      confidenceScore: 0.85,
+      createdAt: new Date('2026-05-01'),
+      summary: 'Summary text',
+      facts: 'Facts text',
+      petitionerArguments: null,
+      respondentArguments: null,
+      issues: 'Issues text',
+      ruling: 'Ruling text',
+      doctrine: 'Doctrine text',
+      dispositive: 'Dispositive text',
+      digestType: 'full',
+      citedAuthoritiesJson: [
+        { gr_no: 'G.R. No. 111', citation_text: 'Foo v. Bar, G.R. No. 111' },
+        { citation_text: 'Baz v. Qux' },
+      ],
+      legalDocument: {
+        id: 'doc-1',
+        title: 'People v. Doe',
+        shortTitle: null,
+        citationText: 'G.R. No. 12345',
+        court: 'SC',
+        decisionDate: new Date('2024-06-15'),
+        subjectAssignments: [],
+      },
+      contentDisclaimer: { id: 'cd', contentClass: 'ai_digest', version: 1 },
+      ...overrides,
+    });
+
+    describe('(a) buildOnePageSummaryContentJson', () => {
+      it('yields a non-empty bottomLine from doctrine and well-formed keyPoints/quickReference', () => {
+        const content = (service as any).buildOnePageSummaryContentJson(
+          makeDigestRow(),
+        ) as Record<string, unknown>;
+
+        expect(content['topic']).toBe('People v. Doe');
+        // bottomLine prefers doctrine
+        expect(content['bottomLine']).toBe('Doctrine text');
+        // keyPoints = [issues, ruling, facts] trimmed, falsy-filtered
+        expect(content['keyPoints']).toEqual(['Issues text', 'Ruling text', 'Facts text']);
+        // highlights map cited authorities (gr_no preferred for term)
+        expect(content['highlights']).toEqual([
+          { term: 'G.R. No. 111', definition: 'Foo v. Bar, G.R. No. 111' },
+          { term: 'Baz v. Qux', definition: 'Baz v. Qux' },
+        ]);
+        // quickReference filters out empty values; Decision Date is ISO
+        expect(content['quickReference']).toEqual([
+          { label: 'Citation', value: 'G.R. No. 12345' },
+          { label: 'Court', value: 'SC' },
+          { label: 'Decision Date', value: new Date('2024-06-15').toISOString() },
+          { label: 'Digest Type', value: 'full' },
+        ]);
+      });
+
+      it('falls back through ruling/dispositive/summary/title so bottomLine is always non-empty', () => {
+        const content = (service as any).buildOnePageSummaryContentJson(
+          makeDigestRow({ doctrine: '   ', ruling: null }),
+        ) as Record<string, unknown>;
+        // doctrine blank + ruling null → dispositive
+        expect(content['bottomLine']).toBe('Dispositive text');
+
+        const bare = (service as any).buildOnePageSummaryContentJson(
+          makeDigestRow({
+            doctrine: null,
+            ruling: null,
+            dispositive: null,
+            summary: null,
+            issues: null,
+            facts: null,
+            citedAuthoritiesJson: [],
+          }),
+        ) as Record<string, unknown>;
+        expect(bare['bottomLine']).toBe('People v. Doe'); // title fallback
+        expect(bare['keyPoints']).toEqual([]);
+        expect(bare['highlights']).toEqual([]);
+      });
+    });
+
+    describe('(b) findOne disambiguation via asType', () => {
+      it('returns the one-pager projection (isGated=false) for asType=one_page_summary', async () => {
+        prisma.derivativeArtifact.findFirst.mockResolvedValue(null);
+        prisma.digest.findFirst.mockResolvedValue(makeDigestRow());
+        prisma.contentDisclaimer.findFirst.mockResolvedValue({
+          id: 'ops-disc',
+          contentClass: 'one_page_summary',
+          version: 1,
+          bodyHtml: '<p>ops</p>',
+          bodyPlain: 'ops',
+        });
+
+        const result = await service.findOne('d1', 'user-1', 'org-1', false, 'one_page_summary');
+
+        expect(result.derivativeType).toBe('one_page_summary');
+        expect(result.isGated).toBe(false);
+        expect(result.upgradeTier).toBeNull();
+        const content = result.contentJson as Record<string, unknown>;
+        expect(content['bottomLine']).toBe('Doctrine text');
+        // one_page_summary disclaimer attached (NOT the digest's ai_digest one)
+        expect(result.disclaimer).toEqual({
+          id: 'ops-disc',
+          contentClass: 'one_page_summary',
+          version: 1,
+        });
+        expect(result.disclaimerBody).toEqual({ bodyHtml: '<p>ops</p>', bodyPlain: 'ops' });
+        // disclaimer fetched by contentClass
+        const discCall = prisma.contentDisclaimer.findFirst.mock.calls[0][0];
+        expect(discCall.where.contentClass).toBe('one_page_summary');
+      });
+
+      it('still returns case_digest for the SAME id WITHOUT asType', async () => {
+        prisma.derivativeArtifact.findFirst.mockResolvedValue(null);
+        prisma.digest.findFirst.mockResolvedValue(makeDigestRow());
+
+        const result = await service.findOne('d1', 'user-1', 'org-1');
+
+        expect(result.derivativeType).toBe('case_digest');
+        // case_digest exposes the full digest content (facts), one-pager does not
+        const content = result.contentJson as Record<string, unknown>;
+        expect(content['facts']).toBe('Facts text');
+        expect(prisma.contentDisclaimer.findFirst).not.toHaveBeenCalled();
+      });
+
+      it('returns the detail with disclaimer:null when the one_page_summary disclaimer row is missing', async () => {
+        prisma.derivativeArtifact.findFirst.mockResolvedValue(null);
+        prisma.digest.findFirst.mockResolvedValue(makeDigestRow());
+        prisma.contentDisclaimer.findFirst.mockResolvedValue(null);
+
+        const result = await service.findOne('d1', 'user-1', 'org-1', false, 'one_page_summary');
+
+        expect(result.derivativeType).toBe('one_page_summary');
+        expect(result.disclaimer).toBeNull();
+        expect(result.disclaimerBody).toBeNull();
+      });
+    });
+
+    describe('(c) list dispatch', () => {
+      it('routes derivativeType=one_page_summary to the digests table (not derivative_artifacts)', async () => {
+        prisma.digest.findMany.mockResolvedValue([makeDigestRow()]);
+
+        const { items } = await service.list('user-1', 'org-1', {
+          derivativeType: 'one_page_summary',
+        });
+
+        expect(prisma.digest.findMany).toHaveBeenCalledTimes(1);
+        expect(prisma.derivativeArtifact.findMany).not.toHaveBeenCalled();
+        expect(items).toHaveLength(1);
+        expect(items[0]!.derivativeType).toBe('one_page_summary');
+        expect(items[0]!.isGated).toBe(false);
+
+        // honours the case-digest visibility filter (same source)
+        const call = prisma.digest.findMany.mock.calls[0][0];
+        expect(call.where.visibility).toBe('public_editorial');
+        expect(call.where.reviewStatus).toEqual({ in: ['approved', 'ai_generated'] });
+      });
     });
   });
 
