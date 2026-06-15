@@ -11,6 +11,8 @@ const GATED_DERIVATIVE_TYPES = new Set([
   'mcq_question',
   'essay_model_answer',
   'suggested_bar_answer',
+  'sample_pleading',
+  'sample_contract',
 ]);
 
 const UPGRADE_TIER = 'edu';
@@ -407,7 +409,9 @@ export class DerivativesService {
       publishedAt: row.publishedAt,
       audience: row.audience,
       language: row.language,
-      contentJson: gated ? this.redactGatedContent(row.contentJson) : row.contentJson,
+      contentJson: gated
+        ? this.redactGatedContent(row.contentJson, row.derivativeType)
+        : row.contentJson,
       contentPlainText: gated ? null : row.contentPlainText,
       sourceDocument: row.sourceDocument
         ? {
@@ -1168,7 +1172,9 @@ export class DerivativesService {
       // Redact answer-side content (suggestedAnswer, annotations) server-side for
       // gated tiers so it never reaches the client. questionText/barYear/
       // examSubject remain visible for the preview.
-      contentJson: gated ? this.redactGatedContent(contentJson) : contentJson,
+      contentJson: gated
+        ? this.redactGatedContent(contentJson, 'suggested_bar_answer')
+        : contentJson,
       contentPlainText: null,
       disclaimerBody: null,
       mcqQuestion: null,
@@ -1386,7 +1392,9 @@ export class DerivativesService {
       // Redact answer-side content (answer.outlineSections + modelAnswer) server-side
       // for gated tiers so the worked answer never reaches free clients. promptRef
       // (the essay prompt text) stays visible for the preview.
-      contentJson: gated ? this.redactGatedContent(contentJson) : contentJson,
+      contentJson: gated
+        ? this.redactGatedContent(contentJson, 'essay_model_answer')
+        : contentJson,
       contentPlainText: null,
       disclaimerBody: row.contentDisclaimer
         ? {
@@ -1434,7 +1442,10 @@ export class DerivativesService {
    * prompt/stem/question text and strip keys that would reveal the answer,
    * matching the Quimbee-style preview pattern.
    */
-  private redactGatedContent(content: Prisma.JsonValue | null): Prisma.JsonValue | null {
+  private redactGatedContent(
+    content: Prisma.JsonValue | null,
+    derivativeType: string,
+  ): Prisma.JsonValue | null {
     if (!content || typeof content !== 'object' || Array.isArray(content)) {
       return content;
     }
@@ -1451,6 +1462,18 @@ export class DerivativesService {
       'rationale',
       'solution',
     ]);
+    if (derivativeType === 'sample_pleading') {
+      // Preview keeps ONLY: pleadingType, caption. Strip the substantive body.
+      // NOTE asymmetry: pleading strips 'parties'; sample_contract KEEPS it.
+      ['parties', 'preamble', 'sections', 'prayer', 'verification', 'proofOfService'].forEach(
+        (k) => redactedKeys.add(k),
+      );
+    } else if (derivativeType === 'sample_contract') {
+      // Preview keeps ONLY: contractType, parties. Strip the substantive body.
+      ['recitals', 'clauses', 'schedules', 'signatureBlocks'].forEach((k) =>
+        redactedKeys.add(k),
+      );
+    }
     const out: Record<string, Prisma.JsonValue> = {};
     for (const [key, value] of Object.entries(content as Record<string, Prisma.JsonValue>)) {
       if (redactedKeys.has(key)) {
