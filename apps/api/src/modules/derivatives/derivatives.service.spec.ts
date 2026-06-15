@@ -198,6 +198,106 @@ describe('DerivativesService', () => {
       expect(result.mcqQuestion).toBeNull();
     });
 
+    it('strips sample_pleading body for gated users but keeps pleadingType + caption', async () => {
+      subs.getPlanCode.mockResolvedValue('free');
+      prisma.derivativeArtifact.findFirst.mockResolvedValue({
+        id: 'p1',
+        title: 'Motion to Dismiss (Illustrative Sample)',
+        derivativeType: 'sample_pleading',
+        confidenceScore: null,
+        createdAt: new Date(),
+        publishedAt: null,
+        audience: 'both',
+        language: 'en',
+        contentJson: {
+          pleadingType: 'Motion to Dismiss',
+          caption: { court: 'RTC', caseTitle: 'A v. B', caseNumber: 'Civil Case No. ____' },
+          parties: { plaintiff: 'Juan', defendant: 'Pedro', counsel: 'Atty. X' },
+          preamble: 'Defendant, by counsel, respectfully states:',
+          sections: [{ heading: 'Grounds', paragraphs: ['...'] }],
+          prayer: 'WHEREFORE, ...',
+          verification: 'I, Pedro, ...',
+          proofOfService: 'A copy was served ...',
+        },
+        contentPlainText: 'full text',
+        sourceDocument: null,
+        subjectAssignments: [],
+        contentDisclaimer: {
+          id: 'cd',
+          contentClass: 'sample_pleading',
+          version: 1,
+          bodyHtml: '<p>disc</p>',
+          bodyPlain: 'disc',
+        },
+        mcqQuestion: null,
+        essayPrompt: null,
+      });
+
+      const result = await service.findOne('p1', 'user-1', 'org-1');
+
+      expect(result.isGated).toBe(true);
+      expect(result.upgradeTier).toBe('edu');
+      const content = result.contentJson as Record<string, unknown>;
+      // Preview keeps ONLY pleadingType + caption.
+      expect(content['pleadingType']).toBe('Motion to Dismiss');
+      expect(content['caption']).toBeDefined();
+      // Everything else is stripped server-side — including 'parties'.
+      expect(content).not.toHaveProperty('parties');
+      expect(content).not.toHaveProperty('sections');
+      expect(content).not.toHaveProperty('prayer');
+      expect(content).not.toHaveProperty('preamble');
+      expect(content).not.toHaveProperty('verification');
+      expect(content).not.toHaveProperty('proofOfService');
+    });
+
+    it('strips sample_contract body for gated users but KEEPS contractType + parties', async () => {
+      subs.getPlanCode.mockResolvedValue('free');
+      prisma.derivativeArtifact.findFirst.mockResolvedValue({
+        id: 'c1',
+        title: 'Contract of Lease (Illustrative Sample)',
+        derivativeType: 'sample_contract',
+        confidenceScore: null,
+        createdAt: new Date(),
+        publishedAt: null,
+        audience: 'both',
+        language: 'en',
+        contentJson: {
+          contractType: 'Contract of Lease',
+          parties: [{ role: 'Lessor', name: 'Juan', address: '...' }],
+          recitals: ['WHEREAS, ...'],
+          clauses: [{ heading: 'Term', text: '...', subclauses: [] }],
+          schedules: [{ heading: 'Schedule A', text: '...' }],
+          signatureBlocks: [{ role: 'Lessor', name: 'Juan' }],
+        },
+        contentPlainText: 'full text',
+        sourceDocument: null,
+        subjectAssignments: [],
+        contentDisclaimer: {
+          id: 'cd',
+          contentClass: 'sample_contract',
+          version: 1,
+          bodyHtml: '<p>disc</p>',
+          bodyPlain: 'disc',
+        },
+        mcqQuestion: null,
+        essayPrompt: null,
+      });
+
+      const result = await service.findOne('c1', 'user-1', 'org-1');
+
+      expect(result.isGated).toBe(true);
+      expect(result.upgradeTier).toBe('edu');
+      const content = result.contentJson as Record<string, unknown>;
+      // Preview keeps contractType + parties (asymmetry vs sample_pleading).
+      expect(content['contractType']).toBe('Contract of Lease');
+      expect(content['parties']).toBeDefined();
+      // Substantive body stripped server-side.
+      expect(content).not.toHaveProperty('clauses');
+      expect(content).not.toHaveProperty('recitals');
+      expect(content).not.toHaveProperty('schedules');
+      expect(content).not.toHaveProperty('signatureBlocks');
+    });
+
     it('returns full content to edu-tier users', async () => {
       subs.getPlanCode.mockResolvedValue('edu');
       prisma.derivativeArtifact.findFirst.mockResolvedValue({
