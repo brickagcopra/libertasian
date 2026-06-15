@@ -97,6 +97,17 @@ interface DigestRowForMapping {
   } | null;
 }
 
+/**
+ * one_page_summary is a CONDENSED read-only projection of the SAME public
+ * digests surfaced as case_digest. buildOnePageSummaryContentJson additionally
+ * reads digestType + citedAuthoritiesJson, which the digest `include` query
+ * already returns (no `select`, so all scalars come back).
+ */
+interface OnePageSummaryDigestRow extends DigestRowForMapping {
+  digestType: string;
+  citedAuthoritiesJson: Prisma.JsonValue;
+}
+
 interface BarAnswerRowForMapping {
   id: string;
   answerText: string;
@@ -180,6 +191,10 @@ export class DerivativesService {
   }> {
     if (query.derivativeType === 'case_digest') {
       return this.listCaseDigests(query);
+    }
+
+    if (query.derivativeType === 'one_page_summary') {
+      return this.listOnePageSummaries(query);
     }
 
     if (query.derivativeType === 'suggested_bar_answer') {
@@ -374,6 +389,15 @@ export class DerivativesService {
     });
 
     if (!row) {
+      // CARVE-OUT: with ?as=one_page_summary, a shared digest id resolves to the
+      // condensed one-pager projection instead of the full case_digest. Without
+      // ?as=, the same id falls through to findCaseDigestById below (correct).
+      if (asType === 'one_page_summary') {
+        const onePager = await this.findOnePageSummaryById(id);
+        if (onePager) {
+          return onePager;
+        }
+      }
       const digest = await this.findCaseDigestById(id);
       if (digest) {
         return digest;
@@ -479,6 +503,32 @@ export class DerivativesService {
       const digestCounts = await Promise.all(
         subjects.map((s) =>
           // CARVE-OUT: count under caseDigestVisibilityWhere() (visibility='public_editorial', reviewStatus in approved/ai_generated); forTenant() would miscount
+          this.prisma.digest.count({
+            where: {
+              ...this.caseDigestVisibilityWhere(),
+              legalDocument: {
+                subjectAssignments: { some: { subjectId: s.id } },
+              },
+            },
+          }),
+        ),
+      );
+
+      return subjects.map((s, i) => ({
+        subjectCode: s.code,
+        subjectName: s.name,
+        taxonomyVersion: s.taxonomyVersion,
+        totalCount: digestCounts[i] ?? 0,
+        approvedCount: digestCounts[i] ?? 0,
+      }));
+    }
+
+    if (type === 'one_page_summary') {
+      // one_page_summary is a projection of the SAME public digests as
+      // case_digest, so counts are identical: count under
+      // caseDigestVisibilityWhere() joined to legalDocument.subjectAssignments.
+      const digestCounts = await Promise.all(
+        subjects.map((s) =>
           this.prisma.digest.count({
             where: {
               ...this.caseDigestVisibilityWhere(),
@@ -1031,6 +1081,223 @@ export class DerivativesService {
       ruling: row.ruling,
       doctrine: row.doctrine,
       dispositive: row.dispositive,
+    } as Prisma.JsonValue;
+  }
+
+  /**
+   * one_page_summary bridge — a CONDENSED read-only projection of the SAME
+   * public digests surfaced as case_digest (visibility='public_editorial',
+   * reviewStatus in approved/ai_generated). No LLM, no Celery, no new rows.
+   * FREE (never gated). Shares the digest id with case_digest, so the detail
+   * path needs ?as=one_page_summary to disambiguate.
+   */
+  private async listOnePageSummaries(query: ListDerivativesQueryDto): Promise<{
+    items: DerivativeListItem[];
+    meta: { hasNext: boolean; nextCursor?: string; limit: number };
+  }> {
+    const limit = query.limit ?? 20;
+    const taxonomyVersion = query.taxonomyVersion ?? 'study_8';
+
+    const where: Prisma.DigestWhereInput = this.caseDigestVisibilityWhere();
+
+    if (query.subjectCode) {
+      where.legalDocument = {
+        subjectAssignments: {
+          some: {
+            subject: {
+              code: query.subjectCode,
+              taxonomyVersion,
+            },
+          },
+        },
+      };
+    }
+
+    if (query.search) {
+      where.title = { contains: query.search, mode: 'insensitive' };
+    }
+
+    // CARVE-OUT: read under caseDigestVisibilityWhere() (visibility='public_editorial'); forTenant() would 404 cross-org
+    const rows = await this.prisma.digest.findMany({
+      where,
+      take: limit + 1,
+      ...(query.cursor && { skip: 1, cursor: { id: query.cursor } }),
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      include: {
+        legalDocument: {
+          select: {
+            id: true,
+            title: true,
+            shortTitle: true,
+            citationText: true,
+            court: true,
+            decisionDate: true,
+            subjectAssignments: {
+              include: {
+                subject: {
+                  select: { code: true, name: true, taxonomyVersion: true },
+                },
+              },
+            },
+          },
+        },
+        contentDisclaimer: {
+          select: { id: true, contentClass: true, version: true },
+        },
+      },
+    });
+
+    const hasNext = rows.length > limit;
+    const pageRows = hasNext ? rows.slice(0, limit) : rows;
+    const lastRow = pageRows[pageRows.length - 1];
+    const nextCursor = hasNext && lastRow ? lastRow.id : undefined;
+
+    const items: DerivativeListItem[] = pageRows.map((row) =>
+      this.mapDigestToOnePageSummaryListItem(row),
+    );
+
+    return { items, meta: { hasNext, nextCursor, limit } };
+  }
+
+  private async findOnePageSummaryById(id: string): Promise<DerivativeDetail | null> {
+    // CARVE-OUT: read under caseDigestVisibilityWhere() (visibility='public_editorial'); forTenant() would 404 cross-org
+    const row = await this.prisma.digest.findFirst({
+      where: { id, ...this.caseDigestVisibilityWhere() },
+      include: {
+        legalDocument: {
+          select: {
+            id: true,
+            title: true,
+            shortTitle: true,
+            citationText: true,
+            court: true,
+            decisionDate: true,
+            subjectAssignments: {
+              include: {
+                subject: {
+                  select: { code: true, name: true, taxonomyVersion: true },
+                },
+              },
+            },
+          },
+        },
+        contentDisclaimer: {
+          select: { id: true, contentClass: true, version: true },
+        },
+      },
+    });
+
+    if (!row) return null;
+
+    // Attach the one_page_summary disclaimer (NOT the digest's ai_digest
+    // disclaimer). Fetch it directly by contentClass; tolerate a missing row.
+    const disclaimer = await this.prisma.contentDisclaimer.findFirst({
+      where: { contentClass: 'one_page_summary' },
+      orderBy: { version: 'desc' },
+    });
+    if (!disclaimer) {
+      this.logger.warn(
+        "ContentDisclaimer contentClass='one_page_summary' not found — returning detail with disclaimer:null",
+      );
+    }
+
+    const listItem = this.mapDigestToOnePageSummaryListItem(row);
+    return {
+      ...listItem,
+      contentJson: this.buildOnePageSummaryContentJson(row),
+      contentPlainText: null,
+      disclaimer: disclaimer
+        ? {
+            id: disclaimer.id,
+            contentClass: disclaimer.contentClass,
+            version: disclaimer.version,
+          }
+        : null,
+      disclaimerBody: disclaimer
+        ? {
+            bodyHtml: disclaimer.bodyHtml,
+            bodyPlain: disclaimer.bodyPlain,
+          }
+        : null,
+      mcqQuestion: null,
+      essayPrompt: null,
+    };
+  }
+
+  private mapDigestToOnePageSummaryListItem(row: DigestRowForMapping): DerivativeListItem {
+    const subjectAssignments = row.legalDocument?.subjectAssignments ?? [];
+    return {
+      id: row.id,
+      title: row.title,
+      derivativeType: 'one_page_summary',
+      confidenceScore: row.confidenceScore,
+      createdAt: row.createdAt,
+      publishedAt: null,
+      audience: 'both',
+      language: 'en',
+      sourceDocument: row.legalDocument
+        ? {
+            id: row.legalDocument.id,
+            title: row.legalDocument.title,
+            shortTitle: row.legalDocument.shortTitle,
+            citationText: row.legalDocument.citationText,
+            court: row.legalDocument.court,
+            decisionDate: row.legalDocument.decisionDate,
+          }
+        : null,
+      subjects: subjectAssignments.map((a) => ({
+        code: a.subject.code,
+        name: a.subject.name,
+        taxonomyVersion: a.subject.taxonomyVersion,
+        isPrimary: a.isPrimary,
+      })),
+      disclaimer: row.contentDisclaimer
+        ? {
+            id: row.contentDisclaimer.id,
+            contentClass: row.contentDisclaimer.contentClass,
+            version: row.contentDisclaimer.version,
+          }
+        : null,
+      // one_page_summary is FREE — never gated.
+      isGated: false,
+      upgradeTier: null,
+    };
+  }
+
+  /**
+   * Project a digest + its legalDocument into the one-page-summary renderer
+   * shape. Keys are EXACT — the renderer requires a non-empty `bottomLine`.
+   */
+  private buildOnePageSummaryContentJson(row: OnePageSummaryDigestRow): Prisma.JsonValue {
+    const citedAuthorities = Array.isArray(row.citedAuthoritiesJson)
+      ? (row.citedAuthoritiesJson as Array<Record<string, unknown>>)
+      : [];
+
+    const decisionDate = row.legalDocument?.decisionDate
+      ? row.legalDocument.decisionDate.toISOString()
+      : '';
+
+    return {
+      topic: row.title,
+      bottomLine:
+        row.doctrine?.trim() ||
+        row.ruling?.trim() ||
+        row.dispositive?.trim() ||
+        row.summary?.trim() ||
+        row.title, // always non-empty
+      keyPoints: [row.issues, row.ruling, row.facts]
+        .map((s) => s?.trim())
+        .filter(Boolean),
+      highlights: citedAuthorities.slice(0, 6).map((a) => ({
+        term: (a?.['gr_no'] as string) ?? (a?.['citation_text'] as string) ?? '',
+        definition: (a?.['citation_text'] as string) ?? '',
+      })).filter((h) => h.term || h.definition),
+      quickReference: [
+        { label: 'Citation', value: row.legalDocument?.citationText },
+        { label: 'Court', value: row.legalDocument?.court },
+        { label: 'Decision Date', value: decisionDate },
+        { label: 'Digest Type', value: row.digestType },
+      ].filter((q) => q.value),
     } as Prisma.JsonValue;
   }
 

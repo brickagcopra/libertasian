@@ -65,11 +65,14 @@ export default function LibraryDetailPage() {
     notFound();
   }
 
-  // essay_model_answer is projected from an essay_prompt artifact; the detail id
-  // is that artifact's UUID, so request the projection via ?as=. Hook is always
+  // essay_model_answer and one_page_summary are projected from a shared source
+  // row (an essay_prompt artifact / a case digest respectively); the detail id
+  // is that source's UUID, so request the projection via ?as=. Hook is always
   // called (no conditional hooks) — asType is undefined for every other type.
   const asType =
-    typeMeta?.enum === 'essay_model_answer' ? 'essay_model_answer' : undefined;
+    typeMeta?.enum === 'essay_model_answer' || typeMeta?.enum === 'one_page_summary'
+      ? typeMeta.enum
+      : undefined;
   const { data, isLoading, error } = useDerivative(id, asType);
 
   if (isLoading) {

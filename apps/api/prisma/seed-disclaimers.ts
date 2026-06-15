@@ -333,6 +333,49 @@ export const DISCLAIMER_SEEDS: DisclaimerSeed[] = [
       'LIBERTASIAN is an educational research platform. Nothing it publishes is legal advice.',
     authorNote: AUTHOR_NOTE_PATTERN_ONLY,
   },
+
+  // ------------------------------------------------------------------
+  // one_page_summary — drafted at seed-data authoring time per §8.2
+  // pattern (bold framing → how produced → what it is not → load-bearing
+  // closing). one_page_summary is a CONDENSED read-only projection of an
+  // AI-generated case digest (same source as ai_digest), surfaced as a
+  // FREE quick-study one-pager. Distinct from ai_digest because the
+  // projection drops detail (facts/arguments) in favour of a bottom-line
+  // + key points, which raises the "verify against the full decision"
+  // stakes. bodyHtml verbatim is not in §8.2 for this class.
+  // ------------------------------------------------------------------
+  {
+    contentClass: 'one_page_summary',
+    version: 1,
+    isActive: true,
+    bodyHtml:
+      '<p><strong>Condensed one-page summary — quick study reference only.</strong></p>\n' +
+      '<p>This one-page summary is a condensed projection of an AI-generated case digest, itself\n' +
+      'produced by an AI system reading the decision cited below. It distils the digest to a\n' +
+      'bottom line, a few key points, and quick-reference metadata, and in doing so necessarily\n' +
+      'omits facts, arguments, and qualifications that may change the result.</p>\n' +
+      '<p>It is a study aid, <em>not</em> legal advice, not a substitute for reading the full\n' +
+      'decision, and not a statement by LIBERTASIAN, its operators, or any court about the meaning\n' +
+      'of the ruling. Before relying on any proposition stated here — especially for a case,\n' +
+      'brief, exam answer, or client matter — read the full decision at the linked source and\n' +
+      'verify that the doctrine, holding, and citations correspond to what appears here.</p>\n' +
+      '<p>LIBERTASIAN is an educational research platform. Nothing it generates or retrieves is\n' +
+      'legal advice.</p>',
+    bodyPlain:
+      'Condensed one-page summary — quick study reference only.\n\n' +
+      'This one-page summary is a condensed projection of an AI-generated case digest, itself ' +
+      'produced by an AI system reading the decision cited below. It distils the digest to a ' +
+      'bottom line, a few key points, and quick-reference metadata, and in doing so necessarily ' +
+      'omits facts, arguments, and qualifications that may change the result.\n\n' +
+      'It is a study aid, NOT legal advice, not a substitute for reading the full decision, and ' +
+      'not a statement by LIBERTASIAN, its operators, or any court about the meaning of the ' +
+      'ruling. Before relying on any proposition stated here — especially for a case, brief, ' +
+      'exam answer, or client matter — read the full decision at the linked source and verify ' +
+      'that the doctrine, holding, and citations correspond to what appears here.\n\n' +
+      'LIBERTASIAN is an educational research platform. Nothing it generates or retrieves is ' +
+      'legal advice.',
+    authorNote: AUTHOR_NOTE_PATTERN_ONLY,
+  },
 ];
 
 /**
