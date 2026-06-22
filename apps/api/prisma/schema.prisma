@@ -4176,3 +4176,34 @@ model EvaluationRun {
   @@index([goldenSetType, promptTemplateVersion])
   @@map("evaluation_runs")
 }
+
+// ==========================================================================
+// Audio Corpus — Phase 1 Foundation (text-to-speech renditions)
+//
+// One row per synthesized audio rendition of a short legal content item
+// (a digest or a bar-exam answer) for a given language + voice. Audio + speech
+// marks are stored in object storage (MinIO/S3); only the keys live here.
+// contentHash is the sha256 of the normalized SSML input, so a content edit
+// produces a new hash and a cache miss without colliding on the unique tuple.
+// ==========================================================================
+
+model AudioRendition {
+  id             String   @id @default(uuid()) @db.Uuid
+  contentType    String   @map("content_type") @db.VarChar(30) // 'digest' | 'bar_exam_answer'
+  contentId      String   @map("content_id") @db.VarChar(255)
+  contentHash    String   @map("content_hash") @db.VarChar(64) // sha256 of normalized SSML input
+  language       String   @default("en") @db.VarChar(10)
+  voiceId        String   @map("voice_id") @db.VarChar(50)
+  engine         String   @default("polly") @db.VarChar(30)
+  audioObjectKey String   @map("audio_object_key") @db.VarChar(500)
+  marksObjectKey String?  @map("marks_object_key") @db.VarChar(500)
+  durationMs     Int?     @map("duration_ms")
+  charCount      Int?     @map("char_count")
+  status         String   @default("pending") @db.VarChar(20)
+  visibility     String   @default("public_editorial") @db.VarChar(30)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([contentType, contentId, language, voiceId])
+  @@index([contentHash])
+  @@map("audio_renditions")
+}
