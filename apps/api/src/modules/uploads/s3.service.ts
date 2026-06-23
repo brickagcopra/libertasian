@@ -5,6 +5,7 @@ import {
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
@@ -142,5 +143,18 @@ export class S3Service {
   /** Compute SHA-256 checksum of a buffer */
   computeChecksum(buffer: Buffer): string {
     return crypto.createHash('sha256').update(buffer).digest('hex');
+  }
+
+  /**
+   * Generate a presigned GET URL for an object with a short TTL.
+   * Used to hand out time-limited download links (e.g. audio renditions)
+   * without proxying bytes through the API or exposing bucket credentials.
+   */
+  async getSignedUrl(objectKey: string, ttlSeconds = 300): Promise<string> {
+    return getSignedUrl(
+      this.client,
+      new GetObjectCommand({ Bucket: this.bucket, Key: objectKey }),
+      { expiresIn: ttlSeconds },
+    );
   }
 }
