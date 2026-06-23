@@ -33,6 +33,7 @@
   "dependencies": {
     "@aws-sdk/client-polly": "^3.1074.0",
     "@aws-sdk/client-s3": "^3.1012.0",
+    "@aws-sdk/s3-request-presigner": "^3.1012.0",
     "@libertasian/types": "workspace:*",
     "@nest-lab/throttler-storage-redis": "^1.2.0",
     "@nestjs/bullmq": "^11.0.4",
