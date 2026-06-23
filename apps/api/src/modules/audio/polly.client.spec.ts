@@ -97,10 +97,39 @@ describe('PollyClient', () => {
     expect(marks.toString()).toBe('{"time":0,"value":"x"}');
   });
 
-  it('defaults the voice to Gregory when POLLY_VOICE_ID is unset', async () => {
+  it('defaults the voice to Matthew when POLLY_VOICE_ID is unset', async () => {
     const { service, send } = newService(makeConfig());
     await service.synthesize('<speak>hi</speak>');
     for (const input of inputsOf(send)) {
+      expect(input.VoiceId).toBe('Matthew');
+    }
+  });
+
+  it('defaults the engine to neural on both calls when POLLY_ENGINE is unset', async () => {
+    const { service, send } = newService(makeConfig());
+    await service.synthesize('<speak>hi</speak>');
+    expect(send).toHaveBeenCalledTimes(2);
+    for (const input of inputsOf(send)) {
+      expect(input.Engine).toBe('neural');
+    }
+  });
+
+  it('passes the configured POLLY_ENGINE on both calls', async () => {
+    const { service, send } = newService(makeConfig({ POLLY_ENGINE: 'generative' }));
+    await service.synthesize('<speak>hi</speak>');
+    for (const input of inputsOf(send)) {
+      expect(input.Engine).toBe('generative');
+    }
+  });
+
+  it('flows a long-form voice + engine config through to both calls', async () => {
+    const { service, send } = newService(
+      makeConfig({ POLLY_ENGINE: 'long-form', POLLY_VOICE_ID: 'Gregory' }),
+    );
+    await service.synthesize('<speak>hi</speak>');
+    expect(send).toHaveBeenCalledTimes(2);
+    for (const input of inputsOf(send)) {
+      expect(input.Engine).toBe('long-form');
       expect(input.VoiceId).toBe('Gregory');
     }
   });

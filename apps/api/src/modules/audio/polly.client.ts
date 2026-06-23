@@ -1,6 +1,7 @@
 import {
   PollyClient as AwsPollyClient,
   SynthesizeSpeechCommand,
+  type Engine,
   type SynthesizeSpeechCommandOutput,
   type VoiceId,
 } from '@aws-sdk/client-polly';
@@ -28,9 +29,13 @@ export class PollyClient {
   private readonly logger = new Logger(PollyClient.name);
   private readonly client: AwsPollyClient;
   private readonly defaultVoiceId: string;
+  private readonly engine: Engine;
 
   constructor(private readonly config: ConfigService) {
-    this.defaultVoiceId = this.config.get<string>('POLLY_VOICE_ID', 'Gregory');
+    this.defaultVoiceId = this.config.get<string>('POLLY_VOICE_ID', 'Matthew');
+    // Engine and voice must be compatible — Polly rejects a long-form-only
+    // voice on the neural engine (and vice versa) at runtime.
+    this.engine = this.config.get<string>('POLLY_ENGINE', 'neural') as Engine;
     const region = this.config.get<string>('AWS_REGION', 'us-east-1');
     const accessKeyId = this.config.get<string>('AWS_ACCESS_KEY_ID', '');
     const secretAccessKey = this.config.get<string>('AWS_SECRET_ACCESS_KEY', '');
@@ -61,7 +66,7 @@ export class PollyClient {
           TextType: 'ssml',
           OutputFormat: 'mp3',
           VoiceId: resolvedVoiceId,
-          Engine: 'neural',
+          Engine: this.engine,
         }),
       ),
       this.client.send(
@@ -71,7 +76,7 @@ export class PollyClient {
           OutputFormat: 'json',
           SpeechMarkTypes: ['word', 'sentence'],
           VoiceId: resolvedVoiceId,
-          Engine: 'neural',
+          Engine: this.engine,
         }),
       ),
     ]);

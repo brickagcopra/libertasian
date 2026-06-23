@@ -148,7 +148,14 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
         AWS_REGION: Joi.string().default('us-east-1'),
         AWS_ACCESS_KEY_ID: Joi.string().optional().allow(''),
         AWS_SECRET_ACCESS_KEY: Joi.string().optional().allow(''),
-        POLLY_VOICE_ID: Joi.string().default('Gregory'),
+        // Default voice + engine must be consistent: 'Matthew' is a neural
+        // voice that works with the default 'neural' engine.
+        // Long-form voices (Gregory/Ruth/Danielle) require POLLY_ENGINE=long-form
+        // — ~6× cost (~$100 vs ~$16 /1M chars).
+        POLLY_VOICE_ID: Joi.string().default('Matthew'),
+        POLLY_ENGINE: Joi.string()
+          .valid('standard', 'neural', 'long-form', 'generative')
+          .default('neural'),
       }),
     }),
 
