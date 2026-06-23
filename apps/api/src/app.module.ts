@@ -69,6 +69,7 @@ import { DerivativesAdminModule } from './modules/derivatives-admin/derivatives-
 import { DerivativesModule } from './modules/derivatives/derivatives.module';
 import { InternalModule } from './modules/internal/internal.module';
 import { ReportingModule } from './modules/reporting/reporting.module';
+import { AudioModule } from './modules/audio/audio.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
 
@@ -141,6 +142,20 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
         // Redis-backed must_not.terms clause. Flip to 'false' to revert
         // instantly if the filter ever over-suppresses in prod.
         SEARCH_DEDUP_FILTER_ENABLED: Joi.string().valid('true', 'false').default('true'),
+        // Amazon Polly (Audio Corpus Phase 1). All optional so existing envs
+        // keep booting; the default AWS provider chain is used when the
+        // explicit access keys are absent (e.g. IAM role in prod).
+        AWS_REGION: Joi.string().default('us-east-1'),
+        AWS_ACCESS_KEY_ID: Joi.string().optional().allow(''),
+        AWS_SECRET_ACCESS_KEY: Joi.string().optional().allow(''),
+        // Default voice + engine must be consistent: 'Matthew' is a neural
+        // voice that works with the default 'neural' engine.
+        // Long-form voices (Gregory/Ruth/Danielle) require POLLY_ENGINE=long-form
+        // — ~6× cost (~$100 vs ~$16 /1M chars).
+        POLLY_VOICE_ID: Joi.string().default('Matthew'),
+        POLLY_ENGINE: Joi.string()
+          .valid('standard', 'neural', 'long-form', 'generative')
+          .default('neural'),
       }),
     }),
 
@@ -246,6 +261,7 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
     DerivativesAdminModule,
     DerivativesModule,
     InternalModule,
+    AudioModule,
   ],
   providers: [
     // Global rate limiting guard — applies to all routes by default
