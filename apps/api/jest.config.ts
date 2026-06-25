@@ -3,6 +3,10 @@ import type { Config } from 'jest';
 const config: Config = {
   moduleFileExtensions: ['js', 'json', 'ts'],
   rootDir: 'src',
+  // Also discover specs co-located with standalone operational scripts
+  // (e.g. scripts/*.spec.ts). rootDir stays 'src' so @/ and other mappings
+  // are unchanged; this only widens test discovery.
+  roots: ['<rootDir>', '<rootDir>/../scripts'],
   testRegex: '.*\\.spec\\.ts$',
   transform: {
     '^.+\\.ts$': 'ts-jest',
