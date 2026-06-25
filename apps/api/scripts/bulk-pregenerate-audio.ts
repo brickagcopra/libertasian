@@ -23,12 +23,15 @@
  *     (no Polly call, no budget consumed), so the script can be re-run any number
  *     of times and resumes where the cap stopped it.
  *
- * Run commands (from repo root):
+ * Run commands (from repo root). Uses ts-node, NOT tsx/esbuild: this script
+ * bootstraps the full Nest DI container, which depends on the tsc-emitted
+ * decorator metadata (`emitDecoratorMetadata: true`) that esbuild does not
+ * produce — under tsx, provider constructor params resolve as undefined.
  *   # Dry-run plan (default; zero Polly/AWS calls — just prints what it WOULD do)
- *   pnpm --filter @libertasian/api exec tsx scripts/bulk-pregenerate-audio.ts
+ *   pnpm --filter @libertasian/api exec ts-node scripts/bulk-pregenerate-audio.ts
  *
  *   # Commit, free-tier cap (~186 digests/run after the 53 bar answers)
- *   pnpm --filter @libertasian/api exec tsx scripts/bulk-pregenerate-audio.ts \
+ *   pnpm --filter @libertasian/api exec ts-node scripts/bulk-pregenerate-audio.ts \
  *     --commit --char-budget=900000
  *
  *   # Other flags:
