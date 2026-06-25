@@ -1,10 +1,15 @@
-import { LATIN_LEXICON, toSsml } from './legal-ssml.util';
+import { LATIN_LEXICON, toSsml, toSsmlDocument } from './legal-ssml.util';
 
 describe('toSsml — legal SSML normalizer', () => {
   it('wraps output in a single <speak> root', () => {
     const { ssml } = toSsml('A short ruling.');
     expect(ssml.startsWith('<speak>')).toBe(true);
     expect(ssml.endsWith('</speak>')).toBe(true);
+  });
+
+  it('frames a sentence in <p>/<s> (back-compat single-blob entry)', () => {
+    const { ssml } = toSsml('A short ruling.');
+    expect(ssml).toBe('<speak><p><s>A short ruling.</s></p></speak>');
   });
 
   describe('G.R. citation expansion', () => {
@@ -41,8 +46,127 @@ describe('toSsml — legal SSML normalizer', () => {
     expect(toSsml('the Hon. Court').normalizedText).toBe('the Honorable Court');
   });
 
+  it('does not mangle an initial chain like J.B.L.', () => {
+    const { normalizedText } = toSsml('Penned by J.B.L. Reyes, J.');
+    expect(normalizedText).toContain('J.B.L.');
+    expect(normalizedText).toContain('Reyes, Justice');
+    expect(normalizedText).not.toContain('JusticeB');
+  });
+
+  describe('statute citations', () => {
+    it('expands R.A./P.D./B.P./E.O. and digit-izes their numbers', () => {
+      expect(toSsml('Violation of R.A. 8294 applies.').normalizedText).toContain(
+        'Republic Act Number 8294',
+      );
+      expect(toSsml('Under P.D. No. 1606 the court acts.').normalizedText).toContain(
+        'Presidential Decree Number 1606',
+      );
+      expect(toSsml('Per B.P. 22 the check bounced.').normalizedText).toContain(
+        'Batas Pambansa Number 22',
+      );
+      expect(toSsml('See E.O. 209 today.').normalizedText).toContain(
+        'Executive Order Number 209',
+      );
+    });
+
+    it('digit-spells statute numbers in SSML', () => {
+      const { ssml } = toSsml('Violation of R.A. 8294 applies.');
+      expect(ssml).toContain(
+        'Republic Act Number <say-as interpret-as="digits">8294</say-as>',
+      );
+    });
+  });
+
+  describe('number, symbol and currency normalization', () => {
+    it('expands a standalone No. to "Number" with spelled digits', () => {
+      const { ssml, normalizedText } = toSsml('Filed under No. 12345 today.');
+      expect(normalizedText).toContain('Number 12345');
+      expect(ssml).toContain(
+        'Number <say-as interpret-as="digits">12345</say-as>',
+      );
+    });
+
+    it('expands § to Section and % to percent', () => {
+      expect(toSsml('See § 5 of the Code.').normalizedText).toContain('Section 5');
+      expect(toSsml('Raised by 50%.').normalizedText).toContain('50 percent');
+    });
+
+    it('re-voices peso amounts, including a scale word', () => {
+      expect(toSsml('He paid P2.8 million in damages.').normalizedText).toContain(
+        '2.8 million pesos',
+      );
+      expect(toSsml('A fine of ₱500 was set.').normalizedText).toContain('500 pesos');
+      expect(toSsml('Damages of PHP 1,000 awarded.').normalizedText).toContain(
+        '1,000 pesos',
+      );
+    });
+
+    it('does not treat a middle initial as a peso amount', () => {
+      const { normalizedText } = toSsml('Juan P. Cruz reasoned otherwise.');
+      expect(normalizedText).toContain('Juan P. Cruz');
+      expect(normalizedText).not.toContain('pesos');
+    });
+  });
+
+  describe('all-caps de-shouting', () => {
+    it('title-cases all-caps words longer than three characters', () => {
+      const { normalizedText } = toSsml(
+        'WHEREFORE, the petition is GRANTED by METROBANK.',
+      );
+      expect(normalizedText).toContain('Wherefore');
+      expect(normalizedText).toContain('Granted');
+      expect(normalizedText).toContain('Metrobank');
+      expect(normalizedText).not.toContain('WHEREFORE');
+      expect(normalizedText).not.toContain('METROBANK');
+    });
+
+    it('leaves short (<=3 char) all-caps tokens untouched', () => {
+      const { normalizedText } = toSsml('The DOJ and the SEC ruled.');
+      expect(normalizedText).toContain('DOJ');
+      expect(normalizedText).toContain('SEC');
+    });
+  });
+
+  describe('dict-blob hygiene', () => {
+    it('rewrites a single {issue, holding} object to prose (single quotes)', () => {
+      const { ssml, normalizedText } = toSsml(
+        "{'issue': 'Whether the search was valid', 'holding': 'The search was illegal'}",
+      );
+      expect(normalizedText).toContain(
+        'Issue: Whether the search was valid. The Court held: The search was illegal.',
+      );
+      expect(normalizedText).not.toContain('{');
+      expect(normalizedText).not.toContain('}');
+      expect(normalizedText).not.toContain("'");
+      // No brace/quote artifacts reach the SSML either.
+      expect(ssml).not.toContain('{');
+      expect(ssml).not.toContain("'");
+    });
+
+    it('rewrites the double-quoted object form', () => {
+      const { normalizedText } = toSsml(
+        '{"issue": "Was notice given", "holding": "Notice was defective"}',
+      );
+      expect(normalizedText).toContain('Issue: Was notice given.');
+      expect(normalizedText).toContain('The Court held: Notice was defective.');
+      expect(normalizedText).not.toContain('"');
+    });
+
+    it('rewrites a bulleted list of objects', () => {
+      const blob =
+        "- {'issue': 'Was probable cause shown', 'holding': 'No probable cause existed'}\n" +
+        "- {'issue': 'Is the evidence admissible', 'holding': 'The evidence is suppressed'}";
+      const { normalizedText } = toSsml(blob);
+      expect(normalizedText).toContain('Issue: Was probable cause shown.');
+      expect(normalizedText).toContain('The Court held: No probable cause existed.');
+      expect(normalizedText).toContain('Issue: Is the evidence admissible.');
+      expect(normalizedText).not.toContain('{');
+      expect(normalizedText).not.toContain('}');
+    });
+  });
+
   describe('Latin lexicon', () => {
-    it('exports the five expected terms', () => {
+    it('exports the five original terms', () => {
       const terms = LATIN_LEXICON.map((entry) => entry.term);
       expect(terms).toEqual(
         expect.arrayContaining([
@@ -51,6 +175,21 @@ describe('toSsml — legal SSML normalizer', () => {
           'certiorari',
           'ponente',
           'en banc',
+        ]),
+      );
+    });
+
+    it('includes the extended Philippine legal terms', () => {
+      const terms = LATIN_LEXICON.map((entry) => entry.term);
+      expect(terms).toEqual(
+        expect.arrayContaining([
+          'prima facie',
+          'habeas corpus',
+          'mandamus',
+          'amicus curiae',
+          'obiter dictum',
+          'ratio decidendi',
+          'ex parte',
         ]),
       );
     });
@@ -65,6 +204,11 @@ describe('toSsml — legal SSML normalizer', () => {
       const { ssml } = toSsml('The ponente wrote en banc.');
       expect(ssml).toContain('<sub alias="poh-NEN-teh">ponente</sub>');
       expect(ssml).toContain('<sub alias="on bonk">en banc</sub>');
+    });
+
+    it('wraps an extended term (habeas corpus)', () => {
+      const { ssml } = toSsml('The writ of habeas corpus issued.');
+      expect(ssml).toContain('<sub alias="HAY-bee-us KOR-pus">habeas corpus</sub>');
     });
 
     it('matches case-insensitively while preserving original casing', () => {
@@ -91,17 +235,67 @@ describe('toSsml — legal SSML normalizer', () => {
     });
   });
 
-  describe('paragraph breaks', () => {
-    it('inserts <break> between paragraphs in SSML', () => {
-      const { ssml } = toSsml('First paragraph.\n\nSecond paragraph.');
-      expect(ssml).toContain('<break time="700ms"/>');
+  describe('sentence segmentation', () => {
+    it('splits paragraphs into <s> sentences', () => {
+      const { ssml } = toSsml('The accused fled. The Court convicted him.');
       expect(ssml).toBe(
-        '<speak>First paragraph.<break time="700ms"/>Second paragraph.</speak>',
+        '<speak><p><s>The accused fled.</s><s>The Court convicted him.</s></p></speak>',
+      );
+    });
+
+    it('does not split after a guard abbreviation (Inc.)', () => {
+      const { ssml } = toSsml('Owned by Acme Inc. The board met.');
+      expect(ssml).toContain('<s>Owned by Acme Inc. The board met.</s>');
+    });
+
+    it('does not split after Corp.', () => {
+      const { ssml } = toSsml('Held by Big Corp. The motion was denied.');
+      expect(ssml).toContain('<s>Held by Big Corp. The motion was denied.</s>');
+    });
+  });
+
+  describe('paragraph structure', () => {
+    it('renders each paragraph as its own <p> block', () => {
+      const { ssml } = toSsml('First paragraph.\n\nSecond paragraph.');
+      expect(ssml).toBe(
+        '<speak><p><s>First paragraph.</s></p><p><s>Second paragraph.</s></p></speak>',
       );
     });
 
     it('preserves paragraph separation in normalizedText', () => {
       expect(toSsml('One.\n\nTwo.').normalizedText).toBe('One.\n\nTwo.');
+    });
+  });
+
+  describe('structured document builder', () => {
+    it('paces the title and headings with prosody + breaks', () => {
+      const { ssml, normalizedText } = toSsmlDocument({
+        title: 'People v. Dela Cruz',
+        sections: [{ heading: 'Facts', body: 'The accused fled.' }],
+      });
+      expect(ssml).toContain(
+        '<p><prosody rate="96%">People versus Dela Cruz</prosody></p><break time="900ms"/>',
+      );
+      expect(ssml).toContain(
+        '<break time="600ms"/><p><prosody rate="92%">Facts.</prosody></p><break time="350ms"/>',
+      );
+      expect(ssml).toContain('<p><s>The accused fled.</s></p>');
+      expect(normalizedText).toContain('People versus Dela Cruz');
+      expect(normalizedText).toContain('Facts.');
+    });
+
+    it('skips an empty section and a blank title', () => {
+      const { ssml } = toSsmlDocument({
+        title: '   ',
+        sections: [
+          { heading: 'Facts', body: '' },
+          { heading: 'Ruling', body: 'Affirmed.' },
+        ],
+      });
+      expect(ssml).not.toContain('rate="96%"'); // no title
+      expect(ssml).not.toContain('Facts.'); // empty body → heading skipped
+      expect(ssml).toContain('<prosody rate="92%">Ruling.</prosody>');
+      expect(ssml).toContain('<p><s>Affirmed.</s></p>');
     });
   });
 

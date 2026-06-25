@@ -156,6 +156,10 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
         POLLY_ENGINE: Joi.string()
           .valid('standard', 'neural', 'long-form', 'generative')
           .default('neural'),
+        // Newscaster delivery (<amazon:domain name="news">) on the neural
+        // engine. 'true' (default) wraps SSML for a news-anchor tone; 'false'
+        // disables. Never applied on generative/long-form engines.
+        POLLY_NEWSCASTER: Joi.string().valid('true', 'false').default('true'),
       }),
     }),
 
