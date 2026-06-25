@@ -16,7 +16,10 @@ export {
 export {
   LATIN_LEXICON,
   toSsml,
+  toSsmlDocument,
   type LatinTerm,
+  type SpokenDocument,
   type SsmlResult,
+  type ToSsmlOptions,
 } from './legal-ssml.util';
 export { PollyClient, type SynthesisResult } from './polly.client';

@@ -71,7 +71,7 @@ describe('PollyClient', () => {
   });
 
   it('requests MP3 audio and JSON speech marks from the same SSML', async () => {
-    const { service, send } = newService(makeConfig());
+    const { service, send } = newService(makeConfig({ POLLY_NEWSCASTER: 'false' }));
     await service.synthesize('<speak>hi</speak>');
 
     const inputs = inputsOf(send);
@@ -85,6 +85,7 @@ describe('PollyClient', () => {
 
     expect(marks).toBeDefined();
     expect(marks?.TextType).toBe('ssml');
+    expect(marks?.Text).toBe('<speak>hi</speak>');
     expect(marks?.SpeechMarkTypes).toEqual(['word', 'sentence']);
   });
 
@@ -154,5 +155,86 @@ describe('PollyClient', () => {
     const { audio, marks } = await service.synthesize('<speak>hi</speak>');
     expect(audio.length).toBe(0);
     expect(marks.length).toBe(0);
+  });
+
+  describe('newscaster domain wrapper', () => {
+    const NEWSCASTER = '<speak><amazon:domain name="news">hi</amazon:domain></speak>';
+
+    it('wraps neural SSML in <amazon:domain name="news"> by default', async () => {
+      const { service, send } = newService(makeConfig());
+      await service.synthesize('<speak>hi</speak>');
+      for (const input of inputsOf(send)) {
+        expect(input.Text).toBe(NEWSCASTER);
+      }
+    });
+
+    it('omits the wrapper when POLLY_NEWSCASTER=false', async () => {
+      const { service, send } = newService(makeConfig({ POLLY_NEWSCASTER: 'false' }));
+      await service.synthesize('<speak>hi</speak>');
+      for (const input of inputsOf(send)) {
+        expect(input.Text).toBe('<speak>hi</speak>');
+      }
+    });
+
+    it('never applies the wrapper on the generative engine', async () => {
+      const { service, send } = newService(
+        makeConfig({ POLLY_ENGINE: 'generative' }),
+      );
+      await service.synthesize('<speak>hi</speak>');
+      for (const input of inputsOf(send)) {
+        expect(input.Text).toBe('<speak>hi</speak>');
+      }
+    });
+
+    it('never applies the wrapper on the long-form engine', async () => {
+      const { service, send } = newService(
+        makeConfig({ POLLY_ENGINE: 'long-form', POLLY_VOICE_ID: 'Gregory' }),
+      );
+      await service.synthesize('<speak>hi</speak>');
+      for (const input of inputsOf(send)) {
+        expect(input.Text).toBe('<speak>hi</speak>');
+      }
+    });
+
+    it('retries once without the wrapper on an SSML validation error', async () => {
+      const { service, send } = newService(makeConfig());
+      const warnSpy = jest
+        .spyOn((service as unknown as { logger: { warn: jest.Mock } }).logger, 'warn')
+        .mockImplementation(() => undefined);
+
+      send.mockImplementation((command) => {
+        if (command.input.Text?.includes('amazon:domain')) {
+          const err = new Error('Invalid SSML request');
+          err.name = 'InvalidSsmlException';
+          return Promise.reject(err);
+        }
+        const payload =
+          command.input.OutputFormat === 'json' ? '{"time":0}' : 'MP3';
+        return Promise.resolve({ AudioStream: Readable.from(Buffer.from(payload)) });
+      });
+
+      const { audio } = await service.synthesize('<speak>hi</speak>');
+
+      // First (wrapped) attempt rejected both calls; retry used the raw SSML.
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(audio.toString()).toBe('MP3');
+      const retried = inputsOf(send).filter(
+        (i) => i.Text === '<speak>hi</speak>',
+      );
+      expect(retried.length).toBe(2);
+    });
+
+    it('does not retry on a non-SSML error', async () => {
+      const { service, send } = newService(makeConfig());
+      const err = new Error('network down');
+      err.name = 'TimeoutError';
+      send.mockRejectedValue(err);
+
+      await expect(service.synthesize('<speak>hi</speak>')).rejects.toThrow(
+        'network down',
+      );
+      // Only the first (wrapped) attempt — no retry.
+      expect(send).toHaveBeenCalledTimes(2);
+    });
   });
 });

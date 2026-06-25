@@ -177,7 +177,8 @@ describe('AudioRenditionService', () => {
         visibility: 'public_editorial',
       });
       const resolved = await service.resolveText('bar_exam_answer', 'ans-1');
-      expect(resolved.text).toBe('The answer.');
+      expect(resolved.doc.sections[0]?.body).toBe('The answer.');
+      expect(resolved.doc.title).toBeUndefined();
       expect(resolved.visibility).toBe('public_editorial');
     });
   });

@@ -12,7 +12,7 @@ import {
   type AudioContentType,
   type AudioGenerationJobData,
 } from './audio.types';
-import { toSsml } from './legal-ssml.util';
+import { toSsmlDocument, type SpokenDocument } from './legal-ssml.util';
 import { PollyClient } from './polly.client';
 
 /** Public read projection of a rendition, with short-lived signed URLs. */
@@ -25,9 +25,9 @@ export interface AudioRenditionReadModel {
   voiceId: string;
 }
 
-/** Resolved spoken text for a content item plus its visibility. */
+/** Resolved spoken document for a content item plus its visibility. */
 interface ResolvedContent {
-  text: string;
+  doc: SpokenDocument;
   visibility: string;
 }
 
@@ -57,9 +57,10 @@ export class AudioRenditionService {
   }
 
   /**
-   * Assemble the spoken text for a content item.
-   *  - digest → labeled chapters (Facts/Issues/Ruling/Doctrine/Dispositive).
-   *  - bar_exam_answer → the answer text.
+   * Assemble the spoken document for a content item.
+   *  - digest → titled document with named sections (Facts/Issues/Ruling/
+   *    Doctrine/Dispositive); empty sections are skipped.
+   *  - bar_exam_answer → a single untitled section holding the answer text.
    * Throws NotFoundException if the content row does not exist.
    */
   async resolveText(
@@ -89,13 +90,12 @@ export class AudioRenditionService {
         ['Doctrine', digest.doctrine],
         ['Dispositive', digest.dispositive],
       ];
-      const parts: string[] = [digest.title];
-      for (const [label, value] of chapters) {
-        if (value && value.trim().length > 0) {
-          parts.push(`${label}.\n\n${value.trim()}`);
-        }
-      }
-      return { text: parts.join('\n\n'), visibility: digest.visibility };
+      const sections = chapters
+        .filter(([, value]) => value !== null && value.trim().length > 0)
+        .map(([heading, value]) => ({ heading, body: (value ?? '').trim() }));
+      const title =
+        digest.title && digest.title.trim().length > 0 ? digest.title : undefined;
+      return { doc: { title, sections }, visibility: digest.visibility };
     }
 
     const answer = await this.prisma.barExamAnswer.findUnique({
@@ -105,7 +105,10 @@ export class AudioRenditionService {
     if (!answer) {
       throw new NotFoundException(`Bar exam answer ${contentId} not found`);
     }
-    return { text: answer.answerText, visibility: answer.visibility };
+    return {
+      doc: { sections: [{ body: answer.answerText }] },
+      visibility: answer.visibility,
+    };
   }
 
   /** Look up the rendition for the configured voice (any status). */
@@ -164,8 +167,8 @@ export class AudioRenditionService {
     const language = data.language || 'en';
     const voiceId = this.defaultVoiceId;
 
-    const { text, visibility } = await this.resolveText(contentType, contentId);
-    const { ssml, normalizedText } = toSsml(text);
+    const { doc, visibility } = await this.resolveText(contentType, contentId);
+    const { ssml, normalizedText } = toSsmlDocument(doc);
     const contentHash = crypto
       .createHash('sha256')
       .update(normalizedText)
