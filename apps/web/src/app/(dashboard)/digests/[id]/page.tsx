@@ -15,6 +15,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ArrowLeftIcon, AlertCircleIcon, ExternalLinkIcon } from 'lucide-react';
 import { ExportButton } from '@/features/exports/components/export-button';
+import { AudioPlayer } from '@/features/audio';
 
 const VISIBILITY_STYLES: Record<string, { variant: 'default' | 'secondary' | 'outline'; className?: string }> = {
   private: { variant: 'secondary' },
@@ -124,6 +125,9 @@ export default function DigestDetailPage() {
           </Button>
         )}
       </div>
+
+      {/* Listen — narrated audio with synced read-along. Digest audio is free. */}
+      <AudioPlayer contentType="digest" contentId={digest.id} title={digest.title} />
 
       <Separator />
 
