@@ -16,6 +16,7 @@ import { EmptyState } from '@/components/empty-states/empty-state';
 import { useBarExamAnswer } from '@/features/bar-exams/hooks/use-bar-exam-answer';
 import type { BarExamAnswer } from '@/features/bar-exams/types';
 import { useCanAccessPaidFeature } from '@/hooks/useCanAccessPaidFeature';
+import { AudioPlayer } from '@/features/audio';
 import { ApiClientError, apiClient } from '@/lib/api-client';
 import { subjectLabelWithPart, type SittingDetail } from '../../subjects';
 
@@ -354,6 +355,7 @@ function BarExamAnswerSection({
 
 function BarExamAnswerBody({ answer }: { answer: BarExamAnswer }) {
   const structured = answer.structuredAnswerJson;
+  const { canAccess } = useCanAccessPaidFeature();
   return (
     <article className="space-y-3 py-2 text-sm text-gray-800" data-testid="answer-body">
       {structured ? (
@@ -365,6 +367,24 @@ function BarExamAnswerBody({ answer }: { answer: BarExamAnswer }) {
         </>
       ) : (
         <p className="whitespace-pre-wrap">{answer.answerText}</p>
+      )}
+      {/* Listen — bar-answer audio is Pro-gated. The AudioPlayer also catches a
+          402 from the audio hook defensively and renders the same upsell. */}
+      {canAccess ? (
+        <AudioPlayer contentType="bar_exam_answer" contentId={answer.id} />
+      ) : (
+        <div
+          className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-2.5"
+          data-testid="answer-audio-locked"
+        >
+          <p className="text-sm text-gray-600">Listen to this answer with Pro.</p>
+          <Link
+            href="/pricing"
+            className="whitespace-nowrap text-sm font-medium text-indigo-600 hover:underline"
+          >
+            See plans →
+          </Link>
+        </div>
       )}
       {answer.modelRun && (
         <p className="pt-2 text-xs text-gray-400">
