@@ -3,14 +3,26 @@ import { ConfigService } from '@nestjs/config';
 
 import { S3Service } from './s3.service';
 
-// Mock @aws-sdk/client-s3
+// Mock @aws-sdk/client-s3 — each client records the endpoint it was built
+// with so presign tests can assert which origin the URL is signed against.
 const mockSend = jest.fn();
 jest.mock('@aws-sdk/client-s3', () => ({
-  S3Client: jest.fn().mockImplementation(() => ({ send: mockSend })),
+  S3Client: jest.fn().mockImplementation((config) => ({
+    send: mockSend,
+    __endpoint: config?.endpoint,
+  })),
   PutObjectCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'PutObject' })),
   GetObjectCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'GetObject' })),
   DeleteObjectCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'DeleteObject' })),
   HeadObjectCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'HeadObject' })),
+}));
+
+// Mock the presigner — build a URL from the client's endpoint + bucket/key so
+// tests can assert the signing host without a real SigV4 round-trip.
+jest.mock('@aws-sdk/s3-request-presigner', () => ({
+  getSignedUrl: jest.fn(async (client, command) =>
+    `${client.__endpoint}/${command.Bucket}/${command.Key}?X-Amz-Signature=test`,
+  ),
 }));
 
 // Mock uuid
@@ -208,6 +220,49 @@ describe('S3Service', () => {
       const a = service.computeChecksum(Buffer.from('content a'));
       const b = service.computeChecksum(Buffer.from('content b'));
       expect(a).not.toBe(b);
+    });
+  });
+
+  // ---- getSignedUrl ----
+
+  describe('getSignedUrl', () => {
+    const buildService = async (publicEndpoint?: string) => {
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          S3Service,
+          {
+            provide: ConfigService,
+            useValue: {
+              get: jest.fn((key: string, defaultValue?: string) => {
+                if (key === 'S3_BUCKET_UPLOADS') return 'test-bucket';
+                if (key === 'S3_ENDPOINT') return 'http://minio:9000';
+                if (key === 'S3_PUBLIC_ENDPOINT') return publicEndpoint;
+                if (key === 'S3_ACCESS_KEY') return 'test-key';
+                if (key === 'S3_SECRET_KEY') return 'test-secret';
+                return defaultValue;
+              }),
+            },
+          },
+        ],
+      }).compile();
+      return module.get<S3Service>(S3Service);
+    };
+
+    it('signs against S3_PUBLIC_ENDPOINT when set', async () => {
+      const svc = await buildService('https://libertasian.com');
+      const url = await svc.getSignedUrl('audio/track.mp3');
+
+      expect(url).toMatch(/^https:\/\/libertasian\.com\//);
+      expect(url).toContain('/test-bucket/audio/track.mp3');
+      expect(url).toContain('X-Amz-Signature');
+    });
+
+    it('falls back to the internal endpoint when S3_PUBLIC_ENDPOINT is unset', async () => {
+      const svc = await buildService(undefined);
+      const url = await svc.getSignedUrl('audio/track.mp3');
+
+      expect(url).toMatch(/^http:\/\/minio:9000\//);
+      expect(url).toContain('/test-bucket/audio/track.mp3');
     });
   });
 
