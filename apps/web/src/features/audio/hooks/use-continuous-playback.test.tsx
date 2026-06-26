@@ -212,4 +212,102 @@ describe('useContinuousDigestPlayback', () => {
 
     expect(nav.push).not.toHaveBeenCalledWith('/digests/p2a?autoplay=1');
   });
+
+  // DEEP-LINK SEED: a digest opened via direct link (currentId NOT already in the
+  // queue) seeds the queue from the DEFAULT digests browse page, so continuous play
+  // can advance past it and paginate onward — as if the reader entered from the list.
+  it('seeds the queue from the default feed for a deep-linked digest', async () => {
+    useAutoplayPrefStore.getState().setContinueEnabled(true);
+    // No list context — the queue starts empty.
+    mockGet.mockResolvedValueOnce({
+      success: true,
+      data: [{ id: 'd1' }, { id: 'd2' }],
+      meta: { hasNext: true, nextCursor: 'c2' },
+    });
+
+    const { result } = renderPlayback();
+
+    // The default browse page is fetched with no filters/cursor (just limit).
+    await waitFor(() =>
+      expect(mockGet).toHaveBeenCalledWith('/digests', {
+        params: { limit: '20' },
+      }),
+    );
+    await waitFor(() =>
+      expect(usePlayQueueStore.getState().ids).toEqual(['current', 'd1', 'd2']),
+    );
+    expect(usePlayQueueStore.getState().cursor).toBe('c2');
+
+    // handleEnded now advances into the default feed instead of End-of-list.
+    act(() => result.current.handleEnded());
+    expect(nav.push).toHaveBeenCalledWith('/digests/d1?autoplay=1');
+    expect(result.current.atEndOfList).toBe(false);
+  });
+
+  // LIST-ORIGINATED: when currentId is already in the queue, the deep-link seed is
+  // inert — the default fetch is never called and the queue is left untouched.
+  it('does not fetch the default feed when the queue is list-originated', async () => {
+    usePlayQueueStore
+      .getState()
+      .setQueue({ ids: ['a', 'current', 'b'], cursor: 'c9', filters: { digestType: 'case_digest' } });
+
+    renderPlayback();
+
+    // Give any stray async seed a chance to run, then assert it didn't.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mockGet).not.toHaveBeenCalled();
+    expect(usePlayQueueStore.getState().ids).toEqual(['a', 'current', 'b']);
+    expect(usePlayQueueStore.getState().cursor).toBe('c9');
+  });
+
+  // STALE GUARD: if the reader navigates away before the default-feed fetch resolves,
+  // the upgrade is dropped — the queue is not clobbered by a resolved stale closure.
+  it('does not upgrade the deep-link queue if the reader navigates away mid-fetch', async () => {
+    let resolveFetch: ((value: unknown) => void) | undefined;
+    mockGet.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+
+    const { rerender } = renderPlaybackWithId('current');
+    // Reader navigates to a different digest while the default fetch is pending.
+    rerender({ id: 'other' });
+
+    await act(async () => {
+      resolveFetch?.({
+        success: true,
+        data: [{ id: 'd1' }, { id: 'd2' }],
+        meta: { hasNext: false },
+      });
+    });
+
+    // The stale 'current' closure must NOT win: the queue is never the
+    // 'current'-headed upgrade. (The now-current 'other' digest is the one that
+    // legitimately owns the seed — its floor stays at the head.)
+    expect(usePlayQueueStore.getState().ids).not.toEqual(['current', 'd1', 'd2']);
+    expect(usePlayQueueStore.getState().ids[0]).toBe('other');
+  });
+
+  // FETCH ERROR: a failed default-feed fetch leaves the single-item floor in place,
+  // so the chain ends cleanly at End-of-list (no throw, no console).
+  it('leaves the single-item floor in place when the default-feed fetch fails', async () => {
+    useAutoplayPrefStore.getState().setContinueEnabled(true);
+    mockGet.mockRejectedValueOnce(new Error('network down'));
+
+    const { result } = renderPlayback();
+
+    await waitFor(() => expect(mockGet).toHaveBeenCalled());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(usePlayQueueStore.getState().ids).toEqual(['current']);
+
+    act(() => result.current.handleEnded());
+    expect(nav.push).not.toHaveBeenCalled();
+    expect(result.current.atEndOfList).toBe(true);
+  });
 });
