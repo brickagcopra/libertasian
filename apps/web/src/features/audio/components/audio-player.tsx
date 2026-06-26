@@ -18,6 +18,12 @@ interface AudioPlayerProps {
   contentType: AudioContentType;
   contentId: string;
   title?: string;
+  /** Auto-start the Listen flow on mount (used by `?autoplay=1` chaining). */
+  autoPlay?: boolean;
+  /** Called when narration ends naturally (drives continuous autoplay). */
+  onEnded?: () => void;
+  /** When provided, renders a "Continue playing" toggle bound to this state. */
+  continueToggle?: { enabled: boolean; onChange: (enabled: boolean) => void };
 }
 
 const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5] as const;
@@ -55,10 +61,19 @@ function PaywallUpsell() {
  * The inline read-along highlight is rendered by the digest body — this player
  * publishes the manifest segments + playback state via the read-along context.
  */
-export function AudioPlayer({ contentType, contentId, title }: AudioPlayerProps) {
-  const [enabled, setEnabled] = useState(false);
+export function AudioPlayer({
+  contentType,
+  contentId,
+  title,
+  autoPlay = false,
+  onEnded,
+  continueToggle,
+}: AudioPlayerProps) {
+  const [enabled, setEnabled] = useState(autoPlay);
   const queryClient = useQueryClient();
   const audioRef = useRef<HTMLAudioElement>(null);
+  // Auto-start playback only once, the first time a rendition becomes ready.
+  const autoPlayedRef = useRef(false);
 
   const { data, isLoading, isError, error, isTakingTooLong, refetch } =
     useAudioRendition({ contentType, contentId, enabled });
@@ -94,6 +109,14 @@ export function AudioPlayer({ contentType, contentId, title }: AudioPlayerProps)
   useEffect(() => {
     if (audioRef.current) audioRef.current.playbackRate = rate;
   }, [rate, audioUrl]);
+
+  // Continuous autoplay: when this player was opened via the chain (`?autoplay=1`),
+  // start playing as soon as the rendition is ready — without a manual click.
+  useEffect(() => {
+    if (!autoPlay || !audioUrl || autoPlayedRef.current) return;
+    autoPlayedRef.current = true;
+    void audioRef.current?.play().catch(() => undefined);
+  }, [autoPlay, audioUrl]);
 
   const handleError = useCallback(() => {
     const el = audioRef.current;
@@ -211,7 +234,10 @@ export function AudioPlayer({ contentType, contentId, title }: AudioPlayerProps)
           preload="metadata"
           onPlay={() => setIsPlaying(true)}
           onPause={() => setIsPlaying(false)}
-          onEnded={() => setIsPlaying(false)}
+          onEnded={() => {
+            setIsPlaying(false);
+            onEnded?.();
+          }}
           onTimeUpdate={(e) => setCurrentMs(e.currentTarget.currentTime * 1000)}
           onLoadedMetadata={handleLoadedMetadata}
           onError={handleError}
@@ -259,6 +285,22 @@ export function AudioPlayer({ contentType, contentId, title }: AudioPlayerProps)
           </div>
 
           <div className="flex items-center gap-4">
+            {continueToggle && (
+              <label
+                className="flex items-center gap-1.5 text-xs text-muted-foreground"
+                data-testid="audio-continue-toggle"
+              >
+                <input
+                  type="checkbox"
+                  checked={continueToggle.enabled}
+                  onChange={(e) => continueToggle.onChange(e.target.checked)}
+                  aria-label="Continue playing next digest"
+                  data-testid="audio-continue-checkbox"
+                  className="size-3.5 cursor-pointer accent-primary"
+                />
+                Continue playing
+              </label>
+            )}
             <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
               Speed
               <select

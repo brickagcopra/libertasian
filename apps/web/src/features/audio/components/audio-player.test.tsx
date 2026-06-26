@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { fireEvent } from '@testing-library/react';
 
-import { renderWithProviders, screen, userEvent } from '@/test/test-utils';
+import { renderWithProviders, screen, userEvent, waitFor } from '@/test/test-utils';
 
 import { AudioPlayer } from './audio-player';
 import type { AudioRenditionResponse } from '../types';
@@ -116,6 +117,66 @@ describe('AudioPlayer', () => {
     // total duration 65000ms -> 1:05
     expect(screen.getByText('1:05')).toBeInTheDocument();
     expect(screen.getByText(/Matthew · neural/)).toBeInTheDocument();
+  });
+
+  it('auto-starts playback when autoPlay is set (no manual click)', async () => {
+    setHook({ data: READY });
+    const playSpy = vi.spyOn(HTMLMediaElement.prototype, 'play');
+    playSpy.mockClear();
+
+    renderWithProviders(
+      <AudioPlayer contentType="digest" contentId="d1" autoPlay />,
+    );
+
+    // Skips the Listen gate and renders the transport immediately.
+    expect(screen.queryByTestId('listen-button')).not.toBeInTheDocument();
+    expect(screen.getByTestId('audio-player')).toBeInTheDocument();
+    await waitFor(() => expect(playSpy).toHaveBeenCalled());
+  });
+
+  it('fires onEnded when narration ends, but not when it pauses', async () => {
+    setHook({ data: READY });
+    const onEnded = vi.fn();
+    const { container } = renderWithProviders(
+      <AudioPlayer contentType="digest" contentId="d1" onEnded={onEnded} />,
+    );
+
+    await userEvent.click(screen.getByTestId('listen-button'));
+    const audio = container.querySelector('audio');
+    if (!audio) throw new Error('audio element not rendered');
+
+    fireEvent.pause(audio);
+    expect(onEnded).not.toHaveBeenCalled();
+
+    fireEvent.ended(audio);
+    expect(onEnded).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders the Continue playing toggle and reports changes', async () => {
+    setHook({ data: READY });
+    const onChange = vi.fn();
+    renderWithProviders(
+      <AudioPlayer
+        contentType="digest"
+        contentId="d1"
+        continueToggle={{ enabled: false, onChange }}
+      />,
+    );
+
+    await userEvent.click(screen.getByTestId('listen-button'));
+    const checkbox = screen.getByTestId('audio-continue-checkbox');
+    expect(checkbox).not.toBeChecked();
+
+    await userEvent.click(checkbox);
+    expect(onChange).toHaveBeenCalledWith(true);
+  });
+
+  it('omits the Continue toggle when no continueToggle prop is given', async () => {
+    setHook({ data: READY });
+    renderWithProviders(<AudioPlayer contentType="digest" contentId="d1" />);
+
+    await userEvent.click(screen.getByTestId('listen-button'));
+    expect(screen.queryByTestId('audio-continue-toggle')).not.toBeInTheDocument();
   });
 
   it('shows the Pro upsell on a 402 paywall response', async () => {

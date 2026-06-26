@@ -19,6 +19,7 @@ import {
   AudioPlayer,
   DigestReadAlongBody,
   ReadAlongProvider,
+  useContinuousDigestPlayback,
   type DigestSectionDef,
 } from '@/features/audio';
 
@@ -32,6 +33,15 @@ export default function DigestDetailPage() {
   const params = useParams();
   const id = params['id'] as string;
   const { data: digest, isLoading, error } = useDigest(id);
+  // Continuous autoplay across digests. Called unconditionally (before the early
+  // returns below) to satisfy the rules of hooks; keyed off the route id.
+  const {
+    autoStart,
+    continueEnabled,
+    setContinueEnabled,
+    handleEnded,
+    atEndOfList,
+  } = useContinuousDigestPlayback(id);
 
   if (isLoading) {
     return (
@@ -147,7 +157,22 @@ export default function DigestDetailPage() {
       </div>
 
       {/* Listen — narrated audio with synced read-along. Digest audio is free. */}
-      <AudioPlayer contentType="digest" contentId={digest.id} title={digest.title} />
+      <AudioPlayer
+        contentType="digest"
+        contentId={digest.id}
+        title={digest.title}
+        autoPlay={autoStart}
+        onEnded={handleEnded}
+        continueToggle={{ enabled: continueEnabled, onChange: setContinueEnabled }}
+      />
+      {atEndOfList && (
+        <p
+          className="text-center text-xs text-muted-foreground"
+          data-testid="autoplay-end-of-list"
+        >
+          End of list — autoplay stopped.
+        </p>
+      )}
 
       <Separator />
 
