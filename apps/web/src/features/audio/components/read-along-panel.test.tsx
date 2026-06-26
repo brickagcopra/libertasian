@@ -30,13 +30,23 @@ describe('ReadAlongPanel', () => {
       'fetch',
       vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(NDJSON) }),
     );
-    // Drive the rAF loop deterministically (a few frames, then stop).
-    let frames = 0;
-    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
-      frames += 1;
-      if (frames <= 4) setTimeout(() => cb(0), 0);
-      return frames;
-    });
+    // Drive the rAF loop deterministically: fire the callback synchronously so
+    // the active-word index computes immediately. useReadAlongSync re-schedules
+    // itself (raf = requestAnimationFrame(tick) inside tick), so guard against
+    // that re-entrant call to avoid infinite recursion — but still allow a fresh
+    // tick when the effect re-runs after the async marks fetch populates `words`.
+    let inTick = false;
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn((cb: FrameRequestCallback) => {
+        if (!inTick) {
+          inTick = true;
+          cb(0);
+          inTick = false;
+        }
+        return 1;
+      }),
+    );
     vi.stubGlobal('cancelAnimationFrame', vi.fn());
 
     // currentTime 0.42s -> 420ms -> the "Mariano" word (onset 420).
