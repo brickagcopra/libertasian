@@ -43,7 +43,12 @@ export const usePlayQueueStore = create<PlayQueueState>()(
       ids: [],
       cursor: null,
       filters: null,
-      setQueue: ({ ids, cursor, filters }) => set({ ids, cursor, filters }),
+      // De-dupe on the way in: the source list is ordered by `updatedAt`, so cursor
+      // pagination can surface the same id on two page boundaries. Storing ids
+      // verbatim would let the chain ping-pong (e.g. [A,B,A] → A→B→A→…) forever.
+      // `new Set` preserves first-seen order, mirroring `appendPage`.
+      setQueue: ({ ids, cursor, filters }) =>
+        set({ ids: [...new Set(ids)], cursor, filters }),
       appendPage: ({ ids, cursor }) =>
         set((prev) => {
           const seen = new Set(prev.ids);

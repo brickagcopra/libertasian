@@ -20,6 +20,19 @@ describe('usePlayQueueStore', () => {
     expect(state.filters).toEqual({ digestType: 'case_digest' });
   });
 
+  it('setQueue de-dupes ids (cursor pagination can surface an id twice)', () => {
+    // An updatedAt-ordered list can repeat an id across page boundaries. Without
+    // de-dupe a queue like [a,b,a] makes the chain ping-pong a→b→a→… forever.
+    usePlayQueueStore.getState().setQueue({
+      ids: ['a', 'b', 'a', 'c', 'b'],
+      cursor: 'c1',
+      filters: null,
+    });
+
+    expect(usePlayQueueStore.getState().ids).toEqual(['a', 'b', 'c']);
+    expect(usePlayQueueStore.getState().cursor).toBe('c1');
+  });
+
   it('appendPage appends new ids, de-dupes, and advances the cursor', () => {
     usePlayQueueStore
       .getState()

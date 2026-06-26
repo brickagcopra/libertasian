@@ -156,8 +156,12 @@ export default function DigestDetailPage() {
         )}
       </div>
 
-      {/* Listen — narrated audio with synced read-along. Digest audio is free. */}
+      {/* Listen — narrated audio with synced read-along. Digest audio is free.
+          `key={digest.id}` forces a fresh mount per digest under client-side
+          navigation, so the player's `enabled`/`autoPlayedRef` reset and a chained
+          `?autoplay=1` hop actually starts instead of inheriting the prior gate. */}
       <AudioPlayer
+        key={digest.id}
         contentType="digest"
         contentId={digest.id}
         title={digest.title}

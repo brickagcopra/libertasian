@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -34,8 +34,15 @@ export interface ContinuousPlayback {
 /**
  * Drives Bible.com-style continuous autoplay for the digest detail page.
  *
- * - Reads `?autoplay=1` ONCE on mount (stable across re-renders) and strips it via
- *   `router.replace` so a manual refresh does NOT re-autoplay.
+ * - Derives `autoStart` PER digest from `?autoplay=1`. The App Router preserves the
+ *   `digests/[id]` component instance across client-side navigation, so a once-only
+ *   `useState` initializer would lock `autoStart` to whatever the FIRST digest saw
+ *   and the chain would never auto-play the next hop. Instead we arm per `currentId`
+ *   (render-derived so a cached digest's player mounts with the right `autoPlay`),
+ *   strip the param via `router.replace`, and a `consumed` guard makes re-visits and
+ *   manual refreshes inert. Arming survives the strip because it lives in a ref, not
+ *   in the URL. (The detail page also gives `<AudioPlayer key={digest.id}>` so its
+ *   internal `enabled`/`autoPlayedRef` reset per digest.)
  * - Ensures the current digest is represented in the play queue (direct loads with
  *   no queue collapse to `[currentId]`).
  * - On a natural `ended`, if the reader opted in, advances to the next queued id
@@ -50,18 +57,46 @@ export function useContinuousDigestPlayback(currentId: string): ContinuousPlayba
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
 
-  // Capture the autoplay intent exactly once; stripping the param below must not
-  // flip this back to false before the player has a chance to auto-start.
-  const [autoStart] = useState(() => searchParams?.get('autoplay') === '1');
   const [atEndOfList, setAtEndOfList] = useState(false);
 
   const continueEnabled = useAutoplayPrefStore((s) => s.continueEnabled);
   const setContinueEnabled = useAutoplayPrefStore((s) => s.setContinueEnabled);
 
-  // Strip `?autoplay=1` after consuming it so a manual refresh is inert.
+  // Ids whose `?autoplay=1` has already been honoured + stripped — re-pasting the
+  // same autoplay URL within this instance won't replay, and a stripped URL is inert.
+  const consumedRef = useRef<Set<string>>(new Set());
+  // The single id currently armed for autoplay. Lives in a ref (not the URL) so it
+  // survives the param strip below; moves forward as the chain advances, so an
+  // earlier digest revisited later without `?autoplay=1` is NOT re-armed.
+  const armedIdRef = useRef<string | null>(null);
+  // Latest rendered id — read inside async work to detect the reader navigating away.
+  const currentIdRef = useRef(currentId);
+  currentIdRef.current = currentId;
+
+  // Render-derived so the FIRST render after navigation already reflects the URL:
+  // a cached digest mounts its player with the correct `autoPlay` instead of losing
+  // the arming to an effect that only runs post-mount.
+  if (
+    searchParams?.get('autoplay') === '1' &&
+    !consumedRef.current.has(currentId)
+  ) {
+    armedIdRef.current = currentId;
+  }
+  const autoStart = armedIdRef.current === currentId;
+
+  // Strip `?autoplay=1` after honouring it so a manual refresh is inert. Marking the
+  // id consumed (effect, post-commit) does not disarm the current visit because
+  // `armedIdRef` already points at it.
   useEffect(() => {
-    if (autoStart && pathname) router.replace(pathname);
-  }, [autoStart, router, pathname]);
+    if (
+      searchParams?.get('autoplay') === '1' &&
+      !consumedRef.current.has(currentId) &&
+      pathname
+    ) {
+      consumedRef.current.add(currentId);
+      router.replace(pathname);
+    }
+  }, [currentId, pathname, router, searchParams]);
 
   // A fresh digest means a fresh chance to reach the end of the queue.
   useEffect(() => {
@@ -100,7 +135,9 @@ export function useContinuousDigestPlayback(currentId: string): ContinuousPlayba
     const state = usePlayQueueStore.getState();
     const i = state.ids.indexOf(currentId);
     const nextId = i >= 0 ? state.ids[i + 1] : undefined;
-    if (nextId) {
+    // `nextId !== currentId` is belt-and-suspenders alongside the `setQueue` de-dupe:
+    // with unique ids and a strictly-forward index walk the chain always terminates.
+    if (nextId && nextId !== currentId) {
       router.push(`/digests/${nextId}?autoplay=1`);
       return;
     }
@@ -112,6 +149,15 @@ export function useContinuousDigestPlayback(currentId: string): ContinuousPlayba
       void (async () => {
         try {
           const page = await fetchNextPage(cursor, filters);
+          // Stale-async guard: the fetch can outlast the reader's intent. If they
+          // toggled Continue OFF or navigated to a different digest while it was in
+          // flight, this resolved closure must NOT hijack their navigation.
+          if (
+            !useAutoplayPrefStore.getState().continueEnabled ||
+            currentIdRef.current !== currentId
+          ) {
+            return;
+          }
           const newIds = page.data.map((d) => d.id);
           const nextCursor = page.meta?.hasNext
             ? (page.meta.nextCursor ?? null)

@@ -41,6 +41,13 @@ function renderPlayback() {
   });
 }
 
+function renderPlaybackWithId(initialId: string) {
+  return renderHook(({ id }) => useContinuousDigestPlayback(id), {
+    initialProps: { id: initialId },
+    wrapper: createWrapper(),
+  });
+}
+
 describe('useContinuousDigestPlayback', () => {
   beforeEach(() => {
     nav.push.mockReset();
@@ -122,5 +129,87 @@ describe('useContinuousDigestPlayback', () => {
 
     expect(result.current.autoStart).toBe(true);
     expect(nav.replace).toHaveBeenCalledWith('/digests/current');
+  });
+
+  // FIX 1: the App Router preserves the digests/[id] component instance across
+  // /digests/A → /digests/B navigations, so a once-only useState initializer would
+  // never re-evaluate and the chain would never auto-play the next hop. autoStart
+  // must re-derive per currentId. renderHook-per-case (a fresh mount each time) did
+  // NOT catch this; re-rendering the SAME instance with a new id does.
+  it('arms autoStart per digest under client-side nav without a remount', () => {
+    const { result, rerender } = renderPlaybackWithId('current');
+
+    // Opened from the list with no ?autoplay — the first digest is NOT armed.
+    expect(result.current.autoStart).toBe(false);
+
+    // The chain navigates to the next digest with ?autoplay=1, but the page
+    // component instance is preserved (no remount) — only the params change.
+    nav.search = 'autoplay=1';
+    rerender({ id: 'next' });
+
+    expect(result.current.autoStart).toBe(true);
+  });
+
+  // FIX 2: cursor pagination over an updatedAt-ordered list can surface the current
+  // id again. setQueue de-dupes so the chain can't ping-pong current→next→current.
+  it('does not loop when the list re-surfaces the current id (de-dupe terminates)', () => {
+    useAutoplayPrefStore.getState().setContinueEnabled(true);
+    usePlayQueueStore
+      .getState()
+      .setQueue({ ids: ['current', 'next', 'current'], cursor: null, filters: null });
+
+    expect(usePlayQueueStore.getState().ids).toEqual(['current', 'next']);
+
+    const { result } = renderPlayback();
+    act(() => result.current.handleEnded());
+
+    expect(nav.push).toHaveBeenCalledTimes(1);
+    expect(nav.push).toHaveBeenCalledWith('/digests/next?autoplay=1');
+  });
+
+  // FIX 3: a cursor-extend fetch can outlast the reader's intent.
+  it('does not hijack navigation if Continue is toggled OFF during the cursor fetch', async () => {
+    useAutoplayPrefStore.getState().setContinueEnabled(true);
+    usePlayQueueStore
+      .getState()
+      .setQueue({ ids: ['current'], cursor: 'c1', filters: null });
+    mockGet.mockImplementationOnce(async () => {
+      // Reader flips Continue OFF while the next page is in flight.
+      useAutoplayPrefStore.getState().setContinueEnabled(false);
+      return { success: true, data: [{ id: 'p2a' }], meta: { hasNext: false } };
+    });
+
+    const { result } = renderPlayback();
+    await act(async () => {
+      result.current.handleEnded();
+    });
+
+    await waitFor(() => expect(mockGet).toHaveBeenCalled());
+    expect(nav.push).not.toHaveBeenCalled();
+  });
+
+  it('does not hijack navigation if the reader navigates away during the cursor fetch', async () => {
+    useAutoplayPrefStore.getState().setContinueEnabled(true);
+    usePlayQueueStore
+      .getState()
+      .setQueue({ ids: ['current'], cursor: 'c1', filters: null });
+    let resolveFetch: ((value: unknown) => void) | undefined;
+    mockGet.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+
+    const { result, rerender } = renderPlaybackWithId('current');
+    act(() => result.current.handleEnded());
+
+    // Reader navigates to a different digest while the fetch is still pending.
+    rerender({ id: 'other' });
+    await act(async () => {
+      resolveFetch?.({ success: true, data: [{ id: 'p2a' }], meta: { hasNext: false } });
+    });
+
+    expect(nav.push).not.toHaveBeenCalledWith('/digests/p2a?autoplay=1');
   });
 });
