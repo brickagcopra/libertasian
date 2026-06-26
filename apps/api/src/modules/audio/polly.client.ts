@@ -12,7 +12,7 @@ import { ConfigService } from '@nestjs/config';
 export interface SynthesisResult {
   /** Synthesized MP3 audio. */
   readonly audio: Buffer;
-  /** Newline-delimited JSON speech marks (word + sentence types). */
+  /** Newline-delimited JSON speech marks (word + sentence + ssml types). */
   readonly marks: Buffer;
 }
 
@@ -106,7 +106,10 @@ export class PollyClient {
           Text: text,
           TextType: 'ssml',
           OutputFormat: 'json',
-          SpeechMarkTypes: ['word', 'sentence'],
+          // 'ssml' surfaces every `<mark name="seg-N"/>` as an ssml-type mark
+          // ({type:'ssml',value:'seg-N',time}) used to drive segment read-along.
+          // word/sentence retained for duration + back-compat consumers.
+          SpeechMarkTypes: ['word', 'sentence', 'ssml'],
           VoiceId: resolvedVoiceId,
           Engine: this.engine,
         }),

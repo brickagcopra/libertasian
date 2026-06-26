@@ -15,7 +15,12 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ArrowLeftIcon, AlertCircleIcon, ExternalLinkIcon } from 'lucide-react';
 import { ExportButton } from '@/features/exports/components/export-button';
-import { AudioPlayer } from '@/features/audio';
+import {
+  AudioPlayer,
+  DigestReadAlongBody,
+  ReadAlongProvider,
+  type DigestSectionDef,
+} from '@/features/audio';
 
 const VISIBILITY_STYLES: Record<string, { variant: 'default' | 'secondary' | 'outline'; className?: string }> = {
   private: { variant: 'secondary' },
@@ -86,7 +91,22 @@ export default function DigestDetailPage() {
   const displayType = digest.digestType.replace(/_/g, ' ');
   const visibilityStyle = VISIBILITY_STYLES[digest.visibility] ?? { variant: 'secondary' as const };
 
+  // Section keys MUST match the server manifest sectionKeys (audio-rendition
+  // resolveText) for the narrated sections so inline read-along maps onto them;
+  // non-narrated sections (Summary / arguments) simply render plain.
+  const sections: DigestSectionDef[] = [
+    { key: 'summary', title: 'Summary', content: digest.summary },
+    { key: 'doctrine', title: 'Doctrine', content: digest.doctrine },
+    { key: 'facts', title: 'Facts', content: digest.facts },
+    { key: 'petitioner_arguments', title: "Petitioner's Arguments", content: digest.petitionerArguments },
+    { key: 'respondent_arguments', title: "Respondent's Arguments", content: digest.respondentArguments },
+    { key: 'issues', title: 'Issues', content: digest.issues },
+    { key: 'ruling', title: 'Ruling', content: sanitizeRulingText(digest.ruling) || null },
+    { key: 'dispositive', title: 'Dispositive Portion', content: digest.dispositive },
+  ];
+
   return (
+    <ReadAlongProvider>
     <div className="mx-auto max-w-3xl space-y-6">
       <div className="flex items-center justify-between">
         <Button variant="ghost" size="sm" asChild>
@@ -131,17 +151,10 @@ export default function DigestDetailPage() {
 
       <Separator />
 
-      {/* Digest Sections — DFIR+ Gold Standard Order */}
-      <div className="space-y-5">
-        <DigestSection title="Summary" content={digest.summary} />
-        <DigestSection title="Doctrine" content={digest.doctrine} />
-        <DigestSection title="Facts" content={digest.facts} />
-        <DigestSection title="Petitioner's Arguments" content={digest.petitionerArguments} />
-        <DigestSection title="Respondent's Arguments" content={digest.respondentArguments} />
-        <DigestSection title="Issues" content={digest.issues} />
-        <DigestSection title="Ruling" content={sanitizeRulingText(digest.ruling) || null} />
-        <DigestSection title="Dispositive Portion" content={digest.dispositive} />
-      </div>
+      {/* Digest Sections — DFIR+ Gold Standard Order. Upgrades to inline
+          read-along (span-wrapped, highlighted) once the audio manifest loads;
+          plain text otherwise (graceful fallback for legacy/not-yet-played). */}
+      <DigestReadAlongBody sections={sections} />
 
       {/* Metadata */}
       <Card>
@@ -180,18 +193,7 @@ export default function DigestDetailPage() {
         </CardContent>
       </Card>
     </div>
-  );
-}
-
-function DigestSection({ title, content }: { title: string; content: string | null }) {
-  if (!content) return null;
-  return (
-    <div>
-      <h2 className="mb-1 text-sm font-semibold uppercase text-muted-foreground">{title}</h2>
-      <div className="whitespace-pre-wrap text-sm leading-relaxed">
-        {content}
-      </div>
-    </div>
+    </ReadAlongProvider>
   );
 }
 

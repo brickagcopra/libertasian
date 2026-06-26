@@ -4197,6 +4197,7 @@ model AudioRendition {
   engine         String   @default("polly") @db.VarChar(30)
   audioObjectKey String   @map("audio_object_key") @db.VarChar(500)
   marksObjectKey String?  @map("marks_object_key") @db.VarChar(500)
+  readalongObjectKey String? @map("readalong_object_key") @db.VarChar(500) // segment read-along manifest JSON (S3 key)
   durationMs     Int?     @map("duration_ms")
   charCount      Int?     @map("char_count")
   status         String   @default("pending") @db.VarChar(20)

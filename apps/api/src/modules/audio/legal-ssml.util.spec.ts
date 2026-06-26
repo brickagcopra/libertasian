@@ -7,9 +7,11 @@ describe('toSsml — legal SSML normalizer', () => {
     expect(ssml.endsWith('</speak>')).toBe(true);
   });
 
-  it('frames a sentence in <p>/<s> (back-compat single-blob entry)', () => {
+  it('frames a sentence in <p>/<s> with a leading mark (back-compat single-blob)', () => {
     const { ssml } = toSsml('A short ruling.');
-    expect(ssml).toBe('<speak><p><s>A short ruling.</s></p></speak>');
+    expect(ssml).toBe(
+      '<speak><p><mark name="seg-0"/><s>A short ruling.</s></p></speak>',
+    );
   });
 
   describe('G.R. citation expansion', () => {
@@ -236,10 +238,11 @@ describe('toSsml — legal SSML normalizer', () => {
   });
 
   describe('sentence segmentation', () => {
-    it('splits paragraphs into <s> sentences', () => {
+    it('splits paragraphs into <s> sentences, each preceded by its mark', () => {
       const { ssml } = toSsml('The accused fled. The Court convicted him.');
       expect(ssml).toBe(
-        '<speak><p><s>The accused fled.</s><s>The Court convicted him.</s></p></speak>',
+        '<speak><p><mark name="seg-0"/><s>The accused fled.</s>' +
+          '<mark name="seg-1"/><s>The Court convicted him.</s></p></speak>',
       );
     });
 
@@ -258,7 +261,8 @@ describe('toSsml — legal SSML normalizer', () => {
     it('renders each paragraph as its own <p> block', () => {
       const { ssml } = toSsml('First paragraph.\n\nSecond paragraph.');
       expect(ssml).toBe(
-        '<speak><p><s>First paragraph.</s></p><p><s>Second paragraph.</s></p></speak>',
+        '<speak><p><mark name="seg-0"/><s>First paragraph.</s></p>' +
+          '<p><mark name="seg-1"/><s>Second paragraph.</s></p></speak>',
       );
     });
 
@@ -268,20 +272,35 @@ describe('toSsml — legal SSML normalizer', () => {
   });
 
   describe('structured document builder', () => {
-    it('paces the title and headings with prosody + breaks', () => {
+    it('gives the title a distinct drc + x-loud (slower) delivery', () => {
       const { ssml, normalizedText } = toSsmlDocument({
         title: 'People v. Dela Cruz',
         sections: [{ heading: 'Facts', body: 'The accused fled.' }],
       });
       expect(ssml).toContain(
-        '<p><prosody rate="96%">People versus Dela Cruz</prosody></p><break time="900ms"/>',
+        '<mark name="seg-0"/><p><amazon:effect name="drc"><prosody volume="x-loud" rate="96%">People versus Dela Cruz</prosody></amazon:effect></p><break time="900ms"/>',
       );
-      expect(ssml).toContain(
-        '<break time="600ms"/><p><prosody rate="92%">Facts.</prosody></p><break time="350ms"/>',
-      );
-      expect(ssml).toContain('<p><s>The accused fled.</s></p>');
       expect(normalizedText).toContain('People versus Dela Cruz');
+    });
+
+    it('paces section headings with drc + x-loud and long breaks', () => {
+      const { ssml, normalizedText } = toSsmlDocument({
+        sections: [{ heading: 'Facts', body: 'The accused fled.' }],
+      });
+      expect(ssml).toContain(
+        '<break time="700ms"/><mark name="seg-0"/><amazon:effect name="drc"><prosody volume="x-loud" rate="90%"><p>Facts.</p></prosody></amazon:effect><break time="400ms"/>',
+      );
+      expect(ssml).toContain('<mark name="seg-1"/><s>The accused fled.</s>');
       expect(normalizedText).toContain('Facts.');
+    });
+
+    it('never emits <emphasis> or <prosody pitch> (rejected on neural)', () => {
+      const { ssml } = toSsmlDocument({
+        title: 'A Title',
+        sections: [{ heading: 'Ruling', body: 'Affirmed in full.' }],
+      });
+      expect(ssml).not.toContain('<emphasis');
+      expect(ssml).not.toContain('pitch=');
     });
 
     it('skips an empty section and a blank title', () => {
@@ -294,8 +313,95 @@ describe('toSsml — legal SSML normalizer', () => {
       });
       expect(ssml).not.toContain('rate="96%"'); // no title
       expect(ssml).not.toContain('Facts.'); // empty body → heading skipped
-      expect(ssml).toContain('<prosody rate="92%">Ruling.</prosody>');
-      expect(ssml).toContain('<p><s>Affirmed.</s></p>');
+      expect(ssml).toContain('<prosody volume="x-loud" rate="90%"><p>Ruling.</p>');
+      expect(ssml).toContain('<s>Affirmed.</s>');
+    });
+  });
+
+  describe('segment manifest + marks', () => {
+    it('emits one <mark> per manifest entry, ids contiguous from seg-0', () => {
+      const { ssml, manifest } = toSsmlDocument({
+        title: 'People v. Dela Cruz',
+        sections: [
+          { key: 'facts', heading: 'Facts', body: 'He fled. He hid.' },
+          { key: 'ruling', heading: 'Ruling', body: 'Affirmed.' },
+        ],
+      });
+
+      // ids are contiguous seg-0..seg-(n-1) in manifest order.
+      expect(manifest.map((m) => m.id)).toEqual([
+        'seg-0',
+        'seg-1',
+        'seg-2',
+        'seg-3',
+        'seg-4',
+        'seg-5',
+      ]);
+
+      // exactly one <mark> per manifest entry, same ids, same order.
+      const markIds = [...ssml.matchAll(/<mark name="(seg-\d+)"\/>/g)].map(
+        (m) => m[1],
+      );
+      expect(markIds).toEqual(manifest.map((m) => m.id));
+    });
+
+    it('labels kinds (title/heading/sentence) and carries the section key', () => {
+      const { manifest } = toSsmlDocument({
+        title: 'People v. Dela Cruz',
+        sections: [{ key: 'facts', heading: 'Facts', body: 'He fled. He hid.' }],
+      });
+      expect(manifest).toEqual([
+        { id: 'seg-0', kind: 'title', sectionKey: 'title', text: 'People v. Dela Cruz' },
+        { id: 'seg-1', kind: 'heading', sectionKey: 'facts', text: 'Facts' },
+        { id: 'seg-2', kind: 'sentence', sectionKey: 'facts', text: 'He fled.', paragraphIndex: 0 },
+        { id: 'seg-3', kind: 'sentence', sectionKey: 'facts', text: 'He hid.', paragraphIndex: 0 },
+      ]);
+    });
+
+    it('numbers sentence paragraphIndex per paragraph, reset per section', () => {
+      const { manifest } = toSsmlDocument({
+        sections: [
+          { key: 'facts', heading: 'Facts', body: 'The first. The second.\n\nThe third.' },
+          { key: 'ruling', heading: 'Ruling', body: 'Alpha wins.\n\nBeta loses.' },
+        ],
+      });
+      const sentences = manifest.filter((m) => m.kind === 'sentence');
+      expect(sentences).toEqual([
+        { id: 'seg-1', kind: 'sentence', sectionKey: 'facts', text: 'The first.', paragraphIndex: 0 },
+        { id: 'seg-2', kind: 'sentence', sectionKey: 'facts', text: 'The second.', paragraphIndex: 0 },
+        { id: 'seg-3', kind: 'sentence', sectionKey: 'facts', text: 'The third.', paragraphIndex: 1 },
+        { id: 'seg-5', kind: 'sentence', sectionKey: 'ruling', text: 'Alpha wins.', paragraphIndex: 0 },
+        { id: 'seg-6', kind: 'sentence', sectionKey: 'ruling', text: 'Beta loses.', paragraphIndex: 1 },
+      ]);
+      // Headings carry no paragraphIndex.
+      expect(manifest.find((m) => m.kind === 'heading')?.paragraphIndex).toBeUndefined();
+    });
+
+    it('keeps manifest text ORIGINAL/un-normalized while SSML is spoken-form', () => {
+      const { ssml, manifest } = toSsmlDocument({
+        sections: [{ key: 'facts', heading: 'Facts', body: 'See G.R. No. 168338.' }],
+      });
+      const sentence = manifest.find((m) => m.kind === 'sentence');
+      // Manifest preserves the citation exactly as displayed…
+      expect(sentence?.text).toBe('See G.R. No. 168338.');
+      // …while the spoken SSML expands + digit-spells it.
+      expect(ssml).toContain(
+        'G R Number <say-as interpret-as="digits">168338</say-as>',
+      );
+      expect(sentence?.text).not.toContain('G R Number');
+    });
+
+    it('falls back to a heading slug for sectionKey when none is supplied', () => {
+      const { manifest } = toSsmlDocument({
+        sections: [{ heading: 'Dispositive Portion', body: 'Granted.' }],
+      });
+      expect(manifest.every((m) => m.sectionKey === 'dispositive-portion')).toBe(
+        true,
+      );
+    });
+
+    it('is empty for an empty document', () => {
+      expect(toSsml('').manifest).toEqual([]);
     });
   });
 
