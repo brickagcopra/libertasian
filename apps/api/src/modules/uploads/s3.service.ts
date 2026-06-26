@@ -15,6 +15,13 @@ import { v4 as uuidv4 } from 'uuid';
 export class S3Service {
   private readonly logger = new Logger(S3Service.name);
   private readonly client: S3Client;
+  /**
+   * Client used exclusively for presigning GET URLs handed to browsers.
+   * When S3_PUBLIC_ENDPOINT is set it points at the browser-facing origin
+   * (e.g. https://libertasian.com) so signed audio URLs resolve publicly;
+   * otherwise it is the same internal client (dev/local unchanged).
+   */
+  private readonly presignClient: S3Client;
   private readonly bucket: string;
 
   constructor(private readonly config: ConfigService) {
@@ -23,18 +30,34 @@ export class S3Service {
       'libertasian-uploads',
     );
 
+    const region = 'us-east-1';
+    const credentials = {
+      accessKeyId: this.config.get<string>('S3_ACCESS_KEY', 'libertasian'),
+      secretAccessKey: this.config.get<string>(
+        'S3_SECRET_KEY',
+        'libertasian_dev_secret',
+      ),
+    };
+
     this.client = new S3Client({
       endpoint: this.config.get<string>('S3_ENDPOINT', 'http://localhost:9000'),
-      region: 'us-east-1',
-      credentials: {
-        accessKeyId: this.config.get<string>('S3_ACCESS_KEY', 'libertasian'),
-        secretAccessKey: this.config.get<string>(
-          'S3_SECRET_KEY',
-          'libertasian_dev_secret',
-        ),
-      },
+      region,
+      credentials,
       forcePathStyle: true, // Required for MinIO
     });
+
+    // Presigned URLs must be signed against the public, browser-facing origin
+    // so the SigV4 signature matches the Host nginx forwards to MinIO. The
+    // path is NOT rewritten — MinIO validates the same path + Host + secret.
+    const publicEndpoint = this.config.get<string>('S3_PUBLIC_ENDPOINT');
+    this.presignClient = publicEndpoint
+      ? new S3Client({
+          endpoint: publicEndpoint,
+          region,
+          credentials,
+          forcePathStyle: true,
+        })
+      : this.client;
   }
 
   /**
@@ -152,7 +175,7 @@ export class S3Service {
    */
   async getSignedUrl(objectKey: string, ttlSeconds = 300): Promise<string> {
     return getSignedUrl(
-      this.client,
+      this.presignClient,
       new GetObjectCommand({ Bucket: this.bucket, Key: objectKey }),
       { expiresIn: ttlSeconds },
     );
