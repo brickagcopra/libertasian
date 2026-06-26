@@ -9,10 +9,16 @@ import { S3Service } from '../uploads/s3.service';
 import {
   AUDIO_JOB,
   AUDIO_QUEUE,
+  READALONG_SCHEMA_VERSION,
+  audioContentHashInput,
   type AudioContentType,
   type AudioGenerationJobData,
 } from './audio.types';
-import { toSsmlDocument, type SpokenDocument } from './legal-ssml.util';
+import {
+  toSsmlDocument,
+  type ManifestEntry,
+  type SpokenDocument,
+} from './legal-ssml.util';
 import { PollyClient } from './polly.client';
 
 /** Public read projection of a rendition, with short-lived signed URLs. */
@@ -20,9 +26,25 @@ export interface AudioRenditionReadModel {
   status: string;
   audioUrl: string | null;
   marksUrl: string | null;
+  /** Signed URL to the segment read-along manifest JSON; null when absent. */
+  readalongUrl: string | null;
   durationMs: number | null;
   language: string;
   voiceId: string;
+}
+
+/** One timed read-along segment in the persisted `readalong.json` manifest. */
+interface ReadAlongSegment extends ManifestEntry {
+  /** ms offset into the audio at which this segment's `<mark>` fires. */
+  readonly timeMs: number;
+}
+
+/** Shape of the `readalong.json` object uploaded alongside the audio + marks. */
+interface ReadAlongManifest {
+  readonly version: number;
+  readonly voiceId: string;
+  readonly durationMs: number | null;
+  readonly segments: ReadAlongSegment[];
 }
 
 /** Resolved spoken document for a content item plus its visibility. */
@@ -83,16 +105,24 @@ export class AudioRenditionService {
       if (!digest) {
         throw new NotFoundException(`Digest ${contentId} not found`);
       }
-      const chapters: Array<[string, string | null]> = [
-        ['Facts', digest.facts],
-        ['Issues', digest.issues],
-        ['Ruling', digest.ruling],
-        ['Doctrine', digest.doctrine],
-        ['Dispositive', digest.dispositive],
+      // [sectionKey, on-page display heading, value]. The key is carried into
+      // every manifest segment so the web client can map segments back onto its
+      // own section blocks; the display heading is the EXACT on-page label so
+      // the manifest heading text matches what the reader sees.
+      const chapters: Array<[string, string, string | null]> = [
+        ['facts', 'Facts', digest.facts],
+        ['issues', 'Issues', digest.issues],
+        ['ruling', 'Ruling', digest.ruling],
+        ['doctrine', 'Doctrine', digest.doctrine],
+        ['dispositive', 'Dispositive Portion', digest.dispositive],
       ];
       const sections = chapters
-        .filter(([, value]) => value !== null && value.trim().length > 0)
-        .map(([heading, value]) => ({ heading, body: (value ?? '').trim() }));
+        .filter(([, , value]) => value !== null && value.trim().length > 0)
+        .map(([key, heading, value]) => ({
+          key,
+          heading,
+          body: (value ?? '').trim(),
+        }));
       const title =
         digest.title && digest.title.trim().length > 0 ? digest.title : undefined;
       return { doc: { title, sections }, visibility: digest.visibility };
@@ -106,7 +136,7 @@ export class AudioRenditionService {
       throw new NotFoundException(`Bar exam answer ${contentId} not found`);
     }
     return {
-      doc: { sections: [{ body: answer.answerText }] },
+      doc: { sections: [{ key: 'answer', body: answer.answerText }] },
       visibility: answer.visibility,
     };
   }
@@ -168,10 +198,14 @@ export class AudioRenditionService {
     const voiceId = this.defaultVoiceId;
 
     const { doc, visibility } = await this.resolveText(contentType, contentId);
-    const { ssml, normalizedText } = toSsmlDocument(doc);
+    const { ssml, normalizedText, manifest } = toSsmlDocument(doc);
+    // Hash the VERSIONED input so a READALONG_SCHEMA_VERSION bump invalidates
+    // every prior row (whose hash predates the bump) and forces a clean regen —
+    // adding `<mark>` tags does not change normalizedText, so without this the
+    // hash would be unchanged and existing rows would never regenerate.
     const contentHash = crypto
       .createHash('sha256')
-      .update(normalizedText)
+      .update(audioContentHashInput(normalizedText))
       .digest('hex');
 
     if (!force) {
@@ -190,9 +224,14 @@ export class AudioRenditionService {
     const durationMs = this.lastWordMarkTime(marks);
     const charCount = normalizedText.length;
 
+    // Join the manifest (mark id → original text) onto the ssml-type speech
+    // marks (mark id → time) to produce the timed read-along manifest.
+    const readalong = this.buildReadAlong(manifest, marks, voiceId, durationMs);
+
     const baseKey = `audio/${contentType}/${contentId}/${voiceId}-${language}`;
     const audioObjectKey = `${baseKey}.mp3`;
     const marksObjectKey = `${baseKey}.marks.json`;
+    const readalongObjectKey = `${baseKey}.readalong.json`;
     await this.s3.upload(
       audioObjectKey,
       audio,
@@ -204,6 +243,12 @@ export class AudioRenditionService {
       marks,
       'application/json',
       `${voiceId}-${language}.marks.json`,
+    );
+    await this.s3.upload(
+      readalongObjectKey,
+      Buffer.from(JSON.stringify(readalong), 'utf-8'),
+      'application/json',
+      `${voiceId}-${language}.readalong.json`,
     );
 
     const rendition = await this.prisma.audioRendition.upsert({
@@ -224,6 +269,7 @@ export class AudioRenditionService {
         engine: this.engine,
         audioObjectKey,
         marksObjectKey,
+        readalongObjectKey,
         durationMs,
         charCount,
         status: 'ready',
@@ -234,6 +280,7 @@ export class AudioRenditionService {
         engine: this.engine,
         audioObjectKey,
         marksObjectKey,
+        readalongObjectKey,
         durationMs,
         charCount,
         status: 'ready',
@@ -252,6 +299,7 @@ export class AudioRenditionService {
     status: string;
     audioObjectKey: string;
     marksObjectKey: string | null;
+    readalongObjectKey: string | null;
     durationMs: number | null;
     language: string;
     voiceId: string;
@@ -266,10 +314,74 @@ export class AudioRenditionService {
         isReady && rendition.marksObjectKey
           ? await this.s3.getSignedUrl(rendition.marksObjectKey, SIGNED_URL_TTL_SECONDS)
           : null,
+      readalongUrl:
+        isReady && rendition.readalongObjectKey
+          ? await this.s3.getSignedUrl(
+              rendition.readalongObjectKey,
+              SIGNED_URL_TTL_SECONDS,
+            )
+          : null,
       durationMs: rendition.durationMs,
       language: rendition.language,
       voiceId: rendition.voiceId,
     };
+  }
+
+  /**
+   * Join the SSML manifest onto Polly's `ssml`-type speech marks to produce the
+   * timed read-along manifest. Each manifest entry keeps its original text and
+   * gains the `time` of its `<mark>`; the rare entry without a matching mark
+   * inherits the previous segment's time (monotonic, never undefined). Segments
+   * are returned ordered by `timeMs`.
+   */
+  private buildReadAlong(
+    manifest: ManifestEntry[],
+    marks: Buffer,
+    voiceId: string,
+    durationMs: number | null,
+  ): ReadAlongManifest {
+    const timeById = this.parseSsmlMarkTimes(marks);
+    let prevTime = 0;
+    const segments: ReadAlongSegment[] = manifest.map((entry) => {
+      const timeMs = timeById.get(entry.id) ?? prevTime;
+      prevTime = timeMs;
+      return { ...entry, timeMs };
+    });
+    segments.sort((a, b) => a.timeMs - b.timeMs);
+    return {
+      version: READALONG_SCHEMA_VERSION,
+      voiceId,
+      durationMs,
+      segments,
+    };
+  }
+
+  /**
+   * Parse Polly's newline-delimited speech marks and return a map of
+   * `<mark>` name (`seg-N`) → ms onset, for every `ssml`-type mark.
+   */
+  private parseSsmlMarkTimes(marks: Buffer): Map<string, number> {
+    const times = new Map<string, number>();
+    for (const line of marks.toString('utf-8').split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(trimmed);
+      } catch {
+        continue;
+      }
+      if (typeof parsed !== 'object' || parsed === null) continue;
+      const rec = parsed as Record<string, unknown>;
+      if (
+        rec['type'] === 'ssml' &&
+        typeof rec['value'] === 'string' &&
+        typeof rec['time'] === 'number'
+      ) {
+        times.set(rec['value'], rec['time']);
+      }
+    }
+    return times;
   }
 
   /**

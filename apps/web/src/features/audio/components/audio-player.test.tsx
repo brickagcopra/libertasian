@@ -11,11 +11,6 @@ vi.mock('../hooks/use-audio-rendition', () => ({
   useAudioRendition: (opts: { enabled: boolean }) => mockHook(opts),
 }));
 
-// ReadAlongPanel is not exercised here; stub it so its fetch never runs.
-vi.mock('./read-along-panel', () => ({
-  ReadAlongPanel: () => <div data-testid="read-along-panel-stub" />,
-}));
-
 type HookReturn = {
   data?: AudioRenditionResponse | undefined;
   isLoading: boolean;
@@ -41,6 +36,7 @@ const READY: AudioRenditionResponse = {
   status: 'ready',
   audioUrl: 'https://signed.example/audio.mp3',
   marksUrl: 'https://signed.example/marks.ndjson',
+  readalongUrl: null,
   durationMs: 65000,
   language: 'en',
   voiceId: 'Matthew',
@@ -92,6 +88,7 @@ describe('AudioPlayer', () => {
         status: 'pending',
         audioUrl: null,
         marksUrl: null,
+        readalongUrl: null,
         durationMs: null,
         language: 'en',
         voiceId: 'Matthew',

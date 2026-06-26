@@ -86,7 +86,7 @@ describe('PollyClient', () => {
     expect(marks).toBeDefined();
     expect(marks?.TextType).toBe('ssml');
     expect(marks?.Text).toBe('<speak>hi</speak>');
-    expect(marks?.SpeechMarkTypes).toEqual(['word', 'sentence']);
+    expect(marks?.SpeechMarkTypes).toEqual(['word', 'sentence', 'ssml']);
   });
 
   it('returns the audio and marks bytes as Buffers', async () => {

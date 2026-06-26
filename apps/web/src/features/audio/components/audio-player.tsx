@@ -7,13 +7,12 @@ import { Loader2, Pause, Play, Sparkles, Volume2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Switch } from '@/components/ui/switch';
 import { ApiClientError } from '@/lib/api-client';
-import { cn } from '@/lib/utils';
 
 import { useAudioRendition } from '../hooks/use-audio-rendition';
+import { useReadAlongSegments } from '../hooks/use-readalong-segments';
 import type { AudioContentType } from '../types';
-import { ReadAlongPanel } from './read-along-panel';
+import { useReadAlongPublisher } from './read-along-context';
 
 interface AudioPlayerProps {
   contentType: AudioContentType;
@@ -52,8 +51,9 @@ function PaywallUpsell() {
  * Compact "Listen" player for a digest or bar answer. Strictly defers the audio
  * fetch until the user clicks Listen (the not-ready call triggers server-side
  * synthesis — a cost guard). While synthesis is pending it shows a spinner and
- * polls; when ready it renders a hidden <audio> + custom transport controls and
- * an optional synced read-along transcript.
+ * polls; when ready it renders a hidden <audio> + custom transport controls.
+ * The inline read-along highlight is rendered by the digest body — this player
+ * publishes the manifest segments + playback state via the read-along context.
  */
 export function AudioPlayer({ contentType, contentId, title }: AudioPlayerProps) {
   const [enabled, setEnabled] = useState(false);
@@ -66,7 +66,6 @@ export function AudioPlayer({ contentType, contentId, title }: AudioPlayerProps)
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentMs, setCurrentMs] = useState(0);
   const [rate, setRate] = useState(1);
-  const [readAlong, setReadAlong] = useState(false);
 
   // Resume state across a fresh signed-URL fetch (expired-URL recovery).
   const resumeRef = useRef<{ atMs: number; wasPlaying: boolean } | null>(null);
@@ -74,6 +73,22 @@ export function AudioPlayer({ contentType, contentId, title }: AudioPlayerProps)
   const isPaywalled = error instanceof ApiClientError && error.statusCode === 402;
   const audioUrl = data?.status === 'ready' ? data.audioUrl : null;
   const durationMs = data?.durationMs ?? 0;
+
+  // Inline read-along: fetch the manifest and publish it (plus the <audio>
+  // element + play state) to the digest body, which renders the highlight.
+  const readalongUrl = data?.status === 'ready' ? data.readalongUrl : null;
+  const segments = useReadAlongSegments(readalongUrl);
+  const publishReadAlong = useReadAlongPublisher();
+
+  useEffect(() => {
+    publishReadAlong({ audioRef, segments, isPlaying });
+  }, [publishReadAlong, segments, isPlaying, audioUrl]);
+
+  // Stop driving the inline highlight once the player unmounts.
+  useEffect(
+    () => () => publishReadAlong({ audioRef: null, segments: null, isPlaying: false }),
+    [publishReadAlong],
+  );
 
   // Keep the element's playback rate in sync with the chosen rate.
   useEffect(() => {
@@ -186,8 +201,6 @@ export function AudioPlayer({ contentType, contentId, title }: AudioPlayerProps)
     return null;
   }
 
-  const hasMarks = !!data.marksUrl;
-
   return (
     <Card data-testid="audio-player">
       <CardContent className="space-y-3 p-4">
@@ -262,33 +275,8 @@ export function AudioPlayer({ contentType, contentId, title }: AudioPlayerProps)
                 ))}
               </select>
             </label>
-
-            {hasMarks && (
-              <label
-                className={cn(
-                  'flex items-center gap-2 text-xs',
-                  readAlong ? 'text-foreground' : 'text-muted-foreground',
-                )}
-              >
-                Read along
-                <Switch
-                  checked={readAlong}
-                  onCheckedChange={setReadAlong}
-                  aria-label="Toggle read along"
-                  data-testid="audio-read-along-toggle"
-                />
-              </label>
-            )}
           </div>
         </div>
-
-        {hasMarks && readAlong && data.marksUrl && (
-          <ReadAlongPanel
-            marksUrl={data.marksUrl}
-            audioRef={audioRef}
-            isPlaying={isPlaying}
-          />
-        )}
       </CardContent>
     </Card>
   );

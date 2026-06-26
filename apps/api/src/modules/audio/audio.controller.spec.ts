@@ -75,6 +75,7 @@ describe('AudioController', () => {
         status: 'ready',
         audioUrl: 'https://signed/a.mp3',
         marksUrl: 'https://signed/a.marks.json',
+        readalongUrl: 'https://signed/a.readalong.json',
         durationMs: 4200,
         language: 'en',
         voiceId: 'Matthew',
@@ -83,6 +84,7 @@ describe('AudioController', () => {
       const out = await controller.getRendition('digest', 'd1', 'en', makeUser(), res);
       expect(out.data.status).toBe('ready');
       expect(out.data.audioUrl).toBe('https://signed/a.mp3');
+      expect(out.data.readalongUrl).toBe('https://signed/a.readalong.json');
       expect(renditions.requestGeneration).not.toHaveBeenCalled();
     });
 

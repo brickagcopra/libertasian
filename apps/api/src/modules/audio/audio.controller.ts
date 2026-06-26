@@ -91,6 +91,7 @@ export class AudioController {
         status: 'pending',
         audioUrl: null,
         marksUrl: null,
+        readalongUrl: null,
         durationMs: null,
         language,
         voiceId: this.renditions.voiceId,

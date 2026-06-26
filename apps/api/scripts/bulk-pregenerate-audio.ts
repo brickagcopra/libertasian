@@ -47,7 +47,10 @@ import { createHash } from 'crypto';
 import { writeFileSync } from 'fs';
 
 import { toSsmlDocument } from '../src/modules/audio/legal-ssml.util';
-import type { AudioContentType } from '../src/modules/audio/audio.types';
+import {
+  audioContentHashInput,
+  type AudioContentType,
+} from '../src/modules/audio/audio.types';
 
 // ---------------------------------------------------------------------------
 // Pure, testable core — no Nest, no I/O, no AWS.
@@ -255,8 +258,10 @@ async function main(): Promise<void> {
       try {
         const { doc } = await service.resolveText(contentType, id);
         const { ssml, normalizedText } = toSsmlDocument(doc);
+        // Must match AudioRenditionService.generate()'s versioned hash so the
+        // already-done idempotency check (findFirst by contentHash) agrees.
         const contentHash = createHash('sha256')
-          .update(normalizedText)
+          .update(audioContentHashInput(normalizedText))
           .digest('hex');
         return { contentType, contentId: id, createdAt, normalizedText, ssml, contentHash };
       } catch (err) {

@@ -40,9 +40,33 @@ export interface SpokenDocument {
   readonly sections: ReadonlyArray<{
     /** Spoken as a section marker before the body (e.g. "Facts."). */
     readonly heading?: string;
+    /**
+     * Stable key carried verbatim into every manifest segment of this section
+     * so the web client can group segments back onto its own section blocks.
+     * Falls back to a slug of the heading (or `section-{index}`) when omitted.
+     */
+    readonly key?: string;
     /** The prose to narrate. */
     readonly body: string;
   }>;
+}
+
+/** The kind of a syncable read-along unit. */
+export type ManifestKind = 'title' | 'heading' | 'sentence';
+
+/**
+ * One read-along segment: the stable `<mark>` id, what kind of unit it is, the
+ * section it belongs to, and the ORIGINAL (un-normalized, display-ready) text
+ * of that unit. The mark id and the manifest entry are produced together in a
+ * single pass through {@link toSsmlDocument} so the manifest order, the mark
+ * order, and (after joining onto speech-mark timestamps) the segment order are
+ * always identical.
+ */
+export interface ManifestEntry {
+  readonly id: string;
+  readonly kind: ManifestKind;
+  readonly sectionKey: string;
+  readonly text: string;
 }
 
 /** Reserved options bag for future pacing/prosody tuning of {@link toSsmlDocument}. */
@@ -117,10 +141,18 @@ const STATUTE_CITATIONS: ReadonlyArray<readonly [RegExp, string]> = [
 const DICT_BLOB_RE =
   /-?\s*\{\s*(['"])issue\1\s*:\s*(['"])([\s\S]*?)\2\s*,\s*(['"])holding\4\s*:\s*(['"])([\s\S]*?)\5\s*\}/gi;
 
-/** Abbreviation tokens that must NOT terminate a spoken sentence. */
+/**
+ * Abbreviation tokens that must NOT terminate a spoken sentence. Sentence
+ * splitting now runs on the lightly-cleaned (un-expanded) text — so periods
+ * after legal abbreviations like "Art."/"Sec."/"Hon." are still present at
+ * split time and must be guarded here (previously the citation expansion ran
+ * first and dissolved them). Initial chains (e.g. "G.R.", "J.B.L.") are guarded
+ * separately by {@link isGuardToken}.
+ */
 const GUARD_ABBREVS = new Set<string>([
   'no.', 'inc.', 'corp.', 'co.', 'ltd.', 'sr.', 'jr.', 'mr.', 'mrs.', 'ms.',
   'dr.', 'st.', 'ave.', 'phil.', 'rep.', 'pp.', 'vol.', 'al.', 'etc.',
+  'art.', 'arts.', 'sec.', 'secs.', 'hon.',
 ]);
 
 /** Sentence boundary: end punctuation, optional closing quote, space, capital. */
@@ -170,20 +202,32 @@ const titleCaseAllCaps = (value: string): string =>
   value.replace(ALLCAPS_RE, (word) => word.charAt(0) + word.slice(1).toLowerCase());
 
 /**
- * Apply every textual normalization, leaving citation/number runs wrapped in
- * sentinels. Runs once per body/heading/title; the result feeds both
- * projections (plain digits vs `<say-as>` digits) and sentence splitting.
- *
- * Order matters: dict hygiene first; citations (which consume their own "No.")
- * before the standalone-"No." rule; abbreviation expansions before sentence
- * splitting; de-shouting last so inserted words ("Number") are untouched.
+ * Display-safe prose hygiene shared by BOTH projections (spoken SSML and the
+ * read-along manifest). Strips footnote markers, rewrites `{issue,holding}`
+ * dict blobs to prose, and removes residual brace/wrapper-quote artifacts —
+ * nothing here changes wording or pronunciation, so the cleaned text is a
+ * faithful, un-normalized display form. Sentence splitting runs on THIS output
+ * so display sentences and spoken sentences share identical boundaries.
  */
-const expandText = (raw: string): string => {
+const cleanProse = (raw: string): string => {
   let value = stripFootnotes((raw ?? '').replace(SENTINEL_RE, ''));
   value = rewriteDictBlobs(value);
   value = stripBraceArtifacts(value);
+  return value;
+};
 
-  value = value.replace(
+/**
+ * Spoken-only normalization, applied per sentence AFTER cleaning + splitting,
+ * leaving citation/number runs wrapped in sentinels. This is the layer that
+ * makes the audio natural but the text unsuitable for on-page display:
+ * citations expanded ("G.R. No." → "G R Number"), digits spelled, peso/percent
+ * re-voiced, all-caps de-shouted.
+ *
+ * Order matters: citations (which consume their own "No.") before the
+ * standalone-"No." rule; de-shouting last so inserted words ("Number") survive.
+ */
+const expandSpoken = (cleaned: string): string => {
+  let value = (cleaned ?? '').replace(
     GR_CITATION_RE,
     (_match, num: string) => `G R Number ${numToken(digitsOnly(num))}`,
   );
@@ -304,35 +348,68 @@ const toPlainNums = (value: string): string => value.replace(NUM_TOKEN_RE, '$1')
 const toSsmlNums = (value: string): string =>
   value.replace(NUM_TOKEN_RE, '<say-as interpret-as="digits">$1</say-as>');
 
-/** Render an inline fragment (title/heading): collapsed, no `<p>`/`<s>` frame. */
-const renderInline = (text: string): { plain: string; ssml: string } => {
-  const collapsed = expandText(text).replace(/\s+/g, ' ').trim();
+/** Spoken projections (plain + SSML) of a single cleaned text fragment. */
+const renderSpoken = (cleaned: string): { plain: string; ssml: string } => {
+  const spoken = expandSpoken(cleaned);
   return {
-    plain: toPlainNums(collapsed),
-    ssml: wrapLatinTerms(toSsmlNums(escapeXml(collapsed))),
+    plain: toPlainNums(spoken),
+    ssml: wrapLatinTerms(toSsmlNums(escapeXml(spoken))),
   };
 };
 
-/** Render a body into per-paragraph plain text and `<p><s>…</s></p>` SSML. */
-const renderBody = (body: string): { plain: string[]; ssml: string[] } => {
-  const plain: string[] = [];
-  const ssml: string[] = [];
-  for (const paragraph of toParagraphs(expandText(body))) {
+/** Render an inline fragment (title/heading): collapsed, no `<p>`/`<s>` frame. */
+const renderInline = (text: string): { plain: string; ssml: string } => {
+  const collapsed = cleanProse(text).replace(/\s+/g, ' ').trim();
+  return renderSpoken(collapsed);
+};
+
+/** One read-along unit: its original display text + spoken plain/SSML forms. */
+interface RenderedSentence {
+  /** Original, un-normalized sentence text — the manifest/display source. */
+  readonly display: string;
+  /** Spoken plain projection (digits expanded) — for normalizedText + hashing. */
+  readonly plain: string;
+  /** Spoken SSML fragment (no `<s>` frame, no `<mark>`). */
+  readonly ssml: string;
+}
+
+/**
+ * Render a body into paragraphs of sentences. Splitting runs on the cleaned
+ * (un-expanded) text so each sentence's `display` form is faithful to the
+ * source while its `plain`/`ssml` forms carry the spoken normalization.
+ */
+const renderBody = (body: string): RenderedSentence[][] => {
+  const paragraphs: RenderedSentence[][] = [];
+  for (const paragraph of toParagraphs(cleanProse(body))) {
     const sentences = splitSentences(paragraph);
     if (sentences.length === 0) continue;
-    plain.push(toPlainNums(sentences.join(' ')));
-    const wrapped = sentences
-      .map((sentence) => `<s>${wrapLatinTerms(toSsmlNums(escapeXml(sentence)))}</s>`)
-      .join('');
-    ssml.push(`<p>${wrapped}</p>`);
+    paragraphs.push(
+      sentences.map((sentence) => ({
+        display: sentence,
+        ...renderSpoken(sentence),
+      })),
+    );
   }
-  return { plain, ssml };
+  return paragraphs;
 };
+
+/** Slugify a heading into a stable section key (fallback when none supplied). */
+const slugKey = (value: string): string =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 
 /** Result of {@link toSsmlDocument}: Polly-ready SSML plus its plain projection. */
 export interface SsmlResult {
   readonly ssml: string;
   readonly normalizedText: string;
+  /**
+   * Ordered read-along segments, one per `<mark>` emitted into the SSML (same
+   * order). Empty when the document renders to nothing. Joined onto Polly's
+   * `ssml`-type speech marks downstream to produce the read-along manifest.
+   */
+  readonly manifest: ManifestEntry[];
 }
 
 /**
@@ -355,41 +432,83 @@ export function toSsmlDocument(
   const sections = Array.isArray(doc?.sections) ? doc.sections : [];
   const plainBlocks: string[] = [];
   const ssmlParts: string[] = [];
+  const manifest: ManifestEntry[] = [];
+
+  // Single monotonic id counter shared across title, headings and sentences so
+  // manifest order == mark order == (post-join) segment order, by construction.
+  let seq = 0;
+  const nextId = (): string => `seg-${seq++}`;
 
   const titleText = (doc?.title ?? '').trim();
   if (titleText.length > 0) {
     const { plain, ssml } = renderInline(titleText);
     if (plain.length > 0) {
+      const id = nextId();
       plainBlocks.push(plain);
+      // Title keeps its slower 96% rate; drc + x-loud make it audibly distinct.
       ssmlParts.push(
-        `<p><prosody rate="96%">${ssml}</prosody></p><break time="900ms"/>`,
+        `<mark name="${id}"/><p><amazon:effect name="drc"><prosody volume="x-loud" rate="96%">${ssml}</prosody></amazon:effect></p><break time="900ms"/>`,
       );
+      manifest.push({ id, kind: 'title', sectionKey: 'title', text: titleText });
     }
   }
 
-  for (const section of sections) {
+  sections.forEach((section, index) => {
     // Skip a section whose body renders to nothing — its heading would be a
     // dangling marker with no content to introduce.
-    const rendered = renderBody(section?.body ?? '');
-    if (rendered.plain.length === 0) continue;
+    const paragraphs = renderBody(section?.body ?? '');
+    if (paragraphs.length === 0) return;
 
     const headingText = (section?.heading ?? '').trim();
+    const sectionKey =
+      (section?.key ?? '').trim() ||
+      (headingText ? slugKey(headingText) : '') ||
+      `section-${index}`;
+
     if (headingText.length > 0) {
       const { plain, ssml } = renderInline(headingText);
       if (plain.length > 0) {
+        const id = nextId();
         plainBlocks.push(ensureStop(plain));
+        // Section markers: a long lead-in pause, then a drc + x-loud + slowed
+        // delivery so the heading stands out from the body it introduces.
+        // (`<emphasis>` / `<prosody pitch>` are rejected on neural — never used.)
         ssmlParts.push(
-          `<break time="600ms"/><p><prosody rate="92%">${ensureStop(ssml)}</prosody></p><break time="350ms"/>`,
+          `<break time="700ms"/><mark name="${id}"/><amazon:effect name="drc"><prosody volume="x-loud" rate="90%"><p>${ensureStop(ssml)}</p></prosody></amazon:effect><break time="400ms"/>`,
         );
+        manifest.push({
+          id,
+          kind: 'heading',
+          sectionKey,
+          // The exact on-page display heading — NOT the spoken/normalized form.
+          text: headingText,
+        });
       }
     }
-    plainBlocks.push(...rendered.plain);
-    ssmlParts.push(...rendered.ssml);
-  }
+
+    for (const sentences of paragraphs) {
+      const parts: string[] = [];
+      const plain: string[] = [];
+      for (const sentence of sentences) {
+        const id = nextId();
+        parts.push(`<mark name="${id}"/><s>${sentence.ssml}</s>`);
+        plain.push(sentence.plain);
+        manifest.push({
+          id,
+          kind: 'sentence',
+          sectionKey,
+          text: sentence.display,
+        });
+      }
+      plainBlocks.push(plain.join(' '));
+      ssmlParts.push(`<p>${parts.join('')}</p>`);
+    }
+  });
 
   return {
     ssml: `<speak>${ssmlParts.join('')}</speak>`,
     normalizedText: plainBlocks.join('\n\n'),
+    manifest,
   };
 }
 
