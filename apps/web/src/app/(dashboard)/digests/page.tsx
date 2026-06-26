@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import {
   DIGEST_TYPE_VALUES,
@@ -17,6 +17,7 @@ import {
   type MatchedDocument,
 } from '@/features/digests/hooks/use-digests';
 import { ApiClientError } from '@/lib/api-client';
+import { usePlayQueueStore } from '@/features/audio';
 import { UpgradeBanner } from '@/components/paywall/upgrade-banner';
 import { DigestListSkeleton } from '@/components/ui/skeleton';
 import { Card, CardContent } from '@/components/ui/card';
@@ -135,6 +136,31 @@ export default function DigestsPage() {
   const lockedCount = isSearching
     ? (searchData?.lockedCount ?? 0)
     : (browseMeta?.lockedCount ?? 0);
+
+  const setQueue = usePlayQueueStore((s) => s.setQueue);
+
+  // Capture the currently-loaded, ordered ids into the autoplay queue when the
+  // reader opens a digest, so continuous playback can advance through this list.
+  // Only the browse path carries a usable next-page cursor; search results play
+  // through what's loaded and then stop.
+  const captureQueue = useCallback(() => {
+    const ids = digests.map((d) => d.id);
+    if (isSearching) {
+      setQueue({ ids, cursor: null, filters: null });
+      return;
+    }
+    const pages = browseData?.pages ?? [];
+    const lastMeta = pages[pages.length - 1]?.meta;
+    const cursor = lastMeta?.hasNext ? (lastMeta.nextCursor ?? null) : null;
+    setQueue({
+      ids,
+      cursor,
+      filters: {
+        digestType: digestType !== 'all' ? digestType : undefined,
+        reviewStatus: reviewStatus !== 'all' ? reviewStatus : undefined,
+      },
+    });
+  }, [digests, isSearching, browseData, digestType, reviewStatus, setQueue]);
 
   const handleGenerate = async (doc: MatchedDocument) => {
     setToast(null);
@@ -282,6 +308,7 @@ export default function DigestsPage() {
                 <div className="min-w-0 flex-1">
                   <Link
                     href={`/digests/${digest.id}`}
+                    onClick={captureQueue}
                     className="text-sm font-semibold hover:underline"
                   >
                     {digest.title}
