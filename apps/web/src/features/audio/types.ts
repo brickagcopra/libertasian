@@ -48,6 +48,12 @@ export interface ReadAlongSegment {
   text: string;
   /** ms offset into the audio at which this segment's `<mark>` fires. */
   timeMs: number;
+  /**
+   * 0-based paragraph index of a `sentence` within its section, used to restore
+   * the original DB paragraph breaks in the inline render. Undefined for
+   * title/heading segments (and treated as paragraph 0 when absent).
+   */
+  paragraphIndex?: number;
 }
 
 /** Parsed `readalong.json` manifest. */

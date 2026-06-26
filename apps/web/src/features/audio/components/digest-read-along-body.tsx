@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef } from 'react';
+import { Fragment, useEffect, useMemo, useRef } from 'react';
 
 import { cn } from '@/lib/utils';
 
@@ -48,6 +48,27 @@ function groupBySection(
     groups.set(seg.sectionKey, group);
   }
   return groups;
+}
+
+/**
+ * Split a section's (reading-ordered) sentence segments into consecutive
+ * paragraph runs by `paragraphIndex`, restoring the original DB `\n\n` breaks
+ * that the flat manifest list dropped. Missing `paragraphIndex` is treated as 0.
+ */
+function splitParagraphs(
+  sentences: readonly ReadAlongSegment[],
+): ReadAlongSegment[][] {
+  const paragraphs: ReadAlongSegment[][] = [];
+  let lastIndex: number | null = null;
+  for (const seg of sentences) {
+    const index = seg.paragraphIndex ?? 0;
+    if (index !== lastIndex || paragraphs.length === 0) {
+      paragraphs.push([]);
+      lastIndex = index;
+    }
+    paragraphs[paragraphs.length - 1]?.push(seg);
+  }
+  return paragraphs;
 }
 
 interface ReadAlongSectionsProps {
@@ -115,28 +136,41 @@ function ReadAlongSections({
             >
               {section.title}
             </h2>
+            {/* whitespace-pre-wrap + literal "\n\n" between paragraph runs
+                reproduces the exact blank-line gap of the plain render, while
+                each run is a distinct [data-paragraph] block. */}
             <div className="whitespace-pre-wrap text-sm leading-relaxed">
-              {group.sentences.map((seg, i) => {
-                const isActive = seg.id === activeId;
-                return (
-                  <span
-                    key={seg.id}
-                    data-seg-id={seg.id}
-                    data-active={isActive || undefined}
-                    ref={
-                      isActive
-                        ? (el) => {
-                            activeRef.current = el;
+              {splitParagraphs(group.sentences).map((paragraph, pIndex) => (
+                <Fragment key={paragraph[0]?.id ?? pIndex}>
+                  {pIndex > 0 ? '\n\n' : ''}
+                  <span data-paragraph={paragraph[0]?.paragraphIndex ?? pIndex}>
+                    {paragraph.map((seg, i) => {
+                      const isActive = seg.id === activeId;
+                      return (
+                        <span
+                          key={seg.id}
+                          data-seg-id={seg.id}
+                          data-active={isActive || undefined}
+                          ref={
+                            isActive
+                              ? (el) => {
+                                  activeRef.current = el;
+                                }
+                              : undefined
                           }
-                        : undefined
-                    }
-                    className={cn('px-0.5 transition-colors', highlight(seg.id))}
-                  >
-                    {i > 0 ? ' ' : ''}
-                    {seg.text}
+                          className={cn(
+                            'px-0.5 transition-colors',
+                            highlight(seg.id),
+                          )}
+                        >
+                          {i > 0 ? ' ' : ''}
+                          {seg.text}
+                        </span>
+                      );
+                    })}
                   </span>
-                );
-              })}
+                </Fragment>
+              ))}
             </div>
           </div>
         );

@@ -29,6 +29,9 @@ function toSegment(raw: unknown): ReadAlongSegment | null {
     sectionKey: m['sectionKey'],
     text: m['text'],
     timeMs: m['timeMs'],
+    ...(isFiniteNumber(m['paragraphIndex'])
+      ? { paragraphIndex: m['paragraphIndex'] }
+      : {}),
   };
 }
 

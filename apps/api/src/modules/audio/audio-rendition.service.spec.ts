@@ -6,6 +6,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { S3Service } from '../uploads/s3.service';
 import { AudioRenditionService } from './audio-rendition.service';
 import { PollyClient } from './polly.client';
+import { sanitizeRulingText } from './sanitize-ruling.util';
 
 interface PrismaMock {
   digest: { findUnique: jest.Mock };
@@ -166,10 +167,12 @@ describe('AudioRenditionService', () => {
         timeMs: 0,
       });
       // seg-2 got its time from the matching ssml mark; segments are time-ordered.
+      // Sections narrate in page display order: Doctrine is first, so seg-2 is
+      // the first Doctrine sentence.
       const seg2 = manifest.segments.find((s) => s.id === 'seg-2');
       expect(seg2?.timeMs).toBe(1500);
       expect(seg2?.kind).toBe('sentence');
-      expect(seg2?.sectionKey).toBe('facts');
+      expect(seg2?.sectionKey).toBe('doctrine');
       const times = manifest.segments.map((s) => s.timeMs);
       expect([...times].sort((a, b) => a - b)).toEqual(times);
     });
@@ -202,13 +205,19 @@ describe('AudioRenditionService', () => {
       const { toSsmlDocument } = await import('./legal-ssml.util');
       const { audioContentHashInput } = await import('./audio.types');
       const crypto = await import('crypto');
+      // Section order + ruling sanitization must mirror resolveText exactly so
+      // the reconstructed normalizedText (and thus the hash) matches.
       const { normalizedText } = toSsmlDocument({
         title: DIGEST_ROW.title,
         sections: [
+          { key: 'doctrine', heading: 'Doctrine', body: DIGEST_ROW.doctrine },
           { key: 'facts', heading: 'Facts', body: DIGEST_ROW.facts },
           { key: 'issues', heading: 'Issues', body: DIGEST_ROW.issues },
-          { key: 'ruling', heading: 'Ruling', body: DIGEST_ROW.ruling },
-          { key: 'doctrine', heading: 'Doctrine', body: DIGEST_ROW.doctrine },
+          {
+            key: 'ruling',
+            heading: 'Ruling',
+            body: sanitizeRulingText(DIGEST_ROW.ruling),
+          },
           {
             key: 'dispositive',
             heading: 'Dispositive Portion',

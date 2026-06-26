@@ -10,7 +10,7 @@ const MANIFEST = JSON.stringify({
   segments: [
     { id: 'seg-0', kind: 'title', sectionKey: 'title', text: 'People v. Cruz', timeMs: 0 },
     { id: 'seg-1', kind: 'heading', sectionKey: 'facts', text: 'Facts', timeMs: 800 },
-    { id: 'seg-2', kind: 'sentence', sectionKey: 'facts', text: 'He fled.', timeMs: 1500 },
+    { id: 'seg-2', kind: 'sentence', sectionKey: 'facts', text: 'He fled.', timeMs: 1500, paragraphIndex: 0 },
   ],
 });
 
@@ -29,6 +29,9 @@ describe('parseReadAlong', () => {
       text: 'People v. Cruz',
       timeMs: 0,
     });
+    // Title carries no paragraphIndex; the sentence carries the parsed one.
+    expect(manifest?.segments[0]?.paragraphIndex).toBeUndefined();
+    expect(manifest?.segments[2]?.paragraphIndex).toBe(0);
   });
 
   it('returns null for invalid JSON or a missing segments array', () => {

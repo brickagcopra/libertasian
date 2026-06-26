@@ -20,6 +20,7 @@ import {
   type SpokenDocument,
 } from './legal-ssml.util';
 import { PollyClient } from './polly.client';
+import { sanitizeRulingText } from './sanitize-ruling.util';
 
 /** Public read projection of a rendition, with short-lived signed URLs. */
 export interface AudioRenditionReadModel {
@@ -108,12 +109,16 @@ export class AudioRenditionService {
       // [sectionKey, on-page display heading, value]. The key is carried into
       // every manifest segment so the web client can map segments back onto its
       // own section blocks; the display heading is the EXACT on-page label so
-      // the manifest heading text matches what the reader sees.
+      // the manifest heading text matches what the reader sees. Order matches
+      // the page's display order (Doctrine → Facts → Issues → Ruling →
+      // Dispositive) so the highlight moves monotonically top-to-bottom instead
+      // of jumping back up the page. Ruling is sanitized identically to the web
+      // plain render so the text doesn't change when the user clicks Listen.
       const chapters: Array<[string, string, string | null]> = [
+        ['doctrine', 'Doctrine', digest.doctrine],
         ['facts', 'Facts', digest.facts],
         ['issues', 'Issues', digest.issues],
-        ['ruling', 'Ruling', digest.ruling],
-        ['doctrine', 'Doctrine', digest.doctrine],
+        ['ruling', 'Ruling', sanitizeRulingText(digest.ruling)],
         ['dispositive', 'Dispositive Portion', digest.dispositive],
       ];
       const sections = chapters

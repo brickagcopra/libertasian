@@ -81,6 +81,39 @@ describe('DigestReadAlongBody', () => {
     expect(inactive?.className).not.toContain('bg-primary/15');
   });
 
+  it('preserves paragraph breaks: two paragraphs render two blocks matching plain', () => {
+    const plainContent = 'One. Two.\n\nThree.';
+    const segs: ReadAlongSegment[] = [
+      { id: 'h', kind: 'heading', sectionKey: 'facts', text: 'Facts', timeMs: 0 },
+      { id: 's0', kind: 'sentence', sectionKey: 'facts', text: 'One.', timeMs: 100, paragraphIndex: 0 },
+      { id: 's1', kind: 'sentence', sectionKey: 'facts', text: 'Two.', timeMs: 200, paragraphIndex: 0 },
+      { id: 's2', kind: 'sentence', sectionKey: 'facts', text: 'Three.', timeMs: 300, paragraphIndex: 1 },
+    ];
+    mockState.mockReturnValue({
+      audioRef: { current: null },
+      segments: segs,
+      isPlaying: true,
+    });
+    mockActive.mockReturnValue(null);
+
+    const { container } = renderWithProviders(
+      <DigestReadAlongBody
+        sections={[{ key: 'facts', title: 'Facts', content: plainContent }]}
+      />,
+    );
+
+    // Two distinct paragraph blocks (not one run-on block).
+    const paragraphs = container.querySelectorAll('[data-paragraph]');
+    expect(paragraphs).toHaveLength(2);
+    // Sentences inside a paragraph are space-joined.
+    expect(paragraphs[0]).toHaveTextContent('One. Two.');
+    expect(paragraphs[1]).toHaveTextContent('Three.');
+    // Visible text + breaks of the read-along body exactly match the plain
+    // render (same whitespace-pre-wrap container, same "\n\n" gap).
+    const bodyDiv = container.querySelector('.whitespace-pre-wrap');
+    expect(bodyDiv?.textContent).toBe(plainContent);
+  });
+
   it('falls back to plain sections when no manifest is loaded', () => {
     mockState.mockReturnValue({ audioRef: null, segments: null, isPlaying: false });
     mockActive.mockReturnValue(null);

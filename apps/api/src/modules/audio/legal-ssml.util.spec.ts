@@ -353,9 +353,28 @@ describe('toSsml — legal SSML normalizer', () => {
       expect(manifest).toEqual([
         { id: 'seg-0', kind: 'title', sectionKey: 'title', text: 'People v. Dela Cruz' },
         { id: 'seg-1', kind: 'heading', sectionKey: 'facts', text: 'Facts' },
-        { id: 'seg-2', kind: 'sentence', sectionKey: 'facts', text: 'He fled.' },
-        { id: 'seg-3', kind: 'sentence', sectionKey: 'facts', text: 'He hid.' },
+        { id: 'seg-2', kind: 'sentence', sectionKey: 'facts', text: 'He fled.', paragraphIndex: 0 },
+        { id: 'seg-3', kind: 'sentence', sectionKey: 'facts', text: 'He hid.', paragraphIndex: 0 },
       ]);
+    });
+
+    it('numbers sentence paragraphIndex per paragraph, reset per section', () => {
+      const { manifest } = toSsmlDocument({
+        sections: [
+          { key: 'facts', heading: 'Facts', body: 'The first. The second.\n\nThe third.' },
+          { key: 'ruling', heading: 'Ruling', body: 'Alpha wins.\n\nBeta loses.' },
+        ],
+      });
+      const sentences = manifest.filter((m) => m.kind === 'sentence');
+      expect(sentences).toEqual([
+        { id: 'seg-1', kind: 'sentence', sectionKey: 'facts', text: 'The first.', paragraphIndex: 0 },
+        { id: 'seg-2', kind: 'sentence', sectionKey: 'facts', text: 'The second.', paragraphIndex: 0 },
+        { id: 'seg-3', kind: 'sentence', sectionKey: 'facts', text: 'The third.', paragraphIndex: 1 },
+        { id: 'seg-5', kind: 'sentence', sectionKey: 'ruling', text: 'Alpha wins.', paragraphIndex: 0 },
+        { id: 'seg-6', kind: 'sentence', sectionKey: 'ruling', text: 'Beta loses.', paragraphIndex: 1 },
+      ]);
+      // Headings carry no paragraphIndex.
+      expect(manifest.find((m) => m.kind === 'heading')?.paragraphIndex).toBeUndefined();
     });
 
     it('keeps manifest text ORIGINAL/un-normalized while SSML is spoken-form', () => {

@@ -67,6 +67,13 @@ export interface ManifestEntry {
   readonly kind: ManifestKind;
   readonly sectionKey: string;
   readonly text: string;
+  /**
+   * 0-based paragraph index of a `sentence` segment WITHIN its section (reset
+   * per section). Lets the web client regroup the flat sentence list back into
+   * the original DB paragraphs so the inline read-along preserves paragraph
+   * breaks. Undefined for `title`/`heading` segments.
+   */
+  readonly paragraphIndex?: number;
 }
 
 /** Reserved options bag for future pacing/prosody tuning of {@link toSsmlDocument}. */
@@ -486,7 +493,7 @@ export function toSsmlDocument(
       }
     }
 
-    for (const sentences of paragraphs) {
+    paragraphs.forEach((sentences, paragraphIndex) => {
       const parts: string[] = [];
       const plain: string[] = [];
       for (const sentence of sentences) {
@@ -498,11 +505,12 @@ export function toSsmlDocument(
           kind: 'sentence',
           sectionKey,
           text: sentence.display,
+          paragraphIndex,
         });
       }
       plainBlocks.push(plain.join(' '));
       ssmlParts.push(`<p>${parts.join('')}</p>`);
-    }
+    });
   });
 
   return {
