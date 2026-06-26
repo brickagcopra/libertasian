@@ -72,6 +72,10 @@ export function useContinuousDigestPlayback(currentId: string): ContinuousPlayba
   // Latest rendered id — read inside async work to detect the reader navigating away.
   const currentIdRef = useRef(currentId);
   currentIdRef.current = currentId;
+  // Digests whose deep-link default-feed seed has already been attempted — so the
+  // seed effect re-running (it depends on `currentId`) never refetches the browse
+  // page more than once per digest.
+  const deepLinkSeededRef = useRef<Set<string>>(new Set());
 
   // Render-derived so the FIRST render after navigation already reflects the URL:
   // a cached digest mounts its player with the correct `autoPlay` instead of losing
@@ -103,13 +107,77 @@ export function useContinuousDigestPlayback(currentId: string): ContinuousPlayba
     setAtEndOfList(false);
   }, [currentId]);
 
-  // Direct load (or stale queue): seed a single-item queue so navigation is sane.
+  // Fetch the DEFAULT digests browse page — the exact call the list page makes on
+  // initial load with no filters applied (GET /digests, limit 20, no digestType,
+  // no reviewStatus, no cursor) — so a deep link can continue into the default feed.
+  const fetchDefaultPage = useCallback(
+    () =>
+      queryClient.fetchQuery({
+        queryKey: ['digests', 'queue-page', null, null],
+        queryFn: async () => {
+          const res = await apiClient.get<DigestsListResponse>('/digests', {
+            params: { limit: '20' },
+          });
+          return res;
+        },
+      }),
+    [queryClient],
+  );
+
+  // Deep link / direct load (currentId is NOT already in the queue — the reader did
+  // not enter from the list): seed the queue so continuous play can advance past
+  // this digest into the default feed instead of dead-ending at End-of-list.
+  //
+  //   1. SYNCHRONOUSLY install a single-item floor `[currentId]` so a valid queue
+  //      always exists immediately (also the graceful fallback if the fetch fails).
+  //   2. ASYNCHRONOUSLY fetch the default browse page and upgrade the queue to
+  //      `[currentId, ...pageIds]` with the page cursor.
+  //
+  // A list-originated queue (currentId already present) is left entirely untouched:
+  // the early return means neither the floor nor the fetch fire.
   useEffect(() => {
     const { ids, setQueue } = usePlayQueueStore.getState();
-    if (!ids.includes(currentId)) {
-      setQueue({ ids: [currentId], cursor: null, filters: null });
-    }
-  }, [currentId]);
+    if (ids.includes(currentId)) return;
+
+    // Floor: install immediately so navigation is always sane.
+    setQueue({ ids: [currentId], cursor: null, filters: null });
+
+    // Upgrade the floor from the default feed — at most once per digest.
+    if (deepLinkSeededRef.current.has(currentId)) return;
+    deepLinkSeededRef.current.add(currentId);
+
+    void (async () => {
+      try {
+        const page = await fetchDefaultPage();
+        // Stale-async guard (same pattern as the cursor-extend below): only upgrade
+        // if (a) the reader is still on this digest, AND (b) the queue is still the
+        // single-item floor for it — so we never clobber a queue the reader
+        // meanwhile populated by entering from the list.
+        const live = usePlayQueueStore.getState();
+        if (
+          currentIdRef.current !== currentId ||
+          live.ids.length !== 1 ||
+          live.ids[0] !== currentId
+        ) {
+          return;
+        }
+        const pageIds = page.data.map((d) => d.id);
+        const nextCursor = page.meta?.hasNext
+          ? (page.meta.nextCursor ?? null)
+          : null;
+        // setQueue de-dupes via `[...new Set(ids)]`, so currentId reappearing in the
+        // page is handled — currentId stays first, then the chain walks the feed.
+        usePlayQueueStore.getState().setQueue({
+          ids: [currentId, ...pageIds],
+          cursor: nextCursor,
+          filters: null,
+        });
+      } catch {
+        // Default-feed fetch failed — leave the single-item floor in place; the
+        // chain stops cleanly at End-of-list, exactly as before.
+      }
+    })();
+  }, [currentId, fetchDefaultPage]);
 
   const fetchNextPage = useCallback(
     (cursor: string, filters: DigestQueueFilters | null) =>
