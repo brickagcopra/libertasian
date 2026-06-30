@@ -66,6 +66,7 @@ export class LifecycleEventProcessorService {
             status: true,
             organizationId: true,
             planCode: true,
+            xenditSubscriptionId: true,
           },
         },
       },
@@ -114,6 +115,7 @@ export class LifecycleEventProcessorService {
         status: string;
         organizationId: string;
         planCode: string;
+        xenditSubscriptionId: string | null;
       };
     },
   ): Promise<void> {
@@ -123,6 +125,20 @@ export class LifecycleEventProcessorService {
         `Unknown lifecycle event type: ${event.eventType} (event ${event.id})`,
       );
       await this.markFailed(event.id, `Unknown event type: ${event.eventType}`);
+      return;
+    }
+
+    // DOUBLE-RENEWAL GUARD: Xendit-native subscriptions are renewed by Xendit's
+    // own billing cycle (driven through the cycle.succeeded webhook, which
+    // advances currentPeriodEnd). The internal `renewal` event must NEVER also
+    // fire RENEW for these subs — that would double-advance the period (and the
+    // RENEW path here charges no one anyway). Treat it as a completed no-op.
+    if (event.eventType === 'renewal' && event.subscription.xenditSubscriptionId) {
+      this.logger.log(
+        `Skipping internal renewal for Xendit-backed subscription ${event.subscription.id} ` +
+          `(event ${event.id}) — Xendit drives the billing cycle`,
+      );
+      await this.markCompleted(event.id);
       return;
     }
 
