@@ -10,6 +10,7 @@ import { EntitlementService } from '../subscriptions/entitlement.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SubscriptionLifecycleService } from '../subscriptions/subscription-lifecycle.service';
+import { SubscriptionAction } from '../subscriptions/subscription-state-machine';
 import { BillingService } from './billing.service';
 import { XenditService } from './xendit.service';
 
@@ -87,6 +88,7 @@ describe('BillingService', () => {
   };
 
   let lifecycleService: jest.Mocked<SubscriptionLifecycleService>;
+  let entitlementService: jest.Mocked<EntitlementService>;
 
   const mockTransactionClient = {
     payment: { update: jest.fn() },
@@ -203,6 +205,7 @@ describe('BillingService', () => {
     couponService = module.get(CouponService);
     promotionService = module.get(PromotionService);
     lifecycleService = module.get(SubscriptionLifecycleService);
+    entitlementService = module.get(EntitlementService);
   });
 
   // ---- getSubscription ----
@@ -1501,6 +1504,142 @@ describe('BillingService', () => {
           }),
         }),
       );
+    });
+  });
+
+  // ---- handleRefundSucceeded ----
+
+  describe('handleRefundSucceeded', () => {
+    /** A payment funding the org's current active subscription. */
+    const refundablePayment = {
+      ...mockPayment,
+      id: 'pay-refund',
+      amount: 99900, // centavos
+      status: 'succeeded',
+      subscriptionId: 'sub-1',
+      refundId: null,
+      refundedAt: null,
+      refundedAmount: null,
+      refundReason: null,
+    };
+
+    /** refund.succeeded payload `data` — amount is WHOLE PHP (999.00). */
+    const fullRefundData = {
+      id: 'refund_abc',
+      invoice_id: 'inv_test_123',
+      amount: 999,
+      currency: 'PHP',
+      status: 'SUCCEEDED',
+      reason: 'DUPLICATE',
+    };
+
+    beforeEach(() => {
+      (prisma.$transaction as jest.Mock).mockImplementation(
+        async (cb: (tx: unknown) => Promise<void>) => {
+          await cb(mockTransactionClient);
+        },
+      );
+      subscriptionsService.getDefaultEntitlements.mockReturnValue({} as never);
+      (prisma.subscription.create as jest.Mock).mockResolvedValue({ id: 'sub-free' });
+    });
+
+    it('full refund of the current active subscription cancels it and drops to free', async () => {
+      (prisma.payment.findUnique as jest.Mock).mockResolvedValue(refundablePayment);
+      subscriptionsService.getActiveSubscription.mockResolvedValue({
+        id: 'sub-1',
+        organizationId: 'org-1',
+      } as never);
+
+      await service.handleRefundSucceeded(fullRefundData);
+
+      // payment marked refunded with centavos-converted amount (999 PHP → 99900)
+      expect(mockTransactionClient.payment.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'pay-refund' },
+          data: expect.objectContaining({
+            status: 'refunded',
+            refundedAmount: 99900,
+            refundId: 'refund_abc',
+            refundReason: 'DUPLICATE',
+          }),
+        }),
+      );
+      // subscription cancelled immediately
+      expect(lifecycleService.executeTransition).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subscriptionId: 'sub-1',
+          action: SubscriptionAction.CANCEL_IMMEDIATELY,
+          actorType: 'system',
+          metadata: expect.objectContaining({ reason: 'refund', refundId: 'refund_abc' }),
+        }),
+      );
+      // free fallback created + cache invalidated
+      expect(prisma.subscription.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ planCode: 'free' }) }),
+      );
+      expect(entitlementService.invalidateEntitlementCache).toHaveBeenCalledWith('org-1');
+      expect(auditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'billing.payment_refunded' }),
+      );
+    });
+
+    it('partial refund records only — no entitlement change', async () => {
+      (prisma.payment.findUnique as jest.Mock).mockResolvedValue(refundablePayment);
+
+      await service.handleRefundSucceeded({ ...fullRefundData, amount: 500 }); // 500 PHP < 999
+
+      expect(mockTransactionClient.payment.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: 'refunded', refundedAmount: 50000 }),
+        }),
+      );
+      expect(lifecycleService.executeTransition).not.toHaveBeenCalled();
+      expect(prisma.subscription.create).not.toHaveBeenCalled();
+      expect(auditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'billing.payment_refunded',
+          metadata: expect.objectContaining({ fullRefund: false }),
+        }),
+      );
+    });
+
+    it('is idempotent on replay of an already-refunded payment', async () => {
+      (prisma.payment.findUnique as jest.Mock).mockResolvedValue({
+        ...refundablePayment,
+        status: 'refunded',
+        refundId: 'refund_abc',
+      });
+
+      await service.handleRefundSucceeded(fullRefundData);
+
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(lifecycleService.executeTransition).not.toHaveBeenCalled();
+    });
+
+    it('returns gracefully without throwing for an unknown invoice_id', async () => {
+      (prisma.payment.findUnique as jest.Mock).mockResolvedValue(null);
+
+      await expect(
+        service.handleRefundSucceeded({ ...fullRefundData, invoice_id: 'inv_unknown' }),
+      ).resolves.toBeUndefined();
+
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('does not cancel when the refunded payment is not the current active subscription', async () => {
+      (prisma.payment.findUnique as jest.Mock).mockResolvedValue(refundablePayment);
+      // Org's current active sub is a different one (e.g. already upgraded).
+      subscriptionsService.getActiveSubscription.mockResolvedValue({
+        id: 'sub-other',
+        organizationId: 'org-1',
+      } as never);
+
+      await service.handleRefundSucceeded(fullRefundData);
+
+      expect(lifecycleService.executeTransition).not.toHaveBeenCalled();
+      expect(prisma.subscription.create).not.toHaveBeenCalled();
+      // still recorded the refund
+      expect(mockTransactionClient.payment.update).toHaveBeenCalled();
     });
   });
 });

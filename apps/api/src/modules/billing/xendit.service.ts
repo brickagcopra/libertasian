@@ -34,6 +34,41 @@ export interface XenditWebhookEvent {
   [key: string]: unknown;
 }
 
+/**
+ * Refund webhook payload (envelope shape).
+ * Unlike invoice webhooks (flat), refund webhooks wrap the refund in a
+ * `data` object under a string `event` discriminator
+ * (`refund.succeeded` | `refund.failed`).
+ */
+export interface XenditRefundData {
+  /** The refund's own id (used as the idempotency key for refund events). */
+  id: string;
+  /**
+   * Invoice id the refund originated from. Present (though deprecated by
+   * Xendit) for invoice-originated refunds — this is how we link back to a
+   * local Payment via `xenditInvoiceId`.
+   */
+  invoice_id?: string;
+  /**
+   * Payments-API id the refund originated from. After the recurring
+   * migration, invoice-originated refunds go away and this becomes the
+   * linkage field. See the TODO in BillingService.handleRefundSucceeded.
+   */
+  payment_request_id?: string;
+  /** Refund amount in WHOLE PHP (not centavos) — Xendit mirrors the invoice unit. */
+  amount: number;
+  currency: string;
+  status: string;
+  reason?: string;
+  [key: string]: unknown;
+}
+
+export interface XenditRefundWebhookEvent {
+  event: string;
+  data: XenditRefundData;
+  [key: string]: unknown;
+}
+
 @Injectable()
 export class XenditService {
   private readonly logger = new Logger(XenditService.name);
