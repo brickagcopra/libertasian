@@ -91,13 +91,21 @@ describe('SidebarContent', () => {
   });
 
   it('does not render admin section for non-admin users', () => {
-    mockUser = { fullName: 'Student', role: 'student' };
+    mockUser = { fullName: 'Student', role: 'student', isPlatformAdmin: false };
     render(<SidebarContent />);
     expect(screen.queryByText('Admin')).not.toBeInTheDocument();
   });
 
-  it('renders admin section for admin role', () => {
-    mockUser = { fullName: 'Admin User', role: 'admin' };
+  it('does not render admin section for workspace owners without platform admin', () => {
+    // Regression: every self-registered user is 'owner' of their own
+    // workspace, so gating on the org role showed admin nav to everyone.
+    mockUser = { fullName: 'Owner', role: 'owner', isPlatformAdmin: false };
+    render(<SidebarContent />);
+    expect(screen.queryByText('Admin')).not.toBeInTheDocument();
+  });
+
+  it('renders admin section for platform admins', () => {
+    mockUser = { fullName: 'Admin User', role: 'admin', isPlatformAdmin: true };
     render(<SidebarContent />);
     expect(screen.getByText('Admin')).toBeInTheDocument();
     expect(screen.getByText('Review Queue')).toBeInTheDocument();
@@ -105,14 +113,14 @@ describe('SidebarContent', () => {
     expect(screen.getByText('Doctrines')).toBeInTheDocument();
   });
 
-  it('renders admin section for editor role', () => {
-    mockUser = { fullName: 'Editor User', role: 'editor' };
+  it('renders admin section for platform-admin editors', () => {
+    mockUser = { fullName: 'Editor User', role: 'editor', isPlatformAdmin: true };
     render(<SidebarContent />);
     expect(screen.getByText('Admin')).toBeInTheDocument();
   });
 
-  it('renders admin section for owner role', () => {
-    mockUser = { fullName: 'Owner User', role: 'owner' };
+  it('renders admin section for platform-admin owners', () => {
+    mockUser = { fullName: 'Owner User', role: 'owner', isPlatformAdmin: true };
     render(<SidebarContent />);
     expect(screen.getByText('Admin')).toBeInTheDocument();
   });
