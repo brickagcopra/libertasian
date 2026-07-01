@@ -365,6 +365,12 @@ model Payment {
   paidAt          DateTime? @map("paid_at") @db.Timestamptz
   failedAt        DateTime? @map("failed_at") @db.Timestamptz
   failureReason   String?   @map("failure_reason")
+  // Refund tracking — populated from Xendit refund.succeeded webhooks.
+  refundedAt      DateTime? @map("refunded_at") @db.Timestamptz
+  refundedAmount  Int?      @map("refunded_amount")
+  // refundedAmount in centavos (PHP smallest unit), matches `amount`
+  refundId        String?   @unique @map("refund_id") @db.VarChar(255)
+  refundReason    String?   @map("refund_reason")
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 

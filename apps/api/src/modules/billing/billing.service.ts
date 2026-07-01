@@ -18,7 +18,7 @@ import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { SubscriptionLifecycleService } from '../subscriptions/subscription-lifecycle.service';
 import { SubscriptionAction, SubscriptionState } from '../subscriptions/subscription-state-machine';
 import { NotificationsService } from '../notifications/notifications.service';
-import { XenditService } from './xendit.service';
+import { XenditService, type XenditRefundData } from './xendit.service';
 import type { CreateCheckoutDto, PreviewCheckoutDto } from './dto';
 
 @Injectable()
@@ -546,6 +546,143 @@ export class BillingService {
     } catch (err) {
       this.logger.error(`Failed to send payment failure notification: ${err}`);
     }
+  }
+
+  /**
+   * Handle a Xendit `refund.succeeded` webhook.
+   *
+   * Refunds are initiated manually from the Xendit dashboard — we only REACT
+   * here. This method is deliberately tolerant: it never throws for
+   * unactionable payloads (unknown invoice, already-processed) because a thrown
+   * error makes Xendit retry the webhook indefinitely.
+   */
+  async handleRefundSucceeded(data: XenditRefundData) {
+    const refundId = data.id;
+
+    // LINKAGE: invoice-originated refunds carry the (deprecated-but-present)
+    // invoice_id, which maps to Payment.xenditInvoiceId.
+    // TODO(recurring): after the Xendit-native recurring migration, refunds
+    //   will instead carry data.payment_request_id — also match Payment on that
+    //   field (Payment will gain a payment-request linkage column then).
+    const invoiceId = data.invoice_id;
+    if (!invoiceId) {
+      this.logger.warn(
+        `Refund ${refundId}: no invoice_id on payload — cannot link to a Payment, skipping`,
+      );
+      return;
+    }
+
+    const payment = await this.prisma.payment.findUnique({
+      where: { xenditInvoiceId: invoiceId },
+    });
+
+    if (!payment) {
+      // Do NOT throw — that triggers infinite Xendit retries for a refund we
+      // can't act on (e.g. an invoice that predates this system).
+      this.logger.warn(
+        `Refund ${refundId}: no Payment found for invoice ${invoiceId}, skipping`,
+      );
+      return;
+    }
+
+    // IDEMPOTENCY: a replayed refund webhook for an already-refunded payment.
+    if (payment.status === 'refunded' && payment.refundId === refundId) {
+      this.logger.log(`Refund ${refundId} already processed for payment ${payment.id}`);
+      return;
+    }
+
+    // UNIT GOTCHA: the original invoice amount was sent to Xendit in WHOLE PHP
+    // (createCheckout divides centavos by 100). The refund webhook `amount` is
+    // likewise whole PHP → multiply by 100 to store centavos matching
+    // Payment.amount.
+    const refundedAmount = Math.round(Number(data.amount) * 100);
+    const isFullRefund = refundedAmount >= payment.amount;
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.payment.update({
+        where: { id: payment.id },
+        data: {
+          status: 'refunded',
+          refundedAt: new Date(),
+          refundedAmount,
+          refundId,
+          refundReason: data.reason ?? null,
+        },
+      });
+    });
+
+    // SUBSCRIPTION IMPACT: a FULL refund of the payment that funds the org's
+    // CURRENT active subscription revokes access immediately. A PARTIAL refund
+    // records the money movement only — entitlements are unchanged.
+    if (isFullRefund && payment.subscriptionId) {
+      const activeSub = await this.subscriptionsService.getActiveSubscription(
+        payment.organizationId,
+      );
+      if (activeSub && activeSub.id === payment.subscriptionId) {
+        try {
+          await this.lifecycleService.executeTransition({
+            subscriptionId: payment.subscriptionId,
+            action: SubscriptionAction.CANCEL_IMMEDIATELY,
+            actorType: 'system',
+            reason: 'refund',
+            metadata: { reason: 'refund', refundId },
+          });
+
+          // CANCEL_IMMEDIATELY moves the sub to CANCELLED but does not create a
+          // free-tier row; mirror cancelSubscription() so the org lands on free
+          // instead of having no active subscription at all.
+          const freeEntitlements =
+            this.subscriptionsService.getDefaultEntitlements('free');
+          await this.prisma.subscription.create({
+            data: {
+              organizationId: payment.organizationId,
+              planCode: 'free',
+              status: 'active',
+              seats: 1,
+              entitlementsJson: freeEntitlements as unknown as Prisma.InputJsonValue,
+            },
+          });
+
+          // Invalidate cached entitlements so revoked limits take effect now.
+          await this.entitlementService.invalidateEntitlementCache(
+            payment.organizationId,
+          );
+        } catch (err) {
+          this.logger.error(
+            `Refund ${refundId}: failed to cancel subscription ${payment.subscriptionId}`,
+            err,
+          );
+        }
+      } else {
+        this.logger.log(
+          `Refund ${refundId}: payment ${payment.id} is not tied to the org's current active subscription — recording refund only`,
+        );
+      }
+    }
+
+    // TODO(accounting): emit a REFUND journal entry (debit 4910 Refunds /
+    //   credit 2150 Customer Credits). The chart-of-accounts + REFUND journal
+    //   source already exist; a follow-up PR will wire this in.
+
+    await this.auditService.log({
+      organizationId: payment.organizationId,
+      actorType: 'system',
+      action: 'billing.payment_refunded',
+      entityType: 'payment',
+      entityId: payment.id,
+      // PII-safe: ids + amounts only.
+      metadata: {
+        refundId,
+        refundedAmount,
+        fullRefund: isFullRefund,
+        currency: data.currency,
+      },
+    });
+
+    this.logger.log(
+      `Refund ${refundId} processed for org ${payment.organizationId}: ` +
+        `${isFullRefund ? 'full' : 'partial'} (${refundedAmount} centavos)`,
+    );
   }
 
   // ---- Cancel Subscription ----

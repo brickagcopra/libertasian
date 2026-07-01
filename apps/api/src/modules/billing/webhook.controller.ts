@@ -12,7 +12,12 @@ import { SkipThrottle } from '@nestjs/throttler';
 import type { Request } from 'express';
 
 import { RedisService } from '../../common/services/redis.service';
-import { XenditService } from './xendit.service';
+import {
+  XenditService,
+  type XenditRefundData,
+  type XenditRefundWebhookEvent,
+  type XenditWebhookEvent,
+} from './xendit.service';
 import { BillingService } from './billing.service';
 import { AuditService } from '../audit/audit.service';
 
@@ -55,16 +60,30 @@ export class WebhookController {
       throw new BadRequestException('Invalid callback token');
     }
 
-    // Parse the event — Xendit sends flat JSON
-    const event = this.xenditService.parseWebhookEvent(rawBody);
+    // Parse the event. Invoice webhooks are flat ({ id, status, ... });
+    // refund webhooks are an envelope ({ event: 'refund.*', data: {...} }).
+    const parsed = this.xenditService.parseWebhookEvent(rawBody) as XenditWebhookEvent &
+      Partial<XenditRefundWebhookEvent>;
+
+    // Branch on payload shape AFTER token verification (verification is shared).
+    if (typeof parsed.event === 'string' && parsed.event.startsWith('refund.')) {
+      return this.handleRefundWebhook(parsed.event, parsed.data as XenditRefundData);
+    }
+
+    return this.handleInvoiceWebhook(parsed);
+  }
+
+  /** Flat invoice webhook path (PAID / EXPIRED). */
+  private async handleInvoiceWebhook(event: XenditWebhookEvent) {
     const eventId = event.id;
     const eventStatus = event.status;
 
-    // Idempotency check — store processed event IDs in Redis (7-day TTL)
-    const idempotencyKey = `billing:webhook:${eventId}`;
+    // Idempotency check — keyed by event KIND + invoice id so a refund webhook
+    // for the same invoice cannot collide with the original PAID/EXPIRED event.
+    const idempotencyKey = `billing:webhook:invoice:${eventId}`;
     const alreadyProcessed = await this.redisService.get(idempotencyKey);
     if (alreadyProcessed) {
-      this.logger.log(`Webhook event already processed: ${eventId}`);
+      this.logger.log(`Webhook event already processed: invoice ${eventId}`);
       return { received: true };
     }
 
@@ -104,6 +123,63 @@ export class WebhookController {
       entityType: 'webhook_event',
       entityId: eventId,
       metadata: { status: eventStatus },
+    });
+
+    return { received: true };
+  }
+
+  /** Envelope refund webhook path (refund.succeeded / refund.failed). */
+  private async handleRefundWebhook(eventName: string, data: XenditRefundData) {
+    const refundId = data?.id;
+    if (!refundId) {
+      // No refund id → no idempotency key and nothing to link. Don't throw
+      // (throwing triggers Xendit retries); log and acknowledge.
+      this.logger.warn('Refund webhook missing data.id — acknowledging without processing');
+      return { received: true };
+    }
+
+    // Idempotency keyed by refund id so it never collides with invoice events
+    // for the same invoice.
+    const idempotencyKey = `billing:webhook:refund:${refundId}`;
+    const alreadyProcessed = await this.redisService.get(idempotencyKey);
+    if (alreadyProcessed) {
+      this.logger.log(`Webhook event already processed: refund ${refundId}`);
+      return { received: true };
+    }
+    await this.redisService.set(idempotencyKey, '1', 7 * 24 * 60 * 60);
+
+    this.logger.log(`Processing Xendit refund webhook: ${eventName} refund=${refundId}`);
+
+    const isSuccess = eventName === 'refund.succeeded';
+    try {
+      if (isSuccess) {
+        await this.billingService.handleRefundSucceeded(data);
+      } else {
+        // refund.failed → audit + structured warn only. No entitlement change:
+        // the original charge stands, so the subscription is untouched.
+        this.logger.warn(
+          `Xendit refund failed: refund=${refundId} invoice=${data.invoice_id ?? 'n/a'} status=${data.status}`,
+        );
+      }
+    } catch (err) {
+      await this.redisService.del(idempotencyKey);
+      this.logger.error(`Refund webhook processing failed: ${eventName}`, err);
+      throw err;
+    }
+
+    await this.auditService.log({
+      actorType: 'system',
+      action: isSuccess
+        ? 'billing.webhook.xendit.refund_succeeded'
+        : 'billing.webhook.xendit.refund_failed',
+      entityType: 'webhook_event',
+      entityId: refundId,
+      // PII-safe: ids + status only, no customer/contact data.
+      metadata: {
+        event: eventName,
+        invoiceId: data.invoice_id,
+        status: data.status,
+      },
     });
 
     return { received: true };
