@@ -22,9 +22,11 @@ export default function CheckoutSuccessPage() {
           <CheckIcon className="h-7 w-7 text-green-600" />
         </div>
 
-        <h1 className="text-2xl font-bold">Payment Successful</h1>
+        <h1 className="text-2xl font-bold">Subscription Active</h1>
         <p className="text-sm text-muted-foreground">
-          Your subscription has been activated. You now have access to all the features included in your plan.
+          Your subscription is active and renews automatically. You now have
+          access to all the features included in your plan. You can manage or
+          cancel auto-renewal anytime from Billing.
         </p>
 
         <div className="flex justify-center gap-3 pt-2">

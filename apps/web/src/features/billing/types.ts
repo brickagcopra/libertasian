@@ -22,6 +22,26 @@ export interface SubscriptionResponse {
   data: SubscriptionDetail;
 }
 
+// ─── Subscription Status Helpers ───────────────────────────
+
+/**
+ * Statuses where the subscription still grants access to paid features.
+ * With Xendit-native recurring billing a failed cycle moves the sub to
+ * `past_due` then `grace_period` — the user keeps access (and the plan card
+ * keeps rendering) while Xendit auto-retries, so these count as "has access".
+ */
+export function subscriptionHasAccess(status: string | undefined | null): boolean {
+  return status === 'active' || status === 'past_due' || status === 'grace_period';
+}
+
+/**
+ * Statuses inside the failed-payment dunning window (Xendit is auto-retrying).
+ * Drives the dunning banner and the "update payment method" nudge.
+ */
+export function subscriptionIsPastDue(status: string | undefined | null): boolean {
+  return status === 'past_due' || status === 'grace_period';
+}
+
 // ─── Payment Methods ───────────────────────────────────────
 
 export interface PaymentMethodDetail {

@@ -22,6 +22,8 @@ import {
   PLAN_LABELS,
   TIER_ORDER,
   formatPHP,
+  subscriptionHasAccess,
+  subscriptionIsPastDue,
   type PlanInfo,
   type PaymentMethodDetail,
   type InvoiceDetail,
@@ -29,6 +31,7 @@ import {
   type PromotionEligibilityResult,
   type CheckoutPreviewData,
 } from '@/features/billing/types';
+import { DunningBanner } from '@/features/billing/components/dunning-banner';
 import { ApiClientError } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
 
@@ -65,6 +68,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 
 export default function BillingPage() {
   return (
@@ -96,13 +104,21 @@ function CurrentPlanSection() {
 
   if (isLoading) return <BillingSkeleton />;
 
+  const status = subscription?.status;
   const planCode = subscription?.planCode ?? 'free';
   const planName = PLAN_LABELS[planCode] ?? 'Free';
-  const isActive = subscription?.status === 'active';
-  const cancelPending = subscription?.cancelAtPeriodEnd;
+  const isActive = status === 'active';
+  const isPastDue = subscriptionIsPastDue(status);
+  const hasAccess = subscriptionHasAccess(status);
+  const cancelPending = subscription?.cancelAtPeriodEnd ?? false;
+  const periodEnd = subscription?.currentPeriodEnd ?? null;
+  const periodEndLabel = periodEnd ? formatLongDate(periodEnd) : null;
 
   return (
     <div className="space-y-4">
+      {/* Dunning banner — failed cycle, Xendit auto-retrying (past_due / grace_period) */}
+      {isPastDue && <DunningBanner periodEnd={periodEnd} />}
+
       <h2 className="text-lg font-semibold">Current Plan</h2>
 
       <Card>
@@ -117,8 +133,13 @@ function CurrentPlanSection() {
                 {cancelPending && (
                   <Badge className="bg-yellow-100 text-yellow-700 hover:bg-yellow-100">Cancels at period end</Badge>
                 )}
-                {!isActive && !cancelPending && subscription?.status && (
-                  <Badge variant="secondary">{subscription.status}</Badge>
+                {isPastDue && !cancelPending && (
+                  <Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100">
+                    {status === 'grace_period' ? 'Grace period' : 'Past due'}
+                  </Badge>
+                )}
+                {status && !isActive && !isPastDue && !cancelPending && (
+                  <Badge variant="secondary">{status}</Badge>
                 )}
               </div>
 
@@ -128,15 +149,29 @@ function CurrentPlanSection() {
                 </p>
               )}
 
-              {subscription?.currentPeriodEnd && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {cancelPending ? 'Access until' : 'Renews'}{' '}
-                  {new Date(subscription.currentPeriodEnd).toLocaleDateString('en-PH', {
-                    year: 'numeric',
-                    month: 'long',
-                    day: 'numeric',
-                  })}
-                </p>
+              {periodEndLabel && (
+                cancelPending ? (
+                  <>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Your plan won&apos;t renew. Access ends on {periodEndLabel}.
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      To continue after {periodEndLabel}, subscribe again.
+                    </p>
+                  </>
+                ) : isActive ? (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Renews automatically on {periodEndLabel}
+                  </p>
+                ) : isPastDue ? (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Access continues until {periodEndLabel} while we retry your payment.
+                  </p>
+                ) : (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Renews {periodEndLabel}
+                  </p>
+                )
               )}
             </div>
 
@@ -146,7 +181,7 @@ function CurrentPlanSection() {
                   {planCode === 'free' ? 'Upgrade' : 'Change Plan'}
                 </Button>
               )}
-              {planCode !== 'free' && isActive && !cancelPending && (
+              {planCode !== 'free' && hasAccess && !cancelPending && (
                 <Button variant="outline" onClick={() => setShowCancel(true)}>
                   Cancel
                 </Button>
@@ -772,16 +807,11 @@ function CancelDialogContent({
           <RadioGroupItem value="end_of_period" id="cancel-end" className="mt-1" />
           <div>
             <Label htmlFor="cancel-end" className="font-medium">Cancel at end of billing period</Label>
-            {periodEnd && (
-              <p className="text-xs text-muted-foreground">
-                Keep access until{' '}
-                {new Date(periodEnd).toLocaleDateString('en-PH', {
-                  year: 'numeric',
-                  month: 'long',
-                  day: 'numeric',
-                })}
-              </p>
-            )}
+            <p className="text-xs text-muted-foreground">
+              Stops auto-renewal.{' '}
+              {periodEnd ? `You keep access until ${formatLongDate(periodEnd)}, ` : 'You keep access until the period ends, '}
+              then your plan ends. This can&apos;t be undone — you&apos;d re-subscribe to return.
+            </p>
           </div>
         </div>
 
@@ -814,13 +844,32 @@ function CancelDialogContent({
 
 function PaymentMethodsSection() {
   const { data: methods, isLoading, error } = usePaymentMethods();
+  const { data: subscription } = useSubscription();
   const setDefault = useSetDefaultPaymentMethod();
   const deleteMethod = useDeletePaymentMethod();
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
+  // With auto-renew recurring billing, the default method backs the live
+  // subscription — removing it would break the next Xendit charge, so guard it.
+  const backsAutoRenew = subscriptionHasAccess(subscription?.status);
+
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold">Payment Methods</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold">Payment Methods</h2>
+        {/* Replacing a saved method requires a Xendit re-link flow that doesn't
+            exist yet — offer a disabled affordance, not a fake flow. */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span tabIndex={0}>
+              <Button variant="outline" size="sm" disabled>
+                Update payment method
+              </Button>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>Coming soon</TooltipContent>
+        </Tooltip>
+      </div>
 
       {error && (
         <Alert variant="destructive">
@@ -835,7 +884,8 @@ function PaymentMethodsSection() {
       {!isLoading && methods && methods.length === 0 && (
         <Card>
           <CardContent className="py-8 text-center text-sm text-muted-foreground">
-            No payment methods saved. A payment method will be added when you subscribe to a plan.
+            No payment method on file. One is saved automatically when you subscribe,
+            and is used to auto-renew your plan.
           </CardContent>
         </Card>
       )}
@@ -844,74 +894,97 @@ function PaymentMethodsSection() {
         <Card>
           <CardContent className="p-0">
             <div className="divide-y">
-              {methods.map((method) => (
-                <div key={method.id} className="flex items-center justify-between px-4 py-3">
-                  <div className="flex items-center gap-3">
-                    <PaymentMethodIcon type={method.type} brand={method.brand} />
-                    <div>
-                      <p className="text-sm font-medium">
-                        {formatPaymentMethod(method)}
-                      </p>
-                      {method.expiryMonth && method.expiryYear && (
-                        <p className="text-xs text-muted-foreground">
-                          Expires {String(method.expiryMonth).padStart(2, '0')}/{method.expiryYear}
+              {methods.map((method) => {
+                const isBackingMethod = method.isDefault && backsAutoRenew;
+
+                return (
+                  <div key={method.id} className="flex items-center justify-between px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <PaymentMethodIcon type={method.type} brand={method.brand} />
+                      <div>
+                        <p className="text-sm font-medium">
+                          {formatPaymentMethod(method)}
                         </p>
+                        {method.expiryMonth && method.expiryYear && (
+                          <p className="text-xs text-muted-foreground">
+                            Expires {String(method.expiryMonth).padStart(2, '0')}/{method.expiryYear}
+                          </p>
+                        )}
+                        {method.billingEmail && (
+                          <p className="text-xs text-muted-foreground">{method.billingEmail}</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      {method.isDefault ? (
+                        <Badge className="bg-green-100 text-green-700 hover:bg-green-100">Default</Badge>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setDefault.mutate(method.id)}
+                          disabled={setDefault.isPending}
+                        >
+                          Set default
+                        </Button>
                       )}
-                      {method.billingEmail && (
-                        <p className="text-xs text-muted-foreground">{method.billingEmail}</p>
+
+                      {isBackingMethod ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span tabIndex={0}>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-destructive hover:text-destructive"
+                                disabled
+                              >
+                                Remove
+                              </Button>
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            This method auto-renews your subscription. Cancel your plan
+                            before removing it.
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : confirmDeleteId === method.id ? (
+                        <span className="flex items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-destructive font-semibold hover:text-destructive"
+                            onClick={() => {
+                              deleteMethod.mutate(method.id);
+                              setConfirmDeleteId(null);
+                            }}
+                            disabled={deleteMethod.isPending}
+                          >
+                            Confirm
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setConfirmDeleteId(null)}
+                          >
+                            Cancel
+                          </Button>
+                        </span>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive hover:text-destructive"
+                          onClick={() => setConfirmDeleteId(method.id)}
+                        >
+                          Remove
+                        </Button>
                       )}
                     </div>
                   </div>
-
-                  <div className="flex items-center gap-3">
-                    {method.isDefault ? (
-                      <Badge className="bg-green-100 text-green-700 hover:bg-green-100">Default</Badge>
-                    ) : (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setDefault.mutate(method.id)}
-                        disabled={setDefault.isPending}
-                      >
-                        Set default
-                      </Button>
-                    )}
-
-                    {confirmDeleteId === method.id ? (
-                      <span className="flex items-center gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-destructive font-semibold hover:text-destructive"
-                          onClick={() => {
-                            deleteMethod.mutate(method.id);
-                            setConfirmDeleteId(null);
-                          }}
-                          disabled={deleteMethod.isPending}
-                        >
-                          Confirm
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setConfirmDeleteId(null)}
-                        >
-                          Cancel
-                        </Button>
-                      </span>
-                    ) : (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-destructive hover:text-destructive"
-                        onClick={() => setConfirmDeleteId(method.id)}
-                      >
-                        Remove
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </CardContent>
         </Card>
@@ -936,7 +1009,8 @@ function formatPaymentMethod(method: PaymentMethodDetail): string {
   }
   if (method.type === 'gcash') return 'GCash';
   if (method.type === 'maya') return 'Maya';
-  return method.type;
+  // Generic e-wallet fallback — capitalize the wallet type for a clean label.
+  return method.type.charAt(0).toUpperCase() + method.type.slice(1);
 }
 
 // ---- Invoices ----
@@ -1048,6 +1122,16 @@ function InvoiceRow({ invoice }: { invoice: InvoiceDetail }) {
       </TableCell>
     </TableRow>
   );
+}
+
+// ---- Helpers ----
+
+function formatLongDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-PH', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
 }
 
 // ---- Skeleton ----
