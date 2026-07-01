@@ -423,10 +423,22 @@ export class SubscriptionLifecycleService {
 
   private async scheduleEvent(
     tx: Prisma.TransactionClient,
-    subscription: { id: string; organizationId: string },
+    subscription: { id: string; organizationId: string; xenditSubscriptionId?: string | null },
     effect: SideEffect,
   ): Promise<void> {
     const eventType = effect.payload?.['eventType'] as string;
+
+    // DOUBLE-RENEWAL GUARD (defense-in-depth): never schedule the internal
+    // `renewal` event for a Xendit-backed subscription. Xendit drives the cycle
+    // via webhooks; the LifecycleEventProcessor also no-ops any renewal event
+    // that slips through, but skipping it here avoids accumulating dead events.
+    if (eventType === 'renewal' && subscription.xenditSubscriptionId) {
+      this.logger.log(
+        `Not scheduling internal renewal for Xendit-backed subscription ${subscription.id}`,
+      );
+      return;
+    }
+
     const scheduledAt = await this.calculateScheduledTime(tx, eventType, subscription.id);
 
     await tx.subscriptionLifecycleEvent.create({

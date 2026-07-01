@@ -69,6 +69,119 @@ export interface XenditRefundWebhookEvent {
   [key: string]: unknown;
 }
 
+// ---- Recurring (Xendit v3 Payments API: Customers + Payment Sessions + Recurring Plans) ----
+//
+// Current Xendit "Subscriptions" product:
+//   POST /customers                              -> { id }
+//   POST /sessions  (session_type=SUBSCRIPTION)  -> { payment_session_id (ps-...), payment_link_url }
+//   GET  /recurring/plans/{id}                   -> plan (id = repl_...)
+//   POST /recurring/plans/{id}/deactivate        -> immediate cancel
+// Recurring/session calls require the `api-version: 2026-01-01` header.
+// NOTE: createSession returns a SESSION (ps-...); the recurring plan id (repl_...)
+// is only known once `recurring.plan.activated` fires, so subscriptions are
+// linked back by `reference_id` (our local Subscription id) at activation.
+
+/** Pinned API version for the recurring/session endpoints. */
+export const XENDIT_RECURRING_API_VERSION = '2026-01-01';
+
+export interface XenditCustomerParams {
+  /** Idempotent external reference (we use the organization id). */
+  referenceId: string;
+  email?: string;
+  mobileNumber?: string;
+  givenNames?: string;
+}
+
+export interface XenditCustomer {
+  id: string;
+  reference_id: string;
+  [key: string]: unknown;
+}
+
+export interface XenditSubscriptionSessionParams {
+  /** Idempotent external reference (we use the local Subscription id). */
+  referenceId: string;
+  customerId: string;
+  /** Amount in WHOLE PHP (Xendit `amount` is whole currency units). */
+  amount: number;
+  currency: string;
+  /** Billing cadence — Xendit `schedule.interval` + `interval_count`. */
+  interval: 'MONTH' | 'YEAR';
+  intervalCount: number;
+  description: string;
+  /** Hosted-flow redirect targets (no separate failure URL on sessions). */
+  successReturnUrl: string;
+  cancelReturnUrl: string;
+  metadata: Record<string, string>;
+}
+
+/** Response from `POST /sessions` (session_type=SUBSCRIPTION). */
+export interface XenditSubscriptionSession {
+  payment_session_id: string;
+  /** Hosted checkout URL the client is redirected to. */
+  payment_link_url: string;
+  reference_id: string;
+  status?: string;
+  [key: string]: unknown;
+}
+
+/** Response from `GET /recurring/plans/{id}` (id = repl_...). */
+export interface XenditRecurringPlan {
+  id: string;
+  reference_id: string;
+  customer_id: string;
+  status: string;
+  currency: string;
+  amount: number;
+  [key: string]: unknown;
+}
+
+/**
+ * Exact webhook event-name strings for the current Subscriptions product.
+ * Confirmed against the docs (see PR description). Envelope is nested:
+ * `{ event, business_id, created, api_version, data }`. The dotted forms are
+ * the canonical ones. Centralised so a single edit reconciles every consumer.
+ */
+export const XENDIT_RECURRING_EVENTS = {
+  PLAN_ACTIVATED: 'recurring.plan.activated',
+  PLAN_INACTIVATED: 'recurring.plan.inactivated',
+  CYCLE_CREATED: 'recurring.cycle.created',
+  CYCLE_SUCCEEDED: 'recurring.cycle.succeeded',
+  CYCLE_RETRYING: 'recurring.cycle.retrying',
+  CYCLE_FAILED: 'recurring.cycle.failed',
+  /** Fires alongside `recurring.cycle.succeeded` when the charge captures. */
+  PAYMENT_SUCCEEDED: 'payment.succeeded',
+} as const;
+
+/** Recurring webhook envelope: `{ event, business_id, created, api_version, data }`. */
+export interface XenditRecurringWebhookEvent {
+  event: string;
+  business_id?: string;
+  created?: string;
+  api_version?: string;
+  data: XenditRecurringData;
+  [key: string]: unknown;
+}
+
+export interface XenditRecurringData {
+  /** For plan.* events: the plan id (repl_...). For cycle.* events: the cycle id. */
+  id: string;
+  /**
+   * The recurring plan id (repl_...). Field name varies by event/surface, so we
+   * accept both; cycle.* events carry the plan via `recurring_plan_id`.
+   */
+  plan_id?: string;
+  recurring_plan_id?: string;
+  /** Our local Subscription id (we set `reference_id` on the session). */
+  reference_id?: string;
+  customer_id?: string;
+  status?: string;
+  /** Charge amount in WHOLE PHP. */
+  amount?: number;
+  currency?: string;
+  [key: string]: unknown;
+}
+
 @Injectable()
 export class XenditService {
   private readonly logger = new Logger(XenditService.name);
@@ -108,6 +221,102 @@ export class XenditService {
     return this.request<XenditInvoice>('GET', `/v2/invoices/${id}`);
   }
 
+  // ---- Recurring subscriptions (Customers + Payment Sessions + Recurring Plans) ----
+  //
+  // Endpoint paths, body shapes and webhook event names are confirmed against
+  // the current Xendit Subscriptions docs (see PR description). Centralised here
+  // so any future API change only touches this file.
+
+  /**
+   * Create (or idempotently reference) a Xendit Customer for an organization.
+   * `reference_id` is the org id so repeat calls map to the same customer.
+   */
+  async createCustomer(params: XenditCustomerParams): Promise<XenditCustomer> {
+    const body: Record<string, unknown> = {
+      reference_id: params.referenceId,
+      type: 'INDIVIDUAL',
+      ...(params.email && { email: params.email }),
+      ...(params.mobileNumber && { mobile_number: params.mobileNumber }),
+      ...(params.givenNames && {
+        individual_detail: { given_names: params.givenNames },
+      }),
+    };
+
+    return this.request<XenditCustomer>('POST', '/customers', body);
+  }
+
+  /**
+   * Create a SUBSCRIPTION-mode Payment Session and return the hosted checkout
+   * (`payment_link_url`). Xendit auto-creates a Recurring Plan once the customer
+   * authorises, then owns scheduling, auto-debit (cards AND GCash/Maya), retries
+   * and dunning. The `repl_` plan id arrives later via `recurring.plan.activated`
+   * — subscriptions are linked back by `reference_id`.
+   */
+  async createSubscriptionSession(
+    params: XenditSubscriptionSessionParams,
+  ): Promise<XenditSubscriptionSession> {
+    const body = {
+      reference_id: params.referenceId,
+      session_type: 'SUBSCRIPTION',
+      mode: 'PAYMENT_LINK',
+      amount: params.amount,
+      currency: params.currency,
+      country: 'PH',
+      customer_id: params.customerId,
+      description: params.description,
+      subscription: {
+        schedule: {
+          interval: params.interval,
+          interval_count: params.intervalCount,
+        },
+        // Let Xendit retry a failed cycle (dunning) before giving up.
+        failed_cycle_action: 'STOP',
+      },
+      // Cards + PH e-wallets for auto-debit.
+      allowed_payment_channels: ['CARDS', 'GCASH', 'PAYMAYA'],
+      success_return_url: params.successReturnUrl,
+      cancel_return_url: params.cancelReturnUrl,
+      metadata: params.metadata,
+    };
+
+    return this.request<XenditSubscriptionSession>(
+      'POST',
+      '/sessions',
+      body,
+      XENDIT_RECURRING_API_VERSION,
+    );
+  }
+
+  /** Retrieve a recurring plan by id (id = repl_...). */
+  async retrieveSubscription(id: string): Promise<XenditRecurringPlan> {
+    return this.request<XenditRecurringPlan>(
+      'GET',
+      `/recurring/plans/${id}`,
+      undefined,
+      XENDIT_RECURRING_API_VERSION,
+    );
+  }
+
+  /**
+   * Deactivate (cancel) a recurring plan immediately — Xendit exposes no
+   * cancel-at-period-end parameter, so we model that distinction at our layer
+   * (REQUEST_CANCEL keeps entitlements until currentPeriodEnd; either way we
+   * deactivate now so no further auto-debit occurs).
+   */
+  async cancelSubscription(id: string): Promise<XenditRecurringPlan> {
+    return this.request<XenditRecurringPlan>(
+      'POST',
+      `/recurring/plans/${id}/deactivate`,
+      undefined,
+      XENDIT_RECURRING_API_VERSION,
+    );
+  }
+
+  /** Extract the hosted checkout URL from a freshly-created session. */
+  static hostedUrl(session: XenditSubscriptionSession): string | null {
+    return session.payment_link_url ?? null;
+  }
+
   /**
    * Verify webhook callback token.
    * Xendit sends the token via X-CALLBACK-TOKEN header.
@@ -144,6 +353,7 @@ export class XenditService {
     method: string,
     path: string,
     body?: unknown,
+    apiVersion?: string,
   ): Promise<T> {
     const authHeader = Buffer.from(`${this.secretKey}:`).toString('base64');
     const url = `${this.baseUrl}${path}`;
@@ -152,6 +362,7 @@ export class XenditService {
       'Content-Type': 'application/json',
       Accept: 'application/json',
       Authorization: `Basic ${authHeader}`,
+      ...(apiVersion ? { 'api-version': apiVersion } : {}),
     };
 
     const response = await fetch(url, {

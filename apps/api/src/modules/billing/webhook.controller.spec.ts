@@ -43,6 +43,10 @@ describe('WebhookController', () => {
             handlePaymentSuccess: jest.fn().mockResolvedValue(undefined),
             handlePaymentFailed: jest.fn().mockResolvedValue(undefined),
             handleRefundSucceeded: jest.fn().mockResolvedValue(undefined),
+            handleSubscriptionActivated: jest.fn().mockResolvedValue(undefined),
+            handleCycleSucceeded: jest.fn().mockResolvedValue(undefined),
+            handleCycleFailed: jest.fn().mockResolvedValue(undefined),
+            handlePlanDeactivated: jest.fn().mockResolvedValue(undefined),
           },
         },
         {
@@ -88,6 +92,7 @@ describe('WebhookController', () => {
       expect.objectContaining({ id: 'inv_1', status: 'PAID' }),
     );
     expect(billingService.handleRefundSucceeded).not.toHaveBeenCalled();
+    expect(billingService.handleCycleSucceeded).not.toHaveBeenCalled();
   });
 
   it('routes a refund.succeeded envelope to handleRefundSucceeded', async () => {
@@ -121,6 +126,67 @@ describe('WebhookController', () => {
     );
   });
 
+  it('routes recurring.plan.activated to handleSubscriptionActivated', async () => {
+    await controller.handleXenditWebhook(
+      reqWith({ event: 'recurring.plan.activated', data: { id: 'repl_1', reference_id: 'sub-1' } }),
+      'tok',
+    );
+
+    expect(billingService.handleSubscriptionActivated).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'repl_1' }),
+    );
+    expect(auditService.log).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'billing.webhook.xendit.recurring_plan_activated' }),
+    );
+  });
+
+  it('routes recurring.cycle.succeeded to handleCycleSucceeded (authoritative)', async () => {
+    await controller.handleXenditWebhook(
+      reqWith({ event: 'recurring.cycle.succeeded', data: { id: 'cycle_1', recurring_plan_id: 'repl_1' } }),
+      'tok',
+    );
+
+    expect(billingService.handleCycleSucceeded).toHaveBeenCalledTimes(1);
+    expect(billingService.handleCycleSucceeded).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'cycle_1' }),
+    );
+  });
+
+  it('does NOT route payment.succeeded into handleCycleSucceeded (log-only, no period advance)', async () => {
+    // payment.succeeded fires alongside recurring.cycle.succeeded for the SAME
+    // charge but with a different data.id. It must be informational only — never
+    // a second period advance / Payment. This is the double-advance guard.
+    await controller.handleXenditWebhook(
+      reqWith({ event: 'payment.succeeded', data: { id: 'pay_evt_1', recurring_plan_id: 'repl_1' } }),
+      'tok',
+    );
+
+    expect(billingService.handleCycleSucceeded).not.toHaveBeenCalled();
+    expect(billingService.handleSubscriptionActivated).not.toHaveBeenCalled();
+    // Still acknowledged + audited so Xendit does not retry it.
+    expect(auditService.log).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'billing.webhook.xendit.payment_succeeded' }),
+    );
+  });
+
+  it('routes recurring.cycle.failed to handleCycleFailed', async () => {
+    await controller.handleXenditWebhook(
+      reqWith({ event: 'recurring.cycle.failed', data: { id: 'cycle_2', recurring_plan_id: 'repl_1' } }),
+      'tok',
+    );
+
+    expect(billingService.handleCycleFailed).toHaveBeenCalled();
+  });
+
+  it('routes recurring.plan.inactivated to handlePlanDeactivated', async () => {
+    await controller.handleXenditWebhook(
+      reqWith({ event: 'recurring.plan.inactivated', data: { id: 'repl_1' } }),
+      'tok',
+    );
+
+    expect(billingService.handlePlanDeactivated).toHaveBeenCalled();
+  });
+
   it('dedups a replayed invoice event on the kind-scoped key', async () => {
     const req = () => reqWith({ id: 'inv_1', status: 'PAID' });
 
@@ -128,6 +194,17 @@ describe('WebhookController', () => {
     await controller.handleXenditWebhook(req(), 'tok');
 
     expect(billingService.handlePaymentSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  it('dedups a replayed recurring event on the kind-scoped key', async () => {
+    const req = () =>
+      reqWith({ event: 'recurring.cycle.succeeded', data: { id: 'cycle_dup', recurring_plan_id: 'repl_1' } });
+
+    await controller.handleXenditWebhook(req(), 'tok');
+    await controller.handleXenditWebhook(req(), 'tok');
+
+    expect(billingService.handleCycleSucceeded).toHaveBeenCalledTimes(1);
+    expect(store.has('billing:webhook:recurring.cycle.succeeded:cycle_dup')).toBe(true);
   });
 
   // REGRESSION: the original idempotency bug keyed on the invoice id alone, so a
@@ -151,5 +228,18 @@ describe('WebhookController', () => {
     // distinct idempotency keys were written
     expect(store.has('billing:webhook:invoice:inv_1')).toBe(true);
     expect(store.has('billing:webhook:refund:refund_1')).toBe(true);
+  });
+
+  it('processes a PAID invoice and a recurring event with the SAME id without collision', async () => {
+    await controller.handleXenditWebhook(reqWith({ id: 'shared', status: 'PAID' }), 'tok');
+    await controller.handleXenditWebhook(
+      reqWith({ event: 'recurring.cycle.succeeded', data: { id: 'shared', recurring_plan_id: 'repl_1' } }),
+      'tok',
+    );
+
+    expect(billingService.handlePaymentSuccess).toHaveBeenCalledTimes(1);
+    expect(billingService.handleCycleSucceeded).toHaveBeenCalledTimes(1);
+    expect(store.has('billing:webhook:invoice:shared')).toBe(true);
+    expect(store.has('billing:webhook:recurring.cycle.succeeded:shared')).toBe(true);
   });
 });

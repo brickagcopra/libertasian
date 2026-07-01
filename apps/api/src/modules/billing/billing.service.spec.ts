@@ -7,6 +7,7 @@ import { PricingEngineService } from '../pricing/pricing-engine.service';
 import { CouponService } from '../coupons/coupon.service';
 import { PromotionService } from '../promotions/promotion.service';
 import { EntitlementService } from '../subscriptions/entitlement.service';
+import { UsageQuotaService } from '../subscriptions/usage-quota.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SubscriptionLifecycleService } from '../subscriptions/subscription-lifecycle.service';
@@ -89,9 +90,10 @@ describe('BillingService', () => {
 
   let lifecycleService: jest.Mocked<SubscriptionLifecycleService>;
   let entitlementService: jest.Mocked<EntitlementService>;
+  let usageQuotaService: jest.Mocked<UsageQuotaService>;
 
   const mockTransactionClient = {
-    payment: { update: jest.fn() },
+    payment: { update: jest.fn(), create: jest.fn() },
     subscription: { updateMany: jest.fn(), create: jest.fn().mockResolvedValue({ id: 'sub-new' }), update: jest.fn() },
     invoice: { create: jest.fn() },
     checkoutPriceSnapshot: { findUnique: jest.fn().mockResolvedValue(null) },
@@ -114,15 +116,22 @@ describe('BillingService', () => {
               findFirst: jest.fn(),
               update: jest.fn(),
               updateMany: jest.fn(),
+              upsert: jest.fn(),
             },
             invoice: {
               findMany: jest.fn(),
               findFirst: jest.fn(),
             },
             subscription: {
+              findFirst: jest.fn(),
+              findUnique: jest.fn(),
               update: jest.fn(),
               updateMany: jest.fn(),
-              create: jest.fn(),
+              create: jest.fn().mockResolvedValue({ id: 'sub-prov', organizationId: 'org-1' }),
+              delete: jest.fn().mockResolvedValue({ id: 'sub-prov' }),
+            },
+            user: {
+              findUnique: jest.fn().mockResolvedValue({ email: 'u@example.com', fullName: 'U' }),
             },
             organization: {
               findUnique: jest.fn(),
@@ -138,6 +147,14 @@ describe('BillingService', () => {
           provide: XenditService,
           useValue: {
             createInvoice: jest.fn(),
+            createCustomer: jest.fn().mockResolvedValue({ id: 'cust-1', reference_id: 'org-1' }),
+            createSubscriptionSession: jest.fn().mockResolvedValue({
+              payment_session_id: 'ps-1',
+              payment_link_url: 'https://checkout.xendit.co/sessions/ps-1',
+              reference_id: 'sub-prov',
+            }),
+            retrieveSubscription: jest.fn(),
+            cancelSubscription: jest.fn().mockResolvedValue({ id: 'repl_1', status: 'INACTIVE' }),
           },
         },
         {
@@ -193,6 +210,12 @@ describe('BillingService', () => {
             invalidateEntitlementCache: jest.fn().mockResolvedValue(undefined),
           },
         },
+        {
+          provide: UsageQuotaService,
+          useValue: {
+            resetQuotasForBillingCycle: jest.fn().mockResolvedValue(undefined),
+          },
+        },
       ],
     }).compile();
 
@@ -206,6 +229,7 @@ describe('BillingService', () => {
     promotionService = module.get(PromotionService);
     lifecycleService = module.get(SubscriptionLifecycleService);
     entitlementService = module.get(EntitlementService);
+    usageQuotaService = module.get(UsageQuotaService);
   });
 
   // ---- getSubscription ----
@@ -235,95 +259,82 @@ describe('BillingService', () => {
       cancelUrl: 'https://app.com/cancel',
     };
 
-    it('should create checkout session for new subscription', async () => {
+    it('should create a recurring subscription session for a new subscription', async () => {
       subscriptionsService.getActiveSubscription.mockResolvedValue(null as never);
       pricingEngine.calculatePriceBreakdown.mockResolvedValue({ ...mockBreakdown } as never);
-      xenditService.createInvoice.mockResolvedValue({
-        id: 'inv_test_123',
-        external_id: 'ext-uuid-123',
-        invoice_url: 'https://checkout.xendit.co/inv_test_123',
-        status: 'PENDING',
-        amount: 999,
-        currency: 'PHP',
-        description: 'LIBERTASIAN Pro Plan — Monthly',
-      });
-      (prisma.payment.create as jest.Mock).mockResolvedValue(mockPayment);
-      (prisma.checkoutPriceSnapshot.create as jest.Mock).mockResolvedValue({ id: 'snap-1' });
+      subscriptionsService.getDefaultEntitlements.mockReturnValue({} as never);
 
       const result = await service.createCheckout('org-1', dto, 'user-1');
 
-      expect(result).toHaveProperty('checkoutUrl');
-      expect(result).toHaveProperty('checkoutSessionId');
-      expect(result).toHaveProperty('paymentId');
-      expect(pricingEngine.calculatePriceBreakdown).toHaveBeenCalledWith(
-        expect.objectContaining({
-          organizationId: 'org-1',
-          userId: 'user-1',
-          planCode: 'pro',
-          billingPeriod: 'monthly',
-        }),
-      );
-      expect(xenditService.createInvoice).toHaveBeenCalledWith(
-        expect.objectContaining({
-          amount: 999,
-          currency: 'PHP',
-          description: 'LIBERTASIAN Pro Plan — Monthly',
-        }),
-      );
-      expect(prisma.checkoutPriceSnapshot.create).toHaveBeenCalledWith(
+      expect(result).toHaveProperty('checkoutUrl', 'https://checkout.xendit.co/sessions/ps-1');
+      expect(result).toHaveProperty('checkoutSessionId', 'ps-1');
+      expect(result).toHaveProperty('subscriptionId');
+      // provisioning subscription created up-front with the resolved customer
+      expect(prisma.subscription.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
-            paymentId: 'pay-1',
             planCode: 'pro',
-            basePriceAmount: 99900,
-            finalAmount: 99900,
+            status: 'provisioning',
+            xenditCustomerId: 'cust-1',
           }),
         }),
       );
+      // recurring session created (amount in WHOLE PHP), not a one-time invoice
+      expect(xenditService.createSubscriptionSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          amount: 999,
+          currency: 'PHP',
+          interval: 'MONTH',
+          intervalCount: 1,
+        }),
+      );
+      expect(xenditService.createInvoice).not.toHaveBeenCalled();
       expect(auditService.log).toHaveBeenCalledWith(
         expect.objectContaining({
           action: 'billing.checkout_created',
-          entityType: 'payment',
+          entityType: 'subscription',
         }),
       );
     });
 
-    it('should create checkout for annual billing', async () => {
+    it('should create an annual subscription session with YEAR interval', async () => {
       const annualBreakdown = {
         ...mockBreakdown,
         basePriceAmount: 999000,
         finalAmount: 999000,
         billingPeriod: 'annual',
-        lineItems: [
-          {
-            type: 'base_price',
-            label: 'Pro Plan — Annual',
-            amount: 999000,
-            referenceId: null,
-            referenceCode: 'pro',
-            metadata: { source: 'hardcoded' },
-          },
-        ],
       };
       pricingEngine.calculatePriceBreakdown.mockResolvedValue(annualBreakdown as never);
       subscriptionsService.getActiveSubscription.mockResolvedValue(null as never);
-      xenditService.createInvoice.mockResolvedValue({
-        id: 'inv_annual',
-        external_id: 'ext-annual',
-        invoice_url: 'https://checkout.xendit.co/inv_annual',
-        status: 'PENDING',
-        amount: 9990,
-        currency: 'PHP',
-        description: 'LIBERTASIAN Pro Plan — Annual',
-      });
-      (prisma.payment.create as jest.Mock).mockResolvedValue({ ...mockPayment, id: 'pay-annual' });
-      (prisma.checkoutPriceSnapshot.create as jest.Mock).mockResolvedValue({ id: 'snap-2' });
+      subscriptionsService.getDefaultEntitlements.mockReturnValue({} as never);
 
       await service.createCheckout('org-1', { ...dto, billingPeriod: 'annual' }, 'user-1');
 
-      expect(xenditService.createInvoice).toHaveBeenCalledWith(
-        expect.objectContaining({ amount: 9990 }),
+      expect(xenditService.createSubscriptionSession).toHaveBeenCalledWith(
+        expect.objectContaining({ amount: 9990, interval: 'YEAR' }),
       );
+    });
+
+    it('should reuse an existing org Xendit customer instead of creating a new one', async () => {
+      subscriptionsService.getActiveSubscription.mockResolvedValue(null as never);
+      subscriptionsService.getDefaultEntitlements.mockReturnValue({} as never);
+      (prisma.subscription.findFirst as jest.Mock).mockResolvedValue({ xenditCustomerId: 'cust-existing' });
+
+      await service.createCheckout('org-1', dto, 'user-1');
+
+      expect(xenditService.createCustomer).not.toHaveBeenCalled();
+      expect(xenditService.createSubscriptionSession).toHaveBeenCalledWith(
+        expect.objectContaining({ customerId: 'cust-existing' }),
+      );
+    });
+
+    it('should roll back the provisioning subscription if the Xendit session fails', async () => {
+      subscriptionsService.getActiveSubscription.mockResolvedValue(null as never);
+      subscriptionsService.getDefaultEntitlements.mockReturnValue({} as never);
+      xenditService.createSubscriptionSession.mockRejectedValueOnce(new Error('xendit down'));
+
+      await expect(service.createCheckout('org-1', dto, 'user-1')).rejects.toThrow('xendit down');
+      expect(prisma.subscription.delete).toHaveBeenCalledWith({ where: { id: 'sub-prov' } });
     });
 
     it('should throw BadRequestException for invalid plan code', async () => {
@@ -469,21 +480,7 @@ describe('BillingService', () => {
       pricingEngine.calculatePriceBreakdown.mockResolvedValue({ ...breakdownWithCoupon } as never);
       couponService.reserveCoupon.mockResolvedValue({ id: 'redemption-1' } as never);
       subscriptionsService.getActiveSubscription.mockResolvedValue(null as never);
-      xenditService.createInvoice.mockResolvedValue({
-        id: 'inv_coupon',
-        external_id: 'ext-coupon',
-        invoice_url: 'https://checkout.xendit.co/inv_coupon',
-        status: 'PENDING',
-        amount: 799,
-        currency: 'PHP',
-        description: 'LIBERTASIAN Pro Plan — Monthly',
-      });
-      (prisma.payment.create as jest.Mock).mockResolvedValue({
-        ...mockPayment,
-        id: 'pay-coupon',
-        amount: 79920,
-      });
-      (prisma.checkoutPriceSnapshot.create as jest.Mock).mockResolvedValue({ id: 'snap-coupon' });
+      subscriptionsService.getDefaultEntitlements.mockReturnValue({} as never);
 
       await service.createCheckout('org-1', dto, 'user-1');
 
@@ -494,7 +491,9 @@ describe('BillingService', () => {
         'pro',
         'monthly',
       );
-      expect(xenditService.createInvoice).toHaveBeenCalledWith(
+      // discounted amount in WHOLE PHP (79920 centavos → 799), coupon redemption
+      // carried in the session metadata
+      expect(xenditService.createSubscriptionSession).toHaveBeenCalledWith(
         expect.objectContaining({
           amount: 799,
           metadata: expect.objectContaining({
@@ -526,33 +525,18 @@ describe('BillingService', () => {
       expect(couponService.reserveCoupon).not.toHaveBeenCalled();
     });
 
-    it('should include couponRedemptionId in payment metadata', async () => {
+    it('should include couponRedemptionId in the session metadata', async () => {
       pricingEngine.calculatePriceBreakdown.mockResolvedValue({ ...breakdownWithCoupon } as never);
       couponService.reserveCoupon.mockResolvedValue({ id: 'redemption-2' } as never);
       subscriptionsService.getActiveSubscription.mockResolvedValue(null as never);
-      xenditService.createInvoice.mockResolvedValue({
-        id: 'inv_meta',
-        external_id: 'ext-meta',
-        invoice_url: 'https://checkout.xendit.co/inv_meta',
-        status: 'PENDING',
-        amount: 799,
-        currency: 'PHP',
-        description: 'LIBERTASIAN Pro Plan — Monthly',
-      });
-      (prisma.payment.create as jest.Mock).mockResolvedValue({
-        ...mockPayment,
-        id: 'pay-meta',
-      });
-      (prisma.checkoutPriceSnapshot.create as jest.Mock).mockResolvedValue({ id: 'snap-meta' });
+      subscriptionsService.getDefaultEntitlements.mockReturnValue({} as never);
 
       await service.createCheckout('org-1', dto, 'user-1');
 
-      expect(prisma.payment.create).toHaveBeenCalledWith(
+      expect(xenditService.createSubscriptionSession).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({
-            metadata: expect.objectContaining({
-              couponRedemptionId: 'redemption-2',
-            }),
+          metadata: expect.objectContaining({
+            couponRedemptionId: 'redemption-2',
           }),
         }),
       );
@@ -1287,7 +1271,7 @@ describe('BillingService', () => {
 
   // ---- createCheckout — userId in metadata ----
 
-  describe('createCheckout — userId in payment metadata', () => {
+  describe('createCheckout — userId in session metadata', () => {
     const dto = {
       planCode: 'pro',
       billingPeriod: 'monthly' as const,
@@ -1295,30 +1279,16 @@ describe('BillingService', () => {
       cancelUrl: 'https://app.com/cancel',
     };
 
-    it('should include userId in payment metadata', async () => {
+    it('should include userId in the session metadata', async () => {
       pricingEngine.calculatePriceBreakdown.mockResolvedValue({ ...mockBreakdown } as never);
       subscriptionsService.getActiveSubscription.mockResolvedValue(null as never);
-      xenditService.createInvoice.mockResolvedValue({
-        id: 'inv_meta_user',
-        external_id: 'ext-meta-user',
-        invoice_url: 'https://checkout.xendit.co/inv_meta_user',
-        status: 'PENDING',
-        amount: 999,
-        currency: 'PHP',
-        description: 'LIBERTASIAN Pro Plan — Monthly',
-      });
-      (prisma.payment.create as jest.Mock).mockResolvedValue(mockPayment);
-      (prisma.checkoutPriceSnapshot.create as jest.Mock).mockResolvedValue({ id: 'snap-1' });
+      subscriptionsService.getDefaultEntitlements.mockReturnValue({} as never);
 
       await service.createCheckout('org-1', dto, 'user-1');
 
-      expect(prisma.payment.create).toHaveBeenCalledWith(
+      expect(xenditService.createSubscriptionSession).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({
-            metadata: expect.objectContaining({
-              userId: 'user-1',
-            }),
-          }),
+          metadata: expect.objectContaining({ userId: 'user-1' }),
         }),
       );
     });
@@ -1334,52 +1304,26 @@ describe('BillingService', () => {
       cancelUrl: 'https://app.com/cancel',
     };
 
-    it('should use DB price when pricing engine returns database source', async () => {
+    it('should use the DB price (whole PHP) for the recurring session amount', async () => {
       const dbBreakdown = {
         ...mockBreakdown,
         basePriceAmount: 89900,
         finalAmount: 89900,
         planName: 'Professional',
         planId: 'plan-db-1',
-        lineItems: [
-          {
-            type: 'base_price',
-            label: 'Professional Plan — Monthly',
-            amount: 89900,
-            referenceId: 'plan-db-1',
-            referenceCode: 'pro',
-            metadata: { source: 'database' },
-          },
-        ],
       };
       pricingEngine.calculatePriceBreakdown.mockResolvedValue(dbBreakdown as never);
       subscriptionsService.getActiveSubscription.mockResolvedValue(null as never);
-      xenditService.createInvoice.mockResolvedValue({
-        id: 'inv_db_1',
-        external_id: 'ext-db-1',
-        invoice_url: 'https://checkout.xendit.co/inv_db_1',
-        status: 'PENDING',
-        amount: 899,
-        currency: 'PHP',
-        description: 'LIBERTASIAN Professional Plan — Monthly',
-      });
-      (prisma.payment.create as jest.Mock).mockResolvedValue({
-        ...mockPayment,
-        amount: 89900,
-      });
-      (prisma.checkoutPriceSnapshot.create as jest.Mock).mockResolvedValue({ id: 'snap-db' });
+      subscriptionsService.getDefaultEntitlements.mockReturnValue({} as never);
 
       await service.createCheckout('org-1', dto, 'user-1');
 
-      expect(xenditService.createInvoice).toHaveBeenCalledWith(
-        expect.objectContaining({
-          amount: 899,
-          description: 'LIBERTASIAN Professional Plan — Monthly',
-        }),
+      expect(xenditService.createSubscriptionSession).toHaveBeenCalledWith(
+        expect.objectContaining({ amount: 899 }),
       );
     });
 
-    it('should include planId in metadata when pricing engine returns planId', async () => {
+    it('should include planId in the session metadata when present', async () => {
       const dbBreakdown = {
         ...mockBreakdown,
         planId: 'plan-db-1',
@@ -1387,122 +1331,238 @@ describe('BillingService', () => {
       };
       pricingEngine.calculatePriceBreakdown.mockResolvedValue(dbBreakdown as never);
       subscriptionsService.getActiveSubscription.mockResolvedValue(null as never);
-      xenditService.createInvoice.mockResolvedValue({
-        id: 'inv_db_3',
-        external_id: 'ext-db-3',
-        invoice_url: 'https://checkout.xendit.co/inv_db_3',
-        status: 'PENDING',
-        amount: 999,
-        currency: 'PHP',
-        description: 'LIBERTASIAN Professional Plan — Monthly',
-      });
-      (prisma.payment.create as jest.Mock).mockResolvedValue(mockPayment);
-      (prisma.checkoutPriceSnapshot.create as jest.Mock).mockResolvedValue({ id: 'snap-db3' });
+      subscriptionsService.getDefaultEntitlements.mockReturnValue({} as never);
 
       await service.createCheckout('org-1', dto, 'user-1');
 
-      expect(xenditService.createInvoice).toHaveBeenCalledWith(
+      expect(xenditService.createSubscriptionSession).toHaveBeenCalledWith(
         expect.objectContaining({
-          metadata: expect.objectContaining({
-            planId: 'plan-db-1',
-          }),
+          metadata: expect.objectContaining({ planId: 'plan-db-1' }),
         }),
       );
     });
 
-    it('should use hardcoded pricing when pricing engine returns hardcoded source', async () => {
+    it('should NOT create a one-time invoice for plan purchases', async () => {
       pricingEngine.calculatePriceBreakdown.mockResolvedValue({ ...mockBreakdown } as never);
       subscriptionsService.getActiveSubscription.mockResolvedValue(null as never);
-      xenditService.createInvoice.mockResolvedValue({
-        id: 'inv_hardcoded',
-        external_id: 'ext-hardcoded',
-        invoice_url: 'https://checkout.xendit.co/inv_hardcoded',
-        status: 'PENDING',
-        amount: 999,
-        currency: 'PHP',
-        description: 'LIBERTASIAN Pro Plan — Monthly',
-      });
-      (prisma.payment.create as jest.Mock).mockResolvedValue(mockPayment);
-      (prisma.checkoutPriceSnapshot.create as jest.Mock).mockResolvedValue({ id: 'snap-hc' });
+      subscriptionsService.getDefaultEntitlements.mockReturnValue({} as never);
 
       await service.createCheckout('org-1', dto, 'user-1');
 
-      expect(xenditService.createInvoice).toHaveBeenCalledWith(
-        expect.objectContaining({
-          amount: 999,
-          description: 'LIBERTASIAN Pro Plan — Monthly',
-        }),
+      expect(xenditService.createInvoice).not.toHaveBeenCalled();
+      expect(xenditService.createSubscriptionSession).toHaveBeenCalledWith(
+        expect.objectContaining({ amount: 999 }),
+      );
+    });
+  });
+
+  // ---- Recurring webhook handlers ----
+
+  describe('recurring webhook handlers', () => {
+    const provisioningSub = {
+      id: 'sub-1',
+      organizationId: 'org-1',
+      planCode: 'pro',
+      billingPeriod: 'monthly',
+      status: 'provisioning',
+      xenditSubscriptionId: null,
+      currentPeriodEnd: null,
+    };
+
+    const activeSub = {
+      ...provisioningSub,
+      status: 'active',
+      xenditSubscriptionId: 'repl_1',
+      currentPeriodEnd: new Date('2026-07-01T00:00:00Z'),
+    };
+
+    beforeEach(() => {
+      subscriptionsService.getDefaultEntitlements.mockReturnValue({} as never);
+      // mockTransactionClient is module-level — clear accumulated calls so each
+      // test reads its own tx invocations.
+      mockTransactionClient.payment.create.mockClear();
+      mockTransactionClient.payment.update.mockClear();
+      mockTransactionClient.subscription.update.mockClear();
+      (prisma.$transaction as jest.Mock).mockImplementation(
+        async (cb: (tx: unknown) => Promise<void>) => cb(mockTransactionClient),
       );
     });
 
-    it('should create CheckoutPriceSnapshot with full breakdown data', async () => {
-      const fullBreakdown = {
-        ...mockBreakdown,
-        couponId: 'coupon-1',
-        couponCode: 'SAVE10',
-        couponDiscountAmount: 9990,
-        totalDiscountAmount: 9990,
-        finalAmount: 89910,
-        lineItems: [
-          {
-            type: 'base_price',
-            label: 'Pro Plan — Monthly',
-            amount: 99900,
-            referenceId: null,
-            referenceCode: 'pro',
-            metadata: { source: 'hardcoded' },
-          },
-          {
-            type: 'coupon_discount',
-            label: 'Coupon: SAVE10',
-            amount: -9990,
-            referenceId: 'coupon-1',
-            referenceCode: 'SAVE10',
-            metadata: { discountType: 'percentage', discountValue: 10 },
-          },
-        ],
-      };
-      pricingEngine.calculatePriceBreakdown.mockResolvedValue(fullBreakdown as never);
-      couponService.reserveCoupon.mockResolvedValue({ id: 'redemption-snap' } as never);
-      subscriptionsService.getActiveSubscription.mockResolvedValue(null as never);
-      xenditService.createInvoice.mockResolvedValue({
-        id: 'inv_snap',
-        external_id: 'ext-snap',
-        invoice_url: 'https://checkout.xendit.co/inv_snap',
-        status: 'PENDING',
-        amount: 899,
-        currency: 'PHP',
-        description: 'LIBERTASIAN Pro Plan — Monthly',
-      });
-      (prisma.payment.create as jest.Mock).mockResolvedValue({
-        ...mockPayment,
-        id: 'pay-snap',
-      });
-      (prisma.checkoutPriceSnapshot.create as jest.Mock).mockResolvedValue({ id: 'snap-full' });
+    describe('handleSubscriptionActivated', () => {
+      it('links by reference_id, sets the repl_ id + period, and ACTIVATEs', async () => {
+        // not found by xenditSubscriptionId, found by reference_id
+        (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(null);
+        (prisma.subscription.findUnique as jest.Mock).mockResolvedValue(provisioningSub);
 
-      await service.createCheckout(
-        'org-1',
-        { ...dto, couponCode: 'SAVE10' },
-        'user-1',
-      );
+        await service.handleSubscriptionActivated({
+          id: 'repl_1',
+          recurring_plan_id: 'repl_1',
+          reference_id: 'sub-1',
+          status: 'ACTIVE',
+        });
 
-      expect(prisma.checkoutPriceSnapshot.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            paymentId: 'pay-snap',
-            organizationId: 'org-1',
-            planCode: 'pro',
-            basePriceAmount: 99900,
-            couponId: 'coupon-1',
-            couponCode: 'SAVE10',
-            couponDiscountAmount: 9990,
-            totalDiscountAmount: 9990,
-            finalAmount: 89910,
-            currency: 'PHP',
-            discountsStacked: false,
-            priceSource: 'hardcoded',
+        expect(prisma.subscription.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { id: 'sub-1' },
+            data: expect.objectContaining({ xenditSubscriptionId: 'repl_1' }),
           }),
-        }),
+        );
+        expect(lifecycleService.executeTransition).toHaveBeenCalledWith(
+          expect.objectContaining({ subscriptionId: 'sub-1', action: SubscriptionAction.ACTIVATE }),
+        );
+        expect(entitlementService.invalidateEntitlementCache).toHaveBeenCalledWith('org-1');
+      });
+
+      it('opens the period (currentPeriodStart) but does NOT set currentPeriodEnd — cycle.succeeded owns the advance', async () => {
+        (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(null);
+        (prisma.subscription.findUnique as jest.Mock).mockResolvedValue(provisioningSub);
+
+        await service.handleSubscriptionActivated({
+          id: 'repl_1',
+          recurring_plan_id: 'repl_1',
+          reference_id: 'sub-1',
+          status: 'ACTIVE',
+        });
+
+        const updateArgs = (prisma.subscription.update as jest.Mock).mock.calls[0][0];
+        expect(updateArgs.data.currentPeriodStart).toBeInstanceOf(Date);
+        // The double-advance fix: activation must NOT set currentPeriodEnd, so
+        // the first recurring.cycle.succeeded advances it exactly one period.
+        expect(updateArgs.data).not.toHaveProperty('currentPeriodEnd');
+      });
+
+      it('is idempotent when the subscription is already active', async () => {
+        (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(activeSub);
+
+        await service.handleSubscriptionActivated({ id: 'repl_1', reference_id: 'sub-1' });
+
+        expect(lifecycleService.executeTransition).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('handleCycleSucceeded', () => {
+      it('records the cycle payment and advances the period by exactly one cycle', async () => {
+        (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(activeSub);
+        (prisma.payment.findUnique as jest.Mock).mockResolvedValue(null); // not seen before
+
+        await service.handleCycleSucceeded({
+          id: 'cycle_1',
+          recurring_plan_id: 'repl_1',
+          amount: 999,
+          currency: 'PHP',
+        });
+
+        // payment recorded with centavos amount (999 PHP → 99900)
+        expect(mockTransactionClient.payment.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ xenditInvoiceId: 'cycle_1', amount: 99900, status: 'succeeded' }),
+          }),
+        );
+        // period advanced exactly one month from the prior end (anchor),
+        // computed the same way the implementation does (tz-independent).
+        const updateArgs = (mockTransactionClient.subscription.update as jest.Mock).mock.calls[0][0];
+        const priorEnd = new Date('2026-07-01T00:00:00Z');
+        expect(updateArgs.data.currentPeriodStart).toEqual(priorEnd);
+        const expectedEnd = new Date(priorEnd);
+        expectedEnd.setMonth(expectedEnd.getMonth() + 1);
+        expect(updateArgs.data.currentPeriodEnd).toEqual(expectedEnd);
+        expect(usageQuotaService.resetQuotasForBillingCycle).toHaveBeenCalledWith('org-1');
+      });
+
+      it('first cycle (currentPeriodEnd null after activation) sets end to now + one period exactly once', async () => {
+        // After the double-advance fix, activation leaves currentPeriodEnd null.
+        (prisma.subscription.findFirst as jest.Mock).mockResolvedValue({
+          ...activeSub,
+          currentPeriodEnd: null,
+        });
+        (prisma.payment.findUnique as jest.Mock).mockResolvedValue(null);
+
+        const before = new Date();
+        await service.handleCycleSucceeded({
+          id: 'cycle_first',
+          recurring_plan_id: 'repl_1',
+          amount: 999,
+          currency: 'PHP',
+        });
+        const after = new Date();
+
+        expect(mockTransactionClient.payment.create).toHaveBeenCalledTimes(1);
+        const updateArgs = (mockTransactionClient.subscription.update as jest.Mock).mock.calls[0][0];
+        const start: Date = updateArgs.data.currentPeriodStart;
+        const end: Date = updateArgs.data.currentPeriodEnd;
+        // Period anchored on "now" (fallback), not left null, and advanced by
+        // exactly ONE month — not two.
+        expect(start.getTime()).toBeGreaterThanOrEqual(before.getTime());
+        expect(start.getTime()).toBeLessThanOrEqual(after.getTime());
+        const expectedEnd = new Date(start);
+        expectedEnd.setMonth(expectedEnd.getMonth() + 1);
+        // Within a small tolerance: anchor and start are separate `new Date()`
+        // reads a few ms apart when the prior end was null.
+        expect(Math.abs(end.getTime() - expectedEnd.getTime())).toBeLessThan(1000);
+      });
+
+      it('is idempotent on replay — already-recorded cycle does NOT advance the period (no double-charge)', async () => {
+        (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(activeSub);
+        (prisma.payment.findUnique as jest.Mock).mockResolvedValue({ id: 'pay-existing' });
+
+        await service.handleCycleSucceeded({ id: 'cycle_1', recurring_plan_id: 'repl_1', amount: 999 });
+
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+        expect(usageQuotaService.resetQuotasForBillingCycle).not.toHaveBeenCalled();
+      });
+
+      it('recovers a past_due subscription to active via RENEW', async () => {
+        (prisma.subscription.findFirst as jest.Mock).mockResolvedValue({
+          ...activeSub,
+          status: 'past_due',
+        });
+        (prisma.payment.findUnique as jest.Mock).mockResolvedValue(null);
+
+        await service.handleCycleSucceeded({ id: 'cycle_2', recurring_plan_id: 'repl_1', amount: 999 });
+
+        expect(lifecycleService.executeTransition).toHaveBeenCalledWith(
+          expect.objectContaining({ subscriptionId: 'sub-1', action: SubscriptionAction.RENEW }),
+        );
+      });
+    });
+
+    describe('handleCycleFailed', () => {
+      it('moves an active subscription to past_due via PAYMENT_FAILED', async () => {
+        (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(activeSub);
+
+        await service.handleCycleFailed({ id: 'cycle_3', recurring_plan_id: 'repl_1' });
+
+        expect(lifecycleService.executeTransition).toHaveBeenCalledWith(
+          expect.objectContaining({ subscriptionId: 'sub-1', action: SubscriptionAction.PAYMENT_FAILED }),
+        );
+      });
+    });
+
+    describe('handlePlanDeactivated', () => {
+      it('cancels immediately and creates the free fallback', async () => {
+        (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(activeSub);
+
+        await service.handlePlanDeactivated({ id: 'repl_1' });
+
+        expect(lifecycleService.executeTransition).toHaveBeenCalledWith(
+          expect.objectContaining({ subscriptionId: 'sub-1', action: SubscriptionAction.CANCEL_IMMEDIATELY }),
+        );
+        expect(prisma.subscription.create).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ planCode: 'free' }) }),
+        );
+        expect(entitlementService.invalidateEntitlementCache).toHaveBeenCalledWith('org-1');
+      });
+    });
+
+    it('cancelSubscription deactivates the Xendit plan in addition to the internal transition', async () => {
+      subscriptionsService.getActiveSubscription.mockResolvedValue(activeSub as never);
+      (prisma.organization.findUnique as jest.Mock).mockResolvedValue(null);
+
+      await service.cancelSubscription('org-1', 'user-1', false);
+
+      expect(xenditService.cancelSubscription).toHaveBeenCalledWith('repl_1');
+      expect(lifecycleService.executeTransition).toHaveBeenCalledWith(
+        expect.objectContaining({ action: SubscriptionAction.CANCEL_IMMEDIATELY }),
       );
     });
   });

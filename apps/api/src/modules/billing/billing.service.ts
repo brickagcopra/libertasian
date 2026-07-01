@@ -17,8 +17,13 @@ import { EntitlementService } from '../subscriptions/entitlement.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { SubscriptionLifecycleService } from '../subscriptions/subscription-lifecycle.service';
 import { SubscriptionAction, SubscriptionState } from '../subscriptions/subscription-state-machine';
+import { UsageQuotaService } from '../subscriptions/usage-quota.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { XenditService, type XenditRefundData } from './xendit.service';
+import {
+  XenditService,
+  type XenditRefundData,
+  type XenditRecurringData,
+} from './xendit.service';
 import type { CreateCheckoutDto, PreviewCheckoutDto } from './dto';
 
 @Injectable()
@@ -36,6 +41,7 @@ export class BillingService {
     private readonly lifecycleService: SubscriptionLifecycleService,
     private readonly notificationsService: NotificationsService,
     private readonly entitlementService: EntitlementService,
+    private readonly usageQuotaService: UsageQuotaService,
   ) {}
 
   // ---- Subscription ----
@@ -129,95 +135,115 @@ export class BillingService {
     const periodLabel = dto.billingPeriod === 'annual' ? 'Annual' : 'Monthly';
     const description = `LIBERTASIAN ${breakdown.planName} Plan — ${periodLabel}`;
 
-    // 3. Create Xendit invoice with final amount
-    // Xendit expects whole currency units (PHP), our DB stores centavos → divide by 100
-    const externalId = randomUUID();
-    const invoice = await this.xenditService.createInvoice({
-      amount: Math.round(breakdown.finalAmount / 100),
-      currency: breakdown.currency,
-      description,
-      externalId,
-      metadata: {
-        organizationId,
-        userId,
-        planCode: dto.planCode,
-        billingPeriod: dto.billingPeriod,
-        ...(breakdown.planId && { planId: breakdown.planId }),
-        ...(couponRedemptionId && { couponRedemptionId }),
-        ...(breakdown.promotionId && { promotionId: breakdown.promotionId }),
-      },
-      successRedirectUrl: dto.successUrl,
-      failureRedirectUrl: dto.cancelUrl,
-    });
+    // 3. Resolve (or create) the org's Xendit Customer. Reuse the customer id
+    //    from any prior subscription so re-subscriptions map to one customer.
+    const xenditCustomerId = await this.resolveXenditCustomer(organizationId, userId);
 
-    // 4. Create local Payment record
-    const payment = await this.prisma.payment.create({
+    // 4. Create the local Subscription up-front in `provisioning`. The Xendit
+    //    plan's reference_id is this row's id, so the `plan.activated` webhook
+    //    can link back deterministically.
+    const provisioningEntitlements =
+      this.subscriptionsService.getDefaultEntitlements(dto.planCode);
+    const subscription = await this.prisma.subscription.create({
       data: {
         organizationId,
-        xenditInvoiceId: invoice.id,
-        amount: breakdown.finalAmount,
+        planCode: dto.planCode,
+        ...(breakdown.planId && { planId: breakdown.planId }),
+        status: SubscriptionState.PROVISIONING,
+        billingPeriod: dto.billingPeriod,
+        seats: this.getSeatsForPlan(dto.planCode),
+        xenditCustomerId,
+        entitlementsJson: provisioningEntitlements as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    // 5. Create the Xendit SUBSCRIPTION-mode Payment Session (auto-debit).
+    //    Xendit owns scheduling, retries and dunning thereafter. The `repl_`
+    //    recurring-plan id is NOT known yet — it arrives on plan.activated and
+    //    is linked back via reference_id (this subscription's id). Amount is
+    //    whole PHP (centavos / 100).
+    let session;
+    try {
+      session = await this.xenditService.createSubscriptionSession({
+        referenceId: subscription.id,
+        customerId: xenditCustomerId,
+        amount: Math.round(breakdown.finalAmount / 100),
         currency: breakdown.currency,
-        status: 'pending',
-        paymentType: currentSub ? 'upgrade' : 'subscription',
+        interval: dto.billingPeriod === 'annual' ? 'YEAR' : 'MONTH',
+        intervalCount: 1,
         description,
+        successReturnUrl: dto.successUrl,
+        cancelReturnUrl: dto.cancelUrl,
         metadata: {
+          organizationId,
+          userId,
           planCode: dto.planCode,
           billingPeriod: dto.billingPeriod,
-          xenditInvoiceId: invoice.id,
-          externalId,
-          userId,
+          subscriptionId: subscription.id,
           ...(breakdown.planId && { planId: breakdown.planId }),
           ...(couponRedemptionId && { couponRedemptionId }),
           ...(breakdown.promotionId && { promotionId: breakdown.promotionId }),
         },
-      },
-    });
-
-    // 5. Create CheckoutPriceSnapshot for audit trail
-    await this.prisma.checkoutPriceSnapshot.create({
-      data: {
-        paymentId: payment.id,
-        organizationId,
-        planCode: breakdown.planCode,
-        planId: breakdown.planId,
-        planName: breakdown.planName,
-        billingPeriod: breakdown.billingPeriod,
-        basePriceAmount: breakdown.basePriceAmount,
-        couponId: breakdown.couponId,
-        couponCode: breakdown.couponCode,
-        couponDiscountAmount: breakdown.couponDiscountAmount,
-        promotionId: breakdown.promotionId,
-        promotionDiscountAmount: breakdown.promotionDiscountAmount,
-        totalDiscountAmount: breakdown.totalDiscountAmount,
-        finalAmount: breakdown.finalAmount,
-        currency: breakdown.currency,
-        discountsStacked: breakdown.discountsStacked,
-        priceSource: breakdown.lineItems[0]?.metadata?.['source'] === 'database' ? 'database' : 'hardcoded',
-        lineItemsJson: breakdown.lineItems as unknown as Prisma.InputJsonValue,
-      },
-    });
+      });
+    } catch (err) {
+      // Roll back the provisioning row so a failed Xendit call doesn't leave an
+      // orphaned subscription behind.
+      await this.prisma.subscription.delete({ where: { id: subscription.id } }).catch(() => undefined);
+      throw err;
+    }
 
     await this.auditService.log({
       organizationId,
       actorUserId: userId,
       actorType: 'user',
       action: 'billing.checkout_created',
-      entityType: 'payment',
-      entityId: payment.id,
+      entityType: 'subscription',
+      entityId: subscription.id,
       metadata: {
         planCode: dto.planCode,
         billingPeriod: dto.billingPeriod,
         finalAmount: breakdown.finalAmount,
         couponCode: breakdown.couponCode,
         promotionId: breakdown.promotionId,
+        xenditSessionId: session.payment_session_id,
       },
     });
 
     return {
-      checkoutUrl: invoice.invoice_url,
-      checkoutSessionId: invoice.id,
-      paymentId: payment.id,
+      checkoutUrl: XenditService.hostedUrl(session),
+      checkoutSessionId: session.payment_session_id,
+      subscriptionId: subscription.id,
     };
+  }
+
+  /**
+   * Return the org's Xendit Customer id, creating one if none exists yet.
+   * The id is stored on every Subscription row, so we read it back from the
+   * most recent row that has one.
+   */
+  private async resolveXenditCustomer(
+    organizationId: string,
+    userId: string,
+  ): Promise<string> {
+    const existing = await this.prisma.subscription.findFirst({
+      where: { organizationId, xenditCustomerId: { not: null } },
+      orderBy: { createdAt: 'desc' },
+      select: { xenditCustomerId: true },
+    });
+    if (existing?.xenditCustomerId) {
+      return existing.xenditCustomerId;
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true, fullName: true },
+    });
+    const customer = await this.xenditService.createCustomer({
+      referenceId: organizationId,
+      email: user?.email,
+      givenNames: user?.fullName ?? undefined,
+    });
+    return customer.id;
   }
 
   // ---- Webhook Handlers ----
@@ -685,6 +711,313 @@ export class BillingService {
     );
   }
 
+  // ---- Recurring subscription webhook handlers ----
+
+  /**
+   * `recurring.plan.activated` — the customer authorised the plan and the first
+   * charge cleared. Move the provisioning Subscription → active.
+   */
+  async handleSubscriptionActivated(data: XenditRecurringData) {
+    const sub = await this.findSubscriptionForPlan(data);
+    if (!sub) {
+      this.logger.warn(`plan.activated: no Subscription for plan ${data.id}, skipping`);
+      return;
+    }
+
+    if (sub.status === SubscriptionState.ACTIVE) {
+      this.logger.log(`plan.activated: subscription ${sub.id} already active (idempotent)`);
+      return;
+    }
+
+    const now = new Date();
+    const planId = data.recurring_plan_id ?? data.plan_id ?? data.id;
+
+    await this.prisma.subscription.update({
+      where: { id: sub.id },
+      data: {
+        // Capture the repl_ recurring-plan id now (not known at checkout time).
+        xenditSubscriptionId: sub.xenditSubscriptionId ?? planId,
+        // Open the first period at activation but DO NOT set currentPeriodEnd
+        // here. `recurring.cycle.succeeded` is the sole owner of
+        // currentPeriodEnd: Xendit emits cycle.succeeded for the immediate
+        // (activation) charge too, and handleCycleSucceeded's anchor falls back
+        // to `now` when currentPeriodEnd is null — so the first cycle correctly
+        // sets now + 1 period. Setting it here as well would net TWO periods for
+        // the first cycle (activation advance + cycle.succeeded advance).
+        currentPeriodStart: now,
+      },
+    });
+
+    // provisioning → active (idempotency above guards against re-activation).
+    await this.lifecycleService.executeTransition({
+      subscriptionId: sub.id,
+      action: SubscriptionAction.ACTIVATE,
+      actorType: 'system',
+      reason: 'Xendit recurring plan activated',
+      metadata: { xenditSubscriptionId: data.id },
+    });
+
+    // Persist the saved instrument if Xendit supplied one.
+    await this.persistPaymentMethod(sub.organizationId, data);
+
+    await this.entitlementService.invalidateEntitlementCache(sub.organizationId);
+
+    await this.auditService.log({
+      organizationId: sub.organizationId,
+      actorType: 'system',
+      action: 'billing.subscription_activated',
+      entityType: 'subscription',
+      entityId: sub.id,
+      metadata: { xenditSubscriptionId: data.id, planCode: sub.planCode },
+    });
+
+    this.logger.log(`Subscription ${sub.id} activated via Xendit plan ${data.id}`);
+  }
+
+  /**
+   * `recurring.cycle.succeeded` / `payment.succeeded` — a billing cycle was
+   * charged. Idempotently record the Payment, advance the period by exactly one
+   * cycle, reset usage quotas, and recover the sub from past_due if needed.
+   *
+   * Idempotency is anchored on the cycle id (stored as the Payment's external
+   * id): a replayed webhook finds the existing Payment and returns BEFORE
+   * advancing the period — this is the guard against double-advance / double
+   * charge.
+   */
+  async handleCycleSucceeded(data: XenditRecurringData) {
+    const sub = await this.findSubscriptionForPlan(data);
+    if (!sub) {
+      this.logger.warn(`cycle.succeeded: no Subscription for plan ${data.plan_id ?? data.recurring_plan_id ?? data.id}, skipping`);
+      return;
+    }
+
+    // IDEMPOTENCY: the cycle/charge id is unique per cycle.
+    const cycleChargeId = data.id;
+    const existing = await this.prisma.payment.findUnique({
+      where: { xenditInvoiceId: cycleChargeId },
+    });
+    if (existing) {
+      this.logger.log(`cycle.succeeded: payment ${cycleChargeId} already recorded — skipping period advance`);
+      return;
+    }
+
+    const amountCentavos = Math.round(Number(data.amount ?? 0) * 100);
+    // Advance from the existing period end (anchor) to avoid drift; fall back to
+    // now for the very first cycle if the period was not yet set.
+    const anchor = sub.currentPeriodEnd ?? new Date();
+    const newPeriodStart = sub.currentPeriodEnd ?? new Date();
+    const newPeriodEnd = this.addBillingPeriod(anchor, sub.billingPeriod);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.payment.create({
+        data: {
+          organizationId: sub.organizationId,
+          subscriptionId: sub.id,
+          xenditInvoiceId: cycleChargeId,
+          amount: amountCentavos,
+          currency: data.currency ?? 'PHP',
+          status: 'succeeded',
+          paymentType: 'subscription',
+          description: `Recurring cycle — ${sub.planCode}`,
+          paidAt: new Date(),
+          metadata: {
+            xenditSubscriptionId: sub.xenditSubscriptionId,
+            cycleId: cycleChargeId,
+          },
+        },
+      });
+
+      await tx.subscription.update({
+        where: { id: sub.id },
+        data: { currentPeriodStart: newPeriodStart, currentPeriodEnd: newPeriodEnd },
+      });
+    });
+
+    // Reset usage quotas for the new period.
+    try {
+      await this.usageQuotaService.resetQuotasForBillingCycle(sub.organizationId);
+    } catch (err) {
+      this.logger.error(`Failed to reset quotas for org ${sub.organizationId} after cycle`, err);
+    }
+
+    // If we were past_due / in grace, a successful charge recovers us to active.
+    if (
+      sub.status === SubscriptionState.PAST_DUE ||
+      sub.status === SubscriptionState.GRACE_PERIOD
+    ) {
+      try {
+        await this.lifecycleService.executeTransition({
+          subscriptionId: sub.id,
+          action: SubscriptionAction.RENEW,
+          actorType: 'system',
+          reason: 'Xendit cycle succeeded — recovered from past_due',
+          metadata: { cycleId: cycleChargeId },
+        });
+      } catch (err) {
+        this.logger.warn(`Could not recover subscription ${sub.id} from ${sub.status}: ${err}`);
+      }
+    }
+
+    await this.auditService.log({
+      organizationId: sub.organizationId,
+      actorType: 'system',
+      action: 'billing.cycle_succeeded',
+      entityType: 'subscription',
+      entityId: sub.id,
+      metadata: { cycleId: cycleChargeId, amount: amountCentavos },
+    });
+
+    this.logger.log(
+      `Cycle ${cycleChargeId} recorded for subscription ${sub.id}; period advanced to ${newPeriodEnd.toISOString()}`,
+    );
+  }
+
+  /**
+   * `recurring.cycle.failed` — Xendit's auto-debit (and its own retries) failed.
+   * Move to past_due; the existing grace_period / suspend lifecycle events take
+   * over dunning fallback from there.
+   */
+  async handleCycleFailed(data: XenditRecurringData) {
+    const sub = await this.findSubscriptionForPlan(data);
+    if (!sub) {
+      this.logger.warn(`cycle.failed: no Subscription for plan ${data.plan_id ?? data.id}, skipping`);
+      return;
+    }
+
+    if (sub.status !== SubscriptionState.ACTIVE) {
+      this.logger.log(`cycle.failed: subscription ${sub.id} not active (${sub.status}) — no transition`);
+      return;
+    }
+
+    try {
+      await this.lifecycleService.executeTransition({
+        subscriptionId: sub.id,
+        action: SubscriptionAction.PAYMENT_FAILED,
+        actorType: 'system',
+        reason: 'Xendit recurring cycle failed',
+        metadata: { cycleId: data.id },
+      });
+    } catch (err) {
+      this.logger.warn(`Could not transition subscription ${sub.id} to past_due: ${err}`);
+    }
+
+    await this.auditService.log({
+      organizationId: sub.organizationId,
+      actorType: 'system',
+      action: 'billing.cycle_failed',
+      entityType: 'subscription',
+      entityId: sub.id,
+      metadata: { cycleId: data.id },
+    });
+  }
+
+  /**
+   * `recurring.plan.inactivated` — the plan was deactivated at Xendit (e.g.
+   * exhausted dunning, or our own cancel call). Cancel + downgrade to free.
+   */
+  async handlePlanDeactivated(data: XenditRecurringData) {
+    const sub = await this.findSubscriptionForPlan(data);
+    if (!sub) {
+      this.logger.warn(`plan.inactivated: no Subscription for plan ${data.id}, skipping`);
+      return;
+    }
+
+    if (
+      sub.status === SubscriptionState.CANCELLED ||
+      sub.status === SubscriptionState.EXPIRED
+    ) {
+      this.logger.log(`plan.inactivated: subscription ${sub.id} already terminal (${sub.status})`);
+      return;
+    }
+
+    try {
+      await this.lifecycleService.executeTransition({
+        subscriptionId: sub.id,
+        action: SubscriptionAction.CANCEL_IMMEDIATELY,
+        actorType: 'system',
+        reason: 'Xendit recurring plan deactivated',
+        metadata: { xenditSubscriptionId: data.id },
+      });
+      await this.createFreeFallback(sub.organizationId);
+      await this.entitlementService.invalidateEntitlementCache(sub.organizationId);
+    } catch (err) {
+      this.logger.error(`Failed to downgrade subscription ${sub.id} on plan deactivation`, err);
+    }
+
+    await this.auditService.log({
+      organizationId: sub.organizationId,
+      actorType: 'system',
+      action: 'billing.subscription_deactivated',
+      entityType: 'subscription',
+      entityId: sub.id,
+      metadata: { xenditSubscriptionId: data.id },
+    });
+  }
+
+  /** Link a recurring webhook back to a local Subscription row. */
+  private async findSubscriptionForPlan(data: XenditRecurringData) {
+    const planId = data.plan_id ?? data.recurring_plan_id ?? data.id;
+    // Prefer the plan id; fall back to our reference_id (the local sub id).
+    const bySubId = await this.prisma.subscription.findFirst({
+      where: { xenditSubscriptionId: planId },
+    });
+    if (bySubId) return bySubId;
+    if (data.reference_id) {
+      return this.prisma.subscription.findUnique({ where: { id: data.reference_id } });
+    }
+    return null;
+  }
+
+  /** Persist the saved card / e-wallet instrument from an activation payload. */
+  private async persistPaymentMethod(organizationId: string, data: XenditRecurringData) {
+    const pmId =
+      (data['payment_method_id'] as string | undefined) ??
+      (data['payment_token_id'] as string | undefined);
+    if (!pmId) return;
+
+    const type = ((data['payment_method_type'] as string) ?? 'card').toLowerCase();
+    try {
+      await this.prisma.paymentMethod.upsert({
+        where: { xenditPaymentMethodId: pmId },
+        create: {
+          organizationId,
+          xenditPaymentMethodId: pmId,
+          type: type.includes('ewallet') ? 'gcash' : 'card',
+          isDefault: true,
+          isActive: true,
+        },
+        update: { isActive: true },
+      });
+    } catch (err) {
+      this.logger.warn(`Could not persist payment method ${pmId} for org ${organizationId}: ${err}`);
+    }
+  }
+
+  /** Create the free-tier fallback subscription after an immediate cancel. */
+  private async createFreeFallback(organizationId: string) {
+    const freeEntitlements = this.subscriptionsService.getDefaultEntitlements('free');
+    await this.prisma.subscription.create({
+      data: {
+        organizationId,
+        planCode: 'free',
+        status: 'active',
+        seats: 1,
+        entitlementsJson: freeEntitlements as unknown as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  /** Add one billing period (month/year) to a date. */
+  private addBillingPeriod(from: Date, billingPeriod: string): Date {
+    const d = new Date(from);
+    if (billingPeriod === 'annual') {
+      d.setFullYear(d.getFullYear() + 1);
+    } else {
+      d.setMonth(d.getMonth() + 1);
+    }
+    return d;
+  }
+
   // ---- Cancel Subscription ----
 
   async cancelSubscription(
@@ -706,6 +1039,23 @@ export class BillingService {
     const action = cancelAtPeriodEnd
       ? SubscriptionAction.REQUEST_CANCEL
       : SubscriptionAction.CANCEL_IMMEDIATELY;
+
+    // Deactivate the Xendit recurring plan so NO further auto-debit occurs, in
+    // both modes. The cancelAtPeriodEnd vs immediate distinction is about OUR
+    // entitlement state (REQUEST_CANCEL keeps access until currentPeriodEnd;
+    // CANCEL_IMMEDIATELY revokes now), not about Xendit continuing to charge.
+    if (sub.xenditSubscriptionId) {
+      try {
+        await this.xenditService.cancelSubscription(sub.xenditSubscriptionId);
+      } catch (err) {
+        // Don't block our own cancellation if Xendit is unreachable; the plan
+        // can be reconciled later and the internal state is the source of truth.
+        this.logger.error(
+          `Failed to deactivate Xendit plan ${sub.xenditSubscriptionId} for subscription ${sub.id}`,
+          err,
+        );
+      }
+    }
 
     await this.lifecycleService.executeTransition({
       subscriptionId: sub.id,
