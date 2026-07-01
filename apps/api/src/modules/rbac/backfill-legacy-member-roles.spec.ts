@@ -193,7 +193,7 @@ describe('backfill_legacy_member_roles migration', () => {
   });
 
   describe('downstream authorization after backfill', () => {
-    it('an orphaned owner gains admin:* perms and resolves isPlatformAdmin=true', async () => {
+    it('an orphaned owner regains tenant perms; isPlatformAdmin stays false', async () => {
       // 1. Orphaned owner: legacy role='owner', zero member_roles.
       const members: MemberRow[] = [
         { id: 'member-owner', role: 'owner', userId: 'u-owner' },
@@ -206,8 +206,10 @@ describe('backfill_legacy_member_roles migration', () => {
 
       // 2. Resolve effective permissions through the REAL service, with Prisma
       //    mocked to reflect the post-backfill member_roles state. The owner
-      //    system role grants ALL permissions (see rbac-seed ROLE_PERMISSIONS),
-      //    which includes the admin:* family.
+      //    system role grants all TENANT permissions — the admin:* family was
+      //    stripped by 20260702120000_strip_owner_platform_admin (platform
+      //    admin now comes only from the allowlisted system 'admin' role; see
+      //    strip-owner-platform-admin.spec.ts).
       const prisma = {
         memberRole: {
           findMany: jest
@@ -217,10 +219,8 @@ describe('backfill_legacy_member_roles migration', () => {
         roleHierarchy: { findMany: jest.fn().mockResolvedValue([]) },
         rolePermission: {
           findMany: jest.fn().mockResolvedValue([
-            { permission: { code: 'admin:dashboard' } },
-            { permission: { code: 'admin:billing' } },
-            { permission: { code: 'admin:users' } },
             { permission: { code: 'documents:read' } },
+            { permission: { code: 'matters:read' } },
             { permission: { code: 'subscriptions:manage' } },
           ]),
         },
@@ -233,13 +233,17 @@ describe('backfill_legacy_member_roles migration', () => {
       const service = new PermissionsService(prisma as never, cache as never);
       const perms = await service.getEffectivePermissions('member-owner');
 
-      // 3a. getEffectivePermissions includes admin:* perms.
-      expect(perms).toEqual(expect.arrayContaining(['admin:dashboard', 'admin:billing']));
+      // 3a. getEffectivePermissions restores the owner's tenant perms (the
+      //     paywall-preview bug this backfill fixed).
+      expect(perms).toEqual(
+        expect.arrayContaining(['documents:read', 'subscriptions:manage']),
+      );
 
       // 3b. The jwt.strategy derivation `perms.some(p => p.startsWith('admin:'))`
-      //     — i.e. isPlatformAdmin — now resolves true.
+      //     — i.e. isPlatformAdmin — stays false: ownership no longer confers
+      //     platform administration.
       const isPlatformAdmin = perms.some((p) => p.startsWith('admin:'));
-      expect(isPlatformAdmin).toBe(true);
+      expect(isPlatformAdmin).toBe(false);
     });
 
     it('without backfill an orphaned owner has no perms and isPlatformAdmin=false', async () => {

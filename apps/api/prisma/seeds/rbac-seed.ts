@@ -218,9 +218,12 @@ function byResource(res: string): string[] {
   return PERMISSIONS.filter((p) => p.resource === res).map((p) => p.code);
 }
 
-const ROLE_PERMISSIONS: Record<string, string[]> = {
-  // Owner: ALL permissions
-  owner: ALL_CODES,
+export const ROLE_PERMISSIONS: Record<string, string[]> = {
+  // Owner: ALL tenant permissions EXCEPT platform admin:* codes. Personal-
+  // workspace owners are linked to this shared system role, so it must NOT
+  // confer platform administration. Real admins are granted explicitly (see
+  // migration 20260702120000_strip_owner_platform_admin), never via ownership.
+  owner: ALL_CODES.filter((c) => !c.startsWith('admin:')),
 
   // Admin: all except billing:manage and org transfer
   admin: ALL_CODES.filter(
@@ -332,8 +335,13 @@ for (const role of Object.keys(ROLE_PERMISSIONS)) {
 // Hierarchy Edges (parent → child)
 // ---------------------------------------------------------------------------
 
-const HIERARCHY_EDGES: Array<{ parent: string; child: string }> = [
-  { parent: 'owner', child: 'admin' },
+// NOTE: deliberately NO owner→admin edge. PermissionsService resolves
+// effective permissions by inheriting DOWN the hierarchy (parent gains child
+// permissions), so an owner→admin edge would hand every personal-workspace
+// owner the admin role's platform admin:* codes — the exact leak that
+// migration 20260702120000_strip_owner_platform_admin removes. Owner loses
+// nothing: it holds every tenant permission directly (see ROLE_PERMISSIONS).
+export const HIERARCHY_EDGES: Array<{ parent: string; child: string }> = [
   { parent: 'admin', child: 'editor' },
   { parent: 'admin', child: 'reviewer' },
   { parent: 'editor', child: 'member' },
