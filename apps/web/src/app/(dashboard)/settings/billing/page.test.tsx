@@ -1,96 +1,153 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen } from '@testing-library/react';
 
 /**
- * Billing Settings Page integration tests.
- * Per PRD: Plan management, subscription lifecycle, invoice history.
- * Per CLAUDE.md: Xendit webhook validation, subscription enforcement.
+ * Billing Settings Page — recurring-subscription UI.
+ * Covers the dunning banner (past_due / grace_period), auto-renew vs.
+ * cancel-at-period-end period copy, and the payment-method removal guard.
+ * Hooks are mocked so the page renders without a live QueryClient / API.
  */
 
-vi.mock('@/lib/api-client', () => ({
-  apiClient: { get: vi.fn(), post: vi.fn(), patch: vi.fn() },
+// Mutable fixtures — reset in beforeEach, varied per test.
+type Sub = {
+  planCode: string;
+  status: string;
+  billingPeriod: string;
+  currentPeriodEnd: string | null;
+  seats: number;
+  cancelAtPeriodEnd: boolean;
+} | null;
+
+let mockSubscription: Sub = null;
+let mockMethods: Array<Record<string, unknown>> = [];
+
+vi.mock('@/features/billing/hooks/use-subscription', () => ({
+  useSubscription: () => ({ data: mockSubscription, isLoading: false }),
+  meetsMinimumTier: () => false,
 }));
 
-vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(),
-  usePathname: () => '/settings/billing',
+vi.mock('@/features/billing/hooks/use-plans', () => ({
+  usePlanInfoList: () => ({ plans: [], isLoading: false }),
 }));
 
-vi.mock('@/stores/auth-store', () => ({
-  useAuthStore: () => ({
-    user: { id: 'user-1', email: 'test@test.com', fullName: 'Test User' },
-    accessToken: 'test-token',
-    isAuthenticated: true,
+const mutation = () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
+
+vi.mock('@/features/billing/hooks/use-billing', () => ({
+  useCreateCheckout: () => mutation(),
+  useCheckoutPreview: () => mutation(),
+  useValidateCoupon: () => mutation(),
+  useEligiblePromotions: () => mutation(),
+  useCancelSubscription: () => mutation(),
+  usePaymentMethods: () => ({ data: mockMethods, isLoading: false, error: null }),
+  useSetDefaultPaymentMethod: () => mutation(),
+  useDeletePaymentMethod: () => mutation(),
+  useInvoices: () => ({
+    data: { data: [], meta: { hasNext: false } },
+    isLoading: false,
+    error: null,
   }),
 }));
 
-describe('Billing Settings Page', () => {
+import BillingPage from './page';
+
+const activeSub: NonNullable<Sub> = {
+  planCode: 'pro',
+  status: 'active',
+  billingPeriod: 'monthly',
+  currentPeriodEnd: '2026-07-15T00:00:00Z',
+  seats: 1,
+  cancelAtPeriodEnd: false,
+};
+
+const cardMethod = {
+  id: 'pm-1',
+  type: 'card',
+  brand: 'visa',
+  last4: '4242',
+  expiryMonth: 12,
+  expiryYear: 2029,
+  billingEmail: null,
+  isDefault: true,
+  isActive: true,
+  createdAt: '2026-06-01T00:00:00Z',
+};
+
+const bannerText = /process your latest payment/i;
+
+describe('BillingPage — recurring subscription UI', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockSubscription = null;
+    mockMethods = [];
   });
 
-  describe('Plan display', () => {
-    it('should validate plan structure', () => {
-      const plan = {
-        id: 'plan-pro',
-        name: 'Pro',
-        price: 999,
-        currency: 'PHP',
-        interval: 'monthly',
-        features: ['Unlimited search', 'AI answers', 'Digest generation'],
-      };
-      expect(plan.price).toBeGreaterThan(0);
-      expect(plan.currency).toBe('PHP');
-      expect(plan.interval).toMatch(/^(monthly|yearly)$/);
-      expect(plan.features.length).toBeGreaterThan(0);
+  describe('dunning banner', () => {
+    it('shows the dunning banner when status is past_due', () => {
+      mockSubscription = { ...activeSub, status: 'past_due' };
+      render(<BillingPage />);
+      expect(screen.getByText(bannerText)).toBeInTheDocument();
     });
 
-    it('should show yearly discount', () => {
-      const monthlyPrice = 999;
-      const yearlyPrice = 9990;
-      const yearlyEquivalent = yearlyPrice / 12;
-      expect(yearlyEquivalent).toBeLessThan(monthlyPrice);
-    });
-  });
-
-  describe('Subscription status', () => {
-    it('should validate subscription status values', () => {
-      const validStatuses = ['active', 'trialing', 'past_due', 'cancelled', 'expired'];
-      expect(validStatuses.includes('active')).toBe(true);
-      expect(validStatuses.includes('invalid')).toBe(false);
+    it('shows the dunning banner when status is grace_period', () => {
+      mockSubscription = { ...activeSub, status: 'grace_period' };
+      render(<BillingPage />);
+      expect(screen.getByText(bannerText)).toBeInTheDocument();
     });
 
-    it('should show warning for past_due status', () => {
-      const status = 'past_due';
-      const showWarning = status === 'past_due' || status === 'expired';
-      expect(showWarning).toBe(true);
+    it('hides the dunning banner when status is active', () => {
+      mockSubscription = { ...activeSub };
+      render(<BillingPage />);
+      expect(screen.queryByText(bannerText)).not.toBeInTheDocument();
+    });
+
+    it('still renders the plan card (not "no subscription") while past_due', () => {
+      mockSubscription = { ...activeSub, status: 'past_due' };
+      render(<BillingPage />);
+      // Plan name + a dunning badge render alongside the banner.
+      expect(screen.getByText('Pro')).toBeInTheDocument();
+      expect(screen.getByText('Past due')).toBeInTheDocument();
     });
   });
 
-  describe('Invoice list', () => {
-    it('should validate invoice structure', () => {
-      const invoice = {
-        id: 'inv-1',
-        amount: 999,
-        currency: 'PHP',
-        status: 'paid',
-        paidAt: '2026-03-01T00:00:00Z',
-        invoiceUrl: 'https://checkout.xendit.co/inv/123',
-      };
-      expect(invoice.amount).toBeGreaterThan(0);
-      expect(invoice.status).toMatch(/^(paid|pending|failed|refunded)$/);
+  describe('period-end copy', () => {
+    it('shows auto-renew copy for an active, non-cancelling subscription', () => {
+      mockSubscription = { ...activeSub };
+      render(<BillingPage />);
+      expect(screen.getByText(/renews automatically on/i)).toBeInTheDocument();
+      expect(screen.queryByText(/won.t renew/i)).not.toBeInTheDocument();
+    });
+
+    it('switches to end-of-access copy when cancelAtPeriodEnd is set', () => {
+      mockSubscription = { ...activeSub, cancelAtPeriodEnd: true };
+      render(<BillingPage />);
+      expect(screen.getByText(/won.t renew/i)).toBeInTheDocument();
+      expect(screen.getByText(/subscribe again/i)).toBeInTheDocument();
+      expect(screen.queryByText(/renews automatically on/i)).not.toBeInTheDocument();
     });
   });
 
-  describe('Cancellation flow', () => {
-    it('should require confirmation for cancellation', () => {
-      const confirmationRequired = true;
-      expect(confirmationRequired).toBe(true);
+  describe('payment method removal guard', () => {
+    it('disables Remove for the method backing an active subscription', () => {
+      mockSubscription = { ...activeSub };
+      mockMethods = [cardMethod];
+      render(<BillingPage />);
+      expect(screen.getByRole('button', { name: /remove/i })).toBeDisabled();
     });
 
-    it('should validate cancellation reason', () => {
-      const reasons = ['too_expensive', 'not_using', 'missing_features', 'other'];
-      expect(reasons.length).toBeGreaterThan(0);
+    it('renders the card method label cleanly', () => {
+      mockSubscription = { ...activeSub };
+      mockMethods = [cardMethod];
+      render(<BillingPage />);
+      expect(screen.getByText(/visa ending in 4242/i)).toBeInTheDocument();
+    });
+
+    it('renders an e-wallet method label cleanly', () => {
+      mockSubscription = { ...activeSub };
+      mockMethods = [
+        { ...cardMethod, type: 'gcash', brand: null, last4: null, expiryMonth: null, expiryYear: null },
+      ];
+      render(<BillingPage />);
+      expect(screen.getByText('GCash')).toBeInTheDocument();
     });
   });
 });
