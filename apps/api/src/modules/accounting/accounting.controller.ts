@@ -10,9 +10,11 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { RequiredPermissions } from '../../common/decorators/permissions.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { MfaGuard } from '../../common/guards/mfa.guard';
+import { TenantGuard } from '../../common/guards/tenant.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { AccountingService } from './accounting.service';
 import {
   CreateJournalEntryDto,
@@ -24,8 +26,8 @@ import {
 
 @ApiTags('Admin Accounting')
 @Controller('admin/accounting')
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('owner', 'admin')
+@UseGuards(JwtAuthGuard, MfaGuard, TenantGuard, PermissionsGuard)
+@RequiredPermissions({ permissions: ['admin:billing'], mode: 'any' })
 @ApiBearerAuth()
 export class AccountingController {
   constructor(private readonly accountingService: AccountingService) {}
@@ -49,8 +51,7 @@ export class AccountingController {
   }
 
   @Post('periods/:id/close')
-  @Roles('owner')
-  @ApiOperation({ summary: 'Close an accounting period (owner only)' })
+  @ApiOperation({ summary: 'Close an accounting period' })
   async closePeriod(
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
@@ -91,8 +92,7 @@ export class AccountingController {
   }
 
   @Post('journal-entries/:id/post')
-  @Roles('owner')
-  @ApiOperation({ summary: 'Post a draft journal entry (owner only)' })
+  @ApiOperation({ summary: 'Post a draft journal entry' })
   async postJournalEntry(
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
@@ -102,8 +102,7 @@ export class AccountingController {
   }
 
   @Post('journal-entries/:id/void')
-  @Roles('owner')
-  @ApiOperation({ summary: 'Void a posted journal entry (owner only)' })
+  @ApiOperation({ summary: 'Void a posted journal entry' })
   async voidJournalEntry(
     @Param('id') id: string,
     @Body() dto: VoidJournalEntryDto,

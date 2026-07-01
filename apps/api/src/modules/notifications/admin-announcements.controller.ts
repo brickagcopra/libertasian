@@ -7,9 +7,11 @@ const sanitizeHtml = require('sanitize-html') as (dirty: string, options?: Recor
 import type { JwtPayload } from '@libertasian/types';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { RequiredPermissions } from '../../common/decorators/permissions.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { MfaGuard } from '../../common/guards/mfa.guard';
+import { TenantGuard } from '../../common/guards/tenant.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from './notifications.service';
@@ -51,8 +53,8 @@ class SendAnnouncementDto {
 
 @ApiTags('Admin')
 @Controller('admin/announcements')
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('admin', 'owner')
+@UseGuards(JwtAuthGuard, MfaGuard, TenantGuard, PermissionsGuard)
+@RequiredPermissions({ permissions: ['admin:settings'], mode: 'any' })
 @ApiBearerAuth()
 export class AdminAnnouncementsController {
   constructor(

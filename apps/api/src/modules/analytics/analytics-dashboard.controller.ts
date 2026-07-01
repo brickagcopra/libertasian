@@ -9,16 +9,17 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Observable } from 'rxjs';
 
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { MfaGuard } from '../../common/guards/mfa.guard';
+import { TenantGuard } from '../../common/guards/tenant.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequiredPermissions } from '../../common/decorators/permissions.decorator';
 import { AnalyticsDashboardService } from './analytics-dashboard.service';
 import { DashboardQueryDto } from './dto';
 
 /**
  * Admin analytics dashboard endpoints.
- * Restricted to admin/owner roles via RolesGuard.
+ * Restricted to platform staff holding the admin:dashboard permission.
  *
  * All endpoints read from pre-aggregated tables (analytics_daily_aggregates,
  * analytics_funnel_steps, analytics_retention_cohorts) — NOT from raw events.
@@ -26,8 +27,8 @@ import { DashboardQueryDto } from './dto';
  */
 @ApiTags('Admin Analytics')
 @Controller('admin/analytics')
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('owner', 'admin')
+@UseGuards(JwtAuthGuard, MfaGuard, TenantGuard, PermissionsGuard)
+@RequiredPermissions({ permissions: ['admin:dashboard'], mode: 'any' })
 @ApiBearerAuth()
 export class AnalyticsDashboardController {
   constructor(private readonly dashboardService: AnalyticsDashboardService) {}
