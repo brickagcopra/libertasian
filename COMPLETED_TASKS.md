@@ -1,6 +1,21 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-05-08 (Session 203 — Mobile Design System Phase 1: Two-Theme Tokens, 14 Primitives, 9 Restyled Screens)
+> Last updated: 2026-07-01 (PR #250 — Security: strip platform admin:* from system owner role)
+
+---
+
+## 2026-07-01 — PR #250: Strip platform admin:* from SYSTEM owner role (critical auth fix)
+
+**Branch:** `fix/owner-role-strip-platform-admin` → https://github.com/brickagcopra/libertasian/pull/250
+**Root cause:** `rbac-seed.ts` gave the shared SYSTEM `owner` role ALL permission codes including the 13 platform `admin:*` codes. Every signup owns a personal workspace linked to that role, so `jwt.strategy`'s `isPlatformAdmin` (= "has any `admin:*` perm") was true for everyone → cross-tenant read of `/admin/users`, `/admin/subscriptions`, `/admin/accounting`, etc. This is the data-layer defect beneath PR #249's controller-layer fix.
+
+1. **Seed** (`apps/api/prisma/seeds/rbac-seed.ts`) — owner role = every tenant code EXCEPT `admin:*`; exported `ROLE_PERMISSIONS`/`HIERARCHY_EDGES` for tests. Seed's deleteMany-reconcile prevents re-introduction on re-seed.
+2. **Removed the `owner→admin` hierarchy edge** (seed + migration) — **extension beyond the original task spec:** `PermissionsService.getEffectivePermissions` BFS-inherits permissions parent→child, so the edge alone would have kept re-granting all 13 `admin:*` codes to every owner even after the strip (and the requested regression test would have failed). Owner loses nothing — it holds every tenant code directly.
+3. **Migration** `20260702120000_strip_owner_platform_admin` — 3 statements, one transaction: strip owner `admin:*` grants; drop the `owner→admin` edge; idempotently link the 4-account allowlist's personal-workspace membership to the SYSTEM `admin` role (bma5871, programmingfiles5871, libertasianphilippines, libertasian.play.reviewer @gmail.com). Roles matched by slug + is_system + org IS NULL, never by UUID.
+4. **Tests** — NEW `src/modules/rbac/strip-owner-platform-admin.spec.ts` (13-code catalogue invariant, owner has zero `admin:*` + all non-admin codes, admin role keeps all 13, no `owner→*` edge; and via the real `PermissionsService` with seed-derived mocks: owner-only member → `isPlatformAdmin=false`, owner+admin → `true`). Updated `backfill-legacy-member-roles.spec.ts` downstream test which previously documented the vulnerable behavior. Spec loads the seed via typed `require()` because tsconfig `rootDir: src` rejects a static import (TS6059).
+5. **Verification** — api build ✅, tsc ✅, **167 suites / 3357 tests ✅**. Migration SQL dry-run in a rolled-back psql transaction against the dev DB (12 grants deleted, 1 edge deleted, 1 allowlist insert, owner keeps 119 tenant perms), then applied for real via `prisma migrate deploy`; `seed:rbac` re-run confirmed owner stays at 0 `admin:*` / 0 outgoing edges, admin role at 13.
+
+**Explicitly NOT done (per instructions):** no controller/guard/apps-web changes; no prod migrate/deploy — handed back for prod `migrate deploy` + RBAC cache flush + live verification.
 
 ---
 

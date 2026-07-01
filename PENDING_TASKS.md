@@ -1,6 +1,15 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-05-08 (Session 203 — Mobile Design System Phase 1 complete; Phase 2 wiring deferred)
+> Last updated: 2026-07-01 (PR #250 — RBAC owner-role security fix awaiting merge + prod rollout)
+
+---
+
+## 2026-07-01 — PR #250 rollout (owner action required)
+
+- [ ] Review + merge https://github.com/brickagcopra/libertasian/pull/250 (`fix/owner-role-strip-platform-admin`)
+- [ ] Prod `prisma migrate deploy` (agent did NOT touch prod — local dev DB only)
+- [ ] **Flush the RBAC effective-permission Redis cache** after the prod migrate — stale cached permission sets keep resolving `isPlatformAdmin=true` until TTL
+- [ ] Live verification: fresh signup gets 403 on `/admin/*`; the 4 allowlisted accounts retain admin access
 
 ---
 
