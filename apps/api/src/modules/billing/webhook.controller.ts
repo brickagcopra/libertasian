@@ -218,8 +218,23 @@ export class WebhookController {
           await this.billingService.handleSubscriptionActivated(data);
           break;
         case XENDIT_RECURRING_EVENTS.CYCLE_SUCCEEDED:
-        case XENDIT_RECURRING_EVENTS.PAYMENT_SUCCEEDED:
+          // AUTHORITATIVE cycle signal. `recurring.cycle.succeeded` is the SINGLE
+          // source of truth for advancing currentPeriodEnd and recording the
+          // subscription Payment for a charged cycle — including the first
+          // (activation) charge, for which Xendit also emits cycle.succeeded.
           await this.billingService.handleCycleSucceeded(data);
+          break;
+        case XENDIT_RECURRING_EVENTS.PAYMENT_SUCCEEDED:
+          // LOG-ONLY (informational). `payment.succeeded` is the lower-level
+          // capture event that fires alongside `recurring.cycle.succeeded` for
+          // the same charge, but carries a DIFFERENT `data.id` (the payment id,
+          // not the cycle id). Routing it into handleCycleSucceeded would defeat
+          // the cycle-id idempotency check (the two ids never dedup against each
+          // other) and record a second Payment + advance the period twice. The
+          // cycle event owns the period advance and the Payment; do NOT act here.
+          this.logger.log(
+            `payment.succeeded ${dataId} (informational) — cycle.succeeded is authoritative; not advancing period`,
+          );
           break;
         case XENDIT_RECURRING_EVENTS.CYCLE_FAILED:
           await this.billingService.handleCycleFailed(data);

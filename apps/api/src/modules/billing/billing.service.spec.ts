@@ -1413,6 +1413,24 @@ describe('BillingService', () => {
         expect(entitlementService.invalidateEntitlementCache).toHaveBeenCalledWith('org-1');
       });
 
+      it('opens the period (currentPeriodStart) but does NOT set currentPeriodEnd — cycle.succeeded owns the advance', async () => {
+        (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(null);
+        (prisma.subscription.findUnique as jest.Mock).mockResolvedValue(provisioningSub);
+
+        await service.handleSubscriptionActivated({
+          id: 'repl_1',
+          recurring_plan_id: 'repl_1',
+          reference_id: 'sub-1',
+          status: 'ACTIVE',
+        });
+
+        const updateArgs = (prisma.subscription.update as jest.Mock).mock.calls[0][0];
+        expect(updateArgs.data.currentPeriodStart).toBeInstanceOf(Date);
+        // The double-advance fix: activation must NOT set currentPeriodEnd, so
+        // the first recurring.cycle.succeeded advances it exactly one period.
+        expect(updateArgs.data).not.toHaveProperty('currentPeriodEnd');
+      });
+
       it('is idempotent when the subscription is already active', async () => {
         (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(activeSub);
 
@@ -1449,6 +1467,38 @@ describe('BillingService', () => {
         expectedEnd.setMonth(expectedEnd.getMonth() + 1);
         expect(updateArgs.data.currentPeriodEnd).toEqual(expectedEnd);
         expect(usageQuotaService.resetQuotasForBillingCycle).toHaveBeenCalledWith('org-1');
+      });
+
+      it('first cycle (currentPeriodEnd null after activation) sets end to now + one period exactly once', async () => {
+        // After the double-advance fix, activation leaves currentPeriodEnd null.
+        (prisma.subscription.findFirst as jest.Mock).mockResolvedValue({
+          ...activeSub,
+          currentPeriodEnd: null,
+        });
+        (prisma.payment.findUnique as jest.Mock).mockResolvedValue(null);
+
+        const before = new Date();
+        await service.handleCycleSucceeded({
+          id: 'cycle_first',
+          recurring_plan_id: 'repl_1',
+          amount: 999,
+          currency: 'PHP',
+        });
+        const after = new Date();
+
+        expect(mockTransactionClient.payment.create).toHaveBeenCalledTimes(1);
+        const updateArgs = (mockTransactionClient.subscription.update as jest.Mock).mock.calls[0][0];
+        const start: Date = updateArgs.data.currentPeriodStart;
+        const end: Date = updateArgs.data.currentPeriodEnd;
+        // Period anchored on "now" (fallback), not left null, and advanced by
+        // exactly ONE month — not two.
+        expect(start.getTime()).toBeGreaterThanOrEqual(before.getTime());
+        expect(start.getTime()).toBeLessThanOrEqual(after.getTime());
+        const expectedEnd = new Date(start);
+        expectedEnd.setMonth(expectedEnd.getMonth() + 1);
+        // Within a small tolerance: anchor and start are separate `new Date()`
+        // reads a few ms apart when the prior end was null.
+        expect(Math.abs(end.getTime() - expectedEnd.getTime())).toBeLessThan(1000);
       });
 
       it('is idempotent on replay — already-recorded cycle does NOT advance the period (no double-charge)', async () => {

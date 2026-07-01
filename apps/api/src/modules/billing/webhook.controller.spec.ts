@@ -140,17 +140,33 @@ describe('WebhookController', () => {
     );
   });
 
-  it('routes recurring.cycle.succeeded AND payment.succeeded to handleCycleSucceeded', async () => {
+  it('routes recurring.cycle.succeeded to handleCycleSucceeded (authoritative)', async () => {
     await controller.handleXenditWebhook(
       reqWith({ event: 'recurring.cycle.succeeded', data: { id: 'cycle_1', recurring_plan_id: 'repl_1' } }),
       'tok',
     );
+
+    expect(billingService.handleCycleSucceeded).toHaveBeenCalledTimes(1);
+    expect(billingService.handleCycleSucceeded).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'cycle_1' }),
+    );
+  });
+
+  it('does NOT route payment.succeeded into handleCycleSucceeded (log-only, no period advance)', async () => {
+    // payment.succeeded fires alongside recurring.cycle.succeeded for the SAME
+    // charge but with a different data.id. It must be informational only — never
+    // a second period advance / Payment. This is the double-advance guard.
     await controller.handleXenditWebhook(
       reqWith({ event: 'payment.succeeded', data: { id: 'pay_evt_1', recurring_plan_id: 'repl_1' } }),
       'tok',
     );
 
-    expect(billingService.handleCycleSucceeded).toHaveBeenCalledTimes(2);
+    expect(billingService.handleCycleSucceeded).not.toHaveBeenCalled();
+    expect(billingService.handleSubscriptionActivated).not.toHaveBeenCalled();
+    // Still acknowledged + audited so Xendit does not retry it.
+    expect(auditService.log).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'billing.webhook.xendit.payment_succeeded' }),
+    );
   });
 
   it('routes recurring.cycle.failed to handleCycleFailed', async () => {

@@ -730,7 +730,6 @@ export class BillingService {
     }
 
     const now = new Date();
-    const periodEnd = this.addBillingPeriod(now, sub.billingPeriod);
     const planId = data.recurring_plan_id ?? data.plan_id ?? data.id;
 
     await this.prisma.subscription.update({
@@ -738,8 +737,14 @@ export class BillingService {
       data: {
         // Capture the repl_ recurring-plan id now (not known at checkout time).
         xenditSubscriptionId: sub.xenditSubscriptionId ?? planId,
+        // Open the first period at activation but DO NOT set currentPeriodEnd
+        // here. `recurring.cycle.succeeded` is the sole owner of
+        // currentPeriodEnd: Xendit emits cycle.succeeded for the immediate
+        // (activation) charge too, and handleCycleSucceeded's anchor falls back
+        // to `now` when currentPeriodEnd is null — so the first cycle correctly
+        // sets now + 1 period. Setting it here as well would net TWO periods for
+        // the first cycle (activation advance + cycle.succeeded advance).
         currentPeriodStart: now,
-        currentPeriodEnd: periodEnd,
       },
     });
 
