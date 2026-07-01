@@ -155,20 +155,15 @@ const ADMIN_NAV_ITEMS: NavItem[] = [
   { href: '/admin/ads', label: 'Advertising', icon: MegaphoneIcon },
 ];
 
-const ADMIN_ROLES = ['admin', 'editor', 'owner'];
-
 export function SidebarContent() {
   const user = useAuthStore((s) => s.user);
-  const legacyAdmin = user && ADMIN_ROLES.includes(user.role);
-  const { hasPermission: rbacAdmin } = useHasPermission(
-    ['documents:read', 'editorial-flags:read'],
-    'any',
-  );
   const { hasPermission: canViewMembers } = useHasPermission('members:read');
   const { hasPermission: canViewRoles } = useHasPermission('roles:read');
   const { hasPermission: canViewAuditLogs } = useHasPermission('audit-logs:read');
-  // Show admin section if either the legacy role check or RBAC permission resolves true
-  const showAdmin = legacyAdmin || rbacAdmin;
+  // Admin nav is platform-admin only — same signal as the /admin route guard.
+  // NOT the org 'owner' role (every user owns a personal workspace) and NOT
+  // documents:read (every owner has it).
+  const showAdmin = user?.isPlatformAdmin === true;
   const pathname = usePathname();
   const { data: subscription } = useSubscription();
   const currentPlan = subscription?.planCode;

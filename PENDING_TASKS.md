@@ -1,6 +1,14 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-07-01 (PR #250 — RBAC owner-role security fix awaiting merge + prod rollout)
+> Last updated: 2026-07-01 (PR #251 — sidebar admin-visibility fix awaiting merge + web rebuild)
+
+---
+
+## 2026-07-01 — PR #251 rollout (owner action required)
+
+- [ ] Review + merge https://github.com/brickagcopra/libertasian/pull/251 (`fix/sidebar-admin-visibility`)
+- [ ] Rebuild + redeploy the web app (agent did NOT deploy)
+- [ ] Live verification: free/owner account no longer sees the Admin sidebar section; platform-admin allowlist accounts still do
 
 ---
 

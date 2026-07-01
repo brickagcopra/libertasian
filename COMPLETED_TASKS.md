@@ -1,6 +1,19 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-07-01 (PR #250 — Security: strip platform admin:* from system owner role)
+> Last updated: 2026-07-01 (PR #251 — Web: gate admin sidebar on isPlatformAdmin)
+
+---
+
+## 2026-07-01 — PR #251: Gate admin sidebar on isPlatformAdmin, not legacy owner role
+
+**Branch:** `fix/sidebar-admin-visibility` → https://github.com/brickagcopra/libertasian/pull/251
+**Root cause:** `apps/web/src/components/layout/app-sidebar.tsx` gated the Admin nav section on the legacy org role (`ADMIN_ROLES = ['admin','editor','owner']`) OR the `documents:read`/`editorial-flags:read` RBAC check. Every self-registered user is `owner` of their personal workspace (and every owner has `documents:read`), so all admin nav items rendered for every free/paid user. The UI companion to PR #249/#250's backend fixes.
+
+1. **Sidebar** — removed `ADMIN_ROLES`, the `legacyAdmin` check, and the admin-gate `useHasPermission(['documents:read','editorial-flags:read'],'any')` call; replaced with `const showAdmin = user?.isPlatformAdmin === true` — the SAME signal the `/admin` route guard (`apps/web/src/app/(dashboard)/admin/layout.tsx`) uses, so visible links == accessible routes. Org-settings gates (`members:read`, `roles:read`, `audit-logs:read`) untouched — tenant-scoped and legitimately owner-visible.
+2. **Tests** (`app-sidebar.test.tsx`) — non-admin test now sets `isPlatformAdmin:false`; NEW regression test: `role:'owner'` + `isPlatformAdmin:false` → Admin section NOT rendered (the exact reported bug); admin/editor/owner "renders admin section" tests now set `isPlatformAdmin:true`.
+3. **Verification** — `pnpm --filter web test` 1518 tests ✅, lint ✅ (pre-existing warnings only), `next build` ✅. Only pre-existing tsc baseline error in the file (`pathname` possibly null, untouched code).
+
+**Explicitly NOT done (per instructions):** no API, route-guard, or other changes — sidebar visibility gate only. NOT deployed — handed back for the web rebuild.
 
 ---
 
