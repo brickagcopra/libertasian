@@ -1,6 +1,14 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-07-01 (PR #252 — settings admin-visibility fix awaiting merge + web rebuild)
+> Last updated: 2026-07-02 (PR #253 — auth bootstrap stale-user fix awaiting merge + web rebuild)
+
+---
+
+## 2026-07-02 — PR #253 rollout (owner action required)
+
+- [ ] Review + merge https://github.com/brickagcopra/libertasian/pull/253 (`fix/auth-bootstrap-stale-user`)
+- [ ] Rebuild + redeploy the web app (agent did NOT deploy)
+- [ ] Live verification: account whose platform-admin was revoked server-side loses the Admin sidebar/`/admin` access on next page load without re-login (persist v0→v1 migration drops the stale cached user, bootstrap refetch pulls the fresh profile)
 
 ---
 

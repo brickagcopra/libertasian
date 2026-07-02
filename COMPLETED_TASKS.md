@@ -1,6 +1,20 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-07-01 (PR #252 — Web: gate admin Settings surfaces on isPlatformAdmin)
+> Last updated: 2026-07-02 (PR #253 — Web: auth bootstrap always refetches /users/me; stale persisted user dropped)
+
+---
+
+## 2026-07-02 — PR #253: Auth bootstrap refetches /users/me so a stale persisted user can't retain revoked permissions
+
+**Branch:** `fix/auth-bootstrap-stale-user` → https://github.com/brickagcopra/libertasian/pull/253
+**Root cause:** The bootstrap in `apps/web/src/providers/auth-provider.tsx` only fetched `/users/me` when the persisted user slice was empty (`else if (token && !cancelled && !useAuthStore.getState().user)`), so a stale localStorage user (e.g. `isPlatformAdmin: true` cached before a server-side permission revocation) persisted forever and client gates (sidebar, `PlatformAdminGate`, `/admin` layout) passed wrongly. Client-side companion to PRs #250–#252.
+
+1. **auth-provider.tsx** — after a successful `apiClient.refresh()`, ALWAYS fetch `/users/me` and `setUser(res.data)` (removed the `!user` condition); existing try/catch swallow kept so a failed profile fetch still flips `isAuthReady`.
+2. **auth-store.ts** — persist config bumped to `version: 1` with a `migrate` that, for any older version, returns `{ user: null, isAuthenticated: persisted?.isAuthenticated ?? false }` — drops any stale v0 user so the bootstrap refetch repopulates it fresh on first load, no re-login needed.
+3. **Tests** — auth-provider: stale persisted user with `isPlatformAdmin: true` + successful refresh → `/users/me` fetched and store user overwritten with the server value (`false`); auth-store: `migrate` from v0 nulls `user`, preserves `isAuthenticated` (true and false cases).
+4. **Verification** — `pnpm --filter web test` 1525 ✅ (179 files), lint ✅ (pre-existing warnings only), `next build` ✅.
+
+**Explicitly NOT done (per instructions):** no API/backend changes. NOT deployed / NOT merged — handed back for review + web rebuild.
 
 ---
 
