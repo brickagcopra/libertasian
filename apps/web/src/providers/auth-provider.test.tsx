@@ -167,6 +167,42 @@ describe('AuthProvider bootstrap', () => {
     expect(mockLogout).not.toHaveBeenCalled();
   });
 
+  it('overwrites a stale persisted user with the server profile after refresh', async () => {
+    // Stale localStorage user claims platform admin; the server has since revoked it.
+    mockState = {
+      isAuthenticated: true,
+      accessToken: null,
+      user: { id: 'user-1', isPlatformAdmin: true },
+    };
+    mockRefresh.mockResolvedValue('new-token');
+    const serverUser = {
+      id: 'user-1',
+      email: 'jane@example.com',
+      fullName: 'Jane',
+      role: 'member',
+      organizationId: 'org-1',
+      mfaEnabled: false,
+      emailVerified: true,
+      onboardingCompletedAt: null,
+      userRole: null,
+      isPlatformAdmin: false,
+    };
+    mockGet.mockResolvedValue({ success: true, data: serverUser });
+
+    render(
+      <AuthProvider>
+        <div>Child</div>
+      </AuthProvider>,
+    );
+
+    await waitFor(() => {
+      expect(mockGet).toHaveBeenCalledWith('/users/me');
+      expect(mockSetUser).toHaveBeenCalledWith(serverUser);
+      expect(mockSetAuthReady).toHaveBeenCalledWith(true);
+    });
+    expect(mockLogout).not.toHaveBeenCalled();
+  });
+
   it('does not logout when /users/me fetch fails after a successful refresh', async () => {
     mockState = { isAuthenticated: true, accessToken: null, user: null };
     mockRefresh.mockResolvedValue('new-token');

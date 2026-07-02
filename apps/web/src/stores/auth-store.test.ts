@@ -112,6 +112,26 @@ describe('useAuthStore', () => {
     expect(persisted).toHaveProperty('isAuthenticated');
   });
 
+  it('migrate from version 0 drops the persisted user but keeps isAuthenticated', () => {
+    const persistOptions = useAuthStore.persist.getOptions();
+    expect(persistOptions.version).toBe(1);
+    const migrate = persistOptions.migrate!;
+
+    const migrated = migrate(
+      { user: { id: 'user-1', isPlatformAdmin: true }, isAuthenticated: true },
+      0,
+    ) as { user: unknown; isAuthenticated: boolean };
+    expect(migrated.user).toBeNull();
+    expect(migrated.isAuthenticated).toBe(true);
+
+    const migratedLoggedOut = migrate({ isAuthenticated: false }, 0) as {
+      user: unknown;
+      isAuthenticated: boolean;
+    };
+    expect(migratedLoggedOut.user).toBeNull();
+    expect(migratedLoggedOut.isAuthenticated).toBe(false);
+  });
+
   it('setAccessToken does not affect user', () => {
     const user = {
       id: 'user-1',

@@ -79,6 +79,19 @@ export const useAuthStore = create<AuthState>()(
         user: state.user,
         isAuthenticated: state.isAuthenticated,
       }),
+      version: 1,
+      // v0 → v1: drop any persisted user so permission fields (isPlatformAdmin)
+      // can't survive a server-side revocation; bootstrap refetches /users/me.
+      migrate: (persisted, version) => {
+        if (version < 1) {
+          return {
+            user: null,
+            isAuthenticated:
+              (persisted as { isAuthenticated?: boolean } | null)?.isAuthenticated ?? false,
+          };
+        }
+        return persisted as { user: User | null; isAuthenticated: boolean };
+      },
       onRehydrate: (_state) => {
         return (rehydratedState) => {
           // Sync cookie with rehydrated auth state

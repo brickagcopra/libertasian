@@ -71,9 +71,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (!token && !cancelled) {
             // Cookie expired or invalid — clear local state
             useAuthStore.getState().logout();
-          } else if (token && !cancelled && !useAuthStore.getState().user) {
-            // Refresh succeeded but persisted user slice is empty (e.g. Google-OAuth-only
-            // user whose callback ran before this field was populated). Hydrate it now.
+          } else if (token && !cancelled) {
+            // Refresh succeeded — always re-fetch the profile so server-side changes
+            // (e.g. a revoked isPlatformAdmin) overwrite any stale persisted user.
             try {
               const res = await apiClient.get<{ success: boolean; data: User }>('/users/me');
               if (!cancelled) {
