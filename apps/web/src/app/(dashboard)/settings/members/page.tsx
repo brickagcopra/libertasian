@@ -28,6 +28,7 @@ import { useSubscription } from '@/features/billing/hooks/use-subscription';
 import { useQuotaUsage } from '@/features/billing/hooks/use-quotas';
 import { PLAN_LABELS } from '@/features/billing/types';
 import { PermissionGate } from '@/components/layout/permission-gate';
+import { PlatformAdminGate } from '@/components/layout/platform-admin-gate';
 import type {
   MemberWithRoles,
   RoleDefinitionDto,
@@ -87,23 +88,25 @@ function getRoleBadgeClass(slug: string): string {
 
 export default function MembersPage() {
   return (
-    <PermissionGate
-      permissions="members:read"
-      fallback={
-        <div className="flex flex-col items-center justify-center gap-4 py-20">
-          <ShieldIcon className="size-12 text-muted-foreground" />
-          <p className="text-lg font-medium">Access Denied</p>
-          <p className="text-muted-foreground">
-            You do not have permission to view members.
-          </p>
-          <Button variant="outline" asChild>
-            <Link href="/settings">Back to Settings</Link>
-          </Button>
-        </div>
-      }
-    >
-      <MembersContent />
-    </PermissionGate>
+    <PlatformAdminGate>
+      <PermissionGate
+        permissions="members:read"
+        fallback={
+          <div className="flex flex-col items-center justify-center gap-4 py-20">
+            <ShieldIcon className="size-12 text-muted-foreground" />
+            <p className="text-lg font-medium">Access Denied</p>
+            <p className="text-muted-foreground">
+              You do not have permission to view members.
+            </p>
+            <Button variant="outline" asChild>
+              <Link href="/settings">Back to Settings</Link>
+            </Button>
+          </div>
+        }
+      >
+        <MembersContent />
+      </PermissionGate>
+    </PlatformAdminGate>
   );
 }
 

@@ -1,6 +1,14 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-07-01 (PR #251 — sidebar admin-visibility fix awaiting merge + web rebuild)
+> Last updated: 2026-07-01 (PR #252 — settings admin-visibility fix awaiting merge + web rebuild)
+
+---
+
+## 2026-07-01 — PR #252 rollout (owner action required)
+
+- [ ] Review + merge https://github.com/brickagcopra/libertasian/pull/252 (`fix/settings-admin-visibility`)
+- [ ] Rebuild + redeploy the web app (agent did NOT deploy)
+- [ ] Live verification: free/owner account sees only Settings + Usage & Quotas in the Settings section and is redirected to /search from `/settings/{members,roles,audit-logs,analytics}`; platform-admin allowlist accounts retain access
 
 ---
 

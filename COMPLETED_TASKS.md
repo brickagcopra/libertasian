@@ -1,6 +1,21 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-07-01 (PR #251 — Web: gate admin sidebar on isPlatformAdmin)
+> Last updated: 2026-07-01 (PR #252 — Web: gate admin Settings surfaces on isPlatformAdmin)
+
+---
+
+## 2026-07-01 — PR #252: Gate Members/Roles/Audit Logs/Org Analytics settings on isPlatformAdmin
+
+**Branch:** `fix/settings-admin-visibility` → https://github.com/brickagcopra/libertasian/pull/252
+**Root cause:** The Settings nav in `app-sidebar.tsx` gated Members & Roles / Roles & Permissions / Audit Logs on tenant permissions (`members:read`, `roles:read`, `audit-logs:read`) that every workspace owner has, and Org Analytics had no gate at all. The four pages under `settings/{members,roles,audit-logs,analytics}/page.tsx` had no access guard, so direct URLs worked too. Follow-up to PR #251 (admin nav section).
+
+1. **Sidebar** — the four links now gate on `showAdmin` (`user?.isPlatformAdmin === true`); Settings + Usage & Quotas stay visible to all. Removed the now-unused `canViewMembers`/`canViewRoles`/`canViewAuditLogs` `useHasPermission` calls and the `useHasPermission` import.
+2. **NEW `PlatformAdminGate`** (`components/layout/platform-admin-gate.tsx`) — mirrors the `/admin` layout guard exactly: fail-closed (null) until `isAuthReady`, `router.replace('/search')` for non-admins, children only for `isPlatformAdmin === true`.
+3. **Route protection** — each of the four pages wraps its returned JSX in `<PlatformAdminGate>`; existing inner `PermissionGate`s untouched. `settings/billing`, `settings/usage`, `settings/api-keys`, `settings/page.tsx` untouched.
+4. **Tests** — sidebar: non-admin sees only Settings + Usage & Quotas (four admin links absent), platform admin sees all; NEW `platform-admin-gate.test.tsx` (renders children for admin; null + redirect for non-admin; fail-closed pre-auth).
+5. **Verification** — `pnpm --filter web test` 1523 ✅ (179 files), lint ✅, build ✅, tsc: no new errors in touched files.
+
+**Explicitly NOT done (per instructions):** no API / RBAC seed / backend changes. NOT deployed — handed back for the web rebuild.
 
 ---
 

@@ -40,10 +40,6 @@ vi.mock('@/features/billing/hooks/use-subscription', () => ({
   },
 }));
 
-vi.mock('@/features/settings/hooks/use-rbac', () => ({
-  useHasPermission: () => ({ hasPermission: false, isLoading: false }),
-}));
-
 vi.mock('@/components/brand/wordmark', () => ({
   Wordmark: () => <div>libertasian</div>,
 }));
@@ -123,6 +119,28 @@ describe('SidebarContent', () => {
     mockUser = { fullName: 'Owner User', role: 'owner', isPlatformAdmin: true };
     render(<SidebarContent />);
     expect(screen.getByText('Admin')).toBeInTheDocument();
+  });
+
+  it('hides admin-only settings links for non-platform admins', () => {
+    // Regression: these were gated on tenant perms (members:read etc.) that
+    // every workspace owner has — or not gated at all (Org Analytics).
+    mockUser = { fullName: 'Owner', role: 'owner', isPlatformAdmin: false };
+    render(<SidebarContent />);
+    expect(screen.getAllByText('Settings').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('Usage & Quotas')).toBeInTheDocument();
+    expect(screen.queryByText('Members & Roles')).not.toBeInTheDocument();
+    expect(screen.queryByText('Roles & Permissions')).not.toBeInTheDocument();
+    expect(screen.queryByText('Audit Logs')).not.toBeInTheDocument();
+    expect(screen.queryByText('Org Analytics')).not.toBeInTheDocument();
+  });
+
+  it('shows admin-only settings links for platform admins', () => {
+    mockUser = { fullName: 'Admin User', role: 'admin', isPlatformAdmin: true };
+    render(<SidebarContent />);
+    expect(screen.getByText('Members & Roles')).toBeInTheDocument();
+    expect(screen.getByText('Roles & Permissions')).toBeInTheDocument();
+    expect(screen.getByText('Audit Logs')).toBeInTheDocument();
+    expect(screen.getByText('Org Analytics')).toBeInTheDocument();
   });
 
   it('shows lock styling for pro-tier features on free plan', () => {
