@@ -1,6 +1,15 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-07-02 (PR #253 — auth bootstrap stale-user fix awaiting merge + web rebuild)
+> Last updated: 2026-07-02 (PR #254 — platform-admin allowlist narrowing awaiting merge + prod migrate deploy)
+
+---
+
+## 2026-07-02 — PR #254 rollout (owner action required)
+
+- [ ] Review + merge `fix/narrow-platform-admin-allowlist` (revoke SYSTEM admin role from programmingfiles5871 / libertasianphilippines / libertasian.play.reviewer)
+- [ ] Prod `prisma migrate deploy` — records `20260702160000_narrow_platform_admin_allowlist` as applied; the DELETE is a no-op on prod (rows already removed directly in prod and live-verified 2026-07-02)
+- [ ] Staging/dev envs: `prisma migrate deploy` (or next deploy) actually performs the revocation there
+- [ ] If the RBAC effective-permission Redis cache is warm in any env, flush it after deploy so the three accounts don't retain cached admin perms until TTL
 
 ---
 

@@ -1,6 +1,19 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-07-02 (PR #253 — Web: auth bootstrap always refetches /users/me; stale persisted user dropped)
+> Last updated: 2026-07-02 (PR #254 — API: narrow platform-admin allowlist to 2 accounts via data-only migration)
+
+---
+
+## 2026-07-02 — PR #254: Narrow platform-admin allowlist — revoke SYSTEM admin role from 3 accounts
+
+**Branch:** `fix/narrow-platform-admin-allowlist` → https://github.com/brickagcopra/libertasian/pull/254
+**Context:** Migration `20260702120000_strip_owner_platform_admin` (PR #250) re-granted the global SYSTEM `admin` role to a 4-email allowlist via `member_roles`. Three of those must NOT be platform admins: `programmingfiles5871@gmail.com`, `libertasianphilippines@gmail.com`, `libertasian.play.reviewer@gmail.com`. Only `bma5871@gmail.com` and `admin@libertasian.com` keep platform admin. The three rows were ALREADY deleted directly in prod and live-verified 2026-07-02 — this PR codifies the revocation for every other environment.
+
+1. **NEW data-only migration** `20260702160000_narrow_platform_admin_allowlist/migration.sql` — DELETEs `member_roles` rows joining `role_definitions` (slug='admin', is_system, org IS NULL) / `organization_members` / `users` on the three emails. No hardcoded UUIDs, naturally idempotent (no-op on prod where rows are gone, no-op if emails absent). Applied #250 migration untouched; on fresh envs migration ordering (#250 grants 4 → this revokes 3) yields the correct end state.
+2. **Seed audit** — grepped `apps/api/prisma` (seeds + migrations) for any other path granting the admin role to these emails: NONE found. The three emails appear only in the applied #250 migration. `rbac-migrate-existing-roles.ts` maps legacy roles same-slug (owner→owner, never →admin); `seed.ts` assigns legacy role 'admin' only to dev user `admin@libertasian.dev`. Nothing removed — nothing re-grants.
+3. **Verification** — `pnpm --filter api lint` (tsc) ✅, `pnpm --filter api test` 3357 tests / 167 suites ✅. Migration NOT applied locally (Docker/Postgres down) — data-only SQL mirroring the #250 style.
+
+**Explicitly NOT done (per instructions):** no app code changes; #250 migration not edited. NOT merged / NOT deployed — handed back for merge + prod `prisma migrate deploy` (no-op on prod data, marks migration applied).
 
 ---
 
