@@ -24,6 +24,7 @@ import {
   useExportAuditLogsCsv,
 } from '@/features/settings/hooks/use-rbac';
 import { PermissionGate } from '@/components/layout/permission-gate';
+import { PlatformAdminGate } from '@/components/layout/platform-admin-gate';
 import type { FullAuditLogItem, ListAllAuditLogsParams } from '@/features/settings/hooks/use-rbac';
 
 import { Button } from '@/components/ui/button';
@@ -117,23 +118,25 @@ function formatDateInput(iso: string): string {
 
 export default function AuditLogsPage() {
   return (
-    <PermissionGate
-      permissions="audit-logs:read"
-      fallback={
-        <div className="flex flex-col items-center justify-center gap-4 py-20">
-          <FileTextIcon className="size-12 text-muted-foreground" />
-          <p className="text-lg font-medium">Access Denied</p>
-          <p className="text-muted-foreground">
-            You do not have permission to view audit logs.
-          </p>
-          <Button variant="outline" asChild>
-            <Link href="/settings">Back to Settings</Link>
-          </Button>
-        </div>
-      }
-    >
-      <AuditLogsContent />
-    </PermissionGate>
+    <PlatformAdminGate>
+      <PermissionGate
+        permissions="audit-logs:read"
+        fallback={
+          <div className="flex flex-col items-center justify-center gap-4 py-20">
+            <FileTextIcon className="size-12 text-muted-foreground" />
+            <p className="text-lg font-medium">Access Denied</p>
+            <p className="text-muted-foreground">
+              You do not have permission to view audit logs.
+            </p>
+            <Button variant="outline" asChild>
+              <Link href="/settings">Back to Settings</Link>
+            </Button>
+          </div>
+        }
+      >
+        <AuditLogsContent />
+      </PermissionGate>
+    </PlatformAdminGate>
   );
 }
 

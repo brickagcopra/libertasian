@@ -33,6 +33,7 @@ import {
   useDeleteRole,
 } from '@/features/settings/hooks/use-rbac';
 import { PermissionGate } from '@/components/layout/permission-gate';
+import { PlatformAdminGate } from '@/components/layout/platform-admin-gate';
 import type {
   RoleDefinitionDto,
   PermissionDef,
@@ -107,23 +108,25 @@ function getRoleBadgeClass(slug: string): string {
 
 export default function RolesPage() {
   return (
-    <PermissionGate
-      permissions="roles:read"
-      fallback={
-        <div className="flex flex-col items-center justify-center gap-4 py-20">
-          <LockIcon className="size-12 text-muted-foreground" />
-          <p className="text-lg font-medium">Access Denied</p>
-          <p className="text-muted-foreground">
-            You do not have permission to view roles and permissions.
-          </p>
-          <Button variant="outline" asChild>
-            <Link href="/settings">Back to Settings</Link>
-          </Button>
-        </div>
-      }
-    >
-      <RolesContent />
-    </PermissionGate>
+    <PlatformAdminGate>
+      <PermissionGate
+        permissions="roles:read"
+        fallback={
+          <div className="flex flex-col items-center justify-center gap-4 py-20">
+            <LockIcon className="size-12 text-muted-foreground" />
+            <p className="text-lg font-medium">Access Denied</p>
+            <p className="text-muted-foreground">
+              You do not have permission to view roles and permissions.
+            </p>
+            <Button variant="outline" asChild>
+              <Link href="/settings">Back to Settings</Link>
+            </Button>
+          </div>
+        }
+      >
+        <RolesContent />
+      </PermissionGate>
+    </PlatformAdminGate>
   );
 }
 

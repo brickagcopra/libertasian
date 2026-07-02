@@ -7,7 +7,6 @@ import { useAuthStore } from '@/stores/auth-store';
 import { Wordmark } from '@/components/brand/wordmark';
 import { useSubscription, meetsMinimumTier } from '@/features/billing/hooks/use-subscription';
 import { useCanAccessPaidFeature } from '@/hooks/useCanAccessPaidFeature';
-import { useHasPermission } from '@/features/settings/hooks/use-rbac';
 import { cn } from '@/lib/utils';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
@@ -157,9 +156,6 @@ const ADMIN_NAV_ITEMS: NavItem[] = [
 
 export function SidebarContent() {
   const user = useAuthStore((s) => s.user);
-  const { hasPermission: canViewMembers } = useHasPermission('members:read');
-  const { hasPermission: canViewRoles } = useHasPermission('roles:read');
-  const { hasPermission: canViewAuditLogs } = useHasPermission('audit-logs:read');
   // Admin nav is platform-admin only — same signal as the /admin route guard.
   // NOT the org 'owner' role (every user owns a personal workspace) and NOT
   // documents:read (every owner has it).
@@ -298,10 +294,10 @@ export function SidebarContent() {
         <nav className="space-y-1">
           {renderSettingsLink('/settings', 'Settings', SettingsIcon, true)}
           {renderSettingsLink('/settings/usage', 'Usage & Quotas', BarChart3Icon)}
-          {canViewMembers && renderSettingsLink('/settings/members', 'Members & Roles', ShieldCheckIcon)}
-          {canViewRoles && renderSettingsLink('/settings/roles', 'Roles & Permissions', LockIcon)}
-          {canViewAuditLogs && renderSettingsLink('/settings/audit-logs', 'Audit Logs', ScrollTextIcon)}
-          {renderSettingsLink('/settings/analytics', 'Org Analytics', BarChart3Icon)}
+          {showAdmin && renderSettingsLink('/settings/members', 'Members & Roles', ShieldCheckIcon)}
+          {showAdmin && renderSettingsLink('/settings/roles', 'Roles & Permissions', LockIcon)}
+          {showAdmin && renderSettingsLink('/settings/audit-logs', 'Audit Logs', ScrollTextIcon)}
+          {showAdmin && renderSettingsLink('/settings/analytics', 'Org Analytics', BarChart3Icon)}
         </nav>
 
         {showAdmin && (
