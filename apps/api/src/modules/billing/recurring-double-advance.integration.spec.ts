@@ -81,7 +81,29 @@ class FakePrisma {
     updateMany: async () => ({}),
   };
 
-  paymentMethod = { upsert: async () => ({}) };
+  paymentMethod = {
+    upsert: async () => ({}),
+    findFirst: async () => null,
+  };
+
+  // Lifecycle-email surface (renewal reminder scheduling + recurring receipt).
+  // organization.findUnique → null means no billing owner, so the receipt email
+  // path is a no-op here; the reminder events are recorded but unasserted.
+  invoice = {
+    findFirst: async () => null,
+    create: async ({ data }: { data: Record<string, unknown> }) => data,
+  };
+
+  organization = { findUnique: async () => null };
+
+  lifecycleEvents: Record<string, unknown>[] = [];
+  subscriptionLifecycleEvent = {
+    updateMany: async () => ({ count: 0 }),
+    create: async ({ data }: { data: Record<string, unknown> }) => {
+      this.lifecycleEvents.push(data);
+      return data;
+    },
+  };
 
   // Handlers run their writes inside a single $transaction; the fake client IS
   // the transaction client (writes apply immediately, mirroring commit).

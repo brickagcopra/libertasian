@@ -20,11 +20,19 @@ import { SubscriptionAction, SubscriptionState } from '../subscriptions/subscrip
 import { UsageQuotaService } from '../subscriptions/usage-quota.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
+  describePaymentMethod,
+  formatBillingDate,
+  formatPhpAmount,
+} from '../notifications/notification-format.util';
+import {
   XenditService,
   type XenditRefundData,
   type XenditRecurringData,
 } from './xendit.service';
 import type { CreateCheckoutDto, PreviewCheckoutDto } from './dto';
+
+/** Renewal reminders go out 3 days before the scheduled charge (T-3d). */
+const RENEWAL_REMINDER_LEAD_MS = 3 * 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class BillingService {
@@ -760,6 +768,11 @@ export class BillingService {
     // Persist the saved instrument if Xendit supplied one.
     await this.persistPaymentMethod(sub.organizationId, data);
 
+    // Schedule the T-3d renewal reminder. currentPeriodEnd is not known yet
+    // (cycle.succeeded owns it), so estimate one billing period from now; the
+    // activation charge's cycle.succeeded re-schedules with the exact date.
+    await this.scheduleRenewalReminder(sub, this.addBillingPeriod(now, sub.billingPeriod));
+
     await this.entitlementService.invalidateEntitlementCache(sub.organizationId);
 
     await this.auditService.log({
@@ -808,8 +821,10 @@ export class BillingService {
     const newPeriodStart = sub.currentPeriodEnd ?? new Date();
     const newPeriodEnd = this.addBillingPeriod(anchor, sub.billingPeriod);
 
+    const invoiceNumber = await this.generateInvoiceNumber();
+
     await this.prisma.$transaction(async (tx) => {
-      await tx.payment.create({
+      const payment = await tx.payment.create({
         data: {
           organizationId: sub.organizationId,
           subscriptionId: sub.id,
@@ -827,11 +842,41 @@ export class BillingService {
         },
       });
 
+      // Recurring cycles get a real Invoice row too, so the billing history
+      // (and the receipt email's invoice number) reference a retrievable record.
+      await tx.invoice.create({
+        data: {
+          organizationId: sub.organizationId,
+          subscriptionId: sub.id,
+          paymentId: payment.id,
+          invoiceNumber,
+          amount: amountCentavos,
+          currency: data.currency ?? 'PHP',
+          status: 'paid',
+          description: `Recurring cycle — ${sub.planCode}`,
+          lineItemsJson: [
+            {
+              description: `${sub.planCode} Plan — ${sub.billingPeriod === 'annual' ? 'Annual' : 'Monthly'} renewal`,
+              quantity: 1,
+              unitAmount: amountCentavos,
+              totalAmount: amountCentavos,
+            },
+          ] as unknown as Prisma.InputJsonValue,
+          billingPeriodStart: newPeriodStart,
+          billingPeriodEnd: newPeriodEnd,
+          paidAt: new Date(),
+        },
+      });
+
       await tx.subscription.update({
         where: { id: sub.id },
         data: { currentPeriodStart: newPeriodStart, currentPeriodEnd: newPeriodEnd },
       });
     });
+
+    // Re-schedule the T-3d renewal reminder against the fresh period end
+    // (cancels any pending reminder first — one pending reminder per sub).
+    await this.scheduleRenewalReminder(sub, newPeriodEnd);
 
     // Reset usage quotas for the new period.
     try {
@@ -870,6 +915,36 @@ export class BillingService {
     this.logger.log(
       `Cycle ${cycleChargeId} recorded for subscription ${sub.id}; period advanced to ${newPeriodEnd.toISOString()}`,
     );
+
+    // Fire-and-forget recurring receipt — a mail failure must never fail the
+    // webhook (Xendit would retry, and the idempotency guard above would then
+    // skip the period advance but the charge is already recorded).
+    try {
+      const org = await this.prisma.organization.findUnique({
+        where: { id: sub.organizationId },
+        include: { billingOwner: true },
+      });
+      if (org?.billingOwner) {
+        const pm = await this.findDefaultPaymentMethod(sub.organizationId);
+        await this.notificationsService.sendPaymentReceipt({
+          email: org.billingOwner.email,
+          userName: org.billingOwner.fullName ?? 'User',
+          amount: formatPhpAmount(amountCentavos),
+          currency: data.currency ?? 'PHP',
+          paymentMethod: describePaymentMethod(pm),
+          invoiceNumber,
+          date: formatBillingDate(new Date()),
+          planName: sub.planCode,
+          billingPeriodLabel: `${formatBillingDate(newPeriodStart)} – ${formatBillingDate(newPeriodEnd)}`,
+          nextBillingDate: formatBillingDate(newPeriodEnd),
+        });
+      }
+    } catch (err) {
+      // PII-safe: ids only, no email address.
+      this.logger.error(
+        `cycle.succeeded: failed to enqueue receipt email for subscription ${sub.id}: ${err}`,
+      );
+    }
   }
 
   /**
@@ -909,6 +984,34 @@ export class BillingService {
       entityId: sub.id,
       metadata: { cycleId: data.id },
     });
+
+    // Fire-and-forget failed-cycle notice — a mail failure must never fail the
+    // webhook handler.
+    try {
+      const org = await this.prisma.organization.findUnique({
+        where: { id: sub.organizationId },
+        include: { billingOwner: true },
+      });
+      if (org?.billingOwner) {
+        const amountCentavos = await this.resolveCycleAmountCentavos(sub, data);
+        await this.notificationsService.sendPaymentFailed({
+          email: org.billingOwner.email,
+          userName: org.billingOwner.fullName ?? 'User',
+          amount:
+            amountCentavos != null
+              ? `PHP ${formatPhpAmount(amountCentavos)}`
+              : 'your subscription renewal',
+          retryDate: formatBillingDate(new Date(Date.now() + 3 * 24 * 60 * 60 * 1000)),
+          graceNote:
+            'Your plan access continues during the grace period while we retry the charge.',
+        });
+      }
+    } catch (err) {
+      // PII-safe: ids only, no email address.
+      this.logger.error(
+        `cycle.failed: failed to enqueue payment-failed email for subscription ${sub.id}: ${err}`,
+      );
+    }
   }
 
   /**
@@ -943,6 +1046,9 @@ export class BillingService {
     } catch (err) {
       this.logger.error(`Failed to downgrade subscription ${sub.id} on plan deactivation`, err);
     }
+
+    // No further charges will occur — drop any pending renewal reminder.
+    await this.cancelPendingRenewalReminders(sub.id);
 
     await this.auditService.log({
       organizationId: sub.organizationId,
@@ -1007,6 +1113,90 @@ export class BillingService {
     });
   }
 
+  /**
+   * (Re-)schedule the T-3d renewal reminder for a Xendit-backed subscription.
+   * Cancels any pending reminder first, so exactly one reminder is pending per
+   * subscription (idempotent per billing period — the period end is stamped
+   * into the event metadata and checked again at send time by the processor).
+   * Never throws: a scheduling failure must not fail the webhook handler.
+   */
+  private async scheduleRenewalReminder(
+    sub: { id: string; organizationId: string; cancelAtPeriodEnd: boolean },
+    periodEnd: Date,
+  ): Promise<void> {
+    try {
+      // A sub winding down at period end will not be charged again — no reminder.
+      if (sub.cancelAtPeriodEnd) return;
+
+      const scheduledAt = new Date(periodEnd.getTime() - RENEWAL_REMINDER_LEAD_MS);
+
+      await this.prisma.subscriptionLifecycleEvent.updateMany({
+        where: { subscriptionId: sub.id, eventType: 'renewal_reminder', status: 'pending' },
+        data: { status: 'cancelled' },
+      });
+      await this.prisma.subscriptionLifecycleEvent.create({
+        data: {
+          subscriptionId: sub.id,
+          organizationId: sub.organizationId,
+          eventType: 'renewal_reminder',
+          status: 'pending',
+          scheduledAt,
+          metadataJson: { periodEnd: periodEnd.toISOString() } as Prisma.InputJsonValue,
+        },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Could not schedule renewal reminder for subscription ${sub.id}: ${err}`,
+      );
+    }
+  }
+
+  /** Cancel any pending renewal reminders (on cancel/deactivation). Never throws. */
+  private async cancelPendingRenewalReminders(subscriptionId: string): Promise<void> {
+    try {
+      await this.prisma.subscriptionLifecycleEvent.updateMany({
+        where: { subscriptionId, eventType: 'renewal_reminder', status: 'pending' },
+        data: { status: 'cancelled' },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Could not cancel pending renewal reminders for subscription ${subscriptionId}: ${err}`,
+      );
+    }
+  }
+
+  /** The org's default (or most recent) active saved payment instrument. */
+  private async findDefaultPaymentMethod(organizationId: string) {
+    const byDefault = await this.prisma.paymentMethod.findFirst({
+      where: { organizationId, isActive: true, isDefault: true },
+    });
+    if (byDefault) return byDefault;
+    return this.prisma.paymentMethod.findFirst({
+      where: { organizationId, isActive: true },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
+   * Best-effort amount (centavos) for a failed cycle: the webhook amount when
+   * present, else the last succeeded payment on this subscription.
+   */
+  private async resolveCycleAmountCentavos(
+    sub: { id: string },
+    data: XenditRecurringData,
+  ): Promise<number | null> {
+    if (data.amount != null && Number.isFinite(Number(data.amount))) {
+      // Xendit recurring payloads carry whole PHP.
+      return Math.round(Number(data.amount) * 100);
+    }
+    const lastPayment = await this.prisma.payment.findFirst({
+      where: { subscriptionId: sub.id, status: 'succeeded' },
+      orderBy: { paidAt: 'desc' },
+      select: { amount: true },
+    });
+    return lastPayment?.amount ?? null;
+  }
+
   /** Add one billing period (month/year) to a date. */
   private addBillingPeriod(from: Date, billingPeriod: string): Date {
     const d = new Date(from);
@@ -1065,6 +1255,10 @@ export class BillingService {
       reason: cancelAtPeriodEnd ? 'User requested cancel at period end' : 'User requested immediate cancel',
       metadata: { previousPlan: sub.planCode },
     });
+
+    // No further charges will occur in either cancel mode — drop any pending
+    // renewal reminder so the user is not reminded of a charge that won't happen.
+    await this.cancelPendingRenewalReminders(sub.id);
 
     // If immediate cancel, create free subscription fallback
     if (!cancelAtPeriodEnd) {

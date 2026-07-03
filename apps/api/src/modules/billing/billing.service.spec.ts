@@ -91,9 +91,10 @@ describe('BillingService', () => {
   let lifecycleService: jest.Mocked<SubscriptionLifecycleService>;
   let entitlementService: jest.Mocked<EntitlementService>;
   let usageQuotaService: jest.Mocked<UsageQuotaService>;
+  let notificationsService: jest.Mocked<NotificationsService>;
 
   const mockTransactionClient = {
-    payment: { update: jest.fn(), create: jest.fn() },
+    payment: { update: jest.fn(), create: jest.fn().mockResolvedValue({ id: 'pay-cycle-1' }) },
     subscription: { updateMany: jest.fn(), create: jest.fn().mockResolvedValue({ id: 'sub-new' }), update: jest.fn() },
     invoice: { create: jest.fn() },
     checkoutPriceSnapshot: { findUnique: jest.fn().mockResolvedValue(null) },
@@ -139,6 +140,10 @@ describe('BillingService', () => {
             checkoutPriceSnapshot: {
               create: jest.fn(),
               findUnique: jest.fn(),
+            },
+            subscriptionLifecycleEvent: {
+              updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+              create: jest.fn().mockResolvedValue({ id: 'evt-reminder-1' }),
             },
             $transaction: jest.fn(),
           },
@@ -230,6 +235,7 @@ describe('BillingService', () => {
     lifecycleService = module.get(SubscriptionLifecycleService);
     entitlementService = module.get(EntitlementService);
     usageQuotaService = module.get(UsageQuotaService);
+    notificationsService = module.get(NotificationsService);
   });
 
   // ---- getSubscription ----
@@ -1383,6 +1389,7 @@ describe('BillingService', () => {
       mockTransactionClient.payment.create.mockClear();
       mockTransactionClient.payment.update.mockClear();
       mockTransactionClient.subscription.update.mockClear();
+      mockTransactionClient.invoice.create.mockClear();
       (prisma.$transaction as jest.Mock).mockImplementation(
         async (cb: (tx: unknown) => Promise<void>) => cb(mockTransactionClient),
       );
@@ -1535,6 +1542,215 @@ describe('BillingService', () => {
         expect(lifecycleService.executeTransition).toHaveBeenCalledWith(
           expect.objectContaining({ subscriptionId: 'sub-1', action: SubscriptionAction.PAYMENT_FAILED }),
         );
+      });
+
+      it('enqueues the payment-failed email with amount, retry date and grace note', async () => {
+        (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(activeSub);
+        (prisma.organization.findUnique as jest.Mock).mockResolvedValue({
+          id: 'org-1',
+          billingOwner: { email: 'owner@example.com', fullName: 'Owner' },
+        });
+
+        await service.handleCycleFailed({ id: 'cycle_3', recurring_plan_id: 'repl_1', amount: 999 });
+
+        expect(notificationsService.sendPaymentFailed).toHaveBeenCalledWith(
+          expect.objectContaining({
+            email: 'owner@example.com',
+            amount: 'PHP 999.00',
+            retryDate: expect.any(String),
+            graceNote: expect.stringContaining('grace period'),
+          }),
+        );
+      });
+
+      it('never fails the webhook when the failed-cycle email cannot be enqueued', async () => {
+        (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(activeSub);
+        (prisma.organization.findUnique as jest.Mock).mockResolvedValue({
+          id: 'org-1',
+          billingOwner: { email: 'owner@example.com', fullName: 'Owner' },
+        });
+        notificationsService.sendPaymentFailed.mockRejectedValue(new Error('smtp down'));
+
+        await expect(
+          service.handleCycleFailed({ id: 'cycle_3', recurring_plan_id: 'repl_1', amount: 999 }),
+        ).resolves.toBeUndefined();
+      });
+    });
+
+    describe('handleCycleSucceeded — recurring receipt email', () => {
+      const billingOwnerOrg = {
+        id: 'org-1',
+        billingOwner: { email: 'owner@example.com', fullName: 'Owner' },
+      };
+
+      beforeEach(() => {
+        (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(activeSub);
+        (prisma.payment.findUnique as jest.Mock).mockResolvedValue(null);
+        (prisma.organization.findUnique as jest.Mock).mockResolvedValue(billingOwnerOrg);
+        (prisma.paymentMethod.findFirst as jest.Mock).mockResolvedValue({
+          type: 'card',
+          brand: 'Visa',
+          last4: '4242',
+        });
+      });
+
+      it('creates a paid Invoice row covering the new period', async () => {
+        await service.handleCycleSucceeded({
+          id: 'cycle_1',
+          recurring_plan_id: 'repl_1',
+          amount: 999,
+          currency: 'PHP',
+        });
+
+        const priorEnd = new Date('2026-07-01T00:00:00Z');
+        const expectedEnd = new Date(priorEnd);
+        expectedEnd.setMonth(expectedEnd.getMonth() + 1);
+        expect(mockTransactionClient.invoice.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              status: 'paid',
+              amount: 99900,
+              paymentId: 'pay-cycle-1',
+              invoiceNumber: expect.stringMatching(/^INV-/),
+              billingPeriodStart: priorEnd,
+              billingPeriodEnd: expectedEnd,
+            }),
+          }),
+        );
+      });
+
+      it('enqueues the receipt with period covered, next billing date and instrument', async () => {
+        await service.handleCycleSucceeded({
+          id: 'cycle_1',
+          recurring_plan_id: 'repl_1',
+          amount: 999,
+          currency: 'PHP',
+        });
+
+        expect(notificationsService.sendPaymentReceipt).toHaveBeenCalledWith(
+          expect.objectContaining({
+            email: 'owner@example.com',
+            amount: '999.00',
+            currency: 'PHP',
+            paymentMethod: 'Visa •••• 4242',
+            invoiceNumber: expect.stringMatching(/^INV-/),
+            planName: 'pro',
+            billingPeriodLabel: expect.stringContaining('–'),
+            nextBillingDate: expect.any(String),
+          }),
+        );
+      });
+
+      it('never fails the webhook when the receipt email cannot be enqueued', async () => {
+        notificationsService.sendPaymentReceipt.mockRejectedValue(new Error('smtp down'));
+
+        await expect(
+          service.handleCycleSucceeded({ id: 'cycle_1', recurring_plan_id: 'repl_1', amount: 999 }),
+        ).resolves.toBeUndefined();
+
+        // The money-critical work still happened.
+        expect(mockTransactionClient.payment.create).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    describe('renewal reminder scheduling (T-3d)', () => {
+      const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+
+      it('handleSubscriptionActivated schedules a reminder ~3 days before the estimated period end', async () => {
+        (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(null);
+        (prisma.subscription.findUnique as jest.Mock).mockResolvedValue(provisioningSub);
+
+        const before = new Date();
+        await service.handleSubscriptionActivated({
+          id: 'repl_1',
+          recurring_plan_id: 'repl_1',
+          reference_id: 'sub-1',
+          status: 'ACTIVE',
+        });
+
+        expect(prisma.subscriptionLifecycleEvent.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              subscriptionId: 'sub-1',
+              organizationId: 'org-1',
+              eventType: 'renewal_reminder',
+              status: 'pending',
+            }),
+          }),
+        );
+        // Estimated period end = now + 1 month; reminder at end − 3d.
+        const createArgs = (prisma.subscriptionLifecycleEvent.create as jest.Mock).mock.calls[0][0];
+        const expectedEnd = new Date(before);
+        expectedEnd.setMonth(expectedEnd.getMonth() + 1);
+        const expectedAt = expectedEnd.getTime() - THREE_DAYS_MS;
+        expect(Math.abs(createArgs.data.scheduledAt.getTime() - expectedAt)).toBeLessThan(5000);
+      });
+
+      it('handleCycleSucceeded re-schedules: cancels the pending reminder and creates one at newPeriodEnd − 3d', async () => {
+        (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(activeSub);
+        (prisma.payment.findUnique as jest.Mock).mockResolvedValue(null);
+
+        await service.handleCycleSucceeded({
+          id: 'cycle_1',
+          recurring_plan_id: 'repl_1',
+          amount: 999,
+          currency: 'PHP',
+        });
+
+        // Prior pending reminders are cancelled (one pending reminder per sub).
+        expect(prisma.subscriptionLifecycleEvent.updateMany).toHaveBeenCalledWith({
+          where: { subscriptionId: 'sub-1', eventType: 'renewal_reminder', status: 'pending' },
+          data: { status: 'cancelled' },
+        });
+
+        // New reminder at exactly newPeriodEnd − 3 days, period stamped in metadata.
+        const priorEnd = new Date('2026-07-01T00:00:00Z');
+        const newEnd = new Date(priorEnd);
+        newEnd.setMonth(newEnd.getMonth() + 1);
+        expect(prisma.subscriptionLifecycleEvent.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            subscriptionId: 'sub-1',
+            eventType: 'renewal_reminder',
+            status: 'pending',
+            scheduledAt: new Date(newEnd.getTime() - THREE_DAYS_MS),
+            metadataJson: { periodEnd: newEnd.toISOString() },
+          }),
+        });
+      });
+
+      it('does NOT schedule a reminder when cancelAtPeriodEnd is set (no charge will occur)', async () => {
+        (prisma.subscription.findFirst as jest.Mock).mockResolvedValue({
+          ...activeSub,
+          cancelAtPeriodEnd: true,
+        });
+        (prisma.payment.findUnique as jest.Mock).mockResolvedValue(null);
+
+        await service.handleCycleSucceeded({ id: 'cycle_1', recurring_plan_id: 'repl_1', amount: 999 });
+
+        expect(prisma.subscriptionLifecycleEvent.create).not.toHaveBeenCalled();
+      });
+
+      it('cancelSubscription cancels any pending renewal reminder', async () => {
+        subscriptionsService.getActiveSubscription.mockResolvedValue(activeSub as never);
+        (prisma.organization.findUnique as jest.Mock).mockResolvedValue(null);
+
+        await service.cancelSubscription('org-1', 'user-1', true);
+
+        expect(prisma.subscriptionLifecycleEvent.updateMany).toHaveBeenCalledWith({
+          where: { subscriptionId: 'sub-1', eventType: 'renewal_reminder', status: 'pending' },
+          data: { status: 'cancelled' },
+        });
+      });
+
+      it('handlePlanDeactivated cancels any pending renewal reminder', async () => {
+        (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(activeSub);
+
+        await service.handlePlanDeactivated({ id: 'repl_1' });
+
+        expect(prisma.subscriptionLifecycleEvent.updateMany).toHaveBeenCalledWith({
+          where: { subscriptionId: 'sub-1', eventType: 'renewal_reminder', status: 'pending' },
+          data: { status: 'cancelled' },
+        });
       });
     });
 
