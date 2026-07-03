@@ -23,6 +23,7 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { apiClient } from '@/lib/api-client';
 import { ROUTES } from '@/lib/constants';
+import { resolveSafeRedirect } from '@/features/auth/safe-redirect';
 import { useAuthStore } from '@/stores/auth-store';
 
 const STEPS = ['Welcome', 'Role', 'Features', 'Preferences', 'Ready'] as const;
@@ -142,7 +143,15 @@ export default function OnboardingPage() {
           userRole: res.data.userRole,
         });
       }
-      router.push(ROUTES.SEARCH);
+      // Honor a ?from= deep link carried through login (e.g. pricing-page
+      // checkout intent → /settings/billing?plan=...). Same-origin validated;
+      // falls back to /search. Read from window to avoid the useSearchParams
+      // Suspense requirement.
+      const from =
+        typeof window !== 'undefined'
+          ? new URLSearchParams(window.location.search).get('from')
+          : null;
+      router.push(resolveSafeRedirect(from, ROUTES.SEARCH));
     } finally {
       setIsSubmitting(false);
     }

@@ -37,7 +37,19 @@ export default function RegisterPage() {
         password: data.password,
         fullName: data.fullName,
       });
-      router.push(`${ROUTES.VERIFY_EMAIL}?email=${encodeURIComponent(data.email)}`);
+      // Carry checkout intent (?plan=&coupon= from the pricing page) through
+      // the verify-email step so the post-auth redirect can reach billing.
+      // Read from window to avoid Next's useSearchParams Suspense requirement.
+      const search =
+        typeof window !== 'undefined'
+          ? new URLSearchParams(window.location.search)
+          : new URLSearchParams();
+      const params = new URLSearchParams({ email: data.email });
+      const plan = search.get('plan');
+      const coupon = search.get('coupon');
+      if (plan) params.set('plan', plan);
+      if (coupon) params.set('coupon', coupon);
+      router.push(`${ROUTES.VERIFY_EMAIL}?${params.toString()}`);
     } catch (error) {
       if (error instanceof ApiClientError) {
         if (error.statusCode === 409) {

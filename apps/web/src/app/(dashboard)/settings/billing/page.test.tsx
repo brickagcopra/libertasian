@@ -18,8 +18,18 @@ type Sub = {
   cancelAtPeriodEnd: boolean;
 } | null;
 
+type MockPlanInfo = {
+  code: string;
+  name: string;
+  monthlyPrice: number;
+  annualPrice: number;
+  features: string[];
+  highlight: boolean;
+};
+
 let mockSubscription: Sub = null;
 let mockMethods: Array<Record<string, unknown>> = [];
+let mockPlans: MockPlanInfo[] = [];
 
 vi.mock('@/features/billing/hooks/use-subscription', () => ({
   useSubscription: () => ({ data: mockSubscription, isLoading: false }),
@@ -27,7 +37,7 @@ vi.mock('@/features/billing/hooks/use-subscription', () => ({
 }));
 
 vi.mock('@/features/billing/hooks/use-plans', () => ({
-  usePlanInfoList: () => ({ plans: [], isLoading: false }),
+  usePlanInfoList: () => ({ plans: mockPlans, isLoading: false }),
 }));
 
 const mutation = () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
@@ -79,6 +89,8 @@ describe('BillingPage — recurring subscription UI', () => {
     vi.clearAllMocks();
     mockSubscription = null;
     mockMethods = [];
+    mockPlans = [];
+    window.history.replaceState(null, '', '/settings/billing');
   });
 
   describe('dunning banner', () => {
@@ -148,6 +160,63 @@ describe('BillingPage — recurring subscription UI', () => {
       ];
       render(<BillingPage />);
       expect(screen.getByText('GCash')).toBeInTheDocument();
+    });
+  });
+
+  // Deep-link support: /settings/billing?plan=<code> is the pricing-page CTA
+  // target for signed-in users. It must auto-open the Choose-a-Plan dialog
+  // with that plan preselected; unknown codes open the dialog unselected.
+  describe('?plan= deep link', () => {
+    const mkPlan = (code: string, name: string, monthlyPrice: number): MockPlanInfo => ({
+      code,
+      name,
+      monthlyPrice,
+      annualPrice: monthlyPrice * 10,
+      features: [`${name} feature`],
+      highlight: code === 'pro',
+    });
+
+    beforeEach(() => {
+      // Free-tier user (null subscription) with the full plan catalog available
+      mockPlans = [
+        mkPlan('free', 'Free', 0),
+        mkPlan('edu', 'Edu', 299),
+        mkPlan('pro', 'Pro', 999),
+        mkPlan('team', 'Team', 1499),
+        mkPlan('enterprise', 'Enterprise', 4999),
+      ];
+    });
+
+    it('auto-opens the dialog with the URL plan preselected', async () => {
+      window.history.replaceState(null, '', '/settings/billing?plan=pro');
+
+      render(<BillingPage />);
+
+      expect(await screen.findByText('Choose a Plan')).toBeInTheDocument();
+      // A preselected plan reveals the checkout phase (payment CTA visible)
+      expect(
+        await screen.findByRole('button', { name: /proceed to payment/i }),
+      ).toBeInTheDocument();
+    });
+
+    it('opens the dialog unselected for an unknown plan code', async () => {
+      window.history.replaceState(null, '', '/settings/billing?plan=not-a-plan');
+
+      render(<BillingPage />);
+
+      expect(await screen.findByText('Choose a Plan')).toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: /proceed to payment/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it('does not auto-open the dialog when no plan param is present', async () => {
+      render(<BillingPage />);
+
+      // Page renders normally...
+      expect(await screen.findByText('Current Plan')).toBeInTheDocument();
+      // ...but the dialog stays closed
+      expect(screen.queryByText('Choose a Plan')).not.toBeInTheDocument();
     });
   });
 });

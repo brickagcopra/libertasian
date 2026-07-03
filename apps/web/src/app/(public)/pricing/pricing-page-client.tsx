@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { TagIcon, ClockIcon } from 'lucide-react';
 
 import { usePlans, useActivePromotions } from '@/features/billing/hooks/use-plans';
+import { useSubscription } from '@/features/billing/hooks/use-subscription';
+import { useAuthStore } from '@/stores/auth-store';
 import {
   PLANS,
   getPlanPrice,
@@ -81,6 +83,76 @@ interface PricingPageClientProps {
   fetchError: boolean;
 }
 
+// ─── Auth-aware CTA resolution ────────────────────────────
+
+export interface PlanCtaContext {
+  isAuthenticated: boolean;
+  /**
+   * Signed-in user's current plan code. `null` when signed out or while the
+   * subscription is still resolving (unknown — treat as "not current plan").
+   */
+  currentPlanCode: string | null;
+}
+
+/**
+ * Resolve where a plan card CTA should point:
+ * - Signed out → `/register`, carrying `plan`/`coupon` so the checkout intent
+ *   survives signup. (NOT `/auth/callback` — that route discards these params
+ *   and bounces authenticated users to /search.)
+ * - Signed in → `/settings/billing`, which owns the real checkout flow; the
+ *   `plan` param preselects the plan in the Choose-a-Plan dialog.
+ */
+export function buildPlanCtaHref(
+  planCode: string,
+  isFree: boolean,
+  couponCode: string,
+  ctx: PlanCtaContext,
+): string {
+  const params = new URLSearchParams();
+  if (!isFree) params.set('plan', planCode);
+  const coupon = couponCode.trim();
+  if (coupon) params.set('coupon', coupon);
+  const base = ctx.isAuthenticated ? '/settings/billing' : '/register';
+  const qs = params.toString();
+  return qs ? `${base}?${qs}` : base;
+}
+
+function PlanCardCta({
+  planCode,
+  isFree,
+  couponCode,
+  ctx,
+  label,
+  className,
+}: {
+  planCode: string;
+  isFree: boolean;
+  couponCode: string;
+  ctx: PlanCtaContext;
+  label: string;
+  className: string;
+}) {
+  // A signed-in user already on the free plan has no action to take on the
+  // free card — show a disabled "Current plan" state instead of a dead link.
+  if (isFree && ctx.isAuthenticated && ctx.currentPlanCode === 'free') {
+    return (
+      <button
+        type="button"
+        disabled
+        className="mt-6 block w-full cursor-not-allowed rounded-full bg-warm-cream-2 px-4 py-2.5 text-center text-sm font-semibold text-warm-ink-faint"
+      >
+        Current plan
+      </button>
+    );
+  }
+
+  return (
+    <Link href={buildPlanCtaHref(planCode, isFree, couponCode, ctx)} className={className}>
+      {label}
+    </Link>
+  );
+}
+
 // ─── Main Client Component ───────────────────────────────
 
 export function PricingPageClient({
@@ -95,6 +167,19 @@ export function PricingPageClient({
     dynamicEnabled ? initialPlans : undefined,
   );
   const { data: promotions } = useActivePromotions();
+
+  // Auth-aware CTAs: signed-in users go to the real checkout in billing
+  // settings, signed-out users go through /register with plan intent attached.
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const { data: subscription } = useSubscription({ enabled: isAuthenticated });
+  const ctaContext: PlanCtaContext = {
+    isAuthenticated,
+    currentPlanCode: isAuthenticated
+      ? subscription === undefined
+        ? null // still resolving — don't claim "Current plan" yet
+        : (subscription?.planCode ?? 'free') // 404/null subscription = free tier
+      : null,
+  };
 
   // Resolve plans: API-driven or fallback (must be called unconditionally — Rules of Hooks)
   const { plans, isFromApi } = useMemo(() => {
@@ -119,7 +204,13 @@ export function PricingPageClient({
       >
         <div className="mt-12 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           {PLANS.map((plan) => (
-            <StaticPlanCard key={plan.code} plan={plan} billingPeriod={billingPeriod} />
+            <StaticPlanCard
+              key={plan.code}
+              plan={plan}
+              billingPeriod={billingPeriod}
+              couponCode={couponCode}
+              ctaContext={ctaContext}
+            />
           ))}
         </div>
         <CouponCodeInput couponCode={couponCode} onChange={setCouponCode} />
@@ -141,7 +232,13 @@ export function PricingPageClient({
       >
         <div className="mt-12 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           {PLANS.map((plan) => (
-            <StaticPlanCard key={plan.code} plan={plan} billingPeriod={billingPeriod} />
+            <StaticPlanCard
+              key={plan.code}
+              plan={plan}
+              billingPeriod={billingPeriod}
+              couponCode={couponCode}
+              ctaContext={ctaContext}
+            />
           ))}
         </div>
         <CouponCodeInput couponCode={couponCode} onChange={setCouponCode} />
@@ -207,13 +304,20 @@ export function PricingPageClient({
               billingPeriod={billingPeriod}
               promotions={activePromotions}
               couponCode={couponCode}
+              ctaContext={ctaContext}
             />
           ))}
         </div>
       ) : (
         <div className="mt-12 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           {PLANS.map((plan) => (
-            <StaticPlanCard key={plan.code} plan={plan} billingPeriod={billingPeriod} />
+            <StaticPlanCard
+              key={plan.code}
+              plan={plan}
+              billingPeriod={billingPeriod}
+              couponCode={couponCode}
+              ctaContext={ctaContext}
+            />
           ))}
         </div>
       )}
@@ -379,23 +483,18 @@ function DynamicPlanCard({
   billingPeriod,
   promotions,
   couponCode,
+  ctaContext,
 }: {
   plan: PlanDetail;
   billingPeriod: 'monthly' | 'annual';
   promotions: ActivePromotionForPricing[];
   couponCode: string;
+  ctaContext: PlanCtaContext;
 }) {
   const priceCentavos = getPlanPrice(plan, billingPeriod);
   const isFree = plan.code === 'free';
   const isHighlight = plan.isFeatured;
   const highlightClasses = getHighlightClasses(plan.highlightColor);
-
-  // Build CTA href with optional coupon
-  const ctaParams = new URLSearchParams();
-  ctaParams.set('mode', 'register');
-  if (!isFree) ctaParams.set('plan', plan.code);
-  if (couponCode.trim()) ctaParams.set('coupon', couponCode.trim());
-  const ctaHref = `/auth/callback?${ctaParams.toString()}`;
 
   // Find applicable promotion discount label
   const firstPromo = promotions[0];
@@ -496,16 +595,18 @@ function DynamicPlanCard({
         ))}
       </ul>
 
-      <Link
-        href={ctaHref}
+      <PlanCardCta
+        planCode={plan.code}
+        isFree={isFree}
+        couponCode={couponCode}
+        ctx={ctaContext}
+        label={ctaText}
         className={`mt-6 block w-full rounded-full px-4 py-2.5 text-center text-sm font-semibold transition ${
           isHighlight
             ? highlightClasses.cta
             : 'bg-warm-ink text-warm-cream hover:bg-warm-ink-soft'
         }`}
-      >
-        {ctaText}
-      </Link>
+      />
     </div>
   );
 }
@@ -515,15 +616,16 @@ function DynamicPlanCard({
 function StaticPlanCard({
   plan,
   billingPeriod,
+  couponCode,
+  ctaContext,
 }: {
   plan: PlanInfo;
   billingPeriod: 'monthly' | 'annual';
+  couponCode: string;
+  ctaContext: PlanCtaContext;
 }) {
   const price = billingPeriod === 'monthly' ? plan.monthlyPrice : plan.annualPrice;
   const isFree = plan.code === 'free';
-  const ctaHref = isFree
-    ? '/auth/callback?mode=register'
-    : `/auth/callback?mode=register&plan=${plan.code}`;
 
   return (
     <div
@@ -581,16 +683,20 @@ function StaticPlanCard({
         ))}
       </ul>
 
-      <Link
-        href={ctaHref}
+      <PlanCardCta
+        planCode={plan.code}
+        isFree={isFree}
+        couponCode={couponCode}
+        ctx={ctaContext}
+        label={
+          isFree ? 'Get Started Free' : plan.code === 'enterprise' ? 'Contact Sales' : 'Start Now'
+        }
         className={`mt-6 block w-full rounded-full px-4 py-2.5 text-center text-sm font-semibold transition ${
           plan.highlight
             ? 'bg-warm-accent text-warm-cream hover:bg-warm-accent-deep'
             : 'bg-warm-ink text-warm-cream hover:bg-warm-ink-soft'
         }`}
-      >
-        {isFree ? 'Get Started Free' : plan.code === 'enterprise' ? 'Contact Sales' : 'Start Now'}
-      </Link>
+      />
     </div>
   );
 }
