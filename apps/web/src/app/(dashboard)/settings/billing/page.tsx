@@ -102,6 +102,22 @@ function CurrentPlanSection() {
   const [showUpgrade, setShowUpgrade] = useState(false);
   const [showCancel, setShowCancel] = useState(false);
 
+  // Deep-link support: /settings/billing?plan=<code> (e.g. from the pricing
+  // page CTAs) auto-opens the Choose-a-Plan dialog with that plan preselected.
+  // Read from window to avoid Next's useSearchParams Suspense requirement —
+  // mirrors the coupon pre-fill pattern in PlanSelectorContent.
+  const [initialPlanCode, setInitialPlanCode] = useState<string | null>(null);
+  const planParamProcessed = useRef(false);
+  useEffect(() => {
+    if (planParamProcessed.current) return;
+    planParamProcessed.current = true;
+    const plan = new URLSearchParams(window.location.search).get('plan');
+    if (plan) {
+      setInitialPlanCode(plan);
+      setShowUpgrade(true);
+    }
+  }, []);
+
   if (isLoading) return <BillingSkeleton />;
 
   const status = subscription?.status;
@@ -199,6 +215,7 @@ function CurrentPlanSection() {
           </DialogHeader>
           <PlanSelectorContent
             currentPlan={planCode}
+            initialPlanCode={initialPlanCode}
             onClose={() => setShowUpgrade(false)}
           />
         </DialogContent>
@@ -221,9 +238,12 @@ function CurrentPlanSection() {
 
 function PlanSelectorContent({
   currentPlan,
+  initialPlanCode = null,
   onClose,
 }: {
   currentPlan: string;
+  /** Plan code from the URL to preselect (unknown codes leave the dialog unselected). */
+  initialPlanCode?: string | null;
   onClose: () => void;
 }) {
   const searchParams = useSearchParams();
@@ -267,6 +287,18 @@ function PlanSelectorContent({
       urlCouponApplied.current = true;
     }
   }, [searchParams]);
+
+  // Preselect the URL-supplied plan once plans have loaded. Defensive:
+  // unknown/ineligible plan codes are ignored and the dialog opens unselected.
+  const initialPlanApplied = useRef(false);
+  useEffect(() => {
+    if (initialPlanApplied.current || !initialPlanCode || plansLoading) return;
+    initialPlanApplied.current = true;
+    if (upgradePlans.some((p) => p.code === initialPlanCode)) {
+      setSelectedPlanCode(initialPlanCode);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialPlanCode, plansLoading, upgradePlans]);
 
   // Fetch eligible promotions when plan or billing period changes
   useEffect(() => {

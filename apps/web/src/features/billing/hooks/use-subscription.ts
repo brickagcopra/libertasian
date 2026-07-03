@@ -8,7 +8,7 @@ import { TIER_ORDER } from '../types';
 
 export type { SubscriptionDetail };
 
-export function useSubscription() {
+export function useSubscription(options?: { enabled?: boolean }) {
   return useQuery<SubscriptionDetail | null>({
     queryKey: ['billing', 'subscription'],
     queryFn: async () => {
@@ -24,6 +24,8 @@ export function useSubscription() {
     },
     staleTime: 5 * 60 * 1000, // 5 minutes
     retry: false, // 404 is a valid empty state; no point retrying
+    // Callers on public pages (e.g. pricing) gate the fetch on auth state
+    enabled: options?.enabled ?? true,
   });
 }
 

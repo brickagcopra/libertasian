@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
 
@@ -10,6 +10,23 @@ import type { PlanDetail } from '@/features/billing/types';
 vi.mock('@/features/billing/hooks/use-plans', () => ({
   usePlans: vi.fn(),
   useActivePromotions: vi.fn(),
+}));
+
+// Mutable auth/subscription state consumed by the module mocks below
+const { authState, subscriptionState } = vi.hoisted(() => ({
+  authState: { isAuthenticated: false },
+  subscriptionState: {
+    data: undefined as { planCode: string } | null | undefined,
+  },
+}));
+
+vi.mock('@/stores/auth-store', () => ({
+  useAuthStore: (selector: (s: { isAuthenticated: boolean }) => unknown) =>
+    selector(authState),
+}));
+
+vi.mock('@/features/billing/hooks/use-subscription', () => ({
+  useSubscription: () => ({ data: subscriptionState.data }),
 }));
 
 import { usePlans, useActivePromotions } from '@/features/billing/hooks/use-plans';
@@ -56,6 +73,8 @@ const mockPlan = (overrides: Partial<PlanDetail> = {}): PlanDetail => ({
 describe('PricingPageClient', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    authState.isAuthenticated = false;
+    subscriptionState.data = undefined;
     vi.mocked(useActivePromotions).mockReturnValue({
       data: [],
       isLoading: false,
@@ -320,5 +339,151 @@ describe('PricingPageClient', () => {
     // (b) none of the "table-—" descriptions appear on the card
     expect(screen.queryByText('Team collaboration features')).not.toBeInTheDocument();
     expect(screen.queryByText('Audit log access')).not.toBeInTheDocument();
+  });
+});
+
+// CTA destinations must match auth state: signed-out users go through
+// /register (carrying plan/coupon intent), signed-in users go to the real
+// checkout at /settings/billing. Never /auth/callback — it discards params
+// and bounces logged-in users to /search.
+describe('PricingPageClient — CTA routing by auth state', () => {
+  const dynamicPlans = () => [
+    mockPlan({ id: 'p1', code: 'free', name: 'Free', displayName: 'Free Plan', displayOrder: 0 }),
+    mockPlan({ id: 'p2', code: 'pro', name: 'Pro', displayName: 'Professional', displayOrder: 2 }),
+  ];
+
+  function renderDynamic() {
+    const plans = dynamicPlans();
+    vi.mocked(usePlans).mockReturnValue({
+      data: plans,
+      isLoading: false,
+      isSuccess: true,
+      isError: false,
+    } as ReturnType<typeof usePlans>);
+
+    const Wrapper = createWrapper();
+    return render(
+      <Wrapper>
+        <PricingPageClient initialPlans={plans} dynamicEnabled={true} fetchError={false} />
+      </Wrapper>,
+    );
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authState.isAuthenticated = false;
+    subscriptionState.data = undefined;
+    vi.mocked(useActivePromotions).mockReturnValue({
+      data: [],
+      isLoading: false,
+      isSuccess: true,
+      isError: false,
+    } as ReturnType<typeof useActivePromotions>);
+  });
+
+  it('signed out: paid CTA links to /register with plan intent, free CTA to /register', () => {
+    renderDynamic();
+
+    expect(screen.getByRole('link', { name: 'Start Now' })).toHaveAttribute(
+      'href',
+      '/register?plan=pro',
+    );
+    expect(screen.getByRole('link', { name: 'Get Started Free' })).toHaveAttribute(
+      'href',
+      '/register',
+    );
+  });
+
+  it('signed out: coupon code is carried into the register link', () => {
+    renderDynamic();
+
+    fireEvent.change(screen.getByPlaceholderText('Have a coupon code?'), {
+      target: { value: 'SAVE20' },
+    });
+
+    expect(screen.getByRole('link', { name: 'Start Now' })).toHaveAttribute(
+      'href',
+      '/register?plan=pro&coupon=SAVE20',
+    );
+  });
+
+  it('signed in on free: paid CTA deep-links to billing checkout with the plan preselected', () => {
+    authState.isAuthenticated = true;
+    subscriptionState.data = { planCode: 'free' };
+    renderDynamic();
+
+    expect(screen.getByRole('link', { name: 'Start Now' })).toHaveAttribute(
+      'href',
+      '/settings/billing?plan=pro',
+    );
+  });
+
+  it('signed in on free: free card shows a disabled "Current plan" state', () => {
+    authState.isAuthenticated = true;
+    subscriptionState.data = { planCode: 'free' };
+    renderDynamic();
+
+    expect(screen.getByRole('button', { name: 'Current plan' })).toBeDisabled();
+    expect(screen.queryByRole('link', { name: 'Get Started Free' })).not.toBeInTheDocument();
+  });
+
+  it('signed in with no subscription record (404 → free tier): free card is "Current plan"', () => {
+    authState.isAuthenticated = true;
+    subscriptionState.data = null;
+    renderDynamic();
+
+    expect(screen.getByRole('button', { name: 'Current plan' })).toBeDisabled();
+  });
+
+  it('signed in on a paid plan: free card links to billing instead of claiming "Current plan"', () => {
+    authState.isAuthenticated = true;
+    subscriptionState.data = { planCode: 'pro' };
+    renderDynamic();
+
+    expect(screen.queryByRole('button', { name: 'Current plan' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Get Started Free' })).toHaveAttribute(
+      'href',
+      '/settings/billing',
+    );
+  });
+
+  it('signed in with coupon: billing deep link carries plan and coupon', () => {
+    authState.isAuthenticated = true;
+    subscriptionState.data = { planCode: 'free' };
+    renderDynamic();
+
+    fireEvent.change(screen.getByPlaceholderText('Have a coupon code?'), {
+      target: { value: 'BAR2026' },
+    });
+
+    expect(screen.getByRole('link', { name: 'Start Now' })).toHaveAttribute(
+      'href',
+      '/settings/billing?plan=pro&coupon=BAR2026',
+    );
+  });
+
+  it('static fallback cards also route by auth state (no /auth/callback links)', () => {
+    vi.mocked(usePlans).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isSuccess: false,
+      isError: false,
+    } as ReturnType<typeof usePlans>);
+
+    const Wrapper = createWrapper();
+    render(
+      <Wrapper>
+        <PricingPageClient dynamicEnabled={false} fetchError={false} />
+      </Wrapper>,
+    );
+
+    const links = screen.getAllByRole('link');
+    const hrefs = links.map((l) => l.getAttribute('href'));
+    expect(hrefs.some((h) => h?.startsWith('/auth/callback'))).toBe(false);
+    expect(hrefs).toContain('/register?plan=pro');
+    expect(screen.getByRole('link', { name: 'Get Started Free' })).toHaveAttribute(
+      'href',
+      '/register',
+    );
   });
 });

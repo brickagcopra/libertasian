@@ -17,6 +17,21 @@ function VerifyEmailContent() {
   const verifyEmail = useVerifyEmail();
   const resendVerification = useResendVerification();
 
+  // Checkout intent carried from the pricing page through /register. After
+  // verification, hand it to /login as a same-origin ?from= path so the
+  // post-login redirect (validated by resolveSafeRedirect) lands on billing
+  // with the plan preselected instead of the /search default.
+  const plan = searchParams.get('plan');
+  const coupon = searchParams.get('coupon');
+  let signInHref: string = ROUTES.LOGIN;
+  if (plan) {
+    const billingParams = new URLSearchParams({ plan });
+    if (coupon) billingParams.set('coupon', coupon);
+    signInHref = `${ROUTES.LOGIN}?from=${encodeURIComponent(
+      `/settings/billing?${billingParams.toString()}`,
+    )}`;
+  }
+
   const [state, setState] = useState<VerifyState>(email ? 'input' : 'no-email');
   const [errorMessage, setErrorMessage] = useState('');
   const [digits, setDigits] = useState<string[]>(['', '', '', '', '', '']);
@@ -133,7 +148,7 @@ function VerifyEmailContent() {
         </div>
         <p className="text-center">
           <Link
-            href={ROUTES.LOGIN}
+            href={signInHref}
             className="inline-flex h-12 items-center rounded-full bg-warm-ink px-6 text-sm font-semibold text-warm-cream shadow-sm hover:bg-warm-ink/90"
           >
             Sign in

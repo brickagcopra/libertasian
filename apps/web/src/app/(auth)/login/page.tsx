@@ -44,16 +44,27 @@ export default function LoginPage() {
         return;
       }
       const onboarded = Boolean(result.user.onboardingCompletedAt);
-      const fallback = onboarded ? ROUTES.SEARCH : ROUTES.ONBOARDING;
-      // Honor a middleware-supplied ?from= deep link, but only after onboarding
-      // is complete and only when it passes same-origin validation (no open
-      // redirects). Read from window so we avoid Next's useSearchParams Suspense
-      // requirement — this runs client-side as a post-login action.
+      // Honor a ?from= deep link (middleware-supplied, or checkout intent from
+      // the pricing → register flow), but only when it passes same-origin
+      // validation (no open redirects). Read from window so we avoid Next's
+      // useSearchParams Suspense requirement — this runs client-side as a
+      // post-login action.
       const from =
         typeof window !== 'undefined'
           ? new URLSearchParams(window.location.search).get('from')
           : null;
-      router.push(onboarded ? resolveSafeRedirect(from, fallback) : fallback);
+      const safeFrom = resolveSafeRedirect(from, '');
+      if (onboarded) {
+        router.push(safeFrom || ROUTES.SEARCH);
+      } else {
+        // Onboarding comes first; carry the deep link through so completing
+        // onboarding can land there instead of the /search default.
+        router.push(
+          safeFrom
+            ? `${ROUTES.ONBOARDING}?from=${encodeURIComponent(safeFrom)}`
+            : ROUTES.ONBOARDING,
+        );
+      }
     } catch (error) {
       if (error instanceof ApiClientError) {
         setError('root', { message: error.message });
