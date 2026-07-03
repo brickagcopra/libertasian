@@ -11,6 +11,7 @@ import { memberInviteTemplate } from './templates/member-invite';
 import { subscriptionConfirmationTemplate } from './templates/subscription-confirmation';
 import { paymentReceiptTemplate } from './templates/payment-receipt';
 import { paymentFailedTemplate } from './templates/payment-failed';
+import { renewalReminderTemplate } from './templates/renewal-reminder';
 import { subscriptionCancelledTemplate } from './templates/subscription-cancelled';
 import { announcementTemplate } from './templates/announcement';
 import { blogNotificationTemplate } from './templates/blog-notification';
@@ -122,6 +123,10 @@ export class NotificationsService {
     invoiceNumber: string;
     date: string;
     planName: string;
+    /** Billing period covered by this charge (recurring cycles). */
+    billingPeriodLabel?: string;
+    /** Next scheduled billing date (recurring cycles). */
+    nextBillingDate?: string;
   }): Promise<void> {
     const billingUrl = `${this.appUrl}/settings/billing`;
     const { subject, html } = paymentReceiptTemplate({
@@ -133,6 +138,8 @@ export class NotificationsService {
       date: params.date,
       planName: params.planName,
       billingUrl,
+      billingPeriodLabel: params.billingPeriodLabel,
+      nextBillingDate: params.nextBillingDate,
     });
 
     await this.enqueue({ to: params.email, subject, html });
@@ -144,6 +151,8 @@ export class NotificationsService {
     userName: string;
     amount: string;
     retryDate: string;
+    /** Optional reassurance line, e.g. that access continues during grace. */
+    graceNote?: string;
   }): Promise<void> {
     const updatePaymentUrl = `${this.appUrl}/settings/billing`;
     const { subject, html } = paymentFailedTemplate({
@@ -151,10 +160,44 @@ export class NotificationsService {
       amount: params.amount,
       retryDate: params.retryDate,
       updatePaymentUrl,
+      graceNote: params.graceNote,
     });
 
     await this.enqueue({ to: params.email, subject, html });
     this.logger.log(`Payment failed email enqueued for ${this.redactEmail(params.email)}`);
+  }
+
+  /**
+   * Upcoming-renewal reminder (sent ~3 days before a recurring charge).
+   * Scheduled as a `renewal_reminder` lifecycle event and delivered by
+   * LifecycleEventProcessorService — see that service for the send guards.
+   */
+  async sendRenewalReminder(params: {
+    email: string;
+    userName: string;
+    planName: string;
+    billingPeriod: string;
+    /** Formatted VAT-inclusive amount, e.g. "1,999.00". */
+    amount: string;
+    /** Formatted charge date, e.g. "July 6, 2026". */
+    chargeDate: string;
+    /** Instrument label, e.g. "Visa •••• 4242". */
+    paymentMethod: string;
+  }): Promise<void> {
+    const manageUrl = `${this.appUrl}/settings/billing`;
+    const { subject, html } = renewalReminderTemplate({
+      userName: params.userName,
+      planName: params.planName,
+      intervalLabel: params.billingPeriod === 'annual' ? 'Annual' : 'Monthly',
+      amount: params.amount,
+      chargeDate: params.chargeDate,
+      paymentMethod: params.paymentMethod,
+      manageUrl,
+      supportEmail: 'support@libertasian.com',
+    });
+
+    await this.enqueue({ to: params.email, subject, html });
+    this.logger.log(`Renewal reminder enqueued for ${this.redactEmail(params.email)}`);
   }
 
   async sendSubscriptionCancelled(params: {

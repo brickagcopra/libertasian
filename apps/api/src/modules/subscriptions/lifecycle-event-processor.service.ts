@@ -3,6 +3,12 @@ import { Cron } from '@nestjs/schedule';
 import type { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import {
+  describePaymentMethod,
+  formatBillingDate,
+  formatPhpAmount,
+} from '../notifications/notification-format.util';
 import { SubscriptionsService } from './subscriptions.service';
 import {
   SubscriptionLifecycleService,
@@ -33,6 +39,22 @@ const EVENT_TYPE_MAP: Record<
   },
 };
 
+/** Shape of a due event as claimed by the 60s poll loop. */
+interface DueLifecycleEvent {
+  id: string;
+  eventType: string;
+  attempts: number;
+  maxAttempts: number;
+  metadataJson?: Prisma.JsonValue;
+  subscription: {
+    id: string;
+    status: string;
+    organizationId: string;
+    planCode: string;
+    xenditSubscriptionId: string | null;
+  };
+}
+
 @Injectable()
 export class LifecycleEventProcessorService {
   private readonly logger = new Logger(LifecycleEventProcessorService.name);
@@ -41,6 +63,7 @@ export class LifecycleEventProcessorService {
     private readonly prisma: PrismaService,
     private readonly lifecycleService: SubscriptionLifecycleService,
     private readonly subscriptionsService: SubscriptionsService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   /**
@@ -104,21 +127,14 @@ export class LifecycleEventProcessorService {
 
   // ---- Private ----
 
-  private async processEvent(
-    event: {
-      id: string;
-      eventType: string;
-      attempts: number;
-      maxAttempts: number;
-      subscription: {
-        id: string;
-        status: string;
-        organizationId: string;
-        planCode: string;
-        xenditSubscriptionId: string | null;
-      };
-    },
-  ): Promise<void> {
+  private async processEvent(event: DueLifecycleEvent): Promise<void> {
+    // RENEWAL REMINDER: an email-only event — no state transition. Handled by
+    // its own path (guards + idempotency-per-period live there).
+    if (event.eventType === 'renewal_reminder') {
+      await this.processRenewalReminderEvent(event);
+      return;
+    }
+
     const mapping = EVENT_TYPE_MAP[event.eventType];
     if (!mapping) {
       this.logger.warn(
@@ -180,25 +196,193 @@ export class LifecycleEventProcessorService {
         `subscription ${event.subscription.id} transitioned via ${mapping.action}`,
       );
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      const newAttempts = event.attempts + 1;
+      await this.recordFailureOrRetry(event, error);
+    }
+  }
 
-      if (newAttempts >= event.maxAttempts) {
-        await this.markFailed(event.id, errorMessage);
-        this.logger.error(
-          `Lifecycle event ${event.id} (${event.eventType}) failed permanently ` +
-          `after ${newAttempts} attempts: ${errorMessage}`,
+  /**
+   * Send the T-3d renewal reminder email scheduled by BillingService.
+   *
+   * Guards (all no-op complete, never send):
+   * - subscription must still be ACTIVE
+   * - subscription must be Xendit-backed (Xendit drives the upcoming charge)
+   * - subscription must NOT be cancelAtPeriodEnd (no charge will occur)
+   * - the reminder for this billing period must not have been sent already
+   *   (idempotent per period via the periodEnd stamped in event metadata)
+   */
+  private async processRenewalReminderEvent(event: DueLifecycleEvent): Promise<void> {
+    const claimed = await this.claimEvent(event.id, event.attempts);
+    if (!claimed) return; // Another instance claimed it
+
+    try {
+      // Re-read the subscription for fresh state (the claim loop's snapshot may
+      // be stale by the time this runs).
+      const sub = await this.prisma.subscription.findUnique({
+        where: { id: event.subscription.id },
+        select: {
+          id: true,
+          organizationId: true,
+          planCode: true,
+          planId: true,
+          status: true,
+          billingPeriod: true,
+          currentPeriodEnd: true,
+          cancelAtPeriodEnd: true,
+          xenditSubscriptionId: true,
+        },
+      });
+
+      const now = new Date();
+      if (
+        !sub ||
+        sub.status !== SubscriptionState.ACTIVE ||
+        !sub.xenditSubscriptionId ||
+        sub.cancelAtPeriodEnd ||
+        !sub.currentPeriodEnd ||
+        sub.currentPeriodEnd <= now
+      ) {
+        this.logger.log(
+          `Renewal reminder ${event.id}: subscription ${event.subscription.id} not eligible ` +
+            `(status=${sub?.status ?? 'missing'}, cancelAtPeriodEnd=${sub?.cancelAtPeriodEnd ?? 'n/a'}) — no-op`,
         );
-      } else {
-        // Reset to pending for retry
-        await this.prisma.subscriptionLifecycleEvent.update({
-          where: { id: event.id },
-          data: { status: 'pending', lastError: errorMessage },
-        });
-        this.logger.warn(
-          `Lifecycle event ${event.id} (${event.eventType}) failed (attempt ${newAttempts}/${event.maxAttempts}): ${errorMessage}`,
-        );
+        await this.markCompleted(event.id);
+        return;
       }
+
+      // IDEMPOTENCY per billing period: if a reminder for the same periodEnd
+      // was already completed, do not send again.
+      const meta = (event.metadataJson ?? {}) as Record<string, unknown>;
+      const periodKey =
+        typeof meta['periodEnd'] === 'string'
+          ? meta['periodEnd']
+          : sub.currentPeriodEnd.toISOString();
+      const alreadySent = await this.prisma.subscriptionLifecycleEvent.findFirst({
+        where: {
+          subscriptionId: sub.id,
+          eventType: 'renewal_reminder',
+          status: 'completed',
+          id: { not: event.id },
+          metadataJson: { path: ['periodEnd'], equals: periodKey },
+        },
+        select: { id: true },
+      });
+      if (alreadySent) {
+        this.logger.log(
+          `Renewal reminder ${event.id}: already sent for subscription ${sub.id} period ${periodKey} — no-op`,
+        );
+        await this.markCompleted(event.id);
+        return;
+      }
+
+      const org = await this.prisma.organization.findUnique({
+        where: { id: sub.organizationId },
+        select: { billingOwner: { select: { email: true, fullName: true } } },
+      });
+      if (!org?.billingOwner) {
+        this.logger.warn(
+          `Renewal reminder ${event.id}: org ${sub.organizationId} has no billing owner — no-op`,
+        );
+        await this.markCompleted(event.id);
+        return;
+      }
+
+      // Plan display name + exact renewal amount (PlanPrice first, last
+      // succeeded Payment as fallback).
+      const plan = await this.findPlanWithPrice(sub);
+      let amountCentavos = plan?.prices[0]?.amount ?? null;
+      if (amountCentavos == null) {
+        const lastPayment = await this.prisma.payment.findFirst({
+          where: { subscriptionId: sub.id, status: 'succeeded' },
+          orderBy: { paidAt: 'desc' },
+          select: { amount: true },
+        });
+        amountCentavos = lastPayment?.amount ?? null;
+      }
+      if (amountCentavos == null) {
+        // Card-network best practice requires the exact amount — do not send a
+        // reminder we cannot price.
+        this.logger.warn(
+          `Renewal reminder ${event.id}: no price or prior payment for subscription ${sub.id} — no-op`,
+        );
+        await this.markCompleted(event.id);
+        return;
+      }
+
+      const pm =
+        (await this.prisma.paymentMethod.findFirst({
+          where: { organizationId: sub.organizationId, isActive: true, isDefault: true },
+        })) ??
+        (await this.prisma.paymentMethod.findFirst({
+          where: { organizationId: sub.organizationId, isActive: true },
+          orderBy: { createdAt: 'desc' },
+        }));
+
+      await this.notificationsService.sendRenewalReminder({
+        email: org.billingOwner.email,
+        userName: org.billingOwner.fullName ?? 'User',
+        planName: plan?.displayName ?? sub.planCode,
+        billingPeriod: sub.billingPeriod,
+        amount: formatPhpAmount(amountCentavos),
+        chargeDate: formatBillingDate(sub.currentPeriodEnd),
+        paymentMethod: describePaymentMethod(pm),
+      });
+
+      await this.markCompleted(event.id);
+      this.logger.log(
+        `Renewal reminder ${event.id} sent for subscription ${sub.id} (charge date ${periodKey})`,
+      );
+    } catch (error) {
+      await this.recordFailureOrRetry(event, error);
+    }
+  }
+
+  /** Resolve the sub's Plan (with the active price for its billing interval). */
+  private async findPlanWithPrice(sub: {
+    planId: string | null;
+    planCode: string;
+    billingPeriod: string;
+  }) {
+    const priceInclude = {
+      prices: {
+        where: { billingInterval: sub.billingPeriod, isActive: true },
+        take: 1,
+      },
+    };
+    if (sub.planId) {
+      return this.prisma.plan.findUnique({
+        where: { id: sub.planId },
+        include: priceInclude,
+      });
+    }
+    return this.prisma.plan.findUnique({
+      where: { code: sub.planCode },
+      include: priceInclude,
+    });
+  }
+
+  /** Shared retry/permanent-failure bookkeeping for a claimed event. */
+  private async recordFailureOrRetry(
+    event: { id: string; eventType: string; attempts: number; maxAttempts: number },
+    error: unknown,
+  ): Promise<void> {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const newAttempts = event.attempts + 1;
+
+    if (newAttempts >= event.maxAttempts) {
+      await this.markFailed(event.id, errorMessage);
+      this.logger.error(
+        `Lifecycle event ${event.id} (${event.eventType}) failed permanently ` +
+        `after ${newAttempts} attempts: ${errorMessage}`,
+      );
+    } else {
+      // Reset to pending for retry
+      await this.prisma.subscriptionLifecycleEvent.update({
+        where: { id: event.id },
+        data: { status: 'pending', lastError: errorMessage },
+      });
+      this.logger.warn(
+        `Lifecycle event ${event.id} (${event.eventType}) failed (attempt ${newAttempts}/${event.maxAttempts}): ${errorMessage}`,
+      );
     }
   }
 

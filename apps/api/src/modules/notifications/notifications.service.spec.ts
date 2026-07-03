@@ -168,6 +168,53 @@ describe('NotificationsService', () => {
     });
   });
 
+  // ---- sendRenewalReminder ----
+
+  describe('sendRenewalReminder', () => {
+    const params = {
+      email: 'owner@example.com',
+      userName: 'Owner',
+      planName: 'Pro',
+      billingPeriod: 'monthly',
+      amount: '1,999.00',
+      chargeDate: 'August 1, 2026',
+      paymentMethod: 'Visa •••• 4242',
+    };
+
+    it('enqueues the reminder with the card-network subject line (plan, date, amount)', async () => {
+      await service.sendRenewalReminder(params);
+
+      expect(emailQueue.add).toHaveBeenCalledTimes(1);
+      expect(emailQueue.add).toHaveBeenCalledWith(
+        'send-email',
+        expect.objectContaining({
+          to: 'owner@example.com',
+          subject: 'Your LIBERTASIAN Pro plan renews on August 1, 2026 — ₱1,999.00',
+        }),
+        expect.any(Object),
+      );
+    });
+
+    it('includes the amount (VAT-inclusive), charge date, instrument and manage link in the body', async () => {
+      await service.sendRenewalReminder(params);
+
+      const emailData = emailQueue.add.mock.calls[0][1] as { html: string };
+      expect(emailData.html).toContain('₱1,999.00');
+      expect(emailData.html).toContain('VAT-inclusive');
+      expect(emailData.html).toContain('August 1, 2026');
+      expect(emailData.html).toContain('Visa •••• 4242');
+      expect(emailData.html).toContain('https://libertasian.com/settings/billing');
+      expect(emailData.html).toContain('support@libertasian.com');
+    });
+
+    it('labels the interval from billingPeriod (annual → Annual)', async () => {
+      await service.sendRenewalReminder({ ...params, billingPeriod: 'annual' });
+
+      const emailData = emailQueue.add.mock.calls[0][1] as { html: string };
+      expect(emailData.html).toContain('Pro — Annual');
+    });
+  });
+
   // ---- retry configuration ----
 
   describe('email queue configuration', () => {
