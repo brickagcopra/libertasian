@@ -22,11 +22,12 @@ export function describePaymentMethod(
   return pm.last4 ? `${brand} •••• ${pm.last4}` : brand;
 }
 
-/** Long-form date for billing emails, e.g. "July 6, 2026". */
+/** Long-form date for billing emails, e.g. "July 6, 2026", in Philippine time. */
 export function formatBillingDate(date: Date): string {
   return date.toLocaleDateString('en-PH', {
     year: 'numeric',
     month: 'long',
     day: 'numeric',
+    timeZone: 'Asia/Manila',
   });
 }
