@@ -13,7 +13,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { SubscriptionLifecycleService } from '../subscriptions/subscription-lifecycle.service';
 import { SubscriptionAction } from '../subscriptions/subscription-state-machine';
 import { BillingService } from './billing.service';
-import { XenditService } from './xendit.service';
+import { XenditApiError, XenditService } from './xendit.service';
 
 describe('BillingService', () => {
   let service: BillingService;
@@ -153,6 +153,7 @@ describe('BillingService', () => {
           useValue: {
             createInvoice: jest.fn(),
             createCustomer: jest.fn().mockResolvedValue({ id: 'cust-1', reference_id: 'org-1' }),
+            getCustomerByReferenceId: jest.fn().mockResolvedValue(null),
             createSubscriptionSession: jest.fn().mockResolvedValue({
               payment_session_id: 'ps-1',
               payment_link_url: 'https://checkout.xendit.co/sessions/ps-1',
@@ -341,6 +342,74 @@ describe('BillingService', () => {
 
       await expect(service.createCheckout('org-1', dto, 'user-1')).rejects.toThrow('xendit down');
       expect(prisma.subscription.delete).toHaveBeenCalledWith({ where: { id: 'sub-prov' } });
+    });
+
+    it('should reuse an existing remote Xendit customer when the local pointer is lost', async () => {
+      // Local DB miss (e.g. rollback deleted the row holding xenditCustomerId)
+      // but the customer still exists at Xendit under reference_id = org id.
+      subscriptionsService.getActiveSubscription.mockResolvedValue(null as never);
+      subscriptionsService.getDefaultEntitlements.mockReturnValue({} as never);
+      (xenditService.getCustomerByReferenceId as jest.Mock).mockResolvedValue({
+        id: 'cust-remote',
+        reference_id: 'org-1',
+      });
+
+      await service.createCheckout('org-1', dto, 'user-1');
+
+      expect(xenditService.getCustomerByReferenceId).toHaveBeenCalledWith('org-1');
+      expect(xenditService.createCustomer).not.toHaveBeenCalled();
+      expect(xenditService.createSubscriptionSession).toHaveBeenCalledWith(
+        expect.objectContaining({ customerId: 'cust-remote' }),
+      );
+    });
+
+    it('should recover from a DUPLICATE_ERROR 409 on customer create via the reference_id lookup', async () => {
+      // Race: the GET missed but a concurrent checkout created the customer
+      // before our POST landed.
+      subscriptionsService.getActiveSubscription.mockResolvedValue(null as never);
+      subscriptionsService.getDefaultEntitlements.mockReturnValue({} as never);
+      (xenditService.getCustomerByReferenceId as jest.Mock)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: 'cust-dup', reference_id: 'org-1' });
+      (xenditService.createCustomer as jest.Mock).mockRejectedValue(
+        new XenditApiError(409, 'DUPLICATE_ERROR'),
+      );
+
+      await service.createCheckout('org-1', dto, 'user-1');
+
+      expect(xenditService.getCustomerByReferenceId).toHaveBeenCalledTimes(2);
+      expect(xenditService.createSubscriptionSession).toHaveBeenCalledWith(
+        expect.objectContaining({ customerId: 'cust-dup' }),
+      );
+    });
+
+    it('should still create a fresh customer when neither DB nor Xendit has one', async () => {
+      subscriptionsService.getActiveSubscription.mockResolvedValue(null as never);
+      subscriptionsService.getDefaultEntitlements.mockReturnValue({} as never);
+
+      await service.createCheckout('org-1', dto, 'user-1');
+
+      expect(xenditService.getCustomerByReferenceId).toHaveBeenCalledTimes(1);
+      expect(xenditService.createCustomer).toHaveBeenCalledWith(
+        expect.objectContaining({ referenceId: 'org-1' }),
+      );
+      expect(xenditService.createSubscriptionSession).toHaveBeenCalledWith(
+        expect.objectContaining({ customerId: 'cust-1' }),
+      );
+    });
+
+    it('should bubble non-duplicate customer create errors', async () => {
+      subscriptionsService.getActiveSubscription.mockResolvedValue(null as never);
+      subscriptionsService.getDefaultEntitlements.mockReturnValue({} as never);
+      (xenditService.createCustomer as jest.Mock).mockRejectedValue(
+        new XenditApiError(500, 'SERVER_ERROR'),
+      );
+
+      await expect(service.createCheckout('org-1', dto, 'user-1')).rejects.toThrow(
+        'Xendit API error: 500',
+      );
+      // No fallback GET for non-duplicate failures.
+      expect(xenditService.getCustomerByReferenceId).toHaveBeenCalledTimes(1);
     });
 
     it('should throw BadRequestException for invalid plan code', async () => {

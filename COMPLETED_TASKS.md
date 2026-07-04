@@ -1,6 +1,21 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-07-02 (PR #254 — API: narrow platform-admin allowlist to 2 accounts via data-only migration)
+> Last updated: 2026-07-03 (PR #257 — billing: anchor_date on subscription sessions + idempotent Xendit customer resolution)
+
+---
+
+## 2026-07-03 — PR #257: Fix prod checkout 500s — anchor_date + Xendit customer DUPLICATE_ERROR
+
+**Branch:** `fix/xendit-checkout-anchor-date-customer-409` → https://github.com/brickagcopra/libertasian/pull/257
+**Context:** Prod `POST /api/v1/billing/checkout` 500s from two confirmed Xendit errors: (1) `400 POST /sessions — subscription/schedule must have required property 'anchor_date'`; (2) `409 POST /customers — DUPLICATE_ERROR "reference_id entered has been used before"`. The 409 is a downstream effect of the 400: the session failure rolls back the provisioning Subscription row — the only local record of `xenditCustomerId` — so the next checkout blindly re-POSTs `/customers` with the same org reference_id and every retry 500s.
+
+1. **xendit.service.ts** — `createSubscriptionSession` now sends `subscription.schedule.anchor_date` (required by the sessions API, api-version 2026-01-01): "now" in ISO 8601 UTC without millis for charge-now-then-recur, via new `XenditService.subscriptionAnchorDate()` which clamps days 29–31 back to 28 (Xendit rejects anchor day-of-month > 28 — without the clamp, month-end checkouts would 400 again).
+2. **xendit.service.ts** — new `getCustomerByReferenceId(referenceId)` (`GET /customers?reference_id=...`, first match or null); `request()` now throws typed `XenditApiError` carrying `status` + body `error_code` (message string unchanged, so existing catch/tests unaffected).
+3. **billing.service.ts** — `resolveXenditCustomer` is idempotent: local DB → remote GET by reference_id (org id) → `POST /customers`; a DUPLICATE_ERROR/409 on the POST falls back to the GET (create-race safety) instead of bubbling a 500.
+4. **Tests** — xendit.service.spec: anchor_date exact value under fake timers + month-end clamp, api-version header, getCustomerByReferenceId (hit/empty/URL-encoding), XenditApiError carries 409 + DUPLICATE_ERROR; billing.service.spec: local miss + remote hit → no POST; POST 409 → recovers via GET; clean create unchanged; non-duplicate errors bubble.
+5. **Verification** — billing suites: 114 tests / 4 suites ✅; `pnpm --filter api lint` (tsc --noEmit) ✅.
+
+**Explicitly NOT done:** NOT merged / NOT deployed. Noted in PR (out of scope): sessions doc lists `schedule.interval` as DAY|WEEK|MONTH — we send YEAR for annual plans; if annual checkouts also 400 on interval, follow up (e.g. MONTH × interval_count 12).
 
 ---
 
