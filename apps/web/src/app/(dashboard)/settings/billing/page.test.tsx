@@ -210,6 +210,17 @@ describe('BillingPage — recurring subscription UI', () => {
       ).not.toBeInTheDocument();
     });
 
+    it('renders the accessible dialog description when the dialog opens', async () => {
+      window.history.replaceState(null, '', '/settings/billing?plan=pro');
+
+      render(<BillingPage />);
+
+      expect(await screen.findByText('Choose a Plan')).toBeInTheDocument();
+      expect(
+        screen.getByText(/select a plan and billing period, then proceed to payment/i),
+      ).toBeInTheDocument();
+    });
+
     it('does not auto-open the dialog when no plan param is present', async () => {
       render(<BillingPage />);
 

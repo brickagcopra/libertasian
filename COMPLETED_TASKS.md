@@ -1,6 +1,19 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-07-03 (PR: anchor_date = next cycle + immediate_payment on subscription sessions — follow-up to #257)
+> Last updated: 2026-07-03 (PR: plan-selector dialog width, card grid overflow, dialog max-w overrides)
+
+---
+
+## 2026-07-03 — PR: fix(web): plan-selector dialog width, card grid overflow, and dialog max-w overrides
+
+**Branch:** `fix/billing-plan-dialog-layout`
+**Context:** Screenshot-confirmed: the "Choose a Plan" dialog on `/settings/billing` was squeezed to 512px on desktop with text overlapping the plan cards. Root cause A (systemic): `DialogContent` base classes include `sm:max-w-lg`; tailwind-merge does NOT merge across variants, so callers passing an un-prefixed `max-w-*` keep both classes and the base `sm:` utility wins at every viewport ≥640px. Root cause B: the plan grid used viewport breakpoints (`sm:grid-cols-2 lg:grid-cols-4`) inside a dialog, and prod `/plans` returns only 3 upgrade plans, leaving a dead 4th column. `dialog.tsx` deliberately untouched (other dialogs depend on current behavior) — callers fixed instead.
+
+1. **settings/billing/page.tsx** — plan-selector `DialogContent` → `sm:max-w-[min(64rem,calc(100%-2rem))] max-h-[90vh] overflow-y-auto` (`min()` keeps side margins at 640–1056px viewports); plan grid → `grid-cols-[repeat(auto-fit,minmax(13rem,1fr))]` so card count and dialog width don't matter (plans stay DB-driven, nothing hardcoded); card polish: feature `<li>` text wrapped in a `min-w-0 break-words` span (long words no longer spill across card borders), plan-name `h4` gets `min-w-0 truncate`, badge container gets `shrink-0` (no "Popular"-badge overlap); a11y: added `DialogDescription` ("Select a plan and billing period, then proceed to payment." — clears the Radix console warning), coupon `Input` gets `id="coupon-code"` + `name="couponCode"` and its label gets `htmlFor`.
+2. **Un-prefixed max-w overrides in other (dashboard) dialogs** — `settings/roles/page.tsx` `max-w-2xl` → `sm:max-w-2xl`; `settings/members/page.tsx` `max-w-md` → `sm:max-w-md`. Redundant `max-w-lg` overrides DELETED (they silently cancelled the base's mobile `max-w-[calc(100%-2rem)]` margin cap): `admin/backfill`, `admin/promotions`, `settings/api-keys`, `settings/members` (permissions dialog), `settings/audit-logs`.
+3. **Tests** — new `page.test.tsx` assertion that the DialogDescription renders when the dialog opens; full `pnpm --filter web test`: 179 files / 1539 tests ✅.
+
+**Explicitly NOT done:** `components/ui/dialog.tsx` unchanged (all other dialogs depend on current behavior); NOT merged / NOT deployed; no visual-regression tooling exists — manual verification steps described in the PR body.
 
 ---
 

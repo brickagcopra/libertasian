@@ -184,7 +184,7 @@ export default function BackfillPage() {
               New Batch
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-lg">
+          <DialogContent>
             <DialogHeader>
               <DialogTitle>Create Backfill Batch</DialogTitle>
               <DialogDescription>
