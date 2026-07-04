@@ -502,7 +502,7 @@ function AuditLogDetailDialog({
 
   return (
     <Dialog open={!!log} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FileTextIcon className="size-5" />

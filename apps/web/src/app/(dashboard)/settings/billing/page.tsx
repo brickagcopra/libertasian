@@ -55,6 +55,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -209,9 +210,12 @@ function CurrentPlanSection() {
 
       {/* Plan Selector Dialog */}
       <Dialog open={showUpgrade} onOpenChange={setShowUpgrade}>
-        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-[min(64rem,calc(100%-2rem))] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Choose a Plan</DialogTitle>
+            <DialogDescription>
+              Select a plan and billing period, then proceed to payment.
+            </DialogDescription>
           </DialogHeader>
           <PlanSelectorContent
             currentPlan={planCode}
@@ -463,7 +467,7 @@ function PlanSelectorContent({
           <span className="ml-2 text-sm text-muted-foreground">Loading plans...</span>
         </div>
       )}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(13rem,1fr))]">
         {upgradePlans.map((plan) => {
           const price = billingPeriod === 'monthly' ? plan.monthlyPrice : plan.annualPrice;
           const isCurrentPlan = plan.code === currentPlan;
@@ -484,9 +488,9 @@ function PlanSelectorContent({
               onClick={() => !isCurrentPlan && handleSelectPlan(plan.code)}
             >
               <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <h4 className="font-semibold">{plan.name}</h4>
-                  <div className="flex items-center gap-1.5">
+                <div className="flex items-center justify-between gap-1.5">
+                  <h4 className="min-w-0 truncate font-semibold">{plan.name}</h4>
+                  <div className="flex shrink-0 items-center gap-1.5">
                     {plan.highlight && <Badge>Popular</Badge>}
                     {isSelected && (
                       <div className="flex h-5 w-5 items-center justify-center rounded-full bg-primary">
@@ -512,9 +516,9 @@ function PlanSelectorContent({
 
                 <ul className="mt-3 space-y-1">
                   {plan.features.map((feature) => (
-                    <li key={feature} className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                    <li key={feature} className="flex min-w-0 items-start gap-1.5 text-xs text-muted-foreground">
                       <CheckIcon className="mt-0.5 h-3 w-3 flex-shrink-0 text-green-500" />
-                      {feature}
+                      <span className="min-w-0 break-words">{feature}</span>
                     </li>
                   ))}
                 </ul>
@@ -621,7 +625,7 @@ function CouponInputSection({
 }) {
   return (
     <div className="space-y-2">
-      <label className="flex items-center gap-1.5 text-sm font-medium">
+      <label htmlFor="coupon-code" className="flex items-center gap-1.5 text-sm font-medium">
         <TicketIcon className="h-4 w-4" />
         Coupon Code
       </label>
@@ -648,6 +652,8 @@ function CouponInputSection({
       ) : (
         <div className="flex gap-2">
           <Input
+            id="coupon-code"
+            name="couponCode"
             placeholder="Enter coupon code"
             value={couponInput}
             onChange={(e) => setCouponInput(e.target.value.toUpperCase())}

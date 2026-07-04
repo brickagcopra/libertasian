@@ -92,7 +92,7 @@ export default function ApiKeysPage() {
               Create API key
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-lg">
+          <DialogContent>
             <DialogHeader>
               <DialogTitle>Create new API key</DialogTitle>
             </DialogHeader>

@@ -492,7 +492,7 @@ export default function PromotionsAdminPage() {
 
       {/* Create Promotion Dialog */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>Create Promotion</DialogTitle>
             <DialogDescription>

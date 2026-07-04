@@ -1,6 +1,14 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-07-03 (anchor_date follow-up PR awaiting merge + deploy)
+> Last updated: 2026-07-03 (plan-selector dialog layout PR awaiting merge + deploy)
+
+---
+
+## 2026-07-03 — plan-selector dialog layout PR rollout (owner action required)
+
+- [ ] Review + merge `fix/billing-plan-dialog-layout` (plan-selector dialog width, card grid overflow, dialog max-w overrides)
+- [ ] Rebuild + redeploy the web app (agent did NOT deploy)
+- [ ] Manual visual verification (no visual-regression tooling): `/settings/billing` → "Choose a Plan" — dialog ~1024px wide on desktop, side margins preserved at 640–1056px viewports, 3 plan cards fill the row with no dead column, long feature words wrap inside card borders, "Popular" badge doesn't overlap the plan name, no Radix missing-description console warning; spot-check the other touched dialogs (roles editor, members role/permissions, audit-log detail, api-keys create, admin backfill/promotions) at mobile width — side margins present — and desktop — unchanged size
 
 ---
 
