@@ -1,14 +1,15 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-07-03 (PR #257 — Xendit checkout fixes awaiting merge + deploy)
+> Last updated: 2026-07-03 (anchor_date follow-up PR awaiting merge + deploy)
 
 ---
 
-## 2026-07-03 — PR #257 rollout (owner action required)
+## 2026-07-03 — anchor_date follow-up PR rollout (owner action required)
 
-- [ ] Review + merge https://github.com/brickagcopra/libertasian/pull/257 (`fix/xendit-checkout-anchor-date-customer-409`)
-- [ ] Deploy API, then live-verify prod checkout: `POST /billing/checkout` returns a `checkoutUrl` (no 400 on `/sessions`, no 409 on `/customers`) — including for the org(s) whose earlier failed attempts left an orphaned Xendit customer
-- [ ] Verify an end-to-end subscription: hosted session → `recurring.plan.activated` webhook → subscription active
+- [ ] Review + merge `fix/xendit-anchor-date-next-cycle` (anchor_date = next cycle start + `immediate_payment: true`; supersedes #257's anchor_date="now", which prod rejected with `anchor_date must be >= expires_at`)
+- [ ] Deploy API, then live-verify prod checkout end-to-end: `POST /billing/checkout` → hosted session → pay → `payment.capture` + `recurring.cycle.succeeded` fire immediately (immediate_payment) → `recurring.plan.activated` → subscription active, currentPeriodEnd ≈ anchor_date
+- [ ] Confirm the ₱ first charge is collected AT session completion (immediate_payment) and the second charge is scheduled at the anchor (one billing period out, day clamped ≤28)
+- [ ] Still pending from #257: verify the previously-broken org(s) with orphaned Xendit customers can check out (409 recovery path)
 - [ ] Follow-up check: run one ANNUAL checkout in sandbox — the sessions doc lists `schedule.interval` as DAY|WEEK|MONTH and we send `YEAR`; if it 400s, switch annual to `MONTH` × `interval_count: 12`
 
 ---

@@ -1,6 +1,19 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-07-03 (PR #257 — billing: anchor_date on subscription sessions + idempotent Xendit customer resolution)
+> Last updated: 2026-07-03 (PR: anchor_date = next cycle + immediate_payment on subscription sessions — follow-up to #257)
+
+---
+
+## 2026-07-03 — Follow-up to PR #257: anchor_date = next cycle + immediate_payment
+
+**Branch:** `fix/xendit-anchor-date-next-cycle`
+**Context:** #257's `anchor_date = now` deployed and live-tested; Xendit rejects it: `400 POST /sessions — "Property 'subscription.schedule.anchor_date' must be greater than or equal to 'expires_at'" (API_VALIDATION_ERROR)`. Sessions expire 30 min after creation, and the anchor is the recurring schedule START — it must be at/after session expiry. Charge-now is instead expressed via `subscription.immediate_payment: true` (first charge collected at session completion; `payment.capture` + `recurring.cycle.succeeded` fire immediately). Docs re-verified (create-session spec + subscriptions-overview + fixed-amount walkthrough example JSON showing `immediate_payment` inside the `subscription` object).
+
+1. **xendit.service.ts** — `subscription.immediate_payment: true` added (without it the customer pays NOTHING until anchor_date); `subscriptionAnchorDate(interval, intervalCount, from = now)` now returns the NEXT cycle start: clamp UTC day-of-month to ≤28 FIRST, then add the billing period (clamp-first prevents JS month rollover — Jan 31 + 1 month would otherwise land Mar 3; clamped → Feb 28 — and satisfies Xendit's max-day-28 anchor rule). Still ISO 8601 UTC without millis. Call site passes `params.interval`/`params.intervalCount`.
+2. **Tests** (xendit.service.spec) — session body: `immediate_payment: true` + anchor `2026-07-04 → 2026-08-04T…Z` (fake timers); anchor ≥ 1h past fake now (guards the expires_at constraint); month-end clamp `2026-07-31 + 1 MONTH → 2026-08-28`. Direct `subscriptionAnchorDate` tests: monthly, Jan-31 rollover → Feb 28, annual +1 year, annual month-end clamp.
+3. **Verification** — billing suites: 119 tests / 4 suites ✅; `pnpm --filter api lint` (tsc --noEmit) ✅.
+
+**Explicitly NOT done:** no re-review/changes to #257's customer-resolution fix; NOT merged / NOT deployed.
 
 ---
 
