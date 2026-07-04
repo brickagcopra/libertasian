@@ -1,6 +1,15 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-07-02 (PR #254 — platform-admin allowlist narrowing awaiting merge + prod migrate deploy)
+> Last updated: 2026-07-03 (PR #257 — Xendit checkout fixes awaiting merge + deploy)
+
+---
+
+## 2026-07-03 — PR #257 rollout (owner action required)
+
+- [ ] Review + merge https://github.com/brickagcopra/libertasian/pull/257 (`fix/xendit-checkout-anchor-date-customer-409`)
+- [ ] Deploy API, then live-verify prod checkout: `POST /billing/checkout` returns a `checkoutUrl` (no 400 on `/sessions`, no 409 on `/customers`) — including for the org(s) whose earlier failed attempts left an orphaned Xendit customer
+- [ ] Verify an end-to-end subscription: hosted session → `recurring.plan.activated` webhook → subscription active
+- [ ] Follow-up check: run one ANNUAL checkout in sandbox — the sessions doc lists `schedule.interval` as DAY|WEEK|MONTH and we send `YEAR`; if it 400s, switch annual to `MONTH` × `interval_count: 12`
 
 ---
 
