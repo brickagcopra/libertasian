@@ -169,8 +169,8 @@ describe('XenditService', () => {
       jest.useRealTimers();
     });
 
-    it('should include the required subscription.schedule.anchor_date (now, ISO 8601)', async () => {
-      jest.useFakeTimers().setSystemTime(new Date('2026-07-03T10:15:30.123Z'));
+    it('should anchor the schedule at the NEXT cycle and set immediate_payment', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-07-04T10:15:30.123Z'));
       global.fetch = jest.fn().mockResolvedValue({
         ok: true,
         json: jest.fn().mockResolvedValue(mockSession),
@@ -184,14 +184,34 @@ describe('XenditService', () => {
         expect.objectContaining({ 'api-version': '2026-01-01' }),
       );
       const body = JSON.parse(init.body as string);
+      // First charge at session completion; anchor starts the second cycle.
+      expect(body.subscription.immediate_payment).toBe(true);
       expect(body.subscription.schedule).toEqual({
         interval: 'MONTH',
         interval_count: 1,
-        anchor_date: '2026-07-03T10:15:30Z',
+        anchor_date: '2026-08-04T10:15:30Z',
       });
     });
 
-    it('should clamp the anchor_date to day 28 for month-end checkouts (Xendit max day is 28)', async () => {
+    it('should keep the anchor_date comfortably past the 30-min session expiry', async () => {
+      const now = new Date('2026-07-04T10:15:30.123Z');
+      jest.useFakeTimers().setSystemTime(now);
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: jest.fn().mockResolvedValue(mockSession),
+      });
+
+      await service.createSubscriptionSession(params);
+
+      const [, init] = (global.fetch as jest.Mock).mock.calls[0];
+      const body = JSON.parse(init.body as string);
+      const anchor = new Date(body.subscription.schedule.anchor_date);
+      // Xendit requires anchor_date >= expires_at (now + 30 min); assert a
+      // wide margin so the constraint can never be violated.
+      expect(anchor.getTime() - now.getTime()).toBeGreaterThanOrEqual(60 * 60 * 1000);
+    });
+
+    it('should clamp the anchor day to 28 for month-end checkouts (Xendit max day is 28)', async () => {
       jest.useFakeTimers().setSystemTime(new Date('2026-07-31T23:59:59.000Z'));
       global.fetch = jest.fn().mockResolvedValue({
         ok: true,
@@ -202,7 +222,35 @@ describe('XenditService', () => {
 
       const [, init] = (global.fetch as jest.Mock).mock.calls[0];
       const body = JSON.parse(init.body as string);
-      expect(body.subscription.schedule.anchor_date).toBe('2026-07-28T23:59:59Z');
+      expect(body.subscription.schedule.anchor_date).toBe('2026-08-28T23:59:59Z');
+    });
+  });
+
+  // ---- subscriptionAnchorDate ----
+
+  describe('subscriptionAnchorDate', () => {
+    it('should return one month ahead for MONTH × 1', () => {
+      expect(
+        XenditService.subscriptionAnchorDate('MONTH', 1, new Date('2026-07-04T10:15:30.123Z')),
+      ).toBe('2026-08-04T10:15:30Z');
+    });
+
+    it('should not overflow into March for Jan 31 + 1 MONTH (clamps to Feb 28)', () => {
+      expect(
+        XenditService.subscriptionAnchorDate('MONTH', 1, new Date('2026-01-31T08:00:00Z')),
+      ).toBe('2026-02-28T08:00:00Z');
+    });
+
+    it('should return one year ahead for YEAR × 1', () => {
+      expect(
+        XenditService.subscriptionAnchorDate('YEAR', 1, new Date('2026-07-04T10:15:30Z')),
+      ).toBe('2027-07-04T10:15:30Z');
+    });
+
+    it('should clamp a month-end annual anchor to day 28', () => {
+      expect(
+        XenditService.subscriptionAnchorDate('YEAR', 1, new Date('2026-12-31T09:30:00Z')),
+      ).toBe('2027-12-28T09:30:00Z');
     });
   });
 

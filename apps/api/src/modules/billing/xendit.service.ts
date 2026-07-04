@@ -298,10 +298,19 @@ export class XenditService {
         schedule: {
           interval: params.interval,
           interval_count: params.intervalCount,
-          // REQUIRED by the sessions API — omitting it 400s. "Now" = charge on
-          // authorisation, then recur every interval from this anchor.
-          anchor_date: XenditService.subscriptionAnchorDate(),
+          // REQUIRED — and Xendit enforces anchor_date >= the session's
+          // expires_at (30 min from creation), so "now" is rejected. The
+          // anchor starts the SECOND cycle, one billing period out; the first
+          // charge is collected at completion via immediate_payment.
+          anchor_date: XenditService.subscriptionAnchorDate(
+            params.interval,
+            params.intervalCount,
+          ),
         },
+        // Collect the first charge at session completion
+        // (charge-now-then-recur). Without this the customer pays NOTHING
+        // until anchor_date.
+        immediate_payment: true,
         // Let Xendit retry a failed cycle (dunning) before giving up.
         failed_cycle_action: 'STOP',
       },
@@ -351,16 +360,33 @@ export class XenditService {
   }
 
   /**
-   * Anchor date for a new subscription schedule: "now" (charge-now-then-recur),
-   * as ISO 8601 UTC without milliseconds. Xendit rejects anchor days 29–31
-   * ("Max allowed day of the month is 28"), so month-end signups are clamped
-   * back to the 28th — the anchor stays at-or-before now (still charges
-   * immediately) and the recurring billing day becomes the 28th.
+   * Anchor date for a new subscription schedule: the start of the NEXT cycle
+   * (`from` + one billing period), as ISO 8601 UTC without milliseconds.
+   *
+   * The first charge is collected at session completion
+   * (`immediate_payment: true`), so the anchor is when the SECOND charge is
+   * due. It cannot be "now": Xendit enforces anchor_date >= the session's
+   * expires_at (sessions expire 30 min after creation) and rejects otherwise
+   * with API_VALIDATION_ERROR.
+   *
+   * Day-of-month is clamped to 28 BEFORE adding the period: Xendit caps the
+   * anchor day at 28 ("Max allowed day of the month is 28"), and clamping
+   * first also prevents JS month rollover (Jan 31 + 1 month via setUTCMonth
+   * would land on Mar 3; clamped it lands on Feb 28).
    */
-  static subscriptionAnchorDate(from: Date = new Date()): string {
+  static subscriptionAnchorDate(
+    interval: 'MONTH' | 'YEAR',
+    intervalCount: number,
+    from: Date = new Date(),
+  ): string {
     const d = new Date(from);
     if (d.getUTCDate() > 28) {
       d.setUTCDate(28);
+    }
+    if (interval === 'YEAR') {
+      d.setUTCFullYear(d.getUTCFullYear() + intervalCount);
+    } else {
+      d.setUTCMonth(d.getUTCMonth() + intervalCount);
     }
     return d.toISOString().replace(/\.\d{3}Z$/, 'Z');
   }
