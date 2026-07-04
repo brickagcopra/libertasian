@@ -84,6 +84,22 @@ export interface XenditRefundWebhookEvent {
 /** Pinned API version for the recurring/session endpoints. */
 export const XENDIT_RECURRING_API_VERSION = '2026-01-01';
 
+/**
+ * Error thrown for non-2xx Xendit responses. Carries the HTTP status and the
+ * Xendit `error_code` from the response body (e.g. `DUPLICATE_ERROR` on
+ * `POST /customers` with an already-used reference_id) so callers can branch
+ * on specific failures instead of treating every Xendit error as a 500.
+ */
+export class XenditApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly errorCode: string | null,
+  ) {
+    super(`Xendit API error: ${status}`);
+    this.name = 'XenditApiError';
+  }
+}
+
 export interface XenditCustomerParams {
   /** Idempotent external reference (we use the organization id). */
   referenceId: string;
@@ -246,6 +262,20 @@ export class XenditService {
   }
 
   /**
+   * Look up an existing Xendit Customer by its `reference_id` (our org id).
+   * Returns null when none exists. Used to make customer resolution
+   * idempotent: reference_id is unique at Xendit, so a blind re-POST after a
+   * lost local pointer 409s with DUPLICATE_ERROR.
+   */
+  async getCustomerByReferenceId(referenceId: string): Promise<XenditCustomer | null> {
+    const result = await this.request<{ data?: XenditCustomer[] }>(
+      'GET',
+      `/customers?reference_id=${encodeURIComponent(referenceId)}`,
+    );
+    return result.data?.[0] ?? null;
+  }
+
+  /**
    * Create a SUBSCRIPTION-mode Payment Session and return the hosted checkout
    * (`payment_link_url`). Xendit auto-creates a Recurring Plan once the customer
    * authorises, then owns scheduling, auto-debit (cards AND GCash/Maya), retries
@@ -268,6 +298,9 @@ export class XenditService {
         schedule: {
           interval: params.interval,
           interval_count: params.intervalCount,
+          // REQUIRED by the sessions API — omitting it 400s. "Now" = charge on
+          // authorisation, then recur every interval from this anchor.
+          anchor_date: XenditService.subscriptionAnchorDate(),
         },
         // Let Xendit retry a failed cycle (dunning) before giving up.
         failed_cycle_action: 'STOP',
@@ -315,6 +348,21 @@ export class XenditService {
   /** Extract the hosted checkout URL from a freshly-created session. */
   static hostedUrl(session: XenditSubscriptionSession): string | null {
     return session.payment_link_url ?? null;
+  }
+
+  /**
+   * Anchor date for a new subscription schedule: "now" (charge-now-then-recur),
+   * as ISO 8601 UTC without milliseconds. Xendit rejects anchor days 29–31
+   * ("Max allowed day of the month is 28"), so month-end signups are clamped
+   * back to the 28th — the anchor stays at-or-before now (still charges
+   * immediately) and the recurring billing day becomes the 28th.
+   */
+  static subscriptionAnchorDate(from: Date = new Date()): string {
+    const d = new Date(from);
+    if (d.getUTCDate() > 28) {
+      d.setUTCDate(28);
+    }
+    return d.toISOString().replace(/\.\d{3}Z$/, 'Z');
   }
 
   /**
@@ -376,7 +424,16 @@ export class XenditService {
       this.logger.error(
         `Xendit API error: ${response.status} ${method} ${path} — ${errorBody}`,
       );
-      throw new Error(`Xendit API error: ${response.status}`);
+      let errorCode: string | null = null;
+      try {
+        const parsed = JSON.parse(errorBody) as { error_code?: unknown };
+        if (typeof parsed.error_code === 'string') {
+          errorCode = parsed.error_code;
+        }
+      } catch {
+        // Non-JSON error body — status alone still identifies the failure.
+      }
+      throw new XenditApiError(response.status, errorCode);
     }
 
     return (await response.json()) as T;

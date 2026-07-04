@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 
-import { XenditService } from './xendit.service';
+import { XenditApiError, XenditService } from './xendit.service';
 
 describe('XenditService', () => {
   let service: XenditService;
@@ -72,6 +72,27 @@ describe('XenditService', () => {
       );
     });
 
+    it('should throw XenditApiError carrying the status and error_code from the body', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        text: jest.fn().mockResolvedValue(
+          JSON.stringify({
+            error_code: 'DUPLICATE_ERROR',
+            message: 'reference_id entered has been used before',
+          }),
+        ),
+      });
+
+      const promise = service.createCustomer({ referenceId: 'org-1' });
+      await expect(promise).rejects.toThrow('Xendit API error: 409');
+      await promise.catch((err: unknown) => {
+        expect(err).toBeInstanceOf(XenditApiError);
+        expect((err as XenditApiError).status).toBe(409);
+        expect((err as XenditApiError).errorCode).toBe('DUPLICATE_ERROR');
+      });
+    });
+
     it('should throw on Xendit API error', async () => {
       global.fetch = jest.fn().mockResolvedValue({
         ok: false,
@@ -117,6 +138,113 @@ describe('XenditService', () => {
       expect(result.id).toBe('inv_test_456');
       expect(global.fetch).toHaveBeenCalledWith(
         'https://api.xendit.co/v2/invoices/inv_test_456',
+        expect.objectContaining({ method: 'GET' }),
+      );
+    });
+  });
+
+  // ---- createSubscriptionSession ----
+
+  describe('createSubscriptionSession', () => {
+    const params = {
+      referenceId: 'sub-1',
+      customerId: 'cust-1',
+      amount: 999,
+      currency: 'PHP',
+      interval: 'MONTH' as const,
+      intervalCount: 1,
+      description: 'LIBERTASIAN Pro Plan — Monthly',
+      successReturnUrl: 'https://app.com/success',
+      cancelReturnUrl: 'https://app.com/cancel',
+      metadata: { organizationId: 'org-1' },
+    };
+
+    const mockSession = {
+      payment_session_id: 'ps-1',
+      payment_link_url: 'https://checkout.xendit.co/sessions/ps-1',
+      reference_id: 'sub-1',
+    };
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('should include the required subscription.schedule.anchor_date (now, ISO 8601)', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-07-03T10:15:30.123Z'));
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: jest.fn().mockResolvedValue(mockSession),
+      });
+
+      await service.createSubscriptionSession(params);
+
+      const [url, init] = (global.fetch as jest.Mock).mock.calls[0];
+      expect(url).toBe('https://api.xendit.co/sessions');
+      expect(init.headers).toEqual(
+        expect.objectContaining({ 'api-version': '2026-01-01' }),
+      );
+      const body = JSON.parse(init.body as string);
+      expect(body.subscription.schedule).toEqual({
+        interval: 'MONTH',
+        interval_count: 1,
+        anchor_date: '2026-07-03T10:15:30Z',
+      });
+    });
+
+    it('should clamp the anchor_date to day 28 for month-end checkouts (Xendit max day is 28)', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-07-31T23:59:59.000Z'));
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: jest.fn().mockResolvedValue(mockSession),
+      });
+
+      await service.createSubscriptionSession(params);
+
+      const [, init] = (global.fetch as jest.Mock).mock.calls[0];
+      const body = JSON.parse(init.body as string);
+      expect(body.subscription.schedule.anchor_date).toBe('2026-07-28T23:59:59Z');
+    });
+  });
+
+  // ---- getCustomerByReferenceId ----
+
+  describe('getCustomerByReferenceId', () => {
+    it('should return the first matching customer', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: jest.fn().mockResolvedValue({
+          data: [{ id: 'cust-1', reference_id: 'org-1' }],
+        }),
+      });
+
+      const result = await service.getCustomerByReferenceId('org-1');
+
+      expect(result).toEqual({ id: 'cust-1', reference_id: 'org-1' });
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://api.xendit.co/customers?reference_id=org-1',
+        expect.objectContaining({ method: 'GET' }),
+      );
+    });
+
+    it('should return null when no customer matches', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: jest.fn().mockResolvedValue({ data: [] }),
+      });
+
+      await expect(service.getCustomerByReferenceId('org-none')).resolves.toBeNull();
+    });
+
+    it('should URL-encode the reference id', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: jest.fn().mockResolvedValue({ data: [] }),
+      });
+
+      await service.getCustomerByReferenceId('org/1&x=y');
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        `https://api.xendit.co/customers?reference_id=${encodeURIComponent('org/1&x=y')}`,
         expect.objectContaining({ method: 'GET' }),
       );
     });

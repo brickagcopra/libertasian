@@ -25,6 +25,7 @@ import {
   formatPhpAmount,
 } from '../notifications/notification-format.util';
 import {
+  XenditApiError,
   XenditService,
   type XenditRefundData,
   type XenditRecurringData,
@@ -228,6 +229,13 @@ export class BillingService {
    * Return the org's Xendit Customer id, creating one if none exists yet.
    * The id is stored on every Subscription row, so we read it back from the
    * most recent row that has one.
+   *
+   * The local pointer can be lost — e.g. a failed checkout rolls back the only
+   * provisioning row holding xenditCustomerId — while the Xendit customer
+   * still exists. reference_id is unique at Xendit, so a blind re-POST 409s
+   * with DUPLICATE_ERROR. Resolution is therefore idempotent: local DB →
+   * remote lookup by reference_id → create, with a 409 on create falling back
+   * to the remote lookup (a concurrent checkout may win the create race).
    */
   private async resolveXenditCustomer(
     organizationId: string,
@@ -242,16 +250,42 @@ export class BillingService {
       return existing.xenditCustomerId;
     }
 
+    const remote = await this.xenditService.getCustomerByReferenceId(organizationId);
+    if (remote) {
+      return remote.id;
+    }
+
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { email: true, fullName: true },
     });
-    const customer = await this.xenditService.createCustomer({
-      referenceId: organizationId,
-      email: user?.email,
-      givenNames: user?.fullName ?? undefined,
-    });
-    return customer.id;
+    try {
+      const customer = await this.xenditService.createCustomer({
+        referenceId: organizationId,
+        email: user?.email,
+        givenNames: user?.fullName ?? undefined,
+      });
+      return customer.id;
+    } catch (err) {
+      if (this.isDuplicateCustomerError(err)) {
+        const raced = await this.xenditService.getCustomerByReferenceId(organizationId);
+        if (raced) {
+          this.logger.warn(
+            `Xendit customer for org ${organizationId} already existed (DUPLICATE_ERROR) — reusing ${raced.id}`,
+          );
+          return raced.id;
+        }
+      }
+      throw err;
+    }
+  }
+
+  /** A `POST /customers` rejection because the reference_id is already used. */
+  private isDuplicateCustomerError(err: unknown): boolean {
+    return (
+      err instanceof XenditApiError &&
+      (err.errorCode === 'DUPLICATE_ERROR' || err.status === 409)
+    );
   }
 
   // ---- Webhook Handlers ----
