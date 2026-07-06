@@ -202,10 +202,14 @@ export class DerivativesReviewService {
     let digestCandidateIds: string[] = [];
     if (includeDigests) {
       // CARVE-OUT: admin bulk-approve spans all orgs by design
+      // sourceOrigin + userId filters exclude user-scan/private digests:
+      // user-scan digests must never be auto-promoted (see CLAUDE.md).
       const digestCandidates = await this.prisma.digest.findMany({
         where: {
-          reviewStatus: 'needs_human_review',
+          reviewStatus: { in: ['ai_generated', 'needs_human_review'] },
           confidenceScore: { gte: dto.threshold },
+          sourceOrigin: 'ai_generated',
+          userId: null,
         },
         select: { id: true },
       });
