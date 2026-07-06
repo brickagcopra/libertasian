@@ -377,15 +377,16 @@ describe('DerivativesReviewService', () => {
       );
 
       expect(result.digestsPromoted).toBe(2);
-      // The where clause must include ai_generated pipeline digests while
-      // excluding user-scan/private digests: only sourceOrigin='ai_generated'
-      // rows with no owning user are eligible (user-scan digests must never
-      // be auto-promoted).
+      // The where clause must include pipeline digests (official_pipeline,
+      // ai_generated, ...) while excluding user-scan/private digests by
+      // origin denylist: only rows outside the user-scan origins with no
+      // owning user are eligible (user-scan digests must never be
+      // auto-promoted).
       expect(prisma.digest.findMany).toHaveBeenCalledWith({
         where: {
           reviewStatus: { in: ['ai_generated', 'needs_human_review'] },
           confidenceScore: { gte: 0.8 },
-          sourceOrigin: 'ai_generated',
+          sourceOrigin: { notIn: ['user_scan', 'user_upload', 'camera_capture'] },
           userId: null,
         },
         select: { id: true },

@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 
 import { PrismaService } from '../../prisma/prisma.service';
-import { DigestsService } from '../digests/digests.service';
+import { DigestsService, USER_SCAN_ORIGINS } from '../digests/digests.service';
 import {
   BulkApproveByConfidenceDto,
   BulkApproveByConfidenceResult,
@@ -202,13 +202,13 @@ export class DerivativesReviewService {
     let digestCandidateIds: string[] = [];
     if (includeDigests) {
       // CARVE-OUT: admin bulk-approve spans all orgs by design
-      // sourceOrigin + userId filters exclude user-scan/private digests:
+      // Exclude user-scan/private digests by origin denylist + userId:
       // user-scan digests must never be auto-promoted (see CLAUDE.md).
       const digestCandidates = await this.prisma.digest.findMany({
         where: {
           reviewStatus: { in: ['ai_generated', 'needs_human_review'] },
           confidenceScore: { gte: dto.threshold },
-          sourceOrigin: 'ai_generated',
+          sourceOrigin: { notIn: USER_SCAN_ORIGINS },
           userId: null,
         },
         select: { id: true },

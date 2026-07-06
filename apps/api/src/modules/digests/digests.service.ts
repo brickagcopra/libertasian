@@ -31,7 +31,7 @@ import {
 const CONFIDENCE_THRESHOLD = 0.7;
 
 /** Source origins that come from user scans — always private visibility */
-const USER_SCAN_ORIGINS = ['user_scan', 'user_upload', 'camera_capture'];
+export const USER_SCAN_ORIGINS = ['user_scan', 'user_upload', 'camera_capture'];
 
 const PREVIEW_DIGEST_CACHE_KEY = 'cache:digest-preview-id';
 const PREVIEW_DIGEST_CACHE_TTL = 60;
