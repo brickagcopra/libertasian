@@ -8,6 +8,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   Max,
   Min,
 } from 'class-validator';
@@ -102,6 +103,10 @@ export class ReviewQueueQueryDto {
     description: 'Filter by assigned reviewer (UUID or "unassigned")',
   })
   @IsString()
+  @Matches(
+    /^(unassigned|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/,
+    { message: 'assignedTo must be a UUID or "unassigned"' },
+  )
   @IsOptional()
   assignedTo?: string;
 

@@ -192,7 +192,7 @@ export default function ReviewQueuePage() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="__all__">All Assignees</SelectItem>
-            <SelectItem value="__unassigned__">Unassigned</SelectItem>
+            <SelectItem value="unassigned">Unassigned</SelectItem>
             {stats?.perReviewer.map((r) => (
               <SelectItem key={r.reviewerUserId} value={r.reviewerUserId}>
                 {r.reviewerName ?? r.reviewerUserId.slice(0, 8)}
