@@ -972,14 +972,25 @@ export class DigestsService {
     reviewerUserId: string,
   ) {
     // CARVE-OUT: admin batch — cross-tenant by design
+    // Skip already-terminal digests so stale re-submits are idempotent
+    // (no duplicate review rows, no status churn).
     const digests = await this.prisma.digest.findMany({
-      where: { id: { in: dto.digestIds } },
-      select: { id: true, sourceOrigin: true, visibility: true, userId: true },
+      where: {
+        id: { in: dto.digestIds },
+        reviewStatus: { notIn: ['approved', 'rejected'] },
+      },
+      select: {
+        id: true,
+        sourceOrigin: true,
+        visibility: true,
+        userId: true,
+        reviewStatus: true,
+      },
     });
 
     const foundIds = digests.map((d) => d.id);
     if (foundIds.length === 0) {
-      throw new NotFoundException('No digests found for the provided IDs');
+      return { processed: 0, digestIds: [] };
     }
 
     // Identify AI-generated digests that should be promoted to public_editorial
@@ -1031,14 +1042,19 @@ export class DigestsService {
     reviewerUserId: string,
   ) {
     // CARVE-OUT: admin batch — cross-tenant by design
+    // Skip already-terminal digests so stale re-submits are idempotent
+    // (no duplicate review rows, no status churn).
     const digests = await this.prisma.digest.findMany({
-      where: { id: { in: dto.digestIds } },
-      select: { id: true },
+      where: {
+        id: { in: dto.digestIds },
+        reviewStatus: { notIn: ['approved', 'rejected'] },
+      },
+      select: { id: true, reviewStatus: true },
     });
 
     const foundIds = digests.map((d) => d.id);
     if (foundIds.length === 0) {
-      throw new NotFoundException('No digests found for the provided IDs');
+      return { processed: 0, digestIds: [] };
     }
 
     const notes = [dto.notes, dto.reason].filter(Boolean).join(' | ') || null;
