@@ -1439,6 +1439,28 @@ describe('DigestsService', () => {
           where: { reviewStatus: { notIn: ['approved', 'rejected'] } },
         });
       });
+
+      it('scopes the unassigned count to pending digests only', async () => {
+        prismaService.digest.count.mockResolvedValue(3);
+        prismaService.digest.groupBy.mockResolvedValue([]);
+        prismaService.digest.aggregate.mockResolvedValue({
+          _avg: { confidenceScore: null },
+        });
+        prismaService.$queryRaw.mockResolvedValue([]);
+
+        await service.getReviewStats();
+
+        // Second digest.count call computes the unassigned count; it must
+        // carry the same pending-only filter as the total, otherwise the
+        // "Unassigned" card can exceed "Total in Queue".
+        const unassignedCountArgs = prismaService.digest.count.mock.calls[1][0];
+        expect(unassignedCountArgs).toEqual({
+          where: {
+            assignedReviewerUserId: null,
+            reviewStatus: { notIn: ['approved', 'rejected'] },
+          },
+        });
+      });
     });
   });
 });

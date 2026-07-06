@@ -1110,10 +1110,13 @@ export class DigestsService {
         _count: { _all: true },
       }),
 
-      // Unassigned count
+      // Unassigned count (pending only — must never exceed "Total in Queue")
       // CARVE-OUT: global metric — counts all orgs by design
       this.prisma.digest.count({
-        where: { assignedReviewerUserId: null },
+        where: {
+          assignedReviewerUserId: null,
+          reviewStatus: { notIn: ['approved', 'rejected'] },
+        },
       }),
 
       // Average confidence score

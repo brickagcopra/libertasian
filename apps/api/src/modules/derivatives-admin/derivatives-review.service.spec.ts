@@ -359,10 +359,37 @@ describe('DerivativesReviewService', () => {
         expect.objectContaining({
           where: expect.objectContaining({
             confidenceScore: { gte: 0.9 },
-            reviewStatus: 'needs_human_review',
+            reviewStatus: { in: ['ai_generated', 'needs_human_review'] },
           }),
         }),
       );
+    });
+
+    it('sweeps ai_generated digests and excludes user-owned/user-scan digests', async () => {
+      prisma.derivativeArtifact.findMany.mockResolvedValue([]);
+      // Pipeline digests sit in reviewStatus='ai_generated' after confidence
+      // scoring — they must be candidates for the bulk sweep.
+      prisma.digest.findMany.mockResolvedValue([{ id: 'd-ai-1' }, { id: 'd-ai-2' }]);
+
+      const result = await service.bulkApproveByConfidence(
+        { threshold: 0.8, dryRun: true },
+        'reviewer-1',
+      );
+
+      expect(result.digestsPromoted).toBe(2);
+      // The where clause must include ai_generated pipeline digests while
+      // excluding user-scan/private digests: only sourceOrigin='ai_generated'
+      // rows with no owning user are eligible (user-scan digests must never
+      // be auto-promoted).
+      expect(prisma.digest.findMany).toHaveBeenCalledWith({
+        where: {
+          reviewStatus: { in: ['ai_generated', 'needs_human_review'] },
+          confidenceScore: { gte: 0.8 },
+          sourceOrigin: 'ai_generated',
+          userId: null,
+        },
+        select: { id: true },
+      });
     });
 
     it('applies the derivativeTypes filter when supplied', async () => {
