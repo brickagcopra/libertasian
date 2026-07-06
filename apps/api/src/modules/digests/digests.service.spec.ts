@@ -1463,4 +1463,127 @@ describe('DigestsService', () => {
       });
     });
   });
+
+  describe('batchApprove / batchReject idempotency', () => {
+    const reviewerUserId = 'reviewer-1';
+
+    describe('batchApprove', () => {
+      it('skips digests that are already terminal and processes only pending ones', async () => {
+        // DB-side filter returns only the pending digest even though two IDs
+        // were submitted (digest-approved is already terminal).
+        prismaService.digest.findMany.mockResolvedValue([
+          {
+            id: 'digest-pending',
+            sourceOrigin: 'official_pipeline',
+            visibility: 'private',
+            userId: 'user-1',
+            reviewStatus: 'ai_generated',
+          },
+        ]);
+        prismaService.$transaction.mockResolvedValue([]);
+
+        const result = await service.batchApprove(
+          { digestIds: ['digest-pending', 'digest-approved'] },
+          reviewerUserId,
+        );
+
+        expect(prismaService.digest.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: {
+              id: { in: ['digest-pending', 'digest-approved'] },
+              reviewStatus: { notIn: ['approved', 'rejected'] },
+            },
+          }),
+        );
+        // Review rows are only created for the non-terminal digest.
+        expect(prismaService.digestReview.createMany).toHaveBeenCalledWith({
+          data: [
+            {
+              digestId: 'digest-pending',
+              reviewerUserId,
+              verdict: 'approve',
+              notes: null,
+            },
+          ],
+        });
+        expect(prismaService.digest.updateMany).toHaveBeenCalledWith({
+          where: { id: { in: ['digest-pending'] } },
+          data: { reviewStatus: 'approved' },
+        });
+        expect(result).toEqual({
+          processed: 1,
+          digestIds: ['digest-pending'],
+        });
+      });
+
+      it('returns processed: 0 without throwing when all supplied IDs are already terminal', async () => {
+        prismaService.digest.findMany.mockResolvedValue([]);
+
+        const result = await service.batchApprove(
+          { digestIds: ['digest-approved', 'digest-rejected'] },
+          reviewerUserId,
+        );
+
+        expect(result).toEqual({ processed: 0, digestIds: [] });
+        expect(prismaService.digestReview.createMany).not.toHaveBeenCalled();
+        expect(prismaService.digest.updateMany).not.toHaveBeenCalled();
+        expect(prismaService.$transaction).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('batchReject', () => {
+      it('skips digests that are already terminal and processes only pending ones', async () => {
+        prismaService.digest.findMany.mockResolvedValue([
+          { id: 'digest-pending', reviewStatus: 'needs_human_review' },
+        ]);
+        prismaService.$transaction.mockResolvedValue([]);
+
+        const result = await service.batchReject(
+          { digestIds: ['digest-pending', 'digest-rejected'] },
+          reviewerUserId,
+        );
+
+        expect(prismaService.digest.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: {
+              id: { in: ['digest-pending', 'digest-rejected'] },
+              reviewStatus: { notIn: ['approved', 'rejected'] },
+            },
+          }),
+        );
+        expect(prismaService.digestReview.createMany).toHaveBeenCalledWith({
+          data: [
+            {
+              digestId: 'digest-pending',
+              reviewerUserId,
+              verdict: 'reject',
+              notes: null,
+            },
+          ],
+        });
+        expect(prismaService.digest.updateMany).toHaveBeenCalledWith({
+          where: { id: { in: ['digest-pending'] } },
+          data: { reviewStatus: 'rejected' },
+        });
+        expect(result).toEqual({
+          processed: 1,
+          digestIds: ['digest-pending'],
+        });
+      });
+
+      it('returns processed: 0 without throwing when all supplied IDs are already terminal', async () => {
+        prismaService.digest.findMany.mockResolvedValue([]);
+
+        const result = await service.batchReject(
+          { digestIds: ['digest-approved'] },
+          reviewerUserId,
+        );
+
+        expect(result).toEqual({ processed: 0, digestIds: [] });
+        expect(prismaService.digestReview.createMany).not.toHaveBeenCalled();
+        expect(prismaService.digest.updateMany).not.toHaveBeenCalled();
+        expect(prismaService.$transaction).not.toHaveBeenCalled();
+      });
+    });
+  });
 });
