@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   View,
   Text,
@@ -10,12 +10,23 @@ import {
   ScrollView,
   Modal,
   Pressable,
+  Alert,
 } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useDigests } from '../../features/digests/hooks/use-digests';
+import { Input } from '@/components/ui';
+import {
+  useDigests,
+  useGenerateDigest,
+} from '../../features/digests/hooks/use-digests';
+import { useDigestTextSearch } from '../../features/digests/hooks/use-digest-text-search';
 import { useBarSubjects } from '../../features/study/hooks/use-bar-subjects';
-import type { Digest, DigestFilters } from '../../features/digests/types';
+import { ApiClientError } from '../../lib/api-client';
+import type {
+  Digest,
+  DigestFilters,
+  MatchedDocument,
+} from '../../features/digests/types';
 
 const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
   draft: { bg: '#f3f4f6', text: '#6b7280' },
@@ -149,6 +160,16 @@ export default function DigestsTab() {
   const [sourceOrigin, setSourceOrigin] = useState<string | undefined>();
   const [sortIndex, setSortIndex] = useState(0);
   const [sortModalVisible, setSortModalVisible] = useState(false);
+  const [searchInput, setSearchInput] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Debounce raw input → committed query (mirrors the web digests page).
+  useEffect(() => {
+    const timer = setTimeout(() => setSearchQuery(searchInput.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
+  const isSearching = searchQuery.length > 0;
 
   const { data: barSubjects } = useBarSubjects();
 
@@ -166,6 +187,15 @@ export default function DigestsTab() {
   );
 
   const { data, isLoading, isFetching, refetch } = useDigests(filters);
+
+  // Server-side full-text search path — activated once the user types.
+  const {
+    data: searchData,
+    isLoading: searchLoading,
+    error: searchError,
+  } = useDigestTextSearch(searchQuery, isSearching);
+
+  const generateDigest = useGenerateDigest();
 
   const hasActiveFilters = !!(digestType || reviewStatus || barSubjectCode || sourceOrigin);
 
@@ -194,6 +224,86 @@ export default function DigestsTab() {
 
   const keyExtractor = useCallback((item: Digest) => item.id, []);
 
+  // Same confirm-Alert pattern as the search tab's generate flow, plus
+  // explicit 402 (subscription) / 429 (quota) messaging.
+  const handleGenerate = useCallback(
+    (doc: MatchedDocument) => {
+      Alert.alert(
+        'Generate digest',
+        `Generate an AI case digest for "${doc.title}"? This uses your digest quota.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Generate',
+            onPress: async () => {
+              try {
+                const result = await generateDigest.mutateAsync({
+                  legalDocumentId: doc.id,
+                  digestType: 'case_digest',
+                });
+                const digestId =
+                  result && typeof result === 'object' && 'data' in result
+                    ? (result as unknown as { data: { id: string } }).data.id
+                    : result?.id;
+                if (digestId) router.push(`/digest/${digestId}`);
+              } catch (err) {
+                if (err instanceof ApiClientError && err.statusCode === 402) {
+                  Alert.alert(
+                    'Upgrade required',
+                    'An active subscription is required to generate digests on demand.',
+                  );
+                  return;
+                }
+                if (err instanceof ApiClientError && err.statusCode === 429) {
+                  Alert.alert(
+                    'Quota reached',
+                    'You have hit your digest generation limit. Try again later.',
+                  );
+                  return;
+                }
+                Alert.alert('Error', 'Failed to generate digest. Please try again.');
+              }
+            },
+          },
+        ],
+      );
+    },
+    [generateDigest],
+  );
+
+  const renderMatchedDocument = useCallback(
+    ({ item }: { item: MatchedDocument }) => (
+      <View style={styles.matchedCard}>
+        <View style={styles.matchedInfo}>
+          <Text style={styles.matchedTitle} numberOfLines={2}>
+            {item.title}
+          </Text>
+          {item.grNo || item.citationText ? (
+            <Text style={styles.matchedMeta} numberOfLines={1}>
+              {[item.grNo, item.citationText].filter(Boolean).join(' · ')}
+            </Text>
+          ) : null}
+        </View>
+        <TouchableOpacity
+          style={[
+            styles.generateButton,
+            generateDigest.isPending && styles.generateButtonDisabled,
+          ]}
+          onPress={() => handleGenerate(item)}
+          disabled={generateDigest.isPending}
+          activeOpacity={0.7}
+          accessibilityLabel="Generate digest"
+        >
+          <Ionicons name="sparkles" size={14} color="#fff" />
+          <Text style={styles.generateButtonText}>Generate digest</Text>
+        </TouchableOpacity>
+      </View>
+    ),
+    [generateDigest.isPending, handleGenerate],
+  );
+
+  const matchedKeyExtractor = useCallback((item: MatchedDocument) => item.id, []);
+
   const subjectChips = useMemo(
     () =>
       (barSubjects ?? []).map((s) => ({
@@ -203,7 +313,7 @@ export default function DigestsTab() {
     [barSubjects],
   );
 
-  if (isLoading) {
+  if (isLoading && !isSearching) {
     return (
       <View style={styles.loadingState}>
         <ActivityIndicator size="large" color="#1a56db" />
@@ -212,11 +322,44 @@ export default function DigestsTab() {
   }
 
   const digests = data?.data ?? [];
+  const searchResults = searchData?.results ?? [];
+  const matchedDocuments = searchData?.matchedDocuments ?? [];
+  // REPLACE semantics: while a query is active, search results take over the
+  // list entirely; clearing the box restores the filtered browse list untouched.
+  const listData = isSearching ? searchResults : digests;
 
   const FilterBar = (
     <View style={styles.filterContainer}>
-      {/* Sort button + Clear all */}
-      <View style={styles.filterActions}>
+      {/* Full-text search */}
+      <View style={styles.searchRow}>
+        <Input
+          value={searchInput}
+          onChangeText={setSearchInput}
+          placeholder="Search by title, case name, or citation..."
+          returnKeyType="search"
+          autoCapitalize="none"
+          autoCorrect={false}
+          accessibilityLabel="Search digests"
+          leading={<Ionicons name="search-outline" size={18} color="#6b7280" />}
+          trailing={
+            searchInput.length > 0 ? (
+              <TouchableOpacity
+                onPress={() => setSearchInput('')}
+                hitSlop={8}
+                accessibilityLabel="Clear search"
+              >
+                <Ionicons name="close-circle" size={18} color="#9ca3af" />
+              </TouchableOpacity>
+            ) : undefined
+          }
+        />
+      </View>
+
+      {/* Chips + sort only apply while browsing, not while actively searching */}
+      {!isSearching ? (
+        <>
+          {/* Sort button + Clear all */}
+          <View style={styles.filterActions}>
         <TouchableOpacity
           style={styles.sortButton}
           onPress={() => setSortModalVisible(true)}
@@ -301,38 +444,87 @@ export default function DigestsTab() {
           ))}
         </ScrollView>
       ) : null}
+        </>
+      ) : null}
     </View>
   );
 
-  return (
-    <View style={styles.container}>
-      {FilterBar}
-
-      {digests.length === 0 ? (
-        <View style={styles.emptyState}>
-          <Ionicons name="document-text-outline" size={48} color="#d1d5db" />
-          <Text style={styles.emptyTitle}>No digests found</Text>
-          <Text style={styles.emptyText}>
-            {hasActiveFilters
+  let listBody: ReactNode;
+  if (isSearching && searchLoading) {
+    listBody = (
+      <View style={styles.loadingState}>
+        <ActivityIndicator size="large" color="#1a56db" />
+      </View>
+    );
+  } else if (isSearching && searchError) {
+    listBody = (
+      <View style={styles.emptyState}>
+        <Ionicons name="alert-circle-outline" size={48} color="#fca5a5" />
+        <Text style={styles.emptyTitle}>Search failed</Text>
+        <Text style={styles.emptyText}>
+          {searchError instanceof Error
+            ? searchError.message
+            : 'Please try again in a moment.'}
+        </Text>
+      </View>
+    );
+  } else if (isSearching && searchResults.length === 0 && matchedDocuments.length > 0) {
+    // No digests matched, but the server found legal documents the user can
+    // generate a digest from.
+    listBody = (
+      <FlatList
+        data={matchedDocuments}
+        renderItem={renderMatchedDocument}
+        keyExtractor={matchedKeyExtractor}
+        contentContainerStyle={styles.listContent}
+        keyboardShouldPersistTaps="handled"
+        ListHeaderComponent={
+          <Text style={styles.matchedHeaderText}>
+            {`No digests found matching "${searchQuery}" — but we found ${matchedDocuments.length} legal ${matchedDocuments.length === 1 ? 'document' : 'documents'} you can generate a digest from:`}
+          </Text>
+        }
+      />
+    );
+  } else if (listData.length === 0) {
+    listBody = (
+      <View style={styles.emptyState}>
+        <Ionicons name="document-text-outline" size={48} color="#d1d5db" />
+        <Text style={styles.emptyTitle}>No digests found</Text>
+        <Text style={styles.emptyText}>
+          {isSearching
+            ? `No digests found matching "${searchQuery}". Try a different search term.`
+            : hasActiveFilters
               ? 'Try adjusting your filters'
               : 'Generate case digests from legal documents using AI'}
-          </Text>
-        </View>
-      ) : (
-        <FlatList
-          data={digests}
-          renderItem={renderItem}
-          keyExtractor={keyExtractor}
-          contentContainerStyle={styles.listContent}
-          refreshControl={
+        </Text>
+      </View>
+    );
+  } else {
+    listBody = (
+      <FlatList
+        data={listData}
+        renderItem={renderItem}
+        keyExtractor={keyExtractor}
+        contentContainerStyle={styles.listContent}
+        keyboardShouldPersistTaps="handled"
+        refreshControl={
+          isSearching ? undefined : (
             <RefreshControl
               refreshing={isFetching && !isLoading}
               onRefresh={() => refetch()}
               colors={['#1a56db']}
             />
-          }
-        />
-      )}
+          )
+        }
+      />
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      {FilterBar}
+
+      {listBody}
 
       {/* Sort modal */}
       <Modal
@@ -395,6 +587,10 @@ const styles = StyleSheet.create({
     borderBottomColor: '#e5e7eb',
     gap: 6,
   },
+  searchRow: {
+    paddingHorizontal: 12,
+    marginBottom: 4,
+  },
   filterActions: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -443,6 +639,52 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   listContent: { padding: 12, gap: 10 },
+  matchedHeaderText: {
+    fontSize: 13,
+    color: '#6b7280',
+    lineHeight: 19,
+    marginBottom: 4,
+  },
+  matchedCard: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  matchedInfo: { flex: 1 },
+  matchedTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+    lineHeight: 20,
+  },
+  matchedMeta: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginTop: 2,
+  },
+  generateButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#1a56db',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  generateButtonDisabled: { opacity: 0.6 },
+  generateButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#fff',
+  },
   card: {
     backgroundColor: '#fff',
     borderRadius: 12,

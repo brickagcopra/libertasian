@@ -29,6 +29,25 @@ export interface DigestsResponse {
   hasNext: boolean;
 }
 
+/** Legal document surfaced by /digests/search when no digest matches the query. */
+export interface MatchedDocument {
+  id: string;
+  title: string;
+  grNo: string | null;
+  citationText: string | null;
+}
+
+/** Payload of GET /digests/search (full-text search over approved public digests). */
+export interface DigestTextSearchResult {
+  results: Digest[];
+  hasMore: boolean;
+  cursor: string | null;
+  matchedDocuments: MatchedDocument[];
+  previewMode?: boolean;
+  lockedCount?: number;
+  upgradeRequired?: boolean;
+}
+
 export interface DigestFilters {
   cursor?: string;
   limit?: number;
