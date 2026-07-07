@@ -59,6 +59,8 @@ export interface DigestDetailScreenProps {
   badges?: DigestBadge[];
   /** Provenance/trust banner (e.g. ContentDisclaimer) rendered above the TL;DR. */
   disclaimerSlot?: ReactNode;
+  /** Audio player bar (e.g. AudioPlayerBar) rendered between the disclaimer and the TL;DR. */
+  playerSlot?: ReactNode;
   /** Additional top-right action buttons rendered alongside bookmark/share/more. */
   extraTopActions?: DigestTopAction[];
   /**
@@ -108,6 +110,7 @@ export function DigestDetailScreen({
   sections = [],
   badges = [],
   disclaimerSlot,
+  playerSlot,
   extraTopActions = [],
   customSections,
   footerSlot,
@@ -331,6 +334,8 @@ export function DigestDetailScreen({
         ) : null}
 
         {disclaimerSlot ? <View style={{ marginBottom: 14 }}>{disclaimerSlot}</View> : null}
+
+        {playerSlot ? <View style={{ marginBottom: 14 }}>{playerSlot}</View> : null}
 
         {/* TL;DR card (digest-specific) */}
         {tldr ? (

@@ -9,6 +9,7 @@ import {
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useBarExamAnswer } from '../hooks/use-bar-exams';
+import { AudioPlayerBar } from '../../audio/components/AudioPlayerBar';
 import { GatedNotice } from '../../derivatives/renderers/gated-notice';
 import { ApiClientError } from '../../../lib/api-client';
 import type { BarExamAnswer, BarExamAnswerStructured } from '../types';
@@ -76,6 +77,11 @@ function AnswerBody({ answer }: { answer: BarExamAnswer }) {
       ) : (
         <Text style={styles.plainAnswer}>{answer.answerText}</Text>
       )}
+
+      {/* Listen — bar-answer audio is Pro-gated server-side; the player renders
+          the upsell itself when the audio endpoint answers 402. Mirrors
+          apps/web .../bar-exams/[year]/[subjectCode]/page.tsx AnswerBody. */}
+      <AudioPlayerBar contentType="bar_exam_answer" contentId={answer.id} />
 
       <View style={styles.disclaimer}>
         <Ionicons

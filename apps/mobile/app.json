@@ -21,6 +21,9 @@
         "applinks:libertasian.com"
       ],
       "infoPlist": {
+        "UIBackgroundModes": [
+          "audio"
+        ],
         "NSCameraUsageDescription": "LIBERTASIAN uses the camera to scan legal documents into searchable digests.",
         "NSPhotoLibraryUsageDescription": "LIBERTASIAN reads selected images from your library to upload as legal document scans.",
         "NSPhotoLibraryAddUsageDescription": "LIBERTASIAN saves rendered digests and shared documents to your photo library."
