@@ -315,6 +315,75 @@ describe('apiClient - token refresh on 401', () => {
     apiClient.setOnUnauthorized(null as unknown as () => void);
   });
 
+  it('skipSignOutOn401: still refreshes, but a persistent 401 throws WITHOUT firing onUnauthorized', async () => {
+    const onUnauthorized = jest.fn();
+    apiClient.setOnUnauthorized(onUnauthorized);
+
+    // First call: 401 (e.g. wrong current password on /auth/change-password)
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      json: () => Promise.resolve({ message: 'Unauthorized' }),
+    });
+
+    // Refresh call succeeds — the session itself is fine
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: {
+            accessToken: 'new-access-token',
+            refreshToken: 'new-refresh-token',
+          },
+        }),
+    });
+
+    // Retry still 401 — domain-level rejection, not an expired session
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      json: () => Promise.resolve({ message: 'Unauthorized' }),
+    });
+
+    await expect(
+      apiClient.post('/auth/change-password', { currentPassword: 'x', newPassword: 'y' }, {
+        skipSignOutOn401: true,
+      }),
+    ).rejects.toMatchObject({ statusCode: 401 });
+
+    expect(onUnauthorized).not.toHaveBeenCalled();
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+
+    apiClient.setOnUnauthorized(null as unknown as () => void);
+  });
+
+  it('skipSignOutOn401: does not fire onUnauthorized even when refresh fails', async () => {
+    const onUnauthorized = jest.fn();
+    apiClient.setOnUnauthorized(onUnauthorized);
+
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      json: () => Promise.resolve({ message: 'Unauthorized' }),
+    });
+
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      json: () => Promise.resolve({ message: 'Invalid refresh token' }),
+    });
+
+    await expect(
+      apiClient.post('/auth/mfa/verify', { code: '000000' }, { skipSignOutOn401: true }),
+    ).rejects.toMatchObject({ statusCode: 401 });
+
+    expect(onUnauthorized).not.toHaveBeenCalled();
+
+    apiClient.setOnUnauthorized(null as unknown as () => void);
+  });
+
   it('does not refresh when skipAuth is true', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: false,

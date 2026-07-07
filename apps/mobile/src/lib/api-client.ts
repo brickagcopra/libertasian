@@ -31,6 +31,13 @@ const API_BASE_URL = resolveApiBaseUrl();
 interface RequestOptions extends RequestInit {
   params?: Record<string, string>;
   skipAuth?: boolean;
+  /**
+   * Endpoints where 401 is a domain answer (wrong current password, bad MFA
+   * code) rather than an expired session. A token refresh is still attempted,
+   * but a persistent 401 is thrown to the caller WITHOUT firing the global
+   * onUnauthorized handler (which would sign the user out locally).
+   */
+  skipSignOutOn401?: boolean;
 }
 
 interface ApiError {
@@ -171,7 +178,7 @@ class ApiClient {
     endpoint: string,
     options: RequestOptions = {},
   ): Promise<T> {
-    const { params, skipAuth, ...init } = options;
+    const { params, skipAuth, skipSignOutOn401, ...init } = options;
     const url = this.buildUrl(endpoint, params);
     const authHeaders = skipAuth ? {} : await this.getAuthHeaders();
 
@@ -204,7 +211,9 @@ class ApiClient {
         }
 
         if (retryResponse.status === 401) {
-          this.onUnauthorized?.();
+          if (!skipSignOutOn401) {
+            this.onUnauthorized?.();
+          }
           const error = await retryResponse
             .json()
             .catch(() => ({ message: 'Session expired' }));
@@ -217,7 +226,9 @@ class ApiClient {
         return this.handleErrorResponse<T>(retryResponse);
       }
 
-      this.onUnauthorized?.();
+      if (!skipSignOutOn401) {
+        this.onUnauthorized?.();
+      }
       throw new ApiClientError(401, 'Session expired. Please sign in again.');
     }
 
