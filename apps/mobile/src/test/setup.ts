@@ -31,6 +31,30 @@ jest.mock('expo-sharing', () => ({
   shareAsync: jest.fn().mockResolvedValue(undefined),
 }));
 
+// Mock expo-av — the audio player streams via Audio.Sound; the native module
+// (ExponentAV) is undefined under jest, so provide a loadable sound stub.
+jest.mock('expo-av', () => {
+  const createSoundStub = () => ({
+    playAsync: jest.fn().mockResolvedValue({ isLoaded: true }),
+    pauseAsync: jest.fn().mockResolvedValue({ isLoaded: true }),
+    unloadAsync: jest.fn().mockResolvedValue({ isLoaded: false }),
+    setPositionAsync: jest.fn().mockResolvedValue({ isLoaded: true }),
+    setRateAsync: jest.fn().mockResolvedValue({ isLoaded: true }),
+    getStatusAsync: jest.fn().mockResolvedValue({ isLoaded: true, isPlaying: false }),
+    setOnPlaybackStatusUpdate: jest.fn(),
+  });
+  return {
+    Audio: {
+      setAudioModeAsync: jest.fn().mockResolvedValue(undefined),
+      Sound: {
+        createAsync: jest.fn().mockImplementation(() =>
+          Promise.resolve({ sound: createSoundStub(), status: { isLoaded: true } }),
+        ),
+      },
+    },
+  };
+});
+
 // Mock expo-constants
 jest.mock('expo-constants', () => ({
   __esModule: true,

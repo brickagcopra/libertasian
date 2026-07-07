@@ -1,6 +1,22 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-07-03 (PR: plan-selector dialog width, card grid overflow, dialog max-w overrides)
+> Last updated: 2026-07-07 (PR: mobile audio player — Listen on digest detail + bar answers)
+
+---
+
+## 2026-07-07 — PR: feat(mobile): audio player for digests + bar answers (Listen, playback only)
+
+**Branch:** `feature/mobile-audio-player`
+**Context:** Port of the web "Listen" player (apps/web/src/features/audio) to mobile. Playback only — read-along highlighting deliberately deferred. The audio endpoint enqueues PAID TTS synthesis on the first not-ready GET, so the player never fetches on mount: it renders a Listen button and fetches only on first tap.
+
+1. **expo-av ~15.0.2 added** (stable on SDK 52; expo-audio is experimental there). `app.json` ios.infoPlist gains `UIBackgroundModes: ["audio"]`; audio session configured once lazily (`playsInSilentModeIOS`, `staysActiveInBackground`) in `features/audio/lib/audio-session.ts`, which also enforces a single active player via a claim/release focus registry (starting one player pauses any other).
+2. **apps/mobile/src/features/audio/** — `types.ts` (AudioRenditionReadModel mirroring the web contract incl. marksUrl/readalongUrl for the read-along follow-up), `hooks/use-audio-rendition.ts` (React Query, retry:false, 3s poll while pending, 60s cutoff → `isTakingTooLong`), `components/AudioPlayerBar.tsx` (states: idle Listen / pending spinner / taking-too-long retry / error retry / 402 Pro upsell → /subscription / ready transport with play-pause, drag-to-seek PanResponder slider — no extra native dep — elapsed/duration, cycling rate chip 0.75/1/1.25/1.5). Streams the presigned S3 URL directly (no auth header). Themed with useTheme() tokens.
+3. **Signed-URL (300s TTL) expiry recovery** — on playback error mid-stream: save positionMillis + wasPlaying, invalidate + refetch the rendition, reload the sound at the saved position, resume. 8s cooldown guard prevents an auto-recovery loop on genuinely broken streams (falls through to a manual Retry state).
+4. **Mounts** — digest detail: new `playerSlot` prop on `DigestDetailScreen` (rendered between disclaimer and TL;DR), wired from `app/digest/[id].tsx` (digest audio is free); bar answers: inside `AnswerBody` in `bar-exam-answer-accordion.tsx` so it only renders after the answer loaded (bar-answer audio is Pro-gated → player renders the 402 upsell itself).
+5. **Lifecycle** — sound unloaded on unmount/navigation (`unloadAsync`), status subscription detached, audio focus released.
+6. **Tests** — `use-audio-rendition.test.ts` (no fetch when disabled; language=en fetch; URL-encoding; 3s pending poll then stop on ready; 60s → isTakingTooLong + polling stops; 402 terminal without retry) + `AudioPlayerBar.test.tsx` (idle no-fetch; tap enables; pending; taking-too-long retry; 402 upsell → /subscription; non-402 retry; ready transport + rate cycle). Global expo-av mock added to `src/test/setup.ts`. Full mobile suite: 207 suites / 1374 tests ✅ (one auth-provider flake in a single run; passes in isolation and on re-runs, pre-existing). `tsc --noEmit`: zero errors in new/touched files (9 pre-existing `global` errors on clean main in unrelated test files, unchanged).
+
+**Explicitly NOT done:** read-along highlighting (follow-up PR); no apps/api changes; NOT merged; native rebuild required before QA (new native module + infoPlist change).
 
 ---
 

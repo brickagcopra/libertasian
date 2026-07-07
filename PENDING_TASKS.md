@@ -1,6 +1,15 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-07-03 (plan-selector dialog layout PR awaiting merge + deploy)
+> Last updated: 2026-07-07 (mobile audio player PR awaiting merge + native rebuild)
+
+---
+
+## 2026-07-07 — mobile audio player PR rollout (owner action required)
+
+- [ ] Review + merge `feature/mobile-audio-player` (Listen player for digest detail + bar answers)
+- [ ] Native rebuild required: expo-av is a native module and `UIBackgroundModes: ["audio"]` changed app.json — dev clients / EAS builds must be regenerated (Metro-only reload is NOT enough)
+- [ ] Manual QA on emulator/device (steps in the PR body): tap Listen on a digest, background the app mid-playback, seek, cycle rate, wait >5 min then seek/play to exercise signed-URL expiry recovery, and confirm a free account sees the Pro upsell on a bar-answer Listen
+- [ ] Follow-up (explicitly out of scope for this PR): read-along highlighting on mobile (marksUrl/readalongUrl are already surfaced by the hook)
 
 ---
 

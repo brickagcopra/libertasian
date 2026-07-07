@@ -6,6 +6,7 @@ import {
   type DigestBadge,
   type DigestSection,
 } from '@/components/screens/DigestDetailScreen';
+import { AudioPlayerBar } from '@/features/audio/components/AudioPlayerBar';
 import { useDigest } from '@/features/digests/hooks/use-digests';
 import { ContentDisclaimer } from '@/features/documents/components/content-disclaimer';
 import { ExportButton } from '@/features/exports/components/export-button';
@@ -221,6 +222,9 @@ export default function DigestDetailRoute() {
       sections={sections}
       badges={badges}
       disclaimerSlot={disclaimerSlot}
+      playerSlot={
+        <AudioPlayerBar contentType="digest" contentId={digest.id} title={digest.title} />
+      }
       footerSlot={footerSlot}
       onBack={() => router.back()}
       onShare={handleShare}
