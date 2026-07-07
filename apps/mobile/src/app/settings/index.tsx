@@ -106,6 +106,13 @@ export default function SettingsRoute() {
 
   const accountRows: ProfileRow[] = [
     {
+      id: 'security',
+      icon: 'lock-closed-outline',
+      label: 'Security',
+      sub: 'Password & two-factor authentication',
+      onPress: () => router.push('/settings/security'),
+    },
+    {
       id: 'notifications',
       icon: 'notifications-outline',
       label: 'Notifications',
@@ -155,7 +162,7 @@ export default function SettingsRoute() {
           { value: memberSince || '—', label: 'Member' },
         ]}
         rows={allRows}
-        onSettingsPress={() => Alert.alert('Settings', 'More settings coming in Phase 3.')}
+        onSettingsPress={() => router.push('/settings/security')}
         onTabPress={(id) => {
           if (id === 'home') router.push('/(tabs)');
           else if (id === 'docs') router.push('/documents');

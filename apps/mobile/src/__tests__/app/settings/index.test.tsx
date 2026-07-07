@@ -95,6 +95,15 @@ describe('SettingsRoute (Phase 2 ProfileScreen)', () => {
     expect(queryByText('Admin dashboard')).toBeNull();
   });
 
+  it('renders the Security row and routes to /settings/security', () => {
+    const { getByText } = render(<SettingsRoute />, { wrapper: createWrapper() });
+
+    expect(getByText('Security')).toBeTruthy();
+
+    fireEvent.press(getByText('Security'));
+    expect(router.push).toHaveBeenCalledWith('/settings/security');
+  });
+
   it('renders the API keys row and routes to /settings/api-keys', () => {
     const { getByText } = render(<SettingsRoute />, { wrapper: createWrapper() });
 
