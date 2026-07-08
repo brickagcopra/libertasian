@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "520922423195",
+    "project_id": "libertasian-74a16",
+    "storage_bucket": "libertasian-74a16.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:520922423195:android:e6dc7206bdc03d66668b3e",
+        "android_client_info": {
+          "package_name": "com.libertasian.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDdAAFy06gMsDzLAzXLehvHcZpynsoexMQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
