@@ -23,11 +23,18 @@ import { useEffect, useState } from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { AuthProvider, useAuth } from '../providers/auth-provider';
 import { ThemeProvider } from '../providers/theme-provider';
+import { useNotificationSocket } from '../features/workspace/hooks/use-notifications';
+import { usePushNotifications } from '../features/workspace/hooks/use-push-notifications';
 import '../../global.css';
 
 function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading, user } = useAuth();
   const segments = useSegments();
+
+  // Socket-primary/poll-fallback notification center (parity with web) and
+  // device push registration + tap deep-linking. Both no-op while signed out.
+  useNotificationSocket(isAuthenticated);
+  usePushNotifications(isAuthenticated);
 
   useEffect(() => {
     if (isLoading) return;

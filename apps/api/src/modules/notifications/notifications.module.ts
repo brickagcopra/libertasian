@@ -13,6 +13,8 @@ import { NotificationCenterService } from './notification-center.service';
 import { NotificationCenterController } from './notification-center.controller';
 import { NotificationListener } from './notification.listener';
 import { NotificationsGateway } from './notifications.gateway';
+import { PushService } from './push.service';
+import { PushTokensController } from './push-tokens.controller';
 
 @Global()
 @Module({
@@ -48,7 +50,9 @@ import { NotificationsGateway } from './notifications.gateway';
       },
     }),
   ],
-  controllers: [NotificationCenterController, EmailUnsubscribeController, AdminAnnouncementsController],
+  // PushTokensController must precede NotificationCenterController so
+  // DELETE /notifications/push-tokens is not captured by DELETE /notifications/:id.
+  controllers: [PushTokensController, NotificationCenterController, EmailUnsubscribeController, AdminAnnouncementsController],
   providers: [
     EmailService,
     EmailProcessor,
@@ -56,7 +60,8 @@ import { NotificationsGateway } from './notifications.gateway';
     NotificationCenterService,
     NotificationListener,
     NotificationsGateway,
+    PushService,
   ],
-  exports: [NotificationsService, NotificationCenterService, NotificationsGateway],
+  exports: [NotificationsService, NotificationCenterService, NotificationsGateway, PushService],
 })
 export class NotificationsModule {}

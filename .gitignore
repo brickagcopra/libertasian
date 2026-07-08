@@ -51,7 +51,10 @@ docker-compose.override.yml
 *.key
 credentials.json
 secrets/
-apps/mobile/google-services.json
+# NOTE: apps/mobile/google-services.json is intentionally NOT ignored — it is
+# Firebase CLIENT config (public identifiers only; Google documents it as safe
+# to commit). The Play submit key below IS a secret and must never be committed.
+apps/mobile/play-service-account.json
 apps/mobile/AuthKey_*.p8
 # Mobile signing material — never commit
 *.keystore

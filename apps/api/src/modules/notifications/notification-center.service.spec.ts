@@ -4,12 +4,14 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationCenterService } from './notification-center.service';
 import { NotificationsGateway } from './notifications.gateway';
+import { PushService } from './push.service';
 import type { CreateNotificationPayload } from './notification-center.service';
 
 describe('NotificationCenterService', () => {
   let service: NotificationCenterService;
   let prisma: jest.Mocked<PrismaService>;
   let gateway: jest.Mocked<NotificationsGateway>;
+  let pushService: { sendToUser: jest.Mock };
 
   const userId = 'user-1';
   const orgId = 'org-1';
@@ -52,12 +54,19 @@ describe('NotificationCenterService', () => {
             emitToUser: jest.fn(),
           },
         },
+        {
+          provide: PushService,
+          useValue: {
+            sendToUser: jest.fn().mockResolvedValue(undefined),
+          },
+        },
       ],
     }).compile();
 
     service = module.get<NotificationCenterService>(NotificationCenterService);
     prisma = module.get(PrismaService);
     gateway = module.get(NotificationsGateway);
+    pushService = module.get(PushService);
   });
 
   // ---- createNotification ----
@@ -93,6 +102,24 @@ describe('NotificationCenterService', () => {
       expect(gateway.emitToUser).toHaveBeenCalledWith(
         userId,
         'notification:created',
+        mockNotification,
+      );
+      expect(pushService.sendToUser).toHaveBeenCalledWith(userId, {
+        title: payload.title,
+        body: payload.body,
+        data: {
+          notificationId: mockNotification.id,
+          entityType: payload.entityType,
+          entityId: payload.entityId,
+        },
+      });
+    });
+
+    it('should not fail notification creation when push send rejects', async () => {
+      (prisma.notification.create as jest.Mock).mockResolvedValue(mockNotification);
+      pushService.sendToUser.mockRejectedValue(new Error('expo down'));
+
+      await expect(service.createNotification(payload)).resolves.toEqual(
         mockNotification,
       );
     });
