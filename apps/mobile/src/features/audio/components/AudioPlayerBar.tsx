@@ -24,6 +24,7 @@ import {
   releaseAudioFocus,
   type AudioFocusHandle,
 } from '../lib/audio-session';
+import { readAlongStore } from '../stores/read-along-store';
 import type { AudioContentType } from '../types';
 
 interface AudioPlayerBarProps {
@@ -106,8 +107,13 @@ function SeekBar({ positionMs, durationMs, onSeek, trackColor, fillColor }: Seek
 
 /**
  * Mobile "Listen" player for a digest or bar answer. Ports the web player at
- * apps/web/src/features/audio/components/audio-player.tsx (playback only —
- * read-along highlighting is a follow-up).
+ * apps/web/src/features/audio/components/audio-player.tsx.
+ *
+ * For DIGESTS it also publishes read-along state (position ticks every 250ms,
+ * play state, and the presigned manifest URL) to `readAlongStore`, which the
+ * digest screen's `ReadAlongDigestBody` subscribes to. For bar-exam answers
+ * nothing is published — the standalone player behavior is unchanged
+ * (mirrors the web, whose answer page mounts no ReadAlongProvider).
  *
  * Strictly defers the audio fetch until the user taps Listen: the first
  * not-ready GET enqueues paid TTS synthesis server-side, so fetching on mount
@@ -148,6 +154,16 @@ export function AudioPlayerBar({ contentType, contentId, title }: AudioPlayerBar
   const isPaywalled = error instanceof ApiClientError && error.statusCode === 402;
   const audioUrl = data?.status === 'ready' ? data.audioUrl : null;
   const durationMs = soundDurationMs || data?.durationMs || 0;
+
+  // Read-along publishing is digest-only; null disables every publish below.
+  const readAlongKey = contentType === 'digest' ? `digest:${contentId}` : null;
+  const readalongUrl = data?.status === 'ready' ? data.readalongUrl : null;
+
+  // Hand the (re-signed on every rendition fetch) manifest URL to subscribers.
+  useEffect(() => {
+    if (!readAlongKey || !readalongUrl) return;
+    readAlongStore.setState({ contentKey: readAlongKey, readalongUrl });
+  }, [readAlongKey, readalongUrl]);
 
   const focusHandleRef = useRef<AudioFocusHandle | null>(null);
   if (focusHandleRef.current == null) {
@@ -197,8 +213,18 @@ export function AudioPlayerBar({ contentType, contentId, title }: AudioPlayerBar
         isPlayingRef.current = false;
         setIsPlaying(false);
       }
+      if (readAlongKey) {
+        readAlongStore.setState({
+          contentKey: readAlongKey,
+          positionMillis: status.positionMillis,
+          isPlaying: isPlayingRef.current,
+          // Latches true on first play; the body only upgrades to the
+          // read-along rendering after playback has actually started.
+          ...(status.isPlaying ? { hasStarted: true } : {}),
+        });
+      }
     },
-    [recoverFromPlaybackError],
+    [readAlongKey, recoverFromPlaybackError],
   );
 
   // (Re)load the sound whenever a (fresh) signed URL arrives.
@@ -261,7 +287,9 @@ export function AudioPlayerBar({ contentType, contentId, title }: AudioPlayerBar
     };
   }, [audioUrl, focusHandle, handleStatus]);
 
-  // Unload on unmount/navigation; drop the single-player focus claim.
+  // Unload on unmount/navigation; drop the single-player focus claim and
+  // clear the read-along highlight state (keyed, so a stale unmount never
+  // clobbers a newer player's published state).
   useEffect(
     () => () => {
       releaseAudioFocus(focusHandle);
@@ -271,8 +299,9 @@ export function AudioPlayerBar({ contentType, contentId, title }: AudioPlayerBar
         sound.setOnPlaybackStatusUpdate(null);
         void sound.unloadAsync().catch(() => undefined);
       }
+      if (readAlongKey) readAlongStore.reset(readAlongKey);
     },
-    [focusHandle],
+    [focusHandle, readAlongKey],
   );
 
   const togglePlay = useCallback(() => {

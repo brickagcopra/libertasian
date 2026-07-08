@@ -1,6 +1,22 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-07-07 (PR: mobile audio player — Listen on digest detail + bar answers)
+> Last updated: 2026-07-07 (PR #270: mobile read-along highlighting on digest detail)
+
+---
+
+## 2026-07-07 — PR #270: feat(mobile): read-along highlighting on the digest detail screen
+
+**Branch:** `feature/mobile-audio-readalong`
+**Context:** Port of the web read-along (apps/web/src/features/audio) to the mobile digest detail screen — as narration plays, the current sentence highlights and the view gently follows. Digests ONLY; bar-exam answers keep the standalone player (publisher skips non-digest content, mirroring the web answer page's no-op). apps/mobile only.
+
+1. **`lib/parse-readalong.ts`** — near-verbatim port of the web parser (`parseReadAlong` returns null on any unusable payload; malformed segments dropped; sorted by `timeMs`) + binary-search `activeSegmentIndex`. Ported the web test suite (jest).
+2. **`stores/read-along-store.ts`** — dependency-free `useSyncExternalStore` micro-store instead of zustand (zustand is web-only; task rule was "no new dependencies"). Publisher pushes `{positionMillis, isPlaying, hasStarted, readalongUrl, contentKey}` per 250ms tick; subscribers select DERIVED values (active segment id) so re-renders happen only on segment-id change. Also owns the 5s auto-follow suspension (imperative, no re-render).
+3. **`hooks/use-readalong-segments.ts`** — BARE fetch of the presigned manifest URL (no Authorization header, not apiClient); null segments on ANY failure → plain body; manifest failures can never affect playback.
+4. **`components/ReadAlongDigestBody.tsx`** — mounts via `DigestDetailScreen`'s existing `customSections` slot (chosen over extending default rendering — less invasive). Before playback starts (or with no manifest) renders `DigestPlainSections`, extracted from `DigestDetailScreen` so the fallback is byte-identical to today. Narrated sections render manifest segments as nested `<Text>` spans, active span highlighted with `theme.accentSoft`, paragraph breaks restored via `paragraphIndex`; sections without segments render plain.
+5. **Auto-follow at paragraph granularity** (RN can't measure nested Text spans): paragraph-run `View`s are `measureLayout`-ed against the screen ScrollView (new inert-when-unused `scrollRef`/`onScrollBeginDrag` props on `DigestDetailScreen`) and `scrollTo`-ed animated, only while playing; manual drag suspends follow 5s (programmatic scrollTo doesn't fire onScrollBeginDrag, so no self-suspend loop).
+6. **`AudioPlayerBar`** publishes read-along state for digests only; unmount/unload resets the store keyed by content (clears highlight, stale unmounts can't clobber a newer player). `progressUpdateIntervalMillis: 250` was already set.
+7. **Section-key alignment** in `app/digest/[id].tsx`: `petitioner` → `petitioner_arguments`, `respondent` → `respondent_arguments` to match the server manifest sectionKeys (canonical list in the web digest page). Mobile shows summary as the TL;DR card, so `summary` segments highlight nothing while narrating — pickup at Facts.
+8. **Tests:** parse/boundary tests + `ReadAlongDigestBody` tests (plain before start with zero fetches, fetch-failure → plain, non-ok → plain, active highlight, seek jumps highlight, store reset reverts to plain, cross-digest isolation). Full suite: 214 suites / 1436 tests green; `tsc --noEmit` clean.
 
 ---
 

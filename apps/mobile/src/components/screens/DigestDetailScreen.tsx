@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import type { ReactNode } from 'react';
+import type { ReactNode, Ref } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { Photo } from '@/components/ui/Photo';
 import { StickyCTA } from '@/components/ui/StickyCTA';
@@ -68,6 +68,10 @@ export interface DigestDetailScreenProps {
    * `sections` is ignored.
    */
   customSections?: ReactNode;
+  /** Ref to the content ScrollView (e.g. for read-along auto-follow). */
+  scrollRef?: Ref<ScrollView>;
+  /** Fires when the user starts dragging the content (not on programmatic scrolls). */
+  onScrollBeginDrag?: () => void;
   /** Slot rendered after the body (e.g. timestamps). */
   footerSlot?: ReactNode;
   /** Reading progress 0..1. */
@@ -83,6 +87,48 @@ export interface DigestDetailScreenProps {
 }
 
 const TOP_ACTION_BG = 'rgba(255,255,255,0.92)';
+
+/**
+ * Default digest body: heading + paragraphs per section. Exported so the
+ * read-along body can render the EXACT same markup as its plain fallback
+ * (before audio starts / when no manifest exists).
+ */
+export function DigestPlainSections({ sections }: { sections: DigestSection[] }) {
+  const { theme } = useTheme();
+  return (
+    <>
+      {sections.map((section) => (
+        <View key={section.id} style={{ marginTop: 22 }}>
+          <Text
+            style={{
+              marginBottom: 8,
+              fontFamily: theme.serif,
+              fontSize: 22,
+              letterSpacing: -0.4,
+              color: theme.ink,
+            }}
+          >
+            {section.heading}
+          </Text>
+          {section.paragraphs.map((para, i) => (
+            <Text
+              key={i}
+              style={{
+                fontFamily: theme.serif,
+                fontSize: 17,
+                lineHeight: 26.35,
+                color: theme.ink,
+                marginTop: i === 0 ? 0 : 14,
+              }}
+            >
+              {para}
+            </Text>
+          ))}
+        </View>
+      ))}
+    </>
+  );
+}
 
 function badgeColors(theme: ReturnType<typeof useTheme>['theme'], tone: DigestBadge['tone']) {
   switch (tone) {
@@ -113,6 +159,8 @@ export function DigestDetailScreen({
   playerSlot,
   extraTopActions = [],
   customSections,
+  scrollRef,
+  onScrollBeginDrag,
   footerSlot,
   progress = 0.38,
   timeLeft = '4 min left',
@@ -230,6 +278,8 @@ export function DigestDetailScreen({
 
       {/* Content */}
       <ScrollView
+        ref={scrollRef}
+        onScrollBeginDrag={onScrollBeginDrag}
         contentContainerStyle={{
           paddingTop: 230,
           paddingBottom: 120,
@@ -411,39 +461,7 @@ export function DigestDetailScreen({
         ) : null}
 
         {/* Body — either a custom slot or default sections */}
-        {customSections ? (
-          customSections
-        ) : (
-          sections.map((section) => (
-            <View key={section.id} style={{ marginTop: 22 }}>
-              <Text
-                style={{
-                  marginBottom: 8,
-                  fontFamily: theme.serif,
-                  fontSize: 22,
-                  letterSpacing: -0.4,
-                  color: theme.ink,
-                }}
-              >
-                {section.heading}
-              </Text>
-              {section.paragraphs.map((para, i) => (
-                <Text
-                  key={i}
-                  style={{
-                    fontFamily: theme.serif,
-                    fontSize: 17,
-                    lineHeight: 26.35,
-                    color: theme.ink,
-                    marginTop: i === 0 ? 0 : 14,
-                  }}
-                >
-                  {para}
-                </Text>
-              ))}
-            </View>
-          ))
-        )}
+        {customSections ?? <DigestPlainSections sections={sections} />}
 
         {footerSlot ? <View style={{ marginTop: 28 }}>{footerSlot}</View> : null}
       </ScrollView>

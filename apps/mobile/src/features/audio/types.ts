@@ -4,9 +4,9 @@
  * Mirrors the deployed NestJS audio endpoint contract:
  *   GET /audio/:contentType/:contentId?language=en
  * and the web feature at apps/web/src/features/audio/types.ts. The backend
- * owns synthesis; the mobile app only streams the ready rendition. Read-along
- * highlighting (marksUrl / readalongUrl) is a follow-up — the URLs are kept in
- * the read model so the hook stays contract-complete.
+ * owns synthesis; the mobile app only streams the ready rendition and, for
+ * digests, fetches the segment read-along manifest (`readalongUrl`) to drive
+ * inline highlighting.
  */
 
 export type AudioContentType = 'digest' | 'bar_exam_answer';
@@ -32,4 +32,30 @@ export interface AudioRenditionReadModel {
   durationMs: number | null;
   language: string;
   voiceId: string;
+}
+
+// --- Segment read-along manifest (mirrors apps/web/src/features/audio/types.ts)
+
+export type ReadAlongKind = 'title' | 'heading' | 'sentence';
+
+/** One narrated segment of the read-along manifest, in reading order. */
+export interface ReadAlongSegment {
+  id: string;
+  kind: ReadAlongKind;
+  /** Digest section this segment belongs to (e.g. "facts", "ruling"). */
+  sectionKey: string;
+  /** Exact display text of the segment. */
+  text: string;
+  /** Onset of this segment in the audio, in milliseconds. */
+  timeMs: number;
+  /** Paragraph run within the section; restores original `\n\n` breaks. */
+  paragraphIndex?: number;
+}
+
+/** Parsed `readalong.json` manifest fetched from its presigned URL. */
+export interface ReadAlongManifest {
+  version: number;
+  voiceId: string;
+  durationMs: number | null;
+  segments: ReadAlongSegment[];
 }
