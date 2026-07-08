@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsGateway } from './notifications.gateway';
+import { PushService } from './push.service';
 
 export interface CreateNotificationPayload {
   userId: string;
@@ -21,6 +22,7 @@ export class NotificationCenterService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly gateway: NotificationsGateway,
+    private readonly pushService: PushService,
   ) {}
 
   async createNotification(payload: CreateNotificationPayload) {
@@ -45,6 +47,25 @@ export class NotificationCenterService {
       'notification:created',
       notification,
     );
+
+    // Fire-and-forget device push. sendToUser is best-effort and never
+    // throws by contract; the defensive catch guards against unhandled
+    // rejections so notification creation is never blocked by push delivery.
+    void this.pushService
+      .sendToUser(payload.userId, {
+        title: payload.title,
+        body: payload.body,
+        data: {
+          notificationId: notification.id,
+          entityType: payload.entityType,
+          entityId: payload.entityId,
+        },
+      })
+      .catch((err: unknown) => {
+        this.logger.warn(
+          `Device push dispatch failed user=${payload.userId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
 
     return notification;
   }
