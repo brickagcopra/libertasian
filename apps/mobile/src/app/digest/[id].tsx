@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
-import { ActivityIndicator, Alert, Share, Text, View } from 'react-native';
+import { useMemo, useRef } from 'react';
+import { ActivityIndicator, Alert, Share, Text, View, type ScrollView } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import {
   DigestDetailScreen,
@@ -7,6 +7,8 @@ import {
   type DigestSection,
 } from '@/components/screens/DigestDetailScreen';
 import { AudioPlayerBar } from '@/features/audio/components/AudioPlayerBar';
+import { ReadAlongDigestBody } from '@/features/audio/components/ReadAlongDigestBody';
+import { suspendAutoFollow } from '@/features/audio/stores/read-along-store';
 import { useDigest } from '@/features/digests/hooks/use-digests';
 import { ContentDisclaimer } from '@/features/documents/components/content-disclaimer';
 import { ExportButton } from '@/features/exports/components/export-button';
@@ -53,10 +55,13 @@ function paragraphsFromBlock(block: string | null): string[] {
 }
 
 function buildCaseDigestSections(digest: Digest): DigestSection[] {
+  // Section ids MUST match the server read-along manifest sectionKeys (see the
+  // canonical list in apps/web/src/app/(dashboard)/digests/[id]/page.tsx) so
+  // inline read-along maps onto them; ids are otherwise only React keys.
   const candidates: Array<[string, string, string | null]> = [
     ['facts', 'Facts', digest.facts],
-    ['petitioner', "Petitioner's arguments", digest.petitionerArguments],
-    ['respondent', "Respondent's arguments", digest.respondentArguments],
+    ['petitioner_arguments', "Petitioner's arguments", digest.petitionerArguments],
+    ['respondent_arguments', "Respondent's arguments", digest.respondentArguments],
     ['issues', 'Issues', digest.issues],
     ['ruling', 'Ruling', digest.ruling],
     ['doctrine', 'Doctrine', digest.doctrine],
@@ -137,6 +142,7 @@ export default function DigestDetailRoute() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const digestId = id ?? '';
 
+  const scrollRef = useRef<ScrollView>(null);
   const { data: digest, isLoading, error } = useDigest(digestId);
 
   const sections = useMemo(
@@ -220,6 +226,15 @@ export default function DigestDetailRoute() {
       headline={digest.title}
       tldr={digest.summary ?? undefined}
       sections={sections}
+      customSections={
+        <ReadAlongDigestBody
+          contentId={digest.id}
+          sections={sections}
+          scrollRef={scrollRef}
+        />
+      }
+      scrollRef={scrollRef}
+      onScrollBeginDrag={suspendAutoFollow}
       badges={badges}
       disclaimerSlot={disclaimerSlot}
       playerSlot={
