@@ -43,10 +43,12 @@
   "submit": {
     "production": {
       "android": {
-        // TODO: Replace with Play Console service account JSON.
+        // TODO: Replace with Play Console service account JSON (a real secret — stays gitignored).
         // Get from: Play Console -> Setup -> API access -> service account -> create key (JSON) -> download.
-        // File should be saved at apps/mobile/google-services.json (gitignored).
-        "serviceAccountKeyPath": "./google-services.json",
+        // File should be saved at apps/mobile/play-service-account.json (gitignored).
+        // NOTE: distinct from google-services.json, which is Firebase CLIENT config
+        // (public identifiers, safe to commit) referenced by app.json for FCM push.
+        "serviceAccountKeyPath": "./play-service-account.json",
         "track": "internal"
       },
       "ios": {

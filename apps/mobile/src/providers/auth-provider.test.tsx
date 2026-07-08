@@ -8,6 +8,7 @@ jest.mock('../lib/api-client', () => ({
   apiClient: {
     get: jest.fn(),
     post: jest.fn(),
+    delete: jest.fn(),
     setOnUnauthorized: jest.fn(),
   },
   ApiClientError: class ApiClientError extends Error {
@@ -191,8 +192,11 @@ describe('AuthProvider', () => {
       expect(getByTestId('authenticated').props.children).toBe('yes');
     });
 
-    // Now sign out
-    mockGetItemAsync.mockResolvedValueOnce('refresh-token');
+    // Now sign out — resolve stored keys by name (signOut also reads the
+    // push token key for best-effort push unregistration).
+    mockGetItemAsync.mockImplementation(async (key) =>
+      key === 'auth_refresh_token' ? 'refresh-token' : null,
+    );
     mockPost.mockResolvedValueOnce(undefined);
 
     await act(async () => {

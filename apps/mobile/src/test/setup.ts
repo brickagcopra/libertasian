@@ -55,6 +55,29 @@ jest.mock('expo-av', () => {
   };
 });
 
+// Mock expo-notifications — importing the real package pulls the `expo`
+// entrypoint whose expo-asset PlatformUtils needs the native Expo global
+// (undefined under jsdom, same issue as @expo/vector-icons below).
+jest.mock('expo-notifications', () => ({
+  setNotificationHandler: jest.fn(),
+  setNotificationChannelAsync: jest.fn().mockResolvedValue(undefined),
+  getPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted' }),
+  requestPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted' }),
+  getExpoPushTokenAsync: jest
+    .fn()
+    .mockResolvedValue({ data: 'ExponentPushToken[test]' }),
+  addNotificationResponseReceivedListener: jest
+    .fn()
+    .mockReturnValue({ remove: jest.fn() }),
+  getLastNotificationResponseAsync: jest.fn().mockResolvedValue(null),
+  AndroidImportance: { DEFAULT: 3, MAX: 5 },
+}));
+
+// Mock expo-device — tests run off-device; keeps push registration a no-op.
+jest.mock('expo-device', () => ({
+  isDevice: false,
+}));
+
 // Mock expo-constants
 jest.mock('expo-constants', () => ({
   __esModule: true,

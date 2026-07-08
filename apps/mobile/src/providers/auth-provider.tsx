@@ -8,6 +8,7 @@ import React, {
 } from 'react';
 import { authStorage } from '../storage/auth-storage';
 import { apiClient } from '../lib/api-client';
+import { unregisterPushToken } from '../lib/push-notifications';
 import type { AuthUser } from '../features/auth/types';
 
 interface AuthContextValue {
@@ -27,6 +28,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = useCallback(async () => {
     try {
+      // Unregister the device push token BEFORE clearing auth storage — the
+      // DELETE needs a valid Bearer token. Best-effort (never throws).
+      await unregisterPushToken();
+
       const refreshToken = await authStorage.getRefreshToken();
       if (refreshToken) {
         await apiClient.post('/auth/logout', { refreshToken }).catch(() => {

@@ -19,12 +19,7 @@ import {
   useDeleteNotification,
 } from '../../features/workspace/hooks/use-notifications';
 import type { NotificationItem } from '../../features/workspace/types';
-
-const ENTITY_ROUTES: Record<string, (id: string) => string> = {
-  task: (id) => `/workspace/tasks/${id}`,
-  matter: (id) => `/workspace/matters/${id}`,
-  digest: (id) => `/digests/${id}`,
-};
+import { ENTITY_ROUTES } from '../../features/workspace/notification-routes';
 
 const TYPE_ICONS: Record<string, string> = {
   task_assigned: 'person-add-outline',

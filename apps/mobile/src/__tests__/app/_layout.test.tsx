@@ -26,6 +26,20 @@ jest.mock('@/providers/auth-provider', () => ({
   useAuth: () => mockUseAuth(),
 }));
 
+// AuthNavigationGuard mounts the notification socket + push registration
+// hooks; both are unit-tested separately and stubbed here so this suite stays
+// focused on navigation behavior (no sockets / native notification modules).
+const mockUseNotificationSocket = jest.fn();
+jest.mock('@/features/workspace/hooks/use-notifications', () => ({
+  useNotificationSocket: (isAuthenticated: boolean) =>
+    mockUseNotificationSocket(isAuthenticated),
+}));
+const mockUsePushNotifications = jest.fn();
+jest.mock('@/features/workspace/hooks/use-push-notifications', () => ({
+  usePushNotifications: (isAuthenticated: boolean) =>
+    mockUsePushNotifications(isAuthenticated),
+}));
+
 jest.mock('@expo-google-fonts/inter', () => ({
   useFonts: () => [true],
   Inter_400Regular: 'Inter_400Regular',
@@ -184,6 +198,20 @@ describe('AuthNavigationGuard', () => {
     render(<RootLayout />);
 
     expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  it('mounts the notification socket and push hooks with the auth state', () => {
+    mockUseAuth.mockReturnValue({
+      isAuthenticated: true,
+      isLoading: false,
+      user: { id: 'u1', onboardingCompletedAt: '2026-01-01' },
+    });
+    mockUseSegments.mockReturnValue(['(tabs)']);
+
+    render(<RootLayout />);
+
+    expect(mockUseNotificationSocket).toHaveBeenCalledWith(true);
+    expect(mockUsePushNotifications).toHaveBeenCalledWith(true);
   });
 
   it('does not perform any navigation while loading', () => {
