@@ -119,6 +119,13 @@ export default function SettingsRoute() {
       onPress: () => router.push('/notifications'),
     },
     {
+      id: 'help',
+      icon: 'chatbubble-ellipses-outline',
+      label: 'Help & FAQ',
+      sub: 'Chat with the LIBERTASIAN assistant',
+      onPress: () => router.push('/help'),
+    },
+    {
       id: 'sign-out',
       icon: 'log-out-outline',
       label: 'Sign out',
