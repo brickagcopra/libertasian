@@ -159,6 +159,49 @@ describe('useAudioRendition', () => {
     expect(mockGet.mock.calls.length).toBe(callsAtTimeout);
   });
 
+  it('manual retry from taking-too-long clears the flag, resumes polling, and restarts the 60s window', async () => {
+    jest.useFakeTimers();
+    mockGet.mockResolvedValue(PENDING);
+
+    const { result } = renderHook(
+      () =>
+        useAudioRendition({
+          contentType: 'digest',
+          contentId: 'd1',
+          enabled: true,
+        }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.data?.status).toBe('pending'));
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(61_000);
+    });
+    expect(result.current.isTakingTooLong).toBe(true);
+    const callsAtTimeout = mockGet.mock.calls.length;
+
+    // Manual retry — what AudioPlayerBar's Retry button invokes.
+    await act(async () => {
+      await result.current.refetch();
+    });
+    expect(result.current.isTakingTooLong).toBe(false);
+    expect(mockGet.mock.calls.length).toBe(callsAtTimeout + 1);
+
+    // Polling resumes: still pending 30s into the fresh window, no timeout yet.
+    const callsAfterRetry = mockGet.mock.calls.length;
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(30_000);
+    });
+    expect(result.current.isTakingTooLong).toBe(false);
+    expect(mockGet.mock.calls.length).toBeGreaterThan(callsAfterRetry);
+
+    // Only after the FULL fresh 60s elapses does the timeout state return.
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(31_000);
+    });
+    expect(result.current.isTakingTooLong).toBe(true);
+  });
+
   it('surfaces a 402 paywall as a terminal error without retrying', async () => {
     mockGet.mockRejectedValueOnce(new ApiClientError(402, 'subscription_required'));
     const { result } = renderHook(

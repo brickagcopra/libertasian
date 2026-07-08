@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { apiClient } from '../../../lib/api-client';
@@ -33,6 +33,9 @@ export const audioRenditionQueryKey = (
  *
  * Pending renditions are polled every 3s. After ~60s we stop polling and expose
  * `isTakingTooLong` so the UI can show a "taking longer than expected" state.
+ * The returned `refetch` (used by the manual Retry action) resets that window:
+ * it clears `isTakingTooLong` and the timeout start so polling resumes with a
+ * fresh 60s budget instead of snapping straight back to the timed-out state.
  */
 export function useAudioRendition({ contentType, contentId, enabled }: Options) {
   const startRef = useRef<number | null>(null);
@@ -83,5 +86,18 @@ export function useAudioRendition({ contentType, contentId, enabled }: Options) 
     return undefined;
   }, [enabled, status, dataUpdatedAt]);
 
-  return { ...query, isTakingTooLong };
+  const queryRefetch = query.refetch;
+  const refetch = useCallback<typeof queryRefetch>(
+    (options) => {
+      // Manual retry: restart the 60s polling window. Without this, a
+      // still-pending rendition re-satisfies `isTakingTooLong` immediately
+      // (stale startRef) and polling stays stopped after the retry fetch.
+      startRef.current = null;
+      setIsTakingTooLong(false);
+      return queryRefetch(options);
+    },
+    [queryRefetch],
+  );
+
+  return { ...query, refetch, isTakingTooLong };
 }
