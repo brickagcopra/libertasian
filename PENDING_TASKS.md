@@ -1,6 +1,14 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-07-07 (mobile audio player PR awaiting merge + native rebuild)
+> Last updated: 2026-07-07 (PR #270 read-along awaiting merge; audio player PR awaiting merge + native rebuild)
+
+---
+
+## 2026-07-07 — PR #270 mobile read-along rollout (owner action required)
+
+- [ ] Review + merge `feature/mobile-audio-readalong` (PR #270 — read-along highlighting on digest detail; bar-exam answers intentionally unchanged). Do NOT merge before the base audio-player work is on main.
+- [ ] Manual QA needs a real digest with a READY rendition (steps in the PR body): segments highlight in sync while playing, view follows paragraph-by-paragraph, seek jumps the highlight, rate change stays in sync (timing is position-based), manual scroll suspends follow ~5s, plain body before first play and after unload, bar-answer player unchanged
+- [ ] No native rebuild needed for this PR itself (JS-only), but it rides on expo-av from the audio-player PR — the native rebuild noted below still applies
 
 ---
 
@@ -9,7 +17,7 @@
 - [ ] Review + merge `feature/mobile-audio-player` (Listen player for digest detail + bar answers)
 - [ ] Native rebuild required: expo-av is a native module and `UIBackgroundModes: ["audio"]` changed app.json — dev clients / EAS builds must be regenerated (Metro-only reload is NOT enough)
 - [ ] Manual QA on emulator/device (steps in the PR body): tap Listen on a digest, background the app mid-playback, seek, cycle rate, wait >5 min then seek/play to exercise signed-URL expiry recovery, and confirm a free account sees the Pro upsell on a bar-answer Listen
-- [ ] Follow-up (explicitly out of scope for this PR): read-along highlighting on mobile (marksUrl/readalongUrl are already surfaced by the hook)
+- [x] Follow-up: read-along highlighting on mobile — DONE, now PR #270 (`feature/mobile-audio-readalong`, see section above)
 
 ---
 
