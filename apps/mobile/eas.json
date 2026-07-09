@@ -48,7 +48,10 @@
       "env": {
         "API_URL": "https://libertasian.com/api/v1"
       },
-      "autoIncrement": true
+      "autoIncrement": true,
+      "ios": {
+        "image": "macos-sequoia-15.6-xcode-26.2"
+      }
     }
   },
   "submit": {
