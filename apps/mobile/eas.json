@@ -31,6 +31,17 @@
         }
       }
     },
+    "preview:simulator": {
+      "extends": "preview",
+      "ios": {
+        "node": "22.13.0",
+        "pnpm": "10.30.3",
+        "simulator": true,
+        "env": {
+          "EXPO_PUBLIC_API_URL": "https://libertasian.com/api/v1"
+        }
+      }
+    },
     "production": {
       "node": "22.13.0",
       "pnpm": "10.30.3",

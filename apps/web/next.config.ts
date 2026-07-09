@@ -18,6 +18,17 @@ const nextConfig: NextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
+  async headers() {
+    return [
+      {
+        // Apple's AASA validator requires Content-Type: application/json;
+        // the file has no extension, so Next would otherwise serve it as
+        // application/octet-stream.
+        source: '/.well-known/apple-app-site-association',
+        headers: [{ key: 'Content-Type', value: 'application/json' }],
+      },
+    ];
+  },
 };
 
 export default withBundleAnalyzer(nextConfig);

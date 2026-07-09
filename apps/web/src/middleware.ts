@@ -31,7 +31,9 @@ const PUBLIC_PATHS = [
 ];
 
 /** Path prefixes that should be accessible without authentication. */
-const PUBLIC_PREFIXES = ['/shared/', '/blog'];
+// /.well-known/ hosts apple-app-site-association + assetlinks.json —
+// Apple/Google deep-link verifiers require a direct 200, never a redirect.
+const PUBLIC_PREFIXES = ['/shared/', '/blog', '/.well-known/'];
 
 function isPublicRoute(pathname: string): boolean {
   if (PUBLIC_PATHS.includes(pathname)) return true;
@@ -84,9 +86,10 @@ export const config = {
      * - _next/static (static files)
      * - _next/image (image optimization)
      * - favicon.ico, sitemap.xml, robots.txt
+     * - .well-known (deep-link verification files — must return 200, no redirect)
      * - API routes (handled by NestJS)
      * - Public assets
      */
-    '/((?!_next/static|_next/image|favicon\\.ico|sitemap\\.xml|robots\\.txt|api/|metrics).*)',
+    '/((?!_next/static|_next/image|favicon\\.ico|sitemap\\.xml|robots\\.txt|\\.well-known/|api/|metrics).*)',
   ],
 };
