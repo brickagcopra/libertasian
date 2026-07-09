@@ -3,13 +3,16 @@ import { View, Text, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
+import { useTheme } from '@/providers/theme-provider';
 
 /**
  * Deep link target: libertasian://billing/success
- * Xendit redirects here after successful payment.
- * Invalidates billing queries and navigates to subscription screen.
+ * The web bounce page (apps/web /billing/mobile/success) hands off here
+ * after Xendit payment. Invalidates billing queries and navigates to the
+ * subscription screen.
  */
 export default function BillingSuccessScreen() {
+  const { theme } = useTheme();
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -25,12 +28,14 @@ export default function BillingSuccessScreen() {
   }, [queryClient]);
 
   return (
-    <View style={styles.container}>
-      <View style={styles.iconContainer}>
-        <Ionicons name="checkmark-circle" size={64} color="#16a34a" />
+    <View style={[styles.container, { backgroundColor: theme.bg }]}>
+      <View style={[styles.iconContainer, { backgroundColor: theme.accentSoft }]}>
+        <Ionicons name="checkmark-circle" size={64} color={theme.accent} />
       </View>
-      <Text style={styles.title}>Payment Successful</Text>
-      <Text style={styles.subtitle}>
+      <Text style={[styles.title, { fontFamily: theme.serif, color: theme.ink }]}>
+        Payment Successful
+      </Text>
+      <Text style={[styles.subtitle, { color: theme.inkSoft }]}>
         Your subscription has been activated. Redirecting...
       </Text>
     </View>
@@ -42,28 +47,24 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#fff',
     padding: 32,
   },
   iconContainer: {
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: '#f0fdf4',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 20,
   },
   title: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#111827',
+    fontSize: 24,
     marginBottom: 8,
   },
   subtitle: {
     fontSize: 15,
-    color: '#6b7280',
     textAlign: 'center',
     lineHeight: 22,
+    fontFamily: 'Inter_400Regular',
   },
 });

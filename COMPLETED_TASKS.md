@@ -1,6 +1,19 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-07-07 (PR #270: mobile read-along highlighting on digest detail)
+> Last updated: 2026-07-09 (mobile billing checkout flow fix — https bounce pages, preview modal, themed plans screen)
+
+---
+
+## 2026-07-09 — PR: fix(mobile,web): billing checkout flow — https redirect bounce, preview modal, safe-area header, themed plans screen
+
+**Branch:** `fix/mobile-billing-checkout-flow`
+**Context:** Mobile checkout was broken end-to-end: `plans.tsx` sent `successUrl: 'libertasian://billing/success'` to `POST /billing/checkout`, but the API DTO validates with `@IsUrl()` (http/https only) → every request 400'd. The API DTO was deliberately NOT changed (Xendit requires https redirect URLs). Also: the checkout-preview card rendered inline below all plan cards (off-screen), the screen had no SafeArea/header/back button, and it was styled with off-theme blue `#1a56db`. Touches apps/mobile + apps/web only.
+
+1. **apps/web public bounce pages** — new `/billing/mobile/success` + `/billing/mobile/cancel` (shared `bounce-content.tsx` client component): cream `#F6F1E8` bg, ink `#1C1A14` text, serif heading (`var(--font-display)`), one automatic `libertasian://billing/...` scheme redirect attempt on mount plus a prominent manual fallback button. `/billing/mobile` added to `PUBLIC_PREFIXES` in `src/middleware.ts` (user arrives from the system browser with no session cookie); `/billing` itself stays protected.
+2. **plans.tsx rework** — checkout now sends `https://libertasian.com/billing/mobile/success|cancel`; `Linking.openURL` (system browser) kept for the Xendit checkoutUrl. Checkout preview moved into a `<Modal transparent>` bottom sheet (rgba(0,0,0,0.45) scrim, theme.surface sheet, rounded top corners, tap-scrim dismiss) — all preview rows/logic preserved. SafeArea via `useSafeAreaInsets` + header row: themed back pill (pillBg/pillInk, `router.canGoBack()` → back, else `router.replace('/settings')`) and serif "Plans" title.
+3. **Retheme (zero hardcoded hex in mobile files)** — screen bg theme.bg; Monthly/Annual toggle = chipBg track + pillBg active segment (pillInk active / inkSoft inactive); plan cards surface, radius 22, border theme.line, serif plan names; highlight card = pillBg with pillInk text + accent "Most Popular" badge (accentInk); CTAs pillBg/pillInk (normal), accent/accentInk (highlight), accentSoft/ink disabled (current plan); checkmarks theme.accent; promo banner accentSoft/ink. `billing/success.tsx` + `cancel.tsx` rethemed with theme tokens (invalidate + redirect behavior kept).
+4. **Entitlement safety net** — AppState 'active' listeners on plans.tsx AND settings/subscription.tsx invalidate the `['billing']` query key, so entitlements refresh after returning from the browser even if the deep link never fires.
+5. **Tests** — new `__tests__/app/settings/plans.test.tsx` (renders header/cards, toggle switches period, Upgrade opens the preview modal, confirm POSTs `/billing/checkout` with the https bounce URLs asserted, back-pill fallback + history-pop); web `middleware.test.ts` extended (`/billing/mobile/*` public, `/billing` still protected) + `bounce-pages.test.tsx` (copy, deep-link button, auto-redirect). Verified: mobile suite 215 suites / 1447 tests green, web 180 files / 1548 tests green, `pnpm lint` clean, `tsc --noEmit` in apps/mobile clean.
 
 ---
 

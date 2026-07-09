@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,10 +7,12 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
+  AppState,
   RefreshControl,
 } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useQueryClient } from '@tanstack/react-query';
 import { useSubscription } from '../../features/billing/hooks/use-subscription';
 import { useCancelSubscription } from '../../features/billing/hooks/use-billing';
 import { PLAN_LABELS } from '../../features/billing/types';
@@ -35,6 +38,7 @@ function formatDate(dateStr: string | null): string {
 }
 
 export default function SubscriptionScreen() {
+  const queryClient = useQueryClient();
   const {
     data: subscription,
     isLoading,
@@ -42,6 +46,18 @@ export default function SubscriptionScreen() {
     refetch,
   } = useSubscription();
   const cancelMutation = useCancelSubscription();
+
+  // Entitlement safety net: checkout happens in the system browser, so the
+  // deep link back may never fire. Refresh billing data whenever the app
+  // returns to the foreground.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        queryClient.invalidateQueries({ queryKey: ['billing'] });
+      }
+    });
+    return () => sub.remove();
+  }, [queryClient]);
 
   function handleCancel() {
     Alert.alert(
