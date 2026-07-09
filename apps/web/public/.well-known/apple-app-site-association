@@ -1,10 +1,10 @@
 {
-  "_comment": "<APPLE_TEAM_ID> is a placeholder — swap it for the real 10-char Apple Developer Team ID (developer.apple.com -> Account -> Membership details) once Apple Developer Program enrollment completes. Paths mirror the Android intent filter in apps/mobile/app.json (pathPrefix /shared). This file MUST be served with Content-Type application/json and no redirect — see headers() in apps/web/next.config.ts.",
+  "_comment": "Paths mirror the Android intent filter in apps/mobile/app.json (pathPrefix /shared). This file MUST be served with Content-Type application/json and no redirect — see headers() in apps/web/next.config.ts.",
   "applinks": {
     "apps": [],
     "details": [
       {
-        "appID": "<APPLE_TEAM_ID>.com.libertasian.app",
+        "appID": "V2W2BY5P8D.com.libertasian.app",
         "paths": ["/shared/*"]
       }
     ]

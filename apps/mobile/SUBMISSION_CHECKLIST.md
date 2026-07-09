@@ -21,7 +21,7 @@ The work splits into two lanes:
 - **Apple Team ID** — 10-character alphanumeric, e.g. `AB12CD34EF`. Find at [developer.apple.com](https://developer.apple.com) → Account → Membership details. This becomes `appleTeamId` in `eas.json`.
 - App-specific password (only if running `eas submit` manually outside of EAS-managed credentials) — generate at [appleid.apple.com](https://appleid.apple.com) → Sign-In and Security → App-Specific Passwords. EAS prompts for it on first submit.
 
-> **📌 When enrollment completes:** replace the literal `<APPLE_TEAM_ID>` placeholder in `apps/web/public/.well-known/apple-app-site-association` with the real Team ID from this section, then redeploy the web app. Universal Links (`https://libertasian.com/shared/*`) will not open in the iOS app until Apple's CDN fetches the corrected file.
+> **✅ Done:** enrollment is complete (Team ID `V2W2BY5P8D`) and `apps/web/public/.well-known/apple-app-site-association` carries the real Team ID. Universal Links (`https://libertasian.com/shared/*`) start working once the web app is redeployed and Apple's CDN fetches the file.
 
 ### 1.2 Apple — register the app
 

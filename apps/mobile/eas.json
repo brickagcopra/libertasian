@@ -63,12 +63,10 @@
         "track": "internal"
       },
       "ios": {
-        // TODO: Replace with the Apple ID email used to sign in to App Store Connect.
-        "appleId": "YOUR_APPLE_ID",
-        // TODO: Replace with App Store Connect App ID. Created when the app is registered in App Store Connect -> My Apps -> + -> New App. Shown in app's App Information page.
+        "appleId": "bma5871@gmail.com",
+        // TODO: Replace with the numeric App Store Connect App ID once the ASC app exists — `eas submit` offers to create it on first run, then shows the ID (also on the app's App Information page in ASC).
         "ascAppId": "YOUR_APP_STORE_CONNECT_APP_ID",
-        // TODO: Replace with Apple Developer Team ID. Found at developer.apple.com -> Account -> Membership details.
-        "appleTeamId": "YOUR_TEAM_ID"
+        "appleTeamId": "V2W2BY5P8D"
       }
     }
   }
