@@ -107,6 +107,12 @@ describe('HomeRoute', () => {
     expect(router.push).toHaveBeenCalledWith('/reader/doc-article-1');
   });
 
+  it('routes "See all" to the digests tab', () => {
+    const { getByText } = render(<HomeRoute />);
+    fireEvent.press(getByText('See all'));
+    expect(router.push).toHaveBeenCalledWith('/(tabs)/digests');
+  });
+
   it('routes the brief CTA to the brief item route', () => {
     // Brief item is a digest in our fixture, so the CTA must route to /digest/:id.
     const { getByText } = render(<HomeRoute />);

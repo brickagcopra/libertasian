@@ -4,10 +4,12 @@ import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { usePublicFeed, useOrganizationFeed } from '../../../features/feed/hooks/use-feed';
 import { FeedList } from '../../../features/feed/components/feed-list';
+import { useTheme } from '@/providers/theme-provider';
 
 type FeedTab = 'organization' | 'public';
 
 export default function FeedIndexScreen() {
+  const { theme } = useTheme();
   const [activeTab, setActiveTab] = useState<FeedTab>('organization');
 
   const orgFeed = useOrganizationFeed();
@@ -21,22 +23,43 @@ export default function FeedIndexScreen() {
   }, [feed]);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: theme.bg }]}>
       {/* Tab bar */}
-      <View style={styles.tabBar}>
+      <View
+        style={[
+          styles.tabBar,
+          { backgroundColor: theme.surface, borderBottomColor: theme.line },
+        ]}
+      >
         <TouchableOpacity
-          style={[styles.tab, activeTab === 'organization' && styles.tabActive]}
+          style={[
+            styles.tab,
+            { backgroundColor: activeTab === 'organization' ? theme.pillBg : theme.chipBg },
+          ]}
           onPress={() => setActiveTab('organization')}
         >
-          <Text style={[styles.tabText, activeTab === 'organization' && styles.tabTextActive]}>
+          <Text
+            style={[
+              styles.tabText,
+              { color: activeTab === 'organization' ? theme.pillInk : theme.inkSoft },
+            ]}
+          >
             My Org
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.tab, activeTab === 'public' && styles.tabActive]}
+          style={[
+            styles.tab,
+            { backgroundColor: activeTab === 'public' ? theme.pillBg : theme.chipBg },
+          ]}
           onPress={() => setActiveTab('public')}
         >
-          <Text style={[styles.tabText, activeTab === 'public' && styles.tabTextActive]}>
+          <Text
+            style={[
+              styles.tabText,
+              { color: activeTab === 'public' ? theme.pillInk : theme.inkSoft },
+            ]}
+          >
             Public
           </Text>
         </TouchableOpacity>
@@ -47,7 +70,7 @@ export default function FeedIndexScreen() {
           style={styles.bookmarksButton}
           onPress={() => router.push('/feed/bookmarks' as `/${string}`)}
         >
-          <Ionicons name="bookmark-outline" size={20} color="#6b7280" />
+          <Ionicons name="bookmark-outline" size={20} color={theme.inkSoft} />
         </TouchableOpacity>
       </View>
 
@@ -64,11 +87,11 @@ export default function FeedIndexScreen() {
 
       {/* FAB - Create post */}
       <TouchableOpacity
-        style={styles.fab}
+        style={[styles.fab, { backgroundColor: theme.accent, shadowColor: theme.accent }]}
         onPress={() => router.push('/feed/create' as `/${string}`)}
         activeOpacity={0.8}
       >
-        <Ionicons name="add" size={28} color="#fff" />
+        <Ionicons name="add" size={28} color={theme.accentInk} />
       </TouchableOpacity>
     </View>
   );
@@ -77,16 +100,13 @@ export default function FeedIndexScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f3f4f6',
   },
   tabBar: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 8,
-    backgroundColor: '#fff',
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#e5e7eb',
   },
   tab: {
     paddingVertical: 8,
@@ -94,16 +114,9 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     marginRight: 8,
   },
-  tabActive: {
-    backgroundColor: '#eff6ff',
-  },
   tabText: {
+    fontFamily: 'Inter_600SemiBold',
     fontSize: 14,
-    fontWeight: '500',
-    color: '#6b7280',
-  },
-  tabTextActive: {
-    color: '#1a56db',
   },
   tabSpacer: {
     flex: 1,
@@ -118,10 +131,8 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: '#1a56db',
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#1a56db',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,

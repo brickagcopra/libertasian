@@ -26,7 +26,6 @@ function toScreenItem(item: ApiHomeFeedItem): HomeFeedItem {
     headline: item.headline,
     minutes: item.minutes,
     ...(item.byline ? { byline: item.byline } : {}),
-    ...(item.tone ? { tone: item.tone } : {}),
   };
 }
 
@@ -94,7 +93,7 @@ export default function HomeRoute() {
       feed={errorEmptyFeed ?? feedItems ?? []}
       onProfilePress={() => router.push('/settings')}
       onPressFeedItem={handleFeedItemPress}
-      onSeeAllFeed={() => router.push('/(tabs)/feed')}
+      onSeeAllFeed={() => router.push('/(tabs)/digests')}
       activeTab="home"
       onTabPress={(id) => {
         if (id === 'docs') router.push('/documents');
