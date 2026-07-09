@@ -4,7 +4,7 @@
 
 ---
 
-## 2026-07-09 — PR: fix(mobile,web): billing checkout flow — https redirect bounce, preview modal, safe-area header, themed plans screen
+## 2026-07-09 — PR #276: fix(mobile,web): billing checkout flow — https redirect bounce, preview modal, safe-area header, themed plans screen
 
 **Branch:** `fix/mobile-billing-checkout-flow`
 **Context:** Mobile checkout was broken end-to-end: `plans.tsx` sent `successUrl: 'libertasian://billing/success'` to `POST /billing/checkout`, but the API DTO validates with `@IsUrl()` (http/https only) → every request 400'd. The API DTO was deliberately NOT changed (Xendit requires https redirect URLs). Also: the checkout-preview card rendered inline below all plan cards (off-screen), the screen had no SafeArea/header/back button, and it was styled with off-theme blue `#1a56db`. Touches apps/mobile + apps/web only.
