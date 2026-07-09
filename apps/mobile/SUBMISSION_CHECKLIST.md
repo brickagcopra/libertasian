@@ -21,6 +21,8 @@ The work splits into two lanes:
 - **Apple Team ID** — 10-character alphanumeric, e.g. `AB12CD34EF`. Find at [developer.apple.com](https://developer.apple.com) → Account → Membership details. This becomes `appleTeamId` in `eas.json`.
 - App-specific password (only if running `eas submit` manually outside of EAS-managed credentials) — generate at [appleid.apple.com](https://appleid.apple.com) → Sign-In and Security → App-Specific Passwords. EAS prompts for it on first submit.
 
+> **📌 When enrollment completes:** replace the literal `<APPLE_TEAM_ID>` placeholder in `apps/web/public/.well-known/apple-app-site-association` with the real Team ID from this section, then redeploy the web app. Universal Links (`https://libertasian.com/shared/*`) will not open in the iOS app until Apple's CDN fetches the corrected file.
+
 ### 1.2 Apple — register the app
 
 Order matters: register in ASC first, then run any EAS submit/metadata command.
@@ -65,8 +67,10 @@ EAS can manage iOS certs + provisioning profiles automatically. On first `eas bu
 ### 1.7 Google — Play service account JSON (for `eas submit`)
 
 1. Play Console → Setup → API access → "Create new service account" → link to Google Cloud Console → IAM & Admin → Service Accounts → Keys → Add Key → JSON. Download.
-2. Save as `apps/mobile/google-services.json` (already gitignored — verify with `git check-ignore apps/mobile/google-services.json`).
+2. Save as `apps/mobile/play-service-account.json` (matches `submit.production.android.serviceAccountKeyPath` in `eas.json`; gitignored — verify with `git check-ignore apps/mobile/play-service-account.json`).
 3. Back in Play Console → grant the service account **Release manager** role on the LIBERTASIAN app.
+
+> **Not to be confused with** `apps/mobile/google-services.json` — that file is the Firebase **client** config for FCM push (public identifiers, safe to commit, referenced by `app.json`). The Play service-account key above is a real secret and never gets committed.
 
 ### 1.8 Branded icons + splash
 
@@ -101,7 +105,7 @@ Do not commit binary assets. Required sizes:
 }
 ```
 
-`submit.production.android.serviceAccountKeyPath` → `./google-services.json` is already wired. Drop the file from § 1.7 in place.
+`submit.production.android.serviceAccountKeyPath` → `./play-service-account.json` is already wired. Drop the file from § 1.7 in place.
 
 `submit.production.android.track` is set to `"internal"` — **leave it on `internal`**. Promotion to `production` happens later from the Play Console UI (see § 6.3 safety rule).
 
@@ -237,4 +241,4 @@ Promotion from the Play Console UI:
 | Apple + Play data-collection answers | `apps/mobile/store/DATA_SAFETY.md` | Source of truth for App Privacy + Data Safety forms |
 | Privacy Policy (live) | https://libertasian.com/privacy | Source: `apps/web/src/app/(public)/privacy/page.tsx` |
 | Terms of Service (live) | https://libertasian.com/terms | Source: `apps/web/src/app/(public)/terms/page.tsx` |
-| Secrets never committed | `apps/mobile/google-services.json`, `apps/mobile/AuthKey_*.p8`, `*.keystore`, `*.jks`, `*.p12`, `*.mobileprovision` | Enforced via root `.gitignore` |
+| Secrets never committed | `apps/mobile/play-service-account.json`, `apps/mobile/AuthKey_*.p8`, `*.keystore`, `*.jks`, `*.p12`, `*.mobileprovision` | Enforced via root `.gitignore`. (`google-services.json` is Firebase client config — committed, not a secret.) |

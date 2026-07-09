@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.libertasian.app",
+      "sha256_cert_fingerprints": [
+        "75:B9:02:38:76:2A:5A:05:0D:6D:05:8B:4F:C1:E4:5D:97:1C:E3:1B:7E:2D:61:91:C7:FD:8E:7A:19:CF:B4:C9"
+      ]
+    }
+  }
+]

@@ -34,6 +34,8 @@ describe('middleware — public-path allowlist', () => {
       '/privacy',
       '/blog/some-slug',
       '/shared/abc',
+      '/.well-known/apple-app-site-association',
+      '/.well-known/assetlinks.json',
     ];
 
     for (const path of publicPaths) {
