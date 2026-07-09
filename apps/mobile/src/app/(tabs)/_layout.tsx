@@ -1,33 +1,36 @@
 import { Tabs, router } from 'expo-router';
 import { TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useTheme } from '@/providers/theme-provider';
 
 function SettingsButton() {
+  const { theme } = useTheme();
   return (
     <TouchableOpacity
       onPress={() => router.push('/settings')}
       style={{ marginRight: 16 }}
       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
     >
-      <Ionicons name="settings-outline" size={22} color="#374151" />
+      <Ionicons name="settings-outline" size={22} color={theme.inkSoft} />
     </TouchableOpacity>
   );
 }
 
 export default function TabsLayout() {
+  const { theme } = useTheme();
   return (
     <Tabs
       screenOptions={{
         headerShown: true,
-        tabBarActiveTintColor: '#1a56db',
-        tabBarInactiveTintColor: '#9ca3af',
+        tabBarActiveTintColor: theme.accent,
+        tabBarInactiveTintColor: theme.inkFaint,
         tabBarLabelStyle: { fontSize: 12, fontWeight: '500' },
         tabBarStyle: {
-          borderTopColor: '#e5e7eb',
-          backgroundColor: '#fff',
+          borderTopColor: 'transparent',
+          backgroundColor: theme.surface,
         },
-        headerStyle: { backgroundColor: '#fff' },
-        headerTitleStyle: { fontSize: 17, fontWeight: '600', color: '#111827' },
+        headerStyle: { backgroundColor: theme.surface },
+        headerTitleStyle: { fontSize: 17, fontWeight: '600', color: theme.ink },
         headerRight: () => <SettingsButton />,
       }}
     >

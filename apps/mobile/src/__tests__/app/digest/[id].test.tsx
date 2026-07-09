@@ -10,10 +10,16 @@ jest.mock('@/features/digests/hooks/use-digests', () => ({
 
 jest.mock('expo-router', () => ({
   useLocalSearchParams: jest.fn(),
-  router: { back: jest.fn(), push: jest.fn() },
+  router: {
+    back: jest.fn(),
+    push: jest.fn(),
+    replace: jest.fn(),
+    canGoBack: jest.fn(() => true),
+  },
 }));
 
 import { router, useLocalSearchParams } from 'expo-router';
+import { ApiClientError } from '@/lib/api-client';
 import DigestDetailRoute from '@/app/digest/[id]';
 
 function createWrapper() {
@@ -40,6 +46,46 @@ describe('DigestDetailRoute (Phase 3 DigestDetailScreen)', () => {
     mockUseDigest.mockReturnValue({ data: null, isLoading: false, error: new Error('Not found') });
     const { getByText } = render(<DigestDetailRoute />, { wrapper: createWrapper() });
     expect(getByText('Digest not found')).toBeTruthy();
+  });
+
+  it('shows the premium state on a 402 ApiClientError', () => {
+    mockUseDigest.mockReturnValue({
+      data: null,
+      isLoading: false,
+      error: new ApiClientError(402, 'Payment required'),
+    });
+    const { getByText, queryByText } = render(<DigestDetailRoute />, { wrapper: createWrapper() });
+    expect(getByText('Premium digest')).toBeTruthy();
+    expect(getByText('Upgrade to read full case digests.')).toBeTruthy();
+    expect(queryByText('Digest not found')).toBeNull();
+  });
+
+  it('keeps the not-found copy for non-402 ApiClientErrors', () => {
+    mockUseDigest.mockReturnValue({
+      data: null,
+      isLoading: false,
+      error: new ApiClientError(404, 'Not found'),
+    });
+    const { getByText } = render(<DigestDetailRoute />, { wrapper: createWrapper() });
+    expect(getByText('Digest not found')).toBeTruthy();
+  });
+
+  it('navigates back from the error state when history exists', () => {
+    (router.canGoBack as jest.Mock).mockReturnValue(true);
+    mockUseDigest.mockReturnValue({ data: null, isLoading: false, error: new Error('Not found') });
+    const { getByText } = render(<DigestDetailRoute />, { wrapper: createWrapper() });
+    fireEvent.press(getByText('Go back'));
+    expect(router.back).toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the tabs root when there is no history to go back to', () => {
+    (router.canGoBack as jest.Mock).mockReturnValue(false);
+    mockUseDigest.mockReturnValue({ data: null, isLoading: false, error: new Error('Not found') });
+    const { getByText } = render(<DigestDetailRoute />, { wrapper: createWrapper() });
+    fireEvent.press(getByText('Go back'));
+    expect(router.replace).toHaveBeenCalledWith('/(tabs)');
+    expect(router.back).not.toHaveBeenCalled();
   });
 
   it('renders headline + eyebrow + tldr + sections', () => {

@@ -1,6 +1,7 @@
 import { useMemo, useRef } from 'react';
-import { ActivityIndicator, Alert, Share, Text, View, type ScrollView } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, Share, Text, View, type ScrollView } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import {
   DigestDetailScreen,
   type DigestBadge,
@@ -10,6 +11,7 @@ import { AudioPlayerBar } from '@/features/audio/components/AudioPlayerBar';
 import { ReadAlongDigestBody } from '@/features/audio/components/ReadAlongDigestBody';
 import { suspendAutoFollow } from '@/features/audio/stores/read-along-store';
 import { useDigest } from '@/features/digests/hooks/use-digests';
+import { ApiClientError } from '@/lib/api-client';
 import { ContentDisclaimer } from '@/features/documents/components/content-disclaimer';
 import { ExportButton } from '@/features/exports/components/export-button';
 import { useTheme } from '@/providers/theme-provider';
@@ -160,14 +162,44 @@ export default function DigestDetailRoute() {
   }
 
   if (error || !digest) {
+    const isPremiumLocked = error instanceof ApiClientError && error.statusCode === 402;
+    const handleErrorBack = () => {
+      if (router.canGoBack()) {
+        router.back();
+      } else {
+        router.replace('/(tabs)');
+      }
+    };
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.bg, paddingHorizontal: 32 }}>
         <Text style={{ fontFamily: theme.serif, fontSize: 22, color: theme.ink, marginBottom: 8 }}>
-          Digest not found
+          {isPremiumLocked ? 'Premium digest' : 'Digest not found'}
         </Text>
         <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 14, color: theme.inkSoft, textAlign: 'center' }}>
-          The digest you&apos;re looking for could not be loaded.
+          {isPremiumLocked
+            ? 'Upgrade to read full case digests.'
+            : "The digest you're looking for could not be loaded."}
         </Text>
+        <Pressable
+          onPress={handleErrorBack}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 6,
+            backgroundColor: theme.pillBg,
+            paddingVertical: 10,
+            paddingHorizontal: 18,
+            borderRadius: 22,
+            marginTop: 20,
+          }}
+        >
+          <Ionicons name="arrow-back" size={16} color={theme.pillInk} />
+          <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 14, color: theme.pillInk }}>
+            Go back
+          </Text>
+        </Pressable>
       </View>
     );
   }

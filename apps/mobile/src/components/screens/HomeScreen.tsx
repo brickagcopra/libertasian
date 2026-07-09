@@ -1,8 +1,6 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { Pressable, ScrollView, Text, View } from 'react-native';
-import { Photo } from '@/components/ui/Photo';
 import { TabBar, type TabBarItemId } from '@/components/ui/TabBar';
-import { type PhotoTone } from '@/lib/design-tokens';
 import { useTheme } from '@/providers/theme-provider';
 
 export interface HomeFeedItem {
@@ -11,7 +9,6 @@ export interface HomeFeedItem {
   headline: string;
   minutes: number;
   byline?: string;
-  tone?: PhotoTone;
 }
 
 export interface HomeScreenProps {
@@ -41,7 +38,6 @@ const DEFAULT_FEED: HomeFeedItem[] = [
     headline: "The promise that wasn't: a guide to consideration",
     minutes: 6,
     byline: 'By Prof. Andrade',
-    tone: 'sage',
   },
   {
     id: 'b',
@@ -49,7 +45,6 @@ const DEFAULT_FEED: HomeFeedItem[] = [
     headline: 'How the Fourth Amendment meets your phone',
     minutes: 9,
     byline: 'By Prof. Andrade',
-    tone: 'plum',
   },
 ];
 
@@ -301,21 +296,26 @@ export function HomeScreen({
               key={item.id}
               onPress={() => onPressFeedItem?.(item.id)}
               style={{
-                backgroundColor: theme.surface,
-                borderRadius: 18,
+                backgroundColor: theme.pillBg,
+                borderRadius: 22,
+                padding: 18,
                 overflow: 'hidden',
-                borderWidth: 1,
-                borderColor: theme.line,
+                position: 'relative',
               }}
             >
-              <Photo
-                height={220}
-                radius={0}
-                tone={item.tone ?? 'warm'}
-                label={`photo · ${item.category.toLowerCase()}`}
+              <View
+                style={{
+                  position: 'absolute',
+                  right: -20,
+                  top: -20,
+                  width: 130,
+                  height: 130,
+                  borderRadius: 65,
+                  backgroundColor: theme.accent,
+                  opacity: 0.95,
+                }}
               />
-              <View style={{ padding: 16, marginTop: -120 }}>
-                <View style={{ height: 116 }} />
+              <View>
                 <View
                   style={{
                     alignSelf: 'flex-start',
@@ -343,8 +343,9 @@ export function HomeScreen({
                     fontSize: 19,
                     lineHeight: 21.85,
                     letterSpacing: -0.3,
-                    color: theme.ink,
+                    color: theme.pillInk,
                     marginTop: 10,
+                    maxWidth: 240,
                   }}
                 >
                   {item.headline}
@@ -357,23 +358,52 @@ export function HomeScreen({
                     marginTop: 10,
                   }}
                 >
-                  <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 12, color: theme.inkSoft }}>
+                  <Text
+                    style={{
+                      fontFamily: 'Inter_400Regular',
+                      fontSize: 12,
+                      color: theme.pillInk,
+                      opacity: 0.7,
+                    }}
+                  >
                     {item.minutes} min read
                   </Text>
                   {item.byline ? (
                     <>
-                      <Text style={{ color: theme.inkFaint, fontSize: 12 }}>·</Text>
+                      <Text style={{ color: theme.pillInk, opacity: 0.7, fontSize: 12 }}>·</Text>
                       <Text
                         style={{
                           fontFamily: 'Inter_400Regular',
                           fontSize: 12,
-                          color: theme.inkSoft,
+                          color: theme.pillInk,
+                          opacity: 0.7,
                         }}
                       >
                         {item.byline}
                       </Text>
                     </>
                   ) : null}
+                </View>
+                <View style={{ flexDirection: 'row', marginTop: 14 }}>
+                  <Pressable
+                    onPress={() => onPressFeedItem?.(item.id)}
+                    style={{
+                      backgroundColor: theme.accent,
+                      paddingVertical: 8,
+                      paddingHorizontal: 14,
+                      borderRadius: 10,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        color: theme.accentInk,
+                        fontFamily: 'Inter_600SemiBold',
+                        fontSize: 13,
+                      }}
+                    >
+                      Read →
+                    </Text>
+                  </Pressable>
                 </View>
               </View>
             </Pressable>
