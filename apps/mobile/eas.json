@@ -64,8 +64,7 @@
       },
       "ios": {
         "appleId": "bma5871@gmail.com",
-        // TODO: Replace with the numeric App Store Connect App ID once the ASC app exists — `eas submit` offers to create it on first run, then shows the ID (also on the app's App Information page in ASC).
-        "ascAppId": "YOUR_APP_STORE_CONNECT_APP_ID",
+        "ascAppId": "6788971669",
         "appleTeamId": "V2W2BY5P8D"
       }
     }

@@ -33,6 +33,8 @@ Order matters: register in ASC first, then run any EAS submit/metadata command.
 4. SKU: any internal slug (e.g. `libertasian-ios-001`).
 5. After creation, the **Apple ID** (numeric, e.g. `1234567890`) appears in the app's **App Information** page. This becomes `ascAppId` in `eas.json`.
 
+> **✅ Done:** the ASC app was created by the first `eas submit` run (2026-07-08) rather than by hand — `ascAppId` is `6788971669`, already wired into `eas.json`. First build submitted to TestFlight the same day.
+
 ### 1.3 Apple — review test account (MFA disabled)
 
 App Store reviewers must be able to sign in without TOTP/SMS friction.
