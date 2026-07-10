@@ -35,7 +35,10 @@ const PUBLIC_PATHS = [
 // Apple/Google deep-link verifiers require a direct 200, never a redirect.
 // /billing/mobile hosts the Xendit → mobile-app bounce pages; the user
 // arrives from the system browser without a web session cookie.
-const PUBLIC_PREFIXES = ['/shared/', '/blog', '/.well-known/', '/billing/mobile'];
+// /email/ hosts static assets referenced by outgoing transactional emails
+// (logo etc.) — email clients fetch with no session cookie and must get a
+// direct 200, never a redirect.
+const PUBLIC_PREFIXES = ['/shared/', '/blog', '/.well-known/', '/billing/mobile', '/email/'];
 
 function isPublicRoute(pathname: string): boolean {
   if (PUBLIC_PATHS.includes(pathname)) return true;
@@ -89,9 +92,10 @@ export const config = {
      * - _next/image (image optimization)
      * - favicon.ico, sitemap.xml, robots.txt
      * - .well-known (deep-link verification files — must return 200, no redirect)
+     * - email (static assets referenced by transactional emails — must return 200, no redirect)
      * - API routes (handled by NestJS)
      * - Public assets
      */
-    '/((?!_next/static|_next/image|favicon\\.ico|sitemap\\.xml|robots\\.txt|\\.well-known/|api/|metrics).*)',
+    '/((?!_next/static|_next/image|favicon\\.ico|sitemap\\.xml|robots\\.txt|\\.well-known/|email/|api/|metrics).*)',
   ],
 };

@@ -38,6 +38,7 @@ describe('middleware — public-path allowlist', () => {
       '/.well-known/assetlinks.json',
       '/billing/mobile/success',
       '/billing/mobile/cancel',
+      '/email/logo.png',
     ];
 
     for (const path of publicPaths) {
