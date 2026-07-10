@@ -15,6 +15,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Separator } from '@/components/ui/separator';
+import { HeaderGlow } from '@/components/layout/header-glow';
 import { NotificationBell } from '@/components/layout/notification-bell';
 import { LogOutIcon, SettingsIcon, UserIcon, MenuIcon } from 'lucide-react';
 import Link from 'next/link';
@@ -88,10 +89,11 @@ export function Header({ onMenuClick }: HeaderProps) {
 
   return (
     <header
-      className="flex h-14 items-center justify-between border-b border-warm-ink/10 px-4 backdrop-blur md:px-6"
+      className="relative flex h-14 items-center justify-between overflow-hidden border-b border-warm-ink/10 px-4 backdrop-blur md:px-6"
       style={{ background: 'rgba(246, 241, 232, 0.9)' }}
     >
-      <div className="flex items-center gap-2">
+      <HeaderGlow />
+      <div className="relative z-10 flex items-center gap-2">
         {onMenuClick && (
           <Button
             variant="ghost"
@@ -112,7 +114,7 @@ export function Header({ onMenuClick }: HeaderProps) {
         </span>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="relative z-10 flex items-center gap-2">
         {user && <NotificationBell />}
         {user && (
           <DropdownMenu>
