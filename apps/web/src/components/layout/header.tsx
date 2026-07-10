@@ -92,7 +92,7 @@ export function Header({ onMenuClick }: HeaderProps) {
       className="relative flex h-14 items-center justify-between overflow-hidden border-b border-warm-ink/10 px-4 backdrop-blur md:px-6"
       style={{ background: 'rgba(246, 241, 232, 0.9)' }}
     >
-      <HeaderGlow />
+      <HeaderGlow variant="bar" />
       <div className="relative z-10 flex items-center gap-2">
         {onMenuClick && (
           <Button

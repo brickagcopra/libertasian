@@ -19,7 +19,7 @@ export default function AuthLayout({
         aria-hidden
         className="pointer-events-none absolute inset-x-0 top-0 h-40 overflow-hidden"
       >
-        <HeaderGlow />
+        <HeaderGlow variant="band" />
       </div>
       <div className="relative z-10 flex w-full justify-center">{children}</div>
     </main>

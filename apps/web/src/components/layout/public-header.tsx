@@ -46,7 +46,7 @@ export function PublicHeader() {
         borderColor: 'var(--warm-line)',
       }}
     >
-      <HeaderGlow />
+      <HeaderGlow variant="band" />
       <div className="relative z-10 mx-auto flex max-w-[1320px] items-center gap-7 px-6 py-4 sm:px-10">
         <Wordmark size={36} />
 
