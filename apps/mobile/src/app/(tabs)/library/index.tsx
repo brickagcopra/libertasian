@@ -2,47 +2,52 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
+import { HeaderAmbient } from '@/components/ui/HeaderAmbient';
 import { DERIVATIVE_TYPES } from '../../../features/derivatives/taxonomy';
 
 export default function LibraryHubScreen() {
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <View style={styles.header}>
-        <Text style={styles.title} accessibilityRole="header">
-          Library
-        </Text>
-        <Text style={styles.subtitle}>
-          Browse Quimbee-style study artifacts organised by type and subject.
-        </Text>
-      </View>
+    <View style={styles.container}>
+      <HeaderAmbient />
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
+        <View style={styles.header}>
+          <Text style={styles.title} accessibilityRole="header">
+            Library
+          </Text>
+          <Text style={styles.subtitle}>
+            Browse Quimbee-style study artifacts organised by type and subject.
+          </Text>
+        </View>
 
-      <View style={styles.grid}>
-        {DERIVATIVE_TYPES.map((t) => (
-          <Pressable
-            key={t.enum}
-            style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
-            onPress={() => router.push(`/library/${t.slug}`)}
-            accessibilityRole="button"
-            accessibilityLabel={`Browse ${t.label}`}
-          >
-            <View style={styles.iconBox}>
-              <Ionicons name={t.icon} size={20} color="#1d4ed8" />
-            </View>
-            <Text style={styles.tileTitle} numberOfLines={2}>
-              {t.label}
-            </Text>
-            <Text style={styles.tileDescription} numberOfLines={3}>
-              {t.description}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
-    </ScrollView>
+        <View style={styles.grid}>
+          {DERIVATIVE_TYPES.map((t) => (
+            <Pressable
+              key={t.enum}
+              style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
+              onPress={() => router.push(`/library/${t.slug}`)}
+              accessibilityRole="button"
+              accessibilityLabel={`Browse ${t.label}`}
+            >
+              <View style={styles.iconBox}>
+                <Ionicons name={t.icon} size={20} color="#1d4ed8" />
+              </View>
+              <Text style={styles.tileTitle} numberOfLines={2}>
+                {t.label}
+              </Text>
+              <Text style={styles.tileDescription} numberOfLines={3}>
+                {t.description}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f3f4f6' },
+  scroll: { flex: 1 },
   content: { padding: 16, gap: 16 },
   header: { gap: 4 },
   title: { fontSize: 24, fontWeight: '700', color: '#111827' },

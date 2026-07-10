@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import type { ReactNode } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
+import { HeaderAmbient } from '@/components/ui/HeaderAmbient';
 import { useTheme } from '@/providers/theme-provider';
 
 export interface DocumentReaderSection {
@@ -107,6 +108,8 @@ export function DocumentReaderScreen({
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
+      {/* Ambient glass decoration — zIndex 0, beneath the gradient (5) and header cluster (10) */}
+      <HeaderAmbient />
       {/* Top gradient bar */}
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 100, zIndex: 5 }}>
         <LinearGradient

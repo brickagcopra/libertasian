@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { useState } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { Chip } from '@/components/ui/Chip';
+import { HeaderAmbient } from '@/components/ui/HeaderAmbient';
 import { TabBar, type TabBarItemId } from '@/components/ui/TabBar';
 import { photoTones, type PhotoTone } from '@/lib/design-tokens';
 import { useTheme } from '@/providers/theme-provider';
@@ -99,6 +100,7 @@ export function SearchScreen({
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
+      <HeaderAmbient />
       <ScrollView
         contentContainerStyle={{
           paddingTop: 54,
