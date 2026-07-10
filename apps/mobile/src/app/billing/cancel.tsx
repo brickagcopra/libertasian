@@ -2,13 +2,16 @@ import { useEffect } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useTheme } from '@/providers/theme-provider';
 
 /**
  * Deep link target: libertasian://billing/cancel
- * Xendit redirects here when user cancels payment.
- * Navigates back to plans screen.
+ * The web bounce page (apps/web /billing/mobile/cancel) hands off here
+ * when the user cancels payment. Navigates back to the plans screen.
  */
 export default function BillingCancelScreen() {
+  const { theme } = useTheme();
+
   useEffect(() => {
     const timer = setTimeout(() => {
       router.replace('/settings/plans');
@@ -18,12 +21,14 @@ export default function BillingCancelScreen() {
   }, []);
 
   return (
-    <View style={styles.container}>
-      <View style={styles.iconContainer}>
-        <Ionicons name="close-circle" size={64} color="#eab308" />
+    <View style={[styles.container, { backgroundColor: theme.bg }]}>
+      <View style={[styles.iconContainer, { backgroundColor: theme.surfaceMuted }]}>
+        <Ionicons name="close-circle" size={64} color={theme.inkSoft} />
       </View>
-      <Text style={styles.title}>Checkout Cancelled</Text>
-      <Text style={styles.subtitle}>
+      <Text style={[styles.title, { fontFamily: theme.serif, color: theme.ink }]}>
+        Checkout Cancelled
+      </Text>
+      <Text style={[styles.subtitle, { color: theme.inkSoft }]}>
         No charges were made. You can try again anytime. Redirecting...
       </Text>
     </View>
@@ -35,28 +40,24 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#fff',
     padding: 32,
   },
   iconContainer: {
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: '#fefce8',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 20,
   },
   title: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#111827',
+    fontSize: 24,
     marginBottom: 8,
   },
   subtitle: {
     fontSize: 15,
-    color: '#6b7280',
     textAlign: 'center',
     lineHeight: 22,
+    fontFamily: 'Inter_400Regular',
   },
 });

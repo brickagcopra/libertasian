@@ -36,6 +36,8 @@ describe('middleware — public-path allowlist', () => {
       '/shared/abc',
       '/.well-known/apple-app-site-association',
       '/.well-known/assetlinks.json',
+      '/billing/mobile/success',
+      '/billing/mobile/cancel',
     ];
 
     for (const path of publicPaths) {
@@ -54,6 +56,8 @@ describe('middleware — public-path allowlist', () => {
       '/some-unknown-page',
       '/bar-exams',
       '/bar-exams/2022',
+      '/billing',
+      '/billing/history',
     ];
     for (const path of protectedPaths) {
       it(`redirects ${path} → /login?from=${path}`, () => {

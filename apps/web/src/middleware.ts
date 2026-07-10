@@ -33,7 +33,9 @@ const PUBLIC_PATHS = [
 /** Path prefixes that should be accessible without authentication. */
 // /.well-known/ hosts apple-app-site-association + assetlinks.json —
 // Apple/Google deep-link verifiers require a direct 200, never a redirect.
-const PUBLIC_PREFIXES = ['/shared/', '/blog', '/.well-known/'];
+// /billing/mobile hosts the Xendit → mobile-app bounce pages; the user
+// arrives from the system browser without a web session cookie.
+const PUBLIC_PREFIXES = ['/shared/', '/blog', '/.well-known/', '/billing/mobile'];
 
 function isPublicRoute(pathname: string): boolean {
   if (PUBLIC_PATHS.includes(pathname)) return true;

@@ -1,6 +1,16 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-07-07 (PR #270 read-along awaiting merge; audio player PR awaiting merge + native rebuild)
+> Last updated: 2026-07-09 (mobile billing checkout flow PR awaiting merge)
+
+---
+
+## 2026-07-09 — mobile billing checkout flow PR rollout (owner action required)
+
+- [ ] Review + merge PR #276 `fix/mobile-billing-checkout-flow` (https bounce pages + preview modal bottom sheet + safe-area header + themed plans screen)
+- [ ] Deploy the WEB app before (or together with) shipping the mobile build — the mobile checkout now points at `https://libertasian.com/billing/mobile/success|cancel`, which 404s until the web deploy is live
+- [ ] Manual QA on device (JS-only change, Metro/OTA reload is enough): Settings → Plans → Upgrade opens the bottom-sheet preview → Proceed to Payment opens Xendit in the system browser (no more 400 from the DTO) → complete sandbox payment → browser lands on the bounce page → returns to the app via `libertasian://billing/success` → subscription screen shows the new plan
+- [ ] Verify the safety net: complete payment, then return to the app WITHOUT tapping the bounce button (switch apps manually) — plans/subscription screens should still refresh entitlements via the AppState listener
+- [ ] Confirm both themes (A Warm Editorial / B Confident Modern) on the plans screen — no blue remnants anywhere
 
 ---
 
