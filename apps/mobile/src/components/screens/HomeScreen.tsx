@@ -1,5 +1,6 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { Pressable, ScrollView, Text, View } from 'react-native';
+import { HeaderAmbient } from '@/components/ui/HeaderAmbient';
 import { TabBar, type TabBarItemId } from '@/components/ui/TabBar';
 import { useTheme } from '@/providers/theme-provider';
 
@@ -69,6 +70,7 @@ export function HomeScreen({
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
+      <HeaderAmbient />
       <ScrollView
         contentContainerStyle={{
           paddingTop: 60,

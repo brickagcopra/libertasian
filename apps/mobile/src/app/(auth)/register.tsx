@@ -3,6 +3,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { Button } from '@/components/ui/Button';
+import { HeaderAmbient } from '@/components/ui/HeaderAmbient';
 import { Input } from '@/components/ui/Input';
 import { Logo } from '@/components/ui/Logo';
 import { useRegister } from '@/features/auth/hooks/use-auth';
@@ -78,6 +79,7 @@ export default function RegisterRoute() {
       style={{ flex: 1, backgroundColor: theme.bg }}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
+      <HeaderAmbient />
       <ScrollView
         contentContainerStyle={{
           paddingTop: 64,

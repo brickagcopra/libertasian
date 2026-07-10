@@ -12,6 +12,8 @@ export { EmptyState } from './EmptyState';
 export type { EmptyStateProps } from './EmptyState';
 export { Fab } from './Fab';
 export type { FabProps } from './Fab';
+export { HeaderAmbient } from './HeaderAmbient';
+export type { HeaderAmbientProps } from './HeaderAmbient';
 export { Input } from './Input';
 export type { InputProps } from './Input';
 export { ListItem } from './ListItem';
