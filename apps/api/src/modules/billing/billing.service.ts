@@ -35,6 +35,14 @@ import type { CreateCheckoutDto, PreviewCheckoutDto } from './dto';
 /** Renewal reminders go out 3 days before the scheduled charge (T-3d). */
 const RENEWAL_REMINDER_LEAD_MS = 3 * 24 * 60 * 60 * 1000;
 
+/**
+ * Canonical UUID shape (8-4-4-4-12 hex). Xendit "Test webhook" payloads (and
+ * malformed events) carry a non-UUID reference_id (e.g. "test-reference-id");
+ * passing one to findUnique on the UUID `id` column throws P2023, the handler
+ * 500s, and Xendit retries the event forever.
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 @Injectable()
 export class BillingService {
   private readonly logger = new Logger(BillingService.name);
@@ -1103,7 +1111,15 @@ export class BillingService {
     });
     if (bySubId) return bySubId;
     if (data.reference_id) {
-      return this.prisma.subscription.findUnique({ where: { id: data.reference_id } });
+      if (UUID_RE.test(data.reference_id)) {
+        return this.prisma.subscription.findUnique({ where: { id: data.reference_id } });
+      }
+      // Non-UUID reference_id (Xendit test webhook or malformed event): treat
+      // as "no matching subscription" so the handler returns 200 and Xendit
+      // stops retrying, instead of P2023 → 500 → infinite retries.
+      this.logger.warn(
+        `Recurring webhook carried non-UUID reference_id (event object ${planId ?? 'unknown'}); dropping — likely a Xendit test event`,
+      );
     }
     return null;
   }
