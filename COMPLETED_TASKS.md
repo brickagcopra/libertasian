@@ -1,6 +1,18 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-07-09 (mobile billing checkout flow fix — https bounce pages, preview modal, themed plans screen)
+> Last updated: 2026-07-09 (payment receipt email redesign PR #277; previously: mobile billing checkout flow fix — https bounce pages, preview modal, themed plans screen)
+
+---
+
+## 2026-07-09 — PR #277: feat(api,web): redesign payment receipt email with branded shell + logo asset
+
+**Branch:** `feature/email-receipt-redesign` → https://github.com/brickagcopra/libertasian/pull/277
+**Context:** The payment receipt email was a plain bordered grid with an off-brand blue `#2563eb` button and no logo. Touches apps/api (2 template files) + apps/web (1 static asset) only.
+
+1. **Email logo asset** — `apps/web/public/email/logo.png`: 480×86 transparent PNG (2× retina, displayed at 240px) rasterized from `apps/web/public/logo.svg` with sharp (density 300 → resize 480w). Gotcha discovered: the SVG's animated spark `<circle>`s have no static `cx`/`cy`, so a static raster stacks them all at (0,0) as a stray yellow dot — the sparks group and all `<animate>` tags are stripped before rendering. Fire gradient + glow filter survive; verified visually composited on the dark header color. Served at `https://libertasian.com/email/logo.png` once web deploys.
+2. **Reusable email shell** — `templates/email-layout.ts`: `emailLayout({ body, footerNote?, preheader? })` renders cream page (`#FCFAF6` ← `oklch(0.985 0.005 85)`), centered 600px white card, dark slate-teal header band (`#193841` ← `oklch(0.32 0.04 220)`, from globals.css tokens) with the wordmark `<img>`, standard footer (mailto contact + brand line, optional template note). Nested tables only, all styles inline, `bgcolor` fallbacks, `'Inter', -apple-system, …` stack with no webfont loading. Exports shared `emailColors`, `emailFontStack`, `escapeHtml`. Only payment-receipt consumes it in this PR — the other 11 templates adopt it later.
+3. **payment-receipt.ts rebuilt on the shell** — "Payment Receipt" + date, greeting, hero amount block (36px bold on cream, green PAID pill), hairline label/value detail rows (full grid borders gone), slate-teal button, statement-descriptor note moved to the footer. Function signature, all data fields, conditional Billing Period / Next Billing Date rows, `escapeHtml` on every interpolation, and the subject line unchanged.
+4. **Verification** — rendered with sample data (both optional rows populated) via ts-node and screenshotted with headless Chrome: layout, band, pill, hairlines, button, footer all correct. `pnpm --filter api test` 170 suites / 3421 tests green (no specs reference the template directly; none needed changes); `pnpm --filter api lint` (tsc --noEmit) clean.
 
 ---
 

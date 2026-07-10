@@ -1,6 +1,15 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-07-09 (mobile billing checkout flow PR awaiting merge)
+> Last updated: 2026-07-09 (payment receipt email redesign PR #277 awaiting merge)
+
+---
+
+## 2026-07-09 — payment receipt email redesign PR rollout (owner action required)
+
+- [ ] Review + merge PR #277 `feature/email-receipt-redesign` (branded receipt email + `email-layout.ts` shell + logo PNG)
+- [ ] Deploy the WEB app before (or together with) the API — the email references `https://libertasian.com/email/logo.png`, which 404s (broken image in every receipt) until the web deploy ships the new `apps/web/public/email/logo.png`
+- [ ] Send a real receipt (sandbox payment) and eyeball it in Gmail (web + mobile app) and at least one Outlook client — table layout, dark header band + wordmark, PAID pill, hairline rows, slate-teal button
+- [ ] Follow-up: adopt `emailLayout()` in the other 11 templates in `apps/api/src/modules/notifications/templates/` (verify-email, reset-password, password-changed, member-invite, subscription-confirmation, subscription-cancelled, payment-failed, renewal-reminder, budget-alert, announcement, blog-notification) — deliberately out of scope for PR #277
 
 ---
 
