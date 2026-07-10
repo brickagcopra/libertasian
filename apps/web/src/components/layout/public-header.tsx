@@ -14,6 +14,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { HeaderGlow } from '@/components/layout/header-glow';
 import { useLogout } from '@/features/auth/hooks/use-auth';
 import { useAuthStore } from '@/stores/auth-store';
 
@@ -45,7 +46,8 @@ export function PublicHeader() {
         borderColor: 'var(--warm-line)',
       }}
     >
-      <div className="mx-auto flex max-w-[1320px] items-center gap-7 px-6 py-4 sm:px-10">
+      <HeaderGlow />
+      <div className="relative z-10 mx-auto flex max-w-[1320px] items-center gap-7 px-6 py-4 sm:px-10">
         <Wordmark size={36} />
 
 

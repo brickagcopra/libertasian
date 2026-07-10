@@ -207,3 +207,79 @@
     font-weight: 500;
   }
 }
+
+/* Ambient glass header decoration (HeaderGlow component).
+   Radial-gradient blobs in the existing warm palette drift slowly behind
+   header content. Transform-only keyframes so the animation stays on the
+   compositor; the headers' existing backdrop-blur supplies the glass look. */
+.header-glow-blob {
+  position: absolute;
+  border-radius: 9999px;
+  will-change: transform;
+}
+
+.header-glow-blob-1 {
+  top: -170px;
+  left: 6%;
+  width: 320px;
+  height: 320px;
+  opacity: 0.5;
+  background: radial-gradient(circle, var(--warm-accent-soft) 0%, transparent 70%);
+  animation: header-glow-drift-1 26s ease-in-out infinite alternate;
+}
+
+.header-glow-blob-2 {
+  top: -120px;
+  right: 10%;
+  width: 240px;
+  height: 240px;
+  /* --warm-accent at low alpha: full-strength token softened via element opacity */
+  opacity: 0.14;
+  background: radial-gradient(circle, var(--warm-accent) 0%, transparent 70%);
+  animation: header-glow-drift-2 32s ease-in-out infinite alternate;
+  animation-delay: -8s;
+}
+
+.header-glow-blob-3 {
+  top: -90px;
+  left: 42%;
+  width: 200px;
+  height: 200px;
+  opacity: 0.45;
+  background: radial-gradient(circle, var(--warm-cream-3) 0%, transparent 70%);
+  animation: header-glow-drift-3 22s ease-in-out infinite alternate;
+  animation-delay: -14s;
+}
+
+@keyframes header-glow-drift-1 {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    transform: translate3d(64px, 16px, 0) scale(1.12);
+  }
+}
+
+@keyframes header-glow-drift-2 {
+  from {
+    transform: translate3d(0, 0, 0) scale(1.08);
+  }
+  to {
+    transform: translate3d(-72px, 12px, 0) scale(0.94);
+  }
+}
+
+@keyframes header-glow-drift-3 {
+  from {
+    transform: translate3d(0, 0, 0) scale(0.96);
+  }
+  to {
+    transform: translate3d(48px, -14px, 0) scale(1.1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .header-glow-blob {
+    animation: none;
+  }
+}
