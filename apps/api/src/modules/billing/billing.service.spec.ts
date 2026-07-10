@@ -1434,8 +1434,12 @@ describe('BillingService', () => {
   // ---- Recurring webhook handlers ----
 
   describe('recurring webhook handlers', () => {
+    // Real Subscription ids are UUIDs — findSubscriptionForPlan drops non-UUID
+    // reference_ids (Xendit test webhooks), so fixtures must use the real shape.
+    const SUB_ID = '3f9c2b1e-8d4a-4c6f-9e2b-7a1d5c8e0f42';
+
     const provisioningSub = {
-      id: 'sub-1',
+      id: SUB_ID,
       organizationId: 'org-1',
       planCode: 'pro',
       billingPeriod: 'monthly',
@@ -1473,18 +1477,18 @@ describe('BillingService', () => {
         await service.handleSubscriptionActivated({
           id: 'repl_1',
           recurring_plan_id: 'repl_1',
-          reference_id: 'sub-1',
+          reference_id: SUB_ID,
           status: 'ACTIVE',
         });
 
         expect(prisma.subscription.update).toHaveBeenCalledWith(
           expect.objectContaining({
-            where: { id: 'sub-1' },
+            where: { id: SUB_ID },
             data: expect.objectContaining({ xenditSubscriptionId: 'repl_1' }),
           }),
         );
         expect(lifecycleService.executeTransition).toHaveBeenCalledWith(
-          expect.objectContaining({ subscriptionId: 'sub-1', action: SubscriptionAction.ACTIVATE }),
+          expect.objectContaining({ subscriptionId: SUB_ID, action: SubscriptionAction.ACTIVATE }),
         );
         expect(entitlementService.invalidateEntitlementCache).toHaveBeenCalledWith('org-1');
       });
@@ -1496,7 +1500,7 @@ describe('BillingService', () => {
         await service.handleSubscriptionActivated({
           id: 'repl_1',
           recurring_plan_id: 'repl_1',
-          reference_id: 'sub-1',
+          reference_id: SUB_ID,
           status: 'ACTIVE',
         });
 
@@ -1510,9 +1514,55 @@ describe('BillingService', () => {
       it('is idempotent when the subscription is already active', async () => {
         (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(activeSub);
 
-        await service.handleSubscriptionActivated({ id: 'repl_1', reference_id: 'sub-1' });
+        await service.handleSubscriptionActivated({ id: 'repl_1', reference_id: SUB_ID });
 
         expect(lifecycleService.executeTransition).not.toHaveBeenCalled();
+      });
+
+      it('drops a non-UUID reference_id (Xendit test webhook) without querying the UUID id column', async () => {
+        // Xendit "Test webhook" payloads carry e.g. reference_id: "test-reference-id".
+        // findUnique on the UUID `id` column with that value throws P2023 → 500 →
+        // infinite Xendit retries. The guard must short-circuit to null instead.
+        (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(null);
+
+        await expect(
+          service.handleSubscriptionActivated({
+            id: 'repl_test',
+            reference_id: 'test-reference-id',
+            status: 'ACTIVE',
+          }),
+        ).resolves.toBeUndefined();
+
+        expect(prisma.subscription.findUnique).not.toHaveBeenCalled();
+        expect(prisma.subscription.update).not.toHaveBeenCalled();
+        expect(lifecycleService.executeTransition).not.toHaveBeenCalled();
+      });
+
+      it('passes a valid UUID reference_id through to findUnique', async () => {
+        (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(null);
+        (prisma.subscription.findUnique as jest.Mock).mockResolvedValue(provisioningSub);
+
+        await service.handleSubscriptionActivated({
+          id: 'repl_1',
+          recurring_plan_id: 'repl_1',
+          reference_id: SUB_ID,
+          status: 'ACTIVE',
+        });
+
+        expect(prisma.subscription.findUnique).toHaveBeenCalledWith({ where: { id: SUB_ID } });
+        expect(lifecycleService.executeTransition).toHaveBeenCalledWith(
+          expect.objectContaining({ subscriptionId: SUB_ID, action: SubscriptionAction.ACTIVATE }),
+        );
+      });
+
+      it('accepts an uppercase UUID reference_id (guard is case-insensitive)', async () => {
+        (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(null);
+        (prisma.subscription.findUnique as jest.Mock).mockResolvedValue(provisioningSub);
+
+        const upper = SUB_ID.toUpperCase();
+        await service.handleSubscriptionActivated({ id: 'repl_1', reference_id: upper });
+
+        expect(prisma.subscription.findUnique).toHaveBeenCalledWith({ where: { id: upper } });
       });
     });
 
@@ -1597,7 +1647,7 @@ describe('BillingService', () => {
         await service.handleCycleSucceeded({ id: 'cycle_2', recurring_plan_id: 'repl_1', amount: 999 });
 
         expect(lifecycleService.executeTransition).toHaveBeenCalledWith(
-          expect.objectContaining({ subscriptionId: 'sub-1', action: SubscriptionAction.RENEW }),
+          expect.objectContaining({ subscriptionId: SUB_ID, action: SubscriptionAction.RENEW }),
         );
       });
     });
@@ -1609,7 +1659,7 @@ describe('BillingService', () => {
         await service.handleCycleFailed({ id: 'cycle_3', recurring_plan_id: 'repl_1' });
 
         expect(lifecycleService.executeTransition).toHaveBeenCalledWith(
-          expect.objectContaining({ subscriptionId: 'sub-1', action: SubscriptionAction.PAYMENT_FAILED }),
+          expect.objectContaining({ subscriptionId: SUB_ID, action: SubscriptionAction.PAYMENT_FAILED }),
         );
       });
 
@@ -1733,14 +1783,14 @@ describe('BillingService', () => {
         await service.handleSubscriptionActivated({
           id: 'repl_1',
           recurring_plan_id: 'repl_1',
-          reference_id: 'sub-1',
+          reference_id: SUB_ID,
           status: 'ACTIVE',
         });
 
         expect(prisma.subscriptionLifecycleEvent.create).toHaveBeenCalledWith(
           expect.objectContaining({
             data: expect.objectContaining({
-              subscriptionId: 'sub-1',
+              subscriptionId: SUB_ID,
               organizationId: 'org-1',
               eventType: 'renewal_reminder',
               status: 'pending',
@@ -1768,7 +1818,7 @@ describe('BillingService', () => {
 
         // Prior pending reminders are cancelled (one pending reminder per sub).
         expect(prisma.subscriptionLifecycleEvent.updateMany).toHaveBeenCalledWith({
-          where: { subscriptionId: 'sub-1', eventType: 'renewal_reminder', status: 'pending' },
+          where: { subscriptionId: SUB_ID, eventType: 'renewal_reminder', status: 'pending' },
           data: { status: 'cancelled' },
         });
 
@@ -1778,7 +1828,7 @@ describe('BillingService', () => {
         newEnd.setMonth(newEnd.getMonth() + 1);
         expect(prisma.subscriptionLifecycleEvent.create).toHaveBeenCalledWith({
           data: expect.objectContaining({
-            subscriptionId: 'sub-1',
+            subscriptionId: SUB_ID,
             eventType: 'renewal_reminder',
             status: 'pending',
             scheduledAt: new Date(newEnd.getTime() - THREE_DAYS_MS),
@@ -1806,7 +1856,7 @@ describe('BillingService', () => {
         await service.cancelSubscription('org-1', 'user-1', true);
 
         expect(prisma.subscriptionLifecycleEvent.updateMany).toHaveBeenCalledWith({
-          where: { subscriptionId: 'sub-1', eventType: 'renewal_reminder', status: 'pending' },
+          where: { subscriptionId: SUB_ID, eventType: 'renewal_reminder', status: 'pending' },
           data: { status: 'cancelled' },
         });
       });
@@ -1817,7 +1867,7 @@ describe('BillingService', () => {
         await service.handlePlanDeactivated({ id: 'repl_1' });
 
         expect(prisma.subscriptionLifecycleEvent.updateMany).toHaveBeenCalledWith({
-          where: { subscriptionId: 'sub-1', eventType: 'renewal_reminder', status: 'pending' },
+          where: { subscriptionId: SUB_ID, eventType: 'renewal_reminder', status: 'pending' },
           data: { status: 'cancelled' },
         });
       });
@@ -1830,7 +1880,7 @@ describe('BillingService', () => {
         await service.handlePlanDeactivated({ id: 'repl_1' });
 
         expect(lifecycleService.executeTransition).toHaveBeenCalledWith(
-          expect.objectContaining({ subscriptionId: 'sub-1', action: SubscriptionAction.CANCEL_IMMEDIATELY }),
+          expect.objectContaining({ subscriptionId: SUB_ID, action: SubscriptionAction.CANCEL_IMMEDIATELY }),
         );
         expect(prisma.subscription.create).toHaveBeenCalledWith(
           expect.objectContaining({ data: expect.objectContaining({ planCode: 'free' }) }),
