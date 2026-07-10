@@ -1,3 +1,5 @@
+import { emailColors, emailFontStack, emailLayout, escapeHtml } from './email-layout';
+
 export function paymentReceiptTemplate(data: {
   userName: string;
   amount: string;
@@ -12,72 +14,52 @@ export function paymentReceiptTemplate(data: {
   /** Next scheduled billing date for recurring plans. */
   nextBillingDate?: string;
 }): { subject: string; html: string } {
-  const billingPeriodRow = data.billingPeriodLabel
-    ? `
-    <tr>
-      <td style="padding: 8px 12px; background: #f9fafb; border: 1px solid #e5e7eb; font-weight: 600;">Billing Period</td>
-      <td style="padding: 8px 12px; border: 1px solid #e5e7eb;">${escapeHtml(data.billingPeriodLabel)}</td>
-    </tr>`
-    : '';
-  const nextBillingRow = data.nextBillingDate
-    ? `
-    <tr>
-      <td style="padding: 8px 12px; background: #f9fafb; border: 1px solid #e5e7eb; font-weight: 600;">Next Billing Date</td>
-      <td style="padding: 8px 12px; border: 1px solid #e5e7eb;">${escapeHtml(data.nextBillingDate)}</td>
-    </tr>`
-    : '';
+  const detailRow = (label: string, value: string) => `
+                <tr>
+                  <td style="padding: 12px 0; border-bottom: 1px solid ${emailColors.hairline}; font-family: ${emailFontStack}; font-size: 13px; color: ${emailColors.muted};">${label}</td>
+                  <td align="right" style="padding: 12px 0; border-bottom: 1px solid ${emailColors.hairline}; font-family: ${emailFontStack}; font-size: 14px; font-weight: 600; color: ${emailColors.ink};">${value}</td>
+                </tr>`;
+
+  const detailRows = [
+    detailRow('Invoice', escapeHtml(data.invoiceNumber)),
+    detailRow('Plan', escapeHtml(data.planName)),
+    detailRow('Payment Method', escapeHtml(data.paymentMethod)),
+    data.billingPeriodLabel ? detailRow('Billing Period', escapeHtml(data.billingPeriodLabel)) : '',
+    data.nextBillingDate ? detailRow('Next Billing Date', escapeHtml(data.nextBillingDate)) : '',
+  ].join('');
+
+  const body = `
+              <h1 style="margin: 0 0 4px; font-family: ${emailFontStack}; font-size: 22px; line-height: 30px; font-weight: 700; color: ${emailColors.ink};">Payment Receipt</h1>
+              <p style="margin: 0 0 24px; font-family: ${emailFontStack}; font-size: 14px; line-height: 20px; color: ${emailColors.muted};">${escapeHtml(data.date)}</p>
+              <p style="margin: 0 0 24px; font-family: ${emailFontStack}; font-size: 15px; line-height: 22px; color: ${emailColors.ink};">Hi ${escapeHtml(data.userName)}, thank you for your payment. Here is your receipt.</p>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td align="center" bgcolor="${emailColors.page}" style="background-color: ${emailColors.page}; border-radius: 10px; padding: 24px 20px;">
+                    <p style="margin: 0 0 10px; font-family: ${emailFontStack}; font-size: 36px; line-height: 40px; font-weight: 800; color: ${emailColors.ink};">${escapeHtml(data.currency)}&nbsp;${escapeHtml(data.amount)}</p>
+                    <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center">
+                      <tr>
+                        <td bgcolor="${emailColors.successBg}" style="background-color: ${emailColors.successBg}; border-radius: 999px; padding: 4px 14px; font-family: ${emailFontStack}; font-size: 11px; font-weight: 700; letter-spacing: 1px; color: ${emailColors.successText};">PAID</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin: 8px 0 0;">${detailRows}
+              </table>
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin: 32px auto 0;">
+                <tr>
+                  <td align="center" bgcolor="${emailColors.primary}" style="background-color: ${emailColors.primary}; border-radius: 8px;">
+                    <a href="${escapeHtml(data.billingUrl)}" style="display: inline-block; padding: 13px 32px; font-family: ${emailFontStack}; font-size: 14px; font-weight: 600; color: #FFFFFF; text-decoration: none;">View Billing Details</a>
+                  </td>
+                </tr>
+              </table>`;
 
   return {
     subject: 'Payment Receipt — LIBERTASIAN',
-    html: `
-<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"></head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-  <h2 style="color: #1a1a1a;">Payment Receipt</h2>
-  <p>Hi ${escapeHtml(data.userName)},</p>
-  <p>Thank you for your payment. Here is your receipt:</p>
-  <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
-    <tr>
-      <td style="padding: 8px 12px; background: #f9fafb; border: 1px solid #e5e7eb; font-weight: 600;">Invoice</td>
-      <td style="padding: 8px 12px; border: 1px solid #e5e7eb;">${escapeHtml(data.invoiceNumber)}</td>
-    </tr>
-    <tr>
-      <td style="padding: 8px 12px; background: #f9fafb; border: 1px solid #e5e7eb; font-weight: 600;">Date</td>
-      <td style="padding: 8px 12px; border: 1px solid #e5e7eb;">${escapeHtml(data.date)}</td>
-    </tr>
-    <tr>
-      <td style="padding: 8px 12px; background: #f9fafb; border: 1px solid #e5e7eb; font-weight: 600;">Plan</td>
-      <td style="padding: 8px 12px; border: 1px solid #e5e7eb;">${escapeHtml(data.planName)}</td>
-    </tr>
-    <tr>
-      <td style="padding: 8px 12px; background: #f9fafb; border: 1px solid #e5e7eb; font-weight: 600;">Amount</td>
-      <td style="padding: 8px 12px; border: 1px solid #e5e7eb; font-size: 18px; font-weight: 700;">${escapeHtml(data.currency)} ${escapeHtml(data.amount)}</td>
-    </tr>
-    <tr>
-      <td style="padding: 8px 12px; background: #f9fafb; border: 1px solid #e5e7eb; font-weight: 600;">Payment Method</td>
-      <td style="padding: 8px 12px; border: 1px solid #e5e7eb;">${escapeHtml(data.paymentMethod)}</td>
-    </tr>${billingPeriodRow}${nextBillingRow}
-  </table>
-  <p style="color: #666; font-size: 14px;">This charge appears on your statement as <strong>LIBERTASIAN</strong>.</p>
-  <p style="text-align: center; margin: 30px 0;">
-    <a href="${escapeHtml(data.billingUrl)}"
-       style="background-color: #2563eb; color: #fff; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
-      View Billing Details
-    </a>
-  </p>
-  <p style="color: #666; font-size: 14px;">If you have any questions about this charge, please contact our support team.</p>
-  <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
-  <p style="color: #999; font-size: 12px;">LIBERTASIAN — Philippine Legal AI Platform</p>
-</body>
-</html>`.trim(),
+    html: emailLayout({
+      body,
+      preheader: `Receipt for ${data.currency} ${data.amount} — ${data.planName}`,
+      footerNote: 'This charge appears on your statement as <strong>LIBERTASIAN</strong>.',
+    }),
   };
-}
-
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }
