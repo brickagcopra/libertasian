@@ -27,6 +27,31 @@ describe('HeaderGlow', () => {
     expect(blobs.length).toBe(3);
   });
 
+  it('renders the floating owl mascot inside the hidden layer', () => {
+    const { container } = render(<HeaderGlow />);
+    const owlWrapper = container.querySelector('.header-glow-owl');
+    expect(owlWrapper).not.toBeNull();
+    expect(owlWrapper?.querySelector('svg')).not.toBeNull();
+    // The owl lives inside the aria-hidden wrapper so its role="img" never
+    // reaches the accessibility tree.
+    expect(owlWrapper?.closest('[aria-hidden="true"]')).not.toBeNull();
+  });
+
+  it('defaults to the band variant with a larger owl', () => {
+    const { container } = render(<HeaderGlow />);
+    const owlWrapper = container.querySelector('.header-glow-owl');
+    expect(owlWrapper).toHaveClass('header-glow-owl-band');
+    expect(owlWrapper?.querySelector('svg')).toHaveAttribute('width', '132');
+  });
+
+  it('renders the bar variant with a smaller owl', () => {
+    const { container } = render(<HeaderGlow variant="bar" />);
+    const owlWrapper = container.querySelector('.header-glow-owl');
+    expect(owlWrapper).toHaveClass('header-glow-owl-bar');
+    expect(owlWrapper).not.toHaveClass('header-glow-owl-band');
+    expect(owlWrapper?.querySelector('svg')).toHaveAttribute('width', '80');
+  });
+
   it('exposes no content to the accessibility tree', () => {
     const { container } = render(<HeaderGlow />);
     expect(container).toHaveTextContent('');

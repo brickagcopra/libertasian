@@ -218,37 +218,61 @@
   will-change: transform;
 }
 
+/* Blob centers sit roughly on the header band (top between -60px and 0) so
+   about half of each gradient is visible inside the 56–160px-tall
+   overflow-hidden surfaces. Accent tokens only — cream-on-cream is invisible
+   against the #F6F1E8 header background. */
 .header-glow-blob-1 {
-  top: -170px;
+  top: -55px;
   left: 6%;
-  width: 320px;
-  height: 320px;
-  opacity: 0.5;
-  background: radial-gradient(circle, var(--warm-accent-soft) 0%, transparent 70%);
-  animation: header-glow-drift-1 26s ease-in-out infinite alternate;
+  width: 190px;
+  height: 190px;
+  /* full-strength accent token softened via element opacity */
+  opacity: 0.2;
+  background: radial-gradient(circle, var(--warm-accent) 0%, transparent 70%);
+  animation: header-glow-drift-1 24s ease-in-out infinite alternate;
 }
 
 .header-glow-blob-2 {
-  top: -120px;
-  right: 10%;
-  width: 240px;
-  height: 240px;
-  /* --warm-accent at low alpha: full-strength token softened via element opacity */
-  opacity: 0.14;
+  top: -40px;
+  right: 22%;
+  width: 160px;
+  height: 160px;
+  opacity: 0.18;
   background: radial-gradient(circle, var(--warm-accent) 0%, transparent 70%);
-  animation: header-glow-drift-2 32s ease-in-out infinite alternate;
-  animation-delay: -8s;
+  animation: header-glow-drift-2 30s ease-in-out infinite alternate;
+  animation-delay: -12s;
 }
 
 .header-glow-blob-3 {
-  top: -90px;
-  left: 42%;
-  width: 200px;
-  height: 200px;
-  opacity: 0.45;
-  background: radial-gradient(circle, var(--warm-cream-3) 0%, transparent 70%);
-  animation: header-glow-drift-3 22s ease-in-out infinite alternate;
-  animation-delay: -14s;
+  top: -60px;
+  left: 40%;
+  width: 220px;
+  height: 220px;
+  opacity: 0.1;
+  background: radial-gradient(circle, var(--warm-accent-deep) 0%, transparent 70%);
+  animation: header-glow-drift-3 19s ease-in-out infinite alternate;
+  animation-delay: -7s;
+}
+
+/* Floating owl mascot (HeaderGlow owl). Transform-only bob, same
+   compositor-friendly rules as the blobs. */
+.header-glow-owl {
+  position: absolute;
+  opacity: 0.13;
+  will-change: transform;
+  animation: header-glow-owl-float 16s ease-in-out infinite alternate;
+  animation-delay: -5s;
+}
+
+.header-glow-owl-band {
+  right: 5%;
+  bottom: -58px;
+}
+
+.header-glow-owl-bar {
+  right: 15rem;
+  bottom: -48px;
 }
 
 @keyframes header-glow-drift-1 {
@@ -256,30 +280,40 @@
     transform: translate3d(0, 0, 0) scale(1);
   }
   to {
-    transform: translate3d(64px, 16px, 0) scale(1.12);
+    transform: translate3d(150px, 18px, 0) scale(1.12);
   }
 }
 
 @keyframes header-glow-drift-2 {
   from {
-    transform: translate3d(0, 0, 0) scale(1.08);
+    transform: translate3d(0, 0, 0) scale(1.05);
   }
   to {
-    transform: translate3d(-72px, 12px, 0) scale(0.94);
+    transform: translate3d(-120px, 14px, 0) scale(0.92);
   }
 }
 
 @keyframes header-glow-drift-3 {
   from {
-    transform: translate3d(0, 0, 0) scale(0.96);
+    transform: translate3d(0, 0, 0) scale(0.94);
   }
   to {
-    transform: translate3d(48px, -14px, 0) scale(1.1);
+    transform: translate3d(100px, -20px, 0) scale(1.1);
+  }
+}
+
+@keyframes header-glow-owl-float {
+  from {
+    transform: translate3d(0, 0, 0) rotate(-3deg);
+  }
+  to {
+    transform: translate3d(0, -8px, 0) rotate(3deg);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .header-glow-blob {
+  .header-glow-blob,
+  .header-glow-owl {
     animation: none;
   }
 }
