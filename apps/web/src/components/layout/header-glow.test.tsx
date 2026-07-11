@@ -56,4 +56,21 @@ describe('HeaderGlow', () => {
     const { container } = render(<HeaderGlow />);
     expect(container).toHaveTextContent('');
   });
+
+  it('renders the owl with animatable wing and eye groups', () => {
+    const { container } = render(<HeaderGlow />);
+    const owlWrapper = container.querySelector('.header-glow-owl');
+    // The wave/wink keyframes in globals.css target these selectors —
+    // both groups must exist under .header-glow-owl for the character
+    // animation to run.
+    expect(owlWrapper?.querySelector('g.owl-wing-left')).not.toBeNull();
+    expect(owlWrapper?.querySelector('g.owl-eye-right')).not.toBeNull();
+  });
+
+  it('renders the animatable groups in the bar variant too (wink peeks into the h-14 bar)', () => {
+    const { container } = render(<HeaderGlow variant="bar" />);
+    const owlWrapper = container.querySelector('.header-glow-owl');
+    expect(owlWrapper?.querySelector('g.owl-eye-right')).not.toBeNull();
+    expect(owlWrapper?.querySelector('g.owl-wing-left')).not.toBeNull();
+  });
 });

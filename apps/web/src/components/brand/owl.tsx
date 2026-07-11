@@ -67,16 +67,22 @@ function OwlBase({ size = 460, className }: OwlProps) {
       <path d="M390 130 L405 80 L365 115 Z" fill={CREAM} stroke={INK} strokeWidth="8" strokeLinejoin="round" />
 
       <circle cx="240" cy="220" r="58" fill={SURFACE} stroke={INK} strokeWidth="9" />
-      <circle cx="360" cy="220" r="58" fill={SURFACE} stroke={INK} strokeWidth="9" />
       <path d="M298 215 Q300 205 302 215" stroke={INK} strokeWidth="9" strokeLinecap="round" fill="none" />
 
       <path d="M210 195 Q220 180 235 180" stroke={CREAM_2} strokeWidth="7" strokeLinecap="round" fill="none" />
-      <path d="M330 195 Q340 180 355 180" stroke={CREAM_2} strokeWidth="7" strokeLinecap="round" fill="none" />
 
       <circle cx="248" cy="225" r="9" fill={INK} />
-      <circle cx="352" cy="225" r="9" fill={INK} />
       <circle cx="252" cy="221" r="3" fill={SURFACE} />
-      <circle cx="356" cy="221" r="3" fill={SURFACE} />
+
+      {/* Right eye cluster — grouped so HeaderGlow can animate a wink.
+          The class is inert everywhere else (no animation on the bare
+          class; all motion is scoped under `.header-glow-owl`). */}
+      <g className="owl-eye-right">
+        <circle cx="360" cy="220" r="58" fill={SURFACE} stroke={INK} strokeWidth="9" />
+        <path d="M330 195 Q340 180 355 180" stroke={CREAM_2} strokeWidth="7" strokeLinecap="round" fill="none" />
+        <circle cx="352" cy="225" r="9" fill={INK} />
+        <circle cx="356" cy="221" r="3" fill={SURFACE} />
+      </g>
 
       <path
         d="M300 250 L283 285 L317 285 Z"
@@ -90,18 +96,23 @@ function OwlBase({ size = 460, className }: OwlProps) {
       <ellipse cx="175" cy="265" rx="22" ry="14" fill={ACCENT} opacity="0.4" />
       <ellipse cx="425" cy="265" rx="22" ry="14" fill={ACCENT} opacity="0.4" />
 
-      <path
-        d="M160 320
-           C140 320, 130 360, 150 410
-           C170 440, 210 440, 220 410
-           L220 350 Z"
-        fill={CREAM}
-        stroke={INK}
-        strokeWidth="8"
-        strokeLinejoin="round"
-      />
-      <path d="M175 360 Q190 375 175 390" stroke={INK} strokeWidth="4" strokeLinecap="round" fill="none" />
-      <path d="M185 370 Q200 385 185 400" stroke={INK} strokeWidth="4" strokeLinecap="round" fill="none" />
+      {/* Left wing — grouped so HeaderGlow can animate a wave. The class
+          is inert everywhere else (all motion scoped under
+          `.header-glow-owl`). */}
+      <g className="owl-wing-left">
+        <path
+          d="M160 320
+             C140 320, 130 360, 150 410
+             C170 440, 210 440, 220 410
+             L220 350 Z"
+          fill={CREAM}
+          stroke={INK}
+          strokeWidth="8"
+          strokeLinejoin="round"
+        />
+        <path d="M175 360 Q190 375 175 390" stroke={INK} strokeWidth="4" strokeLinecap="round" fill="none" />
+        <path d="M185 370 Q200 385 185 400" stroke={INK} strokeWidth="4" strokeLinecap="round" fill="none" />
+      </g>
 
       <path
         d="M440 320
