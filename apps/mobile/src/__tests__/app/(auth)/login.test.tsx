@@ -33,10 +33,28 @@ jest.mock('@/providers/auth-provider', () => ({
   }),
 }));
 
+// EXPO_PUBLIC_* reads are inlined by babel at transform time, so tests mock
+// the env accessor module instead of mutating process.env.
+jest.mock('@/features/auth/social-login-env', () => ({
+  getGoogleWebClientId: jest.fn(),
+  getGoogleIosClientId: jest.fn(),
+}));
+
+import { Platform } from 'react-native';
+import * as AppleAuthentication from 'expo-apple-authentication';
+import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import { apiClient, ApiClientError } from '@/lib/api-client';
+import {
+  getGoogleIosClientId,
+  getGoogleWebClientId,
+} from '@/features/auth/social-login-env';
 import LoginScreen from '@/app/(auth)/login';
 
 const mockPost = apiClient.post as jest.MockedFunction<typeof apiClient.post>;
+const mockGoogleSignIn = GoogleSignin.signIn as jest.MockedFunction<typeof GoogleSignin.signIn>;
+const mockAppleSignIn = AppleAuthentication.signInAsync as jest.MockedFunction<
+  typeof AppleAuthentication.signInAsync
+>;
 
 function createWrapper() {
   const queryClient = new QueryClient({
@@ -234,5 +252,176 @@ describe('LoginScreen', () => {
       expect(queryByText('Password is required')).toBeTruthy();
     });
     expect(mockPost).not.toHaveBeenCalled();
+  });
+});
+
+describe('LoginScreen — social sign-in buttons', () => {
+  const mockWebClientId = getGoogleWebClientId as jest.MockedFunction<
+    typeof getGoogleWebClientId
+  >;
+  const mockIosClientId = getGoogleIosClientId as jest.MockedFunction<
+    typeof getGoogleIosClientId
+  >;
+
+  const authResponse = {
+    user: {
+      id: '1',
+      email: 'test@example.com',
+      fullName: 'Test',
+      phone: null,
+      status: 'active',
+      emailVerified: true,
+      mfaEnabled: false,
+      onboardingCompletedAt: '2026-01-01',
+      createdAt: '2024-01-01',
+    },
+    tokens: { accessToken: 'at-123', refreshToken: 'rt-456' },
+    mfaRequired: false,
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockWebClientId.mockReturnValue('web-id.apps.googleusercontent.com');
+    mockIosClientId.mockReturnValue('ios-id.apps.googleusercontent.com');
+  });
+
+  it('renders Apple, Google, and SSO buttons on iOS', () => {
+    const { getByText } = render(<LoginScreen />, { wrapper: createWrapper() });
+
+    expect(getByText('Apple')).toBeTruthy();
+    expect(getByText('Google')).toBeTruthy();
+    expect(getByText('SSO')).toBeTruthy();
+  });
+
+  it('hides the Apple button on Android (guideline 4.8 is iOS-only)', () => {
+    const replaced = jest.replaceProperty(Platform, 'OS', 'android');
+    try {
+      const { queryByText, getByText } = render(<LoginScreen />, { wrapper: createWrapper() });
+
+      expect(queryByText('Apple')).toBeNull();
+      expect(getByText('Google')).toBeTruthy();
+      expect(getByText('SSO')).toBeTruthy();
+    } finally {
+      replaced.restore();
+    }
+  });
+
+  it('Google without EXPO_PUBLIC_GOOGLE_* env: shows Coming soon, never touches the native module', async () => {
+    mockWebClientId.mockReturnValue(undefined);
+    mockIosClientId.mockReturnValue(undefined);
+    const { getByText } = render(<LoginScreen />, { wrapper: createWrapper() });
+
+    await act(async () => {
+      fireEvent.press(getByText('Google'));
+    });
+
+    expect(Alert.alert).toHaveBeenCalledWith('Coming soon', 'Google sign-in is not yet enabled.');
+    expect(mockGoogleSignIn).not.toHaveBeenCalled();
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it('Google success: exchanges the idToken and signs in through the shared auth path', async () => {
+    mockGoogleSignIn.mockResolvedValue({
+      type: 'success',
+      data: { idToken: 'google-id-token' },
+    } as never);
+    mockPost.mockResolvedValue(authResponse);
+
+    const { getByText } = render(<LoginScreen />, { wrapper: createWrapper() });
+
+    await act(async () => {
+      fireEvent.press(getByText('Google'));
+    });
+
+    await waitFor(() => {
+      expect(mockPost).toHaveBeenCalledWith(
+        '/auth/google/mobile',
+        { idToken: 'google-id-token' },
+        { skipAuth: true },
+      );
+    });
+    expect(mockSignIn).toHaveBeenCalledWith('at-123', 'rt-456', authResponse.user);
+    expect(Alert.alert).not.toHaveBeenCalled();
+  });
+
+  it('Google cancel is silent: no alert, no API call, no auth change', async () => {
+    mockGoogleSignIn.mockResolvedValue({ type: 'cancelled', data: null } as never);
+
+    const { getByText } = render(<LoginScreen />, { wrapper: createWrapper() });
+
+    await act(async () => {
+      fireEvent.press(getByText('Google'));
+    });
+
+    expect(Alert.alert).not.toHaveBeenCalled();
+    expect(mockPost).not.toHaveBeenCalled();
+    expect(mockSignIn).not.toHaveBeenCalled();
+  });
+
+  it('Google real failure: one friendly alert, no auth change', async () => {
+    mockGoogleSignIn.mockRejectedValue(
+      Object.assign(new Error('play services broke'), { code: 'PLAY_SERVICES_NOT_AVAILABLE' }),
+    );
+
+    const { getByText } = render(<LoginScreen />, { wrapper: createWrapper() });
+
+    await act(async () => {
+      fireEvent.press(getByText('Google'));
+    });
+
+    expect(Alert.alert).toHaveBeenCalledWith(
+      'Sign-in failed',
+      expect.stringContaining('Google'),
+    );
+    expect(mockSignIn).not.toHaveBeenCalled();
+  });
+
+  it('Apple success: exchanges the identityToken and signs in', async () => {
+    mockAppleSignIn.mockResolvedValue({
+      identityToken: 'apple-jwt',
+      fullName: { givenName: 'Juan', familyName: 'Dela Cruz' },
+    } as never);
+    mockPost.mockResolvedValue(authResponse);
+
+    const { getByText } = render(<LoginScreen />, { wrapper: createWrapper() });
+
+    await act(async () => {
+      fireEvent.press(getByText('Apple'));
+    });
+
+    await waitFor(() => {
+      expect(mockPost).toHaveBeenCalledWith(
+        '/auth/apple/mobile',
+        { identityToken: 'apple-jwt', fullName: 'Juan Dela Cruz' },
+        { skipAuth: true },
+      );
+    });
+    expect(mockSignIn).toHaveBeenCalledWith('at-123', 'rt-456', authResponse.user);
+  });
+
+  it('Apple cancel is silent: no alert, no API call', async () => {
+    mockAppleSignIn.mockRejectedValue(
+      Object.assign(new Error('canceled'), { code: 'ERR_REQUEST_CANCELED' }),
+    );
+
+    const { getByText } = render(<LoginScreen />, { wrapper: createWrapper() });
+
+    await act(async () => {
+      fireEvent.press(getByText('Apple'));
+    });
+
+    expect(Alert.alert).not.toHaveBeenCalled();
+    expect(mockPost).not.toHaveBeenCalled();
+    expect(mockSignIn).not.toHaveBeenCalled();
+  });
+
+  it('SSO stays a Coming soon stub', async () => {
+    const { getByText } = render(<LoginScreen />, { wrapper: createWrapper() });
+
+    await act(async () => {
+      fireEvent.press(getByText('SSO'));
+    });
+
+    expect(Alert.alert).toHaveBeenCalledWith('Coming soon', 'SSO is not yet enabled.');
   });
 });

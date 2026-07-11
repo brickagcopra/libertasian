@@ -1,6 +1,18 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-07-11 (API mobile social login PR open; stack headers PR #285 merged)
+> Last updated: 2026-07-11 (mobile native social login PR open; pairs with API PR #286)
+
+---
+
+## 2026-07-11 — PR `feat/mobile-social-login` rollout (owner action required)
+
+- [ ] Review + merge the PR (agent did NOT merge). Merge API PR #286 first (or together) — the endpoints must exist before mobile users can exchange tokens
+- [ ] **Google Cloud console** (same project as the existing web client): create an **iOS OAuth client** (bundle `com.libertasian.app`) and an **Android OAuth client** (package `com.libertasian.app` + the EAS release-keystore SHA-1 — `npx eas-cli credentials -p android`, alongside the SHA-256 used for assetlinks)
+- [ ] **EAS env (production build profile):** add `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` (existing web client ID) + `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID` (new iOS client) so build 8 bakes them in — they are inlined at build time, NOT OTA-updatable. Without them the Google button shows "Coming soon"
+- [ ] **Prod API .env:** `GOOGLE_IOS_CLIENT_ID`, `GOOGLE_ANDROID_CLIENT_ID`, `APPLE_BUNDLE_ID=com.libertasian.app`, then `cd /opt/libertasian && docker compose -f docker-compose.prod.yml up -d api` after PR #286 deploys
+- [ ] **Apple:** on the next iOS EAS build, accept the prompt to add the Sign in with Apple capability to the provisioning profile (no secret needed — API verifies Apple's public JWTs)
+- [ ] Native modules added → this rides **EAS build 8** (full native build, both platforms); dev clients older than build 8 keep working (lazy-require guard) but Google/Apple buttons only function on the new binary
+- [ ] Device QA on build 8: Google + Apple sign-in end-to-end (new user → onboarding, existing user → tabs), cancel is silent on both, Apple button absent on Android
 
 ---
 

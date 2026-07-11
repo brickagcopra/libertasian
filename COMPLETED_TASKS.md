@@ -1,6 +1,20 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-07-11 (API mobile social login PR; previously: mobile native stack headers + back navigation PR #285)
+> Last updated: 2026-07-11 (mobile native social login PR; previously: API mobile social login PR #286)
+
+---
+
+## 2026-07-11 — PR: feat(mobile): native Google + Apple sign-in on login screen
+
+**Branch:** `feat/mobile-social-login` (companion to API PR #286 `feat/api-mobile-social-login` — endpoints POST /auth/google/mobile + /auth/apple/mobile)
+**Native modules added → requires a full EAS build (rides build 8). NOT OTA-updatable.**
+
+1. **Deps + config** — `expo-apple-authentication@~7.1.3` (SDK 52 bundled version) + `@react-native-google-signin/google-signin@^13.2.0` (resolved 13.3.1). app.json: `ios.usesAppleSignIn: true` + `expo-apple-authentication` plugin (static). New `app.config.js` (dynamic layer over app.json) injects the google-signin plugin with `iosUrlScheme` derived by reversing `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID` — plugin skipped entirely when the env var is absent so prebuild never fails.
+2. **`use-social-login.ts` (new hook)** — `signInWithGoogle()`: configure(webClientId + iosClientId) → hasPlayServices → signIn → POST /auth/google/mobile `{ idToken }`; `signInWithApple()`: signInAsync(FULL_NAME + EMAIL) → POST /auth/apple/mobile `{ identityToken, fullName? }` (fullName formatted from given/middle/family, sent only when Apple provides it — first auth only). Success feeds the EXACT password-login path: `AuthProvider.signIn(access, refresh, user)` + the same onboarding-aware `router.replace`. Outcomes: `success | cancelled | failed` — cancel (v13 `{type:'cancelled'}`, thrown `SIGN_IN_CANCELLED`, Apple `ERR_REQUEST_CANCELED`) is a silent no-op.
+3. **Two crash guards discovered & handled:** (a) babel-preset-expo INLINES `EXPO_PUBLIC_*` reads at bundle time — env reads isolated in `social-login-env.ts` (static reads for prod, mockable for tests; runtime `process.env` mutation does nothing). (b) google-signin v13 calls `TurboModuleRegistry.getEnforcing` at IMPORT time — lazy `require()` inside the hook so the login screen still mounts on binaries without the native module (old dev clients / OTA over build 7); missing module → friendly alert, not a crash. (expo-apple-authentication resolves optionally — import-safe.)
+4. **login.tsx** — Alert stubs replaced with real handlers; missing `EXPO_PUBLIC_GOOGLE_*` env → existing "Coming soon" alert (graceful degradation); real failures → one friendly `Sign-in failed` alert + structured `social_login_failed` log (new minimal `src/lib/logger.ts`, dev-only, no token details). Apple button hidden on Android via new `showApple` prop on LoginScreen (guideline 4.8 is iOS-only). SSO stays "Coming soon". SignupScreen has NO social buttons — nothing to wire there (OAuth register == login anyway).
+5. **Env docs** — `apps/mobile/.env.example`: `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` + `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID` documented (must be in the EAS build profile env — baked in at build time).
+6. **Verification** — jest mocks for both native modules in `src/test/setup.ts`; new hook suite (success/cancel-both-shapes/API-failure/missing-env/Apple-name-fallback) + login route suite (buttons render, Apple hidden on Android via `jest.replaceProperty(Platform,'OS','android')`, unconfigured → Coming soon, cancel silent, failure alert, SSO stub): **218 suites / 1480 tests green**, `tsc --noEmit` clean.
 
 ---
 

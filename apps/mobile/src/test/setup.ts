@@ -95,6 +95,30 @@ jest.mock('react-native/Libraries/Alert/Alert', () => ({
   alert: jest.fn(),
 }));
 
+// Mock expo-apple-authentication — native Sign in with Apple module is
+// undefined under jest; tests drive signInAsync per-case.
+jest.mock('expo-apple-authentication', () => ({
+  signInAsync: jest.fn(),
+  isAvailableAsync: jest.fn().mockResolvedValue(true),
+  AppleAuthenticationScope: { FULL_NAME: 0, EMAIL: 1 },
+}));
+
+// Mock @react-native-google-signin/google-signin — same reason; signIn
+// resolves the v13 { type, data } shape in individual tests.
+jest.mock('@react-native-google-signin/google-signin', () => ({
+  GoogleSignin: {
+    configure: jest.fn(),
+    hasPlayServices: jest.fn().mockResolvedValue(true),
+    signIn: jest.fn(),
+    signOut: jest.fn().mockResolvedValue(undefined),
+  },
+  statusCodes: {
+    SIGN_IN_CANCELLED: 'SIGN_IN_CANCELLED',
+    IN_PROGRESS: 'IN_PROGRESS',
+    PLAY_SERVICES_NOT_AVAILABLE: 'PLAY_SERVICES_NOT_AVAILABLE',
+  },
+}));
+
 // Mock @expo/vector-icons — its transitive expo-font/expo-asset imports
 // reach into native PlatformUtils (Expo global) which is undefined under jsdom.
 jest.mock('@expo/vector-icons', () => {

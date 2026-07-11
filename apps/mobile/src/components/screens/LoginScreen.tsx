@@ -15,6 +15,8 @@ export interface LoginScreenProps {
   onApple?: () => void;
   onGoogle?: () => void;
   onSSO?: () => void;
+  /** Apple guideline 4.8 — the Apple button is iOS-only; Android hides it. */
+  showApple?: boolean;
   loading?: boolean;
   error?: string | null;
   defaultEmail?: string;
@@ -31,6 +33,7 @@ export function LoginScreen({
   onApple,
   onGoogle,
   onSSO,
+  showApple = true,
   loading = false,
   error,
   defaultEmail = '',
@@ -208,7 +211,7 @@ export function LoginScreen({
 
         <View style={{ flexDirection: 'row', gap: 10 }}>
           {[
-            { l: 'Apple', onPress: onApple },
+            ...(showApple ? [{ l: 'Apple', onPress: onApple }] : []),
             { l: 'Google', onPress: onGoogle },
             { l: 'SSO', onPress: onSSO },
           ].map((opt) => (
