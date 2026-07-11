@@ -169,6 +169,7 @@ export default function SettingsRoute() {
           { value: memberSince || '—', label: 'Member' },
         ]}
         rows={allRows}
+        contentTopPadding={12}
         onSettingsPress={() => router.push('/settings/security')}
         onTabPress={(id) => {
           if (id === 'home') router.push('/(tabs)');

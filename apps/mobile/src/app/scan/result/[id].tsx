@@ -3,13 +3,12 @@ import {
   View,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   Text,
   ActivityIndicator,
   Alert,
   TextInput,
 } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { ScanResult } from '../../../features/camera-scan/components/scan-result';
 import { useUploadDetail } from '../../../features/camera-scan/hooks/use-upload-status';
@@ -115,32 +114,18 @@ export default function ScanResultScreen() {
 
   if (isLoadingUpload) {
     return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={24} color="#374151" />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Scan Result</Text>
-          <View style={{ width: 24 }} />
-        </View>
+      <View style={styles.container}>
         <View style={styles.loading}>
           <ActivityIndicator size="large" color="#1a56db" />
           <Text style={styles.loadingText}>Loading scan details...</Text>
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   if (!upload) {
     return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={24} color="#374151" />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Scan Result</Text>
-          <View style={{ width: 24 }} />
-        </View>
+      <View style={styles.container}>
         <View style={styles.errorState}>
           <Ionicons name="alert-circle-outline" size={48} color="#9ca3af" />
           <Text style={styles.errorText}>Scan not found</Text>
@@ -148,27 +133,22 @@ export default function ScanResultScreen() {
             <Text style={styles.backButtonText}>Go Back</Text>
           </TouchableOpacity>
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity
-          onPress={() => router.back()}
-          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-        >
-          <Ionicons name="arrow-back" size={24} color="#374151" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Scan Result</Text>
-        {digestMutation.isSuccess && (
-          <TouchableOpacity onPress={handleViewDigest}>
-            <Ionicons name="document-text" size={24} color="#1a56db" />
-          </TouchableOpacity>
-        )}
-        {!digestMutation.isSuccess && <View style={{ width: 24 }} />}
-      </View>
+    <View style={styles.container}>
+      <Stack.Screen
+        options={{
+          headerRight: () =>
+            digestMutation.isSuccess ? (
+              <TouchableOpacity onPress={handleViewDigest}>
+                <Ionicons name="document-text" size={24} color="#1C1A14" />
+              </TouchableOpacity>
+            ) : null,
+        }}
+      />
 
       <ScanResult
         upload={upload}
@@ -194,7 +174,7 @@ export default function ScanResultScreen() {
         isAttaching={attachMutation.isPending}
         isPaidPlan={isPaidPlan}
       />
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -202,20 +182,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f3f4f6',
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 16,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-  },
-  headerTitle: {
-    fontSize: 17,
-    fontWeight: '600',
-    color: '#111827',
   },
   loading: {
     flex: 1,

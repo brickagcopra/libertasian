@@ -1,6 +1,16 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-07-10 (mobile ambient v2 + owl PR open; web #280–#283 merged)
+> Last updated: 2026-07-11 (mobile stack headers PR open; ambient v2 + owl PR #284 merged)
+
+---
+
+## 2026-07-11 — PR `fix/mobile-stack-group-headers` rollout (owner action required)
+
+- [ ] Review + merge the PR (agent did NOT merge)
+- [x] Emulator QA (Pixel_9, Android) — settings/security, study/syllabus, notifications, blog, documents: cream header + working back; digest: custom header only, no double header
+- [ ] iOS spot-check — the whole point of the fix is iOS (no system back button); verify chevron style (`chevron-back` via the fallback) and swipe-back within groups on a simulator/TestFlight build
+- [ ] Native headers are static Theme A cream (`#F6F1E8`) — check they read acceptably when the user picks Theme B (Confident Modern, off-white `#F4F4F2`); follow-up if the mismatch bothers design
+- [ ] Reaches devices in the next EAS build / OTA update (JS-only change)
 
 ---
 

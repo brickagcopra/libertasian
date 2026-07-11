@@ -163,7 +163,7 @@ export default function DocumentsRoute() {
             right: 0,
             zIndex: 20,
             backgroundColor: theme.accentSoft,
-            paddingTop: 50,
+            paddingTop: 8,
             paddingBottom: 8,
             paddingHorizontal: 16,
             flexDirection: 'row',
@@ -206,6 +206,7 @@ export default function DocumentsRoute() {
         filterCount={advancedFilterCount}
         refreshing={isRefetching}
         onRefresh={handleRefresh}
+        contentTopPadding={12}
         onTabPress={(id) => {
           if (id === 'home') router.push('/(tabs)');
           else if (id === 'search') router.push('/(tabs)/search');

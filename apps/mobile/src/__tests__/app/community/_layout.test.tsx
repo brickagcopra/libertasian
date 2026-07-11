@@ -18,15 +18,15 @@ describe('CommunityLayout', () => {
     expect(toJSON()).toBeTruthy();
   });
 
-  it('configures Stack with white background', () => {
+  it('configures Stack with the brand cream header', () => {
     const { toJSON } = render(<CommunityLayout />);
     const output = JSON.stringify(toJSON());
-    expect(output).toContain('#fff');
+    expect(output).toContain('#F6F1E8');
   });
 
-  it('sets tint color for back button', () => {
+  it('sets ink tint color for back button', () => {
     const { toJSON } = render(<CommunityLayout />);
     const output = JSON.stringify(toJSON());
-    expect(output).toContain('#1a56db');
+    expect(output).toContain('#1C1A14');
   });
 });

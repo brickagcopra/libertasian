@@ -78,7 +78,6 @@ describe('ScanResultScreen', () => {
     mockUploadDetail.mockReturnValue({ data: undefined, isLoading: true });
     const { getByText } = render(<ScanResultScreen />, { wrapper: createWrapper() });
     expect(getByText('Loading scan details...')).toBeTruthy();
-    expect(getByText('Scan Result')).toBeTruthy();
   });
 
   it('shows not found state when upload is null', () => {
@@ -125,14 +124,4 @@ describe('ScanResultScreen', () => {
     expect(queryByText('Upgrade to generate digests')).toBeNull();
   });
 
-  it('navigates back on header back button', () => {
-    mockUploadDetail.mockReturnValue({
-      data: { id: 'upload-1', ocrStatus: 'completed', processingStatus: 'completed' },
-      isLoading: false,
-    });
-    const { router } = require('expo-router');
-    const { getAllByText } = render(<ScanResultScreen />, { wrapper: createWrapper() });
-    fireEvent.press(getAllByText('arrow-back')[0]);
-    expect(router.back).toHaveBeenCalled();
-  });
 });

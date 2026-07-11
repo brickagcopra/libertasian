@@ -1,6 +1,21 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-07-10 (mobile glass ambient v2 + animated owl PR; previously: web owl wave/wink PR #283, visible glass ambient fix PR #282, glass ambient PRs #280/#281 — all merged same day)
+> Last updated: 2026-07-11 (mobile native stack headers + back navigation PR; previously: mobile glass ambient v2 + animated owl PR #284)
+
+---
+
+## 2026-07-11 — PR: fix(mobile): native stack headers + back navigation for all route groups
+
+**Branch:** `fix/mobile-stack-group-headers`
+**Root cause:** root `_layout.tsx` renders `<Slot />` (untouched — auth guard depends on it), so only groups with their own Stack `_layout` get a native header/back button. 11 route groups had no `_layout` at all; their screens rendered headerless and in-screen `<Stack.Screen options>` silently no-oped.
+
+1. **`src/components/navigation/stack-screen-options.tsx` (new)** — shared brand header theme: cream `#F6F1E8` bg, ink `#1C1A14` tint, `Inter_600SemiBold` 17 title, `headerShadowVisible: false`, `headerBackButtonDisplayMode: 'minimal'` (+ legacy `headerBackTitleVisible: false`). Type derived from expo-router's `Stack` props (native-stack isn't a direct dep under pnpm strict).
+2. **`GroupEntryBackButton` headerLeft fallback (same file)** — with a root `<Slot />`, pushing into a group mounts its Stack with ONE entry, so the native chevron never renders on group entry screens (confirmed live on emulator). The fallback renders a back button when the nested stack can't pop but `router.canGoBack()` is true; stays null otherwise (`headerBackVisible: true` keeps the native chevron for real in-stack pushes).
+3. **11 new group `_layout.tsx`:** study, digest, reader, documents, settings, scan, blog, help, notifications, billing, shared — each `<Stack screenOptions={sharedStackScreenOptions}>` with per-screen titles. In-screen `Stack.Screen` options (study/*, blog, api-keys, shared/[token], notifications) now actually work.
+4. **headerShown: false exceptions:** digest/[id] + reader/[id] (own full custom headers: audio player, share, bookmark), settings/plans (custom back pill with no-stack fallback to /settings), scan/capture (camera immersion), scan/upload (back button disables during upload), billing/success + cancel (2.5s deep-link bounce screens).
+5. **Rethemed old blue/white layouts** to shared options: community, admin, bar-exams, workspace, (tabs)/feed (create/[postId]), (tabs)/library ([type]/*). Tab bar config untouched. Header icon colors `#1a56db` → `#1C1A14` in notifications, api-keys, flashcards, reviewer-packs.
+6. **De-duplication:** removed `ScreenHeader` from settings/security + help (native header takes over); scan/result/[id] hand-rolled header → native (`headerRight` keeps the conditional view-digest icon); ProfileScreen/LibraryScreen got `contentTopPadding` prop (60 default → 12 under native header) used by settings/index + documents/index (both keep `headerTitle: ''` under their serif hero titles); documents offline banner paddingTop 50 → 8.
+7. **Verification:** mobile `tsc --noEmit` clean; 217 suites / 1457 tests green (3 layout tests updated to brand assertions, 1 obsolete hand-rolled-back test removed). **Live emulator QA (Pixel_9, local API + seeded user):** settings/security shows cream header + working chevron and no double header; study/syllabus, notifications, blog, documents all show header + working back (fallback confirmed after reproducing the missing-chevron gap); digest keeps its custom hero header with no native header stacked.
 
 ---
 

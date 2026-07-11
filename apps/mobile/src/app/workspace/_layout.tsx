@@ -1,14 +1,6 @@
 import { Stack } from 'expo-router';
+import { sharedStackScreenOptions } from '@/components/navigation/stack-screen-options';
 
 export default function WorkspaceLayout() {
-  return (
-    <Stack
-      screenOptions={{
-        headerStyle: { backgroundColor: '#fff' },
-        headerTitleStyle: { fontSize: 17, fontWeight: '600', color: '#111827' },
-        headerShadowVisible: false,
-        headerBackTitle: 'Back',
-      }}
-    />
-  );
+  return <Stack screenOptions={sharedStackScreenOptions} />;
 }

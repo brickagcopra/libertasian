@@ -92,7 +92,7 @@ export default function ReviewerPacksScreen() {
               onPress={() => setShowCreateModal(true)}
               style={{ marginRight: 16 }}
             >
-              <Ionicons name="add-circle-outline" size={24} color="#1a56db" />
+              <Ionicons name="add-circle-outline" size={24} color="#1C1A14" />
             </TouchableOpacity>
           ),
         }}

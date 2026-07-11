@@ -18,22 +18,23 @@ describe('WorkspaceLayout', () => {
     expect(toJSON()).toBeTruthy();
   });
 
-  it('configures Stack with white background', () => {
+  it('configures Stack with the brand cream header', () => {
     const { toJSON } = render(<WorkspaceLayout />);
     const output = JSON.stringify(toJSON());
-    expect(output).toContain('#fff');
+    expect(output).toContain('#F6F1E8');
+    expect(output).toContain('#1C1A14');
   });
 
   it('configures header title style', () => {
     const { toJSON } = render(<WorkspaceLayout />);
     const output = JSON.stringify(toJSON());
-    expect(output).toContain('600');
-    expect(output).toContain('#111827');
+    expect(output).toContain('Inter_600SemiBold');
+    expect(output).toContain('17');
   });
 
-  it('sets headerBackTitle to Back', () => {
+  it('uses a minimal chevron-only back button', () => {
     const { toJSON } = render(<WorkspaceLayout />);
     const output = JSON.stringify(toJSON());
-    expect(output).toContain('Back');
+    expect(output).toContain('minimal');
   });
 });
