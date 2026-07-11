@@ -5,6 +5,10 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { LoginScreen as LoginScreenView } from '@/components/screens/LoginScreen';
 import { useLogin } from '@/features/auth/hooks/use-auth';
+import {
+  isGoogleSignInAvailable,
+  useSocialLogin,
+} from '@/features/auth/hooks/use-social-login';
 import { useAuth } from '@/providers/auth-provider';
 import { useTheme } from '@/providers/theme-provider';
 import { ApiClientError } from '@/lib/api-client';
@@ -21,6 +25,27 @@ export default function LoginRoute() {
 
   const { signIn } = useAuth();
   const loginMutation = useLogin();
+  const { signInWithGoogle, signInWithApple } = useSocialLogin();
+
+  async function handleGoogle() {
+    // Build shipped without the Google client IDs → keep the old stub alert.
+    if (!isGoogleSignInAvailable()) {
+      Alert.alert('Coming soon', 'Google sign-in is not yet enabled.');
+      return;
+    }
+    const outcome = await signInWithGoogle();
+    // 'cancelled' is a deliberate user action — silent no-op, never an error.
+    if (outcome === 'failed') {
+      Alert.alert('Sign-in failed', "We couldn't sign you in with Google. Please try again.");
+    }
+  }
+
+  async function handleApple() {
+    const outcome = await signInWithApple();
+    if (outcome === 'failed') {
+      Alert.alert('Sign-in failed', "We couldn't sign you in with Apple. Please try again.");
+    }
+  }
 
   function validate(email: string, password: string): boolean {
     let ok = true;
@@ -93,9 +118,10 @@ export default function LoginRoute() {
         onSubmit={(email, password) => attemptLogin(email, password)}
         onForgot={() => router.push('/(auth)/forgot-password')}
         onCreateAccount={() => router.push('/(auth)/register')}
-        onApple={() => Alert.alert('Coming soon', 'Apple sign-in is not yet enabled.')}
-        onGoogle={() => Alert.alert('Coming soon', 'Google sign-in is not yet enabled.')}
+        onApple={handleApple}
+        onGoogle={handleGoogle}
         onSSO={() => Alert.alert('Coming soon', 'SSO is not yet enabled.')}
+        showApple={Platform.OS === 'ios'}
       />
 
       <Modal visible={showMfa} animationType="slide" transparent onRequestClose={() => setPendingEmail(null)}>

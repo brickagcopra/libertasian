@@ -17,6 +17,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.libertasian.app",
       "buildNumber": "1",
+      "usesAppleSignIn": true,
       "associatedDomains": [
         "applinks:libertasian.com"
       ],
@@ -67,6 +68,7 @@
     },
     "plugins": [
       "expo-router",
+      "expo-apple-authentication",
       "expo-secure-store",
       "expo-notifications",
       "@react-native-community/datetimepicker",
