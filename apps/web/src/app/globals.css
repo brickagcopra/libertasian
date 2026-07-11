@@ -261,18 +261,38 @@
   position: absolute;
   opacity: 0.13;
   will-change: transform;
-  animation: header-glow-owl-float 16s ease-in-out infinite alternate;
+  animation: header-glow-owl-float 10s ease-in-out infinite alternate;
   animation-delay: -5s;
 }
 
+/* Band owl sits in the empty run between the wordmark and the nav links
+   (public header) — at `right: 5%` the Get Started CTA covered the waving
+   wing entirely. Raised from -58px so the wing sits inside the visible band. */
 .header-glow-owl-band {
-  right: 5%;
-  bottom: -58px;
+  left: 34%;
+  bottom: -38px;
 }
 
 .header-glow-owl-bar {
   right: 15rem;
-  bottom: -48px;
+  bottom: -36px;
+}
+
+/* Character animation — waving wing + winking eye. Scoped under
+   .header-glow-owl so the Owl's bare `.owl-wing-left` / `.owl-eye-right`
+   groups stay inert everywhere else (hero, auth pages, etc.).
+   `transform-box: fill-box` is required for CSS transforms on SVG
+   children to use the element's own bounding box. */
+.header-glow-owl .owl-wing-left {
+  transform-box: fill-box;
+  transform-origin: top center;
+  animation: header-glow-owl-wave 5s ease-in-out infinite;
+}
+
+.header-glow-owl .owl-eye-right {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: header-glow-owl-wink 2s ease-in-out infinite;
 }
 
 @keyframes header-glow-drift-1 {
@@ -304,16 +324,65 @@
 
 @keyframes header-glow-owl-float {
   from {
-    transform: translate3d(0, 0, 0) rotate(-3deg);
+    transform: translate3d(0, 0, 0) rotate(-5deg);
   }
   to {
-    transform: translate3d(0, -8px, 0) rotate(3deg);
+    transform: translate3d(0, -14px, 0) rotate(5deg);
+  }
+}
+
+/* Hello wave: lift + three quick swings in the first ~35% of the 5s
+   cycle, then rest — so the owl waves every 5 seconds, forever. */
+@keyframes header-glow-owl-wave {
+  0% {
+    transform: rotate(0deg);
+  }
+  5% {
+    transform: rotate(-30deg);
+  }
+  10% {
+    transform: rotate(12deg);
+  }
+  15% {
+    transform: rotate(-30deg);
+  }
+  20% {
+    transform: rotate(12deg);
+  }
+  27% {
+    transform: rotate(-30deg);
+  }
+  35% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+
+/* Wink: eye open ~85% of the 2s cycle, then a quick scaleY squeeze.
+   The closed pose holds 88%→92% (~80ms + easing) so the wink actually
+   registers instead of strobing past. */
+@keyframes header-glow-owl-wink {
+  0%,
+  85% {
+    transform: scaleY(1);
+  }
+  88%,
+  92% {
+    transform: scaleY(0.08);
+  }
+  96%,
+  100% {
+    transform: scaleY(1);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .header-glow-blob,
-  .header-glow-owl {
+  .header-glow-owl,
+  .header-glow-owl .owl-wing-left,
+  .header-glow-owl .owl-eye-right {
     animation: none;
   }
 }
