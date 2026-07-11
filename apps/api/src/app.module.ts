@@ -101,6 +101,12 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
         GOOGLE_CLIENT_ID: Joi.string().optional().allow(''),
         GOOGLE_CLIENT_SECRET: Joi.string().optional().allow(''),
         GOOGLE_CALLBACK_URL: Joi.string().default('http://localhost:3001/api/v1/auth/google/callback'),
+        // Mobile social login (ID-token exchange). Google iOS/Android client
+        // IDs extend the audience allowlist for POST /auth/google/mobile;
+        // APPLE_BUNDLE_ID is the audience for Apple identity tokens.
+        GOOGLE_IOS_CLIENT_ID: Joi.string().optional().allow(''),
+        GOOGLE_ANDROID_CLIENT_ID: Joi.string().optional().allow(''),
+        APPLE_BUNDLE_ID: Joi.string().default('com.libertasian.app'),
         OPENSEARCH_URL: Joi.string().default('http://localhost:9200'),
         OPENSEARCH_USERNAME: Joi.string().optional().allow(''),
         OPENSEARCH_PASSWORD: Joi.string().optional().allow(''),

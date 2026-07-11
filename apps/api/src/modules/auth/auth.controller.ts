@@ -10,6 +10,7 @@ import {
   Post,
   Req,
   Res,
+  ServiceUnavailableException,
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
@@ -26,6 +27,7 @@ import { TrackEvent } from '../analytics';
 import { AuditService } from '../audit/audit.service';
 import { OrganizationsService } from '../organizations/organizations.service';
 import { AuthService } from './auth.service';
+import { SocialTokenService } from './social-token.service';
 import type { GoogleProfile } from './strategies/google.strategy';
 import {
   RegisterDto,
@@ -38,6 +40,8 @@ import {
   MfaVerifyDto,
   MfaDisableDto,
   AcceptInviteDto,
+  GoogleMobileLoginDto,
+  AppleMobileLoginDto,
 } from './dto';
 
 /** Cookie name for the httpOnly refresh token */
@@ -76,6 +80,7 @@ export class AuthController {
     private readonly auditService: AuditService,
     private readonly configService: ConfigService,
     private readonly organizationsService: OrganizationsService,
+    private readonly socialTokens: SocialTokenService,
   ) {
     this.googleEnabled = !!(
       this.configService.get<string>('GOOGLE_CLIENT_ID') &&
@@ -194,6 +199,111 @@ export class AuthController {
       accessToken: result.tokens.accessToken,
     });
     res.redirect(`${this.appUrl}/auth/callback?${params.toString()}`);
+  }
+
+  // ---- Mobile social login (ID-token exchange) ----
+
+  @Post('google/mobile')
+  @ApiOperation({
+    summary: 'Mobile Google sign-in — exchange a native-SDK ID token for JWT tokens',
+  })
+  async googleMobileLogin(
+    @Body() dto: GoogleMobileLoginDto,
+    @Req() req: Request,
+    @Ip() ip: string,
+    @Headers('user-agent') userAgent: string,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    if (!this.socialTokens.googleConfigured) {
+      throw new ServiceUnavailableException('Google login provider not configured');
+    }
+
+    // Throws a generic 401 on any verification failure (invalid signature,
+    // wrong audience, expired, unverified email) — token contents never echoed.
+    const profile = await this.socialTokens.verifyGoogleIdToken(dto.idToken);
+
+    const fingerprint = this.buildDeviceFingerprint(userAgent || '', ip);
+    const result = await this.authService.loginWithGoogle(profile, fingerprint, req);
+
+    await this.auditService.log({
+      actorUserId: result.user.id,
+      actorType: 'user',
+      action: result.isNewUser ? 'auth.google_register' : 'auth.google_login',
+      entityType: 'user',
+      entityId: result.user.id,
+      metadata: { ip, provider: 'google', transport: 'mobile' },
+    });
+
+    return this.buildSocialLoginResponse(req, res, result);
+  }
+
+  @Post('apple/mobile')
+  @ApiOperation({
+    summary: 'Mobile Apple sign-in — exchange a native-SDK identity token for JWT tokens',
+  })
+  async appleMobileLogin(
+    @Body() dto: AppleMobileLoginDto,
+    @Req() req: Request,
+    @Ip() ip: string,
+    @Headers('user-agent') userAgent: string,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    // Throws a generic 401 on any verification failure (signature/iss/aud/exp).
+    const profile = await this.socialTokens.verifyAppleIdentityToken(dto.identityToken);
+
+    const fingerprint = this.buildDeviceFingerprint(userAgent || '', ip);
+    const result = await this.authService.loginWithApple(
+      { ...profile, fullName: dto.fullName },
+      fingerprint,
+      req,
+    );
+
+    await this.auditService.log({
+      actorUserId: result.user.id,
+      actorType: 'user',
+      action: result.isNewUser ? 'auth.apple_register' : 'auth.apple_login',
+      entityType: 'user',
+      entityId: result.user.id,
+      metadata: { ip, provider: 'apple', transport: 'mobile' },
+    });
+
+    return this.buildSocialLoginResponse(req, res, result);
+  }
+
+  /**
+   * Transport branch shared by the mobile token-exchange endpoints, mirroring
+   * POST /auth/login: mobile clients (X-Client: mobile) get the refresh token
+   * in the response body; anything else gets the httpOnly cookie (persistent —
+   * provider login has no "keep me signed in" prompt, matching the web OAuth
+   * callback). mfaRequired is always false: provider login is treated as the
+   * second-factor equivalent, matching web Google behavior.
+   */
+  private buildSocialLoginResponse(
+    req: Request,
+    res: Response,
+    result: {
+      tokens: { accessToken: string; refreshToken: string };
+      user: unknown;
+    },
+  ) {
+    const isMobile = this.isMobileClient(req);
+
+    if (!isMobile) {
+      this.setRefreshCookie(res, result.tokens.refreshToken, true);
+    }
+
+    const tokens = isMobile
+      ? { accessToken: result.tokens.accessToken, refreshToken: result.tokens.refreshToken }
+      : { accessToken: result.tokens.accessToken };
+
+    return {
+      success: true,
+      data: {
+        tokens,
+        user: result.user,
+        mfaRequired: false,
+      },
+    };
   }
 
   @Post('login')

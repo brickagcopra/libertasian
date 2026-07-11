@@ -15,6 +15,13 @@ jest.mock('uuid', () => ({
   v4: jest.fn(() => 'mock-uuid-v4'),
 }));
 
+// SocialTokenService is replaced with a stub below; mock its provider SDKs so
+// importing the class never loads google-auth-library / jose.
+jest.mock('google-auth-library', () => ({ OAuth2Client: jest.fn(() => ({})) }));
+jest.mock('jose', () => ({ createRemoteJWKSet: jest.fn(), jwtVerify: jest.fn() }));
+
+import { SocialTokenService } from './social-token.service';
+
 interface MockResponseShape {
   cookie: jest.Mock;
 }
@@ -40,16 +47,34 @@ function buildRequest(opts: {
 
 describe('AuthController — mobile transport branch', () => {
   let controller: AuthController;
-  let authService: { login: jest.Mock; refreshTokens: jest.Mock; logout: jest.Mock };
+  let authService: {
+    login: jest.Mock;
+    refreshTokens: jest.Mock;
+    logout: jest.Mock;
+    loginWithGoogle: jest.Mock;
+    loginWithApple: jest.Mock;
+  };
   let auditService: { log: jest.Mock };
   let configService: { get: jest.Mock };
   let organizationsService: { acceptInvite: jest.Mock };
+  let socialTokens: {
+    googleConfigured: boolean;
+    verifyGoogleIdToken: jest.Mock;
+    verifyAppleIdentityToken: jest.Mock;
+  };
 
   beforeEach(async () => {
     authService = {
       login: jest.fn(),
       refreshTokens: jest.fn(),
       logout: jest.fn(),
+      loginWithGoogle: jest.fn(),
+      loginWithApple: jest.fn(),
+    };
+    socialTokens = {
+      googleConfigured: true,
+      verifyGoogleIdToken: jest.fn(),
+      verifyAppleIdentityToken: jest.fn(),
     };
     auditService = { log: jest.fn().mockResolvedValue(undefined) };
     configService = {
@@ -72,6 +97,7 @@ describe('AuthController — mobile transport branch', () => {
         { provide: AuditService, useValue: auditService },
         { provide: ConfigService, useValue: configService },
         { provide: OrganizationsService, useValue: organizationsService },
+        { provide: SocialTokenService, useValue: socialTokens },
       ],
     }).compile();
 
@@ -348,6 +374,193 @@ describe('AuthController — mobile transport branch', () => {
 
       expect(authService.logout).not.toHaveBeenCalled();
       expect(res.cookie).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---- Mobile social login (ID-token exchange) ----
+
+  describe('googleMobileLogin', () => {
+    const tokens = { accessToken: 'AT', refreshToken: 'RT' };
+    const user = { id: 'user-1', email: 'a@b.com', isPlatformAdmin: false } as never;
+    const profile = { googleId: 'g-sub', email: 'a@b.com', fullName: 'A B' };
+
+    beforeEach(() => {
+      socialTokens.verifyGoogleIdToken.mockResolvedValue(profile);
+      authService.loginWithGoogle.mockResolvedValue({ tokens, user, isNewUser: false });
+    });
+
+    it('mobile client: verifies token, returns both tokens in body, no cookie', async () => {
+      const req = buildRequest({ headers: { 'x-client': 'mobile' } });
+      const res = buildResponse();
+
+      const result = await controller.googleMobileLogin(
+        { idToken: 'google-id-token' },
+        req,
+        '1.2.3.4',
+        'ua',
+        res,
+      );
+
+      expect(socialTokens.verifyGoogleIdToken).toHaveBeenCalledWith('google-id-token');
+      expect(authService.loginWithGoogle).toHaveBeenCalledWith(
+        profile,
+        expect.any(String),
+        req,
+      );
+      expect(res.cookie).not.toHaveBeenCalled();
+      expect(result.success).toBe(true);
+      expect(result.data.tokens).toEqual({ accessToken: 'AT', refreshToken: 'RT' });
+      expect(result.data.user).toBe(user);
+      expect(result.data.mfaRequired).toBe(false);
+    });
+
+    it('without X-Client header: sets httpOnly cookie, omits refreshToken from body', async () => {
+      const req = buildRequest({ headers: {} });
+      const res = buildResponse();
+
+      const result = await controller.googleMobileLogin(
+        { idToken: 't' },
+        req,
+        '1.2.3.4',
+        'ua',
+        res,
+      );
+
+      const refreshCall = res.cookie.mock.calls.find((c) => c[0] === 'libertasian-refresh');
+      expect(refreshCall).toBeDefined();
+      expect(refreshCall![1]).toBe('RT');
+      expect(result.data.tokens).toEqual({ accessToken: 'AT' });
+    });
+
+    it('audit-logs auth.google_login for an existing user', async () => {
+      const req = buildRequest({ headers: { 'x-client': 'mobile' } });
+
+      await controller.googleMobileLogin({ idToken: 't' }, req, '1.2.3.4', 'ua', buildResponse());
+
+      expect(auditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'auth.google_login',
+          metadata: expect.objectContaining({ provider: 'google' }),
+        }),
+      );
+    });
+
+    it('audit-logs auth.google_register for a new user', async () => {
+      authService.loginWithGoogle.mockResolvedValue({ tokens, user, isNewUser: true });
+      const req = buildRequest({ headers: { 'x-client': 'mobile' } });
+
+      await controller.googleMobileLogin({ idToken: 't' }, req, '1.2.3.4', 'ua', buildResponse());
+
+      expect(auditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'auth.google_register' }),
+      );
+    });
+
+    it('returns 503 when no Google client IDs are configured', async () => {
+      socialTokens.googleConfigured = false;
+      const req = buildRequest({ headers: { 'x-client': 'mobile' } });
+
+      await expect(
+        controller.googleMobileLogin({ idToken: 't' }, req, '1.2.3.4', 'ua', buildResponse()),
+      ).rejects.toMatchObject({ status: 503 });
+      expect(socialTokens.verifyGoogleIdToken).not.toHaveBeenCalled();
+    });
+
+    it('propagates the generic 401 from the verifier without calling AuthService', async () => {
+      socialTokens.verifyGoogleIdToken.mockRejectedValue(
+        Object.assign(new Error('Invalid Google credential'), { status: 401 }),
+      );
+      const req = buildRequest({ headers: { 'x-client': 'mobile' } });
+
+      await expect(
+        controller.googleMobileLogin({ idToken: 'bad' }, req, '1.2.3.4', 'ua', buildResponse()),
+      ).rejects.toMatchObject({ message: 'Invalid Google credential' });
+      expect(authService.loginWithGoogle).not.toHaveBeenCalled();
+      expect(auditService.log).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('appleMobileLogin', () => {
+    const tokens = { accessToken: 'AT', refreshToken: 'RT' };
+    const user = { id: 'user-1', email: 'a@b.com', isPlatformAdmin: false } as never;
+    const profile = { appleId: 'apple-sub', email: 'relay@privaterelay.appleid.com' };
+
+    beforeEach(() => {
+      socialTokens.verifyAppleIdentityToken.mockResolvedValue(profile);
+      authService.loginWithApple.mockResolvedValue({ tokens, user, isNewUser: false });
+    });
+
+    it('mobile client: verifies token, forwards optional fullName, returns tokens in body', async () => {
+      const req = buildRequest({ headers: { 'x-client': 'mobile' } });
+      const res = buildResponse();
+
+      const result = await controller.appleMobileLogin(
+        { identityToken: 'apple-jwt', fullName: 'Juan Dela Cruz' },
+        req,
+        '1.2.3.4',
+        'ua',
+        res,
+      );
+
+      expect(socialTokens.verifyAppleIdentityToken).toHaveBeenCalledWith('apple-jwt');
+      expect(authService.loginWithApple).toHaveBeenCalledWith(
+        { ...profile, fullName: 'Juan Dela Cruz' },
+        expect.any(String),
+        req,
+      );
+      expect(res.cookie).not.toHaveBeenCalled();
+      expect(result.data.tokens).toEqual({ accessToken: 'AT', refreshToken: 'RT' });
+      expect(result.data.mfaRequired).toBe(false);
+    });
+
+    it('omitted fullName is forwarded as undefined (server falls back to email local-part)', async () => {
+      const req = buildRequest({ headers: { 'x-client': 'mobile' } });
+
+      await controller.appleMobileLogin(
+        { identityToken: 'apple-jwt' },
+        req,
+        '1.2.3.4',
+        'ua',
+        buildResponse(),
+      );
+
+      expect(authService.loginWithApple).toHaveBeenCalledWith(
+        { ...profile, fullName: undefined },
+        expect.any(String),
+        req,
+      );
+    });
+
+    it('audit-logs auth.apple_login / auth.apple_register by isNewUser', async () => {
+      const req = buildRequest({ headers: { 'x-client': 'mobile' } });
+
+      await controller.appleMobileLogin({ identityToken: 't' }, req, '1.2.3.4', 'ua', buildResponse());
+      expect(auditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'auth.apple_login',
+          metadata: expect.objectContaining({ provider: 'apple' }),
+        }),
+      );
+
+      auditService.log.mockClear();
+      authService.loginWithApple.mockResolvedValue({ tokens, user, isNewUser: true });
+      await controller.appleMobileLogin({ identityToken: 't' }, req, '1.2.3.4', 'ua', buildResponse());
+      expect(auditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'auth.apple_register' }),
+      );
+    });
+
+    it('propagates the generic 401 from the verifier without calling AuthService', async () => {
+      socialTokens.verifyAppleIdentityToken.mockRejectedValue(
+        Object.assign(new Error('Invalid Apple credential'), { status: 401 }),
+      );
+      const req = buildRequest({ headers: { 'x-client': 'mobile' } });
+
+      await expect(
+        controller.appleMobileLogin({ identityToken: 'bad' }, req, '1.2.3.4', 'ua', buildResponse()),
+      ).rejects.toMatchObject({ message: 'Invalid Apple credential' });
+      expect(authService.loginWithApple).not.toHaveBeenCalled();
+      expect(auditService.log).not.toHaveBeenCalled();
     });
   });
 });

@@ -30,6 +30,7 @@ model User {
   mfaEnabled                Boolean   @default(false) @map("mfa_enabled")
   mfaSecret                 String?   @map("mfa_secret") @db.VarChar(500)
   googleId                  String?   @unique @map("google_id") @db.VarChar(255)
+  appleId                   String?   @unique @map("apple_id") @db.VarChar(255)
   createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt                 DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   onboardingCompletedAt     DateTime? @map("onboarding_completed_at") @db.Timestamptz

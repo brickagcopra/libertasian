@@ -8,3 +8,5 @@ export { VerifyEmailDto, ResendVerificationDto } from './verify-email.dto';
 export { MfaVerifyDto } from './mfa-verify.dto';
 export { MfaDisableDto } from './mfa-disable.dto';
 export { AcceptInviteDto } from './accept-invite.dto';
+export { GoogleMobileLoginDto } from './google-mobile-login.dto';
+export { AppleMobileLoginDto } from './apple-mobile-login.dto';

@@ -10,6 +10,7 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { LoginEventService } from './login-event.service';
 import { LoginThrottleService } from './login-throttle.service';
+import { SocialTokenService } from './social-token.service';
 import { GoogleStrategy } from './strategies/google.strategy';
 import { JwtStrategy } from './strategies/jwt.strategy';
 
@@ -68,7 +69,14 @@ const googleStrategyProvider = {
     UsersModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, LoginEventService, LoginThrottleService, JwtStrategy, GoogleStrategy],
+  providers: [
+    AuthService,
+    LoginEventService,
+    LoginThrottleService,
+    SocialTokenService,
+    JwtStrategy,
+    GoogleStrategy,
+  ],
   exports: [AuthService, LoginEventService],
 })
 export class AuthModule {}

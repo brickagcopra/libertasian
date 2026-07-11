@@ -1,12 +1,22 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-07-11 (mobile stack headers PR open; ambient v2 + owl PR #284 merged)
+> Last updated: 2026-07-11 (API mobile social login PR open; stack headers PR #285 merged)
+
+---
+
+## 2026-07-11 — PR `feat/api-mobile-social-login` rollout (owner action required)
+
+- [ ] Review + merge the PR (agent did NOT merge)
+- [ ] Set env vars in staging/production: `GOOGLE_IOS_CLIENT_ID`, `GOOGLE_ANDROID_CLIENT_ID` (Google mobile login returns 503 until at least one Google client ID is set), `APPLE_BUNDLE_ID` if it ever differs from `com.libertasian.app`
+- [ ] Run the migration in staging/production (`prisma migrate deploy`) — adds nullable `users.apple_id` + unique index, no backfill needed
+- [ ] Local dev DB drift (pre-existing): `prisma migrate dev` wants a reset because applied migration `20260505013309` is missing from the directory — decide whether to reset locally or reconcile the history
+- [ ] Mobile PR (next): consume `POST /auth/google/mobile` + `POST /auth/apple/mobile` per the contract note in COMPLETED_TASKS.md (X-Client: mobile header required for body tokens)
 
 ---
 
 ## 2026-07-11 — PR `fix/mobile-stack-group-headers` rollout (owner action required)
 
-- [ ] Review + merge the PR (agent did NOT merge)
+- [x] Review + merge PR #285 — MERGED 2026-07-11, squash commit `af46163` on main, branch deleted
 - [x] Emulator QA (Pixel_9, Android) — settings/security, study/syllabus, notifications, blog, documents: cream header + working back; digest: custom header only, no double header
 - [ ] iOS spot-check — the whole point of the fix is iOS (no system back button); verify chevron style (`chevron-back` via the fallback) and swipe-back within groups on a simulator/TestFlight build
 - [ ] Native headers are static Theme A cream (`#F6F1E8`) — check they read acceptably when the user picks Theme B (Confident Modern, off-white `#F4F4F2`); follow-up if the mismatch bothers design

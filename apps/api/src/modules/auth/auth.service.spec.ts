@@ -63,6 +63,9 @@ type MockPrismaService = {
   subscription: {
     create: jest.Mock;
   };
+  emailPreference: {
+    create: jest.Mock;
+  };
   refreshToken: {
     create: jest.Mock;
     findUnique: jest.Mock;
@@ -79,9 +82,12 @@ type MockUsersService = {
   findByEmail: jest.Mock;
   findById: jest.Mock;
   findByGoogleId: jest.Mock;
+  findByAppleId: jest.Mock;
   create: jest.Mock;
   createFromGoogle: jest.Mock;
+  createFromApple: jest.Mock;
   linkGoogleAccount: jest.Mock;
+  linkAppleAccount: jest.Mock;
   sanitize: jest.Mock;
 };
 
@@ -185,9 +191,12 @@ describe('AuthService', () => {
             findByEmail: jest.fn(),
             findById: jest.fn(),
             findByGoogleId: jest.fn(),
+            findByAppleId: jest.fn(),
             create: jest.fn(),
             createFromGoogle: jest.fn(),
+            createFromApple: jest.fn(),
             linkGoogleAccount: jest.fn(),
+            linkAppleAccount: jest.fn(),
             sanitize: jest.fn(),
           },
         },
@@ -910,6 +919,147 @@ describe('AuthService', () => {
 
       await expect(service.loginWithGoogle(googleProfile, deviceFingerprint)).rejects.toThrow(UnauthorizedException);
       await expect(service.loginWithGoogle(googleProfile, deviceFingerprint)).rejects.toThrow('Account is suspended or deactivated');
+    });
+  });
+
+  describe('loginWithApple', () => {
+    const appleProfile = {
+      appleId: 'apple-sub-123',
+      email: 'relay@privaterelay.appleid.com',
+      fullName: 'Apple User',
+    };
+
+    const deviceFingerprint = 'device-fingerprint-789';
+
+    function stubTokenIssuance() {
+      prismaService.organizationMember.findFirst.mockResolvedValue(mockMembership as unknown as ReturnType<typeof prismaService.organizationMember.findFirst>);
+      jwtService.sign.mockReturnValue('access-token-jwt');
+      prismaService.refreshToken.create.mockResolvedValue({} as unknown as ReturnType<typeof prismaService.refreshToken.create>);
+    }
+
+    it('should login existing Apple user directly (found by appleId)', async () => {
+      const appleUser = { ...mockUser, appleId: appleProfile.appleId, emailVerified: true };
+
+      usersService.findByAppleId.mockResolvedValue(appleUser as unknown as ReturnType<UsersService['findByAppleId']>);
+      usersService.sanitize.mockReturnValue({ id: appleUser.id, email: appleUser.email });
+      stubTokenIssuance();
+
+      const result = await service.loginWithApple(appleProfile, deviceFingerprint);
+
+      expect(result.isNewUser).toBe(false);
+      expect(result.tokens.accessToken).toBe('access-token-jwt');
+      expect(usersService.findByEmail).not.toHaveBeenCalled();
+      expect(usersService.createFromApple).not.toHaveBeenCalled();
+      expect(usersService.linkAppleAccount).not.toHaveBeenCalled();
+
+      // Provider login is the second-factor equivalent (matches Google)
+      expect(jwtService.sign).toHaveBeenCalledWith(
+        expect.objectContaining({ mfaVerified: true }),
+        expect.any(Object),
+      );
+      expect(loginEventService.record).toHaveBeenCalledWith(
+        'apple_login',
+        appleUser.id,
+        null,
+        expect.objectContaining({ deviceFingerprint }),
+      );
+    });
+
+    it('should link Apple account to existing user found by email and mark email verified', async () => {
+      const existingUser = { ...mockUser, appleId: null, emailVerified: false, email: appleProfile.email };
+
+      usersService.findByAppleId.mockResolvedValue(null);
+      usersService.findByEmail.mockResolvedValue(existingUser as unknown as ReturnType<UsersService['findByEmail']>);
+      usersService.linkAppleAccount.mockResolvedValue(undefined);
+      usersService.sanitize.mockReturnValue({ id: existingUser.id, email: existingUser.email });
+      prismaService.user.update.mockResolvedValue(existingUser as unknown as ReturnType<typeof prismaService.user.update>);
+      stubTokenIssuance();
+
+      const result = await service.loginWithApple(appleProfile, deviceFingerprint);
+
+      expect(result.isNewUser).toBe(false);
+      expect(usersService.linkAppleAccount).toHaveBeenCalledWith(existingUser.id, appleProfile.appleId);
+      expect(prismaService.user.update).toHaveBeenCalledWith({
+        where: { id: existingUser.id },
+        data: { emailVerified: true, emailVerifyToken: null },
+      });
+      expect(prismaService.organization.create).not.toHaveBeenCalled();
+    });
+
+    it('should create new user with personal workspace when neither appleId nor email matches', async () => {
+      const newUser = { ...mockUser, id: 'new-apple-user', email: appleProfile.email, fullName: appleProfile.fullName, appleId: appleProfile.appleId, emailVerified: true };
+
+      usersService.findByAppleId.mockResolvedValue(null);
+      usersService.findByEmail.mockResolvedValue(null);
+      usersService.createFromApple.mockResolvedValue(newUser as unknown as ReturnType<UsersService['createFromApple']>);
+      usersService.sanitize.mockReturnValue({ id: newUser.id, email: newUser.email });
+      prismaService.organization.create.mockResolvedValue(mockOrganization as unknown as ReturnType<typeof prismaService.organization.create>);
+      prismaService.organizationMember.create.mockResolvedValue(mockMembership as unknown as ReturnType<typeof prismaService.organizationMember.create>);
+      prismaService.subscription.create.mockResolvedValue({} as unknown as ReturnType<typeof prismaService.subscription.create>);
+      prismaService.emailPreference.create.mockResolvedValue({} as unknown as ReturnType<typeof prismaService.emailPreference.create>);
+      stubTokenIssuance();
+
+      const result = await service.loginWithApple(appleProfile, deviceFingerprint);
+
+      expect(result.isNewUser).toBe(true);
+      expect(usersService.createFromApple).toHaveBeenCalledWith({
+        email: appleProfile.email,
+        fullName: 'Apple User',
+        appleId: appleProfile.appleId,
+      });
+      expect(prismaService.organization.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            name: "Apple User's Workspace",
+            type: 'individual',
+          }),
+        }),
+      );
+      expect(prismaService.subscription.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ planCode: 'free', status: 'active' }),
+      });
+      expect(prismaService.emailPreference.create).toHaveBeenCalled();
+    });
+
+    it('should fall back to email local-part when Apple sends no name (subsequent authorizations)', async () => {
+      const newUser = { ...mockUser, id: 'new-apple-user', email: appleProfile.email, appleId: appleProfile.appleId };
+
+      usersService.findByAppleId.mockResolvedValue(null);
+      usersService.findByEmail.mockResolvedValue(null);
+      usersService.createFromApple.mockResolvedValue(newUser as unknown as ReturnType<UsersService['createFromApple']>);
+      usersService.sanitize.mockReturnValue({ id: newUser.id, email: newUser.email });
+      prismaService.organization.create.mockResolvedValue(mockOrganization as unknown as ReturnType<typeof prismaService.organization.create>);
+      prismaService.organizationMember.create.mockResolvedValue(mockMembership as unknown as ReturnType<typeof prismaService.organizationMember.create>);
+      prismaService.subscription.create.mockResolvedValue({} as unknown as ReturnType<typeof prismaService.subscription.create>);
+      prismaService.emailPreference.create.mockResolvedValue({} as unknown as ReturnType<typeof prismaService.emailPreference.create>);
+      stubTokenIssuance();
+
+      await service.loginWithApple(
+        { appleId: appleProfile.appleId, email: appleProfile.email },
+        deviceFingerprint,
+      );
+
+      expect(usersService.createFromApple).toHaveBeenCalledWith(
+        expect.objectContaining({ fullName: 'relay' }),
+      );
+    });
+
+    it('should throw generic 401 when token has no email and appleId is unknown', async () => {
+      usersService.findByAppleId.mockResolvedValue(null);
+
+      await expect(
+        service.loginWithApple({ appleId: 'unknown-sub', email: null }, deviceFingerprint),
+      ).rejects.toThrow(new UnauthorizedException('Invalid Apple credential'));
+      expect(usersService.createFromApple).not.toHaveBeenCalled();
+    });
+
+    it('should throw UnauthorizedException for inactive Apple account', async () => {
+      const inactiveUser = { ...mockUser, appleId: appleProfile.appleId, status: 'deactivated' };
+      usersService.findByAppleId.mockResolvedValue(inactiveUser as unknown as ReturnType<UsersService['findByAppleId']>);
+
+      await expect(service.loginWithApple(appleProfile, deviceFingerprint)).rejects.toThrow(
+        'Account is suspended or deactivated',
+      );
     });
   });
 
