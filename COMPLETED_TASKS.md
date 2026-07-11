@@ -1,6 +1,21 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-07-11 (mobile native stack headers + back navigation PR; previously: mobile glass ambient v2 + animated owl PR #284)
+> Last updated: 2026-07-11 (API mobile social login PR; previously: mobile native stack headers + back navigation PR #285)
+
+---
+
+## 2026-07-11 — PR: feat(api): mobile social login — Google + Apple ID-token exchange
+
+**Branch:** `feat/api-mobile-social-login` (API-only; web GET /auth/google[/callback] flow untouched)
+
+1. **Prisma** — `User.appleId String? @unique @map("apple_id")`; hand-authored migration `20260711120000_add_user_apple_id` (verified via `prisma migrate deploy` against a throwaway DB — local dev DB has pre-existing drift and `migrate dev` demanded a reset, which was NOT run).
+2. **`SocialTokenService` (new)** — Google: `google-auth-library` `OAuth2Client.verifyIdToken` against audience allowlist `[GOOGLE_CLIENT_ID, GOOGLE_IOS_CLIENT_ID, GOOGLE_ANDROID_CLIENT_ID]`, rejects `email_verified !== true` (email-link account-takeover guard). Apple: `jose` `createRemoteJWKSet` on appleid.apple.com/auth/keys (cached across calls), iss/aud/exp enforced, aud = `APPLE_BUNDLE_ID` (default `com.libertasian.app`). Every failure → generic 401, token contents never echoed.
+3. **`AuthService.loginWithApple`** — mirrors `loginWithGoogle`: find-by-appleId → link-by-email (marks email verified) → create-with-personal-org; Apple name only arrives on first authorization so optional client `fullName` falls back to email local-part; shared `provisionPersonalWorkspace` helper extracted (Google flow now uses it too). New `apple_login` login-event type (also refreshes lastLogin*).
+4. **Endpoints** — `POST /auth/google/mobile` `{ idToken }` (503 when no Google client IDs configured) and `POST /auth/apple/mobile` `{ identityToken, fullName? }`. Same response shape as mobile `POST /auth/login`: `X-Client: mobile` → tokens (incl. refresh) in body; otherwise httpOnly cookie. `mfaRequired: false` always — provider login is the second-factor equivalent (matches web Google). Audit: `auth.google_login/register`, `auth.apple_login/register`. Class-level throttle covers the routes; LoginThrottleService NOT wired (failure counters are password-specific).
+5. **Config** — Joi + `.env.example`: `GOOGLE_IOS_CLIENT_ID`, `GOOGLE_ANDROID_CLIENT_ID` (optional), `APPLE_BUNDLE_ID` (default). New deps: `google-auth-library@^10`, `jose@^5`.
+6. **Verification** — new `social-token.service.spec.ts` (valid/expired/wrong-aud/wrong-iss/unverified-email/missing-claims, JWKS caching); controller specs for both endpoints (transport branch, 503, generic-401 propagation, audit actions); `loginWithApple` service specs (direct/link/create/name-fallback/no-email-401/inactive). API suite: **171 suites / 3456 tests green**; `tsc --noEmit` clean.
+
+**Mobile PR contract:** `POST /api/v1/auth/google/mobile` body `{ idToken }`; `POST /api/v1/auth/apple/mobile` body `{ identityToken, fullName? }` (send fullName when Apple provides it — first authorization only). Send `X-Client: mobile` to receive `{ tokens: { accessToken, refreshToken }, user, mfaRequired: false }` in the body. 401 = invalid/expired provider token (generic), 503 = Google not configured on the server.
 
 ---
 

@@ -16,6 +16,7 @@ export type LoginEventType =
   | 'login_success'
   | 'login_failed'
   | 'google_login'
+  | 'apple_login'
   | 'token_refresh'
   | 'logout'
   | 'password_reset_used'
@@ -95,7 +96,11 @@ export class LoginEventService {
 
       // Update lastLogin* snapshot on successful authentications so the admin
       // list view can render without joining login_events.
-      if (eventType === 'login_success' || eventType === 'google_login') {
+      if (
+        eventType === 'login_success' ||
+        eventType === 'google_login' ||
+        eventType === 'apple_login'
+      ) {
         await this.prisma.user.update({
           where: { id: userId },
           data: {

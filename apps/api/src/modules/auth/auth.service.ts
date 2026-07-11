@@ -309,44 +309,7 @@ export class AuthService {
         // 3. Create new user from Google profile
         user = await this.usersService.createFromGoogle(googleProfile);
         isNewUser = true;
-
-        // Create personal organization
-        const slug = this.generateSlug(googleProfile.fullName);
-        const org = await this.prisma.organization.create({
-          data: {
-            name: `${googleProfile.fullName}'s Workspace`,
-            slug,
-            type: 'individual',
-            billingOwnerUserId: user.id,
-          },
-        });
-
-        await this.prisma.organizationMember.create({
-          data: {
-            organizationId: org.id,
-            userId: user.id,
-            role: 'owner',
-            status: 'active',
-          },
-        });
-
-        await this.prisma.subscription.create({
-          data: {
-            organizationId: org.id,
-            planCode: 'free',
-            status: 'active',
-            seats: 1,
-            entitlementsJson: {},
-          },
-        });
-
-        // Create email preferences for new Google OAuth user
-        await this.prisma.emailPreference.create({
-          data: {
-            userId: user.id,
-            unsubscribeToken: crypto.randomBytes(32).toString('hex'),
-          },
-        });
+        await this.provisionPersonalWorkspace(user.id, googleProfile.fullName);
       }
     }
 
@@ -382,6 +345,134 @@ export class AuthService {
       user: { ...this.usersService.sanitize(user), isPlatformAdmin },
       isNewUser,
     };
+  }
+
+  // ---- Apple Sign In (mobile ID-token exchange) ----
+
+  async loginWithApple(
+    appleProfile: { appleId: string; email: string | null; fullName?: string },
+    deviceFingerprint: string,
+    req: Request | null = null,
+  ): Promise<{
+    tokens: TokenPair;
+    user: ReturnType<UsersService['sanitize']> & { isPlatformAdmin: boolean };
+    isNewUser: boolean;
+  }> {
+    // 1. Try to find user by Apple ID (the identity token's stable `sub`)
+    let user = await this.usersService.findByAppleId(appleProfile.appleId);
+    let isNewUser = false;
+
+    if (!user) {
+      // Without an email claim we can neither link nor create an account.
+      // Generic 401 — never reveal which part of the credential was rejected.
+      if (!appleProfile.email) {
+        throw new UnauthorizedException('Invalid Apple credential');
+      }
+
+      // 2. Try to find existing user by email (link accounts). Works for
+      // private-relay addresses too — relay emails are stable per app.
+      user = await this.usersService.findByEmail(appleProfile.email);
+
+      if (user) {
+        await this.usersService.linkAppleAccount(user.id, appleProfile.appleId);
+        // Mark email as verified since Apple verified it
+        if (!user.emailVerified) {
+          await this.prisma.user.update({
+            where: { id: user.id },
+            data: { emailVerified: true, emailVerifyToken: null },
+          });
+        }
+      } else {
+        // 3. Create new user from Apple profile. Apple sends the user's name
+        // ONLY on first authorization (client forwards it when present) —
+        // fall back to the email local-part.
+        const fullName =
+          appleProfile.fullName?.trim() || appleProfile.email.split('@')[0] || 'User';
+        user = await this.usersService.createFromApple({
+          email: appleProfile.email,
+          fullName,
+          appleId: appleProfile.appleId,
+        });
+        isNewUser = true;
+        await this.provisionPersonalWorkspace(user.id, fullName);
+      }
+    }
+
+    if (user.status !== 'active') {
+      throw new UnauthorizedException('Account is suspended or deactivated');
+    }
+
+    // Get primary org membership
+    const membership = await this.prisma.organizationMember.findFirst({
+      where: { userId: user.id, status: 'active' },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    if (!membership) {
+      throw new UnauthorizedException('No active organization membership');
+    }
+
+    const tokens = await this.issueTokenPair(
+      user.id,
+      user.email,
+      membership.role as UserRole,
+      membership.organizationId,
+      true, // provider login is the second-factor equivalent (matches Google)
+      deviceFingerprint,
+    );
+
+    this.emitLoginEvent('apple_login', user.id, req, { deviceFingerprint });
+
+    const isPlatformAdmin = await this.computeIsPlatformAdmin(membership.id);
+
+    return {
+      tokens,
+      user: { ...this.usersService.sanitize(user), isPlatformAdmin },
+      isNewUser,
+    };
+  }
+
+  /**
+   * Personal org + free subscription + email preferences for a user created
+   * via a social provider (register() keeps its own inline copy because it
+   * also threads the org through admin-flag computation).
+   */
+  private async provisionPersonalWorkspace(userId: string, fullName: string): Promise<void> {
+    const slug = this.generateSlug(fullName);
+    const org = await this.prisma.organization.create({
+      data: {
+        name: `${fullName}'s Workspace`,
+        slug,
+        type: 'individual',
+        billingOwnerUserId: userId,
+      },
+    });
+
+    await this.prisma.organizationMember.create({
+      data: {
+        organizationId: org.id,
+        userId,
+        role: 'owner',
+        status: 'active',
+      },
+    });
+
+    await this.prisma.subscription.create({
+      data: {
+        organizationId: org.id,
+        planCode: 'free',
+        status: 'active',
+        seats: 1,
+        entitlementsJson: {},
+      },
+    });
+
+    await this.prisma.emailPreference.create({
+      data: {
+        userId,
+        unsubscribeToken: crypto.randomBytes(32).toString('hex'),
+      },
+    });
   }
 
   // ---- Refresh Token ----

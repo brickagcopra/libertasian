@@ -58,6 +58,30 @@ export class UsersService {
     });
   }
 
+  async findByAppleId(appleId: string) {
+    return this.prisma.user.findUnique({
+      where: { appleId },
+    });
+  }
+
+  async createFromApple(data: { email: string; fullName: string; appleId: string }) {
+    return this.prisma.user.create({
+      data: {
+        email: data.email.toLowerCase().trim(),
+        fullName: data.fullName.trim(),
+        appleId: data.appleId,
+        emailVerified: true, // Apple-verified email (real or private relay)
+      },
+    });
+  }
+
+  async linkAppleAccount(userId: string, appleId: string) {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { appleId },
+    });
+  }
+
   async update(id: string, dto: UpdateUserDto) {
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) {
