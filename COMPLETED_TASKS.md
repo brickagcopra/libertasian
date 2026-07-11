@@ -1,6 +1,76 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-07-09 (payment receipt email redesign PR #277; previously: mobile billing checkout flow fix — https bounce pages, preview modal, themed plans screen)
+> Last updated: 2026-07-10 (mobile glass ambient v2 + animated owl PR; previously: web owl wave/wink PR #283, visible glass ambient fix PR #282, glass ambient PRs #280/#281 — all merged same day)
+
+---
+
+## 2026-07-10 — PR: feat(mobile): glass ambient v2 — visible blobs + animated owl
+
+**Branch:** `feature/mobile-ambient-owl` (port of web PRs #282 + #283 to mobile)
+**Constraints honored:** no reanimated, no expo-blur, no new native modules; RN core `Animated`, transform-only, `useNativeDriver: true`; react-native-svg ^15.8.0 (already installed).
+
+1. **HeaderAmbient.tsx blob fix (mirrors web #282)** — the invisible-blob bug (two `accentSoft`-on-`bg` circles + an alpha-'22' accent blob centred at top:-60) recolored/repositioned: two blobs on `theme.accent` (alpha '30'/'26') + one on `theme.pillBg` (alpha '10') for depth; all centres at top ≥ -size/2 so ~half of each circle sits inside the band; drift widened to 60–90px horizontal / 14–22px vertical; cycles 12/16/18s; stagger + infinite loop + null-until-known reduce-motion handling kept. `BlobSpec.base` type is now `'accent' | 'pillBg'`.
+2. **`src/components/brand/Owl.tsx` (new, + brand barrel)** — 600×600 web owl SVG ported verbatim to react-native-svg with its hardcoded warm mascot palette. Three layered pieces in a square container: full `OwlBody` Svg minus left wing + right-eye cluster; wing piece (cropped viewBox `130 310 100 140`) in an Animated.View at the matching fraction of `size`, wave = 5s linear master clock interpolated through the web keyframes (3 quick −30°→12° swings in the first 35%, then rest), pivot biased to the shoulder via `[{translateY:-h/2},{rotate},{translateY:h/2}]`; eye piece (viewBox `295 155 130 130`, crop centred on the eye) with wink = `loop(sequence(delay 1700, close 110ms, hold 80ms, open 110ms))`, scaleY 1→0.08→1. Owl runs the same null-until-known reduce-motion pattern internally — static render, zero loops when reduced.
+3. **Owl slot in HeaderAmbient** — `owl?: boolean` prop (default true), owl size 118 at opacity 0.14, top-right of the band (top 78 / right −14), inherits `pointerEvents="none"` from the band; all 8 existing mount surfaces get it with no new mount sites; DocumentReaderScreen keeps the band at zIndex 0 under its zIndex 5/10 layers.
+4. **Tests** — HeaderAmbient.test.tsx updated (loop count 3→5 = 3 blobs + wave + wink; new owl-slot presence/`owl={false}` case); new `__tests__/components/brand/Owl.test.tsx` (renders, wing + eye pieces present, size prop, NO loop started when reduce-motion mocked on, listener cleanup). `pnpm --filter mobile test`: 217 suites / 1458 tests green. Mobile `tsc --noEmit`: **0 errors** (the 37 pre-existing errors noted on older main are gone — clean baseline, zero new). Root `pnpm lint`: 5/5 tasks pass (pre-existing web warnings only).
+5. **On-emulator visual verification** — Pixel_9 AVD, fresh x86_64 debug APK (arm64 blocked by expo-av CMake `build.ninja still dirty` on Windows) + Metro. Login + Register (theme B): blobs clearly visible + drifting (numeric pixel-diff), owl legible at 0.14 opacity top-right, wing wave and eye wink both caught on camera and confirmed by region pixel-diff spikes at the expected 5s/2s cadences.
+
+---
+
+## 2026-07-10 — PR #283: feat(web): header owl waves hello and winks
+
+**Branch:** `feature/web-owl-wave-wink` → https://github.com/brickagcopra/libertasian/pull/283
+**Context:** PR #282's floating owl read as static (±8px/±3° over 14–18s). Adds real character animation: waving left wing + winking right eye, looping forever. apps/web only.
+
+1. **owl.tsx** — grouping-only refactor, zero visual change: `<g className="owl-wing-left">` (wing path "M160 320" + 2 feather lines), `<g className="owl-eye-right">` (white circle cx=360, pupil, highlight, brow). Bare classes carry NO animation — Owl stays inert in hero/signup/login/register.
+2. **globals.css** — all animation scoped under `.header-glow-owl`: wave (5s infinite; lift + 3 swings ~-30°→12° in first ~35%, rest at 0; `transform-box: fill-box`, origin top center), wink (2s infinite; open ~85%, scaleY 1→0.08→1 with an ~80ms closed hold at 88–92% because an instantaneous spike strobed past invisibly), float strengthened to ±14px/±5°/10s; reduced-motion block extended to disable wave/wink too (a11y convention overrides "loops forever").
+3. **Positioning fixes discovered by measurement** — band owl moved right:5% → left:34% (the Get Started CTA completely covered the waving wing at the original spot); bar owl raised -48px → -36px so the eye bbox sits at y 19–36 inside the 56px dashboard bar (wink clearly visible; wave best-effort there per spec).
+4. **Visual verification** — CDP frame bursts (12×500ms for wave, 26×90ms for wink) on `/`, `/login`, and a temporary bar-variant preview route (Docker/API down; temp page + middleware entry reverted before commit): wing swing and eye-squeeze both captured on camera, computed-transform sampling confirmed scaleY ~0.08 each cycle, nav fully readable (owl at 0.13 opacity in empty space).
+5. **Tests/lint** — header-glow.test.tsx +2 group-presence cases (both variants); new owl.test.tsx (groups exist, no inline animation styles, globals.css never targets bare classes unscoped). `pnpm --filter web test` 182 files / 1562 tests green; `pnpm --filter web lint` clean (one pre-existing unrelated warning).
+
+**MERGED 2026-07-10** — squash commit `2b2759b` on main, branch deleted.
+
+---
+
+## 2026-07-10 — PR #282: fix(web): visible glass ambient — repositioned blobs + floating owl
+
+**Branch:** `fix/web-header-glass-visible` → https://github.com/brickagcopra/libertasian/pull/282
+**Context:** PR #280's HeaderGlow rendered but was invisible — blob centers sat 90–170px above the 56–64px overflow-hidden header (only the transparent gradient fringe showed) and two blobs were cream-on-cream. apps/web only.
+
+1. **globals.css** — blobs repositioned so ~half of each sits inside the header band; recolored to two on `--warm-accent` (opacity 0.20/0.18) + one on `--warm-accent-deep` (0.10) — cream-on-cream blobs dropped, warm tokens only; drift widened (translate3d 100–150px horizontal / 14–20px vertical, scale 0.92–1.12, 19–30s, infinite alternate + staggered negative delays kept); new owl-float keyframe (translateY ±8px + rotate ±3°, infinite alternate); reduced-motion block now covers blobs + owl.
+2. **header-glow.tsx** — new `variant` prop: `'band'` (default; public header + auth h-40 band, owl ~132px peeking from bottom edge) and `'bar'` (dashboard h-14 header, smaller owl bottom-cropped so head/ears peek in); floating `Owl` from `@/components/brand/owl` added inside the existing aria-hidden pointer-events-none wrapper at low opacity, right side clear of nav/user menu. Mount sites updated with variants (`public-header.tsx` + `(auth)/layout.tsx` → band, `header.tsx` → bar); locations unchanged.
+3. **Visual verification** (headless Chrome 1440×900, paired real-time screenshots 6s apart via CDP — one-shot `--screenshot` freezes CSS animations): `/` and `/login` show clearly visible warm glow + owl with nav fully readable; drift proven numerically (blob translateX 7.2→52.1px over 6s; owl ~2.5° rotation). `bar` variant verified via a temporary isolated preview page rendering the real dashboard Header (local Docker/API were down so /search login was impossible); temp page + middleware entry reverted before commit, disclosed in the PR body. Screenshots described in PR body (saved locally).
+4. **Tests/lint** — header-glow.test.tsx +3 tests (variant rendering, owl present, aria-hidden/pointer-events-none intact); `pnpm --filter web test` 181 files / 1556 tests green; `pnpm --filter web lint` passes (pre-existing warnings only).
+
+**MERGED 2026-07-10** — squash commit `b990b9e` on main, branch deleted.
+
+---
+
+## 2026-07-10 — PR #280: feat(web): subtle animated glass ambient behind headers
+
+**Branch:** `feature/web-header-glass-ambient` → https://github.com/brickagcopra/libertasian/pull/280
+**Context:** Decorative animated glassmorphism blobs behind the web app's top/nav areas. apps/web only; theme unchanged (existing `--warm-*` tokens only).
+
+1. **`src/components/layout/header-glow.tsx` (new)** — shared decorative layer: `aria-hidden`, `pointer-events-none absolute inset-0 z-0 overflow-hidden`, 3 radial-gradient blobs (320/240/200px) using `var(--warm-accent-soft)`, `var(--warm-accent)`, `var(--warm-cream-3)`; no `filter: blur()` (gradient falloff + headers' existing backdrop-blur produce the glass look).
+2. **`globals.css`** — blob classes + 3 transform-only `@keyframes` (22s/26s/32s, ease-in-out, infinite alternate, staggered negative delays), `will-change: transform`, `prefers-reduced-motion: reduce` → `animation: none` (static blobs).
+3. **Mounts** — `public-header.tsx` (glow first child, inner bar `relative z-10`; deliberately did NOT add `relative` — header is `sticky`, which already establishes the containing block, and doubling `position` risks breaking stickiness); `header.tsx` dashboard header (`relative overflow-hidden`, content groups `relative z-10`); `(auth)/layout.tsx` (absolute `inset-x-0 top-0 h-40 overflow-hidden pointer-events-none` band behind the centered card, children wrapped `relative z-10`).
+4. **Tests/lint** — new `header-glow.test.tsx` (4 tests: aria-hidden, pointer-events-none/z-0/clipping, 3 blobs, empty a11y content); `pnpm --filter web test` 181 files / 1553 tests green (header.test.tsx + public-header.test.tsx pass unmodified); `pnpm --filter web lint` exit 0 (only pre-existing exhaustive-deps warnings in unrelated files).
+
+**MERGED 2026-07-10** — squash commit `8657ea4` on main, branch deleted.
+
+---
+
+## 2026-07-10 — PR #281: feat(mobile): subtle animated glass ambient on core screens
+
+**Branch:** `feature/mobile-header-glass-ambient` → https://github.com/brickagcopra/libertasian/pull/281
+**Context:** Same glass-ambient treatment on mobile top areas. HARD constraint honored: no react-native-reanimated, no expo-blur — RN core `Animated` with `useNativeDriver: true` only. apps/mobile only; existing theme tokens at hex-alpha translucency (no new colors).
+
+1. **`src/components/ui/HeaderAmbient.tsx` (new)** — `{ height?: number }` (default 180); absolute `pointerEvents="none"` top band (`zIndex: 0`, `overflow: hidden`, `testID="header-ambient"`) with 3 translucent circles (`theme.accentSoft + 'aa'`, `theme.accent + '22'`, `theme.accentSoft + '66'`) via `useTheme()` inline styles; `Animated.loop(Animated.sequence([timing, timing]))` per blob, transform-only (translateX/translateY/scale), 12s/16s/20s cycles staggered 0/1.4s/2.6s. Barrel-exported from `ui/index.ts`.
+2. **Reduced motion** — `AccessibilityInfo.isReduceMotionEnabled()` + `reduceMotionChanged` listener (ad-renderer pattern); state initializes to `null` and loops only start once the OS preference resolves to `false` (no start-then-cancel flicker); circles render static when reduced.
+3. **Mounts (7 screens)** — HomeScreen, LoginScreen, SearchScreen, DocumentReaderScreen (at zIndex 0 beneath its existing zIndex 5 gradient / zIndex 10 header cluster), ProfileScreen (Me + Settings), `(auth)/register.tsx` (real signup; onboarding SignupScreen untouched), `(tabs)/library/index.tsx`. LoginScreen and the Library hub had ScrollView roots → wrapped in a root View (same bg) so the ambient sits behind the ScrollView.
+4. **Tests/lint** — new `__tests__/components/ui/HeaderAmbient.test.tsx` (5 tests, AccessibilityInfo spied per-test; no jest config / setup.ts changes); `pnpm --filter mobile test` 216 suites / 1452 tests green (screen-route tests for login, reader/[id], settings still pass). Mobile `lint` (`tsc --noEmit`): 37 pre-existing errors, identical set verified on clean origin/main (React 19 @types/react vs Stack/Tabs/LinearGradient/Svg) — zero new errors; all other packages pass root `pnpm lint`.
+
+**MERGED 2026-07-10** — squash commit `c284a7b` on main, branch deleted. JS-only change — no native rebuild needed.
 
 ---
 

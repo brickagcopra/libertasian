@@ -1,6 +1,43 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-07-09 (payment receipt email redesign PR #277 awaiting merge)
+> Last updated: 2026-07-10 (mobile ambient v2 + owl PR open; web #280–#283 merged)
+
+---
+
+## 2026-07-10 — PR `feature/mobile-ambient-owl` rollout (owner action required)
+
+- [ ] Review + merge the PR (agent did NOT merge)
+- [x] Emulator visual QA (Pixel_9, theme B) — Login + Register verified live via a fresh x86_64 debug build + Metro: blobs plainly visible and drifting (pixel-diff monotonic 192→12.5k over 20 frames), owl top-right at 0.14 opacity clear of header controls, wing wave caught mid-swing on camera, wink caught mid-blink (eye slit frame) + eye-region pixel spikes every ~2s
+- [ ] Remaining device QA — JS-only change, reaches real devices in **EAS build 8** (or any dev-client/OTA update): spot-check Home / Search / Profile / Library / Reader surfaces (same shared HeaderAmbient — emulator QA only reached the unauthenticated screens because the local API was down)
+- [ ] Check theme A (warm): emulator QA ran on default theme B (lime accent + near-black pillBg blob) — confirm theme A's orange accent + warm-ink blob read well and header text keeps contrast
+- [ ] DocumentReaderScreen: ambient + owl stay beneath the zIndex 5 gradient and zIndex 10 header cluster
+- [ ] OS reduce-motion: blobs AND owl (wave + wink) all render static, nothing loops
+- [ ] Note: local gradle debug builds — expo-av's CMake step fails on arm64 with `ninja: manifest 'build.ninja' still dirty` (Windows); workaround used: `-PreactNativeArchitectures=x86_64` for emulator builds
+
+---
+
+## 2026-07-10 — PR #283 owl wave + wink rollout (owner action required)
+
+- [x] Review + merge PR #283 `feature/web-owl-wave-wink` — MERGED 2026-07-10, squash commit `2b2759b` on main, branch deleted
+- [ ] Note the band owl MOVED (right:5% → left:34%) because the Get Started CTA covered the waving wing — eyeball the home header after deploy and confirm the new spot reads well at common viewport widths (the 34% offset was tuned at 1440px)
+- [ ] Live-check the dashboard bar variant (verified only on a temp preview page — API was down): eyes/wink visible inside the h-14 bar, wing peek acceptable
+- [ ] Confirm Owl is still static on hero/signup/login/register illustrations (bare classes inert)
+- [ ] OS reduce-motion: wave, wink, AND float all stop
+
+## 2026-07-10 — PR #282 visible glass ambient + owl rollout (owner action required)
+
+- [x] Review + merge PR #282 `fix/web-header-glass-visible` — MERGED 2026-07-10, squash commit `b990b9e` on main, branch deleted
+- [ ] After web deploy, eyeball `/`, `/login`, and a logged-in dashboard page: warm glow + owl plainly visible, drift noticeable within ~5s, nav text/links fully readable and clickable
+- [ ] The dashboard `bar` variant was only verified on an isolated preview page (local API was down, so no real /search login) — specifically check the h-14 dashboard header live: owl head/ears peek in on the right without crowding the user menu
+- [ ] OS reduce-motion check: blobs AND owl render static
+
+## 2026-07-10 — glass ambient header PRs rollout (owner action required)
+
+- [x] Review + merge PR #280 `feature/web-header-glass-ambient` — MERGED 2026-07-10, squash commit `8657ea4` on main, branch deleted
+- [x] Review + merge PR #281 `feature/mobile-header-glass-ambient` — MERGED 2026-07-10, squash commit `c284a7b` on main, branch deleted
+- [ ] Web visual QA after deploy: blobs drift subtly behind header text on Home/public pages, dashboard shell, and Login/Register; text contrast unaffected; nothing intercepts clicks; enable OS "reduce motion" → blobs render static
+- [ ] Mobile QA (JS-only, Metro/OTA reload is enough — no native rebuild): circles stay in the top band behind header rows on all 7 screens, title text (theme.ink) keeps clear contrast, DocumentReaderScreen ambient sits beneath the existing top gradient + header cluster; toggle OS reduce-motion → circles static
+- [ ] Mobile known pre-existing: `tsc --noEmit` has 37 errors on main (React 19 @types/react vs Stack/Tabs/LinearGradient/Svg) — unrelated to these PRs, still worth a dedicated cleanup pass
 
 ---
 

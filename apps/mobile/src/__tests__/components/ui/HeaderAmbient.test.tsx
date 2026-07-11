@@ -56,9 +56,19 @@ describe('HeaderAmbient', () => {
     const { unmount } = render(<HeaderAmbient />);
     await flushAsync();
 
-    // One Animated.loop per blob.
-    expect(loopSpy).toHaveBeenCalledTimes(3);
+    // One Animated.loop per blob (3) + the owl's wave and wink loops (2).
+    expect(loopSpy).toHaveBeenCalledTimes(5);
     unmount();
+  });
+
+  it('renders the owl by default and hides it when owl is false', async () => {
+    const { getByTestId, queryByTestId, rerender } = render(<HeaderAmbient />);
+    await flushAsync();
+
+    expect(getByTestId('header-ambient-owl')).toBeTruthy();
+
+    rerender(<HeaderAmbient owl={false} />);
+    expect(queryByTestId('header-ambient-owl')).toBeNull();
   });
 
   it('renders static circles (no loop) when reduce motion is enabled', async () => {
