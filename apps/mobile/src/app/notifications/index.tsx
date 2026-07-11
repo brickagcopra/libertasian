@@ -153,7 +153,7 @@ export default function NotificationsScreen() {
                 <Ionicons
                   name="checkmark-done-outline"
                   size={22}
-                  color="#1a56db"
+                  color="#1C1A14"
                 />
               </TouchableOpacity>
             ) : null,

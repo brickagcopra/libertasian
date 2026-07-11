@@ -50,6 +50,8 @@ export interface LibraryScreenProps {
   onRefresh?: () => void;
   activeTab?: TabBarItemId;
   onTabPress?: (id: TabBarItemId) => void;
+  /** Top content padding. Default compensates for headerless routes; pass a small value under a native header. */
+  contentTopPadding?: number;
 }
 
 const DEFAULT_FILTERS = ['All', 'Cases', 'Statutes', 'Outlines', 'My uploads', 'Saved'];
@@ -99,6 +101,7 @@ export function LibraryScreen({
   onRefresh,
   activeTab = 'docs',
   onTabPress,
+  contentTopPadding = 60,
 }: LibraryScreenProps) {
   const { theme } = useTheme();
   const isControlledSearch = onSearchChange !== undefined;
@@ -107,7 +110,7 @@ export function LibraryScreen({
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
       <ScrollView
         contentContainerStyle={{
-          paddingTop: 60,
+          paddingTop: contentTopPadding,
           paddingBottom: 110,
           paddingHorizontal: 18,
         }}

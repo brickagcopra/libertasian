@@ -1,12 +1,9 @@
 import { Stack } from 'expo-router';
+import { sharedStackScreenOptions } from '@/components/navigation/stack-screen-options';
 
 export default function FeedLayout() {
   return (
-    <Stack
-      screenOptions={{
-        headerShown: false,
-      }}
-    >
+    <Stack screenOptions={{ ...sharedStackScreenOptions, headerShown: false }}>
       <Stack.Screen name="index" />
       <Stack.Screen name="organization" />
       <Stack.Screen name="bookmarks" />
@@ -16,8 +13,6 @@ export default function FeedLayout() {
           headerShown: true,
           title: 'Create Post',
           presentation: 'modal',
-          headerStyle: { backgroundColor: '#fff' },
-          headerTitleStyle: { fontSize: 17, fontWeight: '600', color: '#111827' },
         }}
       />
       <Stack.Screen
@@ -25,8 +20,6 @@ export default function FeedLayout() {
         options={{
           headerShown: true,
           title: 'Post',
-          headerStyle: { backgroundColor: '#fff' },
-          headerTitleStyle: { fontSize: 17, fontWeight: '600', color: '#111827' },
         }}
       />
     </Stack>

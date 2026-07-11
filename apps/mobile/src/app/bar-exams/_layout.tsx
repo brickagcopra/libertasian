@@ -1,15 +1,6 @@
 import { Stack } from 'expo-router';
+import { sharedStackScreenOptions } from '@/components/navigation/stack-screen-options';
 
 export default function BarExamsLayout() {
-  return (
-    <Stack
-      screenOptions={{
-        headerStyle: { backgroundColor: '#fff' },
-        headerTitleStyle: { fontSize: 17, fontWeight: '600', color: '#111827' },
-        headerTintColor: '#1a56db',
-        headerShadowVisible: false,
-        headerBackTitle: 'Back',
-      }}
-    />
-  );
+  return <Stack screenOptions={sharedStackScreenOptions} />;
 }

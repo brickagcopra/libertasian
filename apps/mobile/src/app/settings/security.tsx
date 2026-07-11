@@ -15,7 +15,6 @@ import * as Clipboard from 'expo-clipboard';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
-import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import {
   useChangePassword,
   useConfirmMfa,
@@ -458,7 +457,6 @@ export default function SecurityRoute() {
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
-      <ScreenHeader title="Security" style={{ paddingTop: 60 }} />
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}

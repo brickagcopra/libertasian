@@ -43,6 +43,8 @@ export interface ProfileScreenProps {
   onChangeTheme?: (key: ThemeKey) => void;
   activeTab?: TabBarItemId;
   onTabPress?: (id: TabBarItemId) => void;
+  /** Top content padding. Default compensates for headerless routes; pass a small value under a native header. */
+  contentTopPadding?: number;
 }
 
 const DEFAULT_STATS: ProfileStat[] = [
@@ -69,6 +71,7 @@ export function ProfileScreen({
   onChangeTheme,
   activeTab = 'me',
   onTabPress,
+  contentTopPadding = 60,
 }: ProfileScreenProps) {
   const { theme, themeKey: providerKey, setTheme } = useTheme();
   const activeThemeKey = themeKeyProp ?? providerKey;
@@ -85,7 +88,7 @@ export function ProfileScreen({
       <HeaderAmbient />
       <ScrollView
         contentContainerStyle={{
-          paddingTop: 60,
+          paddingTop: contentTopPadding,
           paddingBottom: 110,
           paddingHorizontal: 18,
         }}
