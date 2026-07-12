@@ -14,7 +14,9 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { JwtPayload } from '@libertasian/types';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { RequiredSubscription } from '../../common/decorators/subscription.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { SubscriptionGuard } from '../../common/guards/subscription.guard';
 import { AuditService } from '../audit/audit.service';
 import { BookmarksService } from './bookmarks.service';
 import { CreateBookmarkDto, ListBookmarksQueryDto } from './dto';
@@ -35,7 +37,11 @@ export class BookmarksController {
   ) {}
 
   @Post()
-  @ApiOperation({ summary: 'Create a bookmark on a legal document' })
+  @UseGuards(SubscriptionGuard)
+  @RequiredSubscription('edu')
+  @ApiOperation({
+    summary: 'Create a bookmark on a legal document (Edu plan or higher)',
+  })
   async create(
     @Body() dto: CreateBookmarkDto,
     @CurrentUser() user: JwtPayload,

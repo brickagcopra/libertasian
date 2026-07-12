@@ -1,7 +1,11 @@
 import { INestApplication } from '@nestjs/common';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const request = require('supertest') as typeof import('supertest');
-import { createTestApp, createAuthenticatedUser } from './helpers';
+import {
+  createTestApp,
+  createAuthenticatedUser,
+  upgradeOrgSubscription,
+} from './helpers';
 
 /**
  * Phase 4 Security Testing: SQL / NoSQL Injection Prevention
@@ -24,6 +28,9 @@ describe('SQL & NoSQL Injection Prevention (E2E)', () => {
     user = await createAuthenticatedUser(app, {
       email: `sqli-${Date.now()}@test.com`,
     });
+    // Bookmark creation is gated to edu tier — upgrade so injection tests
+    // reach the validation/service layer instead of the subscription guard.
+    await upgradeOrgSubscription(app, user.accessToken, 'edu');
   }, 30000);
 
   afterAll(async () => {

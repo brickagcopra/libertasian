@@ -157,6 +157,135 @@ describe('Subscription Enforcement (E2E)', () => {
     });
   });
 
+  // ─── Bookmarks & annotations creation — Edu tier required ────────────────
+
+  describe('Bookmarks & annotations creation — edu subscription required', () => {
+    // Deterministic UUID for the shared seeded source (Source.id is @db.Uuid).
+    const GATE_TEST_SOURCE_ID = '00000000-0000-4e2e-8e2e-000000000002';
+
+    /** Seed a minimal published legal document for successful create paths */
+    async function seedLegalDocument(): Promise<string> {
+      const prisma = app.get(PrismaService);
+      await prisma.source.upsert({
+        where: { id: GATE_TEST_SOURCE_ID },
+        update: {},
+        create: {
+          id: GATE_TEST_SOURCE_ID,
+          name: 'E2E Subscription Gate Test Source',
+          type: 'editorial',
+          trustLevel: 'medium',
+          fetchStrategy: 'manual',
+        },
+      });
+      const doc = await prisma.legalDocument.create({
+        data: {
+          sourceId: GATE_TEST_SOURCE_ID,
+          documentType: 'case',
+          jurisdiction: 'PH',
+          title: `E2E Gate Test Case ${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
+          citationText: 'G.R. No. 888888',
+          status: 'published',
+          isPublished: true,
+          isOfficial: false,
+          truthfulnessStatus: 'needs_review',
+        },
+      });
+      return doc.id;
+    }
+
+    it('should deny free tier user from creating a bookmark (403)', async () => {
+      const user = await createAuthenticatedUser(app, {
+        email: `sub-bm1-${Date.now()}@test.com`,
+      });
+      // Guard fires before validation/service, so a dummy UUID suffices
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/bookmarks')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .send({ legalDocumentId: '00000000-0000-0000-0000-000000000000' })
+        .expect(403);
+
+      const errorMsg =
+        res.body.error?.message ?? res.body.message ?? JSON.stringify(res.body);
+      expect(errorMsg.toLowerCase()).toMatch(/edu|subscription|plan/i);
+    });
+
+    it('should deny free tier user from creating an annotation (403)', async () => {
+      const user = await createAuthenticatedUser(app, {
+        email: `sub-an1-${Date.now()}@test.com`,
+      });
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/annotations')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .send({
+          legalDocumentId: '00000000-0000-0000-0000-000000000000',
+          textAnchor: { startOffset: 0, endOffset: 10, anchorText: 'test' },
+        })
+        .expect(403);
+
+      const errorMsg =
+        res.body.error?.message ?? res.body.message ?? JSON.stringify(res.body);
+      expect(errorMsg.toLowerCase()).toMatch(/edu|subscription|plan/i);
+    });
+
+    it('should allow edu tier user to create a bookmark', async () => {
+      const user = await createAuthenticatedUser(app, {
+        email: `sub-bm2-${Date.now()}@test.com`,
+      });
+      await upgradeSubscription(user.accessToken, 'edu');
+      const docId = await seedLegalDocument();
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/bookmarks')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .send({ legalDocumentId: docId, note: 'edu tier bookmark' })
+        .expect(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.id).toBeDefined();
+    });
+
+    it('should allow edu tier user to create an annotation', async () => {
+      const user = await createAuthenticatedUser(app, {
+        email: `sub-an2-${Date.now()}@test.com`,
+      });
+      await upgradeSubscription(user.accessToken, 'edu');
+      const docId = await seedLegalDocument();
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/annotations')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .send({
+          legalDocumentId: docId,
+          textAnchor: { startOffset: 0, endOffset: 10, anchorText: 'The court' },
+          color: 'yellow',
+        })
+        .expect(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.id).toBeDefined();
+    });
+
+    it('should still allow free tier user to list bookmarks (reads ungated)', async () => {
+      const user = await createAuthenticatedUser(app, {
+        email: `sub-bm3-${Date.now()}@test.com`,
+      });
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/bookmarks')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .expect(200);
+      expect(res.body.success).toBe(true);
+    });
+
+    it('should still allow free tier user to list annotations (reads ungated)', async () => {
+      const user = await createAuthenticatedUser(app, {
+        email: `sub-an3-${Date.now()}@test.com`,
+      });
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/annotations')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .expect(200);
+      expect(res.body.success).toBe(true);
+    });
+  });
+
   // ─── External API — Enterprise tier required ─────────────────────────────
 
   describe('External API — enterprise subscription required', () => {
