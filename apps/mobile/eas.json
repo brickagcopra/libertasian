@@ -46,7 +46,9 @@
       "node": "22.13.0",
       "pnpm": "10.30.3",
       "env": {
-        "API_URL": "https://libertasian.com/api/v1"
+        "API_URL": "https://libertasian.com/api/v1",
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "611735597639-gritsa8iokpu4h8t5kmbmfum9m3sr6fc.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "611735597639-pu2f1jbvsunsbt7sfhglhoo4i82kj1b9.apps.googleusercontent.com"
       },
       "autoIncrement": true,
       "ios": {
