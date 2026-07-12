@@ -1,7 +1,11 @@
 import { INestApplication } from '@nestjs/common';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const request = require('supertest') as typeof import('supertest');
-import { createTestApp, createAuthenticatedUser } from './helpers';
+import {
+  createTestApp,
+  createAuthenticatedUser,
+  upgradeOrgSubscription,
+} from './helpers';
 
 /**
  * Workspace Annotations + Activity Feed E2E tests.
@@ -73,6 +77,9 @@ describe('Workspace — Annotations & Activity (E2E)', () => {
       const user = await createAuthenticatedUser(app, {
         email: `annot-invalid-${Date.now()}@test.com`,
       });
+      // Annotation creation is edu-gated; upgrade so the SubscriptionGuard
+      // passes and the ValidationPipe (400) is what gets exercised.
+      await upgradeOrgSubscription(app, user.accessToken, 'edu');
 
       // Missing legalDocumentId
       await request(app.getHttpServer())
@@ -93,6 +100,9 @@ describe('Workspace — Annotations & Activity (E2E)', () => {
       const user = await createAuthenticatedUser(app, {
         email: `annot-whitelist-${Date.now()}@test.com`,
       });
+      // Annotation creation is edu-gated; upgrade so the SubscriptionGuard
+      // passes and the ValidationPipe (400) is what gets exercised.
+      await upgradeOrgSubscription(app, user.accessToken, 'edu');
 
       await request(app.getHttpServer())
         .post('/api/v1/annotations')

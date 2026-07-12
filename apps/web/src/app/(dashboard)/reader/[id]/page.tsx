@@ -47,6 +47,19 @@ import { DigestContentPanel } from '@/features/digests/components/digest-content
 import { AiSummaryTab } from './_components/ai-summary-tab';
 import { DigestsTab } from './_components/digests-tab';
 
+// Friendly copy shown when bookmark/annotation creation is blocked by the
+// subscription gate (API returns 402/403 for free-tier orgs).
+const UPGRADE_REQUIRED_MESSAGE =
+  'Bookmarks and annotations are available on Edu plans and above — upgrade to save your work.';
+
+/** True when the error is the subscription gate (402 Payment Required / 403 Forbidden). */
+function isSubscriptionGateError(error: unknown): error is ApiClientError {
+  return (
+    error instanceof ApiClientError &&
+    (error.statusCode === 402 || error.statusCode === 403)
+  );
+}
+
 // -- Color maps ---------------------------------------------------------------
 
 const HIGHLIGHT_BG: Record<AnnotationColor, string> = {
@@ -132,7 +145,9 @@ export default function ReaderPage() {
       setShowBookmarkForm(false);
       setBookmarkNote('');
     } catch (error) {
-      if (error instanceof ApiClientError) {
+      if (isSubscriptionGateError(error)) {
+        setBookmarkMsg(UPGRADE_REQUIRED_MESSAGE);
+      } else if (error instanceof ApiClientError) {
         setBookmarkMsg(error.message);
       } else {
         setBookmarkMsg('Failed to bookmark');
@@ -482,6 +497,7 @@ function AnnotatedSection({
   } | null>(null);
 
   const [activeAnnotation, setActiveAnnotation] = useState<Annotation | null>(null);
+  const [annotationMsg, setAnnotationMsg] = useState('');
 
   // Handle text selection within the section
   const handleMouseUp = useCallback(() => {
@@ -563,9 +579,21 @@ function AnnotatedSection({
             endOffset={selectionPopup.endOffset}
             isPending={createAnnotation.isPending}
             onSave={async (input) => {
-              await createAnnotation.mutateAsync(input);
-              setSelectionPopup(null);
-              globalThis.window.getSelection()?.removeAllRanges();
+              try {
+                setAnnotationMsg('');
+                await createAnnotation.mutateAsync(input);
+                setSelectionPopup(null);
+                globalThis.window.getSelection()?.removeAllRanges();
+              } catch (error) {
+                setSelectionPopup(null);
+                if (isSubscriptionGateError(error)) {
+                  setAnnotationMsg(UPGRADE_REQUIRED_MESSAGE);
+                } else if (error instanceof ApiClientError) {
+                  setAnnotationMsg(error.message);
+                } else {
+                  setAnnotationMsg('Failed to save annotation');
+                }
+              }
             }}
             onCancel={() => setSelectionPopup(null)}
           />
@@ -584,6 +612,11 @@ function AnnotatedSection({
           />
         )}
       </div>
+      {annotationMsg && (
+        <Alert className="mt-2">
+          <AlertDescription className="text-xs">{annotationMsg}</AlertDescription>
+        </Alert>
+      )}
       {section.pageStart != null && (
         <p className="mt-1 text-xs text-muted-foreground">
           Page {section.pageStart}

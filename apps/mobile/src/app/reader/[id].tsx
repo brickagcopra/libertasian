@@ -18,6 +18,7 @@ import {
   type DocumentReaderTopAction,
 } from '@/components/screens/DocumentReaderScreen';
 import { Button } from '@/components/ui/Button';
+import { ApiClientError } from '@/lib/api-client';
 import {
   useDocument,
   useDocumentSections,
@@ -286,8 +287,18 @@ export default function ReaderRoute() {
       });
       setBookmarkSheetOpen(false);
       setBookmarkNote('');
-    } catch {
-      Alert.alert('Error', 'Failed to create bookmark.');
+    } catch (error) {
+      if (
+        error instanceof ApiClientError &&
+        (error.statusCode === 402 || error.statusCode === 403)
+      ) {
+        Alert.alert(
+          'Upgrade required',
+          'Bookmarks and annotations are available on Edu plans and above — upgrade to save your work.',
+        );
+      } else {
+        Alert.alert('Error', 'Failed to create bookmark.');
+      }
     }
   }, [bookmarkNote, createBookmark, documentId]);
 

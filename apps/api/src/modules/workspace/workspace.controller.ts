@@ -16,9 +16,11 @@ import type { JwtPayload } from '@libertasian/types';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequiredPermissions } from '../../common/decorators/permissions.decorator';
+import { RequiredSubscription } from '../../common/decorators/subscription.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { TenantGuard } from '../../common/guards/tenant.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { SubscriptionGuard } from '../../common/guards/subscription.guard';
 import { TrackEvent } from '../analytics';
 import { AuditService } from '../audit/audit.service';
 import { WorkspaceService } from './workspace.service';
@@ -364,7 +366,12 @@ export class WorkspaceController {
   // ==========================================================================
 
   @Post('annotations')
-  @ApiOperation({ summary: 'Create an annotation/highlight on a legal document' })
+  @UseGuards(SubscriptionGuard)
+  @RequiredSubscription('edu')
+  @ApiOperation({
+    summary:
+      'Create an annotation/highlight on a legal document (Edu plan or higher)',
+  })
   @TrackEvent('annotation_created', (req) => ({
     color: (req.body?.['color'] as string) ?? 'yellow',
     text_length: (req.body?.['selectedText'] as string)?.length ?? 0,

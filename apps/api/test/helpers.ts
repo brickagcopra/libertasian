@@ -5,6 +5,7 @@ import cookieParser from 'cookie-parser';
 const request = require('supertest') as typeof import('supertest');
 import { AppModule } from '../src/app.module';
 import { AppThrottlerGuard } from '../src/common/guards/app-throttler.guard';
+import { PrismaService } from '../src/prisma/prisma.service';
 
 /**
  * Disable rate limiting by mocking canActivate on the throttler guard prototype.
@@ -127,6 +128,34 @@ export function extractRefreshCookie(setCookieHeader: string | string[] | undefi
   const pair = match.split(';')[0]; // "libertasian-refresh=VALUE"
   const value = decodeURIComponent(pair.split('=').slice(1).join('='));
   return { refreshToken: value, refreshCookie: pair };
+}
+
+/**
+ * Upgrade the authenticated user's org subscription plan directly in the DB.
+ * Needed since bookmark/annotation creation is gated to the `edu` tier —
+ * suites that exercise those create endpoints must upgrade their org first.
+ */
+export async function upgradeOrgSubscription(
+  app: INestApplication,
+  accessToken: string,
+  planCode: string,
+): Promise<void> {
+  const res = await request(app.getHttpServer())
+    .get('/api/v1/organizations/me')
+    .set('Authorization', `Bearer ${accessToken}`)
+    .expect(200);
+  const orgId = res.body.data[0].id as string;
+
+  const prisma = app.get(PrismaService);
+  const sub = await prisma.subscription.findFirst({
+    where: { organizationId: orgId, status: 'active' },
+  });
+  if (sub) {
+    await prisma.subscription.update({
+      where: { id: sub.id },
+      data: { planCode },
+    });
+  }
 }
 
 /** Create a test user and login — returns everything needed for authenticated requests */
