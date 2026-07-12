@@ -3,7 +3,7 @@ import { INestApplication } from '@nestjs/common';
 const request = require('supertest') as typeof import('supertest');
 import {
   createTestApp,
-  createAuthenticatedUser,
+  createTeamUser as createTeamUserHelper,
   registerTestUser,
   loginTestUser,
 } from './helpers';
@@ -12,6 +12,10 @@ import {
  * Workspace Matters E2E tests — CRUD, tenant isolation, role enforcement.
  * Per CLAUDE.md: "Test with automated E2E tests that attempt cross-tenant
  * reads/writes and assert 403."
+ *
+ * Test users are upgraded to the 'team' plan (unlimited maxMatters) because
+ * matter creation is entitlement-gated: free/edu plans have maxMatters = 0.
+ * The free-tier 403 path is covered in subscription-enforcement.e2e-spec.ts.
  */
 describe('Workspace — Matters (E2E)', () => {
   let app: INestApplication;
@@ -44,6 +48,16 @@ describe('Workspace — Matters (E2E)', () => {
     return res.body.data[0].id;
   }
 
+  /**
+   * Create an authenticated user on the 'team' plan (unlimited maxMatters).
+   * Matter creation is entitlement-gated and the free plan allows 0 matters.
+   */
+  function createTeamUser(
+    overrides?: Partial<{ email: string; password: string; fullName: string }>,
+  ) {
+    return createTeamUserHelper(app, overrides);
+  }
+
   async function inviteMemberToOrg(
     ownerToken: string,
     orgId: string,
@@ -60,7 +74,7 @@ describe('Workspace — Matters (E2E)', () => {
 
   describe('Create matter', () => {
     it('should create a matter with valid data', async () => {
-      const user = await createAuthenticatedUser(app, {
+      const user = await createTeamUser({
         email: `matter-create-${Date.now()}@test.com`,
       });
 
@@ -79,7 +93,7 @@ describe('Workspace — Matters (E2E)', () => {
     });
 
     it('should reject missing title', async () => {
-      const user = await createAuthenticatedUser(app, {
+      const user = await createTeamUser({
         email: `matter-notitle-${Date.now()}@test.com`,
       });
 
@@ -91,7 +105,7 @@ describe('Workspace — Matters (E2E)', () => {
     });
 
     it('should reject unknown fields (whitelist enforcement)', async () => {
-      const user = await createAuthenticatedUser(app, {
+      const user = await createTeamUser({
         email: `matter-whitelist-${Date.now()}@test.com`,
       });
 
@@ -114,7 +128,7 @@ describe('Workspace — Matters (E2E)', () => {
 
   describe('List and get matters', () => {
     it('should list only own org matters', async () => {
-      const user = await createAuthenticatedUser(app, {
+      const user = await createTeamUser({
         email: `matter-list-${Date.now()}@test.com`,
       });
 
@@ -134,7 +148,7 @@ describe('Workspace — Matters (E2E)', () => {
     });
 
     it('should get a matter by ID', async () => {
-      const user = await createAuthenticatedUser(app, {
+      const user = await createTeamUser({
         email: `matter-getid-${Date.now()}@test.com`,
       });
 
@@ -153,7 +167,7 @@ describe('Workspace — Matters (E2E)', () => {
     });
 
     it('should support cursor pagination', async () => {
-      const user = await createAuthenticatedUser(app, {
+      const user = await createTeamUser({
         email: `matter-page-${Date.now()}@test.com`,
       });
 
@@ -182,7 +196,7 @@ describe('Workspace — Matters (E2E)', () => {
     });
 
     it('should filter by status', async () => {
-      const user = await createAuthenticatedUser(app, {
+      const user = await createTeamUser({
         email: `matter-filter-${Date.now()}@test.com`,
       });
 
@@ -204,7 +218,7 @@ describe('Workspace — Matters (E2E)', () => {
 
   describe('Update matter', () => {
     it('should update matter fields', async () => {
-      const user = await createAuthenticatedUser(app, {
+      const user = await createTeamUser({
         email: `matter-update-${Date.now()}@test.com`,
       });
 
@@ -233,7 +247,7 @@ describe('Workspace — Matters (E2E)', () => {
 
   describe('Delete matter — role enforcement', () => {
     it('should allow owner to delete matter', async () => {
-      const owner = await createAuthenticatedUser(app, {
+      const owner = await createTeamUser({
         email: `matter-delowner-${Date.now()}@test.com`,
       });
 
@@ -259,7 +273,7 @@ describe('Workspace — Matters (E2E)', () => {
     });
 
     it('should deny non-admin/non-owner from deleting', async () => {
-      const owner = await createAuthenticatedUser(app, {
+      const owner = await createTeamUser({
         email: `matter-delrole-owner-${Date.now()}@test.com`,
       });
 
@@ -290,10 +304,10 @@ describe('Workspace — Matters (E2E)', () => {
 
   describe('Tenant isolation', () => {
     it('should not allow cross-org matter access (GET)', async () => {
-      const userA = await createAuthenticatedUser(app, {
+      const userA = await createTeamUser({
         email: `matter-iso-a-${Date.now()}@test.com`,
       });
-      const userB = await createAuthenticatedUser(app, {
+      const userB = await createTeamUser({
         email: `matter-iso-b-${Date.now()}@test.com`,
       });
 
@@ -311,10 +325,10 @@ describe('Workspace — Matters (E2E)', () => {
     });
 
     it('should not allow cross-org matter update', async () => {
-      const userA = await createAuthenticatedUser(app, {
+      const userA = await createTeamUser({
         email: `matter-isoupd-a-${Date.now()}@test.com`,
       });
-      const userB = await createAuthenticatedUser(app, {
+      const userB = await createTeamUser({
         email: `matter-isoupd-b-${Date.now()}@test.com`,
       });
 
@@ -331,10 +345,10 @@ describe('Workspace — Matters (E2E)', () => {
     });
 
     it('should isolate matter lists between orgs', async () => {
-      const userA = await createAuthenticatedUser(app, {
+      const userA = await createTeamUser({
         email: `matter-isolist-a-${Date.now()}@test.com`,
       });
-      const userB = await createAuthenticatedUser(app, {
+      const userB = await createTeamUser({
         email: `matter-isolist-b-${Date.now()}@test.com`,
       });
 
@@ -355,7 +369,7 @@ describe('Workspace — Matters (E2E)', () => {
 
   describe('Matter documents', () => {
     it('should list documents on a matter (initially empty)', async () => {
-      const user = await createAuthenticatedUser(app, {
+      const user = await createTeamUser({
         email: `matterdoc-list-${Date.now()}@test.com`,
       });
 
@@ -374,10 +388,10 @@ describe('Workspace — Matters (E2E)', () => {
     });
 
     it('should not list docs on cross-org matter', async () => {
-      const userA = await createAuthenticatedUser(app, {
+      const userA = await createTeamUser({
         email: `matterdoc-isoa-${Date.now()}@test.com`,
       });
-      const userB = await createAuthenticatedUser(app, {
+      const userB = await createTeamUser({
         email: `matterdoc-isob-${Date.now()}@test.com`,
       });
 
@@ -394,7 +408,7 @@ describe('Workspace — Matters (E2E)', () => {
     });
 
     it('should reject add-document with no document reference', async () => {
-      const user = await createAuthenticatedUser(app, {
+      const user = await createTeamUser({
         email: `matterdoc-noref-${Date.now()}@test.com`,
       });
 

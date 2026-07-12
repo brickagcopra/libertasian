@@ -1,11 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const request = require('supertest') as typeof import('supertest');
-import {
-  createTestApp,
-  createAuthenticatedUser,
-  updateSubscriptionPlan,
-} from './helpers';
+import { createTestApp, createTeamUser } from './helpers';
 
 /**
  * Phase 4 Security Testing: SQL / NoSQL Injection Prevention
@@ -21,16 +17,16 @@ import {
  */
 describe('SQL & NoSQL Injection Prevention (E2E)', () => {
   let app: INestApplication;
-  let user: Awaited<ReturnType<typeof createAuthenticatedUser>>;
+  let user: Awaited<ReturnType<typeof createTeamUser>>;
 
   beforeAll(async () => {
     app = await createTestApp();
-    user = await createAuthenticatedUser(app, {
+    // Team plan: matter creation is entitlement-gated (free plan = 0 matters)
+    // and bookmark creation is edu-gated — team satisfies both, so injection
+    // tests reach the validation/service layer instead of the guards.
+    user = await createTeamUser(app, {
       email: `sqli-${Date.now()}@test.com`,
     });
-    // Bookmark creation is gated to edu tier — upgrade so injection tests
-    // reach the validation/service layer instead of the subscription guard.
-    await updateSubscriptionPlan(app, user.accessToken, 'edu');
   }, 30000);
 
   afterAll(async () => {

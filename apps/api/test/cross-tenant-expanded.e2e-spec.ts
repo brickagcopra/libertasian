@@ -1,7 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const request = require('supertest') as typeof import('supertest');
-import { createTestApp, createAuthenticatedUser } from './helpers';
+import { createTestApp, createAuthenticatedUser, createTeamUser } from './helpers';
 
 /**
  * Expanded Cross-Tenant Isolation E2E Tests — Session 91
@@ -43,7 +43,7 @@ describe('Cross-Tenant Expanded Isolation (E2E)', () => {
 
   describe('Matters — cross-tenant isolation', () => {
     it('should not list another user\'s matters', async () => {
-      const userA = await createAuthenticatedUser(app, {
+      const userA = await createTeamUser(app, {
         email: `xten-mat-a-${Date.now()}@test.com`,
       });
       const userB = await createAuthenticatedUser(app, {
@@ -76,7 +76,7 @@ describe('Cross-Tenant Expanded Isolation (E2E)', () => {
     });
 
     it('should not allow User B to access User A\'s specific matter by ID', async () => {
-      const userA = await createAuthenticatedUser(app, {
+      const userA = await createTeamUser(app, {
         email: `xten-mat2-a-${Date.now()}@test.com`,
       });
       const userB = await createAuthenticatedUser(app, {
@@ -101,7 +101,7 @@ describe('Cross-Tenant Expanded Isolation (E2E)', () => {
     });
 
     it('should not allow User B to update User A\'s matter', async () => {
-      const userA = await createAuthenticatedUser(app, {
+      const userA = await createTeamUser(app, {
         email: `xten-mat3-a-${Date.now()}@test.com`,
       });
       const userB = await createAuthenticatedUser(app, {
@@ -183,7 +183,7 @@ describe('Cross-Tenant Expanded Isolation (E2E)', () => {
 
   describe('Tasks — cross-tenant isolation', () => {
     it('should not list another user\'s tasks', async () => {
-      const userA = await createAuthenticatedUser(app, {
+      const userA = await createTeamUser(app, {
         email: `xten-task-a-${Date.now()}@test.com`,
       });
       const userB = await createAuthenticatedUser(app, {

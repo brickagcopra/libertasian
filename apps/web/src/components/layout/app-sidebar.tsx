@@ -86,7 +86,7 @@ const NAV_ITEMS: NavItem[] = [
 
 const WORKSPACE_ITEMS: NavItem[] = [
   { href: '/workspace', label: 'Bookmarks', icon: BookmarkIcon, exact: true },
-  { href: '/workspace/matters', label: 'Matters', icon: FolderIcon },
+  { href: '/workspace/matters', label: 'Matters', icon: FolderIcon, minTier: 'pro' },
   { href: '/workspace/tasks', label: 'Tasks', icon: ListTodoIcon },
   { href: '/workspace/calendar', label: 'Calendar', icon: CalendarIcon },
   { href: '/workspace/notes', label: 'Notes', icon: StickyNoteIcon },

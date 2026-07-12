@@ -4,6 +4,7 @@ const request = require('supertest') as typeof import('supertest');
 import {
   createTestApp,
   createAuthenticatedUser,
+  createTeamUser,
   registerTestUser,
   loginTestUser,
 } from './helpers';
@@ -72,7 +73,8 @@ describe('Workspace — Tasks (E2E)', () => {
 
   describe('Create task', () => {
     it('should create a task with all fields', async () => {
-      const user = await createAuthenticatedUser(app, {
+      // Team plan: matter creation is entitlement-gated (free plan = 0 matters)
+      const user = await createTeamUser(app, {
         email: `task-create-${Date.now()}@test.com`,
       });
 

@@ -172,3 +172,17 @@ export async function createAuthenticatedUser(
   const login = await loginTestUser(app, registration.email, registration.password);
   return { ...registration, ...login };
 }
+
+/**
+ * Create an authenticated user whose org is on the 'team' plan (unlimited
+ * maxMatters). Use for suites that create matters as setup — the default
+ * free plan has maxMatters = 0 and matter creation is entitlement-gated.
+ */
+export async function createTeamUser(
+  app: INestApplication,
+  overrides?: Partial<{ email: string; password: string; fullName: string }>,
+) {
+  const user = await createAuthenticatedUser(app, overrides);
+  await updateSubscriptionPlan(app, user.accessToken, 'team');
+  return user;
+}
