@@ -42,7 +42,6 @@ import {
   annotationColorStyle,
 } from '@/features/annotations/colors';
 import type { Annotation, AnnotationColor } from '@/features/annotations/types';
-import { ApiClientError } from '@/lib/api-client';
 import { useDigests, useGenerateDigest } from '@/features/digests/hooks/use-digests';
 import { useRecentlyViewed } from '@/features/documents/hooks/use-recently-viewed';
 import { useOfflineCodals } from '@/features/study/hooks/use-offline-codals';
