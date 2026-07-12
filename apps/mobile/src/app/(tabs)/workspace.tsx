@@ -15,6 +15,7 @@ import { useNotes } from '../../features/workspace/hooks/use-notes';
 import { useTasks } from '../../features/workspace/hooks/use-tasks';
 import { useActivity } from '../../features/workspace/hooks/use-activity';
 import { useMemos } from '../../features/memos/hooks/use-memos';
+import { useAnnotations } from '../../features/annotations/hooks/use-annotations';
 import { useComparisons } from '../../features/case-comparisons/hooks/use-case-comparisons';
 import { usePleadings } from '../../features/pleadings/hooks/use-pleadings';
 import type { MatterListItem } from '../../features/workspace/types';
@@ -201,6 +202,7 @@ export default function WorkspaceTab() {
   const memos = useMemos({ limit: 5 });
   const comparisons = useComparisons({ limit: 5 });
   const pleadings = usePleadings({ limit: 5 });
+  const annotations = useAnnotations();
   const activity = useActivity({ limit: 8 });
 
   const isLoading =
@@ -215,10 +217,11 @@ export default function WorkspaceTab() {
       memos.refetch(),
       comparisons.refetch(),
       pleadings.refetch(),
+      annotations.refetch(),
       activity.refetch(),
     ]);
     setRefreshing(false);
-  }, [matters, notes, tasks, memos, comparisons, pleadings, activity]);
+  }, [matters, notes, tasks, memos, comparisons, pleadings, annotations, activity]);
 
   if (isLoading) {
     return (
@@ -242,6 +245,7 @@ export default function WorkspaceTab() {
   const totalMemos = memoItems.length;
   const totalComparisons = comparisonItems.length;
   const totalPleadings = pleadingItems.length;
+  const totalAnnotations = annotations.data?.length ?? 0;
 
   return (
     <ScrollView
@@ -302,6 +306,13 @@ export default function WorkspaceTab() {
           count={totalPleadings}
           color="#c2410c"
           onPress={() => router.push('/workspace/pleadings')}
+        />
+        <StatCard
+          icon="color-wand-outline"
+          label="Annotations"
+          count={totalAnnotations}
+          color="#ca8a04"
+          onPress={() => router.push('/workspace/annotations')}
         />
       </View>
 

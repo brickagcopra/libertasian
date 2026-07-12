@@ -12,6 +12,7 @@ import { useLocalSearchParams, router } from 'expo-router';
 import {
   DocumentReaderScreen,
   type DocumentReaderCitation,
+  type DocumentReaderParagraph,
   type DocumentReaderRelated,
   type DocumentReaderSection,
   type DocumentReaderTopAction,
@@ -29,6 +30,18 @@ import {
   useBookmarks,
   useCreateBookmark,
 } from '@/features/bookmarks/hooks/use-bookmarks';
+import {
+  useAnnotations,
+  useCreateAnnotation,
+  useDeleteAnnotation,
+} from '@/features/annotations/hooks/use-annotations';
+import {
+  ANNOTATION_COLOR_ORDER,
+  ANNOTATION_COLOR_STYLES,
+  annotationColorStyle,
+} from '@/features/annotations/colors';
+import type { Annotation, AnnotationColor } from '@/features/annotations/types';
+import { ApiClientError } from '@/lib/api-client';
 import { useDigests, useGenerateDigest } from '@/features/digests/hooks/use-digests';
 import { useRecentlyViewed } from '@/features/documents/hooks/use-recently-viewed';
 import { useOfflineCodals } from '@/features/study/hooks/use-offline-codals';
@@ -112,15 +125,57 @@ function headingFor(section: DocumentSection, index: number): string {
   return `Section ${index + 1}`;
 }
 
-function buildReaderSections(sections: DocumentSection[] | undefined): DocumentReaderSection[] {
+/**
+ * Attach annotations to the paragraphs they anchor. Paragraph offsets into
+ * section.plainText are recovered with a forward-moving indexOf cursor, and an
+ * annotation matches a paragraph when their offset ranges overlap — so
+ * highlights created on web (arbitrary selections) surface on mobile too.
+ */
+function buildParagraphs(
+  section: DocumentSection,
+  annotations: Annotation[] | undefined,
+): DocumentReaderParagraph[] {
+  const texts = paragraphsFromSection(section);
+  if (!annotations || annotations.length === 0) {
+    return texts.map((text) => ({ text }));
+  }
+  const plainText = section.plainText ?? '';
+  let cursor = 0;
+  return texts.map((text) => {
+    const start = plainText.indexOf(text, cursor);
+    const end = start === -1 ? -1 : start + text.length;
+    if (start !== -1) cursor = end;
+    const match =
+      start === -1
+        ? annotations.find((a) => a.textAnchor.anchorText === text)
+        : annotations.find(
+            (a) => a.textAnchor.startOffset < end && a.textAnchor.endOffset > start,
+          );
+    if (!match) return { text };
+    const { tint, solid } = annotationColorStyle(match.color);
+    return { text, annotation: { id: match.id, tint, solid } };
+  });
+}
+
+function buildReaderSections(
+  sections: DocumentSection[] | undefined,
+  annotations: Annotation[] | undefined,
+): DocumentReaderSection[] {
   if (!sections) return [];
+  const bySection = new Map<string, Annotation[]>();
+  for (const a of annotations ?? []) {
+    if (!a.sectionId) continue;
+    const list = bySection.get(a.sectionId);
+    if (list) list.push(a);
+    else bySection.set(a.sectionId, [a]);
+  }
   return sections
     .slice()
     .sort((a, b) => a.ordering - b.ordering)
     .map((s, i) => ({
       id: s.id,
       heading: headingFor(s, i),
-      paragraphs: paragraphsFromSection(s),
+      paragraphs: buildParagraphs(s, bySection.get(s.id)),
       pageStart: s.pageStart,
       pageEnd: s.pageEnd,
     }))
@@ -180,7 +235,22 @@ export default function ReaderRoute() {
   const [bookmarkSheetOpen, setBookmarkSheetOpen] = useState(false);
   const [bookmarkNote, setBookmarkNote] = useState('');
 
-  const readerSections = useMemo(() => buildReaderSections(sections), [sections]);
+  // Annotations — whole-paragraph highlights (see buildParagraphs).
+  const { data: annotations } = useAnnotations(documentId);
+  const createAnnotation = useCreateAnnotation();
+  const deleteAnnotation = useDeleteAnnotation();
+  const [annotationTarget, setAnnotationTarget] = useState<{
+    sectionId: string;
+    paragraphText: string;
+  } | null>(null);
+  const [annotationColor, setAnnotationColor] = useState<AnnotationColor>('yellow');
+  const [annotationNote, setAnnotationNote] = useState('');
+  const [viewedAnnotation, setViewedAnnotation] = useState<Annotation | null>(null);
+
+  const readerSections = useMemo(
+    () => buildReaderSections(sections, annotations),
+    [sections, annotations],
+  );
 
   const citations = useMemo<DocumentReaderCitation[] | undefined>(() => {
     if (!enableExtras) return undefined;
@@ -228,6 +298,87 @@ export default function ReaderRoute() {
     }
     setBookmarkSheetOpen(true);
   }, [isBookmarked]);
+
+  const handleParagraphLongPress = useCallback(
+    (sectionId: string, paragraphText: string) => {
+      setAnnotationColor('yellow');
+      setAnnotationNote('');
+      setAnnotationTarget({ sectionId, paragraphText });
+    },
+    [],
+  );
+
+  const handleAnnotationPress = useCallback(
+    (annotationId: string) => {
+      const found = annotations?.find((a) => a.id === annotationId);
+      if (found) setViewedAnnotation(found);
+    },
+    [annotations],
+  );
+
+  const submitAnnotation = useCallback(async () => {
+    if (!annotationTarget) return;
+    const section = sections?.find((s) => s.id === annotationTarget.sectionId);
+    const plainText = section?.plainText ?? '';
+    const startOffset = plainText.indexOf(annotationTarget.paragraphText);
+    if (startOffset === -1) {
+      setAnnotationTarget(null);
+      Alert.alert('Error', 'Could not anchor the highlight to this paragraph.');
+      return;
+    }
+    try {
+      await createAnnotation.mutateAsync({
+        legalDocumentId: documentId,
+        sectionId: annotationTarget.sectionId,
+        textAnchor: {
+          startOffset,
+          endOffset: startOffset + annotationTarget.paragraphText.length,
+          anchorText: annotationTarget.paragraphText,
+        },
+        annotationText: annotationNote.trim() || undefined,
+        color: annotationColor,
+      });
+      setAnnotationTarget(null);
+      setAnnotationNote('');
+    } catch (error) {
+      // Annotation creation is tier-gated server-side — surface the server's
+      // message for plan/permission rejections instead of a generic error.
+      if (
+        error instanceof ApiClientError &&
+        (error.statusCode === 403 || error.statusCode === 402)
+      ) {
+        Alert.alert('Upgrade required', error.serverMessage);
+        return;
+      }
+      Alert.alert('Error', 'Failed to save the annotation.');
+    }
+  }, [
+    annotationColor,
+    annotationNote,
+    annotationTarget,
+    createAnnotation,
+    documentId,
+    sections,
+  ]);
+
+  const handleDeleteAnnotation = useCallback(() => {
+    if (!viewedAnnotation) return;
+    Alert.alert('Delete annotation', 'Remove this highlight and its note?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await deleteAnnotation.mutateAsync(viewedAnnotation.id);
+            setViewedAnnotation(null);
+          } catch {
+            Alert.alert('Error', 'Failed to delete the annotation.');
+          }
+        },
+      },
+    ]);
+  }, [deleteAnnotation, viewedAnnotation]);
 
   const handleToggleOffline = useCallback(async () => {
     if (!doc) return;
@@ -357,6 +508,8 @@ export default function ReaderRoute() {
         onBack={() => router.back()}
         onBookmark={handleBookmark}
         onAdd={showDigestUI ? handleGenerateDigest : undefined}
+        onParagraphLongPress={handleParagraphLongPress}
+        onAnnotationPress={handleAnnotationPress}
       />
 
       {/* Bookmark-with-note sheet */}
@@ -421,6 +574,183 @@ export default function ReaderRoute() {
             >
               <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 14, color: theme.inkSoft }}>
                 Cancel
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Create-annotation sheet — long-press on a paragraph */}
+      <Modal
+        visible={annotationTarget !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setAnnotationTarget(null)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
+          <View
+            style={{
+              backgroundColor: theme.bg,
+              padding: 22,
+              paddingBottom: 36,
+              borderTopLeftRadius: 24,
+              borderTopRightRadius: 24,
+            }}
+          >
+            <Text style={{ fontFamily: theme.serif, fontSize: 24, letterSpacing: -0.5, color: theme.ink }}>
+              Highlight paragraph
+            </Text>
+            {annotationTarget ? (
+              <Text
+                numberOfLines={3}
+                style={{
+                  marginTop: 8,
+                  fontFamily: theme.serif,
+                  fontSize: 14,
+                  lineHeight: 20,
+                  color: theme.inkSoft,
+                  fontStyle: 'italic',
+                }}
+              >
+                “{annotationTarget.paragraphText}”
+              </Text>
+            ) : null}
+            <View style={{ height: 16 }} />
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              {ANNOTATION_COLOR_ORDER.map((c) => (
+                <Pressable
+                  key={c}
+                  onPress={() => setAnnotationColor(c)}
+                  accessibilityLabel={`Highlight color ${c}`}
+                  accessibilityState={{ selected: annotationColor === c }}
+                  style={{
+                    width: 34,
+                    height: 34,
+                    borderRadius: 17,
+                    backgroundColor: ANNOTATION_COLOR_STYLES[c].solid,
+                    borderWidth: annotationColor === c ? 3 : 1,
+                    borderColor: annotationColor === c ? theme.ink : theme.line,
+                  }}
+                />
+              ))}
+            </View>
+            <View style={{ height: 14 }} />
+            <TextInput
+              value={annotationNote}
+              onChangeText={setAnnotationNote}
+              placeholder="Add a note (optional)"
+              placeholderTextColor={theme.inkFaint}
+              multiline
+              numberOfLines={3}
+              style={{
+                backgroundColor: theme.surface,
+                borderColor: theme.line,
+                borderWidth: 1,
+                borderRadius: 12,
+                padding: 12,
+                minHeight: 76,
+                fontFamily: 'Inter_400Regular',
+                fontSize: 14,
+                color: theme.ink,
+                textAlignVertical: 'top',
+              }}
+            />
+            <View style={{ height: 14 }} />
+            <Button
+              label={createAnnotation.isPending ? 'Saving…' : 'Save highlight'}
+              variant="primary"
+              full
+              disabled={createAnnotation.isPending}
+              onPress={submitAnnotation}
+            />
+            <View style={{ height: 8 }} />
+            <Pressable
+              onPress={() => {
+                setAnnotationTarget(null);
+                setAnnotationNote('');
+              }}
+              style={{ paddingVertical: 12, alignItems: 'center' }}
+            >
+              <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 14, color: theme.inkSoft }}>
+                Cancel
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      {/* View/delete-annotation sheet — tap on an annotated paragraph */}
+      <Modal
+        visible={viewedAnnotation !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setViewedAnnotation(null)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
+          <View
+            style={{
+              backgroundColor: theme.bg,
+              padding: 22,
+              paddingBottom: 36,
+              borderTopLeftRadius: 24,
+              borderTopRightRadius: 24,
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <View
+                style={{
+                  width: 14,
+                  height: 14,
+                  borderRadius: 7,
+                  backgroundColor: annotationColorStyle(viewedAnnotation?.color ?? 'yellow')
+                    .solid,
+                }}
+              />
+              <Text style={{ fontFamily: theme.serif, fontSize: 24, letterSpacing: -0.5, color: theme.ink }}>
+                Annotation
+              </Text>
+            </View>
+            {viewedAnnotation ? (
+              <Text
+                numberOfLines={4}
+                style={{
+                  marginTop: 10,
+                  fontFamily: theme.serif,
+                  fontSize: 14,
+                  lineHeight: 20,
+                  color: theme.inkSoft,
+                  fontStyle: 'italic',
+                }}
+              >
+                “{viewedAnnotation.textAnchor.anchorText}”
+              </Text>
+            ) : null}
+            <Text
+              style={{
+                marginTop: 12,
+                fontFamily: 'Inter_400Regular',
+                fontSize: 14,
+                lineHeight: 20,
+                color: viewedAnnotation?.annotationText ? theme.ink : theme.inkFaint,
+              }}
+            >
+              {viewedAnnotation?.annotationText ?? 'No note added.'}
+            </Text>
+            <View style={{ height: 16 }} />
+            <Button
+              label={deleteAnnotation.isPending ? 'Deleting…' : 'Delete highlight'}
+              variant="destructive"
+              full
+              disabled={deleteAnnotation.isPending}
+              onPress={handleDeleteAnnotation}
+            />
+            <View style={{ height: 8 }} />
+            <Pressable
+              onPress={() => setViewedAnnotation(null)}
+              style={{ paddingVertical: 12, alignItems: 'center' }}
+            >
+              <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 14, color: theme.inkSoft }}>
+                Close
               </Text>
             </Pressable>
           </View>
