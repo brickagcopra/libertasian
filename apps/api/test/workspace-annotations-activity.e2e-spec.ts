@@ -4,6 +4,7 @@ const request = require('supertest') as typeof import('supertest');
 import {
   createTestApp,
   createAuthenticatedUser,
+  createTeamUser,
   updateSubscriptionPlan,
 } from './helpers';
 
@@ -126,7 +127,7 @@ describe('Workspace — Annotations & Activity (E2E)', () => {
     });
 
     it('should return activity entries after workspace operations', async () => {
-      const user = await createAuthenticatedUser(app, {
+      const user = await createTeamUser(app, {
         email: `activity-ops-${Date.now()}@test.com`,
       });
 
@@ -162,7 +163,7 @@ describe('Workspace — Annotations & Activity (E2E)', () => {
     });
 
     it('should filter activity by entity type', async () => {
-      const user = await createAuthenticatedUser(app, {
+      const user = await createTeamUser(app, {
         email: `activity-filter-${Date.now()}@test.com`,
       });
 
@@ -192,7 +193,7 @@ describe('Workspace — Annotations & Activity (E2E)', () => {
     });
 
     it('should support cursor pagination', async () => {
-      const user = await createAuthenticatedUser(app, {
+      const user = await createTeamUser(app, {
         email: `activity-page-${Date.now()}@test.com`,
       });
 
@@ -216,7 +217,7 @@ describe('Workspace — Annotations & Activity (E2E)', () => {
     });
 
     it('should isolate activity between orgs', async () => {
-      const userA = await createAuthenticatedUser(app, {
+      const userA = await createTeamUser(app, {
         email: `activity-iso-a-${Date.now()}@test.com`,
       });
       const userB = await createAuthenticatedUser(app, {

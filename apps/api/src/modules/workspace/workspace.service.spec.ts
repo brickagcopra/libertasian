@@ -8,6 +8,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { EntitlementService } from '../subscriptions/entitlement.service';
 import { WorkspaceService } from './workspace.service';
 import { CreateNoteDto } from './dto/create-note.dto';
 import { NOTIFICATION_EVENTS } from '../notifications/notification.events';
@@ -17,6 +18,7 @@ describe('WorkspaceService', () => {
   let prisma: {
     matter: {
       create: jest.Mock;
+      count: jest.Mock;
       findMany: jest.Mock;
       findFirst: jest.Mock;
       findUnique: jest.Mock;
@@ -78,6 +80,9 @@ describe('WorkspaceService', () => {
   };
   let eventEmitter: {
     emit: jest.Mock;
+  };
+  let entitlementService: {
+    getEffectiveLimit: jest.Mock;
   };
 
   const userId = 'user-1';
@@ -141,6 +146,7 @@ describe('WorkspaceService', () => {
           useValue: {
             matter: {
               create: jest.fn(),
+              count: jest.fn(),
               findMany: jest.fn(),
               findFirst: jest.fn(),
               findUnique: jest.fn(),
@@ -217,6 +223,12 @@ describe('WorkspaceService', () => {
             emit: jest.fn(),
           },
         },
+        {
+          provide: EntitlementService,
+          useValue: {
+            getEffectiveLimit: jest.fn().mockResolvedValue(-1),
+          },
+        },
       ],
     }).compile();
 
@@ -224,6 +236,7 @@ describe('WorkspaceService', () => {
     prisma = module.get(PrismaService) as unknown as typeof prisma;
     prisma.forTenant.mockReturnValue(prisma);
     eventEmitter = module.get(EventEmitter2) as unknown as typeof eventEmitter;
+    entitlementService = module.get(EntitlementService) as unknown as typeof entitlementService;
   });
 
   // =========================================================================
@@ -251,6 +264,57 @@ describe('WorkspaceService', () => {
           court: 'RTC Manila',
         },
       });
+    });
+
+    it('should not count matters when limit is unlimited (-1)', async () => {
+      (prisma.matter.create as jest.Mock).mockResolvedValue(mockMatter);
+
+      await service.createMatter(
+        { title: 'Reyes v. Santos' },
+        orgId,
+        userId,
+      );
+
+      expect(entitlementService.getEffectiveLimit).toHaveBeenCalledWith(orgId, 'maxMatters');
+      expect(prisma.matter.count).not.toHaveBeenCalled();
+    });
+
+    it('should throw ForbiddenException when plan allows 0 matters', async () => {
+      entitlementService.getEffectiveLimit.mockResolvedValue(0);
+      (prisma.matter.count as jest.Mock).mockResolvedValue(0);
+
+      await expect(
+        service.createMatter({ title: 'Reyes v. Santos' }, orgId, userId),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.matter.create).not.toHaveBeenCalled();
+    });
+
+    it('should throw ForbiddenException when active matter count reaches the limit', async () => {
+      entitlementService.getEffectiveLimit.mockResolvedValue(20);
+      (prisma.matter.count as jest.Mock).mockResolvedValue(20);
+
+      await expect(
+        service.createMatter({ title: 'Reyes v. Santos' }, orgId, userId),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.matter.count).toHaveBeenCalledWith({
+        where: { status: { notIn: ['closed', 'archived'] } },
+      });
+      expect(prisma.matter.create).not.toHaveBeenCalled();
+    });
+
+    it('should create when active matter count is below the limit', async () => {
+      entitlementService.getEffectiveLimit.mockResolvedValue(20);
+      (prisma.matter.count as jest.Mock).mockResolvedValue(19);
+      (prisma.matter.create as jest.Mock).mockResolvedValue(mockMatter);
+
+      const result = await service.createMatter(
+        { title: 'Reyes v. Santos' },
+        orgId,
+        userId,
+      );
+
+      expect(result).toEqual(mockMatter);
+      expect(prisma.matter.create).toHaveBeenCalled();
     });
   });
 

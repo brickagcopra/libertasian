@@ -7,6 +7,7 @@ import {
   updateSubscriptionPlan,
 } from './helpers';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { EntitlementService } from '../src/modules/subscriptions/entitlement.service';
 
 /**
  * Subscription Enforcement E2E Tests — Session 91
@@ -63,6 +64,8 @@ describe('Subscription Enforcement (E2E)', () => {
         },
       });
     }
+    // Drop any cached entitlements so the new plan takes effect immediately
+    await app.get(EntitlementService).invalidateEntitlementCache(orgId);
   }
 
   // ─── API Keys — Enterprise tier required ─────────────────────────────────
@@ -447,6 +450,61 @@ describe('Subscription Enforcement (E2E)', () => {
         .set('Authorization', `Bearer ${user.accessToken}`)
         .expect(200);
       expect(res.body.success).toBe(true);
+    });
+  });
+
+  // ─── Matter creation — maxMatters entitlement ────────────────────────────
+
+  describe('Matter creation — maxMatters entitlement', () => {
+    function createMatter(token: string) {
+      return request(app.getHttpServer())
+        .post('/api/v1/matters')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ title: `Entitlement Matter ${Date.now()}` });
+    }
+
+    it('should deny free tier user from creating a matter (403)', async () => {
+      const user = await createAuthenticatedUser(app, {
+        email: `sub-mat1-${Date.now()}@test.com`,
+      });
+      const res = await createMatter(user.accessToken).expect(403);
+      expect(res.body.message).toBe('Matters are available on Pro plans and above.');
+      expect(res.body.quota).toEqual({ used: 0, limit: 0, resetsAt: '' });
+    });
+
+    it('should allow pro tier user to create a matter (limit 20)', async () => {
+      const user = await createAuthenticatedUser(app, {
+        email: `sub-mat2-${Date.now()}@test.com`,
+      });
+      await upgradeSubscription(user.accessToken, 'pro');
+      const res = await createMatter(user.accessToken).expect(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.status).toBe('active');
+    });
+
+    it('should enforce the pro plan active-matter limit (403 when full)', async () => {
+      const user = await createAuthenticatedUser(app, {
+        email: `sub-mat3-${Date.now()}@test.com`,
+      });
+      // Shrink the limit to 1 via per-subscription override to keep the test fast
+      await upgradeSubscription(user.accessToken, 'pro', { maxMatters: 1 });
+
+      await createMatter(user.accessToken).expect(201);
+      const res = await createMatter(user.accessToken).expect(403);
+      expect(res.body.message).toBe(
+        'Matter limit reached. Your plan allows 1 active matters.',
+      );
+      expect(res.body.quota).toEqual({ used: 1, limit: 1, resetsAt: '' });
+    });
+
+    it('should allow team tier user to create matters without limit', async () => {
+      const user = await createAuthenticatedUser(app, {
+        email: `sub-mat4-${Date.now()}@test.com`,
+      });
+      await upgradeSubscription(user.accessToken, 'team');
+      await createMatter(user.accessToken).expect(201);
+      await createMatter(user.accessToken).expect(201);
+      await createMatter(user.accessToken).expect(201);
     });
   });
 

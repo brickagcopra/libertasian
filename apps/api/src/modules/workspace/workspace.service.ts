@@ -12,6 +12,7 @@ import * as bcrypt from 'bcrypt';
 import type { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { EntitlementService } from '../subscriptions/entitlement.service';
 import { NOTIFICATION_EVENTS } from '../notifications/notification.events';
 import type {
   TaskAssignedEvent,
@@ -45,6 +46,7 @@ export class WorkspaceService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly entitlementService: EntitlementService,
   ) {}
 
   // ==========================================================================
@@ -56,6 +58,28 @@ export class WorkspaceService {
     organizationId: string,
     userId: string,
   ) {
+    // Enforce the plan's maxMatters entitlement (static limit; -1 = unlimited).
+    const limit = await this.entitlementService.getEffectiveLimit(
+      organizationId,
+      'maxMatters',
+    );
+    if (limit !== -1) {
+      const activeCount = await this.prisma
+        .forTenant(organizationId)
+        .matter.count({
+          where: { status: { notIn: ['closed', 'archived'] } },
+        });
+      if (activeCount >= limit) {
+        throw new ForbiddenException({
+          message:
+            limit === 0
+              ? 'Matters are available on Pro plans and above.'
+              : `Matter limit reached. Your plan allows ${limit} active matters.`,
+          quota: { used: activeCount, limit, resetsAt: '' },
+        });
+      }
+    }
+
     // Helper also injects this on create; explicit pass kept for TS NOT NULL.
     return this.prisma.forTenant(organizationId).matter.create({
       data: {

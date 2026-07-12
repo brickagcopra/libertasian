@@ -7,6 +7,7 @@ import { S3Service } from '../src/modules/uploads/s3.service';
 import {
   createTestApp,
   createAuthenticatedUser,
+  createTeamUser,
   registerTestUser,
   loginTestUser,
   disableRateLimiting,
@@ -94,7 +95,8 @@ describe('Authentication & Authorization Security (E2E)', () => {
 
   describe('IDOR prevention', () => {
     it('should not allow user A to access user B private digests by ID', async () => {
-      const userA = await createAuthenticatedUser(app, {
+      // Team plan so the matter create succeeds (free plan = 0 matters)
+      const userA = await createTeamUser(app, {
         email: `idor-a-${Date.now()}@test.com`,
       });
       const userB = await createAuthenticatedUser(app, {
@@ -151,7 +153,8 @@ describe('Authentication & Authorization Security (E2E)', () => {
     });
 
     it('should not allow user A to delete user B resources', async () => {
-      const userA = await createAuthenticatedUser(app, {
+      // Team plan so the matter create succeeds (free plan = 0 matters)
+      const userA = await createTeamUser(app, {
         email: `idor-del-a-${Date.now()}@test.com`,
       });
       const userB = await createAuthenticatedUser(app, {
