@@ -1,7 +1,11 @@
 import { INestApplication } from '@nestjs/common';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const request = require('supertest') as typeof import('supertest');
-import { createTestApp, createAuthenticatedUser } from './helpers';
+import {
+  createTestApp,
+  createAuthenticatedUser,
+  updateSubscriptionPlan,
+} from './helpers';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 /**
@@ -283,6 +287,81 @@ describe('Subscription Enforcement (E2E)', () => {
         .set('Authorization', `Bearer ${user.accessToken}`)
         .expect(200);
       expect(res.body.success).toBe(true);
+    });
+  });
+
+  // ─── Document uploads — Pro tier required ────────────────────────────────
+
+  describe('Document uploads — pro subscription required', () => {
+    /** Minimal valid PDF so requests reach (and pass) magic-byte validation */
+    function createTestPdfBuffer(): Buffer {
+      const pdfContent =
+        '%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n' +
+        '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n' +
+        '3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R>>endobj\n' +
+        'xref\n0 4\n0000000000 65535 f \n0000000009 00000 n \n' +
+        '0000000058 00000 n \n0000000115 00000 n \n' +
+        'trailer<</Size 4/Root 1 0 R>>\nstartxref\n190\n%%EOF';
+      return Buffer.from(pdfContent);
+    }
+
+    it('should deny free tier user from uploading documents (403)', async () => {
+      const user = await createAuthenticatedUser(app, {
+        email: `sub-du1-${Date.now()}@test.com`,
+      });
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/uploads')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .attach('file', createTestPdfBuffer(), {
+          filename: 'gated.pdf',
+          contentType: 'application/pdf',
+        })
+        .expect(403);
+
+      const errorMsg =
+        res.body.error?.message ?? res.body.message ?? JSON.stringify(res.body);
+      expect(errorMsg.toLowerCase()).toContain('pro');
+    });
+
+    it('should deny edu tier user from uploading documents (403)', async () => {
+      const user = await createAuthenticatedUser(app, {
+        email: `sub-du2-${Date.now()}@test.com`,
+      });
+      await updateSubscriptionPlan(app, user.accessToken, 'edu');
+
+      await request(app.getHttpServer())
+        .post('/api/v1/uploads')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .attach('file', createTestPdfBuffer(), {
+          filename: 'gated-edu.pdf',
+          contentType: 'application/pdf',
+        })
+        .expect(403);
+    });
+
+    it('should allow pro tier user to upload documents (202)', async () => {
+      const user = await createAuthenticatedUser(app, {
+        email: `sub-du3-${Date.now()}@test.com`,
+      });
+      await updateSubscriptionPlan(app, user.accessToken, 'pro');
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/uploads')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .attach('file', createTestPdfBuffer(), {
+          filename: 'allowed-pro.pdf',
+          contentType: 'application/pdf',
+        });
+
+      // Must NOT be plan-gated. 500 acceptable only when S3/ClamAV is
+      // unavailable in the test environment (same as camera-scan spec).
+      expect(res.status).not.toBe(403);
+      expect([202, 500]).toContain(res.status);
+      if (res.status === 202) {
+        expect(res.body.success).toBe(true);
+        expect(res.body.data.id).toBeDefined();
+      }
     });
   });
 

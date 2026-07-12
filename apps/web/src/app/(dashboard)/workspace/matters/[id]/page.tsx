@@ -17,7 +17,15 @@ import {
   useDeleteMatterComment,
 } from '@/features/workspace/hooks/use-matter-comments';
 import { ShareDialog } from '@/features/workspace/components/share-dialog';
+import {
+  ACCEPTED_UPLOAD_EXTENSIONS,
+  useCanUploadDocuments,
+  useUploadDocument,
+  validateDocumentFile,
+} from '@/features/scans/hooks/use-upload-document';
 import { MatterDetailSkeleton } from '@/components/ui/skeleton';
+import { Progress } from '@/components/ui/progress';
+import { ApiClientError } from '@/lib/api-client';
 import { ROUTES } from '@/lib/constants';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -42,7 +50,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { AlertCircleIcon, ShareIcon, Trash2Icon } from 'lucide-react';
+import { AlertCircleIcon, LockIcon, ShareIcon, Trash2Icon } from 'lucide-react';
 import type {
   MatterDetail,
   MatterDocument,
@@ -331,13 +339,28 @@ function AddDocumentDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const addDocument = useAddMatterDocument();
-  const [mode, setMode] = useState<'corpus' | 'upload'>('corpus');
+  const uploadDocument = useUploadDocument();
+  const { allowed: canUploadFiles, loading: uploadGateLoading } =
+    useCanUploadDocuments();
+  const [mode, setMode] = useState<'corpus' | 'upload' | 'file'>('corpus');
   const [form, setForm] = useState<AddMatterDocumentInput>({
     legalDocumentId: '',
     userUploadId: '',
     title: '',
     role: 'reference',
   });
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+
+  const uploadGated = !uploadGateLoading && !canUploadFiles;
+  const isPending = addDocument.isPending || uploadDocument.isPending;
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] ?? null;
+    setSelectedFile(file);
+    setFileError(file ? validateDocumentFile(file) : null);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -352,6 +375,18 @@ function AddDocumentDialog({
       payload.legalDocumentId = form.legalDocumentId;
     } else if (mode === 'upload' && form.userUploadId) {
       payload.userUploadId = form.userUploadId;
+    } else if (mode === 'file' && selectedFile && !fileError && !uploadGated) {
+      try {
+        setUploadProgress(0);
+        const uploaded = await uploadDocument.mutateAsync({
+          file: selectedFile,
+          onProgress: setUploadProgress,
+        });
+        payload.userUploadId = uploaded.data.id;
+      } catch {
+        // Error handled by mutation state
+        return;
+      }
     } else {
       return;
     }
@@ -387,6 +422,15 @@ function AddDocumentDialog({
             onClick={() => setMode('upload')}
           >
             User Upload
+          </Button>
+          <Button
+            type="button"
+            variant={mode === 'file' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setMode('file')}
+          >
+            {uploadGated && <LockIcon className="mr-1.5 size-3.5" />}
+            Upload file
           </Button>
         </div>
 
@@ -431,6 +475,49 @@ function AddDocumentDialog({
             </div>
           )}
 
+          {mode === 'file' &&
+            (uploadGated ? (
+              <div className="space-y-2 rounded-lg border bg-muted/40 p-4 text-center">
+                <p className="text-sm font-medium">
+                  Document uploads are available on Pro plans and above.
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Upgrade to upload PDFs and images directly to this matter.
+                </p>
+                <Button asChild variant="outline" size="sm">
+                  <Link href="/pricing">View plans &amp; upgrade</Link>
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Label htmlFor="matter-file">
+                  File <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  id="matter-file"
+                  type="file"
+                  accept={ACCEPTED_UPLOAD_EXTENSIONS}
+                  onChange={handleFileChange}
+                  disabled={isPending}
+                />
+                <p className="text-xs text-muted-foreground/70">
+                  PDF up to 50MB, or JPEG/PNG/WebP image up to 20MB. The file
+                  is uploaded, then attached to this matter.
+                </p>
+                {fileError && (
+                  <p className="text-sm text-destructive">{fileError}</p>
+                )}
+                {uploadDocument.isPending && (
+                  <div className="space-y-1">
+                    <Progress value={uploadProgress} />
+                    <p className="text-xs text-muted-foreground">
+                      Uploading… {uploadProgress}%
+                    </p>
+                  </div>
+                )}
+              </div>
+            ))}
+
           <div className="space-y-2">
             <Label htmlFor="doc-title">Display Title (optional)</Label>
             <Input
@@ -462,6 +549,15 @@ function AddDocumentDialog({
             </Select>
           </div>
 
+          {uploadDocument.error != null && !uploadDocument.isPending && (
+            <p className="text-sm text-destructive">
+              {uploadDocument.error instanceof ApiClientError &&
+              uploadDocument.error.statusCode === 403
+                ? 'Document uploads are available on Pro plans and above.'
+                : 'Upload failed. Please try again.'}
+            </p>
+          )}
+
           {addDocument.error && (
             <p className="text-sm text-destructive">
               {addDocument.error instanceof Error
@@ -474,8 +570,21 @@ function AddDocumentDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={addDocument.isPending}>
-              {addDocument.isPending ? 'Adding...' : 'Add Document'}
+            <Button
+              type="submit"
+              disabled={
+                isPending ||
+                (mode === 'file' &&
+                  (uploadGated || !selectedFile || !!fileError))
+              }
+            >
+              {uploadDocument.isPending
+                ? 'Uploading...'
+                : addDocument.isPending
+                  ? 'Adding...'
+                  : mode === 'file'
+                    ? 'Upload & Add'
+                    : 'Add Document'}
             </Button>
           </DialogFooter>
         </form>

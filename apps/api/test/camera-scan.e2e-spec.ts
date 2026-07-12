@@ -2,7 +2,11 @@ import { INestApplication } from '@nestjs/common';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const request = require('supertest') as typeof import('supertest');
 import * as path from 'path';
-import { createTestApp, createAuthenticatedUser } from './helpers';
+import {
+  createTestApp,
+  createAuthenticatedUser,
+  updateSubscriptionPlan,
+} from './helpers';
 
 /**
  * Camera Scan & Upload E2E tests (Phase 3 Batch 7).
@@ -31,6 +35,18 @@ describe('Camera Scan & Uploads (E2E)', () => {
   afterAll(async () => {
     await app.close();
   });
+
+  /**
+   * POST /uploads (document upload) is plan-gated (documentUploadsPerMonth:
+   * pro+ only), so tests that upload documents need a pro user to get past
+   * the quota gate. Camera-scan tests keep free users (free plan includes
+   * cameraScansPerMonth: 3).
+   */
+  async function createProUser(email: string) {
+    const user = await createAuthenticatedUser(app, { email });
+    await updateSubscriptionPlan(app, user.accessToken, 'pro');
+    return user;
+  }
 
   // Helper: create a minimal valid JPEG buffer (1x1 pixel)
   function createTestJpegBuffer(): Buffer {
@@ -89,9 +105,7 @@ describe('Camera Scan & Uploads (E2E)', () => {
     });
 
     it('should accept a valid file upload and return 202', async () => {
-      const user = await createAuthenticatedUser(app, {
-        email: `upload-test-${Date.now()}@test.com`,
-      });
+      const user = await createProUser(`upload-test-${Date.now()}@test.com`);
 
       const res = await request(app.getHttpServer())
         .post('/api/v1/uploads')
@@ -112,9 +126,7 @@ describe('Camera Scan & Uploads (E2E)', () => {
     });
 
     it('should default privacy level to private', async () => {
-      const user = await createAuthenticatedUser(app, {
-        email: `priv-default-${Date.now()}@test.com`,
-      });
+      const user = await createProUser(`priv-default-${Date.now()}@test.com`);
 
       const res = await request(app.getHttpServer())
         .post('/api/v1/uploads')
@@ -188,9 +200,7 @@ describe('Camera Scan & Uploads (E2E)', () => {
 
   describe('GET /api/v1/uploads — list uploads', () => {
     it('should list only the current user\'s uploads (org-scoped)', async () => {
-      const user = await createAuthenticatedUser(app, {
-        email: `list-uploads-${Date.now()}@test.com`,
-      });
+      const user = await createProUser(`list-uploads-${Date.now()}@test.com`);
 
       // Upload a file (may fail with 500 if S3/ClamAV not available)
       const uploadRes = await request(app.getHttpServer())
@@ -218,9 +228,7 @@ describe('Camera Scan & Uploads (E2E)', () => {
 
   describe('Cross-tenant upload isolation', () => {
     it('should not show User A\'s uploads to User B', async () => {
-      const userA = await createAuthenticatedUser(app, {
-        email: `iso-a-${Date.now()}@test.com`,
-      });
+      const userA = await createProUser(`iso-a-${Date.now()}@test.com`);
       const userB = await createAuthenticatedUser(app, {
         email: `iso-b-${Date.now()}@test.com`,
       });
@@ -252,9 +260,7 @@ describe('Camera Scan & Uploads (E2E)', () => {
     });
 
     it('should not allow User B to access User A\'s upload by ID', async () => {
-      const userA = await createAuthenticatedUser(app, {
-        email: `iso-get-a-${Date.now()}@test.com`,
-      });
+      const userA = await createProUser(`iso-get-a-${Date.now()}@test.com`);
       const userB = await createAuthenticatedUser(app, {
         email: `iso-get-b-${Date.now()}@test.com`,
       });
@@ -281,9 +287,7 @@ describe('Camera Scan & Uploads (E2E)', () => {
     });
 
     it('should not allow User B to delete User A\'s upload', async () => {
-      const userA = await createAuthenticatedUser(app, {
-        email: `iso-del-a-${Date.now()}@test.com`,
-      });
+      const userA = await createProUser(`iso-del-a-${Date.now()}@test.com`);
       const userB = await createAuthenticatedUser(app, {
         email: `iso-del-b-${Date.now()}@test.com`,
       });
@@ -312,9 +316,7 @@ describe('Camera Scan & Uploads (E2E)', () => {
 
   describe('GET /api/v1/uploads/:id/status — processing status', () => {
     it('should return processing status for own upload', async () => {
-      const user = await createAuthenticatedUser(app, {
-        email: `status-${Date.now()}@test.com`,
-      });
+      const user = await createProUser(`status-${Date.now()}@test.com`);
 
       const uploadRes = await request(app.getHttpServer())
         .post('/api/v1/uploads')
@@ -345,9 +347,9 @@ describe('Camera Scan & Uploads (E2E)', () => {
       // Default registered user has free plan — per CLAUDE.md:
       // "Free users: return OCR text only. Block digest generation with upgrade prompt.
       //  Enforce at API level, not just UI."
-      const user = await createAuthenticatedUser(app, {
-        email: `free-digest-${Date.now()}@test.com`,
-      });
+      // Document uploads are pro-gated, so upload as pro first, then
+      // downgrade the org back to free before the digest attempt.
+      const user = await createProUser(`free-digest-${Date.now()}@test.com`);
 
       const uploadRes = await request(app.getHttpServer())
         .post('/api/v1/uploads')
@@ -363,6 +365,9 @@ describe('Camera Scan & Uploads (E2E)', () => {
 
       const uploadId = uploadRes.body.data.id;
 
+      // Back to the free plan for the entitlement assertion
+      await updateSubscriptionPlan(app, user.accessToken, 'free');
+
       // Free user tries to generate a digest — should be rejected (403)
       await request(app.getHttpServer())
         .post(`/api/v1/uploads/${uploadId}/generate-digest`)
@@ -374,9 +379,7 @@ describe('Camera Scan & Uploads (E2E)', () => {
 
   describe('PATCH /api/v1/uploads/:id/privacy — privacy management', () => {
     it('should allow owner to update privacy level', async () => {
-      const user = await createAuthenticatedUser(app, {
-        email: `privacy-${Date.now()}@test.com`,
-      });
+      const user = await createProUser(`privacy-${Date.now()}@test.com`);
 
       const uploadRes = await request(app.getHttpServer())
         .post('/api/v1/uploads')
@@ -403,9 +406,7 @@ describe('Camera Scan & Uploads (E2E)', () => {
     });
 
     it('should not allow cross-tenant privacy updates', async () => {
-      const userA = await createAuthenticatedUser(app, {
-        email: `priv-iso-a-${Date.now()}@test.com`,
-      });
+      const userA = await createProUser(`priv-iso-a-${Date.now()}@test.com`);
       const userB = await createAuthenticatedUser(app, {
         email: `priv-iso-b-${Date.now()}@test.com`,
       });
@@ -435,9 +436,7 @@ describe('Camera Scan & Uploads (E2E)', () => {
 
   describe('DELETE /api/v1/uploads/:id — upload deletion', () => {
     it('should allow owner to delete their upload', async () => {
-      const user = await createAuthenticatedUser(app, {
-        email: `delete-${Date.now()}@test.com`,
-      });
+      const user = await createProUser(`delete-${Date.now()}@test.com`);
 
       const uploadRes = await request(app.getHttpServer())
         .post('/api/v1/uploads')

@@ -6,6 +6,7 @@ const request = require('supertest') as typeof import('supertest');
 import { AppModule } from '../src/app.module';
 import { AppThrottlerGuard } from '../src/common/guards/app-throttler.guard';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { EntitlementService } from '../src/modules/subscriptions/entitlement.service';
 
 /**
  * Disable rate limiting by mocking canActivate on the throttler guard prototype.
@@ -131,20 +132,20 @@ export function extractRefreshCookie(setCookieHeader: string | string[] | undefi
 }
 
 /**
- * Upgrade the authenticated user's org subscription plan directly in the DB.
- * Needed since bookmark/annotation creation is gated to the `edu` tier —
- * suites that exercise those create endpoints must upgrade their org first.
+ * Change a user's organization to a different subscription plan (direct
+ * Prisma update) and invalidate the Redis entitlement cache so quota
+ * checks immediately reflect the new plan.
  */
-export async function upgradeOrgSubscription(
+export async function updateSubscriptionPlan(
   app: INestApplication,
   accessToken: string,
   planCode: string,
 ): Promise<void> {
-  const res = await request(app.getHttpServer())
+  const orgRes = await request(app.getHttpServer())
     .get('/api/v1/organizations/me')
     .set('Authorization', `Bearer ${accessToken}`)
     .expect(200);
-  const orgId = res.body.data[0].id as string;
+  const orgId = orgRes.body.data[0].id as string;
 
   const prisma = app.get(PrismaService);
   const sub = await prisma.subscription.findFirst({
@@ -156,6 +157,10 @@ export async function upgradeOrgSubscription(
       data: { planCode },
     });
   }
+
+  // Entitlements are cached in Redis for 2 minutes — invalidate so the
+  // plan change takes effect for the next quota/entitlement check.
+  await app.get(EntitlementService).invalidateEntitlementCache(orgId);
 }
 
 /** Create a test user and login — returns everything needed for authenticated requests */
