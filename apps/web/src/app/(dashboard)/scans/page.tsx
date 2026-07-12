@@ -1,8 +1,10 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import { useScans } from '@/features/scans/hooks/use-scans';
+import { useCanUploadDocuments } from '@/features/scans/hooks/use-upload-document';
+import { UploadDocumentDialog } from '@/features/scans/components/upload-document-dialog';
 import type { ProcessingStatus, ScanListItem } from '@/features/scans/types';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -17,7 +19,14 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
-import { FileTextIcon, CameraIcon, AlertCircleIcon, SearchIcon } from 'lucide-react';
+import {
+  FileTextIcon,
+  CameraIcon,
+  AlertCircleIcon,
+  SearchIcon,
+  UploadIcon,
+  LockIcon,
+} from 'lucide-react';
 
 const STATUS_BADGE_STYLES: Record<ProcessingStatus, { variant: 'default' | 'secondary' | 'destructive' | 'outline'; className?: string }> = {
   completed: { variant: 'outline', className: 'border-green-200 bg-green-50 text-green-700' },
@@ -66,10 +75,15 @@ function ScanRow({ scan }: { scan: ScanListItem }) {
 
 export default function ScansPage() {
   const [statusFilter, setStatusFilter] = useState('all');
+  const [showUploadDialog, setShowUploadDialog] = useState(false);
+  const { allowed: canUpload, loading: uploadGateLoading } = useCanUploadDocuments();
 
-  const { data, isLoading, error } = useScans(
-    statusFilter !== 'all' ? { processingStatus: statusFilter as ProcessingStatus } : undefined,
-  );
+  const { data, isLoading, error } = useScans({
+    uploadType: 'all',
+    ...(statusFilter !== 'all' && {
+      processingStatus: statusFilter as ProcessingStatus,
+    }),
+  });
 
   const scans = data?.data ?? [];
 
@@ -78,17 +92,36 @@ export default function ScansPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Scans</h1>
+          <h1 className="text-2xl font-bold">Scans &amp; Uploads</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            View and manage your camera scan uploads
+            View and manage your camera scans and document uploads
           </p>
         </div>
-        <Button variant="outline" size="sm" asChild>
-          <Link href="/scans/search">
-            <SearchIcon className="mr-1.5 h-4 w-4" />
-            Search Uploads
-          </Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/scans/search">
+              <SearchIcon className="mr-1.5 h-4 w-4" />
+              Search Uploads
+            </Link>
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => setShowUploadDialog(true)}
+            disabled={uploadGateLoading}
+            title={
+              !uploadGateLoading && !canUpload
+                ? 'Document uploads are available on Pro plans and above.'
+                : undefined
+            }
+          >
+            {!uploadGateLoading && !canUpload ? (
+              <LockIcon className="mr-1.5 h-4 w-4" />
+            ) : (
+              <UploadIcon className="mr-1.5 h-4 w-4" />
+            )}
+            Upload document
+          </Button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -137,6 +170,11 @@ export default function ScansPage() {
           ))}
         </div>
       )}
+
+      <UploadDocumentDialog
+        open={showUploadDialog}
+        onOpenChange={setShowUploadDialog}
+      />
     </div>
   );
 }

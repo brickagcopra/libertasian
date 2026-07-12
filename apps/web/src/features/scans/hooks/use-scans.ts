@@ -14,16 +14,23 @@ interface UseScansParams {
   processingStatus?: ProcessingStatus;
   cursor?: string;
   limit?: number;
+  /**
+   * Server-side upload type filter. Defaults to 'camera_scan' for backward
+   * compatibility; pass 'all' to list every upload type (camera scans and
+   * document uploads).
+   */
+  uploadType?: 'camera_scan' | 'document' | 'all';
 }
 
 export function useScans(params?: UseScansParams) {
   return useQuery({
     queryKey: ['scans', params],
     queryFn: async () => {
+      const uploadType = params?.uploadType ?? 'camera_scan';
       const queryParams: Record<string, string> = {
         limit: String(params?.limit ?? 20),
-        uploadType: 'camera_scan',
       };
+      if (uploadType !== 'all') queryParams['uploadType'] = uploadType;
       if (params?.processingStatus) queryParams['processingStatus'] = params.processingStatus;
       if (params?.cursor) queryParams['cursor'] = params.cursor;
 
