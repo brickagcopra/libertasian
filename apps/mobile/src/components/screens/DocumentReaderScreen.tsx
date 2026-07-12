@@ -17,11 +17,21 @@ export interface DocumentReaderSection {
   pageEnd?: number | null;
 }
 
+export interface DocumentReaderParagraphAnnotation {
+  id: string;
+  /** Soft background tint applied to the whole paragraph. */
+  tint: string;
+  /** Solid swatch color used for the 3px left border. */
+  solid: string;
+}
+
 export interface DocumentReaderParagraph {
   /** Plain text body. */
   text: string;
   /** Optional substring to highlight inline with accent-soft background. */
   highlight?: string;
+  /** Whole-paragraph annotation highlight (tap to view/delete). */
+  annotation?: DocumentReaderParagraphAnnotation;
 }
 
 export interface DocumentReaderCitation {
@@ -77,6 +87,10 @@ export interface DocumentReaderScreenProps {
   isBookmarked?: boolean;
   onTextSize?: () => void;
   onAdd?: () => void;
+  /** Long-press on any body paragraph (e.g. open the create-annotation sheet). */
+  onParagraphLongPress?: (sectionId: string, paragraphText: string) => void;
+  /** Tap on an annotated paragraph (e.g. open the view/delete sheet). */
+  onAnnotationPress?: (annotationId: string) => void;
 }
 
 function pageRangeText(s: DocumentReaderSection): string | null {
@@ -103,6 +117,8 @@ export function DocumentReaderScreen({
   isBookmarked = false,
   onTextSize,
   onAdd,
+  onParagraphLongPress,
+  onAnnotationPress,
 }: DocumentReaderScreenProps) {
   const { theme } = useTheme();
 
@@ -338,27 +354,61 @@ export function DocumentReaderScreen({
               </View>
               {section.paragraphs.map((p, i) => {
                 const para = typeof p === 'string' ? { text: p } : p;
+                const annotation = para.annotation;
                 return (
-                  <Text
+                  <Pressable
                     key={i}
+                    onLongPress={
+                      onParagraphLongPress
+                        ? () => onParagraphLongPress(section.id, para.text)
+                        : undefined
+                    }
+                    onPress={
+                      annotation && onAnnotationPress
+                        ? () => onAnnotationPress(annotation.id)
+                        : undefined
+                    }
+                    accessibilityHint={
+                      annotation
+                        ? 'Tap to view annotation. Long-press to annotate.'
+                        : onParagraphLongPress
+                          ? 'Long-press to annotate this paragraph.'
+                          : undefined
+                    }
                     style={{
-                      fontFamily: theme.serif,
-                      fontSize: 16,
-                      lineHeight: 24.8,
-                      color: theme.ink,
                       marginTop: i === 0 ? 0 : 14,
+                      ...(annotation
+                        ? {
+                            backgroundColor: annotation.tint,
+                            borderLeftWidth: 3,
+                            borderLeftColor: annotation.solid,
+                            borderRadius: 6,
+                            paddingLeft: 10,
+                            paddingRight: 6,
+                            paddingVertical: 6,
+                          }
+                        : null),
                     }}
                   >
-                    {para.highlight && para.text.includes(para.highlight) ? (
-                      <>
-                        {para.text.split(para.highlight)[0]}
-                        <Text style={{ backgroundColor: theme.accentSoft }}>{para.highlight}</Text>
-                        {para.text.split(para.highlight)[1]}
-                      </>
-                    ) : (
-                      para.text
-                    )}
-                  </Text>
+                    <Text
+                      style={{
+                        fontFamily: theme.serif,
+                        fontSize: 16,
+                        lineHeight: 24.8,
+                        color: theme.ink,
+                      }}
+                    >
+                      {para.highlight && para.text.includes(para.highlight) ? (
+                        <>
+                          {para.text.split(para.highlight)[0]}
+                          <Text style={{ backgroundColor: theme.accentSoft }}>{para.highlight}</Text>
+                          {para.text.split(para.highlight)[1]}
+                        </>
+                      ) : (
+                        para.text
+                      )}
+                    </Text>
+                  </Pressable>
                 );
               })}
               {section.note ? (
