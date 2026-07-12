@@ -90,6 +90,20 @@ export class UploadsController {
       throw new BadRequestException('No file provided');
     }
 
+    // Enforce plan-based document upload quota (free/edu: 0, pro+: unlimited)
+    const quota = await this.usageQuota.checkAndIncrement(
+      user.organizationId,
+      user.sub,
+      'documentUploadsPerMonth',
+      { isPlatformAdmin: user.isPlatformAdmin === true },
+    );
+    if (!quota.allowed) {
+      throw new ForbiddenException({
+        message: 'Document uploads are available on Pro plans and above.',
+        quota: { used: quota.used, limit: quota.limit, resetsAt: quota.resetsAt },
+      });
+    }
+
     const result = await this.uploadsService.uploadFile(
       file,
       user.organizationId,

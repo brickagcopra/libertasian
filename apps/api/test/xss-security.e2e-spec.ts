@@ -4,7 +4,7 @@ const request = require('supertest') as typeof import('supertest');
 import {
   createTestApp,
   createAuthenticatedUser,
-  upgradeOrgSubscription,
+  updateSubscriptionPlan,
 } from './helpers';
 
 /**
@@ -32,7 +32,7 @@ describe('XSS Prevention (E2E)', () => {
     });
     // Bookmark creation is gated to edu tier — upgrade so XSS tests
     // reach the validation/service layer instead of the subscription guard.
-    await upgradeOrgSubscription(app, user.accessToken, 'edu');
+    await updateSubscriptionPlan(app, user.accessToken, 'edu');
   }, 30000);
 
   afterAll(async () => {

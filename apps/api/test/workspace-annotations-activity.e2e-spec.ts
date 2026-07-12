@@ -4,7 +4,7 @@ const request = require('supertest') as typeof import('supertest');
 import {
   createTestApp,
   createAuthenticatedUser,
-  upgradeOrgSubscription,
+  updateSubscriptionPlan,
 } from './helpers';
 
 /**
@@ -79,7 +79,7 @@ describe('Workspace — Annotations & Activity (E2E)', () => {
       });
       // Annotation creation is edu-gated; upgrade so the SubscriptionGuard
       // passes and the ValidationPipe (400) is what gets exercised.
-      await upgradeOrgSubscription(app, user.accessToken, 'edu');
+      await updateSubscriptionPlan(app, user.accessToken, 'edu');
 
       // Missing legalDocumentId
       await request(app.getHttpServer())
@@ -102,7 +102,7 @@ describe('Workspace — Annotations & Activity (E2E)', () => {
       });
       // Annotation creation is edu-gated; upgrade so the SubscriptionGuard
       // passes and the ValidationPipe (400) is what gets exercised.
-      await upgradeOrgSubscription(app, user.accessToken, 'edu');
+      await updateSubscriptionPlan(app, user.accessToken, 'edu');
 
       await request(app.getHttpServer())
         .post('/api/v1/annotations')

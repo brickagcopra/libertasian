@@ -257,6 +257,35 @@ describe('UsageQuotaService', () => {
       expect(result.remaining).toBe(0);
     });
 
+    it('should use monthly key for documentUploadsPerMonth', async () => {
+      entitlementService.resolveEffectiveEntitlements.mockResolvedValue({
+        ...mockEntitlements,
+        documentUploadsPerMonth: 5,
+      });
+      redis.get.mockResolvedValue('1');
+      redis.incr.mockResolvedValue(2);
+
+      await service.checkAndIncrement('org-1', 'user-1', 'documentUploadsPerMonth');
+
+      expect(redis.get).toHaveBeenCalledWith(
+        'quota:monthly:org-1:user-1:documentUploadsPerMonth',
+      );
+    });
+
+    it('should deny documentUploadsPerMonth when limit is 0 (free/edu plans)', async () => {
+      redis.get.mockResolvedValue(null);
+
+      const result = await service.checkAndIncrement(
+        'org-1',
+        'user-1',
+        'documentUploadsPerMonth',
+      );
+
+      expect(result.allowed).toBe(false);
+      expect(result.limit).toBe(0);
+      expect(result.remaining).toBe(0);
+    });
+
     it('should handle missing entitlement key as 0', async () => {
       entitlementService.resolveEffectiveEntitlements.mockResolvedValue({});
       redis.get.mockResolvedValue(null);
@@ -404,6 +433,7 @@ describe('UsageQuotaService', () => {
         timelineGenerationPerMonth: -1,
         hearingPrepPerMonth: -1,
         contradictionDetectionPerMonth: -1,
+        documentUploadsPerMonth: -1,
       });
       entitlementService.getBaseEntitlements.mockResolvedValue({
         aiAnswers: -1,
@@ -416,6 +446,7 @@ describe('UsageQuotaService', () => {
         timelineGenerationPerMonth: -1,
         hearingPrepPerMonth: -1,
         contradictionDetectionPerMonth: -1,
+        documentUploadsPerMonth: -1,
       });
 
       const summary = await service.getUsageSummary('org-1', 'user-1');

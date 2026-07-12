@@ -145,6 +145,7 @@ describe('SubscriptionsService', () => {
       expect(ent.auditLogs).toBe(false);
       expect(ent.editorialTools).toBe(false);
       expect(ent.memoDraftingPerMonth).toBe(0);
+      expect(ent.documentUploadsPerMonth).toBe(0);
       expect(ent.maxApiKeys).toBe(0);
     });
 
@@ -156,6 +157,7 @@ describe('SubscriptionsService', () => {
       expect(ent.cameraScansPerMonth).toBe(10);
       expect(ent.offlineReading).toBe(true);
       expect(ent.teamCollaboration).toBe(false);
+      expect(ent.documentUploadsPerMonth).toBe(0);
     });
 
     it('should return pro tier defaults', () => {
@@ -167,6 +169,7 @@ describe('SubscriptionsService', () => {
       expect(ent.maxMatters).toBe(20);
       expect(ent.memoDraftingPerMonth).toBe(20);
       expect(ent.pleadingAssistancePerMonth).toBe(10);
+      expect(ent.documentUploadsPerMonth).toBe(-1); // unlimited
       expect(ent.maxResearchWorkspaces).toBe(3);
     });
 
@@ -178,6 +181,7 @@ describe('SubscriptionsService', () => {
       expect(ent.editorialTools).toBe(false);
       expect(ent.hearingPrepPerMonth).toBe(10);
       expect(ent.contradictionDetectionPerMonth).toBe(5);
+      expect(ent.documentUploadsPerMonth).toBe(-1);
       expect(ent.maxResearchWorkspaces).toBe(20);
     });
 
@@ -187,6 +191,7 @@ describe('SubscriptionsService', () => {
       expect(ent.maxApiKeys).toBe(10);
       expect(ent.hearingPrepPerMonth).toBe(-1);
       expect(ent.contradictionDetectionPerMonth).toBe(-1);
+      expect(ent.documentUploadsPerMonth).toBe(-1);
       expect(ent.maxResearchWorkspaces).toBe(-1);
     });
 

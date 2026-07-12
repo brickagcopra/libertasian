@@ -15,7 +15,8 @@ export type QuotaType =
   | 'caseComparisonPerMonth'
   | 'timelineGenerationPerMonth'
   | 'hearingPrepPerMonth'
-  | 'contradictionDetectionPerMonth';
+  | 'contradictionDetectionPerMonth'
+  | 'documentUploadsPerMonth';
 
 export interface QuotaCheckResult {
   allowed: boolean;
@@ -47,6 +48,7 @@ const ALL_QUOTA_TYPES: QuotaType[] = [
   'timelineGenerationPerMonth',
   'hearingPrepPerMonth',
   'contradictionDetectionPerMonth',
+  'documentUploadsPerMonth',
 ];
 
 @Injectable()
@@ -300,6 +302,7 @@ export class UsageQuotaService {
       'timelineGenerationPerMonth',
       'hearingPrepPerMonth',
       'contradictionDetectionPerMonth',
+      'documentUploadsPerMonth',
     ];
     return monthlyTypes.includes(quotaType);
   }
