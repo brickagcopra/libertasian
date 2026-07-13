@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { apiClient } from '../../../lib/api-client';
-import type { SubscriptionDetail, SubscriptionResponse } from '../types';
+import type { SubscriptionDetail } from '../types';
 import { TIER_ORDER } from '../types';
 
 export type { SubscriptionDetail };
@@ -13,11 +13,13 @@ export const subscriptionKeys = {
 export function useSubscription(enabled = true) {
   return useQuery({
     queryKey: subscriptionKeys.subscription,
-    queryFn: () =>
-      apiClient.get<SubscriptionResponse>('/billing/subscription'),
+    // apiClient strips the { success, data } envelope at the transport
+    // layer, so the resolved value IS the SubscriptionDetail. The previous
+    // `select: (res) => res.data` drilled one level too deep and made
+    // `data` resolve to undefined for every consumer.
+    queryFn: () => apiClient.get<SubscriptionDetail>('/billing/subscription'),
     enabled,
     staleTime: 5 * 60 * 1000,
-    select: (res) => res.data,
   });
 }
 
