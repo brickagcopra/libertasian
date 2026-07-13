@@ -10,6 +10,7 @@ import {
   FileTextIcon,
   HighlighterIcon,
   ExternalLinkIcon,
+  LockIcon,
   Trash2Icon,
   XIcon,
   StickyNoteIcon,
@@ -23,6 +24,7 @@ import { ReaderSkeleton } from '@/components/ui/skeleton';
 import { ApiClientError } from '@/lib/api-client';
 import { ROUTES } from '@/lib/constants';
 import { UpgradeBanner, extractPaywall402 } from '@/components/paywall/upgrade-banner';
+import { useCanUseBookmarksAnnotations } from '@/hooks/useCanUseBookmarksAnnotations';
 import type { Annotation, AnnotationColor, CreateAnnotationInput } from '@/features/workspace/types';
 
 import { Button } from '@/components/ui/button';
@@ -57,6 +59,28 @@ function isSubscriptionGateError(error: unknown): error is ApiClientError {
   return (
     error instanceof ApiClientError &&
     (error.statusCode === 402 || error.statusCode === 403)
+  );
+}
+
+// -- Edu+ upsell --------------------------------------------------------------
+
+/**
+ * Proactive paywall shown in place of the bookmark button / annotation-create
+ * submit for orgs known to be below the Edu tier (see
+ * useCanUseBookmarksAnnotations). Static — nothing here can fire a mutation.
+ */
+function EduUpsellNotice() {
+  return (
+    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+      <LockIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+      <span>Available on Edu plans and above</span>
+      <Link
+        href="/pricing"
+        className="font-medium text-primary underline-offset-2 hover:underline"
+      >
+        View plans
+      </Link>
+    </span>
   );
 }
 
@@ -126,6 +150,12 @@ export default function ReaderPage() {
   const { data: annotationsData } = useAnnotations(id);
   const annotations = annotationsData?.data ?? [];
   const [showAnnotations, setShowAnnotations] = useState(true);
+
+  // Bookmarks + annotations are Edu+ features. When the org is KNOWN to be
+  // below Edu, swap the create affordances for an upsell instead of letting
+  // the request 403. While the subscription is loading/errored this stays
+  // false and the 402/403 catch below remains the fallback.
+  const { locked: paywallLocked } = useCanUseBookmarksAnnotations();
 
   const isBookmarked = bookmarksData?.data?.some((b) => b.legalDocumentId === id) ?? false;
 
@@ -274,6 +304,8 @@ export default function ReaderPage() {
                 <BookmarkCheckIcon className="mr-1 h-3 w-3" />
                 Bookmarked
               </Badge>
+            ) : paywallLocked ? (
+              <EduUpsellNotice />
             ) : showBookmarkForm ? (
               <div className="flex items-end gap-2">
                 <Input
@@ -420,6 +452,7 @@ export default function ReaderPage() {
                       showAnnotations ? (annotationsBySection.get(section.id) ?? []) : []
                     }
                     showAnnotations={showAnnotations}
+                    paywallLocked={paywallLocked}
                   />
                 ))}
               </div>
@@ -478,11 +511,13 @@ function AnnotatedSection({
   documentId,
   annotations,
   showAnnotations,
+  paywallLocked,
 }: {
   section: DocumentSection;
   documentId: string;
   annotations: Annotation[];
   showAnnotations: boolean;
+  paywallLocked: boolean;
 }) {
   const sectionRef = useRef<HTMLDivElement>(null);
   const createAnnotation = useCreateAnnotation();
@@ -578,6 +613,7 @@ function AnnotatedSection({
             startOffset={selectionPopup.startOffset}
             endOffset={selectionPopup.endOffset}
             isPending={createAnnotation.isPending}
+            locked={paywallLocked}
             onSave={async (input) => {
               try {
                 setAnnotationMsg('');
@@ -696,6 +732,7 @@ function AnnotationCreatePopup({
   startOffset,
   endOffset,
   isPending,
+  locked,
   onSave,
   onCancel,
 }: {
@@ -707,6 +744,7 @@ function AnnotationCreatePopup({
   startOffset: number;
   endOffset: number;
   isPending: boolean;
+  locked: boolean;
   onSave: (input: CreateAnnotationInput) => Promise<void>;
   onCancel: () => void;
 }) {
@@ -741,7 +779,16 @@ function AnnotationCreatePopup({
     >
       <Card className="shadow-lg">
         <CardContent className="p-2">
-          {!expanded ? (
+          {locked ? (
+            // Below-Edu orgs: replace the highlight/note submit with the
+            // upsell — no annotation request can fire from this popup.
+            <div className="max-w-[240px] space-y-1 p-1">
+              <EduUpsellNotice />
+              <p className="max-w-[220px] truncate text-xs text-muted-foreground">
+                &ldquo;{text.slice(0, 60)}{text.length > 60 ? '...' : ''}&rdquo;
+              </p>
+            </div>
+          ) : !expanded ? (
             <>
               {/* Quick color picker */}
               <TooltipProvider>

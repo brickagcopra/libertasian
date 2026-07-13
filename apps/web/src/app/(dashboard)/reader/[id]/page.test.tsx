@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 
@@ -70,6 +70,15 @@ const digestMocks = vi.hoisted(() => ({
 vi.mock('@/features/digests/hooks/use-digests', () => ({
   useDigests: digestMocks.useDigests,
   useGenerateDigest: digestMocks.useGenerateDigest,
+}));
+
+// Edu+ paywall gate — default unlocked so pre-existing tests see the normal
+// affordances. The paywall describe block flips `locked` per test.
+const paywallMocks = vi.hoisted(() => ({
+  useCanUseBookmarksAnnotations: vi.fn(() => ({ locked: false })),
+}));
+vi.mock('@/hooks/useCanUseBookmarksAnnotations', () => ({
+  useCanUseBookmarksAnnotations: paywallMocks.useCanUseBookmarksAnnotations,
 }));
 
 function withProviders(children: ReactNode) {
@@ -275,5 +284,183 @@ describe('Reader Page — case-digest UI gating by documentType', () => {
         { enabled: true },
       );
     });
+  });
+});
+
+describe('Reader Page — Edu+ paywall gating (bookmarks + annotations)', () => {
+  const SECTION_TEXT = 'Alpha beta gamma delta selection target paragraph.';
+
+  function setDocumentWithSection() {
+    docMocks.useDocument.mockReturnValue({
+      data: {
+        id: 'doc-1',
+        title: 'Test Document',
+        documentType: 'supreme_court_decision',
+        court: null,
+        grNo: null,
+        ponente: null,
+        decisionDate: null,
+        isOfficial: false,
+        citationText: null,
+      },
+      isLoading: false,
+      error: null,
+    });
+    docMocks.useDocumentSections.mockReturnValue({
+      data: [
+        {
+          id: 'sec-1',
+          sectionType: 'facts',
+          sectionLabel: 'Facts',
+          plainText: SECTION_TEXT,
+          pageStart: null,
+          pageEnd: null,
+        },
+      ],
+      isLoading: false,
+    });
+  }
+
+  /** Select the first `length` chars of the section text and fire mouseup. */
+  function selectSectionText(length: number) {
+    const textEl = screen.getByText(SECTION_TEXT);
+    const textNode = textEl.firstChild as Text;
+    const range = globalThis.document.createRange();
+    range.setStart(textNode, 0);
+    range.setEnd(textNode, length);
+    const selection = globalThis.window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    fireEvent.mouseUp(textEl);
+  }
+
+  const createBookmarkMutate = vi.fn();
+  const createAnnotationMutate = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    digestMocks.useDigests.mockReturnValue({ data: { data: [] } });
+    digestMocks.useGenerateDigest.mockReturnValue({
+      mutateAsync: vi.fn(),
+      isPending: false,
+    });
+    bookmarkMocks.useBookmarks.mockReturnValue({ data: { data: [] } });
+    bookmarkMocks.useCreateBookmark.mockReturnValue({
+      mutateAsync: createBookmarkMutate,
+      isPending: false,
+    });
+    annotationMocks.useAnnotations.mockReturnValue({ data: { data: [] } });
+    annotationMocks.useCreateAnnotation.mockReturnValue({
+      mutateAsync: createAnnotationMutate,
+      isPending: false,
+    });
+    annotationMocks.useDeleteAnnotation.mockReturnValue({
+      mutateAsync: vi.fn(),
+      isPending: false,
+    });
+    setDocumentWithSection();
+  });
+
+  describe('below-edu org (locked)', () => {
+    beforeEach(() => {
+      paywallMocks.useCanUseBookmarksAnnotations.mockReturnValue({
+        locked: true,
+      });
+    });
+
+    it('replaces the Bookmark button with the upsell and fires no mutation', async () => {
+      const ReaderPage = (await import('./page')).default;
+      render(withProviders(<ReaderPage />));
+
+      expect(
+        screen.queryByRole('button', { name: /^Bookmark$/ }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByText('Available on Edu plans and above'),
+      ).toBeInTheDocument();
+      const link = screen.getByRole('link', { name: /View plans/i });
+      expect(link).toHaveAttribute('href', '/pricing');
+      expect(createBookmarkMutate).not.toHaveBeenCalled();
+    });
+
+    it('replaces the annotation-create popup submit with the upsell', async () => {
+      const ReaderPage = (await import('./page')).default;
+      render(withProviders(<ReaderPage />));
+
+      selectSectionText(10);
+
+      // The popup opened in its locked state: upsell copy (bookmark bar +
+      // popup) and NO save affordances.
+      expect(
+        screen.getAllByText('Available on Edu plans and above'),
+      ).toHaveLength(2);
+      expect(
+        screen.queryByRole('button', { name: /Note/i }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: /Save/i }),
+      ).not.toBeInTheDocument();
+      expect(createAnnotationMutate).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('edu+ org (unlocked)', () => {
+    beforeEach(() => {
+      paywallMocks.useCanUseBookmarksAnnotations.mockReturnValue({
+        locked: false,
+      });
+    });
+
+    it('shows the normal Bookmark button and saving fires the mutation', async () => {
+      createBookmarkMutate.mockResolvedValue({});
+      const ReaderPage = (await import('./page')).default;
+      render(withProviders(<ReaderPage />));
+
+      expect(
+        screen.queryByText('Available on Edu plans and above'),
+      ).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: /^Bookmark$/ }));
+      fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
+
+      await waitFor(() =>
+        expect(createBookmarkMutate).toHaveBeenCalledWith({
+          legalDocumentId: 'doc-1',
+          note: undefined,
+        }),
+      );
+    });
+
+    it('shows the normal annotation-create popup on selection', async () => {
+      const ReaderPage = (await import('./page')).default;
+      render(withProviders(<ReaderPage />));
+
+      selectSectionText(10);
+
+      expect(
+        screen.getByRole('button', { name: /Note/i }),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText('Available on Edu plans and above'),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it('loading/undetermined subscription does not lock (hook returns locked:false)', async () => {
+    // The hook is the single source of truth: while the subscription query is
+    // loading or errored it reports locked:false (covered by its unit tests),
+    // and the page must render the normal affordances in that state.
+    paywallMocks.useCanUseBookmarksAnnotations.mockReturnValue({
+      locked: false,
+    });
+    const ReaderPage = (await import('./page')).default;
+    render(withProviders(<ReaderPage />));
+
+    expect(
+      screen.getByRole('button', { name: /^Bookmark$/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText('Available on Edu plans and above'),
+    ).not.toBeInTheDocument();
   });
 });
