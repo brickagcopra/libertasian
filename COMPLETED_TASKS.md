@@ -1,6 +1,87 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-07-11 (mobile native social login PR; previously: API mobile social login PR #286)
+> Last updated: 2026-07-13 (epic deployed + reseeded + smoke-verified; PENDING_TASKS.md pruned against ground truth)
+
+---
+
+## 2026-07-13 — Pricing-feature epic: deploy + reseed + smoke (owner-verified)
+
+- Prod api+web deployed with #289–#297; plans reseeded in prod (2026-07-13)
+- Gates smoke-verified live: free-tier 403s confirmed on POST /matters, /uploads, /bookmarks, /annotations; GET /plans serves the realigned #294 entitlement copy
+- Epic fully closed — remaining mobile pieces (#289, #290 alert copy, #297) ride the next EAS build (tracked in PENDING)
+
+## 2026-07-13 — PENDING_TASKS.md pruned (stale entries verified & removed)
+
+Every removal verified against GitHub (`gh pr view --json state,mergedAt`) / remote branches (`git branch -r --no-merged origin/main` after fetch --prune) / today's prod checks. Removed as complete:
+
+- **PR #276** `fix/mobile-billing-checkout-flow` — MERGED 2026-07-10T00:15Z and deployed (its "unmerged + web-deploy-ordering" entry was stale); device-QA residue moved to Needs verification
+- **PR #277** `feat(api,web): receipt email redesign` — MERGED 2026-07-10T02:52Z and deployed; only the sandbox-receipt eyeball QA + 11-template `emailLayout()` adoption remain (kept in PENDING)
+- **`fix/billing-plan-dialog-layout`** and **`fix/xendit-anchor-date-next-cycle`** — neither exists as an unmerged remote branch; both shipped (anchor-date follow-through is now the concrete Aug-10 charge verification + YEAR-interval check in PENDING)
+- **PR #270** `feature/mobile-audio-readalong` — MERGED 2026-07-08; `feature/mobile-audio-player` also merged (branch absent from unmerged list). "Review + merge" entries removed
+- **PRs #250, #251, #252, #253, #254** (platform-admin hardening, 2026-07-01/02) — all MERGED; #250's prod revocation was live-verified 2026-07-02. Remaining env-level migrate/cache-flush/live-check residue moved to Needs verification
+- **`feature/mobile-ambient-owl`** — merged as PR #284 (`79592f6`); its "review + merge (agent did NOT merge)" entry was stale. QA residue folded into the mobile visual-QA batch
+- **Session 192 ErrorOverlay blocker** — disproven by reality: EAS builds 7/8 shipped, TestFlight submission accepted, device installs done (2026-07-08→11). Removed; surviving store-readiness items (icons, google-services.json, metadata) kept in PENDING. Apple credentials item removed — ASC creds + app completed 2026-07-08
+- **Session 191 "run plan seed on production"** — done 2026-07-13 (epic reseed above)
+- **Completed-session summary blocks** (Sessions 172–174, 175–179, 180–183, 194–199, 187–189 checklists, "Code-Level Status", "Completed Systems (Summary)", test-coverage tallies) — historical records, not pending tasks; removed from PENDING. This file remains the historical record
+- Enhancement wishlists from Sessions 200/202 deduplicated (codal_section nav, MCQ keyboard nav, offline syllabus cache appeared twice)
+
+Kept-but-unverifiable items were moved to a "Needs verification" section in PENDING, per the never-delete-unverified rule.
+
+---
+
+## 2026-07-13 — Pricing-feature epic closeout (#294–#297 merged; epic complete)
+
+Continues the 2026-07-12 merge train below. All merges gated on full PR CI (15 checks incl. the ~12-min e2e Test job).
+
+- **#294** `fix/plan-copy-realignment` → `0401773` — every seed entitlement description realigned to its own key (values untouched); free `aiAnswers` 0→15 in `getDefaultEntitlements` (unknown-plan branch inherits via delegation); web+mobile static PLANS arrays updated, byte-identical; pricing page needed no code change. PR body has the full before→after table.
+- **#295** `fix/staging-deploy-workflow` → `fdde9b5` — **verdict: dispatch-only** (PATH 2). Evidence: image-build matrix always succeeded; `Deploy Staging` died instantly at `appleboy/ssh-action` with `missing server host` — `STAGING_HOST` empty; secret audit found **0 repo secrets and 0 secrets on the `staging` environment** (no STAGING_* anywhere → no typo to fix); the post-status 403 was the read-only default GITHUB_TOKEN. Changes: push trigger → `workflow_dispatch` (original trigger preserved in a comment) + `permissions: contents: read, statuses: write` on the deploy job. Also found latent blocker: deploy script references `docker-compose.staging.yml`, which does not exist in the repo. Main pushes no longer produce a red X (confirmed on the #295/#296/#297 merge pushes).
+- **#296** `fix/matter-cap-admin-bypass` → `4f1a2795` — platform admins bypass the maxMatters cap: controller passes `{ isPlatformAdmin: user.isPlatformAdmin === true }` (uploads-controller precedent); service skips the limit+count check on an `opts?: { isPlatformAdmin?: boolean }` trailing param (shape matches case-comparisons/contradictions services). Unit case (limit 0 + admin → creates, no limit/count calls) + e2e case (free-plan platform admin → 201, promoted via new `grantPlatformAdmin` helper that also invalidates the RBAC cache to avoid the 5-min-cache flake). TOCTOU soft cap left as-is, no comment added (none existed).
+- **#297** `fix/mobile-annotation-followups` → `a4bfb89` — (1) annotation anchors use the paragraph's precomputed offset threaded through the long-press payload (fresh `indexOf` removed — duplicate paragraph text no longer mis-anchors); (2) paragraph↔annotation matching is `.filter()` not `.find()`; tint/border still from first annotation, but the view sheet lists ALL overlapping annotations with per-entry color/note/delete. `DocumentReaderParagraph.annotation` → `annotations[]`. Tests: duplicate-paragraph offsets (second para anchors at 12, first at 0), multi-annotation sheet with per-entry delete. Mobile 219 suites / 1488 tests green; the local `tsc` noise in the worktree was a duplicated `@types/react` install artifact — CI Lint & Type Check green.
+
+Verification: each PR fully green before merge. Main CI green through the epic ( intermediate merge CI runs for #295/#296 were auto-cancelled by concurrency, superseded by #297's run — final main CI run on `a4bfb89` is the authoritative one). Deploy to Staging no longer runs on push (by design, #295).
+
+---
+
+## 2026-07-12 — Entitlement-enforcement merge train (all 5 PRs merged)
+
+Merge order and squash SHAs: #289 mobile annotations → `e420393`; #290 Edu-gate bookmarks/annotations → `74e59f7`; **#293 hotfix** `fix/mobile-reader-duplicate-import` → `791d839` (both #289 and #290 added the same `ApiClientError` import to the mobile reader on different lines; merged cleanly but left main failing mobile lint with TS2300 — one-line dedupe); #291 document uploads → `a18467de`; #292 maxMatters → `8771e7cb`.
+
+Rebase/conflict-resolution decisions (test files only, no production source touched):
+1. **Shared e2e helper is `updateSubscriptionPlan(app, accessToken, planCode)`** in `apps/api/test/helpers.ts` — direct Prisma plan update + Redis entitlement-cache invalidation (`EntitlementService.invalidateEntitlementCache`). #290's `upgradeOrgSubscription` and #292's `upgradeOrgPlan` were deleted; all call sites rewritten. `createTeamUser` kept as a thin wrapper (`createAuthenticatedUser` + `updateSubscriptionPlan('team')`, no orgId in return — nothing consumed it).
+2. `subscription-enforcement.e2e-spec.ts` keeps ALL describe blocks: API keys/AI features (original), bookmarks & annotations Edu gate (#290), document uploads Pro gate (#291), maxMatters (#292).
+3. `sql-injection` + `xss-security` suites: auto-merge had stacked `createTeamUser` + a downgrade to `'edu'` (would break matter creation, edu maxMatters=0) — resolved to **team only** (team ≥ edu satisfies the bookmark/annotation gate; unlimited matters).
+4. `workspace-annotations-activity`: both PRs' setups kept (per-test edu upgrades for annotation validation tests + team users for activity/matter tests) — different users, no interaction.
+
+Verification: each rebase ran the full API suite locally (#291: 3458 tests; #292: 3462 tests — all green) + lint; PR CI fully green on both (15 checks incl. 12-min e2e Test job) before each merge. Main CI green on #293 and #291 merge commits. "Deploy to Staging" fails on every main push — pre-existing known-broken workflow, unrelated.
+
+---
+
+## 2026-07-12 — Entitlement-enforcement batch: 4 PRs opened in parallel (worktree agents)
+
+All branched from `main` (`4a0f6ce`). Common caveat: local Docker was down, so API **e2e specs are authored but unexecuted locally** — CI on each PR is the e2e evidence. Prompt 4 (plan-copy realignment + free aiAnswers 15) deliberately deferred until #291 merges.
+
+### PR #292 — security(api): enforce maxMatters entitlement on matter creation (`security/enforce-max-matters`)
+1. `workspace.service.ts createMatter` — injects `EntitlementService` (SubscriptionsModule is @Global), `getEffectiveLimit(orgId,'maxMatters')`; when ≠ -1, counts active matters (`status notIn ['closed','archived']` via `prisma.forTenant`) and throws `ForbiddenException({message, quota:{used,limit,resetsAt:''}})` (same shape as search-quota 403). Free/edu (limit 0): "Matters are available on Pro plans and above."
+2. Web: `app-sidebar.tsx` Matters nav gets `minTier:'pro'`; matter-create dialog already surfaced mutation error — no change needed.
+3. Tests: unit cases (limit 0 / 20-of-20 / 19-of-20 / unlimited skips count); new shared `upgradeOrgPlan`/`createTeamUser` e2e helpers (with Redis entitlement-cache invalidation); `workspace-matters` e2e orgs upgraded to team; subscription-enforcement cases free 403 / pro 201 / override / team; **6 other e2e suites** that created matters as free users fixed (auth-security, cross-tenant-expanded, xss-security, sql-injection, workspace-tasks, workspace-annotations-activity).
+4. Verified: 444/444 unit tests (workspace+subscriptions), sidebar 15/15, tsc clean, lint 5/5.
+
+### PR #291 — feat(uploads): plan-gate document uploads + web upload UI (`feat/document-uploads-gating-web-ui`)
+1. New quota key `documentUploadsPerMonth` (free/edu 0, pro/team/enterprise -1) through QuotaType union + ALL_QUOTA_TYPES + monthly-reset list, SubscriptionEntitlements + all getDefaultEntitlements branches, and plan-seed (all 5 plans, description "Document uploads").
+2. `uploads.controller.ts uploadFile` — `checkAndIncrement('documentUploadsPerMonth')` before processing → 403 "Document uploads are available on Pro plans and above." Camera-scan endpoint + @Throttle untouched.
+3. Web: new `use-upload-document.ts` (uploadMultipart, progress, `validateDocumentFile` 20MB img/50MB pdf, `useCanUploadDocuments` Pro+ check w/ platform-admin bypass); `upload-document-dialog.tsx` (progress bar, success state, lock + /pricing CTA when gated, friendly 403 copy since XHR path lacks parsed error body); Scans page button + list now shows all upload types (optional `uploadType` param on `useScans`); matter AddDocumentDialog third "Upload file" mode → attach `data.id` as `userUploadId`.
+4. Tests: e2e free/edu 403 + pro 202 (new shared `updateSubscriptionPlan` helper w/ Redis cache invalidation); upload-security/camera-scan e2e specs now run as pro; 18 new web hook tests. Verified: api 3458 tests, web 1580 tests, lint + tsc clean.
+
+### PR #290 — feat(api): require Edu tier for bookmark and annotation creation (`feat/gate-bookmarks-annotations-edu`)
+1. Method-level `@UseGuards(SubscriptionGuard)` + `@RequiredSubscription('edu')` on POST /bookmarks and POST /annotations only; GETs/DELETEs/class guards untouched. **Finding: guard throws plain 403 ForbiddenException** ("This feature requires a edu subscription or higher…"), no 402 PaywallException — same as generate-digest.
+2. Web reader: bookmark + annotation create failures (402/403) show "Bookmarks and annotations are available on Edu plans and above — upgrade to save your work." (annotation save rejection was previously unhandled). Mobile: `submitBookmark` alerts same copy; mobile annotation handling deferred to #289.
+3. Tests: subscription-enforcement block (free 403 / edu 201 / free GETs still 200); new `upgradeOrgSubscription` helper; sql-injection, xss-security, workspace-annotations-activity e2e specs upgraded to edu in setup. Verified: api 3456 tests, web 1562 tests, lint + tsc clean.
+
+### PR #289 — feat(mobile): annotations and highlights in reader (`feat/mobile-annotations`)
+1. New `features/annotations/` (types, web-palette color map, `useAnnotations`/`useCreateAnnotation`/`useDeleteAnnotation` + 5 hook tests). apiClient auto-unwraps {success,data}.
+2. Reader: paragraphs anchor WHOLE PARAGRAPHS (`indexOf` offsets into section.plainText — web-compatible; -1 aborts); annotations matched to paragraphs by **offset overlap** so web-created range highlights render on mobile; long-press → create sheet (5 swatches + note), tap annotated paragraph → view/delete sheet; existing Modal pattern, no bottom-sheet lib; search-term highlight preserved; 402/403 create → "Upgrade required" alert with server message.
+3. New `workspace/annotations.tsx` list screen + Annotations StatCard on workspace tab.
+4. Verified: mobile 219 suites / 1484 tests, tsc clean, lint 5/5.
 
 ---
 
