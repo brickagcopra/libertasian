@@ -45,6 +45,14 @@ jest.mock('@/features/documents/hooks/use-documents', () => ({
   useRelatedDocuments: () => ({ data: [], isLoading: false }),
 }));
 
+// Edu+ paywall gate — default unlocked so pre-existing tests exercise the
+// normal create sheets. The paywall describe block flips `locked` per test.
+const mockUseCanUseBookmarksAnnotations = jest.fn();
+jest.mock('@/features/billing/hooks/use-can-use-bookmarks-annotations', () => ({
+  useCanUseBookmarksAnnotations: (...args: unknown[]) =>
+    mockUseCanUseBookmarksAnnotations(...args),
+}));
+
 jest.mock('@/features/study/hooks/use-offline-codals', () => ({
   useOfflineCodals: () => ({
     isOffline: jest.fn(() => false),
@@ -80,6 +88,10 @@ beforeEach(() => {
   mockUseAnnotations.mockReturnValue({ data: [] });
   mockCreateAnnotation.mockResolvedValue({ id: 'an-new' });
   mockDeleteAnnotation.mockResolvedValue({ message: 'Annotation deleted' });
+  mockUseCanUseBookmarksAnnotations.mockReturnValue({
+    locked: false,
+    planName: 'Free',
+  });
 });
 
 function baseDoc(overrides: Partial<Record<string, unknown>> = {}) {
@@ -458,5 +470,108 @@ describe('ReaderRoute — multi-annotation view sheet', () => {
     // The remaining annotation is still listed in the sheet.
     expect(getByText('First note')).toBeTruthy();
     expect(getAllByText('Delete highlight')).toHaveLength(1);
+  });
+});
+
+describe('ReaderRoute — Edu+ paywall (bookmarks + annotations)', () => {
+  beforeEach(() => {
+    mockUseDocument.mockReturnValue({
+      data: baseDoc(),
+      isLoading: false,
+      error: null,
+    });
+    mockUseDocumentSections.mockReturnValue({
+      data: [sectionWith('Alpha beta gamma delta.')],
+      isLoading: false,
+    });
+  });
+
+  describe('below-edu org (locked)', () => {
+    beforeEach(() => {
+      mockUseCanUseBookmarksAnnotations.mockReturnValue({
+        locked: true,
+        planName: 'Free',
+      });
+    });
+
+    it('long-press opens the upsell sheet instead of the create sheet', () => {
+      const { getByText, queryByText } = render(<ReaderRoute />, {
+        wrapper: createWrapper(),
+      });
+
+      fireEvent(getByText('Alpha beta gamma delta.'), 'longPress');
+
+      expect(getByText('Available on Edu plans and above')).toBeTruthy();
+      expect(
+        getByText(/Save bookmarks and highlight passages with notes/),
+      ).toBeTruthy();
+      expect(getByText(/You're on the Free plan/)).toBeTruthy();
+      // Create sheet never opened and no annotation request fired.
+      expect(queryByText('Highlight paragraph')).toBeNull();
+      expect(queryByText('Save highlight')).toBeNull();
+      expect(mockCreateAnnotation).not.toHaveBeenCalled();
+    });
+
+    it('bookmark button opens the upsell sheet instead of the note sheet', () => {
+      const { getByLabelText, getByText, queryByText } = render(
+        <ReaderRoute />,
+        { wrapper: createWrapper() },
+      );
+
+      fireEvent.press(getByLabelText('Bookmark'));
+
+      expect(getByText('Available on Edu plans and above')).toBeTruthy();
+      // Bookmark note sheet never opened.
+      expect(queryByText('Add a note')).toBeNull();
+      expect(queryByText('Save bookmark')).toBeNull();
+    });
+
+    it('"See plans" navigates to Settings → Plans', () => {
+      const { router } = jest.requireMock('expo-router') as {
+        router: { push: jest.Mock };
+      };
+      const { getByLabelText, getByText } = render(<ReaderRoute />, {
+        wrapper: createWrapper(),
+      });
+
+      fireEvent.press(getByLabelText('Bookmark'));
+      fireEvent.press(getByText('See plans'));
+
+      expect(router.push).toHaveBeenCalledWith('/settings/plans');
+    });
+  });
+
+  describe('edu+ org (unlocked)', () => {
+    beforeEach(() => {
+      mockUseCanUseBookmarksAnnotations.mockReturnValue({
+        locked: false,
+        planName: 'Edu',
+      });
+    });
+
+    it('long-press opens the create-annotation sheet and saving fires the mutation', async () => {
+      const { getByText, queryByText } = render(<ReaderRoute />, {
+        wrapper: createWrapper(),
+      });
+
+      fireEvent(getByText('Alpha beta gamma delta.'), 'longPress');
+
+      expect(queryByText('Available on Edu plans and above')).toBeNull();
+      fireEvent.press(getByText('Save highlight'));
+
+      await waitFor(() => expect(mockCreateAnnotation).toHaveBeenCalledTimes(1));
+    });
+
+    it('bookmark button opens the note sheet', () => {
+      const { getByLabelText, getByText, queryByText } = render(
+        <ReaderRoute />,
+        { wrapper: createWrapper() },
+      );
+
+      fireEvent.press(getByLabelText('Bookmark'));
+
+      expect(getByText('Add a note')).toBeTruthy();
+      expect(queryByText('Available on Edu plans and above')).toBeNull();
+    });
   });
 });
