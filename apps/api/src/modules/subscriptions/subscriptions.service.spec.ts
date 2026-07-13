@@ -135,7 +135,7 @@ describe('SubscriptionsService', () => {
   describe('getDefaultEntitlements', () => {
     it('should return free tier defaults', () => {
       const ent = service.getDefaultEntitlements('free');
-      expect(ent.aiAnswers).toBe(0);
+      expect(ent.aiAnswers).toBe(15);
       expect(ent.searchQueries).toBe(50);
       expect(ent.digestsPerMonth).toBe(3);
       expect(ent.cameraScansPerMonth).toBe(3);
@@ -197,7 +197,7 @@ describe('SubscriptionsService', () => {
 
     it('should fallback to free for unknown plan code', () => {
       const ent = service.getDefaultEntitlements('platinum');
-      expect(ent.aiAnswers).toBe(0);
+      expect(ent.aiAnswers).toBe(15);
       expect(ent.searchQueries).toBe(50);
     });
 
@@ -239,7 +239,7 @@ describe('SubscriptionsService', () => {
       (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(null);
 
       const ent = await service.getEntitlements('org-1');
-      expect(ent.aiAnswers).toBe(0);
+      expect(ent.aiAnswers).toBe(15);
       expect(ent.searchQueries).toBe(50);
       expect(featureFlagService.isEnabled).toHaveBeenCalledWith(
         'billing.db_plans',
@@ -357,7 +357,7 @@ describe('SubscriptionsService', () => {
 
     it('should use DB free defaults when no subscription and flag is ON', async () => {
       const dbFreeEntitlements = {
-        aiAnswers: 10, // Different from hardcoded 0 — proves DB was used
+        aiAnswers: 10, // Different from hardcoded 15 — proves DB was used
         searchQueries: 40,
       };
       plansService.resolveEntitlements.mockResolvedValue(dbFreeEntitlements);
