@@ -8,6 +8,7 @@ import {
 } from './helpers';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { EntitlementService } from '../src/modules/subscriptions/entitlement.service';
+import { RbacCacheService } from '../src/modules/rbac/rbac-cache.service';
 
 /**
  * Subscription Enforcement E2E Tests — Session 91
@@ -66,6 +67,82 @@ describe('Subscription Enforcement (E2E)', () => {
     }
     // Drop any cached entitlements so the new plan takes effect immediately
     await app.get(EntitlementService).invalidateEntitlementCache(orgId);
+  }
+
+  /**
+   * Helper: promote a user to platform admin by granting an `admin:*`
+   * permission via RBAC role assignment. JwtStrategy resolves
+   * isPlatformAdmin=true when the member's effective permissions include
+   * any code starting with `admin:` (see jwt.strategy.ts).
+   */
+  async function grantPlatformAdmin(userId: string, token: string) {
+    const orgId = await getOrgId(token);
+    const prisma = app.get(PrismaService);
+
+    const permission = await prisma.permission.upsert({
+      where: { code: 'admin:users' },
+      update: {},
+      create: {
+        code: 'admin:users',
+        resource: 'admin',
+        action: 'users',
+        category: 'admin',
+        description: 'View users across organizations (admin user management)',
+        isSystem: true,
+      },
+    });
+
+    let adminRole = await prisma.roleDefinition.findFirst({
+      where: { slug: 'e2e-platform-admin' },
+    });
+    if (!adminRole) {
+      adminRole = await prisma.roleDefinition.create({
+        data: {
+          name: 'E2E Platform Admin',
+          slug: 'e2e-platform-admin',
+          description: 'Test-only role carrying an admin:* permission',
+          isSystem: false,
+          requiresMfa: false,
+        },
+      });
+    }
+
+    await prisma.rolePermission.upsert({
+      where: {
+        roleId_permissionId: {
+          roleId: adminRole.id,
+          permissionId: permission.id,
+        },
+      },
+      update: {},
+      create: {
+        roleId: adminRole.id,
+        permissionId: permission.id,
+      },
+    });
+
+    const member = await prisma.organizationMember.findFirst({
+      where: { userId, organizationId: orgId, status: 'active' },
+    });
+    if (!member) throw new Error('No active organization member found');
+
+    await prisma.memberRole.upsert({
+      where: {
+        organizationMemberId_roleDefinitionId: {
+          organizationMemberId: member.id,
+          roleDefinitionId: adminRole.id,
+        },
+      },
+      update: {},
+      create: {
+        organizationMemberId: member.id,
+        roleDefinitionId: adminRole.id,
+      },
+    });
+
+    // Drop cached (possibly empty) permissions so the admin grant takes
+    // effect on the next request instead of after the 5-min cache TTL.
+    await app.get(RbacCacheService).invalidateForMember(member.id);
   }
 
   // ─── API Keys — Enterprise tier required ─────────────────────────────────
@@ -505,6 +582,19 @@ describe('Subscription Enforcement (E2E)', () => {
       await createMatter(user.accessToken).expect(201);
       await createMatter(user.accessToken).expect(201);
       await createMatter(user.accessToken).expect(201);
+    });
+
+    it('should allow a platform admin on the free plan to create a matter', async () => {
+      const user = await createAuthenticatedUser(app, {
+        email: `sub-mat5-${Date.now()}@test.com`,
+      });
+      // Org stays on the free plan (maxMatters = 0) — the admin bypass,
+      // not the plan entitlement, must permit creation.
+      await grantPlatformAdmin(user.userId, user.accessToken);
+
+      const res = await createMatter(user.accessToken).expect(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.status).toBe('active');
     });
   });
 
