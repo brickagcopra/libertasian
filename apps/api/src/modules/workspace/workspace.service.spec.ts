@@ -302,6 +302,25 @@ describe('WorkspaceService', () => {
       expect(prisma.matter.create).not.toHaveBeenCalled();
     });
 
+    it('should bypass the entitlement check for platform admins', async () => {
+      // Even on a plan with maxMatters = 0 (free), a platform admin creates
+      // the matter and neither the limit nor the active count is consulted.
+      entitlementService.getEffectiveLimit.mockResolvedValue(0);
+      (prisma.matter.create as jest.Mock).mockResolvedValue(mockMatter);
+
+      const result = await service.createMatter(
+        { title: 'Reyes v. Santos' },
+        orgId,
+        userId,
+        { isPlatformAdmin: true },
+      );
+
+      expect(result).toEqual(mockMatter);
+      expect(entitlementService.getEffectiveLimit).not.toHaveBeenCalled();
+      expect(prisma.matter.count).not.toHaveBeenCalled();
+      expect(prisma.matter.create).toHaveBeenCalled();
+    });
+
     it('should create when active matter count is below the limit', async () => {
       entitlementService.getEffectiveLimit.mockResolvedValue(20);
       (prisma.matter.count as jest.Mock).mockResolvedValue(19);

@@ -79,6 +79,7 @@ export class WorkspaceController {
       dto,
       user.organizationId,
       user.sub,
+      { isPlatformAdmin: user.isPlatformAdmin === true },
     );
 
     await this.auditService.log({

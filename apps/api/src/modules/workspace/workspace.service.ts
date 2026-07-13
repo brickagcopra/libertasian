@@ -57,26 +57,31 @@ export class WorkspaceService {
     dto: CreateMatterDto,
     organizationId: string,
     userId: string,
+    opts?: { isPlatformAdmin?: boolean },
   ) {
     // Enforce the plan's maxMatters entitlement (static limit; -1 = unlimited).
-    const limit = await this.entitlementService.getEffectiveLimit(
-      organizationId,
-      'maxMatters',
-    );
-    if (limit !== -1) {
-      const activeCount = await this.prisma
-        .forTenant(organizationId)
-        .matter.count({
-          where: { status: { notIn: ['closed', 'archived'] } },
-        });
-      if (activeCount >= limit) {
-        throw new ForbiddenException({
-          message:
-            limit === 0
-              ? 'Matters are available on Pro plans and above.'
-              : `Matter limit reached. Your plan allows ${limit} active matters.`,
-          quota: { used: activeCount, limit, resetsAt: '' },
-        });
+    // Platform admins bypass plan entitlements (same policy as SubscriptionGuard
+    // and usage quotas).
+    if (opts?.isPlatformAdmin !== true) {
+      const limit = await this.entitlementService.getEffectiveLimit(
+        organizationId,
+        'maxMatters',
+      );
+      if (limit !== -1) {
+        const activeCount = await this.prisma
+          .forTenant(organizationId)
+          .matter.count({
+            where: { status: { notIn: ['closed', 'archived'] } },
+          });
+        if (activeCount >= limit) {
+          throw new ForbiddenException({
+            message:
+              limit === 0
+                ? 'Matters are available on Pro plans and above.'
+                : `Matter limit reached. Your plan allows ${limit} active matters.`,
+            quota: { used: activeCount, limit, resetsAt: '' },
+          });
+        }
       }
     }
 
