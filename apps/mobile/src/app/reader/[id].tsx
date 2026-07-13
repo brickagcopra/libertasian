@@ -4,6 +4,7 @@ import {
   Alert,
   Modal,
   Pressable,
+  ScrollView,
   Text,
   TextInput,
   View,
@@ -127,33 +128,41 @@ function headingFor(section: DocumentSection, index: number): string {
 
 /**
  * Attach annotations to the paragraphs they anchor. Paragraph offsets into
- * section.plainText are recovered with a forward-moving indexOf cursor, and an
- * annotation matches a paragraph when their offset ranges overlap — so
- * highlights created on web (arbitrary selections) surface on mobile too.
+ * section.plainText are recovered with a forward-moving indexOf cursor (so
+ * duplicate paragraph text resolves to the correct occurrence) and threaded
+ * onto each paragraph for annotation creation. An annotation matches a
+ * paragraph when their offset ranges overlap — so highlights created on web
+ * (arbitrary selections) surface on mobile too. ALL overlapping annotations
+ * are attached; the first drives the paragraph tint.
  */
 function buildParagraphs(
   section: DocumentSection,
   annotations: Annotation[] | undefined,
 ): DocumentReaderParagraph[] {
   const texts = paragraphsFromSection(section);
-  if (!annotations || annotations.length === 0) {
-    return texts.map((text) => ({ text }));
-  }
   const plainText = section.plainText ?? '';
   let cursor = 0;
   return texts.map((text) => {
     const start = plainText.indexOf(text, cursor);
     const end = start === -1 ? -1 : start + text.length;
     if (start !== -1) cursor = end;
-    const match =
+    const offset = start === -1 ? undefined : start;
+    if (!annotations || annotations.length === 0) return { text, offset };
+    const matches =
       start === -1
-        ? annotations.find((a) => a.textAnchor.anchorText === text)
-        : annotations.find(
+        ? annotations.filter((a) => a.textAnchor.anchorText === text)
+        : annotations.filter(
             (a) => a.textAnchor.startOffset < end && a.textAnchor.endOffset > start,
           );
-    if (!match) return { text };
-    const { tint, solid } = annotationColorStyle(match.color);
-    return { text, annotation: { id: match.id, tint, solid } };
+    if (matches.length === 0) return { text, offset };
+    return {
+      text,
+      offset,
+      annotations: matches.map((m) => {
+        const { tint, solid } = annotationColorStyle(m.color);
+        return { id: m.id, tint, solid };
+      }),
+    };
   });
 }
 
@@ -242,10 +251,13 @@ export default function ReaderRoute() {
   const [annotationTarget, setAnnotationTarget] = useState<{
     sectionId: string;
     paragraphText: string;
+    /** Paragraph's precomputed offset in section.plainText (see buildParagraphs). */
+    startOffset?: number;
   } | null>(null);
   const [annotationColor, setAnnotationColor] = useState<AnnotationColor>('yellow');
   const [annotationNote, setAnnotationNote] = useState('');
-  const [viewedAnnotation, setViewedAnnotation] = useState<Annotation | null>(null);
+  // All annotations overlapping the tapped paragraph; empty = sheet closed.
+  const [viewedAnnotations, setViewedAnnotations] = useState<Annotation[]>([]);
 
   const readerSections = useMemo(
     () => buildReaderSections(sections, annotations),
@@ -310,28 +322,30 @@ export default function ReaderRoute() {
   }, [isBookmarked]);
 
   const handleParagraphLongPress = useCallback(
-    (sectionId: string, paragraphText: string) => {
+    (sectionId: string, paragraphText: string, startOffset?: number) => {
       setAnnotationColor('yellow');
       setAnnotationNote('');
-      setAnnotationTarget({ sectionId, paragraphText });
+      setAnnotationTarget({ sectionId, paragraphText, startOffset });
     },
     [],
   );
 
   const handleAnnotationPress = useCallback(
-    (annotationId: string) => {
-      const found = annotations?.find((a) => a.id === annotationId);
-      if (found) setViewedAnnotation(found);
+    (annotationIds: string[]) => {
+      const idSet = new Set(annotationIds);
+      const found = (annotations ?? []).filter((a) => idSet.has(a.id));
+      if (found.length > 0) setViewedAnnotations(found);
     },
     [annotations],
   );
 
   const submitAnnotation = useCallback(async () => {
     if (!annotationTarget) return;
-    const section = sections?.find((s) => s.id === annotationTarget.sectionId);
-    const plainText = section?.plainText ?? '';
-    const startOffset = plainText.indexOf(annotationTarget.paragraphText);
-    if (startOffset === -1) {
+    // The anchor offset is precomputed per paragraph in buildParagraphs (a
+    // fresh indexOf here would mis-anchor duplicate paragraph text to the
+    // first occurrence). If it genuinely couldn't be determined, abort.
+    const { startOffset } = annotationTarget;
+    if (startOffset === undefined) {
       setAnnotationTarget(null);
       Alert.alert('Error', 'Could not anchor the highlight to this paragraph.');
       return;
@@ -368,27 +382,29 @@ export default function ReaderRoute() {
     annotationTarget,
     createAnnotation,
     documentId,
-    sections,
   ]);
 
-  const handleDeleteAnnotation = useCallback(() => {
-    if (!viewedAnnotation) return;
-    Alert.alert('Delete annotation', 'Remove this highlight and its note?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await deleteAnnotation.mutateAsync(viewedAnnotation.id);
-            setViewedAnnotation(null);
-          } catch {
-            Alert.alert('Error', 'Failed to delete the annotation.');
-          }
+  const handleDeleteAnnotation = useCallback(
+    (annotation: Annotation) => {
+      Alert.alert('Delete annotation', 'Remove this highlight and its note?', [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteAnnotation.mutateAsync(annotation.id);
+              // Drop the deleted entry from the open sheet; close when empty.
+              setViewedAnnotations((prev) => prev.filter((a) => a.id !== annotation.id));
+            } catch {
+              Alert.alert('Error', 'Failed to delete the annotation.');
+            }
+          },
         },
-      },
-    ]);
-  }, [deleteAnnotation, viewedAnnotation]);
+      ]);
+    },
+    [deleteAnnotation],
+  );
 
   const handleToggleOffline = useCallback(async () => {
     if (!doc) return;
@@ -689,12 +705,14 @@ export default function ReaderRoute() {
         </View>
       </Modal>
 
-      {/* View/delete-annotation sheet — tap on an annotated paragraph */}
+      {/* View/delete-annotations sheet — tap on an annotated paragraph.
+          Lists EVERY annotation overlapping the paragraph, each with its own
+          color dot, note, and delete action. */}
       <Modal
-        visible={viewedAnnotation !== null}
+        visible={viewedAnnotations.length > 0}
         transparent
         animationType="slide"
-        onRequestClose={() => setViewedAnnotation(null)}
+        onRequestClose={() => setViewedAnnotations([])}
       >
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
           <View
@@ -706,57 +724,71 @@ export default function ReaderRoute() {
               borderTopRightRadius: 24,
             }}
           >
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              <View
-                style={{
-                  width: 14,
-                  height: 14,
-                  borderRadius: 7,
-                  backgroundColor: annotationColorStyle(viewedAnnotation?.color ?? 'yellow')
-                    .solid,
-                }}
-              />
-              <Text style={{ fontFamily: theme.serif, fontSize: 24, letterSpacing: -0.5, color: theme.ink }}>
-                Annotation
-              </Text>
-            </View>
-            {viewedAnnotation ? (
-              <Text
-                numberOfLines={4}
-                style={{
-                  marginTop: 10,
-                  fontFamily: theme.serif,
-                  fontSize: 14,
-                  lineHeight: 20,
-                  color: theme.inkSoft,
-                  fontStyle: 'italic',
-                }}
-              >
-                “{viewedAnnotation.textAnchor.anchorText}”
-              </Text>
-            ) : null}
-            <Text
-              style={{
-                marginTop: 12,
-                fontFamily: 'Inter_400Regular',
-                fontSize: 14,
-                lineHeight: 20,
-                color: viewedAnnotation?.annotationText ? theme.ink : theme.inkFaint,
-              }}
-            >
-              {viewedAnnotation?.annotationText ?? 'No note added.'}
+            <Text style={{ fontFamily: theme.serif, fontSize: 24, letterSpacing: -0.5, color: theme.ink }}>
+              {viewedAnnotations.length > 1
+                ? `Annotations (${viewedAnnotations.length})`
+                : 'Annotation'}
             </Text>
-            <View style={{ height: 16 }} />
-            <Button
-              label={deleteAnnotation.isPending ? 'Deleting…' : 'Delete highlight'}
-              variant="destructive"
-              full
-              disabled={deleteAnnotation.isPending}
-              onPress={handleDeleteAnnotation}
-            />
+            <ScrollView style={{ maxHeight: 380 }}>
+              {viewedAnnotations.map((a, i) => (
+                <View
+                  key={a.id}
+                  style={{
+                    marginTop: i === 0 ? 12 : 16,
+                    paddingTop: i === 0 ? 0 : 16,
+                    borderTopWidth: i === 0 ? 0 : 1,
+                    borderTopColor: theme.line,
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+                    <View
+                      style={{
+                        width: 14,
+                        height: 14,
+                        borderRadius: 7,
+                        marginTop: 3,
+                        backgroundColor: annotationColorStyle(a.color).solid,
+                      }}
+                    />
+                    <Text
+                      numberOfLines={3}
+                      style={{
+                        flex: 1,
+                        fontFamily: theme.serif,
+                        fontSize: 14,
+                        lineHeight: 20,
+                        color: theme.inkSoft,
+                        fontStyle: 'italic',
+                      }}
+                    >
+                      “{a.textAnchor.anchorText}”
+                    </Text>
+                  </View>
+                  <Text
+                    style={{
+                      marginTop: 10,
+                      fontFamily: 'Inter_400Regular',
+                      fontSize: 14,
+                      lineHeight: 20,
+                      color: a.annotationText ? theme.ink : theme.inkFaint,
+                    }}
+                  >
+                    {a.annotationText ?? 'No note added.'}
+                  </Text>
+                  <View style={{ height: 12 }} />
+                  <Button
+                    label={deleteAnnotation.isPending ? 'Deleting…' : 'Delete highlight'}
+                    variant="destructive"
+                    full
+                    disabled={deleteAnnotation.isPending}
+                    onPress={() => handleDeleteAnnotation(a)}
+                  />
+                </View>
+              ))}
+            </ScrollView>
             <View style={{ height: 8 }} />
             <Pressable
-              onPress={() => setViewedAnnotation(null)}
+              onPress={() => setViewedAnnotations([])}
               style={{ paddingVertical: 12, alignItems: 'center' }}
             >
               <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 14, color: theme.inkSoft }}>

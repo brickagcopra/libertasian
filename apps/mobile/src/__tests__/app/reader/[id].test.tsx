@@ -1,5 +1,6 @@
 import React from 'react';
-import { render } from '@testing-library/react-native';
+import { Alert } from 'react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 jest.mock('expo-router', () => ({
@@ -28,6 +29,15 @@ jest.mock('@/features/digests/hooks/use-digests', () => ({
 
 jest.mock('@/features/documents/hooks/use-recently-viewed', () => ({
   useRecentlyViewed: () => ({ addEntry: jest.fn() }),
+}));
+
+const mockUseAnnotations = jest.fn();
+const mockCreateAnnotation = jest.fn();
+const mockDeleteAnnotation = jest.fn();
+jest.mock('@/features/annotations/hooks/use-annotations', () => ({
+  useAnnotations: (...args: unknown[]) => mockUseAnnotations(...args),
+  useCreateAnnotation: () => ({ mutateAsync: mockCreateAnnotation, isPending: false }),
+  useDeleteAnnotation: () => ({ mutateAsync: mockDeleteAnnotation, isPending: false }),
 }));
 
 jest.mock('@/features/documents/hooks/use-documents', () => ({
@@ -67,6 +77,9 @@ beforeEach(() => {
   mockUseBookmarks.mockReturnValue({ data: { data: [] } });
   mockUseDocumentSections.mockReturnValue({ data: null, isLoading: false });
   mockUseDigests.mockReturnValue({ data: { data: [] } });
+  mockUseAnnotations.mockReturnValue({ data: [] });
+  mockCreateAnnotation.mockResolvedValue({ id: 'an-new' });
+  mockDeleteAnnotation.mockResolvedValue({ message: 'Annotation deleted' });
 });
 
 function baseDoc(overrides: Partial<Record<string, unknown>> = {}) {
@@ -274,4 +287,176 @@ describe('ReaderRoute — codal-class digest UI gating', () => {
       });
     },
   );
+});
+
+function sectionWith(plainText: string) {
+  return {
+    id: 's-1',
+    legalDocumentId: 'doc-1',
+    parentSectionId: null,
+    sectionType: 'facts',
+    sectionLabel: 'Facts',
+    ordering: 1,
+    plainText,
+    htmlText: null,
+    pageStart: 1,
+    pageEnd: 2,
+    tokenCount: null,
+    createdAt: '2024-01-15T00:00:00Z',
+  };
+}
+
+function annotation(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: 'an-1',
+    userId: 'u-1',
+    legalDocumentId: 'doc-1',
+    sectionId: 's-1',
+    textAnchor: { startOffset: 0, endOffset: 5, anchorText: 'Alpha' },
+    annotationText: null,
+    color: 'yellow',
+    createdAt: '2024-01-15T00:00:00Z',
+    ...overrides,
+  };
+}
+
+describe('ReaderRoute — annotation anchor offsets', () => {
+  beforeEach(() => {
+    mockUseDocument.mockReturnValue({
+      data: baseDoc(),
+      isLoading: false,
+      error: null,
+    });
+  });
+
+  it('anchors an annotation on the SECOND of two identical paragraphs at the second offset', async () => {
+    // "Same para." occurs at offsets 0 and 12 ("Same para." = 10 chars + "\n\n").
+    mockUseDocumentSections.mockReturnValue({
+      data: [sectionWith('Same para.\n\nSame para.')],
+      isLoading: false,
+    });
+
+    const { getAllByText, getByText } = render(<ReaderRoute />, {
+      wrapper: createWrapper(),
+    });
+
+    const paragraphs = getAllByText('Same para.');
+    expect(paragraphs).toHaveLength(2);
+
+    // Long-press the SECOND occurrence and save the highlight.
+    fireEvent(paragraphs[1], 'longPress');
+    fireEvent.press(getByText('Save highlight'));
+
+    await waitFor(() => expect(mockCreateAnnotation).toHaveBeenCalledTimes(1));
+    expect(mockCreateAnnotation).toHaveBeenCalledWith({
+      legalDocumentId: 'doc-1',
+      sectionId: 's-1',
+      textAnchor: {
+        startOffset: 12,
+        endOffset: 22,
+        anchorText: 'Same para.',
+      },
+      annotationText: undefined,
+      color: 'yellow',
+    });
+  });
+
+  it('anchors the FIRST of two identical paragraphs at offset 0', async () => {
+    mockUseDocumentSections.mockReturnValue({
+      data: [sectionWith('Same para.\n\nSame para.')],
+      isLoading: false,
+    });
+
+    const { getAllByText, getByText } = render(<ReaderRoute />, {
+      wrapper: createWrapper(),
+    });
+
+    fireEvent(getAllByText('Same para.')[0], 'longPress');
+    fireEvent.press(getByText('Save highlight'));
+
+    await waitFor(() => expect(mockCreateAnnotation).toHaveBeenCalledTimes(1));
+    expect(mockCreateAnnotation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        textAnchor: { startOffset: 0, endOffset: 10, anchorText: 'Same para.' },
+      }),
+    );
+  });
+});
+
+describe('ReaderRoute — multi-annotation view sheet', () => {
+  beforeEach(() => {
+    mockUseDocument.mockReturnValue({
+      data: baseDoc(),
+      isLoading: false,
+      error: null,
+    });
+    mockUseDocumentSections.mockReturnValue({
+      data: [sectionWith('Alpha beta gamma delta.')],
+      isLoading: false,
+    });
+    mockUseAnnotations.mockReturnValue({
+      data: [
+        annotation({
+          id: 'an-1',
+          textAnchor: { startOffset: 0, endOffset: 5, anchorText: 'Alpha' },
+          annotationText: 'First note',
+          color: 'yellow',
+        }),
+        annotation({
+          id: 'an-2',
+          textAnchor: { startOffset: 6, endOffset: 10, anchorText: 'beta' },
+          annotationText: null,
+          color: 'green',
+        }),
+      ],
+    });
+  });
+
+  it('lists EVERY annotation overlapping the tapped paragraph', () => {
+    const { getByText, getAllByText } = render(<ReaderRoute />, {
+      wrapper: createWrapper(),
+    });
+
+    fireEvent.press(getByText('Alpha beta gamma delta.'));
+
+    // Sheet header reflects the count, and both entries render with their
+    // own note (or placeholder) and their own delete button.
+    expect(getByText('Annotations (2)')).toBeTruthy();
+    expect(getByText('First note')).toBeTruthy();
+    expect(getByText('No note added.')).toBeTruthy();
+    expect(getByText('“Alpha”')).toBeTruthy();
+    expect(getByText('“beta”')).toBeTruthy();
+    expect(getAllByText('Delete highlight')).toHaveLength(2);
+  });
+
+  it('deletes only the annotation whose delete button was pressed', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert');
+    const { getByText, getAllByText } = render(<ReaderRoute />, {
+      wrapper: createWrapper(),
+    });
+
+    fireEvent.press(getByText('Alpha beta gamma delta.'));
+    fireEvent.press(getAllByText('Delete highlight')[1]);
+
+    // Existing confirm pattern — Alert with Cancel/Delete.
+    expect(alertSpy).toHaveBeenCalledWith(
+      'Delete annotation',
+      'Remove this highlight and its note?',
+      expect.any(Array),
+    );
+    const buttons = alertSpy.mock.calls.at(-1)?.[2] as Array<{
+      text: string;
+      onPress?: () => void | Promise<void>;
+    }>;
+    const confirm = buttons.find((b) => b.text === 'Delete');
+    await act(async () => {
+      await confirm?.onPress?.();
+    });
+
+    await waitFor(() => expect(mockDeleteAnnotation).toHaveBeenCalledTimes(1));
+    expect(mockDeleteAnnotation).toHaveBeenCalledWith('an-2');
+    // The remaining annotation is still listed in the sheet.
+    expect(getByText('First note')).toBeTruthy();
+    expect(getAllByText('Delete highlight')).toHaveLength(1);
+  });
 });

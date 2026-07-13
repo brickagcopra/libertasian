@@ -28,10 +28,20 @@ export interface DocumentReaderParagraphAnnotation {
 export interface DocumentReaderParagraph {
   /** Plain text body. */
   text: string;
+  /**
+   * Start offset of this paragraph within its section's plain text. Threaded
+   * back through `onParagraphLongPress` so annotation anchors stay correct
+   * even when identical paragraph text appears more than once in a section.
+   */
+  offset?: number;
   /** Optional substring to highlight inline with accent-soft background. */
   highlight?: string;
-  /** Whole-paragraph annotation highlight (tap to view/delete). */
-  annotation?: DocumentReaderParagraphAnnotation;
+  /**
+   * Whole-paragraph annotation highlights (tap to view/delete). The FIRST
+   * entry drives the background tint + left border; all entries are surfaced
+   * through `onAnnotationPress`.
+   */
+  annotations?: DocumentReaderParagraphAnnotation[];
 }
 
 export interface DocumentReaderCitation {
@@ -87,10 +97,18 @@ export interface DocumentReaderScreenProps {
   isBookmarked?: boolean;
   onTextSize?: () => void;
   onAdd?: () => void;
-  /** Long-press on any body paragraph (e.g. open the create-annotation sheet). */
-  onParagraphLongPress?: (sectionId: string, paragraphText: string) => void;
-  /** Tap on an annotated paragraph (e.g. open the view/delete sheet). */
-  onAnnotationPress?: (annotationId: string) => void;
+  /**
+   * Long-press on any body paragraph (e.g. open the create-annotation sheet).
+   * `startOffset` is the paragraph's precomputed offset within its section's
+   * plain text (undefined when it could not be determined).
+   */
+  onParagraphLongPress?: (
+    sectionId: string,
+    paragraphText: string,
+    startOffset?: number,
+  ) => void;
+  /** Tap on an annotated paragraph — receives ALL overlapping annotation ids. */
+  onAnnotationPress?: (annotationIds: string[]) => void;
 }
 
 function pageRangeText(s: DocumentReaderSection): string | null {
@@ -354,34 +372,37 @@ export function DocumentReaderScreen({
               </View>
               {section.paragraphs.map((p, i) => {
                 const para = typeof p === 'string' ? { text: p } : p;
-                const annotation = para.annotation;
+                const annotations = para.annotations;
+                // First annotation drives the paragraph's tint + left border.
+                const firstAnnotation =
+                  annotations && annotations.length > 0 ? annotations[0] : undefined;
                 return (
                   <Pressable
                     key={i}
                     onLongPress={
                       onParagraphLongPress
-                        ? () => onParagraphLongPress(section.id, para.text)
+                        ? () => onParagraphLongPress(section.id, para.text, para.offset)
                         : undefined
                     }
                     onPress={
-                      annotation && onAnnotationPress
-                        ? () => onAnnotationPress(annotation.id)
+                      firstAnnotation && annotations && onAnnotationPress
+                        ? () => onAnnotationPress(annotations.map((a) => a.id))
                         : undefined
                     }
                     accessibilityHint={
-                      annotation
-                        ? 'Tap to view annotation. Long-press to annotate.'
+                      firstAnnotation
+                        ? 'Tap to view annotations. Long-press to annotate.'
                         : onParagraphLongPress
                           ? 'Long-press to annotate this paragraph.'
                           : undefined
                     }
                     style={{
                       marginTop: i === 0 ? 0 : 14,
-                      ...(annotation
+                      ...(firstAnnotation
                         ? {
-                            backgroundColor: annotation.tint,
+                            backgroundColor: firstAnnotation.tint,
                             borderLeftWidth: 3,
-                            borderLeftColor: annotation.solid,
+                            borderLeftColor: firstAnnotation.solid,
                             borderRadius: 6,
                             paddingLeft: 10,
                             paddingRight: 6,
