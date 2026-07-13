@@ -20,17 +20,29 @@ beforeEach(() => jest.clearAllMocks());
 
 describe('useSubscription', () => {
   it('fetches subscription', async () => {
-    mockGet.mockResolvedValueOnce({ data: { planCode: 'pro', status: 'active' } });
+    mockGet.mockResolvedValueOnce({ planCode: 'pro', status: 'active' });
     const { result } = renderHook(() => useSubscription(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(mockGet).toHaveBeenCalledWith('/billing/subscription');
   });
 
-  it('selects data from response', async () => {
-    mockGet.mockResolvedValueOnce({ data: { planCode: 'pro', status: 'active' } });
+  // apiClient strips the { success, data } envelope, so the hook exposes the
+  // unwrapped SubscriptionDetail directly (no select).
+  it('exposes the unwrapped subscription detail as data', async () => {
+    mockGet.mockResolvedValueOnce({ planCode: 'pro', status: 'active' });
     const { result } = renderHook(() => useSubscription(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual({ planCode: 'pro', status: 'active' });
+  });
+
+  // Regression guard: if a `select: (res) => res.data` is ever re-added, a
+  // wrapped payload would be drilled into and this as-is assertion would fail.
+  it('passes a wrapped { data: {...} } payload through as-is (no select)', async () => {
+    const wrapped = { data: { planCode: 'pro', status: 'active' } };
+    mockGet.mockResolvedValueOnce(wrapped);
+    const { result } = renderHook(() => useSubscription(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toEqual(wrapped);
   });
 
   it('is disabled when enabled is false', () => {
@@ -41,19 +53,19 @@ describe('useSubscription', () => {
 
 describe('useCanGenerateDigest', () => {
   it('returns true for pro plan', async () => {
-    mockGet.mockResolvedValueOnce({ data: { planCode: 'pro', status: 'active' } });
+    mockGet.mockResolvedValueOnce({ planCode: 'pro', status: 'active' });
     const { result } = renderHook(() => useCanGenerateDigest(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current).toBe(true));
   });
 
   it('returns true for edu plan', async () => {
-    mockGet.mockResolvedValueOnce({ data: { planCode: 'edu', status: 'active' } });
+    mockGet.mockResolvedValueOnce({ planCode: 'edu', status: 'active' });
     const { result } = renderHook(() => useCanGenerateDigest(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current).toBe(true));
   });
 
   it('returns false for free plan', async () => {
-    mockGet.mockResolvedValueOnce({ data: { planCode: 'free', status: 'active' } });
+    mockGet.mockResolvedValueOnce({ planCode: 'free', status: 'active' });
     const { result } = renderHook(() => useCanGenerateDigest(), { wrapper: createWrapper() });
     // Need to wait for query to settle, then check
     await waitFor(() => expect(mockGet).toHaveBeenCalled());

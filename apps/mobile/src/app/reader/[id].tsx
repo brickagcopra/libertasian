@@ -43,6 +43,7 @@ import {
   annotationColorStyle,
 } from '@/features/annotations/colors';
 import type { Annotation, AnnotationColor } from '@/features/annotations/types';
+import { useCanUseBookmarksAnnotations } from '@/features/billing/hooks/use-can-use-bookmarks-annotations';
 import { useDigests, useGenerateDigest } from '@/features/digests/hooks/use-digests';
 import { useRecentlyViewed } from '@/features/documents/hooks/use-recently-viewed';
 import { useOfflineCodals } from '@/features/study/hooks/use-offline-codals';
@@ -244,6 +245,14 @@ export default function ReaderRoute() {
   const [bookmarkSheetOpen, setBookmarkSheetOpen] = useState(false);
   const [bookmarkNote, setBookmarkNote] = useState('');
 
+  // Bookmarks + annotations are Edu+ features (SubscriptionGuard on the
+  // POST endpoints). When the org is KNOWN to be below Edu, the affordances
+  // stay visible but open the upsell sheet instead of the create sheets.
+  // While the subscription is loading/undetermined this reports locked:false
+  // and the 402/403 Alert catches below remain the fallback.
+  const { locked: paywallLocked, planName } = useCanUseBookmarksAnnotations();
+  const [upsellOpen, setUpsellOpen] = useState(false);
+
   // Annotations — whole-paragraph highlights (see buildParagraphs).
   const { data: annotations } = useAnnotations(documentId);
   const createAnnotation = useCreateAnnotation();
@@ -318,16 +327,24 @@ export default function ReaderRoute() {
       Alert.alert('Bookmarked', 'This document is already in your bookmarks.');
       return;
     }
+    if (paywallLocked) {
+      setUpsellOpen(true);
+      return;
+    }
     setBookmarkSheetOpen(true);
-  }, [isBookmarked]);
+  }, [isBookmarked, paywallLocked]);
 
   const handleParagraphLongPress = useCallback(
     (sectionId: string, paragraphText: string, startOffset?: number) => {
+      if (paywallLocked) {
+        setUpsellOpen(true);
+        return;
+      }
       setAnnotationColor('yellow');
       setAnnotationNote('');
       setAnnotationTarget({ sectionId, paragraphText, startOffset });
     },
-    [],
+    [paywallLocked],
   );
 
   const handleAnnotationPress = useCallback(
@@ -793,6 +810,54 @@ export default function ReaderRoute() {
             >
               <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 14, color: theme.inkSoft }}>
                 Close
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Edu+ upsell sheet — bookmark button / paragraph long-press for
+          below-Edu orgs. Proactive paywall: no create request ever fires. */}
+      <Modal
+        visible={upsellOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setUpsellOpen(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
+          <View
+            style={{
+              backgroundColor: theme.bg,
+              padding: 22,
+              paddingBottom: 36,
+              borderTopLeftRadius: 24,
+              borderTopRightRadius: 24,
+            }}
+          >
+            <Text style={{ fontFamily: theme.serif, fontSize: 24, letterSpacing: -0.5, color: theme.ink }}>
+              Available on Edu plans and above
+            </Text>
+            <Text style={{ marginTop: 6, fontFamily: 'Inter_400Regular', fontSize: 13, color: theme.inkSoft }}>
+              You&apos;re on the {planName} plan. Save bookmarks and highlight
+              passages with notes.
+            </Text>
+            <View style={{ height: 18 }} />
+            <Button
+              label="See plans"
+              variant="primary"
+              full
+              onPress={() => {
+                setUpsellOpen(false);
+                router.push('/settings/plans');
+              }}
+            />
+            <View style={{ height: 8 }} />
+            <Pressable
+              onPress={() => setUpsellOpen(false)}
+              style={{ paddingVertical: 12, alignItems: 'center' }}
+            >
+              <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 14, color: theme.inkSoft }}>
+                Not now
               </Text>
             </Pressable>
           </View>
