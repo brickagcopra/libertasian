@@ -20,6 +20,9 @@ export function useSubscription(enabled = true) {
     queryFn: () => apiClient.get<SubscriptionDetail>('/billing/subscription'),
     enabled,
     staleTime: 5 * 60 * 1000,
+    // A 404 (no active subscription = free tier) is deterministic — retrying
+    // only delays the paywall lock for free users.
+    retry: false,
   });
 }
 

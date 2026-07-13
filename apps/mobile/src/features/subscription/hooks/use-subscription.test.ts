@@ -35,6 +35,16 @@ describe('useSubscription', () => {
     expect(result.current.data).toEqual({ planCode: 'pro', status: 'active' });
   });
 
+  // Regression guard: if a `select: (res) => res.data` is ever re-added, a
+  // wrapped payload would be drilled into and this as-is assertion would fail.
+  it('passes a wrapped { data: {...} } payload through as-is (no select)', async () => {
+    const wrapped = { data: { planCode: 'pro', status: 'active' } };
+    mockGet.mockResolvedValueOnce(wrapped);
+    const { result } = renderHook(() => useSubscription(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toEqual(wrapped);
+  });
+
   it('is disabled when enabled is false', () => {
     const { result } = renderHook(() => useSubscription(false), { wrapper: createWrapper() });
     expect(result.current.fetchStatus).toBe('idle');
