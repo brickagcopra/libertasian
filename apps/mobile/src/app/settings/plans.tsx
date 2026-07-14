@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   View,
   Text,
+  TextInput,
   TouchableOpacity,
   Pressable,
   StyleSheet,
@@ -20,13 +21,21 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useTheme } from '@/providers/theme-provider';
 import { usePlanInfoList, useActivePromotions } from '../../features/billing/hooks/use-plans';
 import { useSubscription } from '../../features/billing/hooks/use-subscription';
-import { useCreateCheckout, useCheckoutPreview } from '../../features/billing/hooks/use-billing';
+import {
+  useCreateCheckout,
+  useCheckoutPreview,
+  useValidateCoupon,
+} from '../../features/billing/hooks/use-billing';
 import {
   formatPHP,
   getPromotionDiscountLabel,
   TIER_ORDER,
 } from '../../features/billing/types';
-import type { PlanInfo, CheckoutPreviewData } from '../../features/billing/types';
+import type {
+  PlanInfo,
+  CheckoutPreviewData,
+  CouponValidationResult,
+} from '../../features/billing/types';
 
 // Xendit rejects custom-scheme redirect URLs (the API DTO enforces @IsUrl),
 // so checkout bounces through public web pages that hand back to the app
@@ -43,10 +52,14 @@ export default function PlansScreen() {
   const { data: promotions } = useActivePromotions();
   const checkoutPreview = useCheckoutPreview();
   const createCheckout = useCreateCheckout();
+  const validateCoupon = useValidateCoupon();
 
   const [billingPeriod, setBillingPeriod] = useState<'monthly' | 'annual'>('monthly');
   const [previewData, setPreviewData] = useState<CheckoutPreviewData | null>(null);
   const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
+  const [couponInput, setCouponInput] = useState('');
+  const [appliedCoupon, setAppliedCoupon] = useState<CouponValidationResult | null>(null);
+  const [couponError, setCouponError] = useState('');
 
   const isLoading = plansLoading || subLoading;
   const currentPlanCode = subscription?.planCode ?? 'free';
@@ -80,10 +93,23 @@ export default function PlansScreen() {
     }
   }
 
+  function resetCouponState() {
+    setCouponInput('');
+    setAppliedCoupon(null);
+    setCouponError('');
+  }
+
+  function handleBillingPeriodChange(period: 'monthly' | 'annual') {
+    setBillingPeriod(period);
+    // Clear coupon on period change since it may not apply (mirrors web)
+    resetCouponState();
+  }
+
   async function handleSelectPlan(plan: PlanInfo) {
     if (plan.code === currentPlanCode || plan.code === 'free') return;
 
     setSelectedPlan(plan.code);
+    resetCouponState();
 
     try {
       const preview = await checkoutPreview.mutateAsync({
@@ -97,13 +123,67 @@ export default function PlansScreen() {
     }
   }
 
+  // Re-fetch the preview with (or without) a coupon so the sheet's discount
+  // line reflects the applied code. A failed refresh keeps the old preview —
+  // it never blocks checkout.
+  async function refreshPreview(planCode: string, couponCode?: string) {
+    try {
+      const preview = await checkoutPreview.mutateAsync({
+        planCode: planCode as 'edu' | 'pro' | 'team' | 'enterprise',
+        billingPeriod,
+        ...(couponCode ? { couponCode } : {}),
+      });
+      setPreviewData(preview);
+    } catch {
+      // Keep the existing preview; the coupon still applies at checkout.
+    }
+  }
+
+  function handleApplyCoupon() {
+    const code = couponInput.trim().toUpperCase();
+    if (!code || !previewData) return;
+
+    setCouponError('');
+    validateCoupon.mutate(
+      { code, planCode: previewData.planCode, billingPeriod },
+      {
+        onSuccess: (result) => {
+          if (result.valid) {
+            setAppliedCoupon(result);
+            setCouponError('');
+            refreshPreview(previewData.planCode, result.coupon?.code ?? code);
+          } else {
+            setAppliedCoupon(null);
+            setCouponError(result.errors[0] ?? 'Invalid coupon code');
+          }
+        },
+        onError: (error) => {
+          setAppliedCoupon(null);
+          setCouponError(
+            error instanceof Error ? error.message : 'Failed to validate coupon',
+          );
+        },
+      },
+    );
+  }
+
+  function handleRemoveCoupon() {
+    const planCode = previewData?.planCode;
+    resetCouponState();
+    if (planCode) {
+      refreshPreview(planCode);
+    }
+  }
+
   async function handleCheckout(planCode: string) {
     try {
+      const couponCode = appliedCoupon?.valid ? appliedCoupon.coupon?.code : undefined;
       const result = await createCheckout.mutateAsync({
         planCode: planCode as 'edu' | 'pro' | 'team' | 'enterprise',
         billingPeriod,
         successUrl: CHECKOUT_SUCCESS_URL,
         cancelUrl: CHECKOUT_CANCEL_URL,
+        ...(couponCode ? { couponCode } : {}),
       });
 
       if (result.checkoutUrl) {
@@ -119,12 +199,14 @@ export default function PlansScreen() {
     } finally {
       setSelectedPlan(null);
       setPreviewData(null);
+      resetCouponState();
     }
   }
 
   function dismissPreview() {
     setSelectedPlan(null);
     setPreviewData(null);
+    resetCouponState();
   }
 
   const promoLabelForPeriod = promotions?.[0]
@@ -167,7 +249,7 @@ export default function PlansScreen() {
               styles.toggleButton,
               billingPeriod === 'monthly' && { backgroundColor: theme.pillBg },
             ]}
-            onPress={() => setBillingPeriod('monthly')}
+            onPress={() => handleBillingPeriodChange('monthly')}
           >
             <Text
               style={[
@@ -183,7 +265,7 @@ export default function PlansScreen() {
               styles.toggleButton,
               billingPeriod === 'annual' && { backgroundColor: theme.pillBg },
             ]}
-            onPress={() => setBillingPeriod('annual')}
+            onPress={() => handleBillingPeriodChange('annual')}
           >
             <Text
               style={[
@@ -374,6 +456,64 @@ export default function PlansScreen() {
                 </View>
               )}
 
+              {/* Coupon code */}
+              {appliedCoupon?.valid && appliedCoupon.coupon ? (
+                <View style={styles.couponRow}>
+                  <View style={[styles.couponBadge, { backgroundColor: theme.accentSoft }]}>
+                    <Ionicons name="pricetag" size={14} color={theme.accent} />
+                    <Text style={[styles.couponBadgeText, { color: theme.ink }]}>
+                      {appliedCoupon.coupon.code}
+                      {appliedCoupon.coupon.discountType === 'percentage'
+                        ? ` — ${appliedCoupon.coupon.discountValue}% off`
+                        : ` — ${formatPHP(appliedCoupon.coupon.discountValue)} off`}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={handleRemoveCoupon}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Remove coupon"
+                  >
+                    <Ionicons name="close-circle" size={20} color={theme.inkSoft} />
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={styles.couponRow}>
+                  <TextInput
+                    style={[
+                      styles.couponInput,
+                      { backgroundColor: theme.chipBg, color: theme.ink, borderColor: theme.line },
+                    ]}
+                    value={couponInput}
+                    onChangeText={(text) => setCouponInput(text.toUpperCase())}
+                    placeholder="Coupon code"
+                    placeholderTextColor={theme.inkSoft}
+                    autoCapitalize="characters"
+                    autoCorrect={false}
+                    editable={!validateCoupon.isPending}
+                    onSubmitEditing={handleApplyCoupon}
+                    returnKeyType="done"
+                    accessibilityLabel="Coupon code"
+                  />
+                  <TouchableOpacity
+                    style={[styles.couponApplyButton, { backgroundColor: theme.chipBg }]}
+                    onPress={handleApplyCoupon}
+                    disabled={validateCoupon.isPending || !couponInput.trim()}
+                    accessibilityRole="button"
+                    accessibilityLabel="Apply coupon"
+                  >
+                    {validateCoupon.isPending ? (
+                      <ActivityIndicator size="small" color={theme.ink} />
+                    ) : (
+                      <Text style={[styles.couponApplyText, { color: theme.ink }]}>Apply</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              )}
+              {couponError ? (
+                <Text style={styles.couponErrorText}>{couponError}</Text>
+              ) : null}
+
               <View style={[styles.divider, { backgroundColor: theme.line }]} />
 
               <View style={styles.previewRow}>
@@ -525,6 +665,45 @@ const styles = StyleSheet.create({
   },
   previewLabel: { fontSize: 14, fontFamily: 'Inter_400Regular' },
   previewValue: { fontSize: 14, fontFamily: 'Inter_500Medium' },
+  couponRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 6,
+  },
+  couponInput: {
+    flex: 1,
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 14,
+    fontFamily: 'Inter_500Medium',
+  },
+  couponApplyButton: {
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  couponApplyText: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
+  couponBadge: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  couponBadgeText: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
+  couponErrorText: {
+    fontSize: 12,
+    color: '#dc2626',
+    fontFamily: 'Inter_400Regular',
+    marginTop: 2,
+  },
   divider: { height: 1, marginVertical: 8 },
   previewTotalLabel: { fontSize: 16, fontFamily: 'Inter_700Bold' },
   previewTotalValue: { fontSize: 18, fontFamily: 'Inter_700Bold' },

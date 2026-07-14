@@ -1,6 +1,15 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-07-13 (epic deployed + reseeded + smoke-verified; PENDING_TASKS.md pruned against ground truth)
+> Last updated: 2026-07-14 (coupon-checkout + Digests-page repair pair #301/#302)
+
+---
+
+## 2026-07-14 — Coupon reserve prod 500 + mobile Digests page repair (#301, #302)
+
+Two sequenced PRs, both full-CI-gated and squash-merged.
+
+- **#301** `fix(api)` — (1) `reserveCoupon` row-lock query cast to `$1::uuid` (Postgres 42883 `uuid = text` was 500ing EVERY couponed checkout in prod) and aliased `max_redemptions`/`current_redemptions` to camelCase so the under-lock over-redemption re-check actually reads values (was comparing `undefined`, i.e. dead); narrow `LockedCouponRow` type replaces the full-record cast. (2) `ListDigestsQueryDto` whitelists `orderBy` (`createdAt|updatedAt`) + `orderDirection` (`asc|desc`) — the mobile Digests page sent these on every request and `forbidNonWhitelisted` 400'd all of them (page permanently empty); wired into `list()` ordering with `id` kept as keyset tiebreaker. `barSubjectCode` NOT added — Prisma `Digest` model has no bar-subject field. New HTTP-level spec boots the controller behind the exact main.ts ValidationPipe config and asserts the 200/400 matrix.
+- **#302** `fix(mobile)` — (1) coupon input at checkout: TextInput + Apply in the plans.tsx preview sheet via the previously-unused `useValidateCoupon`; valid → preview re-fetched with `couponCode` (discount line renders) and `couponCode` flows into checkout; invalid → inline error, plain checkout never blocked; clears on period change/dismiss/checkout. (2) Home search entry: search-bar Pressable (greeting → brief card) navigating to `/(tabs)/search`. (3) Digests page: `SOURCE_ORIGINS` chips → DTO-valid values (old `editorial_corpus`/`ai_generated` 400'd every filtered request); **also found** the confidence sorts sent `orderBy=confidenceScore` (DTO-rejected) → replaced with whitelisted "Recently Updated" (`updatedAt desc`); `barSubjectCode` chips removed (no API support, see #301); error state + Retry replaces the silent empty list. (4) Digests gets the floating pill TabBar ("Read" active) + `tabBarStyle: {display:'none'}` override + bottom list padding; other tabs untouched. Mobile 220 suites / 1509 tests green.
 
 ---
 

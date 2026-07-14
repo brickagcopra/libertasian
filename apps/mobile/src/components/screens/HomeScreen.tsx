@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { HeaderAmbient } from '@/components/ui/HeaderAmbient';
@@ -27,6 +28,8 @@ export interface HomeScreenProps {
   onSeeAllFeed?: () => void;
   onPressFeedItem?: (id: string) => void;
   onProfilePress?: () => void;
+  /** Tapping the search bar affordance (navigates to the Search tab). */
+  onSearchPress?: () => void;
   /** Active tab id passed to the design's bottom TabBar. */
   activeTab?: TabBarItemId;
   onTabPress?: (id: TabBarItemId) => void;
@@ -63,6 +66,7 @@ export function HomeScreen({
   onSeeAllFeed,
   onPressFeedItem,
   onProfilePress,
+  onSearchPress,
   activeTab = 'home',
   onTabPress,
 }: HomeScreenProps) {
@@ -117,6 +121,31 @@ export function HomeScreen({
             </View>
           </Pressable>
         </View>
+
+        <View style={{ height: 18 }} />
+
+        {/* Search entry — navigation affordance, not a live input */}
+        <Pressable
+          onPress={onSearchPress}
+          accessibilityRole="button"
+          accessibilityLabel="Search cases, codals, digests"
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 10,
+            backgroundColor: theme.surface,
+            borderWidth: 1,
+            borderColor: theme.line,
+            borderRadius: 16,
+            paddingHorizontal: 14,
+            paddingVertical: 12,
+          }}
+        >
+          <Ionicons name="search-outline" size={18} color={theme.inkFaint} />
+          <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 14, color: theme.inkSoft }}>
+            Search cases, codals, digests…
+          </Text>
+        </Pressable>
 
         <View style={{ height: 18 }} />
 

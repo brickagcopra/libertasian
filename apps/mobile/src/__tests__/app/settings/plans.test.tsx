@@ -171,6 +171,164 @@ describe('PlansScreen', () => {
     );
   });
 
+  describe('coupon input', () => {
+    const validCouponResult = {
+      valid: true,
+      coupon: {
+        id: 'c1',
+        code: 'SAVE20',
+        name: '20% Off',
+        discountType: 'percentage' as const,
+        discountValue: 20,
+        currency: 'PHP',
+      },
+      errors: [],
+    };
+
+    const discountedPreview: CheckoutPreviewData = {
+      ...proPreview,
+      couponId: 'c1',
+      couponCode: 'SAVE20',
+      couponDiscountAmount: 19980,
+      totalDiscountAmount: 19980,
+      finalAmount: 79920,
+    };
+
+    it('applies a valid coupon: validates, refreshes the preview, shows the discount line', async () => {
+      mockPost.mockImplementation((url: string, body?: unknown) => {
+        if (url === '/coupons/validate') return Promise.resolve(validCouponResult);
+        if (url === '/billing/checkout/preview') {
+          const withCoupon = (body as { couponCode?: string })?.couponCode;
+          return Promise.resolve(withCoupon ? discountedPreview : proPreview);
+        }
+        return Promise.reject(new Error(`Unexpected POST ${url}`));
+      });
+
+      const utils = render(<PlansScreen />, { wrapper: createWrapper() });
+      await openProPreview(utils);
+
+      fireEvent.changeText(utils.getByLabelText('Coupon code'), 'save20');
+      fireEvent.press(utils.getByLabelText('Apply coupon'));
+
+      await waitFor(() =>
+        expect(mockPost).toHaveBeenCalledWith('/coupons/validate', {
+          code: 'SAVE20',
+          planCode: 'pro',
+          billingPeriod: 'monthly',
+        }),
+      );
+      await waitFor(() =>
+        expect(mockPost).toHaveBeenCalledWith('/billing/checkout/preview', {
+          planCode: 'pro',
+          billingPeriod: 'monthly',
+          couponCode: 'SAVE20',
+        }),
+      );
+      // Discount line renders from the refreshed preview
+      await waitFor(() => expect(utils.getByText('Coupon (SAVE20)')).toBeTruthy());
+      expect(utils.getByText('SAVE20 — 20% off')).toBeTruthy();
+    });
+
+    it('passes couponCode into the checkout request after applying', async () => {
+      mockPost.mockImplementation((url: string, body?: unknown) => {
+        if (url === '/coupons/validate') return Promise.resolve(validCouponResult);
+        if (url === '/billing/checkout/preview') {
+          const withCoupon = (body as { couponCode?: string })?.couponCode;
+          return Promise.resolve(withCoupon ? discountedPreview : proPreview);
+        }
+        if (url === '/billing/checkout') {
+          return Promise.resolve({
+            checkoutUrl: 'https://checkout.xendit.co/web/session-1',
+            checkoutSessionId: 'cs1',
+            paymentId: 'p1',
+          });
+        }
+        return Promise.reject(new Error(`Unexpected POST ${url}`));
+      });
+
+      const utils = render(<PlansScreen />, { wrapper: createWrapper() });
+      await openProPreview(utils);
+
+      fireEvent.changeText(utils.getByLabelText('Coupon code'), 'SAVE20');
+      fireEvent.press(utils.getByLabelText('Apply coupon'));
+      await waitFor(() => expect(utils.getByText('Coupon (SAVE20)')).toBeTruthy());
+
+      fireEvent.press(utils.getByText('Proceed to Payment'));
+
+      await waitFor(() =>
+        expect(mockPost).toHaveBeenCalledWith('/billing/checkout', {
+          planCode: 'pro',
+          billingPeriod: 'monthly',
+          successUrl: 'https://libertasian.com/billing/mobile/success',
+          cancelUrl: 'https://libertasian.com/billing/mobile/cancel',
+          couponCode: 'SAVE20',
+        }),
+      );
+    });
+
+    it('shows an inline error for an invalid coupon and still allows plain checkout', async () => {
+      mockPost.mockImplementation((url: string) => {
+        if (url === '/coupons/validate') {
+          return Promise.resolve({
+            valid: false,
+            errors: ['Coupon has expired'],
+          });
+        }
+        if (url === '/billing/checkout/preview') return Promise.resolve(proPreview);
+        if (url === '/billing/checkout') {
+          return Promise.resolve({
+            checkoutUrl: 'https://checkout.xendit.co/web/session-1',
+            checkoutSessionId: 'cs1',
+            paymentId: 'p1',
+          });
+        }
+        return Promise.reject(new Error(`Unexpected POST ${url}`));
+      });
+
+      const utils = render(<PlansScreen />, { wrapper: createWrapper() });
+      await openProPreview(utils);
+
+      fireEvent.changeText(utils.getByLabelText('Coupon code'), 'EXPIRED');
+      fireEvent.press(utils.getByLabelText('Apply coupon'));
+
+      await waitFor(() => expect(utils.getByText('Coupon has expired')).toBeTruthy());
+
+      // Checkout is not blocked and carries no couponCode
+      fireEvent.press(utils.getByText('Proceed to Payment'));
+      await waitFor(() =>
+        expect(mockPost).toHaveBeenCalledWith('/billing/checkout', {
+          planCode: 'pro',
+          billingPeriod: 'monthly',
+          successUrl: 'https://libertasian.com/billing/mobile/success',
+          cancelUrl: 'https://libertasian.com/billing/mobile/cancel',
+        }),
+      );
+    });
+
+    it('removing an applied coupon restores the coupon input', async () => {
+      mockPost.mockImplementation((url: string, body?: unknown) => {
+        if (url === '/coupons/validate') return Promise.resolve(validCouponResult);
+        if (url === '/billing/checkout/preview') {
+          const withCoupon = (body as { couponCode?: string })?.couponCode;
+          return Promise.resolve(withCoupon ? discountedPreview : proPreview);
+        }
+        return Promise.reject(new Error(`Unexpected POST ${url}`));
+      });
+
+      const utils = render(<PlansScreen />, { wrapper: createWrapper() });
+      await openProPreview(utils);
+
+      fireEvent.changeText(utils.getByLabelText('Coupon code'), 'SAVE20');
+      fireEvent.press(utils.getByLabelText('Apply coupon'));
+      await waitFor(() => expect(utils.getByText('SAVE20 — 20% off')).toBeTruthy());
+
+      fireEvent.press(utils.getByLabelText('Remove coupon'));
+
+      await waitFor(() => expect(utils.getByLabelText('Coupon code')).toBeTruthy());
+      expect(utils.queryByText('SAVE20 — 20% off')).toBeNull();
+    });
+  });
+
   it('back button falls back to /settings when there is no history', async () => {
     const utils = render(<PlansScreen />, { wrapper: createWrapper() });
 

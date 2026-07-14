@@ -94,6 +94,7 @@ export default function HomeRoute() {
       onProfilePress={() => router.push('/settings')}
       onPressFeedItem={handleFeedItemPress}
       onSeeAllFeed={() => router.push('/(tabs)/digests')}
+      onSearchPress={() => router.push('/(tabs)/search')}
       activeTab="home"
       onTabPress={(id) => {
         if (id === 'docs') router.push('/documents');

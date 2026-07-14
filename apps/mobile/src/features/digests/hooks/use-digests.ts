@@ -13,8 +13,6 @@ export function useDigests(
   if (filters.reviewStatus) params['reviewStatus'] = filters.reviewStatus;
   if (filters.legalDocumentId)
     params['legalDocumentId'] = filters.legalDocumentId;
-  if (filters.barSubjectCode)
-    params['barSubjectCode'] = filters.barSubjectCode;
   if (filters.sourceOrigin) params['sourceOrigin'] = filters.sourceOrigin;
   if (filters.visibility) params['visibility'] = filters.visibility;
   if (filters.orderBy) params['orderBy'] = filters.orderBy;

@@ -54,9 +54,8 @@ export interface DigestFilters {
   digestType?: string;
   reviewStatus?: string;
   legalDocumentId?: string;
-  barSubjectCode?: string;
   sourceOrigin?: string;
   visibility?: string;
-  orderBy?: 'createdAt' | 'confidenceScore';
+  orderBy?: 'createdAt' | 'updatedAt';
   orderDirection?: 'asc' | 'desc';
 }
