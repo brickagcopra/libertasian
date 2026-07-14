@@ -113,6 +113,12 @@ describe('HomeRoute', () => {
     expect(router.push).toHaveBeenCalledWith('/(tabs)/digests');
   });
 
+  it('routes the search entry affordance to the search tab', () => {
+    const { getByText } = render(<HomeRoute />);
+    fireEvent.press(getByText('Search cases, codals, digests…'));
+    expect(router.push).toHaveBeenCalledWith('/(tabs)/search');
+  });
+
   it('routes the brief CTA to the brief item route', () => {
     // Brief item is a digest in our fixture, so the CTA must route to /digest/:id.
     const { getByText } = render(<HomeRoute />);

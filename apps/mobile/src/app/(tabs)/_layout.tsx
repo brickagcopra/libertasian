@@ -60,6 +60,7 @@ export default function TabsLayout() {
         name="digests"
         options={{
           title: 'Digests',
+          tabBarStyle: { display: 'none' },
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="document-text-outline" size={size} color={color} />
           ),

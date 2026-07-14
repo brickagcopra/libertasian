@@ -140,6 +140,62 @@ describe('DigestsTab', () => {
     expect(queryByText('The accused was charged with theft...')).toBeTruthy();
   });
 
+  it('sends only API-whitelisted query params (no barSubjectCode, whitelisted orderBy)', () => {
+    mockUseDigests.mockReturnValue({
+      data: { data: [] },
+      isLoading: false,
+      isFetching: false,
+      refetch: jest.fn(),
+    });
+
+    render(<DigestsTab />, { wrapper: createWrapper() });
+
+    const filters = mockUseDigests.mock.calls[0][0] as Record<string, unknown>;
+    expect(filters).not.toHaveProperty('barSubjectCode');
+    expect(['createdAt', 'updatedAt']).toContain(filters['orderBy']);
+    expect(['asc', 'desc']).toContain(filters['orderDirection']);
+  });
+
+  it('renders source-origin chips with API-valid values only', () => {
+    mockUseDigests.mockReturnValue({
+      data: { data: [] },
+      isLoading: false,
+      isFetching: false,
+      refetch: jest.fn(),
+    });
+
+    const { queryByText } = render(<DigestsTab />, { wrapper: createWrapper() });
+
+    expect(queryByText('Official')).toBeTruthy();
+    expect(queryByText('Admin Generated')).toBeTruthy();
+    expect(queryByText('User Scan')).toBeTruthy();
+    expect(queryByText('User Upload')).toBeTruthy();
+    expect(queryByText('Camera Capture')).toBeTruthy();
+    // The old invalid chips are gone
+    expect(queryByText('Editorial')).toBeNull();
+  });
+
+  it('shows an error state with a Retry button when the list query fails', () => {
+    const refetch = jest.fn();
+    mockUseDigests.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isFetching: false,
+      error: new Error('Network request failed'),
+      refetch,
+    });
+
+    const { queryByText, getByText } = render(<DigestsTab />, {
+      wrapper: createWrapper(),
+    });
+
+    expect(queryByText("Couldn't load digests")).toBeTruthy();
+    expect(queryByText('Network request failed')).toBeTruthy();
+
+    fireEvent.press(getByText('Retry'));
+    expect(refetch).toHaveBeenCalled();
+  });
+
   it('renders digest type and status badges', () => {
     mockUseDigests.mockReturnValue({
       data: {

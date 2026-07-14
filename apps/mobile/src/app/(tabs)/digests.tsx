@@ -15,12 +15,12 @@ import {
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Input } from '@/components/ui';
+import { TabBar } from '@/components/ui/TabBar';
 import {
   useDigests,
   useGenerateDigest,
 } from '../../features/digests/hooks/use-digests';
 import { useDigestTextSearch } from '../../features/digests/hooks/use-digest-text-search';
-import { useBarSubjects } from '../../features/study/hooks/use-bar-subjects';
 import { ApiClientError } from '../../lib/api-client';
 import type {
   Digest,
@@ -51,17 +51,21 @@ const REVIEW_STATUSES = [
   { label: 'Rejected', value: 'rejected' },
 ];
 
+// Values must match the API's ListDigestsQueryDto sourceOrigin whitelist —
+// anything else turns the whole request into a 400 (forbidNonWhitelisted).
 const SOURCE_ORIGINS = [
-  { label: 'Editorial', value: 'editorial_corpus' },
+  { label: 'Official', value: 'official_pipeline' },
+  { label: 'Admin Generated', value: 'admin_generated' },
   { label: 'User Scan', value: 'user_scan' },
-  { label: 'AI Generated', value: 'ai_generated' },
+  { label: 'User Upload', value: 'user_upload' },
+  { label: 'Camera Capture', value: 'camera_capture' },
 ];
 
+// orderBy values must match the API's whitelist: createdAt | updatedAt.
 const SORT_OPTIONS = [
   { label: 'Newest First', orderBy: 'createdAt' as const, orderDirection: 'desc' as const },
   { label: 'Oldest First', orderBy: 'createdAt' as const, orderDirection: 'asc' as const },
-  { label: 'Highest Confidence', orderBy: 'confidenceScore' as const, orderDirection: 'desc' as const },
-  { label: 'Lowest Confidence', orderBy: 'confidenceScore' as const, orderDirection: 'asc' as const },
+  { label: 'Recently Updated', orderBy: 'updatedAt' as const, orderDirection: 'desc' as const },
 ];
 
 function getConfidenceColor(score: number | null): string {
@@ -156,7 +160,6 @@ function DigestCard({ item }: { item: Digest }) {
 export default function DigestsTab() {
   const [digestType, setDigestType] = useState<string | undefined>();
   const [reviewStatus, setReviewStatus] = useState<string | undefined>();
-  const [barSubjectCode, setBarSubjectCode] = useState<string | undefined>();
   const [sourceOrigin, setSourceOrigin] = useState<string | undefined>();
   const [sortIndex, setSortIndex] = useState(0);
   const [sortModalVisible, setSortModalVisible] = useState(false);
@@ -171,22 +174,19 @@ export default function DigestsTab() {
 
   const isSearching = searchQuery.length > 0;
 
-  const { data: barSubjects } = useBarSubjects();
-
   const filters: DigestFilters = useMemo(
     () => ({
       limit: 30,
       digestType,
       reviewStatus,
-      barSubjectCode,
       sourceOrigin,
-      orderBy: SORT_OPTIONS[sortIndex].orderBy,
-      orderDirection: SORT_OPTIONS[sortIndex].orderDirection,
+      orderBy: SORT_OPTIONS[sortIndex]?.orderBy ?? 'createdAt',
+      orderDirection: SORT_OPTIONS[sortIndex]?.orderDirection ?? 'desc',
     }),
-    [digestType, reviewStatus, barSubjectCode, sourceOrigin, sortIndex],
+    [digestType, reviewStatus, sourceOrigin, sortIndex],
   );
 
-  const { data, isLoading, isFetching, refetch } = useDigests(filters);
+  const { data, isLoading, isFetching, error, refetch } = useDigests(filters);
 
   // Server-side full-text search path — activated once the user types.
   const {
@@ -197,12 +197,11 @@ export default function DigestsTab() {
 
   const generateDigest = useGenerateDigest();
 
-  const hasActiveFilters = !!(digestType || reviewStatus || barSubjectCode || sourceOrigin);
+  const hasActiveFilters = !!(digestType || reviewStatus || sourceOrigin);
 
   const clearFilters = useCallback(() => {
     setDigestType(undefined);
     setReviewStatus(undefined);
-    setBarSubjectCode(undefined);
     setSourceOrigin(undefined);
   }, []);
 
@@ -303,15 +302,6 @@ export default function DigestsTab() {
   );
 
   const matchedKeyExtractor = useCallback((item: MatchedDocument) => item.id, []);
-
-  const subjectChips = useMemo(
-    () =>
-      (barSubjects ?? []).map((s) => ({
-        label: s.name,
-        value: s.code,
-      })),
-    [barSubjects],
-  );
 
   if (isLoading && !isSearching) {
     return (
@@ -425,32 +415,32 @@ export default function DigestsTab() {
         ))}
       </ScrollView>
 
-      {/* Bar Subject chips */}
-      {subjectChips.length > 0 ? (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.chipRow}
-        >
-          {subjectChips.map((s) => (
-            <FilterChip
-              key={s.value}
-              label={s.label}
-              active={barSubjectCode === s.value}
-              onPress={() =>
-                toggleFilter(barSubjectCode, s.value, setBarSubjectCode)
-              }
-            />
-          ))}
-        </ScrollView>
-      ) : null}
         </>
       ) : null}
     </View>
   );
 
   let listBody: ReactNode;
-  if (isSearching && searchLoading) {
+  if (!isSearching && error) {
+    listBody = (
+      <View style={styles.emptyState}>
+        <Ionicons name="alert-circle-outline" size={48} color="#fca5a5" />
+        <Text style={styles.emptyTitle}>Couldn&apos;t load digests</Text>
+        <Text style={styles.emptyText}>
+          {error instanceof Error ? error.message : 'Please try again in a moment.'}
+        </Text>
+        <TouchableOpacity
+          style={styles.retryButton}
+          onPress={() => refetch()}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Retry loading digests"
+        >
+          <Text style={styles.retryButtonText}>Retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  } else if (isSearching && searchLoading) {
     listBody = (
       <View style={styles.loadingState}>
         <ActivityIndicator size="large" color="#1a56db" />
@@ -525,6 +515,18 @@ export default function DigestsTab() {
       {FilterBar}
 
       {listBody}
+
+      {/* Floating pill TabBar — same treatment as Home/Search. Digests is
+          reached from Home's "See all", so "Read" (home) stays active. */}
+      <TabBar
+        active="home"
+        onPress={(id) => {
+          if (id === 'home') router.push('/(tabs)');
+          else if (id === 'docs') router.push('/documents');
+          else if (id === 'search') router.push('/(tabs)/search');
+          else if (id === 'me') router.push('/settings');
+        }}
+      />
 
       {/* Sort modal */}
       <Modal
@@ -638,7 +640,8 @@ const styles = StyleSheet.create({
   chipTextActive: {
     color: '#fff',
   },
-  listContent: { padding: 12, gap: 10 },
+  // Extra bottom padding keeps the last cards clear of the floating TabBar.
+  listContent: { padding: 12, gap: 10, paddingBottom: 96 },
   matchedHeaderText: {
     fontSize: 13,
     color: '#6b7280',
@@ -770,6 +773,18 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 6,
     lineHeight: 20,
+  },
+  retryButton: {
+    marginTop: 16,
+    backgroundColor: '#1a56db',
+    borderRadius: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+  },
+  retryButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#fff',
   },
   modalOverlay: {
     flex: 1,
