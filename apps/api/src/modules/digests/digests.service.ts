@@ -309,14 +309,18 @@ export class DigestsService {
       where.visibility = query.visibility;
     }
 
+    // Default: order by updatedAt so freshly-approved digests (approval bumps
+    // updatedAt, not createdAt) surface at the top. id stays as the
+    // deterministic keyset tiebreaker regardless of the requested sort.
+    const orderField = query.orderBy ?? 'updatedAt';
+    const orderDirection = query.orderDirection ?? 'desc';
+
     // CARVE-OUT: public_editorial cross-org read; forTenant() would filter out cross-org rows
     const digests = await this.prisma.digest.findMany({
       where,
       take: limit + 1,
       ...(query.cursor && { skip: 1, cursor: { id: query.cursor } }),
-      // Order by updatedAt so freshly-approved digests (approval bumps updatedAt,
-      // not createdAt) surface at the top. id is a deterministic keyset tiebreaker.
-      orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+      orderBy: [{ [orderField]: orderDirection }, { id: 'desc' }],
       include: {
         legalDocument: {
           select: {
