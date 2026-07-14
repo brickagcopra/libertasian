@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.libertasian.app",
-      "buildNumber": "1",
+      "buildNumber": "11",
       "usesAppleSignIn": true,
       "associatedDomains": [
         "applinks:libertasian.com"
@@ -32,7 +32,7 @@
       }
     },
     "android": {
-      "versionCode": 1,
+      "versionCode": 6,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#f6f1e8"
