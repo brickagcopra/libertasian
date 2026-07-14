@@ -65,6 +65,17 @@ describe('CouponService', () => {
     ...overrides,
   });
 
+  /**
+   * Row shape returned by the reserveCoupon row-lock query, which selects
+   * only id + aliased redemption counters (not the full coupon record).
+   */
+  const makeLockedRow = (overrides: Record<string, unknown> = {}) => ({
+    id: COUPON_ID,
+    maxRedemptions: null,
+    currentRedemptions: 0,
+    ...overrides,
+  });
+
   const makeRedemption = (overrides: Record<string, unknown> = {}) => ({
     id: REDEMPTION_ID,
     couponId: COUPON_ID,
@@ -556,11 +567,21 @@ describe('CouponService', () => {
   describe('reserveCoupon', () => {
     beforeEach(() => {
       prisma['coupon']['findUnique'].mockResolvedValue(makeCoupon());
-      prisma['$queryRawUnsafe'].mockResolvedValue([makeCoupon()]);
+      prisma['$queryRawUnsafe'].mockResolvedValue([makeLockedRow()]);
       prisma['couponRedemption']['create'].mockImplementation(
         ({ data }: { data: Record<string, unknown> }) =>
           Promise.resolve({ id: REDEMPTION_ID, ...data }),
       );
+    });
+
+    it('should lock the row with a uuid-cast, camelCase-aliased query', async () => {
+      await service.reserveCoupon('SAVE20', ORG_ID, USER_ID, 'pro', 'monthly');
+      const [sql, param] = prisma['$queryRawUnsafe'].mock.calls[0];
+      expect(sql).toContain('$1::uuid');
+      expect(sql).toContain('"max_redemptions" AS "maxRedemptions"');
+      expect(sql).toContain('"current_redemptions" AS "currentRedemptions"');
+      expect(sql).toContain('FOR UPDATE');
+      expect(param).toBe(COUPON_ID);
     });
 
     it('should create a reservation with reserved status', async () => {
@@ -601,7 +622,7 @@ describe('CouponService', () => {
 
     it('should throw ConflictException when global limit reached under lock', async () => {
       prisma['$queryRawUnsafe'].mockResolvedValue([
-        makeCoupon({ maxRedemptions: 5, currentRedemptions: 5 }),
+        makeLockedRow({ maxRedemptions: 5, currentRedemptions: 5 }),
       ]);
       await expect(
         service.reserveCoupon('SAVE20', ORG_ID, USER_ID, 'pro', 'monthly'),

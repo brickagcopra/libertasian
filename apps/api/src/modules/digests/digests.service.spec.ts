@@ -566,6 +566,19 @@ describe('DigestsService', () => {
       const call = prismaService.digest.findMany.mock.calls[0][0];
       expect(call?.orderBy).toEqual([{ updatedAt: 'desc' }, { id: 'desc' }]);
     });
+
+    it('should honor orderBy/orderDirection and keep id as keyset tiebreaker', async () => {
+      prismaService.digest.findMany.mockResolvedValue([]);
+
+      await service.list('user-1', 'org-1', {
+        ...listQuery,
+        orderBy: 'createdAt',
+        orderDirection: 'asc',
+      });
+
+      const call = prismaService.digest.findMany.mock.calls[0][0];
+      expect(call?.orderBy).toEqual([{ createdAt: 'asc' }, { id: 'desc' }]);
+    });
   });
 
   describe('update', () => {

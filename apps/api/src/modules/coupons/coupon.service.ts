@@ -225,9 +225,17 @@ export class CouponService {
 
     // Transaction with row-level lock on Coupon
     const redemption = await this.prisma.$transaction(async (tx) => {
-      // Lock the coupon row for update
-      const [locked] = await tx.$queryRawUnsafe<CouponRecord[]>(
-        'SELECT * FROM "coupons" WHERE "id" = $1 FOR UPDATE',
+      // Lock the coupon row for update. coupons.id is uuid, so the parameter
+      // must be cast ($1::uuid — Postgres raises 42883 on uuid = text), and
+      // the snake_case columns must be aliased to the camelCase names the
+      // re-check below reads.
+      interface LockedCouponRow {
+        id: string;
+        maxRedemptions: number | null;
+        currentRedemptions: number;
+      }
+      const [locked] = await tx.$queryRawUnsafe<LockedCouponRow[]>(
+        'SELECT "id", "max_redemptions" AS "maxRedemptions", "current_redemptions" AS "currentRedemptions" FROM "coupons" WHERE "id" = $1::uuid FOR UPDATE',
         couponId,
       );
 

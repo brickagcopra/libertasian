@@ -71,4 +71,22 @@ export class ListDigestsQueryDto {
   @IsIn(['private', 'org', 'public_editorial'])
   @IsOptional()
   visibility?: string;
+
+  @ApiPropertyOptional({
+    description: 'Sort field',
+    enum: ['createdAt', 'updatedAt'],
+    default: 'updatedAt',
+  })
+  @IsIn(['createdAt', 'updatedAt'])
+  @IsOptional()
+  orderBy?: 'createdAt' | 'updatedAt';
+
+  @ApiPropertyOptional({
+    description: 'Sort direction',
+    enum: ['asc', 'desc'],
+    default: 'desc',
+  })
+  @IsIn(['asc', 'desc'])
+  @IsOptional()
+  orderDirection?: 'asc' | 'desc';
 }
