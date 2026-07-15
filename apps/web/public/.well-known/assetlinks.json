@@ -5,7 +5,8 @@
       "namespace": "android_app",
       "package_name": "com.libertasian.app",
       "sha256_cert_fingerprints": [
-        "75:B9:02:38:76:2A:5A:05:0D:6D:05:8B:4F:C1:E4:5D:97:1C:E3:1B:7E:2D:61:91:C7:FD:8E:7A:19:CF:B4:C9"
+        "75:B9:02:38:76:2A:5A:05:0D:6D:05:8B:4F:C1:E4:5D:97:1C:E3:1B:7E:2D:61:91:C7:FD:8E:7A:19:CF:B4:C9",
+        "69:5B:96:60:2B:E3:F1:F4:3A:D5:CA:B0:2D:C7:23:9C:EB:4B:90:B0:00:43:C8:2C:93:CC:3E:8E:87:C7:8B:3E"
       ]
     }
   }
