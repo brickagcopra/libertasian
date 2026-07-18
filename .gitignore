@@ -12,6 +12,8 @@ out/
 # Expo prebuild output (generated, not source)
 apps/mobile/android/
 apps/mobile/ios/
+# stray prebuild that lands at the repo root when gradle runs from here
+/android/
 
 # Environment
 .env

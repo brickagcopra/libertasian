@@ -1,6 +1,25 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-07-14 (coupon-checkout + Digests-page repair pair #301/#302)
+> Last updated: 2026-07-18 (account-deletion page #305; #301 api deploy recorded)
+
+---
+
+## 2026-07-18 — PR #305: feat(web) public account-deletion page for Play Store compliance
+
+Unblocks the Play Data safety submission — Google requires a publicly reachable delete-account URL, and `https://libertasian.com/account-deletion` was already entered in Play Console pointing at a page that did not exist in git.
+
+- **`(public)/account-deletion/page.tsx`** — deletion-request page. Retention periods (30-day recovery window, 2-year audit logs, 5-year billing, 1-year model runs, 90-day query anonymization), DPO address, and layout all mirror the existing `/privacy` page.
+- **`middleware.ts` `PUBLIC_PATHS`** — added `/account-deletion`. **Without this the route 307'd to `/login`**, which would have failed Play review; the page rendering correctly in isolation hid it. Caught by hitting the route on a dev server, not by reading the diff. Verified 307 → 200 after the fix, with `/privacy` as an unchanged 200 control.
+- **Store assets** — `scripts/generate-store-screenshots.mjs` (sharp-based, `pnpm --filter mobile screenshots:marketing`) + the 30 generated images (android phone, 7"/10" tablet, iPhone 6.7", iPad 12.9" × 6 screens) + `STORE_SUBMISSION_GUIDE.md` runbook. Committing framed output follows the convention in `assets/store/screenshots/README.md`.
+- **`.gitignore`** — `/android/`, a stray Expo prebuild that lands at the repo root when gradle runs from there (`apps/mobile/android/` was already ignored).
+
+Prod deploy is manual on the VPS and follows this merge; the release-triggered `deploy-production.yml` is not the deploy path in use.
+
+---
+
+## 2026-07-15 — #301 api deploy (coupon-reserve uuid cast) — shipped to prod
+
+Api deployed + couponed checkout verified in prod 2026-07-15. Closes the last open item from the #301/#302 pair below: the `reserveCoupon` `$1::uuid` cast (every couponed checkout was 500ing) and the `ListDigestsQueryDto` `orderBy`/`orderDirection` whitelist the mobile Digests page depends on are both live.
 
 ---
 
