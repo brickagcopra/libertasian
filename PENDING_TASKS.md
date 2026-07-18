@@ -1,6 +1,6 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-07-14 (#301/#302 coupon-checkout + Digests repair merged; deploy/build follow-ups added)
+> Last updated: 2026-07-18 (#301 api deploy confirmed shipped 2026-07-15; account-deletion page #305 merged)
 
 Verification rules used for this prune: every PR reference checked with `gh pr view <n> --json state,mergedAt`; every branch reference checked against `git branch -r --no-merged origin/main` after `git fetch --prune`. Items that could not be verified were MOVED to "Needs verification", not deleted.
 
@@ -8,7 +8,7 @@ Verification rules used for this prune: every PR reference checked with `gh pr v
 
 ## Owner / billing (genuinely open)
 
-- [ ] **Deploy api with #301** — the coupon-reserve uuid-cast fix (every couponed checkout 500s in prod until this ships) + the digests orderBy/orderDirection whitelist the mobile app depends on
+- [x] **Deploy api with #301** — DONE: api deployed + couponed checkout verified in prod 2026-07-15
 - [ ] **Xendit go-live key swap** — deactivate the TEST plan FIRST, then swap env to live keys
 - [ ] **2026-08-10: verify the first anchor-date recurring charge** collects correctly (first cycle after the anchor-date fix)
 - [ ] **Annual interval check** — run one YEAR-interval checkout in sandbox; Xendit sessions doc lists interval DAY|WEEK|MONTH — if `YEAR` 400s, switch annual to `MONTH` × `interval_count: 12`
@@ -18,7 +18,7 @@ Verification rules used for this prune: every PR reference checked with `gh pr v
 
 ## Mobile (next EAS build / store readiness)
 
-- [ ] **Next EAS build / OTA must carry** (all JS-only): #289 annotations + highlights, #290 bookmark upgrade-alert copy, #297 anchor-offset fix + multi-annotation view sheet, #302 coupon input + Home search entry + Digests repair + Digests TabBar — no server deploy moves these (but #302's Digests page needs the #301 api deploy live first or list requests keep 400ing)
+- [ ] **Next EAS build / OTA must carry** (all JS-only): #289 annotations + highlights, #290 bookmark upgrade-alert copy, #297 anchor-offset fix + multi-annotation view sheet, #302 coupon input + Home search entry + Digests repair + Digests TabBar — no server deploy moves these. #302's api dependency is satisfied: the #301 api deploy went live 2026-07-15, so the Digests list params no longer 400
 - [ ] **brick: device smoke of TestFlight build 8** — Google + Apple sign-in end-to-end (new user → onboarding, existing → tabs), cancel silent on both, Apple button absent on Android
 - [ ] **Play Store first upload (manual)** — Android .aab from EAS build `4d20323a` (versionCode 3) + store metadata + reviewer account before App Review; service-account submit path stays unused until the first manual upload
 - [ ] Store assets: replace placeholder `assets/icon.png` / `adaptive-icon.png` / `splash-icon.png` with branded assets; add `google-services.json` for Play submission

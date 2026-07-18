@@ -21,6 +21,7 @@ const PUBLIC_PATHS = [
   '/pricing',
   '/terms',
   '/privacy',
+  '/account-deletion',
   '/login',
   '/register',
   '/forgot-password',

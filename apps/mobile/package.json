@@ -14,7 +14,8 @@
     "type-check": "tsc --noEmit",
     "generate:assets": "node scripts/generate-assets.mjs",
     "screenshots:capture": "node scripts/capture-screenshots.mjs",
-    "screenshots:frame": "node scripts/frame-screenshots.mjs"
+    "screenshots:frame": "node scripts/frame-screenshots.mjs",
+    "screenshots:marketing": "node scripts/generate-store-screenshots.mjs"
   },
   "dependencies": {
     "@babel/runtime": "^7.29.2",
