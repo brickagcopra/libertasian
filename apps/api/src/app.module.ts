@@ -148,6 +148,16 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
         // Redis-backed must_not.terms clause. Flip to 'false' to revert
         // instantly if the filter ever over-suppresses in prod.
         SEARCH_DEDUP_FILTER_ENABLED: Joi.string().valid('true', 'false').default('true'),
+        // Bootstrap the OpenSearch alias → physical index topology at boot.
+        // Never destructive: it only creates missing indices and refuses to
+        // touch a concrete index squatting on an alias name (see
+        // OpenSearchService.ensureIndexes). Flip to 'false' to opt out.
+        SEARCH_AUTO_ENSURE_INDEXES: Joi.string().valid('true', 'false').default('true'),
+        // Vector dimension the embedding service emits. BAAI/bge-small-en-v1.5
+        // = 384. MUST match the model or the knn_vector field rejects writes.
+        EMBEDDING_DIM: Joi.number().integer().min(1).max(4096).default(384),
+        // Documents per PostgreSQL page during a full index rebuild.
+        SEARCH_INDEX_REBUILD_BATCH_SIZE: Joi.number().integer().min(1).max(2000).default(500),
         // Amazon Polly (Audio Corpus Phase 1). All optional so existing envs
         // keep booting; the default AWS provider chain is used when the
         // explicit access keys are absent (e.g. IAM role in prod).

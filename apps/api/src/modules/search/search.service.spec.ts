@@ -336,6 +336,33 @@ describe('SearchService', () => {
       expect(result.meta.searchType).toBe('keyword_only');
     });
 
+    // The alias swap in POST /search/index/rebuild deletes the legacy concrete
+    // index and adds the alias in one updateAliases call, but a request already
+    // in flight can still land in the gap. That degrades to an empty envelope,
+    // never a 500 — this asserts the guarantee the rebuild job relies on.
+    it('degrades gracefully during the rebuild alias-swap window', async () => {
+      redisService.get.mockResolvedValue(null);
+      openSearchService.searchKeyword.mockRejectedValue({
+        meta: {
+          body: {
+            error: {
+              type: 'index_not_found_exception',
+              reason: 'no such index [legal_documents_keyword]',
+            },
+            status: 404,
+          },
+        },
+        message: 'index_not_found_exception',
+      });
+      embeddingClientService.embed.mockResolvedValue([0.1, 0.2, 0.3]);
+      openSearchService.searchVector.mockResolvedValue({ items: [], timedOut: false });
+
+      const result = await service.search(searchDto);
+
+      expect(result.items).toEqual([]);
+      expect(result.meta.total).toBe(0);
+    });
+
     // E3b: any other OpenSearch failure should throw 503 with a
     // generic message (no upstream details leaked).
     it('should throw ServiceUnavailableException on generic OpenSearch error (E3b)', async () => {

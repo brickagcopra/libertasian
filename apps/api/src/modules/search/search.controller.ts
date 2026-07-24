@@ -23,8 +23,15 @@ import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { TrackEvent } from '../analytics';
 import { AuditService } from '../audit/audit.service';
 import { UsageQuotaService } from '../subscriptions/usage-quota.service';
+import { IndexRebuildService } from './index-rebuild.service';
 import { SearchService } from './search.service';
-import { CitationSearchDto, SearchQueryDto, SuggestionQueryDto } from './dto';
+import {
+  CitationSearchDto,
+  IndexRebuildDto,
+  IndexRollbackDto,
+  SearchQueryDto,
+  SuggestionQueryDto,
+} from './dto';
 
 /**
  * Search controller.
@@ -41,6 +48,7 @@ export class SearchController {
     private readonly searchService: SearchService,
     private readonly auditService: AuditService,
     private readonly usageQuota: UsageQuotaService,
+    private readonly indexRebuild: IndexRebuildService,
   ) {}
 
   @Post()
@@ -135,6 +143,79 @@ export class SearchController {
       actorType: 'admin',
       action: 'search.index.initialize',
       entityType: 'search_index',
+    });
+    return { success: true, data: result };
+  }
+
+  @Get('index/topology')
+  @ApiOperation({
+    summary: 'Show which physical index each search alias resolves to (admin only)',
+  })
+  @UseGuards(JwtAuthGuard, MfaGuard, TenantGuard, PermissionsGuard)
+  @RequiredPermissions('admin:ingestion')
+  @ApiBearerAuth()
+  async getIndexTopology() {
+    return { success: true, data: await this.indexRebuild.describeTopology() };
+  }
+
+  @Post('index/rebuild')
+  @ApiOperation({
+    summary:
+      'Rebuild the OpenSearch indices from PostgreSQL and swap the aliases (admin only)',
+  })
+  @UseGuards(JwtAuthGuard, MfaGuard, TenantGuard, PermissionsGuard)
+  @RequiredPermissions('admin:ingestion')
+  @ApiBearerAuth()
+  async rebuildIndexes(
+    @Body() dto: IndexRebuildDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const { jobId } = await this.indexRebuild.enqueueRebuild({
+      triggeredByUserId: user.sub,
+      organizationId: user.organizationId,
+      dryRun: dto.dryRun === true,
+    });
+    await this.auditService.log({
+      organizationId: user.organizationId,
+      actorUserId: user.sub,
+      actorType: 'admin',
+      action: 'search.index.rebuild_requested',
+      entityType: 'search_index',
+      entityId: jobId,
+      metadata: { jobId, dryRun: dto.dryRun === true },
+    });
+    return { success: true, data: { jobId, dryRun: dto.dryRun === true } };
+  }
+
+  @Get('index/rebuild/:jobId')
+  @ApiOperation({ summary: 'Progress of a search index rebuild job (admin only)' })
+  @UseGuards(JwtAuthGuard, MfaGuard, TenantGuard, PermissionsGuard)
+  @RequiredPermissions('admin:ingestion')
+  @ApiBearerAuth()
+  async getRebuildStatus(@Param('jobId') jobId: string) {
+    return { success: true, data: await this.indexRebuild.getJobStatus(jobId) };
+  }
+
+  @Post('index/rollback')
+  @ApiOperation({
+    summary: 'Repoint a search alias at a previous physical index (admin only)',
+  })
+  @UseGuards(JwtAuthGuard, MfaGuard, TenantGuard, PermissionsGuard)
+  @RequiredPermissions('admin:ingestion')
+  @ApiBearerAuth()
+  async rollbackIndex(
+    @Body() dto: IndexRollbackDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const result = await this.indexRebuild.rollbackAlias(dto.alias, dto.targetIndex);
+    await this.auditService.log({
+      organizationId: user.organizationId,
+      actorUserId: user.sub,
+      actorType: 'admin',
+      action: 'search.index.rollback',
+      entityType: 'search_index',
+      entityId: dto.alias,
+      metadata: { ...result },
     });
     return { success: true, data: result };
   }
