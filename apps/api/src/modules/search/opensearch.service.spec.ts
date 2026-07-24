@@ -1,7 +1,13 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 
-import { OpenSearchService, KEYWORD_INDEX, VECTOR_INDEX, USER_UPLOADS_INDEX } from './opensearch.service';
+import {
+  OpenSearchService,
+  KEYWORD_INDEX,
+  KEYWORD_INDEX_PHYSICAL,
+  VECTOR_INDEX,
+  USER_UPLOADS_INDEX,
+} from './opensearch.service';
 
 // Mock @opensearch-project/opensearch
 const mockClient = {
@@ -11,9 +17,17 @@ const mockClient = {
   search: jest.fn(),
   delete: jest.fn(),
   deleteByQuery: jest.fn(),
+  count: jest.fn(),
+  reindex: jest.fn(),
   indices: {
     exists: jest.fn(),
+    existsAlias: jest.fn(),
+    getAlias: jest.fn(),
+    putAlias: jest.fn(),
+    updateAliases: jest.fn(),
     create: jest.fn(),
+    delete: jest.fn(),
+    refresh: jest.fn(),
   },
 };
 
@@ -23,9 +37,11 @@ jest.mock('@opensearch-project/opensearch', () => ({
 
 describe('OpenSearchService', () => {
   let service: OpenSearchService;
+  let autoEnsureIndexes: string;
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    autoEnsureIndexes = 'true';
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -33,8 +49,9 @@ describe('OpenSearchService', () => {
         {
           provide: ConfigService,
           useValue: {
-            get: jest.fn((key: string, defaultValue?: string) => {
+            get: jest.fn((key: string, defaultValue?: unknown) => {
               if (key === 'OPENSEARCH_URL') return 'http://localhost:9200';
+              if (key === 'SEARCH_AUTO_ENSURE_INDEXES') return autoEnsureIndexes;
               return defaultValue;
             }),
           },
@@ -66,22 +83,82 @@ describe('OpenSearchService', () => {
   // ---- ensureIndexes ----
 
   describe('ensureIndexes', () => {
-    it('should create indexes that do not exist', async () => {
+    it('creates the *_v2 physical index and aliases it when nothing exists', async () => {
+      mockClient.indices.existsAlias.mockResolvedValue({ body: false });
       mockClient.indices.exists.mockResolvedValue({ body: false });
       mockClient.indices.create.mockResolvedValue({});
+      mockClient.indices.putAlias.mockResolvedValue({});
 
-      await service.ensureIndexes();
+      const result = await service.ensureIndexes();
 
-      expect(mockClient.indices.exists).toHaveBeenCalledTimes(3);
-      expect(mockClient.indices.create).toHaveBeenCalledTimes(3);
+      expect(result.created).toEqual([
+        KEYWORD_INDEX,
+        VECTOR_INDEX,
+        USER_UPLOADS_INDEX,
+      ]);
+      expect(mockClient.indices.create).toHaveBeenCalledWith(
+        expect.objectContaining({ index: KEYWORD_INDEX_PHYSICAL }),
+      );
+      expect(mockClient.indices.putAlias).toHaveBeenCalledWith(
+        expect.objectContaining({
+          index: KEYWORD_INDEX_PHYSICAL,
+          name: KEYWORD_INDEX,
+        }),
+      );
     });
 
-    it('should skip creating indexes that already exist', async () => {
+    it('leaves an existing alias completely alone', async () => {
+      mockClient.indices.existsAlias.mockResolvedValue({ body: true });
+
+      const result = await service.ensureIndexes();
+
+      expect(result.existing).toHaveLength(3);
+      expect(mockClient.indices.create).not.toHaveBeenCalled();
+      expect(mockClient.indices.putAlias).not.toHaveBeenCalled();
+    });
+
+    it('refuses to touch a concrete index squatting on an alias name', async () => {
+      // This is production today: `legal_documents_keyword` is a real index
+      // auto-created with dynamic mappings. Only the rebuild job may replace it.
+      mockClient.indices.existsAlias.mockResolvedValue({ body: false });
       mockClient.indices.exists.mockResolvedValue({ body: true });
 
-      await service.ensureIndexes();
+      const result = await service.ensureIndexes();
 
+      expect(result.needsRebuild).toEqual([
+        KEYWORD_INDEX,
+        VECTOR_INDEX,
+        USER_UPLOADS_INDEX,
+      ]);
       expect(mockClient.indices.create).not.toHaveBeenCalled();
+      expect(mockClient.indices.delete).not.toHaveBeenCalled();
+      expect(mockClient.indices.updateAliases).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---- boot resilience ----
+
+  describe('onModuleInit index bootstrap', () => {
+    it('does not crash boot when ensureIndexes throws', async () => {
+      mockClient.info.mockResolvedValue({
+        body: { version: { distribution: 'opensearch', number: '2.11.0' } },
+      });
+      mockClient.indices.existsAlias.mockRejectedValue(
+        new Error('cluster_block_exception'),
+      );
+
+      await expect(service.onModuleInit()).resolves.not.toThrow();
+    });
+
+    it('skips the bootstrap when SEARCH_AUTO_ENSURE_INDEXES=false', async () => {
+      mockClient.info.mockResolvedValue({
+        body: { version: { distribution: 'opensearch', number: '2.11.0' } },
+      });
+      autoEnsureIndexes = 'false';
+
+      await service.onModuleInit();
+
+      expect(mockClient.indices.existsAlias).not.toHaveBeenCalled();
     });
   });
 

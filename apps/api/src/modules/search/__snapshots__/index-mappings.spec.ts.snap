@@ -1,0 +1,430 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`keyword index mapping matches the mapping snapshot 1`] = `
+{
+  "mappings": {
+    "dynamic": "strict",
+    "properties": {
+      "bar_subjects": {
+        "type": "keyword",
+      },
+      "citation_text": {
+        "analyzer": "legal_analyzer",
+        "fields": {
+          "raw": {
+            "normalizer": "citation_normalizer",
+            "type": "keyword",
+          },
+        },
+        "type": "text",
+      },
+      "court": {
+        "type": "keyword",
+      },
+      "created_at": {
+        "type": "date",
+      },
+      "decision_date": {
+        "type": "date",
+      },
+      "docket_no": {
+        "fields": {
+          "raw": {
+            "normalizer": "citation_normalizer",
+            "type": "keyword",
+          },
+        },
+        "type": "keyword",
+      },
+      "document_id": {
+        "type": "keyword",
+      },
+      "document_type": {
+        "type": "keyword",
+      },
+      "gr_no": {
+        "fields": {
+          "raw": {
+            "normalizer": "citation_normalizer",
+            "type": "keyword",
+          },
+        },
+        "type": "keyword",
+      },
+      "gr_no_digits": {
+        "type": "keyword",
+      },
+      "is_official": {
+        "type": "boolean",
+      },
+      "is_published": {
+        "type": "boolean",
+      },
+      "jurisdiction": {
+        "type": "keyword",
+      },
+      "language": {
+        "type": "keyword",
+      },
+      "plain_text": {
+        "analyzer": "legal_analyzer",
+        "search_analyzer": "legal_search_analyzer",
+        "type": "text",
+      },
+      "ponente": {
+        "fields": {
+          "text": {
+            "analyzer": "legal_analyzer",
+            "type": "text",
+          },
+        },
+        "type": "keyword",
+      },
+      "promulgation_date": {
+        "type": "date",
+      },
+      "publication_date": {
+        "type": "date",
+      },
+      "section_id": {
+        "type": "keyword",
+      },
+      "section_text": {
+        "analyzer": "legal_analyzer",
+        "search_analyzer": "legal_search_analyzer",
+        "type": "text",
+      },
+      "section_type": {
+        "type": "keyword",
+      },
+      "short_title": {
+        "analyzer": "legal_analyzer",
+        "type": "text",
+      },
+      "source_id": {
+        "type": "keyword",
+      },
+      "source_trust_level": {
+        "type": "keyword",
+      },
+      "status": {
+        "type": "keyword",
+      },
+      "title": {
+        "analyzer": "legal_analyzer",
+        "fields": {
+          "keyword": {
+            "ignore_above": 512,
+            "type": "keyword",
+          },
+          "suggest": {
+            "analyzer": "legal_analyzer",
+            "type": "search_as_you_type",
+          },
+        },
+        "search_analyzer": "legal_search_analyzer",
+        "type": "text",
+      },
+      "topics": {
+        "type": "keyword",
+      },
+    },
+  },
+  "settings": {
+    "analysis": {
+      "analyzer": {
+        "legal_analyzer": {
+          "filter": [
+            "lowercase",
+            "asciifolding",
+          ],
+          "tokenizer": "standard",
+          "type": "custom",
+        },
+        "legal_search_analyzer": {
+          "filter": [
+            "lowercase",
+            "asciifolding",
+            "legal_synonyms",
+          ],
+          "tokenizer": "standard",
+          "type": "custom",
+        },
+      },
+      "char_filter": {
+        "citation_strip": {
+          "pattern": "[.,\\s]",
+          "replacement": "",
+          "type": "pattern_replace",
+        },
+      },
+      "filter": {
+        "legal_synonyms": {
+          "lenient": true,
+          "synonyms": [
+            "gr, grn => g.r",
+            "sc => supreme court",
+            "ra => republic act",
+            "pd => presidential decree",
+            "eo => executive order",
+            "bp => batas pambansa",
+            "roc => rules of court",
+            "am => administrative matter",
+            "ac => administrative case",
+          ],
+          "type": "synonym_graph",
+        },
+      },
+      "normalizer": {
+        "citation_normalizer": {
+          "char_filter": [
+            "citation_strip",
+          ],
+          "filter": [
+            "lowercase",
+          ],
+          "type": "custom",
+        },
+      },
+    },
+    "index.max_result_window": 10000,
+    "number_of_replicas": 0,
+    "number_of_shards": 1,
+    "refresh_interval": "5s",
+  },
+}
+`;
+
+exports[`user uploads index mapping matches the mapping snapshot 1`] = `
+{
+  "mappings": {
+    "dynamic": "strict",
+    "properties": {
+      "classified_document_type": {
+        "type": "keyword",
+      },
+      "created_at": {
+        "type": "date",
+      },
+      "extracted_citations": {
+        "type": "keyword",
+      },
+      "mime_type": {
+        "type": "keyword",
+      },
+      "ocr_text": {
+        "analyzer": "legal_analyzer",
+        "search_analyzer": "legal_search_analyzer",
+        "type": "text",
+      },
+      "organization_id": {
+        "type": "keyword",
+      },
+      "original_filename": {
+        "analyzer": "legal_analyzer",
+        "fields": {
+          "keyword": {
+            "ignore_above": 512,
+            "type": "keyword",
+          },
+        },
+        "type": "text",
+      },
+      "privacy_level": {
+        "type": "keyword",
+      },
+      "upload_id": {
+        "type": "keyword",
+      },
+      "upload_type": {
+        "type": "keyword",
+      },
+      "user_id": {
+        "type": "keyword",
+      },
+    },
+  },
+  "settings": {
+    "analysis": {
+      "analyzer": {
+        "legal_analyzer": {
+          "filter": [
+            "lowercase",
+            "asciifolding",
+          ],
+          "tokenizer": "standard",
+          "type": "custom",
+        },
+        "legal_search_analyzer": {
+          "filter": [
+            "lowercase",
+            "asciifolding",
+            "legal_synonyms",
+          ],
+          "tokenizer": "standard",
+          "type": "custom",
+        },
+      },
+      "char_filter": {
+        "citation_strip": {
+          "pattern": "[.,\\s]",
+          "replacement": "",
+          "type": "pattern_replace",
+        },
+      },
+      "filter": {
+        "legal_synonyms": {
+          "lenient": true,
+          "synonyms": [
+            "gr, grn => g.r",
+            "sc => supreme court",
+            "ra => republic act",
+            "pd => presidential decree",
+            "eo => executive order",
+            "bp => batas pambansa",
+            "roc => rules of court",
+            "am => administrative matter",
+            "ac => administrative case",
+          ],
+          "type": "synonym_graph",
+        },
+      },
+      "normalizer": {
+        "citation_normalizer": {
+          "char_filter": [
+            "citation_strip",
+          ],
+          "filter": [
+            "lowercase",
+          ],
+          "type": "custom",
+        },
+      },
+    },
+    "index.max_result_window": 10000,
+    "number_of_replicas": 0,
+    "number_of_shards": 1,
+    "refresh_interval": "5s",
+  },
+}
+`;
+
+exports[`vector index mapping matches the mapping snapshot 1`] = `
+{
+  "mappings": {
+    "dynamic": "strict",
+    "properties": {
+      "citation_text": {
+        "type": "keyword",
+      },
+      "court": {
+        "type": "keyword",
+      },
+      "decision_date": {
+        "type": "date",
+      },
+      "document_id": {
+        "type": "keyword",
+      },
+      "document_type": {
+        "type": "keyword",
+      },
+      "embedding_vector": {
+        "dimension": 384,
+        "method": {
+          "engine": "lucene",
+          "name": "hnsw",
+          "parameters": {
+            "ef_construction": 256,
+            "m": 16,
+          },
+          "space_type": "cosinesimil",
+        },
+        "type": "knn_vector",
+      },
+      "is_official": {
+        "type": "boolean",
+      },
+      "is_published": {
+        "type": "boolean",
+      },
+      "section_id": {
+        "type": "keyword",
+      },
+      "source_trust_level": {
+        "type": "keyword",
+      },
+      "text_snippet": {
+        "analyzer": "legal_analyzer",
+        "type": "text",
+      },
+      "title": {
+        "analyzer": "legal_analyzer",
+        "type": "text",
+      },
+    },
+  },
+  "settings": {
+    "analysis": {
+      "analyzer": {
+        "legal_analyzer": {
+          "filter": [
+            "lowercase",
+            "asciifolding",
+          ],
+          "tokenizer": "standard",
+          "type": "custom",
+        },
+        "legal_search_analyzer": {
+          "filter": [
+            "lowercase",
+            "asciifolding",
+            "legal_synonyms",
+          ],
+          "tokenizer": "standard",
+          "type": "custom",
+        },
+      },
+      "char_filter": {
+        "citation_strip": {
+          "pattern": "[.,\\s]",
+          "replacement": "",
+          "type": "pattern_replace",
+        },
+      },
+      "filter": {
+        "legal_synonyms": {
+          "lenient": true,
+          "synonyms": [
+            "gr, grn => g.r",
+            "sc => supreme court",
+            "ra => republic act",
+            "pd => presidential decree",
+            "eo => executive order",
+            "bp => batas pambansa",
+            "roc => rules of court",
+            "am => administrative matter",
+            "ac => administrative case",
+          ],
+          "type": "synonym_graph",
+        },
+      },
+      "normalizer": {
+        "citation_normalizer": {
+          "char_filter": [
+            "citation_strip",
+          ],
+          "filter": [
+            "lowercase",
+          ],
+          "type": "custom",
+        },
+      },
+    },
+    "index.knn": true,
+    "number_of_replicas": 0,
+    "number_of_shards": 1,
+    "refresh_interval": "5s",
+  },
+}
+`;

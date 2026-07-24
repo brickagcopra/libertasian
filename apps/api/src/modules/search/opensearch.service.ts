@@ -2,132 +2,28 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Client } from '@opensearch-project/opensearch';
 
-/**
- * OpenSearch index names per PDD Section 4.4
- */
-export const KEYWORD_INDEX = 'legal_documents_keyword';
-export const VECTOR_INDEX = 'legal_documents_vector';
-export const USER_UPLOADS_INDEX = 'user_uploads_searchable';
+import { deriveGrNoDigits, normalizeCitationKey } from './citation-utils';
+import {
+  DEFAULT_EMBEDDING_DIM,
+  INDEX_TOPOLOGY,
+  KEYWORD_INDEX,
+  USER_UPLOADS_INDEX,
+  VECTOR_INDEX,
+} from './index-mappings';
 
 /**
- * Keyword index mapping for BM25 search.
- * Per CLAUDE.md: keyword type for filterable metadata, text with standard analyzer for full-text.
+ * Index names per PDD Section 4.4. These are ALIASES — the data lives in
+ * versioned physical indices (`*_v2`). See `index-mappings.ts`.
  */
-const KEYWORD_INDEX_MAPPING = {
-  settings: {
-    number_of_shards: 1,
-    number_of_replicas: 0,
-    refresh_interval: '5s',
-    analysis: {
-      analyzer: {
-        legal_analyzer: {
-          type: 'custom',
-          tokenizer: 'standard',
-          filter: ['lowercase', 'asciifolding'],
-        },
-      },
-    },
-  },
-  mappings: {
-    properties: {
-      title: { type: 'text', analyzer: 'legal_analyzer', fields: { keyword: { type: 'keyword' } } },
-      short_title: { type: 'text', analyzer: 'legal_analyzer' },
-      citation_text: { type: 'text', analyzer: 'legal_analyzer', fields: { keyword: { type: 'keyword' } } },
-      plain_text: { type: 'text', analyzer: 'legal_analyzer' },
-      section_text: { type: 'text', analyzer: 'legal_analyzer' },
-      document_id: { type: 'keyword' },
-      section_id: { type: 'keyword' },
-      document_type: { type: 'keyword' },
-      court: { type: 'keyword' },
-      ponente: { type: 'keyword' },
-      jurisdiction: { type: 'keyword' },
-      language: { type: 'keyword' },
-      status: { type: 'keyword' },
-      gr_no: { type: 'keyword' },
-      docket_no: { type: 'keyword' },
-      source_id: { type: 'keyword' },
-      source_trust_level: { type: 'keyword' },
-      is_official: { type: 'boolean' },
-      is_published: { type: 'boolean' },
-      section_type: { type: 'keyword' },
-      decision_date: { type: 'date' },
-      promulgation_date: { type: 'date' },
-      publication_date: { type: 'date' },
-      created_at: { type: 'date' },
-      bar_subjects: { type: 'keyword' },
-      topics: { type: 'keyword' },
-    },
-  },
-};
-
-const VECTOR_INDEX_MAPPING = {
-  settings: {
-    number_of_shards: 1,
-    number_of_replicas: 0,
-    'index.knn': true,
-  },
-  mappings: {
-    properties: {
-      document_id: { type: 'keyword' },
-      section_id: { type: 'keyword' },
-      document_type: { type: 'keyword' },
-      court: { type: 'keyword' },
-      source_trust_level: { type: 'keyword' },
-      is_official: { type: 'boolean' },
-      is_published: { type: 'boolean' },
-      decision_date: { type: 'date' },
-      embedding_vector: {
-        type: 'knn_vector',
-        dimension: 1024,
-        method: {
-          name: 'hnsw',
-          space_type: 'cosinesimil',
-          engine: 'lucene',
-          parameters: { ef_construction: 256, m: 16 },
-        },
-      },
-      text_snippet: { type: 'text' },
-      title: { type: 'text' },
-      citation_text: { type: 'keyword' },
-    },
-  },
-};
-
-/**
- * Separate index for user uploads per CLAUDE.md: "never co-mingle with editorial corpus."
- * organization_id is a mandatory keyword filter for tenant isolation.
- */
-const USER_UPLOADS_INDEX_MAPPING = {
-  settings: {
-    number_of_shards: 1,
-    number_of_replicas: 0,
-    refresh_interval: '5s',
-    analysis: {
-      analyzer: {
-        upload_analyzer: {
-          type: 'custom',
-          tokenizer: 'standard',
-          filter: ['lowercase', 'asciifolding'],
-        },
-      },
-    },
-  },
-  mappings: {
-    properties: {
-      upload_id: { type: 'keyword' },
-      organization_id: { type: 'keyword' },
-      user_id: { type: 'keyword' },
-      ocr_text: { type: 'text', analyzer: 'upload_analyzer' },
-      original_filename: { type: 'text', fields: { keyword: { type: 'keyword' } } },
-      classified_document_type: { type: 'keyword' },
-      upload_type: { type: 'keyword' },
-      mime_type: { type: 'keyword' },
-      privacy_level: { type: 'keyword' },
-      extracted_citations: { type: 'keyword' },
-      created_at: { type: 'date' },
-    },
-  },
-};
+export {
+  INDEX_VERSION,
+  KEYWORD_INDEX,
+  VECTOR_INDEX,
+  USER_UPLOADS_INDEX,
+  KEYWORD_INDEX_PHYSICAL,
+  VECTOR_INDEX_PHYSICAL,
+  USER_UPLOADS_INDEX_PHYSICAL,
+} from './index-mappings';
 
 export interface UserUploadIndexPayload {
   upload_id: string;
@@ -170,6 +66,11 @@ export interface IndexDocumentPayload {
   language?: string;
   status: string;
   gr_no?: string;
+  /**
+   * Digits-and-hyphens-only form of `gr_no`. Derived automatically by
+   * `OpenSearchService` at index time — callers do not need to set it.
+   */
+  gr_no_digits?: string;
   docket_no?: string;
   source_id?: string;
   source_trust_level?: string;
@@ -267,6 +168,15 @@ export class OpenSearchService implements OnModuleInit {
     });
   }
 
+  /**
+   * The embedding dimension the vector index is built with. Read from config so
+   * it always tracks what the embedding service actually emits — hardcoding it
+   * is what left the prod vector index unusable.
+   */
+  get embeddingDimension(): number {
+    return this.config.get<number>('EMBEDDING_DIM', DEFAULT_EMBEDDING_DIM);
+  }
+
   async onModuleInit() {
     try {
       const info = await this.client.info();
@@ -275,25 +185,171 @@ export class OpenSearchService implements OnModuleInit {
       );
     } catch {
       this.logger.warn('OpenSearch not available — search features will be degraded');
+      return;
     }
-  }
 
-  async ensureIndexes() {
-    await this.createIndexIfNotExists(KEYWORD_INDEX, KEYWORD_INDEX_MAPPING);
-    await this.createIndexIfNotExists(VECTOR_INDEX, VECTOR_INDEX_MAPPING);
-    await this.createIndexIfNotExists(USER_UPLOADS_INDEX, USER_UPLOADS_INDEX_MAPPING);
-  }
+    if (this.config.get<string>('SEARCH_AUTO_ENSURE_INDEXES', 'true') === 'false') {
+      this.logger.log('SEARCH_AUTO_ENSURE_INDEXES=false — skipping index bootstrap');
+      return;
+    }
 
-  private async createIndexIfNotExists(indexName: string, mapping: Record<string, unknown>) {
+    // Never crash boot on an index problem: OpenSearch is a projection, not
+    // the system of record (CLAUDE.md rule 4). Log and continue.
     try {
-      const exists = await this.client.indices.exists({ index: indexName });
-      if (!exists.body) {
-        await this.client.indices.create({ index: indexName, body: mapping });
-        this.logger.log(`Created index: ${indexName}`);
-      }
+      await this.ensureIndexes();
     } catch (error) {
-      this.logger.error(`Failed to create index ${indexName}`, error);
+      this.logger.error(
+        `ensureIndexes() failed during boot — continuing with degraded search: ${
+          (error as Error).message
+        }`,
+      );
     }
+  }
+
+  /**
+   * Idempotently bring the alias → physical index topology into existence.
+   *
+   * Three states per logical index:
+   *  - alias already exists → nothing to do (NEVER repoint an existing alias
+   *    here; that is the rebuild job's decision alone).
+   *  - a *concrete* index occupies the alias name (this is production today,
+   *    auto-created with dynamic mappings) → leave it strictly alone and warn.
+   *    Only `POST /search/index/rebuild` may replace it, because that path
+   *    reindexes and verifies before deleting anything.
+   *  - neither exists (fresh install / CI) → create the `_v2` physical index
+   *    with the explicit mapping and point the alias at it.
+   */
+  async ensureIndexes(): Promise<{
+    created: string[];
+    existing: string[];
+    needsRebuild: string[];
+  }> {
+    const created: string[] = [];
+    const existing: string[] = [];
+    const needsRebuild: string[] = [];
+
+    for (const entry of INDEX_TOPOLOGY) {
+      const aliasExists = await this.aliasExists(entry.alias);
+      if (aliasExists) {
+        existing.push(entry.alias);
+        continue;
+      }
+
+      if (await this.indexExists(entry.alias)) {
+        this.logger.warn(
+          `"${entry.alias}" is a concrete index, not an alias — it predates the ` +
+            `explicit mappings and its filters will not match. Run ` +
+            `POST /search/index/rebuild to migrate it to ${entry.physical}.`,
+        );
+        needsRebuild.push(entry.alias);
+        continue;
+      }
+
+      await this.createPhysicalIndex(
+        entry.physical,
+        entry.buildMapping(this.embeddingDimension),
+      );
+      await this.client.indices.putAlias({
+        index: entry.physical,
+        name: entry.alias,
+        body: { is_write_index: true },
+      });
+      this.logger.log(`Created ${entry.physical} and aliased it as ${entry.alias}`);
+      created.push(entry.alias);
+    }
+
+    return { created, existing, needsRebuild };
+  }
+
+  /** True when `name` resolves to an alias (as opposed to a concrete index). */
+  async aliasExists(name: string): Promise<boolean> {
+    const response = await this.client.indices.existsAlias({ name });
+    return response.body === true;
+  }
+
+  /** True when `name` exists as an index or alias. */
+  async indexExists(name: string): Promise<boolean> {
+    const response = await this.client.indices.exists({ index: name });
+    return response.body === true;
+  }
+
+  /**
+   * Resolve the physical index (or indices) an alias currently points at.
+   * Returns an empty array when the alias does not exist.
+   */
+  async resolveAliasTargets(alias: string): Promise<string[]> {
+    try {
+      const response = await this.client.indices.getAlias({ name: alias });
+      return Object.keys(response.body as Record<string, unknown>);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Create a physical index, failing loudly if it already exists. Callers that
+   * want idempotency check `indexExists()` first.
+   */
+  async createPhysicalIndex(
+    indexName: string,
+    mapping: Record<string, unknown>,
+  ): Promise<void> {
+    await this.client.indices.create({ index: indexName, body: mapping });
+  }
+
+  async deleteIndex(indexName: string): Promise<void> {
+    await this.client.indices.delete({ index: indexName });
+  }
+
+  async refreshIndex(indexName: string): Promise<void> {
+    await this.client.indices.refresh({ index: indexName });
+  }
+
+  async countIndex(indexName: string): Promise<number> {
+    const response = await this.client.count({ index: indexName });
+    return (response.body as { count: number }).count;
+  }
+
+  /**
+   * Atomically swap an alias onto `target`, optionally deleting the concrete
+   * index that currently squats on the alias name in the SAME request.
+   *
+   * `remove_index` is the only way to go from "concrete index named X" to
+   * "alias X → X_v2" without a window in which X does not resolve at all.
+   * Callers MUST have verified the target's doc count first — this method is
+   * deliberately dumb about safety so the ordering is testable in one place.
+   */
+  async swapAlias(options: {
+    alias: string;
+    target: string;
+    removeConcreteIndex?: boolean;
+    detachFrom?: string[];
+  }): Promise<void> {
+    const actions: Record<string, unknown>[] = [];
+    if (options.removeConcreteIndex) {
+      actions.push({ remove_index: { index: options.alias } });
+    }
+    for (const previous of options.detachFrom ?? []) {
+      actions.push({ remove: { index: previous, alias: options.alias } });
+    }
+    actions.push({
+      add: { index: options.target, alias: options.alias, is_write_index: true },
+    });
+    await this.client.indices.updateAliases({ body: { actions } });
+  }
+
+  /**
+   * Server-side copy of one index into another. Used for the vector and
+   * user-upload indices, whose payloads (embeddings, OCR text) are expensive or
+   * impossible to regenerate — a `_reindex` preserves them for free.
+   */
+  async reindexInto(source: string, dest: string): Promise<number> {
+    const response = await this.client.reindex({
+      wait_for_completion: true,
+      refresh: true,
+      body: { source: { index: source }, dest: { index: dest } },
+    });
+    return ((response.body as { created?: number }).created ?? 0) as number;
   }
 
   async indexDocument(doc: IndexDocumentPayload) {
@@ -302,7 +358,7 @@ export class OpenSearchService implements OnModuleInit {
       await this.client.index({
         index: KEYWORD_INDEX,
         id,
-        body: doc as unknown as Record<string, unknown>,
+        body: this.withDerivedFields(doc),
         refresh: 'false',
       });
     } catch (error) {
@@ -311,14 +367,29 @@ export class OpenSearchService implements OnModuleInit {
     }
   }
 
-  async bulkIndexDocuments(docs: IndexDocumentPayload[]) {
+  /**
+   * Populate index-time computed fields. Centralised here so every write path
+   * (single, bulk, rebuild job) produces identical documents.
+   */
+  private withDerivedFields(doc: IndexDocumentPayload): Record<string, unknown> {
+    const grNoDigits = deriveGrNoDigits(doc.gr_no ?? doc.docket_no);
+    const payload: Record<string, unknown> = { ...doc };
+    if (grNoDigits) {
+      payload['gr_no_digits'] = grNoDigits;
+    } else {
+      delete payload['gr_no_digits'];
+    }
+    return payload;
+  }
+
+  async bulkIndexDocuments(docs: IndexDocumentPayload[], targetIndex = KEYWORD_INDEX) {
     if (docs.length === 0) return { indexed: 0, errors: 0 };
 
     const body: Record<string, unknown>[] = [];
     for (const doc of docs) {
       const id = doc.section_id ?? doc.document_id;
-      body.push({ index: { _index: KEYWORD_INDEX, _id: id } });
-      body.push(doc as unknown as Record<string, unknown>);
+      body.push({ index: { _index: targetIndex, _id: id } });
+      body.push(this.withDerivedFields(doc));
     }
 
     try {
@@ -459,9 +530,13 @@ export class OpenSearchService implements OnModuleInit {
     const body: Record<string, unknown> = {
       query: {
         bool: {
+          // `.raw` sub-fields carry the citation_normalizer (lowercase, strip
+          // `.`/`,`/space), so the query value must be normalised the same way.
           should: [
             { term: { gr_no: citation } },
-            { term: { 'citation_text.keyword': citation } },
+            { term: { 'gr_no.raw': normalizeCitationKey(citation) } },
+            { term: { gr_no_digits: deriveGrNoDigits(citation) ?? citation } },
+            { term: { 'citation_text.raw': normalizeCitationKey(citation) } },
             { match_phrase: { citation_text: citation } },
           ],
           minimum_should_match: 1,
@@ -500,7 +575,11 @@ export class OpenSearchService implements OnModuleInit {
         bool: {
           should: [
             { prefix: { 'title.keyword': { value: prefix, boost: 2 } } },
-            { prefix: { 'citation_text.keyword': { value: prefix, boost: 3 } } },
+            {
+              prefix: {
+                'citation_text.raw': { value: normalizeCitationKey(prefix), boost: 3 },
+              },
+            },
             { match_phrase_prefix: { title: { query: prefix, max_expansions: 10 } } },
             { match_phrase_prefix: { gr_no: { query: prefix, max_expansions: 10 } } },
           ],
@@ -549,13 +628,16 @@ export class OpenSearchService implements OnModuleInit {
   /**
    * Bulk index vector documents into the vector index.
    */
-  async bulkIndexVectorDocuments(docs: VectorDocumentPayload[]) {
+  async bulkIndexVectorDocuments(
+    docs: VectorDocumentPayload[],
+    targetIndex = VECTOR_INDEX,
+  ) {
     if (docs.length === 0) return { indexed: 0, errors: 0 };
 
     const body: Record<string, unknown>[] = [];
     for (const doc of docs) {
       const id = doc.section_id ?? doc.document_id;
-      body.push({ index: { _index: VECTOR_INDEX, _id: id } });
+      body.push({ index: { _index: targetIndex, _id: id } });
       body.push(doc as unknown as Record<string, unknown>);
     }
 

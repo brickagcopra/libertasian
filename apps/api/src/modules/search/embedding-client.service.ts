@@ -16,7 +16,9 @@ interface BatchEmbedResponse {
 
 /**
  * Client for the embedding service (Python FastAPI at EMBEDDING_SERVICE_URL).
- * Per PDD Section 4.5: embedding model produces 1024-dim vectors for kNN search.
+ * The vector width is model-dependent (BAAI/bge-small-en-v1.5 emits 384) and is
+ * configured once via EMBEDDING_DIM, which also sizes the knn_vector field.
+ * Never assume a fixed width here.
  */
 @Injectable()
 export class EmbeddingClientService implements OnModuleInit {
@@ -48,7 +50,7 @@ export class EmbeddingClientService implements OnModuleInit {
   }
 
   /**
-   * Embed a single text string. Returns a 1024-dim vector.
+   * Embed a single text string. Returns an EMBEDDING_DIM-wide vector.
    */
   async embed(text: string): Promise<number[] | null> {
     try {
@@ -78,7 +80,7 @@ export class EmbeddingClientService implements OnModuleInit {
   }
 
   /**
-   * Embed multiple texts in a single batch call. Returns array of 1024-dim vectors.
+   * Embed multiple texts in a single batch call. Returns EMBEDDING_DIM-wide vectors.
    * Max 256 texts per batch per embedding service schema.
    */
   async embedBatch(texts: string[]): Promise<number[][] | null> {
