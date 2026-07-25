@@ -1,6 +1,6 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-07-18 (account-deletion page #305; #301 api deploy recorded)
+> Last updated: 2026-07-25 (search Phase B merged; Phase A prod dry-run results recorded; two Phase A bugs fixed in #308)
 
 ---
 
@@ -10593,3 +10593,27 @@ Phase 3 of the 6-phase testing strategy. Created 5 integration test files + 2 sh
 5. [x] **Wired subscription cancellation email** — Created `subscription-cancelled.ts` template (end-of-period vs immediate messaging), added `sendSubscriptionCancelled` method to `NotificationsService`, wired into `BillingService.cancelSubscription`.
 6. [x] **Fixed mobile checkout flow** — Replaced `WebBrowser.openBrowserAsync` with `Linking.openURL` for security (users see real xendit.co domain). Created deep link routes: `app/billing/success.tsx` (invalidates queries, redirects to subscription screen) and `app/billing/cancel.tsx` (redirects to plans screen). Updated `_layout.tsx` auth guard to allow billing deep links through.
 7. [x] **Verified subscription status display** — Web billing page shows: plan name, status badge (active/cancelling), billing period, seats, renewal date, upgrade/change plan dialog, cancel dialog (end-of-period or immediate), payment methods (set default, delete), invoices table with pagination. Mobile subscription screen shows: plan name, status badge, billing period, seats, current period, trial end, cancel notice, change plan and usage links.
+
+---
+
+## Session 204 — Search Phase B merge + Phase A prod dry-run fixes (2026-07-25)
+
+**Merged**
+1. [x] **#307 → main (squash `27538fd`)** — `feat(api): query intent classification and ranking v2 (Phase B)`. All 15 checks green at merge. Branch deleted.
+
+**Phase A production dry-run (run by brick, treated as ground truth)**
+2. [x] Synonym rules parse against a real cluster — risk closed. 17,135 docs → 85,977 entries in 3m24s.
+3. [x] Mappings verified live on `_v2`: `document_type=decision` 76,484 · `ponente=LOPEZ` 301 · `status=published` 29,166 · `gr_no_digits=246999` 4 · `ponente.text` match `hernando` 622 · `estafa` no-fuzzy 1,987 (was 4,040).
+4. [x] Vector index repaired: `knn_vector`, dim 384, HNSW, `index.knn` true, all 12,196 embeddings copied — hybrid search will actually run post-swap.
+
+**#308 — two bugs the dry-run exposed (open PR, `fix/reindex-verify-and-court-key`)**
+5. [x] **`reindexInto()` reported 0 for copies that worked.** Both `_v2` copies held full counts (12,196 and 2) while the job reported `vectorsCopied: 0`. Fixed by not trusting the `_reindex` response at all: the method now refreshes the destination and returns measured `_count`s for both sides, keeping the response's `created` only as `reportedCreated` for the log (a discrepancy is warned about), and throwing on per-document `failures[]`.
+6. [x] **Made 0 unambiguous.** The rebuild job classifies every copy as `verified` / `source_missing` / `mismatch` / `failed` — "nothing to copy" and "the copy threw and was swallowed" are no longer the same number. A copy that is not verified leaves its alias on the previous target (reported as `aliasesSkipped`) instead of swapping traffic onto a possibly-empty index; the keyword index still ships either way. Copy tolerance is the same 1% window as the keyword gate, since the source takes live writes mid-copy.
+7. [x] **Court filter fixed (same bug class as `documentType`, missed for `court`).** DB stores display strings; the dropdown sent `supreme_court`; `term court=supreme_court` → 0 hits on `_v2`. Fixed the `gr_no` way: `court` keeps the raw display literal for rendering, new **`court_key`** carries the snake_case form derived at index time, and every filter runs on `court_key`.
+8. [x] `COURT_VALUES` / `COURT_LABELS` / `COURT_FILTER_OPTIONS` / `normalizeCourtKey()` added to `@libertasian/types` beside `DOCUMENT_TYPE_VALUES`; dropdown, DTO `@IsIn` and indexer all derive from them. A round-trip test pins `normalizeCourtKey(COURT_LABELS[v]) === v` so the labels cannot drift from what the corpus stores. Regional Trial Court (2,831 docs) added — it was missing from the dropdown entirely.
+9. [x] Both DTOs normalise the incoming value so `"Supreme Court"` and `supreme_court` are interchangeable. `SearchQueryDto` rejects an unknown court (`@IsIn`); partner-facing `ExternalSearchDto` deliberately does not, so no existing integration starts 400ing.
+10. [x] Vector index is copied forward rather than rebuilt, so its documents have no `court_key` — its court clause matches either the key or the display literal, keeping the kNN arm of court-filtered hybrid search alive.
+11. [x] `INDEX_VERSION` → `v3` (mapping change). Requires `POST /search/index/rebuild`, blue/green ~3.5 min; `_v2` remains as a rollback target.
+12. [x] Tests: 3,691 API + 1,596 web passing. New coverage for `court_key` derivation/omission, `court_key`-only filtering in both builders, the vector dual-form clause, DTO normalisation and rejection, measured-vs-reported copy counts, all four copy statuses, and the swap-refusal on an unverified copy.
+
+**Phase C scoped against measured prod data** — see PENDING_TASKS.md "Search overhaul". Headline: `content_plain_text` is empty (12 of 99,994 rows), so per-`derivative_type` extraction from `content_json` is the work; `organization_id` is NULL on 100% of derivative rows; real backfill is 13,017 rows, not 99,994.
