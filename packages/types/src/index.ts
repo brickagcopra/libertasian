@@ -15,3 +15,4 @@ export * from './reporting';
 export * from './exports';
 export * from './analytics';
 export * from './search';
+export * from './derivative-content';

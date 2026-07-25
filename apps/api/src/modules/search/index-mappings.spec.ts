@@ -1,10 +1,15 @@
+import { MCQ_FORBIDDEN_KEYS } from './derivative-extract';
 import {
+  DERIVATIVES_INDEX,
+  DERIVATIVES_INDEX_ENTRY,
+  DERIVATIVES_INDEX_PHYSICAL,
   INDEX_TOPOLOGY,
   INDEX_VERSION,
   KEYWORD_INDEX,
   KEYWORD_INDEX_PHYSICAL,
   USER_UPLOADS_INDEX,
   VECTOR_INDEX,
+  buildDerivativesIndexMapping,
   buildKeywordIndexMapping,
   buildUserUploadsIndexMapping,
   buildVectorIndexMapping,
@@ -167,5 +172,80 @@ describe('user uploads index mapping', () => {
 
   it('matches the mapping snapshot', () => {
     expect(buildUserUploadsIndexMapping()).toMatchSnapshot();
+  });
+});
+
+describe('derivatives index mapping', () => {
+  const derivativeProps = () =>
+    (buildDerivativesIndexMapping()['mappings'] as { properties: Props }).properties;
+
+  it('is strict so an unmapped field fails the write instead of auto-mapping', () => {
+    const mappings = buildDerivativesIndexMapping()['mappings'] as Record<string, unknown>;
+    expect(mappings['dynamic']).toBe('strict');
+  });
+
+  // SECURITY. The extractor is the first line of defence against an MCQ answer
+  // key reaching the index; this mapping is the second. Under `dynamic:
+  // 'strict'` an absent field is not a soft default — OpenSearch rejects the
+  // write with strict_dynamic_mapping_exception. So the ABSENCE asserted here
+  // is a live control, not documentation.
+  it.each(MCQ_FORBIDDEN_KEYS)('has no field to hold %s', (field) => {
+    expect(derivativeProps()).not.toHaveProperty(field);
+  });
+
+  it('has no field whose name suggests an answer key', () => {
+    for (const field of Object.keys(derivativeProps())) {
+      expect(field).not.toMatch(/correct|rationale|explanation|answer_key/i);
+    }
+  });
+
+  it('is BM25 only — no knn_vector field and no index.knn setting', () => {
+    const settings = buildDerivativesIndexMapping()['settings'] as Record<string, unknown>;
+    expect(settings['index.knn']).toBeUndefined();
+    for (const mapping of Object.values(derivativeProps())) {
+      expect(mapping['type']).not.toBe('knn_vector');
+    }
+  });
+
+  it.each([
+    'derivative_id',
+    'derivative_type',
+    'source_document_id',
+    'organization_id',
+    'visibility',
+    'audience',
+    'language',
+    'subject_codes',
+    'taxonomy_version',
+    'upgrade_tier',
+  ])('maps %s as keyword so term filters match', (field) => {
+    expect(derivativeProps()[field]).toEqual({ type: 'keyword' });
+  });
+
+  it('maps the extracted body as analysed text with no .keyword sub-field', () => {
+    const body = derivativeProps()['body_text'];
+    expect(body).toEqual({
+      type: 'text',
+      analyzer: 'legal_analyzer',
+      search_analyzer: 'legal_search_analyzer',
+    });
+    expect(body).not.toHaveProperty('fields');
+  });
+
+  it('points the alias at a versioned physical index without bumping INDEX_VERSION', () => {
+    expect(DERIVATIVES_INDEX_PHYSICAL).toBe(`${DERIVATIVES_INDEX}_${INDEX_VERSION}`);
+    expect(DERIVATIVES_INDEX_ENTRY.alias).toBe(DERIVATIVES_INDEX);
+    expect(DERIVATIVES_INDEX_ENTRY.physical).toBe(DERIVATIVES_INDEX_PHYSICAL);
+  });
+
+  // C1 shipping the mapping must not change what the rebuild job does today.
+  // C2 appends this entry to INDEX_TOPOLOGY along with the query path.
+  it('is NOT yet wired into INDEX_TOPOLOGY — that is C2', () => {
+    expect(INDEX_TOPOLOGY.map((entry) => entry.alias)).not.toContain(DERIVATIVES_INDEX);
+    expect(INDEX_TOPOLOGY).toHaveLength(3);
+  });
+
+  it('matches the mapping snapshot', () => {
+    expect(buildDerivativesIndexMapping()).toMatchSnapshot();
   });
 });
