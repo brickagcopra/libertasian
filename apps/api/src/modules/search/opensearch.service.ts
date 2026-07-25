@@ -4,6 +4,13 @@ import { Client } from '@opensearch-project/opensearch';
 
 import { deriveGrNoDigits, normalizeCitationKey } from './citation-utils';
 import {
+  buildCitationQueryBody,
+  buildKeywordQueryBody,
+  buildSuggestionQueryBody,
+  type RankingWeights,
+} from './query-builder';
+import type { QueryIntent } from './query-intent';
+import {
   DEFAULT_EMBEDDING_DIM,
   INDEX_TOPOLOGY,
   KEYWORD_INDEX,
@@ -102,8 +109,14 @@ export interface VectorDocumentPayload {
 
 export interface SearchOptions {
   query: string;
+  /**
+   * Classified query intent. When present (SEARCH_RANKER_V2), the tiered
+   * ranking builder is used; when absent the legacy single-fuzzy-multi_match
+   * builder runs unchanged.
+   */
+  intent?: QueryIntent;
   filters?: {
-    documentType?: string;
+    documentType?: string | string[];
     court?: string;
     ponente?: string;
     sourceId?: string;
@@ -120,12 +133,13 @@ export interface SearchOptions {
   excludeDocumentIds?: string[];
   from?: number;
   size?: number;
+  weights?: RankingWeights;
 }
 
 export interface VectorSearchOptions {
   vector: number[];
   filters?: {
-    documentType?: string;
+    documentType?: string | string[];
     court?: string;
     publishedOnly?: boolean;
   };
@@ -149,6 +163,40 @@ interface SearchHit {
   _score: number;
   _source: Record<string, unknown>;
   highlight?: Record<string, string[]>;
+  inner_hits?: Record<string, { hits: { hits: SearchHit[] } }>;
+}
+
+/** Shape of the subset of the OpenSearch response body this service reads. */
+interface OpenSearchResponseBody {
+  hits: {
+    total: { value: number } | number;
+    max_score: number | null;
+    hits: SearchHit[];
+  };
+  aggregations?: { total_docs?: { value: number } };
+  suggest?: Record<string, { options: { text?: string }[] }[]>;
+  timed_out?: boolean;
+}
+
+export interface KeywordSearchResult {
+  total: number;
+  /** True when `total` came from the cardinality agg (approximate by design). */
+  approximateTotal: boolean;
+  maxScore: number | null;
+  items: SearchResultItem[];
+  timedOut: boolean;
+  didYouMean?: string;
+}
+
+export interface SuggestionItem {
+  id: string;
+  documentId: string;
+  title: string;
+  citation?: string;
+  grNo?: string;
+  documentType?: string;
+  court?: string;
+  decisionDate?: string;
 }
 
 @Injectable()
@@ -426,10 +474,94 @@ export class OpenSearchService implements OnModuleInit {
     }
   }
 
-  async searchKeyword(options: SearchOptions) {
+  /**
+   * BM25 keyword search.
+   *
+   * Two builders live here during the SEARCH_RANKER_V2 rollout: the tiered v2
+   * builder (used when `options.intent` is supplied) and the original
+   * single-fuzzy-multi_match v1 builder, retained unchanged for one release so
+   * the flag can be flipped back without a code deploy.
+   */
+  async searchKeyword(options: SearchOptions): Promise<KeywordSearchResult> {
+    const { intent, from = 0, size = 20 } = options;
+
+    const body = intent
+      ? buildKeywordQueryBody({
+          intent,
+          filters: options.filters,
+          excludeDocumentIds: options.excludeDocumentIds,
+          from,
+          size,
+          weights: options.weights,
+        })
+      : this.buildLegacyKeywordBody(options);
+
+    try {
+      const response = await this.client.search({ index: KEYWORD_INDEX, body });
+      return this.parseKeywordResponse(response.body as OpenSearchResponseBody, Boolean(intent));
+    } catch (error) {
+      this.logger.error('Search failed', error);
+      throw error;
+    }
+  }
+
+  private parseKeywordResponse(
+    responseBody: OpenSearchResponseBody,
+    collapsed: boolean,
+  ): KeywordSearchResult {
+    const hits = responseBody.hits;
+    const rawTotal = typeof hits.total === 'number' ? hits.total : hits.total.value;
+
+    // With `collapse`, hits.total still counts raw section hits — the
+    // cardinality agg over document_id is the distinct-document count and is
+    // what callers must report as `total`.
+    const cardinality = responseBody.aggregations?.total_docs?.value;
+    const total = collapsed && typeof cardinality === 'number' ? cardinality : rawTotal;
+
+    const didYouMean = this.extractDidYouMean(responseBody);
+
+    return {
+      total,
+      approximateTotal: collapsed && typeof cardinality === 'number',
+      maxScore: hits.max_score,
+      items: hits.hits.map((hit) => this.toResultItem(hit)),
+      timedOut: Boolean(responseBody.timed_out),
+      ...(didYouMean && { didYouMean }),
+    };
+  }
+
+  /**
+   * Prefer the collapsed `inner_hits` highlight: the outer hit is whichever
+   * section OpenSearch collapsed on, but `best_section` is the highest-scoring
+   * passage for that document, which is what the user should see.
+   */
+  private toResultItem(hit: SearchHit): SearchResultItem {
+    const innerHits = hit.inner_hits?.['best_section']?.hits?.hits ?? [];
+    const best = innerHits[0];
+    const highlights = best?.highlight ?? hit.highlight ?? {};
+
+    return {
+      id: hit._id,
+      score: hit._score,
+      source: hit._source,
+      highlights,
+    };
+  }
+
+  private extractDidYouMean(responseBody: OpenSearchResponseBody): string | undefined {
+    const options = responseBody.suggest?.['did_you_mean']?.[0]?.options ?? [];
+    const first = options[0];
+    return first && typeof first.text === 'string' ? first.text : undefined;
+  }
+
+  /**
+   * Legacy v1 query builder. Kept byte-for-byte so `SEARCH_RANKER_V2=false`
+   * restores the exact previous behaviour. Delete one release after the v2
+   * rollout is confirmed.
+   */
+  private buildLegacyKeywordBody(options: SearchOptions): Record<string, unknown> {
     const { query, filters, excludeDocumentIds, from = 0, size = 20 } = options;
 
-    // Build query DSL programmatically (per CLAUDE.md: never interpolate user input)
     const must: Record<string, unknown>[] = [];
     const filter: Record<string, unknown>[] = [];
     const mustNot: Record<string, unknown>[] = [];
@@ -444,7 +576,13 @@ export class OpenSearchService implements OnModuleInit {
     });
 
     if (filters?.documentType) {
-      filter.push({ term: { document_type: filters.documentType } });
+      // Single value keeps the original `term` clause byte-for-byte; only the
+      // new multi-select array shape widens to `terms`.
+      filter.push(
+        Array.isArray(filters.documentType)
+          ? { terms: { document_type: filters.documentType } }
+          : { term: { document_type: filters.documentType } },
+      );
     }
     if (filters?.court) {
       filter.push({ term: { court: filters.court } });
@@ -472,8 +610,6 @@ export class OpenSearchService implements OnModuleInit {
       filter.push({ terms: { status: ['published', 'indexed'] } });
     }
 
-    // Dedup suppression — exclude non-canonical duplicates / stale versions.
-    // Built programmatically (no user input). Empty array = no clause.
     if (excludeDocumentIds && excludeDocumentIds.length > 0) {
       mustNot.push({ terms: { document_id: excludeDocumentIds } });
     }
@@ -483,7 +619,7 @@ export class OpenSearchService implements OnModuleInit {
       boolQuery['must_not'] = mustNot;
     }
 
-    const body: Record<string, unknown> = {
+    return {
       query: { bool: boolQuery },
       highlight: {
         fields: {
@@ -498,66 +634,24 @@ export class OpenSearchService implements OnModuleInit {
       size,
       timeout: '5s',
     };
-
-    try {
-      const response = await this.client.search({ index: KEYWORD_INDEX, body });
-      const hits = response.body.hits as {
-        total: { value: number } | number;
-        max_score: number | null;
-        hits: SearchHit[];
-      };
-
-      const total = typeof hits.total === 'number' ? hits.total : hits.total.value;
-
-      return {
-        total,
-        maxScore: hits.max_score,
-        items: hits.hits.map((hit: SearchHit) => ({
-          id: hit._id,
-          score: hit._score,
-          source: hit._source,
-          highlights: hit.highlight ?? {},
-        })),
-        timedOut: response.body.timed_out as boolean,
-      };
-    } catch (error) {
-      this.logger.error('Search failed', error);
-      throw error;
-    }
   }
 
+  /**
+   * Exact citation lookup. Every clause is a `term` against a normalized
+   * keyword field, so a near-miss docket (246499) can never outscore the exact
+   * one (246999) — which it did under the previous fuzzy `match_phrase` model.
+   */
   async searchExactCitation(citation: string) {
-    const body: Record<string, unknown> = {
-      query: {
-        bool: {
-          // `.raw` sub-fields carry the citation_normalizer (lowercase, strip
-          // `.`/`,`/space), so the query value must be normalised the same way.
-          should: [
-            { term: { gr_no: citation } },
-            { term: { 'gr_no.raw': normalizeCitationKey(citation) } },
-            { term: { gr_no_digits: deriveGrNoDigits(citation) ?? citation } },
-            { term: { 'citation_text.raw': normalizeCitationKey(citation) } },
-            { match_phrase: { citation_text: citation } },
-          ],
-          minimum_should_match: 1,
-        },
-      },
-      size: 10,
-      timeout: '5s',
-    };
+    const body = buildCitationQueryBody(citation, deriveGrNoDigits(citation));
 
     try {
       const response = await this.client.search({ index: KEYWORD_INDEX, body });
-      const hits = response.body.hits as {
-        total: { value: number } | number;
-        hits: SearchHit[];
-      };
-
+      const hits = (response.body as OpenSearchResponseBody).hits;
       const total = typeof hits.total === 'number' ? hits.total : hits.total.value;
 
       return {
         total,
-        items: hits.hits.map((hit: SearchHit) => ({
+        items: hits.hits.map((hit) => ({
           id: hit._id,
           score: hit._score,
           source: hit._source,
@@ -569,40 +663,39 @@ export class OpenSearchService implements OnModuleInit {
     }
   }
 
-  async searchSuggestions(prefix: string, limit = 10) {
-    const body: Record<string, unknown> = {
-      query: {
-        bool: {
-          should: [
-            { prefix: { 'title.keyword': { value: prefix, boost: 2 } } },
-            {
-              prefix: {
-                'citation_text.raw': { value: normalizeCitationKey(prefix), boost: 3 },
-              },
-            },
-            { match_phrase_prefix: { title: { query: prefix, max_expansions: 10 } } },
-            { match_phrase_prefix: { gr_no: { query: prefix, max_expansions: 10 } } },
-          ],
-          minimum_should_match: 1,
-          filter: [{ term: { is_published: true } }],
-        },
-      },
-      _source: ['document_id', 'title', 'short_title', 'citation_text', 'gr_no', 'document_type', 'court'],
-      size: limit,
-      timeout: '3s',
-    };
+  /**
+   * Typeahead suggestions. Backed by the `title.suggest` search_as_you_type
+   * field plus prefix matches on the normalized citation keys, collapsed to one
+   * row per document and filtered to published content.
+   *
+   * Returns a flat, UI-shaped row rather than a raw hit — callers render these
+   * directly in a dropdown.
+   */
+  async searchSuggestions(prefix: string, limit = 10): Promise<SuggestionItem[]> {
+    const body = buildSuggestionQueryBody(prefix, limit);
 
     try {
       const response = await this.client.search({ index: KEYWORD_INDEX, body });
-      const hits = response.body.hits as { hits: SearchHit[] };
+      const hits = (response.body as OpenSearchResponseBody).hits;
 
-      return hits.hits.map((hit: SearchHit) => ({
-        id: hit._id,
-        score: hit._score,
-        source: hit._source,
-      }));
-    } catch {
-      this.logger.error('Suggestions search failed');
+      return hits.hits.map((hit) => {
+        const source = hit._source;
+        const str = (key: string): string | undefined =>
+          typeof source[key] === 'string' ? (source[key] as string) : undefined;
+
+        return {
+          id: hit._id,
+          documentId: str('document_id') ?? hit._id,
+          title: str('title') ?? '',
+          ...(str('citation_text') && { citation: str('citation_text')! }),
+          ...(str('gr_no') && { grNo: str('gr_no')! }),
+          ...(str('document_type') && { documentType: str('document_type')! }),
+          ...(str('court') && { court: str('court')! }),
+          ...(str('decision_date') && { decisionDate: str('decision_date')! }),
+        };
+      });
+    } catch (error) {
+      this.logger.error(`Suggestions search failed: ${(error as Error).message}`);
       return [];
     }
   }

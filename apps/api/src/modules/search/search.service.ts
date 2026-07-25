@@ -1,6 +1,11 @@
 import { createHash } from 'crypto';
 
-import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import { RedisService } from '../../common/services/redis.service';
@@ -9,9 +14,14 @@ import { EmbeddingClientService } from './embedding-client.service';
 import {
   OpenSearchService,
   type IndexDocumentPayload,
+  type KeywordSearchResult,
   type SearchResultItem,
+  type SuggestionItem,
   type VectorDocumentPayload,
 } from './opensearch.service';
+import { PonenteDirectoryService } from './ponente-directory.service';
+import { DEFAULT_RANKING_WEIGHTS, type RankingWeights } from './query-builder';
+import { classifyQuery } from './query-intent';
 import { SuppressedDocsService } from './suppressed-docs.service';
 import { SearchQueryDto } from './dto';
 
@@ -24,6 +34,38 @@ const RRF_K = 60;
 /** Max text length to send for embedding (truncate long texts) */
 const MAX_EMBEDDING_TEXT_LENGTH = 16_000;
 
+/**
+ * Sorted set of recent zero-result queries, surfaced on the admin search
+ * analytics page so the synonym list can be tuned from real misses. Query text
+ * only — no actor, no org, no PII. 30-day TTL (CLAUDE.md: every key has one).
+ */
+const ZERO_RESULT_QUERY_KEY = 'cache:search:zero_results';
+const ZERO_RESULT_TTL = 2_592_000;
+
+/** Response envelope metadata. Additive over v1 — no field was removed. */
+export interface SearchResponseMeta {
+  total: number;
+  /** True when `total` is the cardinality estimate rather than an exact count. */
+  approximateTotal: boolean;
+  maxScore: number | null;
+  page: number;
+  limit: number;
+  timedOut: boolean;
+  cached: boolean;
+  searchType: 'hybrid' | 'keyword_only';
+  /** Detected query intent kind, for debugging and analytics. */
+  intent: string;
+  /** True when nothing confident was found — suggestions are offered instead. */
+  abstained: boolean;
+  suggestions: SuggestionItem[];
+  didYouMean?: string;
+}
+
+export interface SearchResponse {
+  items: unknown[];
+  meta: SearchResponseMeta;
+}
+
 @Injectable()
 export class SearchService {
   private readonly logger = new Logger(SearchService.name);
@@ -35,6 +77,7 @@ export class SearchService {
     private readonly embeddingClient: EmbeddingClientService,
     private readonly suppressedDocs: SuppressedDocsService,
     private readonly config: ConfigService,
+    private readonly ponenteDirectory: PonenteDirectoryService,
   ) {}
 
   /**
@@ -56,26 +99,26 @@ export class SearchService {
    * Falls back to BM25-only if the embedding service is unavailable.
    * Results are cached in Redis per CLAUDE.md (5-min TTL).
    */
-  async search(dto: SearchQueryDto) {
+  async search(dto: SearchQueryDto): Promise<SearchResponse> {
     const page = dto.page ?? 0;
     const limit = dto.limit ?? 20;
+
+    // Deep pagination guard. `from + size` past SEARCH_MAX_WINDOW exceeds the
+    // index's max_result_window and would surface as an opaque upstream 500;
+    // fail with a clear 400 instead.
+    const maxWindow = this.config.get<number>('SEARCH_MAX_WINDOW', 1000);
+    if ((page + 1) * limit > maxWindow) {
+      throw new BadRequestException(
+        `Result window too large: page ${page} at limit ${limit} exceeds the ` +
+          `${maxWindow}-result maximum. Narrow the query with filters instead.`,
+      );
+    }
+
     const cacheKey = this.buildCacheKey(dto);
 
-    // Check cache first
     const cached = await this.redis.get(cacheKey);
     if (cached) {
-      const parsed = JSON.parse(cached) as {
-        items: unknown[];
-        meta: {
-          total: number;
-          maxScore: number | null;
-          page: number;
-          limit: number;
-          timedOut: boolean;
-          cached: boolean;
-          searchType: string;
-        };
-      };
+      const parsed = JSON.parse(cached) as SearchResponse;
       return {
         items: parsed.items,
         meta: { ...parsed.meta, cached: true },
@@ -96,7 +139,19 @@ export class SearchService {
         );
         return {
           items: [],
-          meta: { total: 0, maxScore: null, page, limit, timedOut: false, cached: false, searchType: 'keyword_only' as const },
+          meta: {
+            total: 0,
+            maxScore: null,
+            page,
+            limit,
+            timedOut: false,
+            cached: false,
+            searchType: 'keyword_only' as const,
+            approximateTotal: false,
+            intent: 'general',
+            abstained: true,
+            suggestions: [] as SuggestionItem[],
+          },
         };
       }
       // Any other OpenSearch / network error → 503
@@ -104,16 +159,36 @@ export class SearchService {
       throw new ServiceUnavailableException('Search temporarily unavailable');
     }
 
+    // Zero-result recovery. Abstain rather than fabricate: return suggestions
+    // plus a term-suggester "did you mean" so the user can self-correct, and
+    // record the miss so the synonym list can be tuned from real data.
+    const minScore = this.config.get<number>('SEARCH_MIN_SCORE', 1.0);
+    const abstained =
+      result.items.length === 0 || (result.maxScore ?? 0) < minScore;
+
+    let suggestions: SuggestionItem[] = [];
+    if (abstained) {
+      suggestions = await this.openSearch
+        .searchSuggestions(result.cleanedQuery, 5)
+        .catch(() => []);
+      this.recordZeroResultQuery(dto.query, result.total);
+    }
+
     const response = {
       items: result.items,
       meta: {
         total: result.total,
+        approximateTotal: result.approximateTotal,
         maxScore: result.maxScore,
         page,
         limit,
         timedOut: result.timedOut,
         cached: false,
         searchType: result.searchType,
+        intent: result.intentKind,
+        abstained,
+        suggestions,
+        ...(result.didYouMean && { didYouMean: result.didYouMean }),
       },
     };
 
@@ -125,6 +200,53 @@ export class SearchService {
       );
 
     return response;
+  }
+
+  /** Whether the v2 tiered ranker is active. Default on; flip to revert. */
+  private isRankerV2Enabled(): boolean {
+    return this.config.get<string>('SEARCH_RANKER_V2', 'true') !== 'false';
+  }
+
+  /**
+   * Log a query that returned nothing useful. Query text only — no user id, no
+   * org id, no PII — so it is safe to surface on the admin analytics page and
+   * mine for missing synonyms.
+   */
+  private recordZeroResultQuery(query: string, total: number): void {
+    const entry = JSON.stringify({
+      q: query.slice(0, 200),
+      total,
+      at: new Date().toISOString(),
+    });
+    const client = this.redis.getClient();
+    client
+      .zadd(ZERO_RESULT_QUERY_KEY, Date.now(), entry)
+      .then(() => client.expire(ZERO_RESULT_QUERY_KEY, ZERO_RESULT_TTL))
+      .catch((err: unknown) =>
+        this.logger.warn(
+          `Failed to record zero-result query: ${(err as Error).message}`,
+        ),
+      );
+  }
+
+  /** Recent zero-result queries, newest first. Used by the admin analytics page. */
+  async getZeroResultQueries(
+    limit = 100,
+  ): Promise<{ query: string; total: number; at: string }[]> {
+    try {
+      const raw = await this.redis
+        .getClient()
+        .zrevrange(ZERO_RESULT_QUERY_KEY, 0, Math.min(limit, 500) - 1);
+      return raw.map((entry) => {
+        const parsed = JSON.parse(entry) as { q: string; total: number; at: string };
+        return { query: parsed.q, total: parsed.total, at: parsed.at };
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Failed to read zero-result queries: ${(err as Error).message}`,
+      );
+      return [];
+    }
   }
 
   /**
@@ -140,9 +262,13 @@ export class SearchService {
   ): Promise<{
     items: SearchResultItem[];
     total: number;
+    approximateTotal: boolean;
     maxScore: number | null;
     timedOut: boolean;
     searchType: 'hybrid' | 'keyword_only';
+    intentKind: string;
+    cleanedQuery: string;
+    didYouMean?: string;
   }> {
     // Resolve the dedup suppression list before issuing OpenSearch calls.
     // The service swallows its own errors and returns an empty Set on
@@ -151,95 +277,192 @@ export class SearchService {
       ? Array.from(await this.suppressedDocs.getSuppressedDocIds())
       : [];
 
-    // Always run BM25 keyword search
+    const rankerV2 = this.isRankerV2Enabled();
+    const intent = rankerV2
+      ? classifyQuery(dto.query, {
+          ponenteAllowList: await this.ponenteDirectory.getPonenteNames(),
+        })
+      : undefined;
+
+    const filters = {
+      documentType: dto.documentType,
+      court: dto.court,
+      ponente: dto.ponente,
+      sourceId: dto.sourceId,
+      grNo: dto.grNo,
+      dateFrom: dto.dateFrom,
+      dateTo: dto.dateTo,
+      publishedOnly: dto.publishedOnly,
+    };
+
+    // Under v2 the collapse happens inside OpenSearch, so `from`/`size`
+    // paginate correctly against the collapsed set and we request exactly one
+    // page. The v1 path still over-fetches because it de-dupes in JS after.
     const bm25Promise = this.openSearch.searchKeyword({
       query: dto.query,
-      filters: {
-        documentType: dto.documentType,
-        court: dto.court,
-        ponente: dto.ponente,
-        sourceId: dto.sourceId,
-        grNo: dto.grNo,
-        dateFrom: dto.dateFrom,
-        dateTo: dto.dateTo,
-        publishedOnly: dto.publishedOnly,
-      },
+      ...(intent && { intent }),
+      filters,
       excludeDocumentIds,
-      from: 0,
-      // Fetch more for RRF merging (we re-paginate after fusion)
-      size: Math.max(limit * 3, 60),
+      from: rankerV2 ? page * limit : 0,
+      size: rankerV2 ? limit : Math.max(limit * 3, 60),
+      ...(rankerV2 && { weights: this.resolveWeights() }),
     });
+
+    const intentKind = intent?.kind ?? 'general';
+    const cleanedQuery = intent?.cleanedQuery ?? dto.query;
 
     // Attempt to get query embedding for kNN search
     const queryVector = await this.embeddingClient.embed(dto.query);
 
     if (!queryVector) {
-      // Embedding service unavailable — fall back to BM25 only.
-      // De-dup per document BEFORE paginating so section duplicates don't
-      // surface the same case multiple times (matches the RRF path).
       const bm25Result = await bm25Promise;
-      const deduped = this.dedupeByDocumentId(bm25Result.items);
-      const paginatedItems = deduped.slice(page * limit, (page + 1) * limit);
       return {
-        items: paginatedItems,
-        total: deduped.length,
-        maxScore: bm25Result.maxScore,
-        timedOut: bm25Result.timedOut,
-        searchType: 'keyword_only',
+        ...this.finalizeKeywordOnly(bm25Result, rankerV2, page, limit),
+        intentKind,
+        cleanedQuery,
       };
     }
 
     // Run kNN search in parallel with BM25
     const [bm25Result, knnResult] = await Promise.all([
       bm25Promise,
-      this.openSearch.searchVector({
-        vector: queryVector,
-        filters: {
-          documentType: dto.documentType,
-          court: dto.court,
-          publishedOnly: dto.publishedOnly,
-        },
-        excludeDocumentIds,
-        k: Math.max(limit * 3, 60),
-      }).catch((err) => {
-        this.logger.warn(`kNN search failed, using BM25 only: ${(err as Error).message}`);
-        return null;
-      }),
+      this.openSearch
+        .searchVector({
+          vector: queryVector,
+          filters: {
+            documentType: dto.documentType,
+            court: dto.court,
+            publishedOnly: dto.publishedOnly,
+          },
+          excludeDocumentIds,
+          k: Math.max(limit * 3, 60),
+        })
+        .catch((err) => {
+          this.logger.warn(
+            `kNN search failed, using BM25 only: ${(err as Error).message}`,
+          );
+          return null;
+        }),
     ]);
 
     if (!knnResult) {
-      // kNN failed — fall back to BM25 only. De-dup per document before
-      // paginating (matches the RRF path and the embedding-null fallback).
-      const deduped = this.dedupeByDocumentId(bm25Result.items);
-      const paginatedItems = deduped.slice(page * limit, (page + 1) * limit);
       return {
-        items: paginatedItems,
-        total: deduped.length,
-        maxScore: bm25Result.maxScore,
-        timedOut: bm25Result.timedOut,
-        searchType: 'keyword_only',
+        ...this.finalizeKeywordOnly(bm25Result, rankerV2, page, limit),
+        intentKind,
+        cleanedQuery,
       };
     }
 
-    // Apply Reciprocal Rank Fusion (RRF)
-    const fusedItems = this.reciprocalRankFusion(
-      bm25Result.items,
-      knnResult.items,
-    );
+    // RRF fusion window. Under v2 the BM25 side is already collapsed AND
+    // already paginated, so fusing on a deep page would reorder rows against a
+    // kNN list that only ever covers the head of the corpus. We therefore fuse
+    // only inside SEARCH_FUSION_WINDOW; past it pagination is purely lexical
+    // (BM25 order). Deep pages are navigational rather than exploratory, so
+    // stable ordering matters more there than blended ranking.
+    const fusionWindow = this.config.get<number>('SEARCH_FUSION_WINDOW', 100);
+    if (rankerV2 && page * limit >= fusionWindow) {
+      return {
+        ...this.finalizeKeywordOnly(bm25Result, rankerV2, page, limit),
+        intentKind,
+        cleanedQuery,
+      };
+    }
 
-    // Paginate the fused results
-    const totalFused = fusedItems.length;
+    const fusedItems = this.reciprocalRankFusion(bm25Result.items, knnResult.items);
+
+    if (rankerV2) {
+      // BM25 already returned exactly this page; fusion reorders it and blends
+      // in kNN neighbours, so there is nothing further to slice off the front.
+      return {
+        items: fusedItems.slice(0, limit),
+        total: bm25Result.total,
+        approximateTotal: bm25Result.approximateTotal,
+        maxScore: bm25Result.maxScore,
+        timedOut: bm25Result.timedOut || knnResult.timedOut,
+        searchType: 'hybrid',
+        intentKind,
+        cleanedQuery,
+        ...(bm25Result.didYouMean && { didYouMean: bm25Result.didYouMean }),
+      };
+    }
+
     const paginatedItems = fusedItems.slice(page * limit, (page + 1) * limit);
-
     return {
       items: paginatedItems,
-      // totalFused already reflects the de-duped fused list (one entry per
-      // document), so it is the correct count — bm25Result.total includes
-      // raw section duplicates and would over-count.
-      total: totalFused,
+      total: fusedItems.length,
+      approximateTotal: false,
       maxScore: paginatedItems.length > 0 ? paginatedItems[0]!.score : null,
       timedOut: bm25Result.timedOut || knnResult.timedOut,
       searchType: 'hybrid',
+      intentKind,
+      cleanedQuery,
+    };
+  }
+
+  /**
+   * Shape a BM25-only result. Under v2 OpenSearch already collapsed and
+   * paginated; under v1 we still de-dupe and slice in JS.
+   */
+  private finalizeKeywordOnly(
+    bm25Result: KeywordSearchResult,
+    rankerV2: boolean,
+    page: number,
+    limit: number,
+  ) {
+    if (rankerV2) {
+      return {
+        items: bm25Result.items,
+        total: bm25Result.total,
+        approximateTotal: bm25Result.approximateTotal,
+        maxScore: bm25Result.maxScore,
+        timedOut: bm25Result.timedOut,
+        searchType: 'keyword_only' as const,
+        ...(bm25Result.didYouMean && { didYouMean: bm25Result.didYouMean }),
+      };
+    }
+
+    const deduped = this.dedupeByDocumentId(bm25Result.items);
+    return {
+      items: deduped.slice(page * limit, (page + 1) * limit),
+      total: deduped.length,
+      approximateTotal: false,
+      maxScore: bm25Result.maxScore,
+      timedOut: bm25Result.timedOut,
+      searchType: 'keyword_only' as const,
+    };
+  }
+
+  /** Ranking weights, all env-tunable without a code deploy. */
+  private resolveWeights(): RankingWeights {
+    return {
+      officialBoost: this.config.get<number>(
+        'SEARCH_BOOST_OFFICIAL',
+        DEFAULT_RANKING_WEIGHTS.officialBoost,
+      ),
+      trustOfficial: this.config.get<number>(
+        'SEARCH_BOOST_TRUST_OFFICIAL',
+        DEFAULT_RANKING_WEIGHTS.trustOfficial,
+      ),
+      trustSemiOfficial: this.config.get<number>(
+        'SEARCH_BOOST_TRUST_SEMI_OFFICIAL',
+        DEFAULT_RANKING_WEIGHTS.trustSemiOfficial,
+      ),
+      trustEditorial: this.config.get<number>(
+        'SEARCH_BOOST_TRUST_EDITORIAL',
+        DEFAULT_RANKING_WEIGHTS.trustEditorial,
+      ),
+      recencyScaleDays: this.config.get<number>(
+        'SEARCH_RECENCY_SCALE_DAYS',
+        DEFAULT_RANKING_WEIGHTS.recencyScaleDays,
+      ),
+      recencyDecay: this.config.get<number>(
+        'SEARCH_RECENCY_DECAY',
+        DEFAULT_RANKING_WEIGHTS.recencyDecay,
+      ),
+      recencyWeight: this.config.get<number>(
+        'SEARCH_RECENCY_WEIGHT',
+        DEFAULT_RANKING_WEIGHTS.recencyWeight,
+      ),
     };
   }
 

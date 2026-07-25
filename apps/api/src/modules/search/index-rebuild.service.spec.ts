@@ -204,7 +204,34 @@ describe('IndexRebuildService', () => {
       expect(openSearch.swapAlias).not.toHaveBeenCalled();
     });
 
+    // The self-referential trap: a bulk pass that silently drops most payloads
+    // leaves `pushed` and `verifiedCount` agreeing at a low number, so the
+    // round-trip check passes. Only the source-derived floor catches it.
+    it('aborts when far fewer entries are pushed than there are source documents', async () => {
+      prisma.legalDocument.count.mockResolvedValue(17_135);
+      pushedCount = 12; // bulk silently dropped the rest
+      verifiedCount = 12; // ...and OpenSearch faithfully reports the same
+
+      await expect(run()).rejects.toThrow(
+        /only 12 entries were indexed for 17135 PostgreSQL documents/,
+      );
+
+      expect(calls.some((call) => call.startsWith('swap:'))).toBe(false);
+      expect(openSearch.swapAlias).not.toHaveBeenCalled();
+    });
+
+    it('accepts a run where every document contributed at least one entry', async () => {
+      prisma.legalDocument.count.mockResolvedValue(1);
+      pushedCount = 2; // 1 doc-level entry + 1 section entry
+      verifiedCount = 2;
+
+      const { result } = await run();
+
+      expect(result.aliasSwapped).toBe(true);
+    });
+
     it('tolerates a shortfall inside the 1% window', async () => {
+      prisma.legalDocument.count.mockResolvedValue(1);
       pushedCount = 1000;
       verifiedCount = 995;
 

@@ -18,6 +18,12 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { SearchIcon, SlidersHorizontalIcon } from 'lucide-react';
+// Single source of truth shared with the API's SearchQueryDto @IsIn list, so
+// the dropdown can never again offer a value the API rejects with HTTP 400.
+import {
+  DOCUMENT_TYPE_FILTER_OPTIONS,
+  DOCUMENT_TYPE_LABELS,
+} from '@libertasian/types';
 
 export default function SearchPage() {
   const [query, setQuery] = useState('');
@@ -123,22 +129,11 @@ export default function SearchPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All types</SelectItem>
-                    <SelectItem value="supreme_court_decision">Supreme Court Decision</SelectItem>
-                    <SelectItem value="court_of_appeals_decision">Court of Appeals Decision</SelectItem>
-                    <SelectItem value="republic_act">Republic Act</SelectItem>
-                    <SelectItem value="executive_order">Executive Order</SelectItem>
-                    <SelectItem value="presidential_decree">Presidential Decree</SelectItem>
-                    <SelectItem value="constitution">Constitution</SelectItem>
-                    <SelectItem value="codal">Codal</SelectItem>
-                    <SelectItem value="statute">Statute</SelectItem>
-                    <SelectItem value="commonwealth_act">Commonwealth Act</SelectItem>
-                    <SelectItem value="batas_pambansa">Batas Pambansa</SelectItem>
-                    <SelectItem value="proclamation">Proclamation</SelectItem>
-                    <SelectItem value="rules_of_court">Rules of Court</SelectItem>
-                    <SelectItem value="rule">Rule</SelectItem>
-                    <SelectItem value="administrative_order">Administrative Order</SelectItem>
-                    <SelectItem value="administrative_circular">Administrative Circular</SelectItem>
-                    <SelectItem value="resolution">Resolution</SelectItem>
+                    {DOCUMENT_TYPE_FILTER_OPTIONS.map((value) => (
+                      <SelectItem key={value} value={value}>
+                        {DOCUMENT_TYPE_LABELS[value]}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>

@@ -50,7 +50,9 @@ export class ExternalApiController {
   ) {
     const result = await this.searchService.search({
       query: dto.query,
-      documentType: dto.documentType,
+      // The external API keeps its single-value contract; SearchQueryDto now
+      // models documentType as a multi-select array internally.
+      ...(dto.documentType && { documentType: [dto.documentType] }),
       court: dto.court,
       ponente: dto.ponente,
       sourceId: dto.sourceId,

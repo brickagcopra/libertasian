@@ -14,3 +14,4 @@ export * from './simulator';
 export * from './reporting';
 export * from './exports';
 export * from './analytics';
+export * from './search';

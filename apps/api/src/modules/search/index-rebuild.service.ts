@@ -254,6 +254,28 @@ export class IndexRebuildService {
     await this.openSearch.refreshIndex(keywordTarget);
     const verifiedCount = await this.openSearch.countIndex(keywordTarget);
 
+    // Gate 1 — SOURCE-derived floor. Every legal document contributes at least
+    // its document-level entry, so the pushed count can never legitimately fall
+    // below the PostgreSQL row count. This is the check that catches a bulk
+    // pass silently dropping payloads: gate 2 alone is self-referential
+    // (`pushed` and `verifiedCount` happily agree at a low number) and would
+    // let the alias swap land on a thin index.
+    if (pushed < documentsTotal) {
+      await push({
+        phase: 'aborted',
+        message:
+          `Verification failed: pushed ${pushed} entries for ${documentsTotal} ` +
+          `source documents — expected at least one entry per document`,
+      });
+      throw new Error(
+        `Index rebuild aborted before alias swap — only ${pushed} entries were ` +
+          `indexed for ${documentsTotal} PostgreSQL documents. Every document ` +
+          `contributes at least one entry, so payloads were dropped during bulk ` +
+          `indexing. The previous index is untouched and still serving traffic.`,
+      );
+    }
+
+    // Gate 2 — round-trip check: what we pushed actually landed in OpenSearch.
     const minAcceptable = Math.floor(pushed * (1 - VERIFY_TOLERANCE));
     if (pushed === 0 || verifiedCount < minAcceptable) {
       await push({

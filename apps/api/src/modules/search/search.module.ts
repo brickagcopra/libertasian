@@ -8,6 +8,7 @@ import { EmbeddingClientService } from './embedding-client.service';
 import { IndexRebuildProcessor } from './index-rebuild.processor';
 import { INDEX_REBUILD_QUEUE, IndexRebuildService } from './index-rebuild.service';
 import { OpenSearchService } from './opensearch.service';
+import { PonenteDirectoryService } from './ponente-directory.service';
 import { SearchController } from './search.controller';
 import { SearchService } from './search.service';
 import { SuppressedDocsService } from './suppressed-docs.service';
@@ -26,6 +27,7 @@ import { SuppressedDocsService } from './suppressed-docs.service';
     SuppressedDocsService,
     IndexRebuildService,
     IndexRebuildProcessor,
+    PonenteDirectoryService,
   ],
   exports: [
     OpenSearchService,
@@ -33,6 +35,7 @@ import { SuppressedDocsService } from './suppressed-docs.service';
     EmbeddingClientService,
     SuppressedDocsService,
     IndexRebuildService,
+    PonenteDirectoryService,
   ],
 })
 export class SearchModule {}

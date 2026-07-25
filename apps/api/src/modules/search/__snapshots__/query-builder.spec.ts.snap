@@ -1,0 +1,1636 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`DSL snapshots per intent kind matches the bare docket snapshot 1`] = `
+{
+  "aggs": {
+    "total_docs": {
+      "cardinality": {
+        "field": "document_id",
+        "precision_threshold": 4000,
+      },
+    },
+  },
+  "collapse": {
+    "field": "document_id",
+    "inner_hits": {
+      "_source": [
+        "section_id",
+        "section_type",
+      ],
+      "highlight": {
+        "fields": {
+          "plain_text": {
+            "fragment_size": 200,
+            "number_of_fragments": 3,
+          },
+          "section_text": {
+            "fragment_size": 200,
+            "number_of_fragments": 3,
+          },
+          "title": {},
+        },
+        "post_tags": [
+          "</mark>",
+        ],
+        "pre_tags": [
+          "<mark>",
+        ],
+      },
+      "name": "best_section",
+      "size": 1,
+    },
+  },
+  "from": 0,
+  "highlight": {
+    "fields": {
+      "plain_text": {
+        "fragment_size": 200,
+        "number_of_fragments": 3,
+      },
+      "section_text": {
+        "fragment_size": 200,
+        "number_of_fragments": 3,
+      },
+      "title": {},
+    },
+    "post_tags": [
+      "</mark>",
+    ],
+    "pre_tags": [
+      "<mark>",
+    ],
+  },
+  "query": {
+    "function_score": {
+      "boost_mode": "multiply",
+      "functions": [
+        {
+          "filter": {
+            "term": {
+              "is_official": true,
+            },
+          },
+          "weight": 1.2,
+        },
+        {
+          "filter": {
+            "term": {
+              "source_trust_level": "official",
+            },
+          },
+          "weight": 1.3,
+        },
+        {
+          "filter": {
+            "term": {
+              "source_trust_level": "semi_official",
+            },
+          },
+          "weight": 1.15,
+        },
+        {
+          "filter": {
+            "term": {
+              "source_trust_level": "editorial",
+            },
+          },
+          "weight": 1,
+        },
+        {
+          "filter": {
+            "exists": {
+              "field": "decision_date",
+            },
+          },
+          "gauss": {
+            "decision_date": {
+              "decay": 0.6,
+              "origin": "now",
+              "scale": "3650d",
+            },
+          },
+          "weight": 1.1,
+        },
+      ],
+      "query": {
+        "bool": {
+          "filter": [
+            {
+              "terms": {
+                "status": [
+                  "published",
+                  "indexed",
+                ],
+              },
+            },
+          ],
+          "minimum_should_match": 1,
+          "should": [
+            {
+              "term": {
+                "gr_no_digits": {
+                  "boost": 50,
+                  "value": "246999",
+                },
+              },
+            },
+            {
+              "term": {
+                "citation_text.raw": {
+                  "boost": 40,
+                  "value": "246999",
+                },
+              },
+            },
+            {
+              "term": {
+                "docket_no.raw": {
+                  "boost": 40,
+                  "value": "246999",
+                },
+              },
+            },
+            {
+              "term": {
+                "gr_no.raw": {
+                  "boost": 40,
+                  "value": "246999",
+                },
+              },
+            },
+            {
+              "match_phrase": {
+                "title": {
+                  "boost": 10,
+                  "query": "246999",
+                  "slop": 2,
+                },
+              },
+            },
+            {
+              "match_phrase": {
+                "citation_text": {
+                  "boost": 12,
+                  "query": "246999",
+                },
+              },
+            },
+            {
+              "multi_match": {
+                "fields": [
+                  "title^5",
+                  "citation_text^6",
+                  "ponente.text^3",
+                  "docket_no^4",
+                  "short_title^2",
+                ],
+                "operator": "and",
+                "query": "246999",
+                "type": "best_fields",
+              },
+            },
+            {
+              "multi_match": {
+                "boost": 0.3,
+                "fields": [
+                  "title^2",
+                  "plain_text",
+                  "section_text",
+                ],
+                "fuzziness": "AUTO",
+                "max_expansions": 20,
+                "minimum_should_match": "75%",
+                "prefix_length": 2,
+                "query": "246999",
+                "type": "most_fields",
+              },
+            },
+          ],
+        },
+      },
+      "score_mode": "multiply",
+    },
+  },
+  "size": 20,
+  "timeout": "5s",
+}
+`;
+
+exports[`DSL snapshots per intent kind matches the citation snapshot 1`] = `
+{
+  "aggs": {
+    "total_docs": {
+      "cardinality": {
+        "field": "document_id",
+        "precision_threshold": 4000,
+      },
+    },
+  },
+  "collapse": {
+    "field": "document_id",
+    "inner_hits": {
+      "_source": [
+        "section_id",
+        "section_type",
+      ],
+      "highlight": {
+        "fields": {
+          "plain_text": {
+            "fragment_size": 200,
+            "number_of_fragments": 3,
+          },
+          "section_text": {
+            "fragment_size": 200,
+            "number_of_fragments": 3,
+          },
+          "title": {},
+        },
+        "post_tags": [
+          "</mark>",
+        ],
+        "pre_tags": [
+          "<mark>",
+        ],
+      },
+      "name": "best_section",
+      "size": 1,
+    },
+  },
+  "from": 0,
+  "highlight": {
+    "fields": {
+      "plain_text": {
+        "fragment_size": 200,
+        "number_of_fragments": 3,
+      },
+      "section_text": {
+        "fragment_size": 200,
+        "number_of_fragments": 3,
+      },
+      "title": {},
+    },
+    "post_tags": [
+      "</mark>",
+    ],
+    "pre_tags": [
+      "<mark>",
+    ],
+  },
+  "query": {
+    "function_score": {
+      "boost_mode": "multiply",
+      "functions": [
+        {
+          "filter": {
+            "term": {
+              "is_official": true,
+            },
+          },
+          "weight": 1.2,
+        },
+        {
+          "filter": {
+            "term": {
+              "source_trust_level": "official",
+            },
+          },
+          "weight": 1.3,
+        },
+        {
+          "filter": {
+            "term": {
+              "source_trust_level": "semi_official",
+            },
+          },
+          "weight": 1.15,
+        },
+        {
+          "filter": {
+            "term": {
+              "source_trust_level": "editorial",
+            },
+          },
+          "weight": 1,
+        },
+        {
+          "filter": {
+            "exists": {
+              "field": "decision_date",
+            },
+          },
+          "gauss": {
+            "decision_date": {
+              "decay": 0.6,
+              "origin": "now",
+              "scale": "3650d",
+            },
+          },
+          "weight": 1.1,
+        },
+      ],
+      "query": {
+        "bool": {
+          "filter": [
+            {
+              "terms": {
+                "status": [
+                  "published",
+                  "indexed",
+                ],
+              },
+            },
+          ],
+          "minimum_should_match": 1,
+          "should": [
+            {
+              "term": {
+                "gr_no_digits": {
+                  "boost": 50,
+                  "value": "246999",
+                },
+              },
+            },
+            {
+              "term": {
+                "citation_text.raw": {
+                  "boost": 40,
+                  "value": "grno246999",
+                },
+              },
+            },
+            {
+              "term": {
+                "docket_no.raw": {
+                  "boost": 40,
+                  "value": "grno246999",
+                },
+              },
+            },
+            {
+              "term": {
+                "gr_no.raw": {
+                  "boost": 40,
+                  "value": "grno246999",
+                },
+              },
+            },
+            {
+              "match_phrase": {
+                "title": {
+                  "boost": 10,
+                  "query": "G.R. No. 246999",
+                  "slop": 2,
+                },
+              },
+            },
+            {
+              "match_phrase": {
+                "citation_text": {
+                  "boost": 12,
+                  "query": "G.R. No. 246999",
+                },
+              },
+            },
+            {
+              "multi_match": {
+                "fields": [
+                  "title^5",
+                  "citation_text^6",
+                  "ponente.text^3",
+                  "docket_no^4",
+                  "short_title^2",
+                ],
+                "operator": "and",
+                "query": "G.R. No. 246999",
+                "type": "best_fields",
+              },
+            },
+            {
+              "multi_match": {
+                "boost": 0.3,
+                "fields": [
+                  "title^2",
+                  "plain_text",
+                  "section_text",
+                ],
+                "fuzziness": "AUTO",
+                "max_expansions": 20,
+                "minimum_should_match": "75%",
+                "prefix_length": 2,
+                "query": "G.R. No. 246999",
+                "type": "most_fields",
+              },
+            },
+          ],
+        },
+      },
+      "score_mode": "multiply",
+    },
+  },
+  "size": 20,
+  "timeout": "5s",
+}
+`;
+
+exports[`DSL snapshots per intent kind matches the date snapshot 1`] = `
+{
+  "aggs": {
+    "total_docs": {
+      "cardinality": {
+        "field": "document_id",
+        "precision_threshold": 4000,
+      },
+    },
+  },
+  "collapse": {
+    "field": "document_id",
+    "inner_hits": {
+      "_source": [
+        "section_id",
+        "section_type",
+      ],
+      "highlight": {
+        "fields": {
+          "plain_text": {
+            "fragment_size": 200,
+            "number_of_fragments": 3,
+          },
+          "section_text": {
+            "fragment_size": 200,
+            "number_of_fragments": 3,
+          },
+          "title": {},
+        },
+        "post_tags": [
+          "</mark>",
+        ],
+        "pre_tags": [
+          "<mark>",
+        ],
+      },
+      "name": "best_section",
+      "size": 1,
+    },
+  },
+  "from": 0,
+  "highlight": {
+    "fields": {
+      "plain_text": {
+        "fragment_size": 200,
+        "number_of_fragments": 3,
+      },
+      "section_text": {
+        "fragment_size": 200,
+        "number_of_fragments": 3,
+      },
+      "title": {},
+    },
+    "post_tags": [
+      "</mark>",
+    ],
+    "pre_tags": [
+      "<mark>",
+    ],
+  },
+  "query": {
+    "function_score": {
+      "boost_mode": "multiply",
+      "functions": [
+        {
+          "filter": {
+            "term": {
+              "is_official": true,
+            },
+          },
+          "weight": 1.2,
+        },
+        {
+          "filter": {
+            "term": {
+              "source_trust_level": "official",
+            },
+          },
+          "weight": 1.3,
+        },
+        {
+          "filter": {
+            "term": {
+              "source_trust_level": "semi_official",
+            },
+          },
+          "weight": 1.15,
+        },
+        {
+          "filter": {
+            "term": {
+              "source_trust_level": "editorial",
+            },
+          },
+          "weight": 1,
+        },
+        {
+          "filter": {
+            "exists": {
+              "field": "decision_date",
+            },
+          },
+          "gauss": {
+            "decision_date": {
+              "decay": 0.6,
+              "origin": "now",
+              "scale": "3650d",
+            },
+          },
+          "weight": 1.1,
+        },
+      ],
+      "query": {
+        "bool": {
+          "filter": [
+            {
+              "terms": {
+                "status": [
+                  "published",
+                  "indexed",
+                ],
+              },
+            },
+            {
+              "range": {
+                "decision_date": {
+                  "gte": "2026-01-21T00:00:00.000Z",
+                  "lt": "2026-01-22T00:00:00.000Z",
+                },
+              },
+            },
+          ],
+          "must": [
+            {
+              "match_all": {},
+            },
+          ],
+        },
+      },
+      "score_mode": "multiply",
+    },
+  },
+  "size": 20,
+  "sort": [
+    {
+      "decision_date": {
+        "order": "desc",
+      },
+    },
+    "_score",
+  ],
+  "timeout": "5s",
+}
+`;
+
+exports[`DSL snapshots per intent kind matches the general snapshot 1`] = `
+{
+  "aggs": {
+    "total_docs": {
+      "cardinality": {
+        "field": "document_id",
+        "precision_threshold": 4000,
+      },
+    },
+  },
+  "collapse": {
+    "field": "document_id",
+    "inner_hits": {
+      "_source": [
+        "section_id",
+        "section_type",
+      ],
+      "highlight": {
+        "fields": {
+          "plain_text": {
+            "fragment_size": 200,
+            "number_of_fragments": 3,
+          },
+          "section_text": {
+            "fragment_size": 200,
+            "number_of_fragments": 3,
+          },
+          "title": {},
+        },
+        "post_tags": [
+          "</mark>",
+        ],
+        "pre_tags": [
+          "<mark>",
+        ],
+      },
+      "name": "best_section",
+      "size": 1,
+    },
+  },
+  "from": 0,
+  "highlight": {
+    "fields": {
+      "plain_text": {
+        "fragment_size": 200,
+        "number_of_fragments": 3,
+      },
+      "section_text": {
+        "fragment_size": 200,
+        "number_of_fragments": 3,
+      },
+      "title": {},
+    },
+    "post_tags": [
+      "</mark>",
+    ],
+    "pre_tags": [
+      "<mark>",
+    ],
+  },
+  "query": {
+    "function_score": {
+      "boost_mode": "multiply",
+      "functions": [
+        {
+          "filter": {
+            "term": {
+              "is_official": true,
+            },
+          },
+          "weight": 1.2,
+        },
+        {
+          "filter": {
+            "term": {
+              "source_trust_level": "official",
+            },
+          },
+          "weight": 1.3,
+        },
+        {
+          "filter": {
+            "term": {
+              "source_trust_level": "semi_official",
+            },
+          },
+          "weight": 1.15,
+        },
+        {
+          "filter": {
+            "term": {
+              "source_trust_level": "editorial",
+            },
+          },
+          "weight": 1,
+        },
+        {
+          "filter": {
+            "exists": {
+              "field": "decision_date",
+            },
+          },
+          "gauss": {
+            "decision_date": {
+              "decay": 0.6,
+              "origin": "now",
+              "scale": "3650d",
+            },
+          },
+          "weight": 1.1,
+        },
+      ],
+      "query": {
+        "bool": {
+          "filter": [
+            {
+              "terms": {
+                "status": [
+                  "published",
+                  "indexed",
+                ],
+              },
+            },
+          ],
+          "minimum_should_match": 1,
+          "should": [
+            {
+              "match_phrase": {
+                "title": {
+                  "boost": 10,
+                  "query": "estafa",
+                  "slop": 2,
+                },
+              },
+            },
+            {
+              "match_phrase": {
+                "citation_text": {
+                  "boost": 12,
+                  "query": "estafa",
+                },
+              },
+            },
+            {
+              "multi_match": {
+                "fields": [
+                  "title^5",
+                  "citation_text^6",
+                  "ponente.text^3",
+                  "docket_no^4",
+                  "short_title^2",
+                ],
+                "operator": "and",
+                "query": "estafa",
+                "type": "best_fields",
+              },
+            },
+            {
+              "multi_match": {
+                "boost": 0.3,
+                "fields": [
+                  "title^2",
+                  "plain_text",
+                  "section_text",
+                ],
+                "fuzziness": "AUTO",
+                "max_expansions": 20,
+                "minimum_should_match": "75%",
+                "prefix_length": 2,
+                "query": "estafa",
+                "type": "most_fields",
+              },
+            },
+          ],
+        },
+      },
+      "score_mode": "multiply",
+    },
+  },
+  "size": 20,
+  "suggest": {
+    "did_you_mean": {
+      "term": {
+        "field": "title",
+        "min_word_length": 4,
+        "size": 1,
+        "suggest_mode": "popular",
+      },
+      "text": "estafa",
+    },
+  },
+  "timeout": "5s",
+}
+`;
+
+exports[`DSL snapshots per intent kind matches the party_case snapshot 1`] = `
+{
+  "aggs": {
+    "total_docs": {
+      "cardinality": {
+        "field": "document_id",
+        "precision_threshold": 4000,
+      },
+    },
+  },
+  "collapse": {
+    "field": "document_id",
+    "inner_hits": {
+      "_source": [
+        "section_id",
+        "section_type",
+      ],
+      "highlight": {
+        "fields": {
+          "plain_text": {
+            "fragment_size": 200,
+            "number_of_fragments": 3,
+          },
+          "section_text": {
+            "fragment_size": 200,
+            "number_of_fragments": 3,
+          },
+          "title": {},
+        },
+        "post_tags": [
+          "</mark>",
+        ],
+        "pre_tags": [
+          "<mark>",
+        ],
+      },
+      "name": "best_section",
+      "size": 1,
+    },
+  },
+  "from": 0,
+  "highlight": {
+    "fields": {
+      "plain_text": {
+        "fragment_size": 200,
+        "number_of_fragments": 3,
+      },
+      "section_text": {
+        "fragment_size": 200,
+        "number_of_fragments": 3,
+      },
+      "title": {},
+    },
+    "post_tags": [
+      "</mark>",
+    ],
+    "pre_tags": [
+      "<mark>",
+    ],
+  },
+  "query": {
+    "function_score": {
+      "boost_mode": "multiply",
+      "functions": [
+        {
+          "filter": {
+            "term": {
+              "is_official": true,
+            },
+          },
+          "weight": 1.2,
+        },
+        {
+          "filter": {
+            "term": {
+              "source_trust_level": "official",
+            },
+          },
+          "weight": 1.3,
+        },
+        {
+          "filter": {
+            "term": {
+              "source_trust_level": "semi_official",
+            },
+          },
+          "weight": 1.15,
+        },
+        {
+          "filter": {
+            "term": {
+              "source_trust_level": "editorial",
+            },
+          },
+          "weight": 1,
+        },
+        {
+          "filter": {
+            "exists": {
+              "field": "decision_date",
+            },
+          },
+          "gauss": {
+            "decision_date": {
+              "decay": 0.6,
+              "origin": "now",
+              "scale": "3650d",
+            },
+          },
+          "weight": 1.1,
+        },
+      ],
+      "query": {
+        "bool": {
+          "filter": [
+            {
+              "terms": {
+                "status": [
+                  "published",
+                  "indexed",
+                ],
+              },
+            },
+          ],
+          "minimum_should_match": 1,
+          "should": [
+            {
+              "match_phrase": {
+                "title": {
+                  "boost": 10,
+                  "query": "People of the Philippines vs. Marvin Balbarez",
+                  "slop": 2,
+                },
+              },
+            },
+            {
+              "match_phrase": {
+                "citation_text": {
+                  "boost": 12,
+                  "query": "People of the Philippines vs. Marvin Balbarez",
+                },
+              },
+            },
+            {
+              "multi_match": {
+                "fields": [
+                  "title^5",
+                  "citation_text^6",
+                  "ponente.text^3",
+                  "docket_no^4",
+                  "short_title^2",
+                ],
+                "operator": "and",
+                "query": "People of the Philippines vs. Marvin Balbarez",
+                "type": "best_fields",
+              },
+            },
+            {
+              "multi_match": {
+                "boost": 0.3,
+                "fields": [
+                  "title^2",
+                  "plain_text",
+                  "section_text",
+                ],
+                "fuzziness": "AUTO",
+                "max_expansions": 20,
+                "minimum_should_match": "75%",
+                "prefix_length": 2,
+                "query": "People of the Philippines vs. Marvin Balbarez",
+                "type": "most_fields",
+              },
+            },
+          ],
+        },
+      },
+      "score_mode": "multiply",
+    },
+  },
+  "size": 20,
+  "suggest": {
+    "did_you_mean": {
+      "term": {
+        "field": "title",
+        "min_word_length": 4,
+        "size": 1,
+        "suggest_mode": "popular",
+      },
+      "text": "People of the Philippines vs. Marvin Balbarez",
+    },
+  },
+  "timeout": "5s",
+}
+`;
+
+exports[`DSL snapshots per intent kind matches the person snapshot 1`] = `
+{
+  "aggs": {
+    "total_docs": {
+      "cardinality": {
+        "field": "document_id",
+        "precision_threshold": 4000,
+      },
+    },
+  },
+  "collapse": {
+    "field": "document_id",
+    "inner_hits": {
+      "_source": [
+        "section_id",
+        "section_type",
+      ],
+      "highlight": {
+        "fields": {
+          "plain_text": {
+            "fragment_size": 200,
+            "number_of_fragments": 3,
+          },
+          "section_text": {
+            "fragment_size": 200,
+            "number_of_fragments": 3,
+          },
+          "title": {},
+        },
+        "post_tags": [
+          "</mark>",
+        ],
+        "pre_tags": [
+          "<mark>",
+        ],
+      },
+      "name": "best_section",
+      "size": 1,
+    },
+  },
+  "from": 0,
+  "highlight": {
+    "fields": {
+      "plain_text": {
+        "fragment_size": 200,
+        "number_of_fragments": 3,
+      },
+      "section_text": {
+        "fragment_size": 200,
+        "number_of_fragments": 3,
+      },
+      "title": {},
+    },
+    "post_tags": [
+      "</mark>",
+    ],
+    "pre_tags": [
+      "<mark>",
+    ],
+  },
+  "query": {
+    "function_score": {
+      "boost_mode": "multiply",
+      "functions": [
+        {
+          "filter": {
+            "term": {
+              "is_official": true,
+            },
+          },
+          "weight": 1.2,
+        },
+        {
+          "filter": {
+            "term": {
+              "source_trust_level": "official",
+            },
+          },
+          "weight": 1.3,
+        },
+        {
+          "filter": {
+            "term": {
+              "source_trust_level": "semi_official",
+            },
+          },
+          "weight": 1.15,
+        },
+        {
+          "filter": {
+            "term": {
+              "source_trust_level": "editorial",
+            },
+          },
+          "weight": 1,
+        },
+        {
+          "filter": {
+            "exists": {
+              "field": "decision_date",
+            },
+          },
+          "gauss": {
+            "decision_date": {
+              "decay": 0.6,
+              "origin": "now",
+              "scale": "3650d",
+            },
+          },
+          "weight": 1.1,
+        },
+      ],
+      "query": {
+        "bool": {
+          "filter": [
+            {
+              "terms": {
+                "status": [
+                  "published",
+                  "indexed",
+                ],
+              },
+            },
+          ],
+          "minimum_should_match": 1,
+          "should": [
+            {
+              "term": {
+                "ponente": {
+                  "boost": 8,
+                  "value": "HERNANDO",
+                },
+              },
+            },
+            {
+              "match": {
+                "ponente.text": {
+                  "boost": 6,
+                  "query": "HERNANDO",
+                },
+              },
+            },
+            {
+              "match_phrase": {
+                "title": {
+                  "boost": 10,
+                  "query": "Hernando",
+                  "slop": 2,
+                },
+              },
+            },
+            {
+              "match_phrase": {
+                "citation_text": {
+                  "boost": 12,
+                  "query": "Hernando",
+                },
+              },
+            },
+            {
+              "multi_match": {
+                "fields": [
+                  "title^5",
+                  "citation_text^6",
+                  "ponente.text^3",
+                  "docket_no^4",
+                  "short_title^2",
+                ],
+                "operator": "and",
+                "query": "Hernando",
+                "type": "best_fields",
+              },
+            },
+            {
+              "multi_match": {
+                "boost": 0.3,
+                "fields": [
+                  "title^2",
+                  "plain_text",
+                  "section_text",
+                ],
+                "fuzziness": "AUTO",
+                "max_expansions": 20,
+                "minimum_should_match": "75%",
+                "prefix_length": 2,
+                "query": "Hernando",
+                "type": "most_fields",
+              },
+            },
+          ],
+        },
+      },
+      "score_mode": "multiply",
+    },
+  },
+  "size": 20,
+  "suggest": {
+    "did_you_mean": {
+      "term": {
+        "field": "title",
+        "min_word_length": 4,
+        "size": 1,
+        "suggest_mode": "popular",
+      },
+      "text": "Hernando",
+    },
+  },
+  "timeout": "5s",
+}
+`;
+
+exports[`DSL snapshots per intent kind matches the phrase snapshot 1`] = `
+{
+  "aggs": {
+    "total_docs": {
+      "cardinality": {
+        "field": "document_id",
+        "precision_threshold": 4000,
+      },
+    },
+  },
+  "collapse": {
+    "field": "document_id",
+    "inner_hits": {
+      "_source": [
+        "section_id",
+        "section_type",
+      ],
+      "highlight": {
+        "fields": {
+          "plain_text": {
+            "fragment_size": 200,
+            "number_of_fragments": 3,
+          },
+          "section_text": {
+            "fragment_size": 200,
+            "number_of_fragments": 3,
+          },
+          "title": {},
+        },
+        "post_tags": [
+          "</mark>",
+        ],
+        "pre_tags": [
+          "<mark>",
+        ],
+      },
+      "name": "best_section",
+      "size": 1,
+    },
+  },
+  "from": 0,
+  "highlight": {
+    "fields": {
+      "plain_text": {
+        "fragment_size": 200,
+        "number_of_fragments": 3,
+      },
+      "section_text": {
+        "fragment_size": 200,
+        "number_of_fragments": 3,
+      },
+      "title": {},
+    },
+    "post_tags": [
+      "</mark>",
+    ],
+    "pre_tags": [
+      "<mark>",
+    ],
+  },
+  "query": {
+    "function_score": {
+      "boost_mode": "multiply",
+      "functions": [
+        {
+          "filter": {
+            "term": {
+              "is_official": true,
+            },
+          },
+          "weight": 1.2,
+        },
+        {
+          "filter": {
+            "term": {
+              "source_trust_level": "official",
+            },
+          },
+          "weight": 1.3,
+        },
+        {
+          "filter": {
+            "term": {
+              "source_trust_level": "semi_official",
+            },
+          },
+          "weight": 1.15,
+        },
+        {
+          "filter": {
+            "term": {
+              "source_trust_level": "editorial",
+            },
+          },
+          "weight": 1,
+        },
+        {
+          "filter": {
+            "exists": {
+              "field": "decision_date",
+            },
+          },
+          "gauss": {
+            "decision_date": {
+              "decay": 0.6,
+              "origin": "now",
+              "scale": "3650d",
+            },
+          },
+          "weight": 1.1,
+        },
+      ],
+      "query": {
+        "bool": {
+          "filter": [
+            {
+              "terms": {
+                "status": [
+                  "published",
+                  "indexed",
+                ],
+              },
+            },
+          ],
+          "minimum_should_match": 1,
+          "should": [
+            {
+              "match_phrase": {
+                "title": {
+                  "boost": 10,
+                  "query": "psychological incapacity",
+                  "slop": 2,
+                },
+              },
+            },
+            {
+              "match_phrase": {
+                "plain_text": {
+                  "boost": 6,
+                  "query": "psychological incapacity",
+                },
+              },
+            },
+            {
+              "match_phrase": {
+                "section_text": {
+                  "boost": 6,
+                  "query": "psychological incapacity",
+                },
+              },
+            },
+            {
+              "match_phrase": {
+                "title": {
+                  "boost": 10,
+                  "query": "psychological incapacity",
+                  "slop": 2,
+                },
+              },
+            },
+            {
+              "match_phrase": {
+                "citation_text": {
+                  "boost": 12,
+                  "query": "psychological incapacity",
+                },
+              },
+            },
+            {
+              "multi_match": {
+                "fields": [
+                  "title^5",
+                  "citation_text^6",
+                  "ponente.text^3",
+                  "docket_no^4",
+                  "short_title^2",
+                ],
+                "operator": "and",
+                "query": "psychological incapacity",
+                "type": "best_fields",
+              },
+            },
+            {
+              "multi_match": {
+                "boost": 0.3,
+                "fields": [
+                  "title^2",
+                  "plain_text",
+                  "section_text",
+                ],
+                "fuzziness": "AUTO",
+                "max_expansions": 20,
+                "minimum_should_match": "75%",
+                "prefix_length": 2,
+                "query": "psychological incapacity",
+                "type": "most_fields",
+              },
+            },
+          ],
+        },
+      },
+      "score_mode": "multiply",
+    },
+  },
+  "size": 20,
+  "suggest": {
+    "did_you_mean": {
+      "term": {
+        "field": "title",
+        "min_word_length": 4,
+        "size": 1,
+        "suggest_mode": "popular",
+      },
+      "text": "psychological incapacity",
+    },
+  },
+  "timeout": "5s",
+}
+`;
+
+exports[`DSL snapshots per intent kind matches the statute snapshot 1`] = `
+{
+  "aggs": {
+    "total_docs": {
+      "cardinality": {
+        "field": "document_id",
+        "precision_threshold": 4000,
+      },
+    },
+  },
+  "collapse": {
+    "field": "document_id",
+    "inner_hits": {
+      "_source": [
+        "section_id",
+        "section_type",
+      ],
+      "highlight": {
+        "fields": {
+          "plain_text": {
+            "fragment_size": 200,
+            "number_of_fragments": 3,
+          },
+          "section_text": {
+            "fragment_size": 200,
+            "number_of_fragments": 3,
+          },
+          "title": {},
+        },
+        "post_tags": [
+          "</mark>",
+        ],
+        "pre_tags": [
+          "<mark>",
+        ],
+      },
+      "name": "best_section",
+      "size": 1,
+    },
+  },
+  "from": 0,
+  "highlight": {
+    "fields": {
+      "plain_text": {
+        "fragment_size": 200,
+        "number_of_fragments": 3,
+      },
+      "section_text": {
+        "fragment_size": 200,
+        "number_of_fragments": 3,
+      },
+      "title": {},
+    },
+    "post_tags": [
+      "</mark>",
+    ],
+    "pre_tags": [
+      "<mark>",
+    ],
+  },
+  "query": {
+    "function_score": {
+      "boost_mode": "multiply",
+      "functions": [
+        {
+          "filter": {
+            "term": {
+              "is_official": true,
+            },
+          },
+          "weight": 1.2,
+        },
+        {
+          "filter": {
+            "term": {
+              "source_trust_level": "official",
+            },
+          },
+          "weight": 1.3,
+        },
+        {
+          "filter": {
+            "term": {
+              "source_trust_level": "semi_official",
+            },
+          },
+          "weight": 1.15,
+        },
+        {
+          "filter": {
+            "term": {
+              "source_trust_level": "editorial",
+            },
+          },
+          "weight": 1,
+        },
+        {
+          "filter": {
+            "exists": {
+              "field": "decision_date",
+            },
+          },
+          "gauss": {
+            "decision_date": {
+              "decay": 0.6,
+              "origin": "now",
+              "scale": "3650d",
+            },
+          },
+          "weight": 1.1,
+        },
+      ],
+      "query": {
+        "bool": {
+          "filter": [
+            {
+              "terms": {
+                "status": [
+                  "published",
+                  "indexed",
+                ],
+              },
+            },
+          ],
+          "minimum_should_match": 1,
+          "should": [
+            {
+              "term": {
+                "gr_no_digits": {
+                  "boost": 50,
+                  "value": "8353",
+                },
+              },
+            },
+            {
+              "term": {
+                "citation_text.raw": {
+                  "boost": 40,
+                  "value": "ra8353",
+                },
+              },
+            },
+            {
+              "term": {
+                "docket_no.raw": {
+                  "boost": 40,
+                  "value": "ra8353",
+                },
+              },
+            },
+            {
+              "term": {
+                "gr_no.raw": {
+                  "boost": 40,
+                  "value": "ra8353",
+                },
+              },
+            },
+            {
+              "match_phrase": {
+                "title": {
+                  "boost": 10,
+                  "query": "RA 8353",
+                  "slop": 2,
+                },
+              },
+            },
+            {
+              "match_phrase": {
+                "citation_text": {
+                  "boost": 12,
+                  "query": "RA 8353",
+                },
+              },
+            },
+            {
+              "multi_match": {
+                "fields": [
+                  "title^5",
+                  "citation_text^6",
+                  "ponente.text^3",
+                  "docket_no^4",
+                  "short_title^2",
+                ],
+                "operator": "and",
+                "query": "RA 8353",
+                "type": "best_fields",
+              },
+            },
+            {
+              "multi_match": {
+                "boost": 0.3,
+                "fields": [
+                  "title^2",
+                  "plain_text",
+                  "section_text",
+                ],
+                "fuzziness": "AUTO",
+                "max_expansions": 20,
+                "minimum_should_match": "75%",
+                "prefix_length": 2,
+                "query": "RA 8353",
+                "type": "most_fields",
+              },
+            },
+          ],
+        },
+      },
+      "score_mode": "multiply",
+    },
+  },
+  "size": 20,
+  "suggest": {
+    "did_you_mean": {
+      "term": {
+        "field": "title",
+        "min_word_length": 4,
+        "size": 1,
+        "suggest_mode": "popular",
+      },
+      "text": "RA 8353",
+    },
+  },
+  "timeout": "5s",
+}
+`;
