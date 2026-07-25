@@ -1,4 +1,5 @@
 import {
+  IsArray,
   IsBoolean,
   IsIn,
   IsInt,
@@ -11,6 +12,13 @@ import {
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
+import { DOCUMENT_TYPE_VALUES } from '@libertasian/types';
+
+/**
+ * Mutable copy of the shared readonly tuple — class-validator's `@IsIn`
+ * signature wants `unknown[]`.
+ */
+const DOCUMENT_TYPES: string[] = [...DOCUMENT_TYPE_VALUES];
 
 export class SearchQueryDto {
   @ApiProperty({ description: 'Search query string' })
@@ -19,52 +27,27 @@ export class SearchQueryDto {
   query!: string;
 
   @ApiPropertyOptional({
-    description: 'Filter by document class',
-    enum: [
-      // Legacy "class" values (kept; see note below).
-      'case',
-      'statute',
-      'codal',
-      'article',
-      'outline',
-      // Codal-class document_type values (mirror server taxonomy in
-      // apps/api/src/modules/study/study.service.ts TAB_GROUP_TO_TYPES).
-      'constitution',
-      'republic_act',
-      'commonwealth_act',
-      'batas_pambansa',
-      'executive_order',
-      'presidential_decree',
-      'proclamation',
-      'administrative_order',
-      'rules_of_court',
-      'rule',
-    ],
+    description:
+      'Filter by document type. Accepts a single value or an array (multi-select). ' +
+      'Values are the shared DOCUMENT_TYPE_VALUES constant, which the web filter ' +
+      'UI also consumes so the two can never drift.',
+    enum: DOCUMENT_TYPES,
+    isArray: true,
   })
-  // NOTE: this enum mixes two namespaces — legacy abstract "classes"
-  // ('case'/'article'/'outline'/'statute'/'codal') and concrete document_type
-  // values matching the legal_documents.document_type column. Reconciling
-  // these is tracked separately; this PR only adds codal-class values so the
-  // /search filter UI can surface Constitution/Codal/Statute/etc.
-  @IsIn([
-    'case',
-    'statute',
-    'codal',
-    'article',
-    'outline',
-    'constitution',
-    'republic_act',
-    'commonwealth_act',
-    'batas_pambansa',
-    'executive_order',
-    'presidential_decree',
-    'proclamation',
-    'administrative_order',
-    'rules_of_court',
-    'rule',
-  ])
+  // Accept `?documentType=a&documentType=b`, `documentType=a,b` and a JSON array
+  // body. Normalised to string[] so the query builder always sees one shape.
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    const raw = Array.isArray(value) ? value : String(value).split(',');
+    const values = raw
+      .map((entry) => String(entry).trim())
+      .filter((entry) => entry.length > 0);
+    return values.length > 0 ? values : undefined;
+  })
+  @IsArray()
+  @IsIn(DOCUMENT_TYPES, { each: true })
   @IsOptional()
-  documentType?: string;
+  documentType?: string[];
 
   @ApiPropertyOptional({ description: 'Filter by court' })
   @IsString()

@@ -1,5 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { Logger, ServiceUnavailableException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import { SearchService } from './search.service';
@@ -8,6 +12,7 @@ import { RedisService } from '../../common/services/redis.service';
 import { OpenSearchService, type SearchResultItem } from './opensearch.service';
 import { EmbeddingClientService } from './embedding-client.service';
 import { SuppressedDocsService } from './suppressed-docs.service';
+import { PonenteDirectoryService } from './ponente-directory.service';
 import { SearchQueryDto } from './dto';
 
 type MockPrismaService = {
@@ -20,6 +25,7 @@ type MockPrismaService = {
 type MockRedisService = {
   get: jest.Mock;
   set: jest.Mock;
+  getClient: jest.Mock;
 };
 
 type MockOpenSearchService = {
@@ -32,6 +38,7 @@ type MockOpenSearchService = {
   bulkIndexVectorDocuments: jest.Mock;
   removeDocumentFromAllIndexes: jest.Mock;
   bulkIndexDocuments: jest.Mock;
+  getZeroResultQueries?: jest.Mock;
 };
 
 type MockEmbeddingClientService = {
@@ -52,6 +59,14 @@ describe('SearchService', () => {
   let openSearchService: MockOpenSearchService;
   let embeddingClientService: MockEmbeddingClientService;
   let suppressedDocsService: MockSuppressedDocsService;
+  /**
+   * The pre-existing suite documents v1 (legacy) behaviour: JS-side dedup,
+   * over-fetch then slice. Keeping SEARCH_RANKER_V2='false' here is the
+   * B8 requirement made executable — every one of these assertions is proof
+   * the legacy builder still behaves exactly as it did before Phase B.
+   * The v2 path has its own describe block at the bottom of this file.
+   */
+  let rankerV2: string;
 
   const mockSearchResultItem: SearchResultItem = {
     id: 'doc-1',
@@ -92,6 +107,7 @@ describe('SearchService', () => {
   };
 
   beforeEach(async () => {
+    rankerV2 = 'false';
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         SearchService,
@@ -109,6 +125,11 @@ describe('SearchService', () => {
           useValue: {
             get: jest.fn(),
             set: jest.fn(),
+            getClient: jest.fn(() => ({
+              zadd: jest.fn().mockResolvedValue(1),
+              expire: jest.fn().mockResolvedValue(1),
+              zrevrange: jest.fn().mockResolvedValue([]),
+            })),
           },
         },
         {
@@ -141,11 +162,19 @@ describe('SearchService', () => {
           },
         },
         {
+          provide: PonenteDirectoryService,
+          useValue: {
+            getPonenteNames: jest.fn().mockResolvedValue(new Set<string>()),
+            invalidate: jest.fn(),
+          },
+        },
+        {
           provide: ConfigService,
           useValue: {
-            get: jest.fn(
-              (key: string, defaultValue?: string) => defaultValue,
-            ),
+            get: jest.fn((key: string, defaultValue?: unknown) => {
+              if (key === 'SEARCH_RANKER_V2') return rankerV2;
+              return defaultValue;
+            }),
           },
         },
       ],
@@ -159,6 +188,13 @@ describe('SearchService', () => {
     suppressedDocsService = module.get(
       SuppressedDocsService,
     ) as unknown as MockSuppressedDocsService;
+
+    // Abstention path calls searchSuggestions; default it to an empty list so
+    // every test does not have to stub it.
+    openSearchService.searchSuggestions.mockResolvedValue([]);
+    // The cache write is fire-and-forget (`.catch(...)`), so the mock must
+    // return a promise or every non-cached path throws.
+    redisService.set.mockResolvedValue(undefined);
 
     // Suppress logger output during tests
     jest.spyOn(Logger.prototype, 'log').mockImplementation();
@@ -844,6 +880,217 @@ describe('SearchService', () => {
       expect(result.total).toBe(3);
       expect(prismaService.legalDocument.findMany).toHaveBeenCalledTimes(1);
       expect(openSearchService.bulkIndexDocuments).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  /**
+   * SEARCH_RANKER_V2=true — the new path. The suite above pins the flag to
+   * 'false' and therefore doubles as the "legacy behaviour is unchanged"
+   * proof required before this can ship.
+   */
+  describe('ranker v2', () => {
+    const v2Dto: SearchQueryDto = { query: 'estafa', page: 0, limit: 20 };
+
+    const collapsedResult = {
+      total: 476,
+      approximateTotal: true,
+      maxScore: 12.5,
+      items: [{ id: 'sec-1', score: 12.5, source: { document_id: 'doc-1' } }],
+      timedOut: false,
+    };
+
+    beforeEach(() => {
+      rankerV2 = 'true';
+      redisService.get.mockResolvedValue(null);
+      redisService.set.mockResolvedValue(undefined);
+      embeddingClientService.embed.mockResolvedValue(null);
+      openSearchService.searchKeyword.mockResolvedValue(collapsedResult);
+    });
+
+    it('classifies the query and passes the intent to the query builder', async () => {
+      await service.search({ ...v2Dto, query: 'G.R. No. 246999' });
+
+      const call = openSearchService.searchKeyword.mock.calls[0]![0] as {
+        intent?: { kind: string; citation?: { digits?: string } };
+      };
+      expect(call.intent?.kind).toBe('citation');
+      expect(call.intent?.citation?.digits).toBe('246999');
+    });
+
+    it('requests exactly one page instead of over-fetching for a JS dedup', async () => {
+      await service.search({ ...v2Dto, page: 2, limit: 20 });
+
+      expect(openSearchService.searchKeyword).toHaveBeenCalledWith(
+        expect.objectContaining({ from: 40, size: 20 }),
+      );
+    });
+
+    // v1 reported the length of its JS-deduped slice as `total` — for `estafa`
+    // that was ~13-24 instead of 476, and page 2 came back empty.
+    it('reports the cardinality total and flags it approximate', async () => {
+      const result = await service.search(v2Dto);
+
+      expect(result.meta.total).toBe(476);
+      expect(result.meta.approximateTotal).toBe(true);
+    });
+
+    it('returns items on a deep page rather than an empty list', async () => {
+      const result = await service.search({ ...v2Dto, page: 2, limit: 20 });
+      expect(result.items).toHaveLength(1);
+    });
+
+    it('does not re-slice the collapsed page in JS', async () => {
+      openSearchService.searchKeyword.mockResolvedValue({
+        ...collapsedResult,
+        items: Array.from({ length: 20 }, (_, i) => ({
+          id: `sec-${i}`,
+          score: 10 - i * 0.1,
+          source: { document_id: `doc-${i}` },
+        })),
+      });
+
+      const result = await service.search({ ...v2Dto, page: 1, limit: 20 });
+      expect(result.items).toHaveLength(20);
+    });
+
+    it('surfaces the detected intent kind in meta', async () => {
+      const result = await service.search({ ...v2Dto, query: '2026-01-21' });
+      expect(result.meta.intent).toBe('date');
+    });
+
+    it('passes env-tuned ranking weights through to the builder', async () => {
+      await service.search(v2Dto);
+      expect(openSearchService.searchKeyword).toHaveBeenCalledWith(
+        expect.objectContaining({
+          weights: expect.objectContaining({ recencyScaleDays: 3650 }),
+        }),
+      );
+    });
+  });
+
+  describe('deep pagination guard', () => {
+    beforeEach(() => {
+      rankerV2 = 'true';
+      redisService.get.mockResolvedValue(null);
+    });
+
+    it('rejects a window past SEARCH_MAX_WINDOW with 400, not an upstream 500', async () => {
+      await expect(
+        service.search({ query: 'estafa', page: 100, limit: 20 }),
+      ).rejects.toThrow(BadRequestException);
+      expect(openSearchService.searchKeyword).not.toHaveBeenCalled();
+    });
+
+    it('allows the last page inside the window', async () => {
+      openSearchService.searchKeyword.mockResolvedValue({
+        total: 1000,
+        approximateTotal: true,
+        maxScore: 5,
+        items: [],
+        timedOut: false,
+      });
+      embeddingClientService.embed.mockResolvedValue(null);
+
+      await expect(
+        service.search({ query: 'estafa', page: 49, limit: 20 }),
+      ).resolves.toBeDefined();
+    });
+  });
+
+  describe('zero-result recovery', () => {
+    beforeEach(() => {
+      rankerV2 = 'true';
+      redisService.get.mockResolvedValue(null);
+      redisService.set.mockResolvedValue(undefined);
+      embeddingClientService.embed.mockResolvedValue(null);
+    });
+
+    it('abstains and returns suggestions instead of fabricating results', async () => {
+      openSearchService.searchKeyword.mockResolvedValue({
+        total: 0,
+        approximateTotal: true,
+        maxScore: null,
+        items: [],
+        timedOut: false,
+        didYouMean: 'estafa',
+      });
+      openSearchService.searchSuggestions.mockResolvedValue([
+        { id: 's1', documentId: 'doc-1', title: 'People v. Santos' },
+      ]);
+
+      const result = await service.search({ query: 'estaffa', limit: 20 });
+
+      expect(result.items).toEqual([]);
+      expect(result.meta.abstained).toBe(true);
+      expect(result.meta.didYouMean).toBe('estafa');
+      expect(result.meta.suggestions).toHaveLength(1);
+    });
+
+    it('abstains when the top score is below SEARCH_MIN_SCORE', async () => {
+      openSearchService.searchKeyword.mockResolvedValue({
+        total: 3,
+        approximateTotal: true,
+        maxScore: 0.4,
+        items: [{ id: 'sec-1', score: 0.4, source: { document_id: 'doc-1' } }],
+        timedOut: false,
+      });
+
+      const result = await service.search({ query: 'qqqq', limit: 20 });
+      expect(result.meta.abstained).toBe(true);
+    });
+
+    it('does not abstain on a confident result', async () => {
+      openSearchService.searchKeyword.mockResolvedValue({
+        total: 476,
+        approximateTotal: true,
+        maxScore: 12.5,
+        items: [{ id: 'sec-1', score: 12.5, source: { document_id: 'doc-1' } }],
+        timedOut: false,
+      });
+
+      const result = await service.search({ query: 'estafa', limit: 20 });
+      expect(result.meta.abstained).toBe(false);
+      expect(result.meta.suggestions).toEqual([]);
+    });
+
+    it('records the miss without any actor identifier', async () => {
+      const zadd = jest.fn().mockResolvedValue(1);
+      const expire = jest.fn().mockResolvedValue(1);
+      redisService.getClient.mockReturnValue({ zadd, expire, zrevrange: jest.fn() });
+      openSearchService.searchKeyword.mockResolvedValue({
+        total: 0,
+        approximateTotal: true,
+        maxScore: null,
+        items: [],
+        timedOut: false,
+      });
+
+      await service.search({ query: 'no such doctrine', limit: 20 });
+
+      expect(zadd).toHaveBeenCalledTimes(1);
+      const payload = JSON.parse(zadd.mock.calls[0]![2] as string) as Record<
+        string,
+        unknown
+      >;
+      expect(payload['q']).toBe('no such doctrine');
+      expect(Object.keys(payload).sort()).toEqual(['at', 'q', 'total']);
+    });
+
+    it('never lets a Redis failure break the search response', async () => {
+      redisService.getClient.mockReturnValue({
+        zadd: jest.fn().mockRejectedValue(new Error('redis down')),
+        expire: jest.fn(),
+        zrevrange: jest.fn(),
+      });
+      openSearchService.searchKeyword.mockResolvedValue({
+        total: 0,
+        approximateTotal: true,
+        maxScore: null,
+        items: [],
+        timedOut: false,
+      });
+
+      await expect(service.search({ query: 'anything', limit: 20 })).resolves.toBeDefined();
     });
   });
 });

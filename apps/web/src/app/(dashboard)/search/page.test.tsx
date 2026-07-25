@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderWithProviders, screen, waitFor, userEvent } from '@/test/test-utils';
 import SearchPage from './page';
+import {
+  DOCUMENT_TYPE_FILTER_OPTIONS,
+  DOCUMENT_TYPE_LABELS,
+} from '@libertasian/types';
 
 /**
  * Search Page integration tests.
@@ -72,7 +76,7 @@ describe('Search Page', () => {
     });
   });
 
-  it('exposes the 8 codal document-type filter options in the dropdown', async () => {
+  it('renders every shared DOCUMENT_TYPE_FILTER_OPTION in the dropdown', async () => {
     const user = userEvent.setup();
     renderWithProviders(<SearchPage />);
 
@@ -87,23 +91,28 @@ describe('Search Page', () => {
     expect(documentTypeTrigger).toBeDefined();
     await user.click(documentTypeTrigger!);
 
-    // The 8 codal-class labels added by this PR should now be selectable.
-    const expectedLabels = [
-      'Constitution',
-      'Codal',
-      'Statute',
-      'Commonwealth Act',
-      'Batas Pambansa',
-      'Proclamation',
-      'Rules of Court',
-      'Rule',
-    ];
-    for (const label of expectedLabels) {
+    // Assert against the shared constant rather than a hardcoded copy. The
+    // dropdown and the API's SearchQueryDto @IsIn list are both generated from
+    // it, so this test fails the moment the two could drift — which is how the
+    // old list came to offer `supreme_court_decision` and three other values
+    // that the API rejected with HTTP 400.
+    for (const value of DOCUMENT_TYPE_FILTER_OPTIONS) {
       await waitFor(() => {
         expect(
-          screen.getByRole('option', { name: label }),
+          screen.getByRole('option', { name: DOCUMENT_TYPE_LABELS[value] }),
         ).toBeInTheDocument();
       });
     }
+  });
+
+  it('offers only document types that exist in the corpus', async () => {
+    // Legacy abstract classes (`statute`, `article`, `outline`, `case`) remain
+    // ACCEPTED by the API for saved searches, but carry zero production rows,
+    // so offering them in the filter UI would guarantee an empty result set.
+    expect(DOCUMENT_TYPE_FILTER_OPTIONS).not.toContain('statute');
+    expect(DOCUMENT_TYPE_FILTER_OPTIONS).not.toContain('case');
+    expect(DOCUMENT_TYPE_FILTER_OPTIONS).toContain('decision');
+    expect(DOCUMENT_TYPE_FILTER_OPTIONS).toContain('codal');
+    expect(DOCUMENT_TYPE_FILTER_OPTIONS).toContain('constitution');
   });
 });

@@ -158,6 +158,28 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
         EMBEDDING_DIM: Joi.number().integer().min(1).max(4096).default(384),
         // Documents per PostgreSQL page during a full index rebuild.
         SEARCH_INDEX_REBUILD_BATCH_SIZE: Joi.number().integer().min(1).max(2000).default(500),
+        // Ranking v2: tiered bool.should, native collapse, intent-aware
+        // clauses. Flip to 'false' to restore the legacy single-fuzzy
+        // multi_match builder without a code deploy (retained one release).
+        SEARCH_RANKER_V2: Joi.string().valid('true', 'false').default('true'),
+        // Deepest reachable result offset (page+1)*limit. Past this the API
+        // returns 400 rather than letting OpenSearch 500 on max_result_window.
+        SEARCH_MAX_WINDOW: Joi.number().integer().min(20).max(10000).default(1000),
+        // RRF blends BM25 and kNN only within this offset; deeper pages
+        // paginate lexically so ordering stays stable.
+        SEARCH_FUSION_WINDOW: Joi.number().integer().min(10).max(1000).default(100),
+        // Below this top score the response is flagged meta.abstained with
+        // suggestions instead of presenting weak matches as answers.
+        SEARCH_MIN_SCORE: Joi.number().min(0).default(1.0),
+        // function_score multipliers (CLAUDE.md: official > semi-official >
+        // editorial). Recency decay is deliberately mild — landmark cases are old.
+        SEARCH_BOOST_OFFICIAL: Joi.number().min(0).default(1.2),
+        SEARCH_BOOST_TRUST_OFFICIAL: Joi.number().min(0).default(1.3),
+        SEARCH_BOOST_TRUST_SEMI_OFFICIAL: Joi.number().min(0).default(1.15),
+        SEARCH_BOOST_TRUST_EDITORIAL: Joi.number().min(0).default(1.0),
+        SEARCH_RECENCY_SCALE_DAYS: Joi.number().integer().min(1).default(3650),
+        SEARCH_RECENCY_DECAY: Joi.number().min(0).max(1).default(0.6),
+        SEARCH_RECENCY_WEIGHT: Joi.number().min(0).default(1.1),
         // Amazon Polly (Audio Corpus Phase 1). All optional so existing envs
         // keep booting; the default AWS provider chain is used when the
         // explicit access keys are absent (e.g. IAM role in prod).
