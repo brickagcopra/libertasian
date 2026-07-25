@@ -95,3 +95,68 @@ export const DOCUMENT_TYPE_FILTER_OPTIONS: readonly DocumentTypeValue[] = [
   'resolution',
   'bar_exam_questions',
 ] as const;
+
+/**
+ * Every accepted `court` filter value, in snake_case.
+ *
+ * These are *keys*, not the strings PostgreSQL stores. `legal_documents.court`
+ * holds display text ("Supreme Court", "Court of Appeals", …), which is what the
+ * reader UI renders — so the search index carries BOTH: `court` (the raw display
+ * literal) and `court_key` (this normalized form, derived at index time by
+ * `normalizeCourtKey`). Filters run against `court_key`.
+ *
+ * The same drift that broke the Document Type dropdown broke this one: the UI
+ * sent `supreme_court` while the index held `Supreme Court`, so every
+ * court-filtered search returned zero results with no error. Ordered by
+ * production row count.
+ */
+export const COURT_VALUES = [
+  'supreme_court',
+  'court_of_appeals',
+  'regional_trial_court',
+  'sandiganbayan',
+  'court_of_tax_appeals',
+] as const;
+
+export type CourtValue = (typeof COURT_VALUES)[number];
+
+/**
+ * Display labels, which MUST be byte-identical to the strings stored in
+ * `legal_documents.court` — `normalizeCourtKey(COURT_LABELS[v]) === v` is
+ * asserted by a unit test, and that round-trip is the only thing keeping the
+ * dropdown and the corpus from drifting apart again.
+ */
+export const COURT_LABELS: Record<CourtValue, string> = {
+  supreme_court: 'Supreme Court',
+  court_of_appeals: 'Court of Appeals',
+  regional_trial_court: 'Regional Trial Court',
+  sandiganbayan: 'Sandiganbayan',
+  court_of_tax_appeals: 'Court of Tax Appeals',
+};
+
+/** The courts offered in the filter dropdown, in display order. */
+export const COURT_FILTER_OPTIONS: readonly CourtValue[] = COURT_VALUES;
+
+/**
+ * Derive the `court_key` index field from a raw court string: lowercase, with
+ * every run of non-alphanumeric characters collapsed to a single underscore.
+ *
+ * Applied to BOTH sides so they cannot disagree — at index time to
+ * `legal_documents.court`, and at query time to whatever the client sent. That
+ * makes the filter accept the display form ("Supreme Court") and the key form
+ * (`supreme_court`) interchangeably.
+ *
+ *   `"Supreme Court"`       → `supreme_court`
+ *   `"Court of Tax Appeals"` → `court_of_tax_appeals`
+ *   `null` / `""`            → `undefined`
+ */
+export function normalizeCourtKey(
+  court: string | null | undefined,
+): string | undefined {
+  if (!court) return undefined;
+  const key = court
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return key.length > 0 ? key : undefined;
+}

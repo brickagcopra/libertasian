@@ -8,7 +8,9 @@ import {
   KEYWORD_INDEX,
   KEYWORD_INDEX_PHYSICAL,
   USER_UPLOADS_INDEX,
+  USER_UPLOADS_INDEX_PHYSICAL,
   VECTOR_INDEX,
+  VECTOR_INDEX_PHYSICAL,
 } from './index-mappings';
 import {
   INDEX_REBUILD_QUEUE,
@@ -75,11 +77,16 @@ describe('IndexRebuildService', () => {
   let queue: { add: jest.Mock; getJob: jest.Mock };
   let verifiedCount: number;
   let pushedCount: number;
+  /** What a mocked `reindexInto` reports as measured on both sides. */
+  let copyCounts: { reportedCreated: number | null; sourceCount: number; destCount: number };
 
   beforeEach(async () => {
     calls = [];
     verifiedCount = 2; // 1 doc payload + 1 section payload
     pushedCount = 2;
+    // The production shape: `_reindex` claims created: 0 while the copy in fact
+    // moved every document. The counts are the truth.
+    copyCounts = { reportedCreated: 0, sourceCount: 12_196, destCount: 12_196 };
 
     openSearch = {
       embeddingDimension: 384,
@@ -95,7 +102,7 @@ describe('IndexRebuildService', () => {
       }),
       reindexInto: jest.fn(async (source: string, dest: string) => {
         calls.push(`reindex:${source}->${dest}`);
-        return 0;
+        return copyCounts;
       }),
       refreshIndex: jest.fn(async (name: string) => {
         calls.push(`refresh:${name}`);
@@ -174,14 +181,14 @@ describe('IndexRebuildService', () => {
 
       expect(calls).toEqual([
         `create:${KEYWORD_INDEX_PHYSICAL}`,
-        `create:${VECTOR_INDEX}_v2`,
-        `create:${USER_UPLOADS_INDEX}_v2`,
+        `create:${VECTOR_INDEX_PHYSICAL}`,
+        `create:${USER_UPLOADS_INDEX_PHYSICAL}`,
         `bulk:${KEYWORD_INDEX_PHYSICAL}:2`,
         `refresh:${KEYWORD_INDEX_PHYSICAL}`,
         `count:${KEYWORD_INDEX_PHYSICAL}`,
         `swap:${KEYWORD_INDEX}->${KEYWORD_INDEX_PHYSICAL}`,
-        `swap:${VECTOR_INDEX}->${VECTOR_INDEX}_v2`,
-        `swap:${USER_UPLOADS_INDEX}->${USER_UPLOADS_INDEX}_v2`,
+        `swap:${VECTOR_INDEX}->${VECTOR_INDEX_PHYSICAL}`,
+        `swap:${USER_UPLOADS_INDEX}->${USER_UPLOADS_INDEX_PHYSICAL}`,
       ]);
     });
 
@@ -306,29 +313,120 @@ describe('IndexRebuildService', () => {
     });
   });
 
-  describe('vector index handling', () => {
-    it('copies the existing vector index instead of re-embedding', async () => {
+  describe('copied index verification', () => {
+    const sourceExists = () =>
       openSearch.indexExists.mockImplementation(async (name: string) =>
-        name === VECTOR_INDEX,
+        [VECTOR_INDEX, USER_UPLOADS_INDEX].includes(name),
       );
+
+    it('copies the existing vector index instead of re-embedding', async () => {
+      sourceExists();
 
       await run();
 
       expect(openSearch.reindexInto).toHaveBeenCalledWith(
         VECTOR_INDEX,
-        `${VECTOR_INDEX}_v2`,
+        VECTOR_INDEX_PHYSICAL,
       );
     });
 
-    it('does not fail the rebuild when the vector copy errors', async () => {
-      openSearch.indexExists.mockImplementation(async (name: string) =>
-        name === VECTOR_INDEX,
-      );
+    // The production bug: `_reindex` returned created: 0 for a copy that landed
+    // all 12,196 embeddings, and the job dutifully reported `vectorsCopied: 0`.
+    // The reported number is now diagnostic only — the counts decide.
+    it('reports the counted destination total, not the _reindex claim', async () => {
+      sourceExists();
+      copyCounts = { reportedCreated: 0, sourceCount: 12_196, destCount: 12_196 };
+
+      const { result } = await run();
+
+      expect(result.vectorsCopied).toBe(12_196);
+      expect(result.vectorCopy).toMatchObject({
+        status: 'verified',
+        sourceCount: 12_196,
+        destCount: 12_196,
+        reportedCreated: 0,
+      });
+      expect(result.aliasesSkipped).toEqual([]);
+    });
+
+    // The other half: 0 used to mean both "copied fine" and "the copy threw and
+    // was swallowed". These two cases must now be distinguishable.
+    it('reports a missing source as source_missing, not as zero copied', async () => {
+      openSearch.indexExists.mockResolvedValue(false);
+
+      const { result } = await run();
+
+      expect(result.vectorCopy).toMatchObject({
+        status: 'source_missing',
+        destCount: 0,
+      });
+      // Nothing to lose, so the fresh empty index may take the alias.
+      expect(result.aliasesSkipped).toEqual([]);
+    });
+
+    it('reports a swallowed copy error as failed, not as zero copied', async () => {
+      sourceExists();
       openSearch.reindexInto.mockRejectedValue(new Error('knn plugin missing'));
 
       const { result } = await run();
 
+      expect(result.vectorCopy).toMatchObject({
+        status: 'failed',
+        destCount: 0,
+        error: expect.stringContaining('knn plugin missing'),
+      });
+    });
+
+    it('does not fail the whole rebuild when a copy errors', async () => {
+      sourceExists();
+      openSearch.reindexInto.mockRejectedValue(new Error('knn plugin missing'));
+
+      const { result } = await run();
+
+      // The keyword index is the one that fixes search — it still ships.
       expect(result.aliasSwapped).toBe(true);
+      expect(
+        calls.some((call) => call === `swap:${KEYWORD_INDEX}->${KEYWORD_INDEX_PHYSICAL}`),
+      ).toBe(true);
+    });
+
+    it('leaves the alias on its old target when a copy cannot be verified', async () => {
+      sourceExists();
+      openSearch.reindexInto.mockRejectedValue(new Error('knn plugin missing'));
+
+      const { result } = await run();
+
+      expect(result.aliasesSkipped).toEqual([VECTOR_INDEX, USER_UPLOADS_INDEX]);
+      expect(calls.some((call) => call.startsWith(`swap:${VECTOR_INDEX}->`))).toBe(false);
+      expect(calls.some((call) => call.startsWith(`swap:${USER_UPLOADS_INDEX}->`))).toBe(
+        false,
+      );
+    });
+
+    // Swapping the alias here would point every kNN query at an index holding
+    // 8% of the embeddings — degraded silently, exactly like the original bug.
+    it('refuses to swap onto a short copy', async () => {
+      sourceExists();
+      copyCounts = { reportedCreated: 1_000, sourceCount: 12_196, destCount: 1_000 };
+
+      const { result } = await run();
+
+      expect(result.vectorCopy).toMatchObject({ status: 'mismatch', destCount: 1_000 });
+      expect(result.aliasesSkipped).toContain(VECTOR_INDEX);
+      expect(calls.some((call) => call.startsWith(`swap:${VECTOR_INDEX}->`))).toBe(false);
+    });
+
+    it('tolerates a shortfall inside the 1% window — the source takes live writes', async () => {
+      sourceExists();
+      copyCounts = { reportedCreated: null, sourceCount: 1_000, destCount: 995 };
+
+      const { result } = await run();
+
+      expect(result.vectorCopy).toMatchObject({ status: 'verified' });
+      expect(result.aliasesSkipped).toEqual([]);
+      expect(
+        calls.some((call) => call.startsWith(`swap:${VECTOR_INDEX}->${VECTOR_INDEX_PHYSICAL}`)),
+      ).toBe(true);
     });
   });
 

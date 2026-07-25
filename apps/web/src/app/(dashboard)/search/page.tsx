@@ -21,6 +21,8 @@ import { SearchIcon, SlidersHorizontalIcon } from 'lucide-react';
 // Single source of truth shared with the API's SearchQueryDto @IsIn list, so
 // the dropdown can never again offer a value the API rejects with HTTP 400.
 import {
+  COURT_FILTER_OPTIONS,
+  COURT_LABELS,
   DOCUMENT_TYPE_FILTER_OPTIONS,
   DOCUMENT_TYPE_LABELS,
 } from '@libertasian/types';
@@ -145,10 +147,11 @@ export default function SearchPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All courts</SelectItem>
-                    <SelectItem value="supreme_court">Supreme Court</SelectItem>
-                    <SelectItem value="court_of_appeals">Court of Appeals</SelectItem>
-                    <SelectItem value="sandiganbayan">Sandiganbayan</SelectItem>
-                    <SelectItem value="court_of_tax_appeals">Court of Tax Appeals</SelectItem>
+                    {COURT_FILTER_OPTIONS.map((value) => (
+                      <SelectItem key={value} value={value}>
+                        {COURT_LABELS[value]}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>

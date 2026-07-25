@@ -52,8 +52,17 @@ describe('keyword index mapping', () => {
     'bar_subjects',
     'topics',
     'gr_no_digits',
+    'court_key',
   ])('maps %s as keyword so term filters match', (field) => {
     expect(keywordProps()[field]).toEqual({ type: 'keyword' });
+  });
+
+  // `court` alone was not enough: it is mapped `keyword` but holds the display
+  // literal ("Supreme Court"), so the dropdown's `supreme_court` matched zero
+  // of 7,443 documents. The filterable form has to be a separate field.
+  it('carries both the display court and the normalized court_key', () => {
+    expect(keywordProps()['court']).toEqual({ type: 'keyword' });
+    expect(keywordProps()['court_key']).toEqual({ type: 'keyword' });
   });
 
   it('gives ponente a .text sub-field so name search works', () => {

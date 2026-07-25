@@ -21,6 +21,9 @@ exports[`keyword index mapping matches the mapping snapshot 1`] = `
       "court": {
         "type": "keyword",
       },
+      "court_key": {
+        "type": "keyword",
+      },
       "created_at": {
         "type": "date",
       },
@@ -318,6 +321,9 @@ exports[`vector index mapping matches the mapping snapshot 1`] = `
         "type": "keyword",
       },
       "court": {
+        "type": "keyword",
+      },
+      "court_key": {
         "type": "keyword",
       },
       "decision_date": {

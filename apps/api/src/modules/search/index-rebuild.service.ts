@@ -33,6 +33,28 @@ export interface IndexRebuildJobData {
   dryRun: boolean;
 }
 
+/**
+ * Outcome of a server-side index copy, derived from `_count` on both sides —
+ * never from the `_reindex` response, which reported `created: 0` in production
+ * for copies that in fact moved every document.
+ *
+ * The distinction that matters operationally is between `source_missing`
+ * (nothing to copy, destination legitimately empty) and `failed`/`mismatch`
+ * (documents were lost). Both used to surface as the number 0.
+ */
+export type IndexCopyStatus = 'verified' | 'source_missing' | 'mismatch' | 'failed';
+
+export interface IndexCopyOutcome {
+  source: string;
+  dest: string;
+  status: IndexCopyStatus;
+  sourceCount: number;
+  destCount: number;
+  /** What `_reindex` claimed. Recorded for diagnosis; not used for any decision. */
+  reportedCreated: number | null;
+  error?: string;
+}
+
 export interface IndexRebuildProgress {
   phase:
     | 'starting'
@@ -47,8 +69,11 @@ export interface IndexRebuildProgress {
   documentsProcessed: number;
   documentsTotal: number;
   docsPushed: number;
+  /** Verified destination count — what `_count` says landed, not what `_reindex` claimed. */
   vectorsCopied: number;
   uploadsCopied: number;
+  vectorCopy: IndexCopyOutcome | null;
+  uploadCopy: IndexCopyOutcome | null;
   message: string;
 }
 
@@ -57,7 +82,13 @@ export interface IndexRebuildResult extends IndexRebuildProgress {
   vectorTarget: string;
   uploadsTarget: string;
   verifiedCount: number;
+  /** True when the KEYWORD alias was repointed. */
   aliasSwapped: boolean;
+  /**
+   * Aliases deliberately left on their previous target because the copy behind
+   * them could not be verified. Empty on a clean run.
+   */
+  aliasesSkipped: string[];
 }
 
 type ProgressReporter = (progress: IndexRebuildProgress) => Promise<void>;
@@ -193,6 +224,8 @@ export class IndexRebuildService {
       docsPushed: 0,
       vectorsCopied: 0,
       uploadsCopied: 0,
+      vectorCopy: null,
+      uploadCopy: null,
       message: 'Preparing rebuild',
     };
     const push = async (patch: Partial<IndexRebuildProgress>) => {
@@ -244,10 +277,20 @@ export class IndexRebuildService {
     // Embeddings cost real GPU/CPU time to regenerate and OCR text is not
     // reproducible at all, so these are copied rather than rebuilt.
     await push({ phase: 'reindexing_vectors', message: 'Copying vector index' });
-    const vectorsCopied = await this.copyIfSourceExists(VECTOR_INDEX, vectorTarget);
+    const vectorCopy = await this.copyAndVerify(VECTOR_INDEX, vectorTarget);
+    await push({
+      vectorsCopied: vectorCopy.destCount,
+      vectorCopy,
+      message: `Vector copy ${vectorCopy.status}: ${vectorCopy.destCount}/${vectorCopy.sourceCount}`,
+    });
 
     await push({ phase: 'reindexing_uploads', message: 'Copying user uploads index' });
-    const uploadsCopied = await this.copyIfSourceExists(USER_UPLOADS_INDEX, uploadsTarget);
+    const uploadCopy = await this.copyAndVerify(USER_UPLOADS_INDEX, uploadsTarget);
+    await push({
+      uploadsCopied: uploadCopy.destCount,
+      uploadCopy,
+      message: `Upload copy ${uploadCopy.status}: ${uploadCopy.destCount}/${uploadCopy.sourceCount}`,
+    });
 
     // ---- 4. verify BEFORE anything destructive happens ----
     await push({ phase: 'verifying', message: 'Verifying document counts' });
@@ -301,18 +344,41 @@ export class IndexRebuildService {
         uploadsTarget,
         verifiedCount,
         aliasSwapped: false,
+        aliasesSkipped: [],
       };
     }
 
     // ---- 5. swap aliases (this is the only destructive step) ----
     await push({ phase: 'swapping_alias', message: 'Swapping aliases' });
     await this.swapOne(KEYWORD_INDEX, keywordTarget);
-    await this.swapOne(VECTOR_INDEX, vectorTarget);
-    await this.swapOne(USER_UPLOADS_INDEX, uploadsTarget);
+
+    // A copied index only takes traffic once its copy has been verified.
+    // Otherwise the alias stays on its previous target: a stale vector index
+    // still answers kNN queries, an empty one silently answers none.
+    const aliasesSkipped: string[] = [];
+    for (const [alias, target, copy] of [
+      [VECTOR_INDEX, vectorTarget, vectorCopy],
+      [USER_UPLOADS_INDEX, uploadsTarget, uploadCopy],
+    ] as const) {
+      if (copy.status === 'verified' || copy.status === 'source_missing') {
+        await this.swapOne(alias, target);
+        continue;
+      }
+      aliasesSkipped.push(alias);
+      this.logger.error(
+        `Leaving alias ${alias} on its previous target — copy into ${target} ` +
+          `was not verified (${copy.status}: ${copy.destCount}/${copy.sourceCount}). ` +
+          `${target} is left in place for inspection.`,
+      );
+    }
 
     await push({
       phase: 'completed',
-      message: `Rebuild complete — ${KEYWORD_INDEX} → ${keywordTarget} (${verifiedCount} docs)`,
+      message:
+        `Rebuild complete — ${KEYWORD_INDEX} → ${keywordTarget} (${verifiedCount} docs)` +
+        (aliasesSkipped.length > 0
+          ? `; UNVERIFIED copies left unswapped: ${aliasesSkipped.join(', ')}`
+          : ''),
     });
 
     return {
@@ -322,6 +388,7 @@ export class IndexRebuildService {
       uploadsTarget,
       verifiedCount,
       aliasSwapped: true,
+      aliasesSkipped,
     };
   }
 
@@ -374,22 +441,61 @@ export class IndexRebuildService {
     );
   }
 
-  private async copyIfSourceExists(source: string, dest: string): Promise<number> {
+  /**
+   * Copy `source` → `dest` and VERIFY it by counting both indices.
+   *
+   * A copy failure still must not take the whole rebuild down — the keyword
+   * index is the one that fixes search. What it must do is refuse to look like
+   * success: an unverified copy returns a non-`verified` status, and
+   * `runRebuild` then leaves that alias pointing at its old target rather than
+   * swapping traffic onto an index that may be missing documents.
+   */
+  private async copyAndVerify(source: string, dest: string): Promise<IndexCopyOutcome> {
+    const base = { source, dest, reportedCreated: null, sourceCount: 0, destCount: 0 };
+
     if (!(await this.openSearch.indexExists(source))) {
       this.logger.warn(`${source} does not exist — ${dest} starts empty`);
-      return 0;
+      return { ...base, status: 'source_missing' };
     }
+
+    let counts;
     try {
-      return await this.openSearch.reindexInto(source, dest);
+      counts = await this.openSearch.reindexInto(source, dest);
     } catch (error) {
-      // A copy failure must not take the whole rebuild down: the keyword index
-      // is the one that fixes search, and vectors repopulate on the next
-      // indexing pass. Surfaced in the job log for the operator.
-      this.logger.error(
-        `Copy ${source} → ${dest} failed: ${(error as Error).message}`,
-      );
-      return 0;
+      const message = (error as Error).message;
+      this.logger.error(`Copy ${source} → ${dest} failed: ${message}`);
+      return { ...base, status: 'failed', error: message };
     }
+
+    const { sourceCount, destCount, reportedCreated } = counts;
+
+    // Same 1% window as the keyword gate: the source index is live and may take
+    // writes mid-copy, so an exact equality check would flap.
+    const minAcceptable = Math.floor(sourceCount * (1 - VERIFY_TOLERANCE));
+    if (destCount < minAcceptable) {
+      const message =
+        `Copy ${source} → ${dest} moved ${destCount} of ${sourceCount} documents ` +
+        `(expected >= ${minAcceptable})`;
+      this.logger.error(message);
+      return {
+        ...base,
+        status: 'mismatch',
+        sourceCount,
+        destCount,
+        reportedCreated,
+        error: message,
+      };
+    }
+
+    if (reportedCreated !== null && reportedCreated !== destCount) {
+      this.logger.warn(
+        `_reindex ${source} → ${dest} reported created=${reportedCreated} but ` +
+          `${dest} holds ${destCount} documents — trusting the count.`,
+      );
+    }
+    this.logger.log(`Copied ${source} → ${dest}: ${destCount}/${sourceCount} documents`);
+
+    return { ...base, status: 'verified', sourceCount, destCount, reportedCreated };
   }
 
   /**

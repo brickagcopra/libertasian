@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderWithProviders, screen, waitFor, userEvent } from '@/test/test-utils';
 import SearchPage from './page';
 import {
+  COURT_FILTER_OPTIONS,
+  COURT_LABELS,
   DOCUMENT_TYPE_FILTER_OPTIONS,
   DOCUMENT_TYPE_LABELS,
 } from '@libertasian/types';
@@ -103,6 +105,28 @@ describe('Search Page', () => {
         ).toBeInTheDocument();
       });
     }
+  });
+
+  it('renders every shared COURT_FILTER_OPTION in the dropdown', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SearchPage />);
+
+    await user.click(screen.getByRole('button', { name: /filters/i }));
+
+    // Court is the second combobox in the filter panel.
+    const triggers = await screen.findAllByRole('combobox');
+    const courtTrigger = triggers[1];
+    expect(courtTrigger).toBeDefined();
+    await user.click(courtTrigger!);
+
+    // Regional Trial Court (2,831 documents) was missing from the hardcoded
+    // list this now replaces — the corpus had it, the dropdown did not.
+    for (const value of COURT_FILTER_OPTIONS) {
+      await waitFor(() => {
+        expect(screen.getByRole('option', { name: COURT_LABELS[value] })).toBeInTheDocument();
+      });
+    }
+    expect(screen.getByRole('option', { name: 'Regional Trial Court' })).toBeInTheDocument();
   });
 
   it('offers only document types that exist in the corpus', async () => {

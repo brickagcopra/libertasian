@@ -54,4 +54,45 @@ describe('SearchQueryDto.documentType', () => {
     const dto = plainToInstance(SearchQueryDto, { query: 'negligence' });
     expect(validateSync(dto)).toHaveLength(0);
   });
+
+  // The court filter matched zero of 7,443 Supreme Court documents because the
+  // dropdown sent `supreme_court` while the index held the display literal.
+  // Normalising here is half the fix; `court_key` in the index is the other.
+  describe('court', () => {
+    it.each([
+      ['supreme_court', 'supreme_court'],
+      ['Supreme Court', 'supreme_court'],
+      ['Regional Trial Court', 'regional_trial_court'],
+      ['court_of_tax_appeals', 'court_of_tax_appeals'],
+    ])('normalises %j to %j', (input, expected) => {
+      const dto = plainToInstance(SearchQueryDto, { query: 'estafa', court: input });
+      expect(validateSync(dto)).toHaveLength(0);
+      expect(dto.court).toBe(expected);
+    });
+
+    it('accepts Regional Trial Court, which the old dropdown omitted entirely', () => {
+      const dto = plainToInstance(SearchQueryDto, {
+        query: 'estafa',
+        court: 'regional_trial_court',
+      });
+      expect(validateSync(dto)).toHaveLength(0);
+    });
+
+    it('rejects an unknown court instead of silently returning nothing', () => {
+      const dto = plainToInstance(SearchQueryDto, {
+        query: 'estafa',
+        court: 'municipal_circuit_trial_court',
+      });
+      const errors = validateSync(dto);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]?.property).toBe('court');
+      expect(errors[0]?.constraints).toHaveProperty('isIn');
+    });
+
+    it('treats an empty court as omitted', () => {
+      const dto = plainToInstance(SearchQueryDto, { query: 'estafa', court: '' });
+      expect(validateSync(dto)).toHaveLength(0);
+      expect(dto.court).toBeUndefined();
+    });
+  });
 });

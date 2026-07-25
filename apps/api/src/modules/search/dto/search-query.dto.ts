@@ -12,13 +12,18 @@ import {
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { DOCUMENT_TYPE_VALUES } from '@libertasian/types';
+import {
+  COURT_VALUES,
+  DOCUMENT_TYPE_VALUES,
+  normalizeCourtKey,
+} from '@libertasian/types';
 
 /**
- * Mutable copy of the shared readonly tuple — class-validator's `@IsIn`
+ * Mutable copies of the shared readonly tuples — class-validator's `@IsIn`
  * signature wants `unknown[]`.
  */
 const DOCUMENT_TYPES: string[] = [...DOCUMENT_TYPE_VALUES];
+const COURTS: string[] = [...COURT_VALUES];
 
 export class SearchQueryDto {
   @ApiProperty({ description: 'Search query string' })
@@ -49,8 +54,21 @@ export class SearchQueryDto {
   @IsOptional()
   documentType?: string[];
 
-  @ApiPropertyOptional({ description: 'Filter by court' })
-  @IsString()
+  @ApiPropertyOptional({
+    description:
+      'Filter by court. Accepts the snake_case key (`supreme_court`) or the ' +
+      'display form as stored in PostgreSQL ("Supreme Court") — both normalise ' +
+      'to the `court_key` the index is filtered on.',
+    enum: COURTS,
+  })
+  // Normalising here is what lets the same value work from the web dropdown,
+  // a saved search, and a client that echoes back a document's display court.
+  @Transform(({ value }) =>
+    value === undefined || value === null || value === ''
+      ? undefined
+      : normalizeCourtKey(String(value)),
+  )
+  @IsIn(COURTS)
   @IsOptional()
   court?: string;
 
