@@ -206,6 +206,44 @@ describe('OpenSearchService', () => {
       );
     });
 
+    it('derives court_key from the display court and keeps both', async () => {
+      mockClient.index.mockResolvedValue({});
+
+      await service.indexDocument({
+        document_id: 'doc-1',
+        title: 'People v. Santos',
+        document_type: 'decision',
+        court: 'Supreme Court',
+        status: 'published',
+        is_official: true,
+        is_published: true,
+        created_at: '2024-01-01',
+      });
+
+      const body = mockClient.index.mock.calls[0]![0]!.body as Record<string, unknown>;
+      // `court` stays the display literal for the reader; `court_key` is what
+      // filters match. Losing either one is a regression.
+      expect(body['court']).toBe('Supreme Court');
+      expect(body['court_key']).toBe('supreme_court');
+    });
+
+    it('omits court_key entirely when the document has no court', async () => {
+      mockClient.index.mockResolvedValue({});
+
+      await service.indexDocument({
+        document_id: 'doc-1',
+        title: 'Republic Act No. 386',
+        document_type: 'republic_act',
+        status: 'published',
+        is_official: true,
+        is_published: true,
+        created_at: '2024-01-01',
+      });
+
+      const body = mockClient.index.mock.calls[0]![0]!.body as Record<string, unknown>;
+      expect(body).not.toHaveProperty('court_key');
+    });
+
     it('should throw on indexing error', async () => {
       mockClient.index.mockRejectedValue(new Error('Index error'));
 
@@ -631,6 +669,33 @@ describe('OpenSearchService', () => {
       );
     });
 
+    it('matches either court form so copied-forward vectors are still filterable', async () => {
+      mockClient.search.mockResolvedValue({
+        body: { hits: { hits: [] }, timed_out: false },
+      });
+
+      await service.searchVector({ vector: [0.1], filters: { court: 'supreme_court' } });
+
+      const body = mockClient.search.mock.calls[0]![0]!.body as Record<string, unknown>;
+      const knn = (body['query'] as Record<string, Record<string, unknown>>)['knn']!;
+      const must = (
+        (knn['filter'] as Record<string, Record<string, unknown>>)['bool'] as Record<
+          string,
+          unknown
+        >
+      )['must'] as Record<string, unknown>[];
+
+      expect(must).toContainEqual({
+        bool: {
+          should: [
+            { term: { court_key: 'supreme_court' } },
+            { term: { court: 'Supreme Court' } },
+          ],
+          minimum_should_match: 1,
+        },
+      });
+    });
+
     it('should throw on vector search error', async () => {
       mockClient.search.mockRejectedValue(new Error('Vector search failed'));
 
@@ -802,6 +867,42 @@ describe('OpenSearchService', () => {
             }),
           }),
         }),
+      );
+    });
+  });
+
+  // ---- reindexInto ----
+
+  describe('reindexInto', () => {
+    // Ground truth from the Phase A production run: `_reindex` answered
+    // `created: 0` for a copy that moved all 12,196 embeddings. Anything
+    // derived from that number is unusable as a verification signal.
+    it('measures both sides instead of believing the _reindex response', async () => {
+      mockClient.reindex.mockResolvedValue({ body: { created: 0 } });
+      mockClient.indices.refresh.mockResolvedValue({});
+      mockClient.count
+        .mockResolvedValueOnce({ body: { count: 12_196 } })
+        .mockResolvedValueOnce({ body: { count: 12_196 } });
+
+      const result = await service.reindexInto('src', 'dest');
+
+      expect(result).toEqual({
+        reportedCreated: 0,
+        sourceCount: 12_196,
+        destCount: 12_196,
+      });
+      // The count is the verification, so it does not ride on the reindex
+      // call's own refresh flag.
+      expect(mockClient.indices.refresh).toHaveBeenCalledWith({ index: 'dest' });
+    });
+
+    it('throws when the response carries per-document failures', async () => {
+      mockClient.reindex.mockResolvedValue({
+        body: { created: 5, failures: [{ id: 'doc-1', cause: 'mapper_parsing_exception' }] },
+      });
+
+      await expect(service.reindexInto('src', 'dest')).rejects.toThrow(
+        /1 document failure/,
       );
     });
   });

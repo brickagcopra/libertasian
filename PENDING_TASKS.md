@@ -1,6 +1,6 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-07-18 (#301 api deploy confirmed shipped 2026-07-15; account-deletion page #305 merged)
+> Last updated: 2026-07-25 (search Phase A prod-verified; Phase B merged as 27538fd; Phase C0 = PR #308; Phase C scoped against measured prod data)
 
 Verification rules used for this prune: every PR reference checked with `gh pr view <n> --json state,mergedAt`; every branch reference checked against `git branch -r --no-merged origin/main` after `git fetch --prune`. Items that could not be verified were MOVED to "Needs verification", not deleted.
 
@@ -36,6 +36,34 @@ Verification rules used for this prune: every PR reference checked with `gh pr v
 - [ ] Set `STAGING_HOST` / `STAGING_USER` / `STAGING_SSH_KEY` (+ optional `STAGING_SSH_PORT`) on the GitHub `staging` environment (currently has ZERO secrets)
 - [ ] Author the missing `docker-compose.staging.yml` the deploy script references (absent from repo — latent blocker)
 - [ ] Then restore the `push: branches: [main]` trigger in `.github/workflows/deploy-staging.yml` (original trigger preserved in a comment)
+
+## Search overhaul (Phase A shipped + prod-verified; Phase B merged; Phase C scoped)
+
+Ground truth below is from brick's Phase A production dry-run (2026-07-25) — measured on prod, not assumed.
+
+**Shipped / verified**
+- [x] Phase A (#306, `7166214`) — explicit mappings behind versioned aliases. Prod run: 17,135 docs → 85,977 entries in 3m24s. Filters confirmed live on `_v2`: `document_type=decision` 76,484 · `ponente=LOPEZ` 301 · `status=published` 29,166 · `gr_no_digits=246999` 4 · `ponente.text` match `hernando` 622 · `estafa` no-fuzzy 1,987 (was 4,040). Vector index repaired: `knn_vector` dim 384 HNSW, `index.knn` true, all 12,196 embeddings copied. Synonym rules parse against a real cluster — that risk is closed.
+- [x] Phase B (#307, squashed to `27538fd`) — query intent classification + tiered ranking.
+
+**Phase C0 — the two Phase A bugs (PR #308, open)**
+- [ ] Merge #308, deploy api, then run `POST /search/index/rebuild` (blue/green, ~3.5 min). `INDEX_VERSION` is now `v3`; the rebuild targets `*_v3` and leaves `_v2` as a rollback target.
+- [ ] After the rebuild, re-verify on `_v3`: `term court_key=supreme_court` ≈ 7,443 · `regional_trial_court` ≈ 2,831 · `court` still renders the display literal · job result reports `vectorsCopied: 12196` (not 0) and `aliasesSkipped: []`.
+
+**Phase C1 — derivative body-text extraction (own PR; this is the actual work)**
+- [ ] `content_plain_text` is EMPTY in prod: 12 of 99,994 rows populated, 966 bytes total. Searchable body text must be derived from `content_json`, whose shape varies per `derivative_type`. Row volume is not the problem — per-type extraction is.
+- [ ] All 11 shapes are already codified and fixture-backed: `apps/web/src/features/derivatives/renderers/__fixtures__/fixtures.ts` + the 11 renderers in that folder. Write one pure extractor per type in a dependency-free module (mirror `citation-utils.ts`) so the indexer and the backfill share one implementation, and test it against those same fixtures.
+- [ ] Known traps: `doctrine_extract` content uses snake_case keys (`doctrine_type`) while the other 10 are camelCase; recursion needed for `subject_outline` (`sections[].subSections[]`), `sample_contract` (`clauses[].subclauses[]`), `essay_prompt` (`modelAnswer.outlineSections[].paragraphs[]`).
+- [ ] **Answer-key leakage decision:** `mcq_question` content carries `options[].isCorrect` and `options[].rationale`. Index the stem + option text; keep `isCorrect`/`rationale`/`explanation` out of anything that can surface in a highlight fragment.
+- [ ] Recommend persisting the extraction to `content_plain_text` on write as well as indexing it, so the column stops being dead weight.
+- [ ] Real backfill size is **13,017 rows** (`public_editorial` + `approved`), not 99,994.
+
+**Phase C2 — visibility + tenant filter (decided with brick)**
+- [ ] Two mutually-exclusive bool branches, explicit — NOT a flat should-list: `(visibility=public_editorial AND review_status=approved)` OR `(organization_id=<jwt org>)`.
+- [ ] `organization_id` is NULL on **100%** of derivative rows in prod, so the org branch matches nothing today. Implement it correctly anyway for future user-generated derivatives.
+- [ ] **Pin with a test that null-org rows can ONLY match the public branch.** A missing keyword field never matches a `term`, so index `organization_id` as *absent* when null — never as `""` or a sentinel. ~87,000 rows (private / needs_human_review / draft, all null-org) must be visible to nobody; a mistake here exposes that many unreviewed AI artifacts.
+- [ ] E2E cross-tenant tests must **seed synthetic org-scoped rows** — no production data exercises that path.
+
+**Phase C3** — digests + `bar_exam_questions`: scope unchanged from the original plan.
 
 ## Parked PRs (decide: revive or close — all verified OPEN 2026-07-13; nothing closed)
 

@@ -10,6 +10,7 @@ import {
   Max,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
+import { normalizeCourtKey } from '@libertasian/types';
 
 export class ExternalSearchDto {
   @IsString()
@@ -20,6 +21,15 @@ export class ExternalSearchDto {
   @IsOptional()
   documentType?: string;
 
+  // Normalised to the `court_key` the index filters on, so "Supreme Court" and
+  // `supreme_court` both work. Deliberately NOT `@IsIn(COURT_VALUES)` like the
+  // first-party DTO: rejecting an unrecognised court would turn a partner's
+  // existing (if fruitless) request into a 400.
+  @Transform(({ value }) =>
+    value === undefined || value === null || value === ''
+      ? undefined
+      : normalizeCourtKey(String(value)),
+  )
   @IsString()
   @IsOptional()
   court?: string;

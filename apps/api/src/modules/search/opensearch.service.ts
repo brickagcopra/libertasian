@@ -2,11 +2,14 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Client } from '@opensearch-project/opensearch';
 
+import { normalizeCourtKey } from '@libertasian/types';
+
 import { deriveGrNoDigits, normalizeCitationKey } from './citation-utils';
 import {
   buildCitationQueryBody,
   buildKeywordQueryBody,
   buildSuggestionQueryBody,
+  buildVectorCourtClause,
   type RankingWeights,
 } from './query-builder';
 import type { QueryIntent } from './query-intent';
@@ -68,6 +71,11 @@ export interface IndexDocumentPayload {
   section_text?: string;
   document_type: string;
   court?: string;
+  /**
+   * snake_case form of `court`. Derived automatically by `OpenSearchService` at
+   * index time — callers do not need to set it.
+   */
+  court_key?: string;
   ponente?: string;
   jurisdiction?: string;
   language?: string;
@@ -97,6 +105,8 @@ export interface VectorDocumentPayload {
   section_id?: string;
   document_type: string;
   court?: string;
+  /** Derived automatically at index time, like its keyword-index counterpart. */
+  court_key?: string;
   source_trust_level?: string;
   is_official: boolean;
   is_published: boolean;
@@ -186,6 +196,17 @@ export interface KeywordSearchResult {
   items: SearchResultItem[];
   timedOut: boolean;
   didYouMean?: string;
+}
+
+/**
+ * What a server-side index copy actually moved, measured rather than reported.
+ * `reportedCreated` is the `_reindex` response's own claim, kept only so the
+ * discrepancy is visible in the job log.
+ */
+export interface IndexCopyCounts {
+  reportedCreated: number | null;
+  sourceCount: number;
+  destCount: number;
 }
 
 export interface SuggestionItem {
@@ -390,14 +411,43 @@ export class OpenSearchService implements OnModuleInit {
    * Server-side copy of one index into another. Used for the vector and
    * user-upload indices, whose payloads (embeddings, OCR text) are expensive or
    * impossible to regenerate — a `_reindex` preserves them for free.
+   *
+   * Returns the counts BOTH sides actually hold, read back with `_count` after
+   * a refresh, plus whatever the `_reindex` response claimed. The claim is
+   * logged, never trusted: on the production Phase A run it reported
+   * `created: 0` for copies that landed 12,196 and 2 documents correctly, and a
+   * copy result of 0 that cannot be distinguished from a swallowed error is the
+   * dangerous half of that bug.
    */
-  async reindexInto(source: string, dest: string): Promise<number> {
+  async reindexInto(source: string, dest: string): Promise<IndexCopyCounts> {
     const response = await this.client.reindex({
       wait_for_completion: true,
       refresh: true,
       body: { source: { index: source }, dest: { index: dest } },
     });
-    return ((response.body as { created?: number }).created ?? 0) as number;
+
+    const body = response.body as {
+      created?: number;
+      failures?: unknown[];
+    };
+    const failures = body.failures ?? [];
+    if (failures.length > 0) {
+      throw new Error(
+        `_reindex ${source} → ${dest} reported ${failures.length} document ` +
+          `failure(s): ${JSON.stringify(failures.slice(0, 3))}`,
+      );
+    }
+
+    // Refresh the destination explicitly: `refresh: true` on the reindex covers
+    // it, but the count below is the verification, so it does not get to depend
+    // on a flag whose semantics we are already not trusting.
+    await this.refreshIndex(dest);
+
+    return {
+      reportedCreated: typeof body.created === 'number' ? body.created : null,
+      sourceCount: await this.countIndex(source),
+      destCount: await this.countIndex(dest),
+    };
   }
 
   async indexDocument(doc: IndexDocumentPayload) {
@@ -426,6 +476,32 @@ export class OpenSearchService implements OnModuleInit {
       payload['gr_no_digits'] = grNoDigits;
     } else {
       delete payload['gr_no_digits'];
+    }
+
+    const courtKey = normalizeCourtKey(doc.court);
+    if (courtKey) {
+      payload['court_key'] = courtKey;
+    } else {
+      delete payload['court_key'];
+    }
+    return payload;
+  }
+
+  /**
+   * Vector-index counterpart of `withDerivedFields`. Separate because the two
+   * indices carry different field sets, but the `court_key` derivation must be
+   * identical — a filter that matched one index and not the other is exactly
+   * the class of bug this field exists to close.
+   */
+  private withVectorDerivedFields(
+    doc: VectorDocumentPayload,
+  ): Record<string, unknown> {
+    const payload: Record<string, unknown> = { ...doc };
+    const courtKey = normalizeCourtKey(doc.court);
+    if (courtKey) {
+      payload['court_key'] = courtKey;
+    } else {
+      delete payload['court_key'];
     }
     return payload;
   }
@@ -585,7 +661,10 @@ export class OpenSearchService implements OnModuleInit {
       );
     }
     if (filters?.court) {
-      filter.push({ term: { court: filters.court } });
+      // court_key, not court — see the mapping comment. The v1 builder is
+      // otherwise kept byte-for-byte, but a filter that silently matches
+      // nothing is not behaviour worth preserving behind the rollback flag.
+      filter.push({ term: { court_key: filters.court } });
     }
     if (filters?.ponente) {
       filter.push({ term: { ponente: filters.ponente } });
@@ -709,7 +788,7 @@ export class OpenSearchService implements OnModuleInit {
       await this.client.index({
         index: VECTOR_INDEX,
         id,
-        body: doc as unknown as Record<string, unknown>,
+        body: this.withVectorDerivedFields(doc),
         refresh: 'false',
       });
     } catch (error) {
@@ -731,7 +810,7 @@ export class OpenSearchService implements OnModuleInit {
     for (const doc of docs) {
       const id = doc.section_id ?? doc.document_id;
       body.push({ index: { _index: targetIndex, _id: id } });
-      body.push(doc as unknown as Record<string, unknown>);
+      body.push(this.withVectorDerivedFields(doc));
     }
 
     try {
@@ -764,7 +843,7 @@ export class OpenSearchService implements OnModuleInit {
       filterClauses.push({ term: { document_type: filters.documentType } });
     }
     if (filters?.court) {
-      filterClauses.push({ term: { court: filters.court } });
+      filterClauses.push(buildVectorCourtClause(filters.court));
     }
     if (filters?.publishedOnly) {
       filterClauses.push({ term: { is_published: true } });

@@ -10,8 +10,36 @@
  * citation fields are never fuzzed at all.
  */
 
+import { COURT_LABELS, type CourtValue } from '@libertasian/types';
+
 import { normalizeCitationKey } from './citation-utils';
 import type { QueryIntent } from './query-intent';
+
+/**
+ * Court filter clause for the VECTOR index.
+ *
+ * The keyword index is rebuilt from PostgreSQL, so every one of its documents
+ * carries `court_key`. The vector index is *copied* forward by the rebuild job
+ * instead (embeddings are too expensive to regenerate), so its existing
+ * documents only ever have the raw display `court` — a `court_key` term filter
+ * against them matches nothing, which would silently drop the kNN arm of every
+ * court-filtered hybrid search.
+ *
+ * So match either form. New vector writes carry `court_key`; copied-forward
+ * ones are reached through the display literal.
+ */
+export function buildVectorCourtClause(courtKey: string): Record<string, unknown> {
+  const display = COURT_LABELS[courtKey as CourtValue];
+  return {
+    bool: {
+      should: [
+        { term: { court_key: courtKey } },
+        ...(display ? [{ term: { court: display } }] : []),
+      ],
+      minimum_should_match: 1,
+    },
+  };
+}
 
 export interface RankingWeights {
   officialBoost: number;
@@ -168,7 +196,10 @@ function buildFilterClauses(
       : [filters.documentType];
     if (values.length > 0) filter.push({ terms: { document_type: values } });
   }
-  if (filters?.court) filter.push({ term: { court: filters.court } });
+  // `court_key`, never `court`: the index stores the raw display literal
+  // ("Supreme Court") in `court`, so a term filter on it can only ever match a
+  // client that happens to send the exact display casing. See index-mappings.
+  if (filters?.court) filter.push({ term: { court_key: filters.court } });
   if (filters?.ponente) filter.push({ term: { ponente: filters.ponente } });
   if (filters?.sourceId) filter.push({ term: { source_id: filters.sourceId } });
   if (filters?.grNo) filter.push({ term: { gr_no: filters.grNo } });

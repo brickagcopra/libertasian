@@ -3,6 +3,7 @@ import {
   buildCitationQueryBody,
   buildKeywordQueryBody,
   buildSuggestionQueryBody,
+  buildVectorCourtClause,
 } from './query-builder';
 import { classifyQuery } from './query-intent';
 
@@ -225,12 +226,51 @@ describe('buildKeywordQueryBody — filters', () => {
     });
   });
 
+  // Verified live against `legal_documents_keyword_v2`:
+  // `term court=supreme_court` → 0 hits, because the field holds "Supreme
+  // Court". Filtering the display field can only ever work by accident.
+  it('filters court on court_key, never on the display court field', () => {
+    const bool = walk(bodyFor('estafa', { filters: { court: 'supreme_court' } })).find(
+      (node) => 'filter' in node,
+    );
+    const clauses = bool?.['filter'] as Record<string, unknown>[];
+
+    expect(clauses).toContainEqual({ term: { court_key: 'supreme_court' } });
+    expect(clauses).not.toContainEqual({ term: { court: 'supreme_court' } });
+  });
+
   it('emits the dedup suppression must_not only when IDs are supplied', () => {
     const withIds = walk(bodyFor('estafa', { excludeDocumentIds: ['a', 'b'] }));
     expect(withIds).toContainEqual({ terms: { document_id: ['a', 'b'] } });
 
     const withoutIds = walk(bodyFor('estafa', { excludeDocumentIds: [] }));
     expect(withoutIds.some((node) => 'must_not' in node)).toBe(false);
+  });
+});
+
+describe('buildVectorCourtClause', () => {
+  // The vector index is COPIED forward rather than rebuilt from PostgreSQL, so
+  // its existing documents have no court_key at all. Matching only the key
+  // would drop the kNN arm of every court-filtered hybrid search.
+  it('matches the key or the display literal so copied-forward vectors still hit', () => {
+    expect(buildVectorCourtClause('supreme_court')).toEqual({
+      bool: {
+        should: [
+          { term: { court_key: 'supreme_court' } },
+          { term: { court: 'Supreme Court' } },
+        ],
+        minimum_should_match: 1,
+      },
+    });
+  });
+
+  it('falls back to the key alone for a court with no known display label', () => {
+    expect(buildVectorCourtClause('municipal_trial_court')).toEqual({
+      bool: {
+        should: [{ term: { court_key: 'municipal_trial_court' } }],
+        minimum_should_match: 1,
+      },
+    });
   });
 });
 

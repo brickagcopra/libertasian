@@ -24,7 +24,7 @@
  * reindex; the rebuild job then builds the new physical index and repoints the
  * alias.
  */
-export const INDEX_VERSION = 'v2';
+export const INDEX_VERSION = 'v3';
 
 /** Alias names — the ONLY names application code should read from or write to. */
 export const KEYWORD_INDEX = 'legal_documents_keyword';
@@ -176,7 +176,12 @@ export function buildKeywordIndexMapping(): Record<string, unknown> {
         document_id: { type: 'keyword' },
         section_id: { type: 'keyword' },
         document_type: { type: 'keyword' },
+        // `court` keeps the raw display literal ("Supreme Court") because the
+        // reader and suggestion rows render it verbatim; `court_key` is the
+        // snake_case form filters actually match on. Same split as
+        // gr_no / gr_no_digits, and for the same reason.
         court: { type: 'keyword' },
+        court_key: { type: 'keyword' },
         jurisdiction: { type: 'keyword' },
         language: { type: 'keyword' },
         status: { type: 'keyword' },
@@ -231,6 +236,10 @@ export function buildVectorIndexMapping(
         section_id: { type: 'keyword' },
         document_type: { type: 'keyword' },
         court: { type: 'keyword' },
+        // Present so vectors written from now on are filterable by key. Note
+        // that documents COPIED forward by the rebuild job predate the field —
+        // `searchVector()` therefore matches either form. See its court clause.
+        court_key: { type: 'keyword' },
         source_trust_level: { type: 'keyword' },
         is_official: { type: 'boolean' },
         is_published: { type: 'boolean' },
