@@ -21,11 +21,19 @@ WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/api/node_modules ./apps/api/node_modules
+COPY --from=deps /app/packages/types/node_modules ./packages/types/node_modules
 COPY . .
 
 RUN pnpm --filter @libertasian/api prisma:generate
+
+# Build shared workspace packages the API imports at runtime (dist/ is gitignored
+# and NOT produced by the API build). Must precede the API build.
+RUN pnpm --filter @libertasian/types build
+
 RUN pnpm --filter @libertasian/api build
 RUN pnpm --filter @libertasian/api deploy --legacy --prod /app/deployed
+# Fail the build here rather than at container bootstrap if types/dist is missing
+RUN test -f /app/deployed/node_modules/@libertasian/types/dist/index.js
 # Re-generate Prisma client inside deployed node_modules
 RUN cp -r apps/api/prisma /app/deployed/prisma && \
     cd /app/deployed && npx prisma@6 generate
@@ -43,6 +51,9 @@ COPY --from=builder /app/apps/api/dist ./dist
 COPY --from=builder /app/apps/api/prisma ./prisma
 COPY --from=builder /app/deployed/package.json ./package.json
 COPY --from=builder /app/apps/api/scripts ./scripts
+
+# Prove runtime resolution of the shared package inside the final image
+RUN node -e "require('@libertasian/types')"
 
 # Non-root user
 RUN addgroup -g 1001 -S nodejs && adduser -S nestjs -u 1001
