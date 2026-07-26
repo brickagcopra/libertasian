@@ -1,10 +1,21 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-07-26 (search Phases A–C3 all merged: #306 #307 #308 #310 #311 #312; C3 squashed to `025e538`, deployed and live-verified on prod. Remaining search work is a client UI for `scope` and C4 fusion behind the reranker — but see the reachability note first: only 13,017 of 99,994 derivatives match any visibility branch.)
+> Last updated: 2026-07-26 (search Phases A–C3 all merged: #306 #307 #308 #310 #311 #312; C3 squashed to `025e538`, deployed and live-verified on prod. Remaining search work is a client UI for `scope` and C4 fusion behind the reranker — but see the reachability note first: only 13,017 of 99,994 derivatives match any visibility branch. Also new: #313 fixed the confidence scorer but re-scoring the existing corpus is an unmade decision — see the top section.)
 
 Verification rules used for this prune: every PR reference checked with `gh pr view <n> --json state,mergedAt`; every branch reference checked against `git branch -r --no-merged origin/main` after `git fetch --prune`. Items that could not be verified were MOVED to "Needs verification", not deleted.
 
 ---
+
+## Derivative confidence re-score (decision for brick — blocks the approval drain)
+
+#313 (`3a648dc`) fixed the scorer, but **it changed no existing row**. Every artifact written before the merge still carries its old capped score, so `POST /admin/derivatives/bulk-approve-by-confidence` keeps returning 0 candidates for flashcard / essay_prompt / doctrine_extract until the corpus is re-scored. The drain stays blocked behind this decision, not behind more engineering.
+
+- [ ] **Run the dry run first:** `uv run python -m src.scripts.rescore_derivatives` from `services/worker-service/`. It reads nothing but `derivative_artifacts` + sections and writes nothing. Optionally narrow with `--type flashcard --limit 500`.
+- [ ] **Read the distribution table before deciding.** It prints per type: n, before min/median/max, after min/median/max, newly ≥ 0.70, plus rows that would **drop** below the bar, rows unchanged, and rows skipped for a missing source or no text sections. The drop column is the one to check — nothing in the fix should lower a score, so a non-zero count there means stop.
+- [ ] **The before/after table in PR #313 is modeled on test fixtures (a synthetic 40-section source), NOT the corpus.** It shows the formula's behaviour, not what will happen to 54,323 real rows. The dry run is the only real measurement.
+- [ ] **Writing requires BOTH guards:** `RESCORE_ALLOW_WRITE=1 uv run python -m src.scripts.rescore_derivatives --apply`. `--apply` on its own exits 2. Two guards because this rewrites the column an editorial approval gate reads across the whole corpus.
+- [ ] Known caveat: scores are recomputed from the **persisted** `content_json`, which already had non-UUID and unknown section IDs stripped at write time, so a recomputed score can differ slightly from what a re-generation would produce. The script measures the formula change, not generation quality.
+- [ ] After a real re-score, re-run the sweep at 0.70 and confirm the per-type candidate counts are non-zero — that is the check that the drain is actually unblocked.
 
 ## Owner / billing (genuinely open)
 

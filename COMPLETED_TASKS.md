@@ -10700,3 +10700,60 @@ Exercised against `POST /api/v1/search` with a minted RS256 JWT — the real gat
 9. [x] **The deploy did NOT make ~100k derivatives searchable, and earlier notes here implying that were wrong.** Only the **13,017** `public_editorial` rows match a visibility branch. The other **86,977** are `visibility='private'` with `organization_id` NULL, so they match **neither** branch of `buildDerivativeVisibilityFilter` — not the public branch (wrong visibility), not the org branch (no owning org). They are indexed and invisible to every caller. That is the filter working as designed; the ~87,000-row figure from the Phase C scoping was always the set that must reach nobody.
 10. [x] Whether those 86,977 rows are a generation-pipeline gap or intended drafts is an **open product question for brick**, logged in PENDING_TASKS.md — a product decision, not an engineering task. If the generator should have marked them `public_editorial` on approval, real search recall is ~13% of what anyone assumes; if they are deliberate drafts, only the expectation needs correcting.
 11. [x] Also logged for Phase D: `limit` is applied **per corpus** in `federatedSearch`, so `scope=all&limit=10` returns **20** items. Intentional — two concatenated BM25 lists cannot share one limit without one corpus starving the other — but a client that slices to `limit` would drop the entire derivative section.
+
+---
+
+## Session 209 — Derivative confidence ceiling: coverage denominator fixed (2026-07-26)
+
+**Merged:** #313 → main (squash `3a648dc`), `fix/derivative-confidence-ceiling`. All 15 checks green. Branch deleted.
+
+`POST /admin/derivatives/bulk-approve-by-confidence` returned **0 candidates** for flashcard / essay_prompt / doctrine_extract at any threshold ≥ 0.70. The sweep's `WHERE` clause (`derivatives-review.service.ts:185`) was correct; the scorer was wrong.
+
+### Read this before touching confidence scoring again: there are two scorers and only one of them counts
+
+1. [x] **`services/worker-service/src/scoring.py` is the scorer that persists.** Every one of the five derivative types routes through it — `flashcard_generation_tasks.py:248`, `essay`, `mcq`, `doctrine`, `outline` — and its result becomes `derivative_artifacts.confidenceScore`, which is the column the bulk-approve sweep filters on.
+2. [x] **`services/rag-service/src/flashcards/service.py:139` is dead code for persistence, and it looks exactly like the culprit.** It is reached only from `study.service.ts:408 generateAiFlashcards`, which returns `confidence_score` in the HTTP response body; `flashcard.create` has **no confidence column**, so the value is never written to any table and gates nothing. Its `source_ref_factor` genuinely is ~0 (it reads `source_document_id` off the raw LLM object, which the model almost never emits) and its ceiling genuinely is `0.4 + 0.25 = 0.65` — which is why it reads as the obvious cause and why the next person will find it first. It is not the cause. **Check which scorer writes the column before believing a confidence bug.**
+3. [x] Also mapped while auditing: `digest` rows score through `rag-service/src/digests/service.py:258` (`field_coverage*0.4 + citation*0.3 + section_factor*0.3`), all three terms reachable, max 1.0 — which is why digests were never reported as stuck.
+
+### The actual defect
+
+4. [x] **`source_passage_coverage` divided distinct valid cited section IDs by EVERY section of the source document** (`flashcard_generation_tasks.py:250` passes `source_sections=sections_with_text`, the full set). An artifact smaller than its source cannot move that term: a 5-card deck cites a handful of sections of a 40-section decision. With citation mapping and OCR already perfect the score collapses to `0.5 + coverage*0.5`, so clearing 0.70 required citing **40% of every section in the document**, regardless of quality.
+5. [x] **Prod maxima matched that identity exactly**, which is what settled the diagnosis: flashcard 0.692 = `0.5 + 0.384*0.5`, essay_prompt 0.688, doctrine_extract 0.667, subject_outline 0.655. All four are *above* the rag scorer's 0.65 hard cap and carry 4-dp precision where that scorer rounds to 2 — it could not have produced them.
+6. [x] **Independently confirmed on prod by brick:** 54,323 `derivative_artifacts` rows carry >2-dp confidence values, with 1,868 rows at the exact ratios `0.6923 = 0.5 + 0.5·(5/13)`, `0.6875 = 3/8`, `0.6667 = 1/3` — arithmetic the rag scorer's `round(..., 2)` and 0.65 cap provably cannot produce.
+7. [x] **`mcq_question` was capped too.** It cleared 0.70 only because a 20–30 question set happens to cite ~40% of a document's sections by accident, not because the formula worked for it. It was one small-document generation away from joining the others.
+
+### The fix
+
+8. [x] Denominator is now what the artifact could plausibly cite: `citable = min(source_section_count, item_count * sections_per_item)`, `coverage = min(distinct_valid_cited / citable, 1.0)`. `sections_per_item` is **2** for the list-valued shapes (the prompts require "at least one source section ID" per item and the shapes carry a list) and **1** for `doctrine_extract`, whose doctrines carry a single `source_section_id` each.
+9. [x] **Unchanged deliberately:** the CLAUDE.md weights `0.5 / 0.3 / 0.2`, the 0.70 threshold, every DTO default, and the OCR term. The bar was fine; the scorer was wrong.
+10. [x] **The 34 existing scoring tests pass unchanged** — the new denominator only differs when `item_count * sections_per_item < source_section_count`, which is exactly the prod case and nothing else.
+
+### Per-type deltas (40-section source, pinned in `tests/test_confidence_ceiling.py`)
+
+| Type | Items | Distinct valid cites | Before | After | Clears 0.70 |
+|---|---|---|---|---|---|
+| `flashcard` | 5 cards | 5 | 0.5625 | **0.750** | yes |
+| `essay_prompt` | 6 outline sections | 6 | 0.5750 | **0.750** | yes |
+| `mcq_question` | 10 questions | 10 | 0.6250 | **0.750** | yes |
+| `doctrine_extract` | 4 doctrines | 4 | 0.5500 | **1.000** | yes |
+| `subject_outline` | 6 nodes | 6 | 0.5750 | **0.750** | yes |
+| `flashcard`, poorly grounded | 5 cards | 1 | 0.2725 | 0.310 | no — correctly |
+| `mcq_question`, hallucinated cites | 10 questions | 0 | 0.200 | 0.200 | no — correctly |
+| `flashcard`, well grounded, OCR 0.3 | 5 cards | 5 | — | 0.610 | no — OCR still gates |
+
+Each test states what the old denominator produced, so reintroducing it fails there instead of silently emptying the approval queue again.
+
+### Study-path scorer, fixed in the same PR
+
+11. [x] Provenance now resolves against the **retrieved passages** rather than the LLM's say-so: a declared section ID that was actually retrieved wins and brings its document with it → a declared document ID that was actually retrieved → the sole document when the entire retrieval came from one. A hallucinated ID across a multi-document retrieval resolves to nothing, so a made-up citation cannot buy confidence and **no invalid FK reaches the database**. The resolved value is written onto the card, so the persisted `legalDocumentId` stops being null.
+12. [x] Named consequence: a single-document deck now earns the full provenance term regardless of which passage each card drew on. Honest for that path — the deck's provenance *is* that document — and per-card grounding is graded on the editorial path by `scoring.py`, which resolves section IDs individually.
+
+### Re-score script — written, deliberately NOT run
+
+13. [x] `services/worker-service/src/scripts/rescore_derivatives.py`: dry run by default; writing requires **both** `--apply` and `RESCORE_ALLOW_WRITE=1` (`--apply` alone exits 2), because it rewrites the column an editorial approval gate reads across the whole corpus. Prints per type: n, before min/median/max, after min/median/max, newly ≥ threshold, rows that would **drop** below the bar, rows unchanged, rows skipped. Keyset pagination by `id`, `deleted_at IS NULL` to match the sweep and the rebuild job, per-document section cache. `--threshold` is display-only.
+14. [x] Caveat in the module docstring: the score is recomputed from the **persisted** `content_json`, which already had non-UUID and unknown section IDs stripped at write time, so a recomputed score can differ slightly from what a re-generation would produce. It measures the formula change, not generation quality.
+
+### Verification
+
+15. [x] `pnpm --filter api test` 182 suites / 3,863 tests · rag-service 592 passed (+9 from this branch) · worker-service 732 passed · `ruff` + `mypy` clean on every file touched.
+16. [x] Pre-existing on `main` and unrelated, each confirmed by re-running against a stash: 5 failures in `test_chain_post_ingestion_per_doc_derivatives.py`, a collection `SyntaxError` in `test_parsers.py`, 40 errors in rag-service `test_routers.py`.
