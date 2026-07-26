@@ -31,8 +31,10 @@ OCR_QUALITY_WEIGHT: float = 0.2
 # flashcard 0.692, essay_prompt 0.688, doctrine_extract 0.667 and
 # subject_outline 0.655 — every one of them exactly 0.5 + coverage * 0.5, i.e.
 # citation mapping and OCR were already perfect and coverage alone held them
-# under the bar. mcq_question cleared it only because a 20-30 question set
-# cites enough distinct sections to reach 40% of a document.
+# under the bar. (mcq_question is scored differently in practice: one artifact
+# is written per question but the score is computed once over the whole
+# generated set and copied onto every row, so an mcq row's stored score is a
+# property of its batch, not of its own content.)
 #
 # The denominator is now what the artifact could plausibly cite: its own item
 # count times the sections an item is expected to cite. The generation prompts
@@ -46,6 +48,21 @@ OCR_QUALITY_WEIGHT: float = 0.2
 SECTIONS_PER_ITEM: int = 2
 SECTIONS_PER_ITEM_SINGLE_REF: int = 1
 
+# Coverage denominators.
+#
+# CITABLE is the live one. DOCUMENT is the pre-#313 denominator — every section
+# of the source document — and exists for exactly one reason: the re-score
+# script must be able to reproduce a stored score before it is allowed to
+# overwrite it, and stored scores were produced by DOCUMENT. Reproducing the
+# old value through the SAME extraction code is what proves the script reads a
+# row correctly; a re-score that cannot reproduce the current value has no
+# business writing a new one.
+#
+# Never score a new artifact with DOCUMENT. It is unreachable above 0.70 for
+# any artifact smaller than its source, which is the bug #313 fixed.
+COVERAGE_MODE_CITABLE = "citable"
+COVERAGE_MODE_DOCUMENT = "document"
+
 
 def compute_source_passage_coverage(
     *,
@@ -53,6 +70,7 @@ def compute_source_passage_coverage(
     item_count: int,
     source_section_count: int,
     sections_per_item: int = SECTIONS_PER_ITEM,
+    coverage_mode: str = COVERAGE_MODE_CITABLE,
 ) -> float:
     """Fraction of the sections this artifact could cite that it did cite.
 
@@ -73,7 +91,14 @@ def compute_source_passage_coverage(
         Ratio in [0, 1]. Zero when nothing was generated, nothing was cited,
         or the source had no sections.
     """
-    if cited_section_count <= 0 or item_count <= 0 or source_section_count <= 0:
+    if cited_section_count <= 0 or source_section_count <= 0:
+        return 0.0
+
+    if coverage_mode == COVERAGE_MODE_DOCUMENT:
+        # Reproduction only — see COVERAGE_MODE_DOCUMENT.
+        return min(cited_section_count / source_section_count, 1.0)
+
+    if item_count <= 0:
         return 0.0
 
     citable = min(source_section_count, item_count * max(sections_per_item, 1))
@@ -124,6 +149,7 @@ def compute_essay_confidence_score(
     content: dict[str, Any],
     source_sections: list[dict[str, Any]],
     ocr_quality: float = 1.0,
+    coverage_mode: str = COVERAGE_MODE_CITABLE,
 ) -> float:
     """Compute confidence score for an essay prompt derivative.
 
@@ -164,6 +190,7 @@ def compute_essay_confidence_score(
         cited_section_count=len(cited_section_ids),
         item_count=len(outline_sections),
         source_section_count=source_section_count,
+        coverage_mode=coverage_mode,
     )
 
     # Citation mapping completeness ratio
@@ -192,6 +219,7 @@ def compute_mcq_confidence_score(
     content: dict[str, Any],
     source_sections: list[dict[str, Any]],
     ocr_quality: float = 1.0,
+    coverage_mode: str = COVERAGE_MODE_CITABLE,
 ) -> float:
     """Compute confidence score for an MCQ derivative.
 
@@ -232,6 +260,7 @@ def compute_mcq_confidence_score(
         cited_section_count=len(cited_section_ids),
         item_count=len(questions),
         source_section_count=source_section_count,
+        coverage_mode=coverage_mode,
     )
 
     question_count = len(questions)
@@ -261,6 +290,7 @@ def compute_doctrine_confidence_score(
     content: dict[str, Any],
     source_sections: list[dict[str, Any]],
     ocr_quality: float = 1.0,
+    coverage_mode: str = COVERAGE_MODE_CITABLE,
 ) -> float:
     """Compute confidence score for a doctrine-extract derivative.
 
@@ -304,6 +334,7 @@ def compute_doctrine_confidence_score(
         item_count=len(doctrines),
         source_section_count=source_section_count,
         sections_per_item=SECTIONS_PER_ITEM_SINGLE_REF,
+        coverage_mode=coverage_mode,
     )
 
     doctrine_count = len(doctrines)
@@ -332,6 +363,7 @@ def compute_flashcard_confidence_score(
     content: dict[str, Any],
     source_sections: list[dict[str, Any]],
     ocr_quality: float = 1.0,
+    coverage_mode: str = COVERAGE_MODE_CITABLE,
 ) -> float:
     """Compute confidence score for a flashcard derivative.
 
@@ -372,6 +404,7 @@ def compute_flashcard_confidence_score(
         cited_section_count=len(cited_section_ids),
         item_count=len(cards),
         source_section_count=source_section_count,
+        coverage_mode=coverage_mode,
     )
 
     card_count = len(cards)
@@ -401,6 +434,7 @@ def compute_outline_confidence_score(
     content: dict[str, Any],
     source_sections: list[dict[str, Any]],
     ocr_quality: float = 1.0,
+    coverage_mode: str = COVERAGE_MODE_CITABLE,
 ) -> float:
     """Compute confidence score for a subject-outline derivative.
 
@@ -456,6 +490,7 @@ def compute_outline_confidence_score(
         cited_section_count=len(cited_section_ids),
         item_count=total_sections,
         source_section_count=source_section_count,
+        coverage_mode=coverage_mode,
     )
 
     if total_sections > 0:
