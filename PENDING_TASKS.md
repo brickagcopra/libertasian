@@ -6,16 +6,21 @@ Verification rules used for this prune: every PR reference checked with `gh pr v
 
 ---
 
-## Derivative confidence re-score (decision for brick — blocks the approval drain)
+## ⛔ Derivative confidence re-score — DO NOT RUN `--apply`
 
-#313 (`3a648dc`) fixed the scorer, but **it changed no existing row**. Every artifact written before the merge still carries its old capped score, so `POST /admin/derivatives/bulk-approve-by-confidence` keeps returning 0 candidates for flashcard / essay_prompt / doctrine_extract until the corpus is re-scored. The drain stays blocked behind this decision, not behind more engineering.
+**The dry run has been executed (2026-07-26) and its output is wrong.** All **70,488** `mcq_question` rows recompute to exactly **0.200**, with **46,081** reported as DROPPED below the bar. Those drops are not real: the script's extraction cannot read an MCQ row.
 
-- [ ] **Run the dry run first:** `uv run python -m src.scripts.rescore_derivatives` from `services/worker-service/`. It reads nothing but `derivative_artifacts` + sections and writes nothing. Optionally narrow with `--type flashcard --limit 500`.
-- [ ] **Read the distribution table before deciding.** It prints per type: n, before min/median/max, after min/median/max, newly ≥ 0.70, plus rows that would **drop** below the bar, rows unchanged, and rows skipped for a missing source or no text sections. The drop column is the one to check — nothing in the fix should lower a score, so a non-zero count there means stop.
-- [ ] **The before/after table in PR #313 is modeled on test fixtures (a synthetic 40-section source), NOT the corpus.** It shows the formula's behaviour, not what will happen to 54,323 real rows. The dry run is the only real measurement.
-- [ ] **Writing requires BOTH guards:** `RESCORE_ALLOW_WRITE=1 uv run python -m src.scripts.rescore_derivatives --apply`. `--apply` on its own exits 2. Two guards because this rewrites the column an editorial approval gate reads across the whole corpus.
-- [ ] Known caveat: scores are recomputed from the **persisted** `content_json`, which already had non-UUID and unknown section IDs stripped at write time, so a recomputed score can differ slightly from what a re-generation would produce. The script measures the formula change, not generation quality.
-- [ ] After a real re-score, re-run the sweep at 0.70 and confirm the per-type candidate counts are non-zero — that is the check that the drain is actually unblocked.
+**Cause.** An `mcq_question` row's `content_json` is a **single question** (`{questionStem, options[], …}`), not a list — `writeMcqBatch` (`internal-derivatives.service.ts:328`) creates one artifact per question and stamps each with the one batch-level `confidenceScore`. `compute_mcq_confidence_score` reads `content["questions"]`, finds nothing, and floors coverage at 0. Running `--apply` in this state would overwrite 46,081 valid scores with 0.200 and empty the approval queue for the one type that was working.
+
+Two types are not row-level reproducible at all:
+- **`mcq_question`** — the stored score is a property of the generation batch, not of the row. It cannot be recomputed from row content in principle, only re-derived by re-scoring whole batches.
+- **`subject_outline`** — scored at generation time against the **flattened sections of MULTIPLE source documents** (`outline_generation_tasks.py:283`), while the row records only the primary `source_document_id`. The denominator cannot be reconstructed from the row.
+
+- [ ] **Blocked on PR: per-type shape audit + a reproduction gate.** Acceptance test is that the script's extraction **reproduces the stored score** for a sample of live rows per type; `--apply` gets gated behind that check passing for every selected type, not just the env var. A re-score that cannot reproduce the current value has no business writing a new one.
+- [ ] **Open question — how did 43,703 MCQ rows get ≥ 0.70?** The mechanism is known (batch score copied to every row in the batch); whether those batch-level scores were well-founded is not established. This is a corpus-integrity question, not a script bug.
+- [ ] Once the gate lands: re-run the dry run, read the distribution **and the reproduction report**, then decide on `--apply` (still needs `RESCORE_ALLOW_WRITE=1`).
+- [ ] Standing caveat: scores are recomputed from the **persisted** `content_json`, which already had non-UUID and unknown section IDs stripped at write time, so a recomputed score can differ from what a re-generation would produce.
+- [ ] After any real re-score, re-run the sweep at 0.70 and confirm per-type candidate counts are non-zero — that is the check that the drain is actually unblocked.
 
 ## Owner / billing (genuinely open)
 
