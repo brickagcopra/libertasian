@@ -324,9 +324,21 @@ def print_report(projections: list[Projection]) -> None:
             print(f"  {dtype}: {reason}")
 
     print()
-    print("Read the 'crossing down' column first: the taper should not be")
-    print("lowering scores. Then check whether 'crossing up' is a plausible")
-    print("number of newly approvable artifacts rather than a landslide.")
+    print("How to read this:")
+    print()
+    print("  'crossing down' is EXPECTED to be non-zero, and is not by itself")
+    print("  a reason to stop. The taper moves weight off coverage and onto")
+    print("  citation mapping, so an artifact that covered every section but")
+    print("  grounded only some of its items loses ground — deliberately, since")
+    print("  that is the artifact whose old score came from breadth rather than")
+    print("  grounding. Example: coverage 1.0 with citation 0.4 scores 0.82")
+    print("  under the old weights and 0.694 under the taper on a 3-section")
+    print("  source, so it drops below the bar.")
+    print()
+    print("  What to judge instead: whether the artifacts crossing down are the")
+    print("  weakly-grounded ones (intended) or well-grounded ones (a bug), and")
+    print("  whether 'crossing up' is a plausible number of newly approvable")
+    print("  artifacts rather than a landslide.")
 
 
 def main_with_args(argv: list[str] | None = None) -> int:

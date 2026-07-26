@@ -166,6 +166,29 @@ class TestWhatTheBarNowMeasures:
         assert clean >= AUTO_APPROVAL_THRESHOLD
         assert scanned_badly < AUTO_APPROVAL_THRESHOLD
 
+    def test_broad_but_shallow_artifacts_lose_ground_deliberately(self) -> None:
+        """The taper LOWERS some scores, and this is the intended direction.
+
+        An artifact that cited every section but grounded only some of its
+        items had a score built on breadth. Moving weight from coverage to
+        citation mapping is precisely a decision to stop rewarding that, so
+        the projection script expects a non-zero 'crossing down' count.
+        """
+        old = compute_derivative_confidence_score(
+            source_passage_coverage=1.0,
+            citation_mapping_completeness=0.4,
+            ocr_quality=1.0,
+        )
+        new = compute_derivative_confidence_score(
+            source_passage_coverage=1.0,
+            citation_mapping_completeness=0.4,
+            ocr_quality=1.0,
+            source_section_count=3,
+        )
+        assert old >= AUTO_APPROVAL_THRESHOLD
+        assert new < AUTO_APPROVAL_THRESHOLD
+        assert new < old
+
     def test_a_fully_grounded_deck_survives_poor_ocr(self) -> None:
         """Deliberate, and true before this change too — do not "fix" it.
 
