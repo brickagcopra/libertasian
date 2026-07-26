@@ -10720,7 +10720,7 @@ Exercised against `POST /api/v1/search` with a minted RS256 JWT — the real gat
 4. [x] **`source_passage_coverage` divided distinct valid cited section IDs by EVERY section of the source document** (`flashcard_generation_tasks.py:250` passes `source_sections=sections_with_text`, the full set). An artifact smaller than its source cannot move that term: a 5-card deck cites a handful of sections of a 40-section decision. With citation mapping and OCR already perfect the score collapses to `0.5 + coverage*0.5`, so clearing 0.70 required citing **40% of every section in the document**, regardless of quality.
 5. [x] **Prod maxima matched that identity exactly**, which is what settled the diagnosis: flashcard 0.692 = `0.5 + 0.384*0.5`, essay_prompt 0.688, doctrine_extract 0.667, subject_outline 0.655. All four are *above* the rag scorer's 0.65 hard cap and carry 4-dp precision where that scorer rounds to 2 — it could not have produced them.
 6. [x] **Independently confirmed on prod by brick:** 54,323 `derivative_artifacts` rows carry >2-dp confidence values, with 1,868 rows at the exact ratios `0.6923 = 0.5 + 0.5·(5/13)`, `0.6875 = 3/8`, `0.6667 = 1/3` — arithmetic the rag scorer's `round(..., 2)` and 0.65 cap provably cannot produce.
-7. [x] ~~**`mcq_question` was capped too.** It cleared 0.70 only because a 20–30 question set happens to cite ~40% of a document's sections by accident.~~ **RETRACTED 2026-07-26 — this was false.** Set size explains nothing about an `mcq_question` row, because a row is **not** a set: `writeMcqBatch` (`internal-derivatives.service.ts:328`) loops `for (const q of dto.questions)` and creates **one artifact per question**, each with `contentJson = { questionStem, options[] }` and each stamped with `dto.confidenceScore` — the single batch-level score computed once over the whole LLM output. So a row's stored score is a property of the generation batch it came from, not of the row's own content, and nothing about that row's citations produced its number. **How the 43,703 MCQ rows at ≥ 0.70 actually got their scores is an open question** — the batch-level computation is the mechanism, but whether those batch scores were themselves well-founded has not been established. See Session 210.
+7. [x] ~~**`mcq_question` was capped too.** It cleared 0.70 only because a 20–30 question set happens to cite ~40% of a document's sections by accident.~~ **RETRACTED 2026-07-26 — this was false.** Set size explains nothing about an `mcq_question` row, because a row is **not** a set: `writeMcqBatch` (`internal-derivatives.service.ts:328`) loops `for (const q of dto.questions)` and creates **one artifact per question**, each with `contentJson = { questionStem, options[] }` and each stamped with `dto.confidenceScore` — the single batch-level score computed once over the whole LLM output. So a row's stored score is a property of the generation batch it came from, not of the row's own content, and nothing about that row's citations produced its number. **ANSWERED 2026-07-26 — see Session 210.** The batch-copy is confirmed at 100% on prod and the inherited scores are legitimate: the defect is provenance granularity, not a bogus number.
 
 ### The fix
 
@@ -10757,3 +10757,41 @@ Each test states what the old denominator produced, so reintroducing it fails th
 
 15. [x] `pnpm --filter api test` 182 suites / 3,863 tests · rag-service 592 passed (+9 from this branch) · worker-service 732 passed · `ruff` + `mypy` clean on every file touched.
 16. [x] Pre-existing on `main` and unrelated, each confirmed by re-running against a stash: 5 failures in `test_chain_post_ingestion_per_doc_derivatives.py`, a collection `SyntaxError` in `test_parsers.py`, 40 errors in rag-service `test_routers.py`.
+
+---
+
+## Session 210 — Re-score dry run: two unreadable types, and the MCQ question answered (2026-07-26)
+
+**Merged:** #315 → main (squash `f2cafc4`), `fix/rescore-shape-audit-and-gate`. All 15 checks green. Branch deleted. Preceded by `a6eb6c5` (retraction + halt notice).
+
+### What the dry run found
+
+1. [x] **The full-corpus dry run produced a wrong answer, and it would have been destructive.** All **70,488** `mcq_question` rows recomputed to exactly **0.200**, with **46,081** reported as dropping below the auto-approval bar. Every one of those drops was fabricated by a wrong extraction. `--apply` in that state would have overwritten 46,081 valid scores with 0.200 and emptied the approval queue for the one type that was working.
+2. [x] **Cause: a row's `content_json` is not what the generation-time scorer consumed.** `writeMcqBatch` (`internal-derivatives.service.ts:328`) loops `for (const q of dto.questions)` and creates **one artifact per question**, each holding `{questionStem, options[]}` — there is no `questions` list on a row. `compute_mcq_confidence_score` reads `content["questions"]`, finds nothing, and floors coverage: `0·0.5 + 0·0.3 + 1.0·0.2 = 0.200`.
+
+### The open question from Session 209, now closed
+
+3. [x] **How the 43,703 MCQ rows at ≥ 0.70 got their scores — answered, verified on prod.** All **14,099** MCQ source documents carry **exactly one distinct `confidence_score`** across their ~5 rows: `max_distinct = 1` over 70,488 rows, no exceptions. The batch-copy in `writeMcqBatch` is confirmed at **100%**.
+4. [x] **Those scores are legitimate.** Each batch was scored against its source document's sections exactly as the formula intends, then the result was copied onto every artifact in the batch. **The defect is provenance granularity — one score describing five rows — not a bogus number.** Nothing about the MCQ corpus needs correcting on these grounds; what is imprecise is the claim each row makes about itself.
+5. [x] This retires the corpus-integrity question raised in Session 209 item 7. The retraction there stands (a row is not a set, so set size never explained a row's score), but the follow-on worry that the numbers might be unfounded is resolved: they are not.
+
+### The per-type audit (now in the script's module docstring)
+
+6. [x] **Re-scorable** — the row holds the whole generated object, scored against one document: `flashcard` (`{cards:[…]}`), `essay_prompt` (whole LLM output incl. `modelAnswer.outlineSections[].citedSectionIds`), `doctrine_extract` (whole RAG output incl. `doctrines[].source_section_id`, snake_case).
+7. [x] **Not re-scorable — `mcq_question`:** the stored score is a property of its batch, not the row. No tolerance setting makes a batch number into a row number.
+8. [x] **Not re-scorable — `subject_outline`:** found during this audit rather than from the dry run. It is scored at generation against the flattened sections of **multiple** source documents (`outline_generation_tasks.py:283`) while the row records only the primary `source_document_id`, so the denominator cannot be reconstructed. It would have mis-scored **silently** against a partial denominator rather than crashing — the more dangerous of the two failure modes.
+9. [x] Both are **refused outright**, not skipped quietly: `--type mcq_question` exits 4 and touches no row, and both are named in every report so the exclusion is visible rather than inferred from a missing table row.
+
+### The gate
+
+10. [x] `--apply` now requires **three** conditions: the flag, `RESCORE_ALLOW_WRITE=1`, and **a passing reproduction check for every selected type**. The check recomputes a sample of live rows under the pre-#313 denominator through the *same* extraction that would produce the new score, and compares against what is stored. A type that cannot reproduce the value already in the column is being read wrongly, whatever its new number looks like. A type with **no sampled rows does not pass** — it has proved nothing. Dry runs still report when reproduction fails; only writing is gated.
+11. [x] `scoring.py` gained only a `coverage_mode` switch (default unchanged) so the check drives the old denominator through the **live** extraction rather than a reimplementation that could drift from it. **All 48 existing scoring tests passed untouched**, which is the evidence that no score moved.
+12. [x] The incident is replayed as a test: re-enable `mcq_question`, feed the real persisted shape, and the gate refuses with exit 3 and `recomputed=0.2000` instead of writing.
+
+### The re-score itself: not worth running
+
+13. [x] **There is no corpus operation left to perform.** With the two unreadable types refused, the dry run moves **7 rows out of 29,471** — 3 `flashcard`, 2 `essay_prompt`, 2 `doctrine_extract`. #315 is worth having as a **safety rail on a script that should sit unused**, not as the last step before a run. See PENDING_TASKS.md.
+
+### What this exposed instead
+
+14. [x] **The real finding is about the corpus, not the scorer.** Generations cite ~**1 of ~3.4** available sections, and on a 3-section source with `0.5 + coverage*0.5` the only reachable scores are **0.5 / 0.667 / 0.833 / 1.0**. So the 0.70 bar is operationally "**cite 2 of 3 sections**" — a coarse, near-binary gate rather than the graded quality signal it reads as. That is a product decision about the editorial standard, not a bug, and it is the open item that replaces the re-score.

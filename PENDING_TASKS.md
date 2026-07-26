@@ -1,26 +1,26 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-07-26 (search Phases A–C3 all merged: #306 #307 #308 #310 #311 #312; C3 squashed to `025e538`, deployed and live-verified on prod. Remaining search work is a client UI for `scope` and C4 fusion behind the reranker — but see the reachability note first: only 13,017 of 99,994 derivatives match any visibility branch. Also new: #313 fixed the confidence scorer but re-scoring the existing corpus is an unmade decision — see the top section.)
+> Last updated: 2026-07-26 (search Phases A–C3 all merged: #306 #307 #308 #310 #311 #312; C3 squashed to `025e538`, deployed and live-verified on prod. Remaining search work is a client UI for `scope` and C4 fusion behind the reranker — but see the reachability note first: only 13,017 of 99,994 derivatives match any visibility branch. Also new: #313 fixed the confidence scorer, #315 gated the re-score script, and the re-score itself is CLOSED as not worth running — 7 rows of 29,471 move. What replaces it is a product decision about what the 0.70 editorial bar should mean; see the top section.)
 
 Verification rules used for this prune: every PR reference checked with `gh pr view <n> --json state,mergedAt`; every branch reference checked against `git branch -r --no-merged origin/main` after `git fetch --prune`. Items that could not be verified were MOVED to "Needs verification", not deleted.
 
 ---
 
-## ⛔ Derivative confidence re-score — DO NOT RUN `--apply`
+## Editorial standard for derivative confidence (product decision for brick)
 
-**The dry run has been executed (2026-07-26) and its output is wrong.** All **70,488** `mcq_question` rows recompute to exactly **0.200**, with **46,081** reported as DROPPED below the bar. Those drops are not real: the script's extraction cannot read an MCQ row.
+The re-score that led here is **closed — not worth running** (below). What it exposed is a corpus question that outlives it.
 
-**Cause.** An `mcq_question` row's `content_json` is a **single question** (`{questionStem, options[], …}`), not a list — `writeMcqBatch` (`internal-derivatives.service.ts:328`) creates one artifact per question and stamps each with the one batch-level `confidenceScore`. `compute_mcq_confidence_score` reads `content["questions"]`, finds nothing, and floors coverage at 0. Running `--apply` in this state would overwrite 46,081 valid scores with 0.200 and empty the approval queue for the one type that was working.
+**Generations cite ~1 of ~3.4 available sections.** On a 3-section source with `0.5 + coverage*0.5`, the only reachable scores are **0.5 / 0.667 / 0.833 / 1.0**. So the 0.70 bar is operationally "**cite 2 of 3 sections**" — a coarse, near-binary gate wearing the clothes of a graded 0–1 quality signal. An editor reading "0.833" is reading "cited 2 of 3", not a confidence estimate.
 
-Two types are not row-level reproducible at all:
-- **`mcq_question`** — the stored score is a property of the generation batch, not of the row. It cannot be recomputed from row content in principle, only re-derived by re-scoring whole batches.
-- **`subject_outline`** — scored at generation time against the **flattened sections of MULTIPLE source documents** (`outline_generation_tasks.py:283`), while the row records only the primary `source_document_id`. The denominator cannot be reconstructed from the row.
+- [ ] **Decide what the bar is supposed to mean** on sources this small. Options worth weighing: keep 0.70 and accept it means "cite 2 of 3"; raise the citation requirement in the generation prompts so artifacts ground themselves more densely; score against something other than section coverage on short sources; or set the bar per source size. This is an editorial-standard decision, not a bug — the formula is doing what it says.
+- [ ] Related, same root: **`mcq_question` provenance is batch-granular.** One score describes ~5 rows (confirmed 100% on prod: all 14,099 MCQ source documents have `max_distinct = 1` across 70,488 rows). The numbers are legitimate — each batch was scored against its source document exactly as intended — but a row's score is not a statement about that row. Worth deciding whether per-question scoring is wanted before the MCQ corpus grows further.
 
-- [ ] **Blocked on PR: per-type shape audit + a reproduction gate.** Acceptance test is that the script's extraction **reproduces the stored score** for a sample of live rows per type; `--apply` gets gated behind that check passing for every selected type, not just the env var. A re-score that cannot reproduce the current value has no business writing a new one.
-- [ ] **Open question — how did 43,703 MCQ rows get ≥ 0.70?** The mechanism is known (batch score copied to every row in the batch); whether those batch-level scores were well-founded is not established. This is a corpus-integrity question, not a script bug.
-- [ ] Once the gate lands: re-run the dry run, read the distribution **and the reproduction report**, then decide on `--apply` (still needs `RESCORE_ALLOW_WRITE=1`).
-- [ ] Standing caveat: scores are recomputed from the **persisted** `content_json`, which already had non-UUID and unknown section IDs stripped at write time, so a recomputed score can differ from what a re-generation would produce.
-- [ ] After any real re-score, re-run the sweep at 0.70 and confirm per-type candidate counts are non-zero — that is the check that the drain is actually unblocked.
+## Derivative confidence re-score — CLOSED, do not run
+
+- [x] **Not worth running, and there is no corpus operation left to perform.** With `mcq_question` and `subject_outline` refused outright (#315 — neither is row-level reproducible), the dry run moves **7 rows out of 29,471**: 3 `flashcard`, 2 `essay_prompt`, 2 `doctrine_extract`.
+- [x] #313 fixed the scorer for everything generated **from now on**, which was the actual problem. The existing corpus barely moves under it.
+- [x] **#315 is a safety rail on a script that should sit unused**, not the last step before a run: `--apply` needs the flag, `RESCORE_ALLOW_WRITE=1`, and a passing reproduction check per type. If anyone reaches for this script later, those gates are why it will refuse rather than repeat the 46,081-row near-miss.
+- [x] The MCQ open question from Session 209 is answered and closed — see COMPLETED_TASKS.md Session 210.
 
 ## Owner / billing (genuinely open)
 
