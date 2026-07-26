@@ -1,5 +1,142 @@
 // Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
 
+exports[`derivatives index mapping matches the mapping snapshot 1`] = `
+{
+  "mappings": {
+    "dynamic": "strict",
+    "properties": {
+      "audience": {
+        "type": "keyword",
+      },
+      "body_text": {
+        "analyzer": "legal_analyzer",
+        "search_analyzer": "legal_search_analyzer",
+        "type": "text",
+      },
+      "confidence_score": {
+        "type": "float",
+      },
+      "created_at": {
+        "type": "date",
+      },
+      "derivative_id": {
+        "type": "keyword",
+      },
+      "derivative_type": {
+        "type": "keyword",
+      },
+      "is_gated": {
+        "type": "boolean",
+      },
+      "is_published": {
+        "type": "boolean",
+      },
+      "language": {
+        "type": "keyword",
+      },
+      "organization_id": {
+        "type": "keyword",
+      },
+      "published_at": {
+        "type": "date",
+      },
+      "source_document_id": {
+        "type": "keyword",
+      },
+      "subject_codes": {
+        "type": "keyword",
+      },
+      "taxonomy_version": {
+        "type": "keyword",
+      },
+      "title": {
+        "analyzer": "legal_analyzer",
+        "fields": {
+          "keyword": {
+            "ignore_above": 512,
+            "type": "keyword",
+          },
+          "suggest": {
+            "analyzer": "legal_analyzer",
+            "type": "search_as_you_type",
+          },
+        },
+        "search_analyzer": "legal_search_analyzer",
+        "type": "text",
+      },
+      "upgrade_tier": {
+        "type": "keyword",
+      },
+      "visibility": {
+        "type": "keyword",
+      },
+    },
+  },
+  "settings": {
+    "analysis": {
+      "analyzer": {
+        "legal_analyzer": {
+          "filter": [
+            "lowercase",
+            "asciifolding",
+          ],
+          "tokenizer": "standard",
+          "type": "custom",
+        },
+        "legal_search_analyzer": {
+          "filter": [
+            "lowercase",
+            "asciifolding",
+            "legal_synonyms",
+          ],
+          "tokenizer": "standard",
+          "type": "custom",
+        },
+      },
+      "char_filter": {
+        "citation_strip": {
+          "pattern": "[.,\\s]",
+          "replacement": "",
+          "type": "pattern_replace",
+        },
+      },
+      "filter": {
+        "legal_synonyms": {
+          "lenient": true,
+          "synonyms": [
+            "gr, grn => g.r",
+            "sc => supreme court",
+            "ra => republic act",
+            "pd => presidential decree",
+            "eo => executive order",
+            "bp => batas pambansa",
+            "roc => rules of court",
+            "am => administrative matter",
+            "ac => administrative case",
+          ],
+          "type": "synonym_graph",
+        },
+      },
+      "normalizer": {
+        "citation_normalizer": {
+          "char_filter": [
+            "citation_strip",
+          ],
+          "filter": [
+            "lowercase",
+          ],
+          "type": "custom",
+        },
+      },
+    },
+    "index.max_result_window": 10000,
+    "number_of_replicas": 0,
+    "number_of_shards": 1,
+    "refresh_interval": "5s",
+  },
+}
+`;
+
 exports[`keyword index mapping matches the mapping snapshot 1`] = `
 {
   "mappings": {

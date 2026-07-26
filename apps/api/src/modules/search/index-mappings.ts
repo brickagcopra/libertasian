@@ -30,11 +30,13 @@ export const INDEX_VERSION = 'v3';
 export const KEYWORD_INDEX = 'legal_documents_keyword';
 export const VECTOR_INDEX = 'legal_documents_vector';
 export const USER_UPLOADS_INDEX = 'user_uploads_searchable';
+export const DERIVATIVES_INDEX = 'derivative_artifacts';
 
 /** Current physical index backing each alias. */
 export const KEYWORD_INDEX_PHYSICAL = `${KEYWORD_INDEX}_${INDEX_VERSION}`;
 export const VECTOR_INDEX_PHYSICAL = `${VECTOR_INDEX}_${INDEX_VERSION}`;
 export const USER_UPLOADS_INDEX_PHYSICAL = `${USER_UPLOADS_INDEX}_${INDEX_VERSION}`;
+export const DERIVATIVES_INDEX_PHYSICAL = `${DERIVATIVES_INDEX}_${INDEX_VERSION}`;
 
 /** Default embedding dimension — `BAAI/bge-small-en-v1.5` emits 384. */
 export const DEFAULT_EMBEDDING_DIM = 384;
@@ -288,6 +290,79 @@ export function buildUserUploadsIndexMapping(): Record<string, unknown> {
   };
 }
 
+/**
+ * Derivative artifacts (~100k rows) — digests, outlines, flashcards, model
+ * answers and the rest of the 11 shapes. Today these are searchable only via
+ * `title ILIKE '%q%'`; this index makes their bodies reachable.
+ *
+ * **BM25 only — no `knn_vector` field, deliberately.** Embedding ~100k
+ * derivative bodies costs materially more than the recall it buys here:
+ * derivatives are short, heavily titled, and already reachable semantically
+ * through the source document they derive from. Adding a vector field later is
+ * a new physical index plus an alias flip, the same as any other mapping
+ * change — nothing about this decision is one-way.
+ *
+ * **SECURITY — no MCQ answer-key fields.** There is deliberately no mapping for
+ * `isCorrect`, `rationale` or `explanation`. With `dynamic: 'strict'` this is
+ * enforced by OpenSearch and not merely by convention: were the extractor ever
+ * to regress and emit one, the write would fail with
+ * `strict_dynamic_mapping_exception` instead of silently publishing an answer
+ * key. `derivative-extract.ts` is the first line of that defence and this
+ * mapping is the second. An admin-facing rationale search is a SEPARATE index.
+ *
+ * `organization_id` and `visibility` are mapped here but not yet filtered on —
+ * C2 owns the query path. They must exist in the mapping before C2 can filter
+ * on them, and an unmapped field under `dynamic: 'strict'` would reject the
+ * write outright.
+ */
+export function buildDerivativesIndexMapping(): Record<string, unknown> {
+  return {
+    settings: BASE_SETTINGS,
+    mappings: {
+      dynamic: 'strict',
+      properties: {
+        // --- full text ---
+        title: {
+          type: 'text',
+          analyzer: 'legal_analyzer',
+          search_analyzer: 'legal_search_analyzer',
+          fields: {
+            keyword: { type: 'keyword', ignore_above: 512 },
+            suggest: { type: 'search_as_you_type', analyzer: 'legal_analyzer' },
+          },
+        },
+        // The joined output of extractSearchableText(). No `.keyword`
+        // sub-field: it is never filtered or aggregated on, and derivative
+        // bodies are long enough that one would be pure index bloat.
+        body_text: {
+          type: 'text',
+          analyzer: 'legal_analyzer',
+          search_analyzer: 'legal_search_analyzer',
+        },
+
+        // --- identity / filterable metadata ---
+        derivative_id: { type: 'keyword' },
+        derivative_type: { type: 'keyword' },
+        source_document_id: { type: 'keyword' },
+        organization_id: { type: 'keyword' },
+        visibility: { type: 'keyword' },
+        audience: { type: 'keyword' },
+        language: { type: 'keyword' },
+        subject_codes: { type: 'keyword' },
+        taxonomy_version: { type: 'keyword' },
+        upgrade_tier: { type: 'keyword' },
+
+        // --- booleans / numerics / dates ---
+        is_gated: { type: 'boolean' },
+        is_published: { type: 'boolean' },
+        confidence_score: { type: 'float' },
+        created_at: { type: 'date' },
+        published_at: { type: 'date' },
+      },
+    },
+  };
+}
+
 export interface IndexTopologyEntry {
   alias: string;
   physical: string;
@@ -312,3 +387,18 @@ export const INDEX_TOPOLOGY: readonly IndexTopologyEntry[] = [
     buildMapping: () => buildUserUploadsIndexMapping(),
   },
 ] as const;
+
+/**
+ * The derivatives index, defined but deliberately NOT yet in INDEX_TOPOLOGY.
+ *
+ * Adding it to the topology array is what makes the rebuild job create and
+ * populate it — that wiring, along with the query path and tenant/visibility
+ * filtering, is C2. Keeping the entry separate means C1 ships the mapping with
+ * zero change to what the rebuild job does today: the existing three indices
+ * are built exactly as before. C2 appends this to INDEX_TOPOLOGY.
+ */
+export const DERIVATIVES_INDEX_ENTRY: IndexTopologyEntry = {
+  alias: DERIVATIVES_INDEX,
+  physical: DERIVATIVES_INDEX_PHYSICAL,
+  buildMapping: () => buildDerivativesIndexMapping(),
+};
