@@ -8,6 +8,7 @@ import {
   KEYWORD_INDEX_PHYSICAL,
   VECTOR_INDEX,
   USER_UPLOADS_INDEX,
+  sanitizeDerivativeSource,
 } from './opensearch.service';
 
 // Mock @opensearch-project/opensearch
@@ -460,6 +461,113 @@ describe('OpenSearchService', () => {
           Object.prototype.hasOwnProperty.call(writtenDoc(), 'organization_id'),
         ).toBe(false);
       });
+    });
+  });
+
+  describe('searchDerivatives', () => {
+    const hit = (source: Record<string, unknown>) => ({
+      body: {
+        hits: {
+          total: { value: 1 },
+          max_score: 1.5,
+          hits: [{ _id: 'der-1', _score: 1.5, _source: source }],
+        },
+        timed_out: false,
+      },
+    });
+
+    const VISIBILITY_FILTER = { bool: { should: [], minimum_should_match: 1 } };
+
+    it('queries the derivatives alias, not the keyword index', async () => {
+      mockClient.search.mockResolvedValue(hit({ derivative_id: 'der-1' }));
+
+      await service.searchDerivatives({
+        query: 'estafa',
+        visibilityFilter: VISIBILITY_FILTER,
+      });
+
+      const [args] = mockClient.search.mock.calls[0] as [{ index: string }];
+      expect(args.index).toBe(DERIVATIVES_INDEX);
+    });
+
+    it('passes the visibility filter straight into the query', async () => {
+      mockClient.search.mockResolvedValue(hit({ derivative_id: 'der-1' }));
+
+      await service.searchDerivatives({
+        query: 'estafa',
+        visibilityFilter: VISIBILITY_FILTER,
+      });
+
+      const [args] = mockClient.search.mock.calls[0] as [
+        { body: Record<string, unknown> },
+      ];
+      const bool = (args.body['query'] as Record<string, unknown>)['bool'] as Record<
+        string,
+        unknown
+      >;
+      expect(bool['filter']).toEqual([VISIBILITY_FILTER]);
+    });
+
+    it('strips MCQ answer-key fields from every returned _source', async () => {
+      // Third layer of defence. Unreachable via the rebuild job — the extractor
+      // never emits these and the strict mapping has no field for them — so this
+      // covers a hand-written document, a restored snapshot, or a future mapping
+      // change.
+      mockClient.search.mockResolvedValue(
+        hit({
+          derivative_id: 'mcq-1',
+          derivative_type: 'mcq_question',
+          title: 'MCQ',
+          body_text: 'Stem and options',
+          rationale: 'LEAKED',
+          isCorrect: true,
+          is_correct: true,
+          explanation: 'ALSO LEAKED',
+        }),
+      );
+
+      const result = await service.searchDerivatives({
+        query: 'exclusionary',
+        visibilityFilter: VISIBILITY_FILTER,
+      });
+
+      const source = result.items[0]!.source;
+      for (const forbidden of ['rationale', 'isCorrect', 'is_correct', 'explanation']) {
+        expect(Object.prototype.hasOwnProperty.call(source, forbidden)).toBe(false);
+      }
+      // The legitimate fields survive.
+      expect(source['title']).toBe('MCQ');
+      expect(source['body_text']).toBe('Stem and options');
+    });
+
+    it('is a no-op for a document the rebuild job actually writes', async () => {
+      // Pins the claim in sanitizeDerivativeSource's comment: for real documents
+      // this layer changes nothing, so it cannot mask a extraction regression.
+      const realistic = {
+        derivative_id: 'der-1',
+        derivative_type: 'mcq_question',
+        title: 'MCQ on the exclusionary rule',
+        body_text: 'Under what doctrine is evidence excluded?',
+        visibility: 'public_editorial',
+        is_published: true,
+        created_at: '2026-04-20T00:00:00.000Z',
+      };
+      expect(sanitizeDerivativeSource(realistic)).toEqual(realistic);
+    });
+
+    it('reports timed_out so the caller can warn about partial results', async () => {
+      mockClient.search.mockResolvedValue({
+        body: {
+          hits: { total: { value: 0 }, max_score: null, hits: [] },
+          timed_out: true,
+        },
+      });
+
+      const result = await service.searchDerivatives({
+        query: 'estafa',
+        visibilityFilter: VISIBILITY_FILTER,
+      });
+      expect(result.timedOut).toBe(true);
     });
   });
 

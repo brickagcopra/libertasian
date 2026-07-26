@@ -85,7 +85,15 @@ export class SearchController {
       });
     }
 
-    const result = await this.searchService.search(dto);
+    // The derivative visibility filter's principal comes from the VERIFIED JWT
+    // claims and nowhere else. `dto` is never consulted for identity: a
+    // body-supplied organization id would let any caller read any tenant's
+    // derivatives. This route is behind JwtAuthGuard, so a caller always exists
+    // — an unauthenticated route would pass `null` and get the public branch,
+    // never skip the filter.
+    const result = await this.searchService.search(dto, {
+      organizationId: user.organizationId,
+    });
 
     // Log search for analytics (non-blocking)
     this.auditService.log({

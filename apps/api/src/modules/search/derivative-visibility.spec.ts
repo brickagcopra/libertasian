@@ -1,4 +1,8 @@
 import {
+  matchesQuery as matches,
+  type MatchableDoc as Doc,
+} from '../../testing/opensearch-dsl-matcher';
+import {
   ORG_SCOPED_DERIVATIVE_VISIBILITIES,
   PUBLIC_DERIVATIVE_VISIBILITY,
   buildDerivativeVisibilityFilter,
@@ -14,78 +18,13 @@ import {
  * actually matters — "a row owned by org A is never returned to a caller in
  * org B" — is a statement about matching, so it is tested by matching.
  *
- * The matcher below implements the subset of the DSL these filters emit, with
- * OpenSearch's semantics for the one operator the whole design rests on:
- * `exists` is true for a field that is PRESENT, including when its value is an
- * empty string. That is why the indexer must omit `organization_id` rather than
- * write `''`, and the sentinel test at the bottom is what pins it.
+ * The matcher is `src/testing/opensearch-dsl-matcher.ts`, shared with the C3
+ * federated-search tests so there is one implementation of these semantics. The
+ * operator the whole design rests on is `exists`: true for a field that is
+ * PRESENT, including when its value is an empty string. That is why the indexer
+ * must omit `organization_id` rather than write `''`, and the sentinel test at
+ * the bottom is what pins it.
  */
-
-type Doc = Record<string, unknown>;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-/** First [field, value] pair of a single-key leaf clause such as `{ term: {...} }`. */
-function singleEntry(value: unknown): [string, unknown] {
-  if (!isRecord(value)) throw new Error('Expected an object clause');
-  const entries = Object.entries(value);
-  if (entries.length !== 1) {
-    throw new Error(`Expected exactly one field, got ${entries.length}`);
-  }
-  return entries[0]!;
-}
-
-function asClauseList(value: unknown): unknown[] {
-  if (value === undefined) return [];
-  return Array.isArray(value) ? value : [value];
-}
-
-function matches(clause: unknown, doc: Doc): boolean {
-  if (!isRecord(clause)) throw new Error('Unsupported clause');
-
-  if ('bool' in clause) {
-    const bool = clause['bool'];
-    if (!isRecord(bool)) throw new Error('Malformed bool clause');
-
-    const must = asClauseList(bool['must']);
-    const mustNot = asClauseList(bool['must_not']);
-    const should = asClauseList(bool['should']);
-
-    if (!must.every((sub) => matches(sub, doc))) return false;
-    if (mustNot.some((sub) => matches(sub, doc))) return false;
-
-    if (should.length > 0) {
-      const raw = bool['minimum_should_match'];
-      const minimum = typeof raw === 'number' ? raw : 1;
-      if (should.filter((sub) => matches(sub, doc)).length < minimum) return false;
-    }
-    return true;
-  }
-
-  if ('term' in clause) {
-    const [field, expected] = singleEntry(clause['term']);
-    return doc[field] === expected;
-  }
-
-  if ('terms' in clause) {
-    const [field, expected] = singleEntry(clause['terms']);
-    return Array.isArray(expected) && expected.includes(doc[field]);
-  }
-
-  if ('exists' in clause) {
-    const exists = clause['exists'];
-    if (!isRecord(exists) || typeof exists['field'] !== 'string') {
-      throw new Error('Malformed exists clause');
-    }
-    const field = exists['field'];
-    // OpenSearch: present and non-null. An empty string IS present.
-    return field in doc && doc[field] !== null && doc[field] !== undefined;
-  }
-
-  throw new Error(`Unsupported clause: ${Object.keys(clause).join(', ')}`);
-}
 
 // --- documents under test ------------------------------------------------
 
@@ -238,7 +177,8 @@ describe('buildDerivativeVisibilityFilter', () => {
         (orgBranch as Record<string, unknown>)['bool'] as Record<string, unknown>
       )['must'] as unknown[];
       const termsClause = must.find(
-        (clause) => isRecord(clause) && 'terms' in clause,
+        (clause) =>
+          typeof clause === 'object' && clause !== null && 'terms' in clause,
       ) as Record<string, unknown>;
       expect(termsClause['terms']).toEqual({
         visibility: [...ORG_SCOPED_DERIVATIVE_VISIBILITIES],

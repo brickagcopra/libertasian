@@ -20,10 +20,15 @@ import {
   type VectorDocumentPayload,
 } from './opensearch.service';
 import { PonenteDirectoryService } from './ponente-directory.service';
-import { DEFAULT_RANKING_WEIGHTS, type RankingWeights } from './query-builder';
+import {
+  DEFAULT_RANKING_WEIGHTS,
+  buildDerivativeVisibilityFilter,
+  type DerivativeSearchPrincipal,
+  type RankingWeights,
+} from './query-builder';
 import { classifyQuery } from './query-intent';
 import { SuppressedDocsService } from './suppressed-docs.service';
-import { SearchQueryDto } from './dto';
+import { SearchQueryDto, type SearchScope } from './dto';
 
 /** Per CLAUDE.md: cache:search:{hash}, 5-min TTL */
 const SEARCH_CACHE_TTL = 300;
@@ -66,6 +71,23 @@ export interface SearchResponse {
   meta: SearchResponseMeta;
 }
 
+/**
+ * Discriminator attached to items ONLY on a federated request (one that sent
+ * `scope`). A request that omits `scope` gets the legacy items untouched.
+ */
+export type SearchResultKind = 'document' | 'derivative';
+
+/** Federated response metadata. Only present when `scope` was supplied. */
+export interface FederatedSearchMeta extends SearchResponseMeta {
+  scope: SearchScope;
+  counts: { documents: number; derivatives: number };
+  /**
+   * Non-fatal degradations, e.g. the derivative arm timing out. Present and
+   * empty on a clean federated run so clients can rely on the field existing.
+   */
+  warnings: string[];
+}
+
 @Injectable()
 export class SearchService {
   private readonly logger = new Logger(SearchService.name);
@@ -99,7 +121,125 @@ export class SearchService {
    * Falls back to BM25-only if the embedding service is unavailable.
    * Results are cached in Redis per CLAUDE.md (5-min TTL).
    */
-  async search(dto: SearchQueryDto): Promise<SearchResponse> {
+  async search(
+    dto: SearchQueryDto,
+    caller: DerivativeSearchPrincipal | null = null,
+  ): Promise<SearchResponse> {
+    // A request that did not send `scope` takes the pre-C3 path verbatim. This
+    // is a structural guarantee rather than a promise to keep two branches in
+    // sync: there is exactly one code path for legacy clients and C3 does not
+    // touch it. `searchDocuments` below IS that path, unmodified.
+    if (dto.scope === undefined) {
+      return this.searchDocuments(dto);
+    }
+    return this.federatedSearch(dto, dto.scope, caller);
+  }
+
+  /**
+   * Federated search across the document and derivative corpora.
+   *
+   * Ordering note, stated plainly because it is a real limitation: within each
+   * kind results are ranked by BM25, but the two lists are CONCATENATED
+   * (documents first), not globally ranked. BM25 scores from two indices with
+   * different mappings, field counts and term statistics are not comparable, so
+   * interleaving them by score would be inventing a ranking. Proper cross-corpus
+   * fusion needs a reranker over the merged candidate set, which is C4's
+   * problem. `counts` lets a client render two sections instead.
+   */
+  private async federatedSearch(
+    dto: SearchQueryDto,
+    scope: SearchScope,
+    caller: DerivativeSearchPrincipal | null,
+  ): Promise<SearchResponse> {
+    const page = dto.page ?? 0;
+    const limit = dto.limit ?? 20;
+    const warnings: string[] = [];
+
+    const wantsDocuments = scope === 'documents' || scope === 'all';
+    const wantsDerivatives = scope === 'derivatives' || scope === 'all';
+
+    const documentResponse = wantsDocuments
+      ? await this.searchDocuments(dto)
+      : null;
+
+    let derivativeItems: SearchResultItem[] = [];
+    let derivativeTotal = 0;
+    let derivativeTimedOut = false;
+
+    if (wantsDerivatives) {
+      // The visibility filter is built HERE, from the JWT-derived principal the
+      // controller passed in. `dto` is never consulted for identity — a
+      // body-supplied organization id would be an org-enumeration primitive.
+      const visibilityFilter = buildDerivativeVisibilityFilter(caller);
+      try {
+        const result = await this.openSearch.searchDerivatives({
+          query: dto.query,
+          visibilityFilter,
+          from: page * limit,
+          size: limit,
+        });
+        derivativeItems = result.items;
+        derivativeTotal = result.total;
+        derivativeTimedOut = result.timedOut;
+        if (result.timedOut) {
+          warnings.push('Derivative results are partial: the derivative search timed out.');
+        }
+      } catch (err: unknown) {
+        // Degrade, do not fail. A missing or unhealthy derivatives index must
+        // not take down document search, which is the primary surface.
+        const reason = this.isIndexNotFound(err)
+          ? 'the derivative index is not available'
+          : 'the derivative search failed';
+        this.logger.warn(`Derivative arm degraded: ${(err as Error).message}`);
+        warnings.push(`Derivative results were omitted because ${reason}.`);
+      }
+    }
+
+    const items: unknown[] = [
+      ...(documentResponse?.items ?? []).map((item) => this.withKind(item, 'document')),
+      ...derivativeItems.map((item) => this.withKind(item, 'derivative')),
+    ];
+
+    const documentTotal = documentResponse?.meta.total ?? 0;
+    const base = documentResponse?.meta;
+
+    const meta: FederatedSearchMeta = {
+      total: documentTotal + derivativeTotal,
+      approximateTotal: base?.approximateTotal ?? false,
+      maxScore: base?.maxScore ?? null,
+      page,
+      limit,
+      timedOut: (base?.timedOut ?? false) || derivativeTimedOut,
+      cached: base?.cached ?? false,
+      searchType: base?.searchType ?? 'keyword_only',
+      intent: base?.intent ?? 'general',
+      // With derivatives in scope, having found derivative hits means the
+      // request was not a miss even if the document arm abstained.
+      abstained: (base?.abstained ?? true) && derivativeItems.length === 0,
+      suggestions: base?.suggestions ?? [],
+      ...(base?.didYouMean && { didYouMean: base.didYouMean }),
+      scope,
+      counts: { documents: documentTotal, derivatives: derivativeTotal },
+      warnings,
+    };
+
+    return { items, meta };
+  }
+
+  /** Attach the federated discriminator without mutating the source item. */
+  private withKind(item: unknown, kind: SearchResultKind): unknown {
+    if (typeof item !== 'object' || item === null) return item;
+    return { ...(item as Record<string, unknown>), kind };
+  }
+
+  /**
+   * The document search path, byte-for-byte as it was before C3.
+   *
+   * Do not add federated concerns here. `search()` routes legacy (no `scope`)
+   * requests straight into this method, so any change to its response is a
+   * change to the pre-C3 contract.
+   */
+  private async searchDocuments(dto: SearchQueryDto): Promise<SearchResponse> {
     const page = dto.page ?? 0;
     const limit = dto.limit ?? 20;
 
@@ -547,6 +687,20 @@ export class SearchService {
     return deduped;
   }
 
+  /**
+   * Cache key for the DOCUMENT arm only.
+   *
+   * `scope` is deliberately excluded: the document results for a given query are
+   * identical whether or not derivatives were also requested, so a federated and
+   * a legacy request share the entry.
+   *
+   * Derivative results are NOT cached at all. Their visibility depends on the
+   * caller's organization, so a correct key would have to include the org — and
+   * a key that is wrong by omission serves one tenant's private artifacts to
+   * another. That is a cross-tenant read, which is not a risk worth a cache hit;
+   * the derivative arm queries OpenSearch every time. If this ever needs
+   * caching, the org id must be IN the key, not merely near it.
+   */
   private buildCacheKey(dto: SearchQueryDto): string {
     const normalized = JSON.stringify({
       q: dto.query,

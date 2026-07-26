@@ -5,8 +5,10 @@ import { Client } from '@opensearch-project/opensearch';
 import { normalizeCourtKey } from '@libertasian/types';
 
 import { deriveGrNoDigits, normalizeCitationKey } from './citation-utils';
+import { MCQ_FORBIDDEN_KEYS } from './derivative-extract';
 import {
   buildCitationQueryBody,
+  buildDerivativeQueryBody,
   buildKeywordQueryBody,
   buildSuggestionQueryBody,
   buildVectorCourtClause,
@@ -15,11 +17,34 @@ import {
 import type { QueryIntent } from './query-intent';
 import {
   DEFAULT_EMBEDDING_DIM,
+  DERIVATIVES_INDEX,
   INDEX_TOPOLOGY,
   KEYWORD_INDEX,
   USER_UPLOADS_INDEX,
   VECTOR_INDEX,
 } from './index-mappings';
+
+/**
+ * Remove the MCQ answer-key fields from a derivative `_source` before it leaves
+ * the service.
+ *
+ * This is the third of three independent layers. The C1 extractor never emits
+ * these fields, and the `dynamic: 'strict'` mapping has no home for them — so
+ * for a document written by the rebuild job this function is a no-op, and a test
+ * asserts it. It exists for the documents that path does not cover: a manual
+ * write, a restored snapshot, or a future mapping change. The cost of the extra
+ * layer is one object copy per hit; the cost of not having it is publishing an
+ * answer key.
+ */
+export function sanitizeDerivativeSource(
+  source: Record<string, unknown>,
+): Record<string, unknown> {
+  const sanitized: Record<string, unknown> = { ...source };
+  for (const key of MCQ_FORBIDDEN_KEYS) {
+    delete sanitized[key];
+  }
+  return sanitized;
+}
 
 /**
  * Index names per PDD Section 4.4. These are ALIASES — the data lives in
@@ -825,6 +850,45 @@ export class OpenSearchService implements OnModuleInit {
       from,
       size,
       timeout: '5s',
+    };
+  }
+
+  /**
+   * BM25 search over the derivatives index.
+   *
+   * `visibilityFilter` is a required argument, not an option: this index is
+   * multi-tenant, so a query without the filter is a cross-tenant read. Making
+   * it impossible to omit is the point — see `buildDerivativeQueryBody`.
+   *
+   * Every returned `_source` passes through `sanitizeDerivativeSource`, which
+   * strips the MCQ answer-key fields. They cannot be in the index (the C1
+   * extractor never emits them and the mapping has no field for them), so this
+   * is redundant by design — a third layer that holds if the first two are ever
+   * bypassed by a hand-written document or a future mapping change.
+   */
+  async searchDerivatives(options: {
+    query: string;
+    visibilityFilter: Record<string, unknown>;
+    from?: number;
+    size?: number;
+  }): Promise<KeywordSearchResult> {
+    const body = buildDerivativeQueryBody(options);
+    const response = await this.client.search({ index: DERIVATIVES_INDEX, body });
+    const parsed = response.body as OpenSearchResponseBody;
+    const hits = parsed.hits;
+    const total = typeof hits.total === 'number' ? hits.total : hits.total.value;
+
+    return {
+      total,
+      approximateTotal: false,
+      maxScore: hits.max_score,
+      timedOut: parsed.timed_out === true,
+      items: hits.hits.map((hit) => ({
+        id: hit._id,
+        score: hit._score,
+        source: sanitizeDerivativeSource(hit._source),
+        ...(hit.highlight && { highlights: hit.highlight }),
+      })),
     };
   }
 
