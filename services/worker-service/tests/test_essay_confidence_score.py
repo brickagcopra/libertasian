@@ -16,6 +16,7 @@ from src.scoring import (
     SOURCE_PASSAGE_COVERAGE_WEIGHT,
     compute_derivative_confidence_score,
     compute_essay_confidence_score,
+    resolve_weights,
 )
 
 # ---------------------------------------------------------------------------
@@ -127,13 +128,15 @@ class TestComputeEssayConfidenceScore:
     def test_empty_content_and_sections(self) -> None:
         """Empty content + empty sections -> only OCR quality contributes.
 
-        With default ocr_quality=1.0, score = 0*0.5 + 0*0.3 + 1.0*0.2 = 0.2.
+        With default ocr_quality=1.0 the score is the OCR weight alone. On a
+        3-section source that weight is tapered up from 0.2 — see
+        resolve_weights().
         """
         score = compute_essay_confidence_score(
             content={},
             source_sections=[],
         )
-        assert score == OCR_QUALITY_WEIGHT  # 0.2
+        assert score == round(resolve_weights(0)[2], 4)
 
     def test_empty_content_and_sections_zero_ocr(self) -> None:
         """Empty content + empty sections + zero OCR -> 0.0."""
@@ -186,8 +189,9 @@ class TestComputeEssayConfidenceScore:
             ocr_quality=0.95,
         )
         # coverage: 1/3 = 0.3333, citation: 3/4 = 0.75, ocr: 0.95
+        cov_w, cite_w, ocr_w = resolve_weights(3)
         expected = round(
-            (1 / 3) * 0.5 + 0.75 * 0.3 + 0.95 * 0.2, 4,
+            (1 / 3) * cov_w + 0.75 * cite_w + 0.95 * ocr_w, 4,
         )
         assert score == expected
 
@@ -216,8 +220,8 @@ class TestComputeEssayConfidenceScore:
             content={"promptText": "some prompt"},
             source_sections=FAKE_SECTIONS,
         )
-        # coverage: 0/3 = 0, citation: 0/0 = 0, ocr: 1.0
-        assert score == OCR_QUALITY_WEIGHT  # 0.2
+        # coverage: 0/3 = 0, citation: 0/0 = 0, ocr: 1.0 at the 3-section weight
+        assert score == round(resolve_weights(3)[2], 4)
 
     def test_deterministic(self) -> None:
         """Same inputs produce identical output every time."""
@@ -262,7 +266,10 @@ class TestComputeEssayConfidenceScore:
             source_sections=sections,
             ocr_quality=0.95,
         )
-        # coverage: 2/2=1.0, citation: 4/4=1.0, ocr: 0.95
-        # 1.0*0.5 + 1.0*0.3 + 0.95*0.2 = 0.5 + 0.3 + 0.19 = 0.99
+        # coverage 1.0, citation 1.0, ocr 0.95 — on a 2-section source the
+        # coverage weight is tapered, so the only term below 1.0 (OCR) carries
+        # more of the total and the score lands slightly lower than the old
+        # 0.99. Still comfortably above the bar, which is the point.
+        cov_w, cite_w, ocr_w = resolve_weights(2)
         assert score >= 0.7
-        assert score == 0.99
+        assert score == round(1.0 * cov_w + 1.0 * cite_w + 0.95 * ocr_w, 4)

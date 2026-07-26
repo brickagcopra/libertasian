@@ -10,11 +10,11 @@ from __future__ import annotations
 from typing import Any
 
 from src.scoring import (
-    OCR_QUALITY_WEIGHT,
     compute_doctrine_confidence_score,
     compute_flashcard_confidence_score,
     compute_mcq_confidence_score,
     compute_outline_confidence_score,
+    resolve_weights,
 )
 
 FAKE_SECTIONS: list[dict[str, Any]] = [
@@ -60,8 +60,8 @@ class TestComputeMcqConfidenceScore:
             content=content,
             source_sections=FAKE_SECTIONS,
         )
-        # coverage: 0/3=0, citation: 0/2=0, ocr: 1.0 -> 0.2
-        assert score == OCR_QUALITY_WEIGHT
+        # coverage 0, citation 0, ocr 1.0 -> the 3-section OCR weight
+        assert score == round(resolve_weights(3)[2], 4)
 
     def test_no_source_sections_ocr_only(self) -> None:
         """Empty source sections + empty content -> ocr weight only."""
@@ -69,7 +69,7 @@ class TestComputeMcqConfidenceScore:
             content={},
             source_sections=[],
         )
-        assert score == OCR_QUALITY_WEIGHT
+        assert score == round(resolve_weights(0)[2], 4)
 
     def test_malformed_content_graceful(self) -> None:
         """Non-dict / non-list shapes are handled gracefully without crashing."""
@@ -77,16 +77,15 @@ class TestComputeMcqConfidenceScore:
             content={"questions": "not-a-list"},  # type: ignore[dict-item]
             source_sections=FAKE_SECTIONS,
         )
-        # coverage: 0/3=0, citation: 0/0=0, ocr: 1.0 -> 0.2
-        assert score == OCR_QUALITY_WEIGHT
+        # coverage 0, citation 0, ocr 1.0 -> the 3-section OCR weight
+        assert score == round(resolve_weights(3)[2], 4)
 
         score2 = compute_mcq_confidence_score(
             content={"questions": [None, "str", 42, {"supportingSectionIds": None}]},
             source_sections=FAKE_SECTIONS,
         )
         # non-dict questions are skipped; the 1 dict has no valid citations.
-        # coverage: 0/3=0, citation: 0/4=0, ocr: 1.0 -> 0.2
-        assert score2 == OCR_QUALITY_WEIGHT
+        assert score2 == round(resolve_weights(3)[2], 4)
 
 
 # ---------------------------------------------------------------------------
@@ -126,8 +125,8 @@ class TestComputeDoctrineConfidenceScore:
             content=content,
             source_sections=FAKE_SECTIONS,
         )
-        # coverage: 0/3=0, citation: 0/3=0, ocr: 1.0 -> 0.2
-        assert score == OCR_QUALITY_WEIGHT
+        # coverage 0, citation 0, ocr 1.0 -> the 3-section OCR weight
+        assert score == round(resolve_weights(3)[2], 4)
 
     def test_no_source_sections_ocr_only(self) -> None:
         """Empty source sections + empty content -> ocr weight only."""
@@ -135,7 +134,7 @@ class TestComputeDoctrineConfidenceScore:
             content={},
             source_sections=[],
         )
-        assert score == OCR_QUALITY_WEIGHT
+        assert score == round(resolve_weights(0)[2], 4)
 
     def test_malformed_content_graceful(self) -> None:
         """Non-dict / non-list shapes are handled gracefully without crashing."""
@@ -143,15 +142,14 @@ class TestComputeDoctrineConfidenceScore:
             content={"doctrines": "not-a-list"},  # type: ignore[dict-item]
             source_sections=FAKE_SECTIONS,
         )
-        assert score == OCR_QUALITY_WEIGHT
+        assert score == round(resolve_weights(3)[2], 4)
 
         score2 = compute_doctrine_confidence_score(
             content={"doctrines": [None, "str", 42, {}]},
             source_sections=FAKE_SECTIONS,
         )
         # non-dict doctrines skipped; the 1 dict has no section_id.
-        # coverage: 0/3=0, citation: 0/4=0, ocr: 1.0 -> 0.2
-        assert score2 == OCR_QUALITY_WEIGHT
+        assert score2 == round(resolve_weights(3)[2], 4)
 
 
 # ---------------------------------------------------------------------------
@@ -204,8 +202,8 @@ class TestComputeOutlineConfidenceScore:
             content=content,
             source_sections=FAKE_SECTIONS,
         )
-        # coverage: 0/3=0, citation: 0/2 nodes cited=0, ocr: 1.0 -> 0.2
-        assert score == OCR_QUALITY_WEIGHT
+        # coverage 0, citation 0, ocr 1.0 -> the 3-section OCR weight
+        assert score == round(resolve_weights(3)[2], 4)
 
     def test_no_source_sections_ocr_only(self) -> None:
         """Empty source sections + empty content -> ocr weight only."""
@@ -213,7 +211,7 @@ class TestComputeOutlineConfidenceScore:
             content={},
             source_sections=[],
         )
-        assert score == OCR_QUALITY_WEIGHT
+        assert score == round(resolve_weights(0)[2], 4)
 
     def test_malformed_content_graceful(self) -> None:
         """Non-dict / non-list shapes are handled gracefully without crashing."""
@@ -221,7 +219,7 @@ class TestComputeOutlineConfidenceScore:
             content={"sections": "not-a-list"},  # type: ignore[dict-item]
             source_sections=FAKE_SECTIONS,
         )
-        assert score == OCR_QUALITY_WEIGHT
+        assert score == round(resolve_weights(3)[2], 4)
 
         score2 = compute_outline_confidence_score(
             content={
@@ -236,8 +234,7 @@ class TestComputeOutlineConfidenceScore:
         )
         # non-dict top-level entries skipped; the 1 dict + its 1 dict sub-section
         # contribute 0 valid citations each.
-        # coverage: 0/3=0, citation: 0/2=0, ocr: 1.0 -> 0.2
-        assert score2 == OCR_QUALITY_WEIGHT
+        assert score2 == round(resolve_weights(3)[2], 4)
 
     def test_partial_coverage_walks_subsections(self) -> None:
         """Mix of valid + invalid citations at both levels computes correctly."""
@@ -268,7 +265,8 @@ class TestComputeOutlineConfidenceScore:
         # Unique valid cited ids across tree: {sec-001, sec-002} -> 2 / 3
         coverage = 2 / 3
         citation = 2 / 4
-        expected = round(coverage * 0.5 + citation * 0.3 + 0.95 * 0.2, 4)
+        cov_w, cite_w, ocr_w = resolve_weights(3)
+        expected = round(coverage * cov_w + citation * cite_w + 0.95 * ocr_w, 4)
         assert score == expected
 
 
@@ -308,8 +306,8 @@ class TestComputeFlashcardConfidenceScore:
             content=content,
             source_sections=FAKE_SECTIONS,
         )
-        # coverage: 0/3=0, citation: 0/2=0, ocr: 1.0 -> 0.2
-        assert score == OCR_QUALITY_WEIGHT
+        # coverage 0, citation 0, ocr 1.0 -> the 3-section OCR weight
+        assert score == round(resolve_weights(3)[2], 4)
 
     def test_no_source_sections_ocr_only(self) -> None:
         """Empty source sections + empty content -> ocr weight only."""
@@ -317,7 +315,7 @@ class TestComputeFlashcardConfidenceScore:
             content={},
             source_sections=[],
         )
-        assert score == OCR_QUALITY_WEIGHT
+        assert score == round(resolve_weights(0)[2], 4)
 
     def test_malformed_content_graceful(self) -> None:
         """Non-dict / non-list shapes are handled gracefully without crashing."""
@@ -325,12 +323,11 @@ class TestComputeFlashcardConfidenceScore:
             content={"cards": "not-a-list"},  # type: ignore[dict-item]
             source_sections=FAKE_SECTIONS,
         )
-        assert score == OCR_QUALITY_WEIGHT
+        assert score == round(resolve_weights(3)[2], 4)
 
         score2 = compute_flashcard_confidence_score(
             content={"cards": [None, "str", 42, {"supportingSectionIds": None}]},
             source_sections=FAKE_SECTIONS,
         )
         # non-dict cards are skipped; the 1 dict has no valid citations.
-        # coverage: 0/3=0, citation: 0/4=0, ocr: 1.0 -> 0.2
-        assert score2 == OCR_QUALITY_WEIGHT
+        assert score2 == round(resolve_weights(3)[2], 4)

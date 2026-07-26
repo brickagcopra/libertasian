@@ -400,6 +400,10 @@ async streamAnswer(@Query() dto: AnswerQueryDto): Observable<MessageEvent> {
 
 - Every digest field (facts, issues, ruling, doctrine, dispositive) MUST have source section references stored in `provenance_records`.
 - Confidence score is computed from: source passage coverage ratio + citation mapping completeness + OCR quality (if from scan).
+- **Weights are 0.5 / 0.3 / 0.2 only for sources with ≥ 10 sections.** Below that, coverage weight tapers linearly down to 0.15 at ≤ 3 sections, and the freed weight goes to citation mapping and OCR in their existing 3:2 ratio. The three weights always sum to 1.0. Implementation and rationale: `resolve_weights()` in `services/worker-service/src/scoring.py`.
+- **Why the taper exists:** source documents in this corpus average **3.4 sections** (measured on prod 2026-07-26). On a 3-section source, coverage can only be 0, 1/3, 2/3 or 1, so a flat 0.5 weight makes the 0.70 bar mean "cite 2 of the 3 sections" — it measures section count, not grounding. A 5-card deck about one holding legitimately cites the one section containing it. Coverage is a reasonable quality proxy over a 20-section document and a poor one over three.
+- **The 0.70 threshold is unchanged and should stay unchanged** when this is revisited — the fix belongs in the measure, not the bar.
+- Any change to this formula must be checked against live rows before merging, not against fixtures: `uv run python -m src.scripts.project_coverage_weights` (read-only) prints the per-type before/after distribution and how many artifacts cross the bar. A 40-section test fixture once made a coverage fix look correct while it moved 7 rows out of 29,471 on the real corpus.
 - If `confidence_score < 0.7`: set `review_status = 'needs_human_review'`. If `confidence_score >= 0.7` AND source is official: eligible for auto-approval.
 - Digests from user scans: `visibility = 'private'` always. Never auto-promote to `'public_editorial'`.
 

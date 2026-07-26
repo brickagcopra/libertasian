@@ -4,9 +4,15 @@ Per CLAUDE.md: "Confidence score is computed from: source passage coverage
 ratio + citation mapping completeness + OCR quality (if from scan)."
 
 Formula:
-    (source_passage_coverage * 0.5) +
-    (citation_mapping_completeness * 0.3) +
-    (ocr_quality * 0.2)
+    (source_passage_coverage * coverage_weight) +
+    (citation_mapping_completeness * citation_weight) +
+    (ocr_quality * ocr_weight)
+
+The weights are 0.5 / 0.3 / 0.2 for a source with at least
+COVERAGE_WEIGHT_FULL_AT_SECTIONS sections. Below that they taper: coverage
+loses weight and citation mapping and OCR gain it, because coverage stops
+being a quality signal on a short source and starts being a section count.
+See resolve_weights() for the reasoning and CLAUDE.md "Digest Generation".
 
 Clamped to [0, 1].  All functions are pure — no I/O, no side effects.
 """
@@ -15,36 +21,124 @@ from __future__ import annotations
 
 from typing import Any
 
-# Weight constants for confidence scoring formula (per CLAUDE.md)
+# Weight constants for confidence scoring formula (per CLAUDE.md).
+# These are the weights for a source long enough that coverage means something;
+# see resolve_weights() for what happens on short sources.
 SOURCE_PASSAGE_COVERAGE_WEIGHT: float = 0.5
 CITATION_MAPPING_COMPLETENESS_WEIGHT: float = 0.3
 OCR_QUALITY_WEIGHT: float = 0.2
 
+# Coverage weight taper for short sources.
+#
+# WHY. On a 3-section source, coverage can only take the values 0, 1/3, 2/3 and
+# 1, so `coverage*0.5 + citation*0.3 + ocr*0.2` can only produce 0.5, 0.667,
+# 0.833 and 1.0 — and the 0.70 bar reduces to "cite 2 of the 3 sections". That
+# is a near-binary gate wearing the clothes of a graded 0-1 signal. Worse, it
+# measures the wrong thing: sections in this corpus are few and large, so a
+# 5-card deck about one holding legitimately cites the section containing that
+# holding, and docking it for skipping the caption measures SECTION COUNT, not
+# grounding. Coverage is a decent quality proxy over a 20-section document and
+# a poor one over three.
+#
+# WHAT. As the source shrinks, coverage weight tapers toward
+# MIN_SOURCE_PASSAGE_COVERAGE_WEIGHT and the freed weight moves to citation
+# mapping and OCR, which stay meaningful at any source size — citation mapping
+# especially, since "did each item ground itself in a real section" is exactly
+# the question coverage stops being able to answer. The three weights always
+# sum to 1.0 and the output stays clamped to [0, 1].
+#
+# SHAPE. A linear ramp between two section counts, not a step. The corpus mass
+# sits at 3.4 sections, so a step would put a cliff in the middle of the
+# distribution and make a 7-section and an 8-section document score materially
+# differently for no reason a reviewer could defend. A ramp keeps neighbours
+# comparable.
+#
+# Freed weight is split in the existing 3:2 citation:OCR ratio, so the
+# documented proportion between those two is preserved rather than silently
+# re-tuned. One consequence worth knowing: on a 3-section non-scan source
+# (ocr_quality = 1.0) the OCR term alone contributes 0.34, so a completely
+# ungrounded artifact floors at 0.34 rather than 0.2. That is still nowhere
+# near the 0.70 bar, and the alternative — inflating citation mapping alone —
+# would re-tune a ratio nobody asked to change.
+#
+# The 0.70 threshold is NOT touched. The measure was wrong, not the bar.
+COVERAGE_WEIGHT_FULL_AT_SECTIONS: int = 10
+COVERAGE_WEIGHT_FLOOR_AT_SECTIONS: int = 3
+MIN_SOURCE_PASSAGE_COVERAGE_WEIGHT: float = 0.15
+
+
+def resolve_weights(
+    source_section_count: int | None,
+) -> tuple[float, float, float]:
+    """Return ``(coverage, citation, ocr)`` weights for a source of this size.
+
+    At or above ``COVERAGE_WEIGHT_FULL_AT_SECTIONS`` sections the weights are
+    the documented 0.5 / 0.3 / 0.2 — long sources are unaffected by the taper.
+    At or below ``COVERAGE_WEIGHT_FLOOR_AT_SECTIONS`` coverage carries
+    ``MIN_SOURCE_PASSAGE_COVERAGE_WEIGHT``. Between them it interpolates
+    linearly.
+
+    ``None`` means "do not taper" and yields the static weights. That is what
+    the reproduction path in the re-score script relies on: stored scores were
+    written under the static weights, so reproducing them must not taper.
+
+    The returned triple always sums to 1.0.
+    """
+    static = (
+        SOURCE_PASSAGE_COVERAGE_WEIGHT,
+        CITATION_MAPPING_COMPLETENESS_WEIGHT,
+        OCR_QUALITY_WEIGHT,
+    )
+    if source_section_count is None:
+        return static
+    if source_section_count >= COVERAGE_WEIGHT_FULL_AT_SECTIONS:
+        return static
+
+    if source_section_count <= COVERAGE_WEIGHT_FLOOR_AT_SECTIONS:
+        coverage_weight = MIN_SOURCE_PASSAGE_COVERAGE_WEIGHT
+    else:
+        span = COVERAGE_WEIGHT_FULL_AT_SECTIONS - COVERAGE_WEIGHT_FLOOR_AT_SECTIONS
+        position = (source_section_count - COVERAGE_WEIGHT_FLOOR_AT_SECTIONS) / span
+        coverage_weight = MIN_SOURCE_PASSAGE_COVERAGE_WEIGHT + position * (
+            SOURCE_PASSAGE_COVERAGE_WEIGHT - MIN_SOURCE_PASSAGE_COVERAGE_WEIGHT
+        )
+
+    freed = SOURCE_PASSAGE_COVERAGE_WEIGHT - coverage_weight
+    remainder = CITATION_MAPPING_COMPLETENESS_WEIGHT + OCR_QUALITY_WEIGHT
+    citation_weight = CITATION_MAPPING_COMPLETENESS_WEIGHT + freed * (
+        CITATION_MAPPING_COMPLETENESS_WEIGHT / remainder
+    )
+    ocr_weight = OCR_QUALITY_WEIGHT + freed * (OCR_QUALITY_WEIGHT / remainder)
+    return coverage_weight, citation_weight, ocr_weight
+
+
 # Sections one generated item can be expected to ground itself in.
 #
-# These exist because source_passage_coverage used to be divided by EVERY
-# section of the source document, which made the term unreachable for any
-# artifact smaller than its source: a 5-card deck over a 40-section decision
-# can cite a handful of sections at most, so coverage was structurally under
-# 0.25 and the score could not clear the 0.70 auto-approval bar however well
-# grounded the deck was. Measured on prod 2026-07-26, the per-type maxima were
-# flashcard 0.692, essay_prompt 0.688, doctrine_extract 0.667 and
-# subject_outline 0.655 — every one of them exactly 0.5 + coverage * 0.5, i.e.
-# citation mapping and OCR were already perfect and coverage alone held them
-# under the bar. (mcq_question is scored differently in practice: one artifact
-# is written per question but the score is computed once over the whole
-# generated set and copied onto every row, so an mcq row's stored score is a
-# property of its batch, not of its own content.)
+# THE MEASURED CORPUS (prod, 2026-07-26). Source documents average **3.4
+# sections**: mcq 3.4, essay 3.4, flashcard 3.4, doctrine 4.4. Everything below
+# follows from that number, and any future change here should be checked
+# against it rather than against an intuition about long decisions.
 #
-# The denominator is now what the artifact could plausibly cite: its own item
-# count times the sections an item is expected to cite. The generation prompts
+# These constants come from #313, which fixed a real bug — coverage used to be
+# divided by every section of the source document, so an artifact smaller than
+# its source could not push the term up. But the fixture that motivated it
+# assumed a 40-section decision, which is the *inverse* of this corpus. Because
+# item_count * 2 (10 or more, for any normal artifact) almost never binds
+# against 3.4 sections, the min() denominator equals source_section_count for
+# ~99.97% of rows: #313 is correct and nearly inert here, and re-scoring the
+# existing corpus under it moved 7 rows out of 29,471.
+#
+# The denominator is what the artifact could plausibly cite: its own item count
+# times the sections an item is expected to cite. The generation prompts
 # require "at least one source section ID" per item (see prompts/*.py) and the
 # emitted shapes carry a list, so two is the allowance for list-valued shapes.
 # doctrine_extract carries a SINGLE source_section_id per doctrine, so one.
 #
-# This keeps the CLAUDE.md weights (0.5 / 0.3 / 0.2) and still fails a badly
-# grounded artifact: an item count of N with only N/5 distinct valid citations
-# scores 0.1 coverage, which lands at 0.55 and stays out of auto-approval.
+# (mcq_question is scored differently in practice: one artifact is written per
+# question but the score is computed once over the whole generated set and
+# copied onto every row — confirmed at 100% on prod, all 14,099 MCQ source
+# documents have exactly one distinct score across their rows. An mcq row's
+# stored score is a property of its batch, not of its own content.)
 SECTIONS_PER_ITEM: int = 2
 SECTIONS_PER_ITEM_SINGLE_REF: int = 1
 
@@ -113,10 +207,15 @@ def compute_derivative_confidence_score(
     source_passage_coverage: float,
     citation_mapping_completeness: float,
     ocr_quality: float = 1.0,
+    source_section_count: int | None = None,
 ) -> float:
     """Compute confidence score for a derivative artifact.
 
     Args:
+        source_section_count: Sections in the source document, used to taper
+            the coverage weight on short sources (see :func:`resolve_weights`).
+            ``None`` keeps the static 0.5 / 0.3 / 0.2 weights — pass ``None``
+            when reproducing a previously stored score.
         source_passage_coverage: Ratio of the sections the derivative could
             plausibly cite that it did cite — see
             :func:`compute_source_passage_coverage`. NOT cited-over-every-
@@ -135,10 +234,14 @@ def compute_derivative_confidence_score(
     citation = max(0.0, min(citation_mapping_completeness, 1.0))
     ocr = max(0.0, min(ocr_quality, 1.0))
 
+    coverage_weight, citation_weight, ocr_weight = resolve_weights(
+        source_section_count
+    )
+
     score = (
-        coverage * SOURCE_PASSAGE_COVERAGE_WEIGHT
-        + citation * CITATION_MAPPING_COMPLETENESS_WEIGHT
-        + ocr * OCR_QUALITY_WEIGHT
+        coverage * coverage_weight
+        + citation * citation_weight
+        + ocr * ocr_weight
     )
 
     return round(max(0.0, min(score, 1.0)), 4)
@@ -211,6 +314,13 @@ def compute_essay_confidence_score(
         source_passage_coverage=source_passage_coverage,
         citation_mapping_completeness=citation_mapping_completeness,
         ocr_quality=ocr_quality,
+        # DOCUMENT mode exists to reproduce scores stored under the static
+        # weights, so it must not taper. See resolve_weights().
+        source_section_count=(
+            None
+            if coverage_mode == COVERAGE_MODE_DOCUMENT
+            else source_section_count
+        ),
     )
 
 
@@ -282,6 +392,13 @@ def compute_mcq_confidence_score(
         source_passage_coverage=source_passage_coverage,
         citation_mapping_completeness=citation_mapping_completeness,
         ocr_quality=ocr_quality,
+        # DOCUMENT mode exists to reproduce scores stored under the static
+        # weights, so it must not taper. See resolve_weights().
+        source_section_count=(
+            None
+            if coverage_mode == COVERAGE_MODE_DOCUMENT
+            else source_section_count
+        ),
     )
 
 
@@ -355,6 +472,13 @@ def compute_doctrine_confidence_score(
         source_passage_coverage=source_passage_coverage,
         citation_mapping_completeness=citation_mapping_completeness,
         ocr_quality=ocr_quality,
+        # DOCUMENT mode exists to reproduce scores stored under the static
+        # weights, so it must not taper. See resolve_weights().
+        source_section_count=(
+            None
+            if coverage_mode == COVERAGE_MODE_DOCUMENT
+            else source_section_count
+        ),
     )
 
 
@@ -426,6 +550,13 @@ def compute_flashcard_confidence_score(
         source_passage_coverage=source_passage_coverage,
         citation_mapping_completeness=citation_mapping_completeness,
         ocr_quality=ocr_quality,
+        # DOCUMENT mode exists to reproduce scores stored under the static
+        # weights, so it must not taper. See resolve_weights().
+        source_section_count=(
+            None
+            if coverage_mode == COVERAGE_MODE_DOCUMENT
+            else source_section_count
+        ),
     )
 
 
@@ -502,4 +633,11 @@ def compute_outline_confidence_score(
         source_passage_coverage=source_passage_coverage,
         citation_mapping_completeness=citation_mapping_completeness,
         ocr_quality=ocr_quality,
+        # DOCUMENT mode exists to reproduce scores stored under the static
+        # weights, so it must not taper. See resolve_weights().
+        source_section_count=(
+            None
+            if coverage_mode == COVERAGE_MODE_DOCUMENT
+            else source_section_count
+        ),
     )

@@ -499,16 +499,19 @@ class TestGenerateMcqQuestions:
 
         _run_task("job-001", "doc-001")
 
-        # Confidence is now computed from real signals:
-        # coverage 1/2 sections (sec-001) + 5/5 questions cited + ocr 1.0
-        # -> 0.5*0.5 + 1.0*0.3 + 1.0*0.2 = 0.75
+        # Confidence is computed from real signals, with the short-source
+        # taper applied: this fixture has 2 sections, so coverage carries only
+        # 0.15 and the freed weight sits on citation mapping (0.51) and OCR
+        # (0.34) — see resolve_weights().
+        # coverage 1/2 + 5/5 questions cited + ocr 1.0
+        # -> 0.5*0.15 + 1.0*0.51 + 1.0*0.34 = 0.925
         mock_db.create_model_run.assert_called_once_with(
             run_type="mcq_generation",
             model_name="gpt-4o-mini",
             prompt_template_version=PROMPT_TEMPLATE_VERSION,
             input_ref="doc:doc-001",
             output_ref="job:job-001",
-            confidence=0.75,
+            confidence=0.925,
             tokens_in=2000,
             tokens_out=1500,
             latency_ms=pytest.approx(0, abs=5000),  # timing varies
