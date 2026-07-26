@@ -120,6 +120,17 @@ def _iter_artifacts(
 
     Soft-deleted rows are excluded, matching the rebuild job and the
     bulk-approve sweep.
+
+    The cursor placeholders cast to ``uuid``, not ``text``.
+    ``derivative_artifacts.id`` is ``@db.Uuid``, and PostgreSQL has no
+    ``uuid > text`` operator — a ``::text`` cast there raises
+    ``operator does not exist`` on the very first page, which is how the
+    original version of this script failed on prod without ever reading a
+    row. ``last_id`` stays a ``str | None``; psycopg2 adapts it to uuid.
+
+    Casting to uuid also makes the comparison agree with ``ORDER BY id ASC``:
+    uuid ordering is not text ordering, so a text comparison would have
+    skipped or repeated rows even where the operator existed.
     """
     last_id: str | None = None
     yielded = 0
@@ -134,7 +145,7 @@ def _iter_artifacts(
                      FROM derivative_artifacts
                     WHERE deleted_at IS NULL
                       AND derivative_type = ANY(%s)
-                      AND (%s::text IS NULL OR id > %s::text)
+                      AND (%s::uuid IS NULL OR id > %s::uuid)
                     ORDER BY id ASC
                     LIMIT %s""",
                 (types, last_id, last_id, PAGE_SIZE),
@@ -150,7 +161,12 @@ def _iter_artifacts(
             if limit is not None and yielded >= limit:
                 return
 
-        last_id = rows[-1]["id"]
+        # str(), not the raw value: psycopg2 only returns uuid columns as
+        # uuid.UUID once register_uuid() has been called, and only adapts
+        # UUID objects back into SQL after the same call — which this script
+        # never makes. Whichever way the driver is configured, a str round
+        # trips.
+        last_id = str(rows[-1]["id"])
 
 
 def _sections_for(document_id: str, cache: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
@@ -176,7 +192,13 @@ def _coerce_content(raw: Any) -> dict[str, Any] | None:
 
 
 def _write_scores(updates: list[tuple[str, float]]) -> int:
-    """Apply recomputed scores. Returns the number of rows written."""
+    """Apply recomputed scores. Returns the number of rows written.
+
+    ``id`` is cast to uuid explicitly for the same reason the read path
+    casts: the column is ``@db.Uuid``. An uncast placeholder happens to work
+    (an unknown-type literal is coerced to uuid), but making it implicit is
+    what let a ``::text`` cast look reasonable in the read path.
+    """
     written = 0
     for start in range(0, len(updates), PAGE_SIZE):
         batch = updates[start : start + PAGE_SIZE]
@@ -185,7 +207,7 @@ def _write_scores(updates: list[tuple[str, float]]) -> int:
                 cur,
                 """UPDATE derivative_artifacts
                       SET confidence_score = %s
-                    WHERE id = %s
+                    WHERE id = %s::uuid
                       AND deleted_at IS NULL""",
                 [(score, artifact_id) for artifact_id, score in batch],
             )
@@ -240,7 +262,13 @@ def _print_report(stats: dict[str, TypeStats], threshold: float, applied: bool) 
               "RESCORE_ALLOW_WRITE=1 to persist.")
 
 
-def main() -> int:
+def main_with_args(argv: list[str] | None = None) -> int:
+    """Entry point taking explicit argv so tests can drive the whole path.
+
+    ``main()`` is the console shim. The split exists because this script
+    shipped with no test that executed any of its database code, and a
+    ``uuid``/``text`` cast mismatch reached prod as a result.
+    """
     parser = argparse.ArgumentParser(
         description="Recompute derivative confidence scores under the corrected "
         "formula. Dry run unless --apply and RESCORE_ALLOW_WRITE=1.",
@@ -267,7 +295,7 @@ def main() -> int:
     parser.add_argument(
         "--log-level", default="WARNING", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     logging.basicConfig(
         level=getattr(logging, args.log_level),
@@ -292,10 +320,11 @@ def main() -> int:
         stat = stats[dtype]
 
         content = _coerce_content(row.get("content_json"))
-        document_id = row.get("source_document_id")
-        if content is None or not document_id:
+        raw_document_id = row.get("source_document_id")
+        if content is None or not raw_document_id:
             stat.skipped_no_source += 1
             continue
+        document_id = str(raw_document_id)
 
         sections = _sections_for(document_id, section_cache)
         if not sections:
@@ -307,7 +336,7 @@ def main() -> int:
 
         stat.record(before, after)
         if abs(after - before) >= 1e-9:
-            updates.append((row["id"], after))
+            updates.append((str(row["id"]), after))
 
     applied = False
     if args.apply:
@@ -317,6 +346,11 @@ def main() -> int:
 
     _print_report(stats, args.threshold, applied)
     return 0
+
+
+def main() -> int:
+    """Console entry point — reads sys.argv."""
+    return main_with_args(None)
 
 
 if __name__ == "__main__":
