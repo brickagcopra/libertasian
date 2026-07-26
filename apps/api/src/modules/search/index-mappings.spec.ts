@@ -27,6 +27,7 @@ describe('index topology', () => {
       KEYWORD_INDEX,
       VECTOR_INDEX,
       USER_UPLOADS_INDEX,
+      DERIVATIVES_INDEX,
     ]);
     for (const entry of INDEX_TOPOLOGY) {
       expect(entry.physical).toBe(`${entry.alias}_${INDEX_VERSION}`);
@@ -238,11 +239,13 @@ describe('derivatives index mapping', () => {
     expect(DERIVATIVES_INDEX_ENTRY.physical).toBe(DERIVATIVES_INDEX_PHYSICAL);
   });
 
-  // C1 shipping the mapping must not change what the rebuild job does today.
-  // C2 appends this entry to INDEX_TOPOLOGY along with the query path.
-  it('is NOT yet wired into INDEX_TOPOLOGY — that is C2', () => {
-    expect(INDEX_TOPOLOGY.map((entry) => entry.alias)).not.toContain(DERIVATIVES_INDEX);
-    expect(INDEX_TOPOLOGY).toHaveLength(3);
+  // C2 wired this in. Exact count, not `>=`: a fifth index appearing without a
+  // deliberate edit here means something was added to the topology by accident,
+  // and every entry in it gets created and aliased by the rebuild job.
+  it('is wired into INDEX_TOPOLOGY as the fourth and last entry', () => {
+    expect(INDEX_TOPOLOGY).toHaveLength(4);
+    expect(INDEX_TOPOLOGY.map((entry) => entry.alias)).toContain(DERIVATIVES_INDEX);
+    expect(INDEX_TOPOLOGY[3]).toBe(DERIVATIVES_INDEX_ENTRY);
   });
 
   it('matches the mapping snapshot', () => {

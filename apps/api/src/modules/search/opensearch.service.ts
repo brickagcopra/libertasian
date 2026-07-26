@@ -30,9 +30,11 @@ export {
   KEYWORD_INDEX,
   VECTOR_INDEX,
   USER_UPLOADS_INDEX,
+  DERIVATIVES_INDEX,
   KEYWORD_INDEX_PHYSICAL,
   VECTOR_INDEX_PHYSICAL,
   USER_UPLOADS_INDEX_PHYSICAL,
+  DERIVATIVES_INDEX_PHYSICAL,
 } from './index-mappings';
 
 export interface UserUploadIndexPayload {
@@ -98,6 +100,36 @@ export interface IndexDocumentPayload {
   created_at: string;
   bar_subjects?: string[];
   topics?: string[];
+}
+
+/**
+ * One derivative artifact as it is written to the derivatives index.
+ *
+ * `organization_id` is OPTIONAL and must be left undefined for a row whose
+ * PostgreSQL `organization_id` is NULL — never `''`, never a sentinel like
+ * `'public'`. The authorization filter's public branch is
+ * `must_not: { exists: { field: 'organization_id' } }`, and a keyword field
+ * that is absent is the only thing `exists` reports false for. An empty string
+ * is a present value: it would make every null-org row invisible to the public
+ * branch and, worse, match a `term` query for `''`.
+ */
+export interface DerivativeDocumentPayload {
+  derivative_id: string;
+  derivative_type: string;
+  title: string;
+  body_text?: string;
+  source_document_id?: string;
+  /** Omit entirely when the row has no owning organization. See above. */
+  organization_id?: string;
+  visibility: string;
+  audience?: string;
+  language?: string;
+  subject_codes?: string[];
+  taxonomy_version?: string;
+  confidence_score?: number;
+  is_published: boolean;
+  created_at: string;
+  published_at?: string;
 }
 
 export interface VectorDocumentPayload {
@@ -535,6 +567,87 @@ export class OpenSearchService implements OnModuleInit {
       this.logger.error('Bulk index failed', error);
       throw error;
     }
+  }
+
+  /**
+   * Temporarily relax an index's refresh interval.
+   *
+   * Per CLAUDE.md the bulk ingestion path runs the destination at `30s` and
+   * restores it afterwards: refreshing every 5s while pushing ~100k documents
+   * builds and discards segments for readers nobody has yet, since the index is
+   * unaliased until it verifies.
+   *
+   * The caller MUST restore the original value in a `finally`, otherwise a
+   * failed rebuild leaves a 30s-stale index behind the alias.
+   */
+  async setRefreshInterval(indexName: string, interval: string): Promise<void> {
+    await this.client.indices.putSettings({
+      index: indexName,
+      body: { index: { refresh_interval: interval } },
+    });
+  }
+
+  /**
+   * Bulk-write derivative artifacts.
+   *
+   * Deliberately NOT a variant of `bulkIndexDocuments`: that method counts
+   * per-item failures and returns them as `{ indexed, errors }`, which is right
+   * for the keyword path where the caller reconciles against a source-derived
+   * floor. Here a per-item failure THROWS.
+   *
+   * The reason is the mapping. The derivatives index is `dynamic: 'strict'`
+   * with no field for an MCQ answer key, so the way a regressed extractor
+   * surfaces is precisely a per-item `strict_dynamic_mapping_exception`.
+   * Counting that as "1 error out of 500" and continuing would turn the
+   * security control into a log line and let the rest of the batch — with the
+   * alias swap behind it — proceed as if healthy. A rejected item means the
+   * documents being written no longer match the contract, so the whole rebuild
+   * stops before anything is aliased.
+   *
+   * `organization_id` is stripped when null/undefined/empty as a second line of
+   * defence behind `toDerivativePayload`; see DerivativeDocumentPayload.
+   */
+  async bulkIndexDerivatives(
+    docs: DerivativeDocumentPayload[],
+    targetIndex: string,
+  ): Promise<{ indexed: number }> {
+    if (docs.length === 0) return { indexed: 0 };
+
+    const body: Record<string, unknown>[] = [];
+    for (const doc of docs) {
+      body.push({ index: { _index: targetIndex, _id: doc.derivative_id } });
+      body.push(this.withDerivativeDerivedFields(doc));
+    }
+
+    const response = await this.client.bulk({ body, refresh: 'false' });
+    if (response.body.errors) {
+      const items = response.body.items as Record<string, Record<string, unknown>>[];
+      const failures = items
+        .filter((item) => item['index']?.['error'])
+        .map((item) => item['index']?.['error']);
+      throw new Error(
+        `Bulk index into ${targetIndex} rejected ${failures.length} of ${docs.length} ` +
+          `derivative(s): ${JSON.stringify(failures.slice(0, 3))}`,
+      );
+    }
+
+    return { indexed: docs.length };
+  }
+
+  /**
+   * Drop `organization_id` unless it is a non-empty string. Centralised for the
+   * same reason `withDerivedFields` is: every write path must produce identical
+   * documents, and this particular omission is load-bearing for authorization.
+   */
+  private withDerivativeDerivedFields(
+    doc: DerivativeDocumentPayload,
+  ): Record<string, unknown> {
+    const payload: Record<string, unknown> = { ...doc };
+    const organizationId = doc.organization_id;
+    if (typeof organizationId !== 'string' || organizationId.length === 0) {
+      delete payload['organization_id'];
+    }
+    return payload;
   }
 
   async removeDocument(documentId: string) {
