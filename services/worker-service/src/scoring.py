@@ -20,6 +20,68 @@ SOURCE_PASSAGE_COVERAGE_WEIGHT: float = 0.5
 CITATION_MAPPING_COMPLETENESS_WEIGHT: float = 0.3
 OCR_QUALITY_WEIGHT: float = 0.2
 
+# Sections one generated item can be expected to ground itself in.
+#
+# These exist because source_passage_coverage used to be divided by EVERY
+# section of the source document, which made the term unreachable for any
+# artifact smaller than its source: a 5-card deck over a 40-section decision
+# can cite a handful of sections at most, so coverage was structurally under
+# 0.25 and the score could not clear the 0.70 auto-approval bar however well
+# grounded the deck was. Measured on prod 2026-07-26, the per-type maxima were
+# flashcard 0.692, essay_prompt 0.688, doctrine_extract 0.667 and
+# subject_outline 0.655 — every one of them exactly 0.5 + coverage * 0.5, i.e.
+# citation mapping and OCR were already perfect and coverage alone held them
+# under the bar. mcq_question cleared it only because a 20-30 question set
+# cites enough distinct sections to reach 40% of a document.
+#
+# The denominator is now what the artifact could plausibly cite: its own item
+# count times the sections an item is expected to cite. The generation prompts
+# require "at least one source section ID" per item (see prompts/*.py) and the
+# emitted shapes carry a list, so two is the allowance for list-valued shapes.
+# doctrine_extract carries a SINGLE source_section_id per doctrine, so one.
+#
+# This keeps the CLAUDE.md weights (0.5 / 0.3 / 0.2) and still fails a badly
+# grounded artifact: an item count of N with only N/5 distinct valid citations
+# scores 0.1 coverage, which lands at 0.55 and stays out of auto-approval.
+SECTIONS_PER_ITEM: int = 2
+SECTIONS_PER_ITEM_SINGLE_REF: int = 1
+
+
+def compute_source_passage_coverage(
+    *,
+    cited_section_count: int,
+    item_count: int,
+    source_section_count: int,
+    sections_per_item: int = SECTIONS_PER_ITEM,
+) -> float:
+    """Fraction of the sections this artifact could cite that it did cite.
+
+    The denominator is ``min(source_section_count, item_count *
+    sections_per_item)`` — the document cannot offer more sections than it
+    has, and the artifact cannot cite more than its items allow.
+
+    Args:
+        cited_section_count: Distinct valid source section IDs the artifact
+            cites. Must already be filtered to IDs that exist in the source.
+        item_count: Number of generated items (cards, questions, doctrines,
+            outline nodes). Zero means nothing was generated.
+        source_section_count: Sections available in the source document.
+        sections_per_item: Sections one item is expected to cite. Use
+            ``SECTIONS_PER_ITEM_SINGLE_REF`` for shapes carrying one ID.
+
+    Returns:
+        Ratio in [0, 1]. Zero when nothing was generated, nothing was cited,
+        or the source had no sections.
+    """
+    if cited_section_count <= 0 or item_count <= 0 or source_section_count <= 0:
+        return 0.0
+
+    citable = min(source_section_count, item_count * max(sections_per_item, 1))
+    if citable <= 0:
+        return 0.0
+
+    return min(cited_section_count / citable, 1.0)
+
 
 def compute_derivative_confidence_score(
     *,
@@ -30,8 +92,11 @@ def compute_derivative_confidence_score(
     """Compute confidence score for a derivative artifact.
 
     Args:
-        source_passage_coverage: Ratio of source sections cited by the
-            derivative to total source sections provided. Range [0, 1].
+        source_passage_coverage: Ratio of the sections the derivative could
+            plausibly cite that it did cite — see
+            :func:`compute_source_passage_coverage`. NOT cited-over-every-
+            section-in-the-document, which no artifact smaller than its source
+            can push toward 1.0. Range [0, 1].
         citation_mapping_completeness: Ratio of derivative output sections
             that include at least one valid citation to total output sections.
             Range [0, 1].
@@ -95,10 +160,11 @@ def compute_essay_confidence_score(
                     cited_section_ids.add(sid)
 
     # Source passage coverage ratio
-    if source_section_count > 0:
-        source_passage_coverage = len(cited_section_ids) / source_section_count
-    else:
-        source_passage_coverage = 0.0
+    source_passage_coverage = compute_source_passage_coverage(
+        cited_section_count=len(cited_section_ids),
+        item_count=len(outline_sections),
+        source_section_count=source_section_count,
+    )
 
     # Citation mapping completeness ratio
     outline_section_count = len(outline_sections)
@@ -162,10 +228,11 @@ def compute_mcq_confidence_score(
             if sid in source_section_ids:
                 cited_section_ids.add(sid)
 
-    if source_section_count > 0:
-        source_passage_coverage = len(cited_section_ids) / source_section_count
-    else:
-        source_passage_coverage = 0.0
+    source_passage_coverage = compute_source_passage_coverage(
+        cited_section_count=len(cited_section_ids),
+        item_count=len(questions),
+        source_section_count=source_section_count,
+    )
 
     question_count = len(questions)
     if question_count > 0:
@@ -231,10 +298,13 @@ def compute_doctrine_confidence_score(
         if sid and sid in source_section_ids:
             cited_section_ids.add(sid)
 
-    if source_section_count > 0:
-        source_passage_coverage = len(cited_section_ids) / source_section_count
-    else:
-        source_passage_coverage = 0.0
+    # One source_section_id per doctrine, so one section per item — not two.
+    source_passage_coverage = compute_source_passage_coverage(
+        cited_section_count=len(cited_section_ids),
+        item_count=len(doctrines),
+        source_section_count=source_section_count,
+        sections_per_item=SECTIONS_PER_ITEM_SINGLE_REF,
+    )
 
     doctrine_count = len(doctrines)
     if doctrine_count > 0:
@@ -298,10 +368,11 @@ def compute_flashcard_confidence_score(
             if sid in source_section_ids:
                 cited_section_ids.add(sid)
 
-    if source_section_count > 0:
-        source_passage_coverage = len(cited_section_ids) / source_section_count
-    else:
-        source_passage_coverage = 0.0
+    source_passage_coverage = compute_source_passage_coverage(
+        cited_section_count=len(cited_section_ids),
+        item_count=len(cards),
+        source_section_count=source_section_count,
+    )
 
     card_count = len(cards)
     if card_count > 0:
@@ -380,10 +451,12 @@ def compute_outline_confidence_score(
         for section in sections:
             _walk(section)
 
-    if source_section_count > 0:
-        source_passage_coverage = len(cited_section_ids) / source_section_count
-    else:
-        source_passage_coverage = 0.0
+    # Every walked node (top-level section or subSection) is an item.
+    source_passage_coverage = compute_source_passage_coverage(
+        cited_section_count=len(cited_section_ids),
+        item_count=total_sections,
+        source_section_count=source_section_count,
+    )
 
     if total_sections > 0:
         citation_mapping_completeness = sections_with_citations / total_sections

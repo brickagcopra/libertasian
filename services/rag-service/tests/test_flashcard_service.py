@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.core.schemas import Passage
 from src.flashcards.schemas import (
     FlashcardGenerationRequest,
     FlashcardGenerationResponse,
@@ -21,6 +22,8 @@ from src.flashcards.schemas import (
 from src.flashcards.service import (
     _compute_confidence,
     _parse_flashcard_response,
+    _passage_provenance,
+    _resolve_card_source,
     generate_flashcards,
 )
 
@@ -305,3 +308,193 @@ class TestGenerateFlashcards:
         call_kwargs = self.mock_generate.call_args.kwargs
         assert call_kwargs.get("response_format") == "json_object"
         assert call_kwargs.get("temperature") == 0.3
+
+
+# ---------------------------------------------------------------------------
+# Provenance resolution — the 0.65 ceiling regression
+# ---------------------------------------------------------------------------
+
+
+def _make_real_passages(
+    count: int, document_id: str = "doc-1", start: int = 0
+) -> list[Passage]:
+    """Real Passage objects — the MagicMocks above carry no usable IDs."""
+    return [
+        Passage(
+            id=f"hit-{i}",
+            document_id=document_id,
+            section_id=f"sec-{i:03d}",
+            text=f"Passage {i} body text.",
+        )
+        for i in range(start, start + count)
+    ]
+
+
+class TestResolveCardSource:
+    """Provenance comes from the retrieved passages, not the LLM's say-so."""
+
+    def _index(self, passages: list[Passage]):
+        return _passage_provenance(passages)
+
+    def test_declared_section_wins_and_brings_its_document(self) -> None:
+        docs, sections, sole = self._index(_make_real_passages(3))
+        assert _resolve_card_source(
+            declared_document_id=None,
+            declared_section_id="sec-001",
+            document_ids=docs,
+            section_to_document=sections,
+            sole_document_id=sole,
+        ) == ("doc-1", "sec-001")
+
+    def test_declared_document_wins_when_retrieved(self) -> None:
+        passages = _make_real_passages(2, "doc-a") + _make_real_passages(2, "doc-b", 2)
+        docs, sections, sole = self._index(passages)
+        assert sole is None  # two documents -> ambiguous
+        assert _resolve_card_source(
+            declared_document_id="doc-b",
+            declared_section_id=None,
+            document_ids=docs,
+            section_to_document=sections,
+            sole_document_id=sole,
+        ) == ("doc-b", None)
+
+    def test_single_document_retrieval_resolves_an_undeclared_card(self) -> None:
+        """The case that used to score zero: the model emitted nothing."""
+        docs, sections, sole = self._index(_make_real_passages(5))
+        assert _resolve_card_source(
+            declared_document_id=None,
+            declared_section_id=None,
+            document_ids=docs,
+            section_to_document=sections,
+            sole_document_id=sole,
+        ) == ("doc-1", None)
+
+    def test_hallucinated_ids_earn_nothing_across_documents(self) -> None:
+        passages = _make_real_passages(2, "doc-a") + _make_real_passages(2, "doc-b", 2)
+        docs, sections, sole = self._index(passages)
+        assert _resolve_card_source(
+            declared_document_id="doc-invented",
+            declared_section_id="sec-invented",
+            document_ids=docs,
+            section_to_document=sections,
+            sole_document_id=sole,
+        ) == (None, None)
+
+    def test_hallucinated_section_does_not_become_an_invalid_fk(self) -> None:
+        """A made-up section is dropped even when the document resolves."""
+        docs, sections, sole = self._index(_make_real_passages(3))
+        assert _resolve_card_source(
+            declared_document_id=None,
+            declared_section_id="sec-invented",
+            document_ids=docs,
+            section_to_document=sections,
+            sole_document_id=sole,
+        ) == ("doc-1", None)
+
+    def test_non_string_declarations_are_ignored(self) -> None:
+        docs, sections, sole = self._index(_make_real_passages(3))
+        assert _resolve_card_source(
+            declared_document_id=42,
+            declared_section_id={"nope": True},
+            document_ids=docs,
+            section_to_document=sections,
+            sole_document_id=sole,
+        ) == ("doc-1", None)
+
+    def test_no_passages_resolves_to_nothing(self) -> None:
+        docs, sections, sole = self._index([])
+        assert _resolve_card_source(
+            declared_document_id="doc-1",
+            declared_section_id="sec-001",
+            document_ids=docs,
+            section_to_document=sections,
+            sole_document_id=sole,
+        ) == (None, None)
+
+
+class TestConfidenceCeilingRegression:
+    """A well-formed generation with real provenance must clear 0.70.
+
+    source_ref_factor carried weight 0.35 and counted only cards whose LLM
+    output object happened to carry source_document_id — which it almost never
+    did. That pinned the reachable ceiling at 0.4 + 0.25 = 0.65, below the 0.70
+    bar, for every generation on this path.
+    """
+
+    AUTO_APPROVAL_THRESHOLD = 0.7
+
+    @pytest.mark.asyncio
+    async def test_undeclared_cards_over_one_document_reach_full_confidence(
+        self,
+    ) -> None:
+        """The exact shape that used to cap at 0.65."""
+        llm_output = json.dumps(
+            {
+                "flashcards": [
+                    {"front": f"What is Q{i}?", "back": f"Answer {i} body text."}
+                    for i in range(5)
+                ]
+            }
+        )
+        with (
+            patch(
+                "src.flashcards.service.get_model_info",
+                MagicMock(return_value={"model_name": "m", "model_version": "1"}),
+            ),
+            patch(
+                "src.flashcards.service.generate_completion",
+                AsyncMock(return_value=llm_output),
+            ),
+            patch(
+                "src.flashcards.service.retrieve_by_query",
+                AsyncMock(return_value=_make_real_passages(5)),
+            ),
+        ):
+            response = await generate_flashcards(
+                FlashcardGenerationRequest(
+                    topic="Constructive dismissal in labor law",
+                    count=5,
+                )
+            )
+
+        # passage 1.0 * 0.4 + source_ref 1.0 * 0.35 + completeness 1.0 * 0.25
+        assert response.confidence_score == 1.0
+        assert response.confidence_score >= self.AUTO_APPROVAL_THRESHOLD
+        # and the provenance is on the cards, so persistence stores a real FK
+        assert all(c.source_document_id == "doc-1" for c in response.flashcards)
+
+    @pytest.mark.asyncio
+    async def test_ungrounded_cards_across_documents_stay_below(self) -> None:
+        """Ambiguous retrieval + no declarations still earns no provenance."""
+        llm_output = json.dumps(
+            {
+                "flashcards": [
+                    {"front": f"What is Q{i}?", "back": f"Answer {i} body text."}
+                    for i in range(5)
+                ]
+            }
+        )
+        passages = _make_real_passages(3, "doc-a") + _make_real_passages(2, "doc-b", 3)
+        with (
+            patch(
+                "src.flashcards.service.get_model_info",
+                MagicMock(return_value={"model_name": "m", "model_version": "1"}),
+            ),
+            patch(
+                "src.flashcards.service.generate_completion",
+                AsyncMock(return_value=llm_output),
+            ),
+            patch(
+                "src.flashcards.service.retrieve_by_query",
+                AsyncMock(return_value=passages),
+            ),
+        ):
+            response = await generate_flashcards(
+                FlashcardGenerationRequest(topic="Labor law across cases", count=5)
+            )
+
+        # 0.4 + 0 + 0.25 = 0.65 — the old ceiling, now only reachable when the
+        # provenance genuinely cannot be resolved.
+        assert response.confidence_score == 0.65
+        assert response.confidence_score < self.AUTO_APPROVAL_THRESHOLD
+        assert all(c.source_document_id is None for c in response.flashcards)
