@@ -1,6 +1,6 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-07-26 (search Phases A–C3 all merged: #306 #307 #308 #310 #311 #312; C3 squashed to `025e538`. Remaining search work is the api deploy, a client UI for `scope`, and C4 fusion behind the reranker.)
+> Last updated: 2026-07-26 (search Phases A–C3 all merged: #306 #307 #308 #310 #311 #312; C3 squashed to `025e538`, deployed and live-verified on prod. Remaining search work is a client UI for `scope` and C4 fusion behind the reranker — but see the reachability note first: only 13,017 of 99,994 derivatives match any visibility branch.)
 
 Verification rules used for this prune: every PR reference checked with `gh pr view <n> --json state,mergedAt`; every branch reference checked against `git branch -r --no-merged origin/main` after `git fetch --prune`. Items that could not be verified were MOVED to "Needs verification", not deleted.
 
@@ -37,7 +37,7 @@ Verification rules used for this prune: every PR reference checked with `gh pr v
 - [ ] Author the missing `docker-compose.staging.yml` the deploy script references (absent from repo — latent blocker)
 - [ ] Then restore the `push: branches: [main]` trigger in `.github/workflows/deploy-staging.yml` (original trigger preserved in a comment)
 
-## Search overhaul (Phases A–C3 merged; api deploy + client UI + C4 remain)
+## Search overhaul (Phases A–C3 merged, deployed and live-verified; client UI + C4 remain)
 
 Ground truth below is from brick's Phase A production dry-run (2026-07-25) — measured on prod, not assumed.
 
@@ -49,11 +49,18 @@ Ground truth below is from brick's Phase A production dry-run (2026-07-25) — m
 - [x] Phase C1 (#310, `3e06e64`) — pure `extractSearchableText` for all 11 `content_json` shapes + the `dynamic: 'strict'` derivatives mapping (BM25 only, no `knn_vector`, no field able to hold an MCQ answer key). The 11 shapes moved to `@libertasian/types`; web vitest now aliases that package to source.
 - [x] Phase C2 (#311, `d4077df`) — derivatives phase in the rebuild job (keyset, soft-delete-excluded, `_bulk` 500, per-item failures THROW) + `buildDerivativeVisibilityFilter` with `organization_id` **omitted** (never `''`) for null-org rows.
 - [x] Phase C3 (#312, squashed to `025e538`) — federated `POST /search` with `scope=documents|derivatives|all`; visibility filter is a required non-optional argument; derivative results uncached (org-dependent key); kinds concatenated, not globally ranked; highlight fields named explicitly + `sanitizeDerivativeSource`; derivative-arm failure degrades to document results + warning; `describeTopology` `_r<N>` false-mismatch fixed.
+- [x] **Phase C3 deployed and live-verified on prod (2026-07-26)** — api rebuilt and recreated from `025e538`; all four scope cases exercised against `POST /api/v1/search` with a minted RS256 JWT. Numbers in COMPLETED_TASKS.md Session 208.
+- [x] **Both prod index rebuilds verified (2026-07-26)** — job 3, four indices: docs 17,135/17,135 → 85,977 sections, `vectorsCopied: 12196`, uploads 2, derivatives 99,994/99,994, `aliasSwapped: true`, `aliasesSkipped: []`, `court_key=supreme_court` exactly 7,443.
+
+**What is actually reachable — read this before scoping Phase D**
+
+Deploying the federated surface did **not** make ~100k derivatives reachable. Only the **13,017** `public_editorial` rows match a visibility branch. The other **86,977** are `visibility='private'` with `organization_id` NULL, so they match **neither** branch of `buildDerivativeVisibilityFilter` — not the public branch (wrong visibility) and not the org branch (no org to own them). They are indexed and invisible to every caller, which is the filter working as designed, not a bug to fix.
+
+- [ ] **Question for brick: are those 86,977 private null-org rows a generation-pipeline gap or intended drafts?** This is a product decision, not an engineering task. If the generator was supposed to mark them `public_editorial` on approval, that is a pipeline defect and search recall is ~13% of what anyone assumes. If they are deliberate drafts, the corpus is correct and only the expectation needs fixing. Nothing downstream should be scoped until this is answered.
 
 **Phase C — remaining**
-- [ ] **Deploy api.** `scope` is inert in prod until then: the federated surface exists only in code. No index rebuild needed — C3 changed no mapping and `INDEX_VERSION` is unchanged.
-- [ ] After the deploy, prod smoke: `scope` omitted → byte-identical legacy envelope · `scope=all` returns both `kind`s · an `mcq_question` hit exposes no `rationale`/`isCorrect`/`explanation` · `describeTopology` now reports the `_r1` targets as matching (it reported all four as mismatched before the fix).
 - [ ] **No client sends `scope`** — web and mobile search UIs still query documents only. Federated results need a UI decision (separate "Study materials" section vs a filter chip) before they reach users. Kind labels and counts are already in the response `meta`.
+- [ ] **`limit` is per corpus, not per response.** `federatedSearch` applies it to each arm, so `scope=all&limit=10` returns **20** items — 10 documents then 10 derivatives. Intentional: two concatenated BM25 lists cannot share one limit without one corpus silently starving the other. Phase D UI must render two sections from `meta.counts` and must **not** assume `items.length <= limit` — a client that slices to `limit` would drop the entire derivative section.
 - [ ] **`content_plain_text` is still dead weight.** It is written from the create/update DTO and `null` in every generation path; C1's extractor is used only by the indexer. Persist the extraction on write, then backfill — real backfill size is **13,017 rows** (`public_editorial` + `approved`), not 99,994.
 - [ ] **E2E cross-tenant tests must seed synthetic org-scoped rows.** `organization_id` is NULL on 100% of prod derivative rows, so no production data exercises the org branch. C2/C3 unit specs evaluate the DSL against synthetic documents; a real seeded E2E pass is still owed.
 - [ ] **C4 — cross-corpus fusion.** The two result lists are concatenated because BM25 scores from indices with different mappings and term statistics are not comparable. Globally ranking them needs a reranker over the merged set → blocked on the same `RAG_RERANKER_URL` deployment as the kNN/cross-encoder work below.
@@ -82,7 +89,6 @@ Ground truth below is from brick's Phase A production dry-run (2026-07-25) — m
 
 ## Needs verification (could NOT be verified against ground truth today — do not treat as done, do not treat as fact)
 
-- [ ] **The two prod index rebuilds behind Phase C.** Indirect evidence says both ran (#311's note observes `*_v3` already exists in prod, and C3 was written against "four verified prod indices"), but no measured job output is recorded here. Re-confirm from `GET /search/index/topology` and the last rebuild result: `court_key=supreme_court` ≈ 7,443 · `regional_trial_court` ≈ 2,831 · `court` still renders the display literal · `vectorsCopied: 12196` (not 0) · `aliasesSkipped: []` · `derivative_artifacts_v3` destCount vs the PostgreSQL `deletedAt: null` count, status `verified`.
 - [ ] #286 `apple_id` migration (`20260711120000_add_user_apple_id`): has `prisma migrate deploy` run in prod/staging? Also: local dev DB drift (applied migration `20260505013309` missing from directory) — reset vs reconcile still undecided
 - [ ] #254 (2026-07-02): staging/dev `prisma migrate deploy` for the allowlist migration + RBAC Redis cache flush where warm; #250–#253 live verifications (admin sidebar/settings gating on prod; #250's revocation itself WAS live-verified 2026-07-02)
 - [ ] #276 checkout-flow device QA (bounce → deep-link return, AppState safety net, both themes) — may have been implicitly covered by later live billing verification

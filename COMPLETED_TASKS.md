@@ -10624,7 +10624,7 @@ Phase 3 of the 6-phase testing strategy. Created 5 integration test files + 2 sh
 
 **Merged:** #310 → main (`3e06e64`), `feature/PHASE-C1-derivative-search-extraction`. Branch deleted.
 
-Context: ~100k `derivative_artifacts` were invisible to search — the derivative endpoints fell back to `title ILIKE '%q%'`, so the body of every digest, outline and model answer was unreachable. C1 shipped **only** the pure extraction layer and the mapping; nothing was wired.
+Context: ~100k `derivative_artifacts` were invisible to search — the derivative endpoints fell back to `title ILIKE '%q%'`, so the body of every digest, outline and model answer was unreachable. C1 shipped **only** the pure extraction layer and the mapping; nothing was wired. (**Corrected 2026-07-26:** the ~100k figure is the row count, not the reachable count. Federating them makes **13,017** `public_editorial` rows searchable; the other 86,977 are `private` with a NULL org and match no visibility branch by design — see Session 208.)
 
 1. [x] **`extractSearchableText(type, content): string[]`** — pure (no I/O, no DB, no LLM, no clock), **total** (unknown type / malformed blob / wrong-typed field → `[]`, never throws, because extraction runs inside the bulk loop and one bad row out of ~100k must not abort the batch), and ordered so the joined blocks read the way the renderer displays the artifact. Markdown/HTML reduced to plain text, whitespace collapsed.
 2. [x] All three traps from the Phase C scoping handled and fixture-tested: `doctrine_extract`'s snake_case keys (every key read accepts both spellings, so there is no shape-specific branch), the nested `subSections` / `subclauses` / `outlineSections` shapes (one recursive walker, depth-capped at 32 so a pathological blob cannot overflow the stack), and `mcq_question`'s answer key.
@@ -10656,7 +10656,7 @@ Context: ~100k `derivative_artifacts` were invisible to search — the derivativ
 
 **Merged:** #312 → main (squash `025e538`), `feature/PHASE-C3-derivative-search-surface`. All 15 checks green at merge (lint & type-check, build, test, 6 container image scans, 4 Python dep audits, Node dep audit, secret detection). Branch deleted.
 
-The gap C3 closed: C1 shipped the extractor, C2 indexed the artifacts and built `buildDerivativeVisibilityFilter` — which had **zero production callers**. Derivatives were indexed and unreachable.
+The gap C3 closed: C1 shipped the extractor, C2 indexed the artifacts and built `buildDerivativeVisibilityFilter` — which had **zero production callers**. Derivatives were indexed and unreachable. (**Scope of that fix, corrected 2026-07-26:** C3 makes the **13,017** `public_editorial` rows queryable, not all 99,994 — the remaining 86,977 `private` null-org rows match neither visibility branch and are meant to reach nobody. Session 208.)
 
 1. [x] **No mapping change, `INDEX_VERSION` unchanged** — `index-mappings.ts` has no diff in the commit, so the four verified prod indices are not forced into another rebuild.
 2. [x] **Federated query path.** `POST /search` gains an optional `scope`: `documents` (default) | `derivatives` | `all`. A request that omits `scope` takes the pre-C3 path **verbatim** — `search()` routes it straight into `searchDocuments`, the original method unmodified. That is a structural guarantee rather than a promise to keep two branches in sync, and a deep-equality test pins the whole legacy envelope so any added field fails.
@@ -10672,3 +10672,31 @@ The gap C3 closed: C1 shipped the extractor, C2 indexed the artifacts and built 
 12. [x] Gates: `pnpm --filter api test` 182 suites / **3,863** tests; `pnpm lint` 5/5.
 
 **Not done in C3 (carried to PENDING):** api deploy — `scope` is inert in prod until the deploy; no web/mobile client sends `scope`, so the federated surface has no UI; `content_plain_text` is still written from the DTO (and `null` in the generation paths), so C1's "persist the extraction on write" recommendation is unimplemented; C4 cross-corpus fusion needs the reranker, which is still blocked on `RAG_RERANKER_URL`.
+
+---
+
+## Session 208 — Phase C3 prod deploy + live verification, and both index rebuilds verified (2026-07-26)
+
+**Deployed:** prod api rebuilt and recreated from `025e538`. Nothing else moved — C3 changed no mapping and `INDEX_VERSION` was unchanged, so no rebuild was required for the deploy itself.
+
+### Federated surface live-verified on prod
+
+Exercised against `POST /api/v1/search` with a minted RS256 JWT — the real gateway, not a test harness.
+
+1. [x] **`scope` omitted → the legacy shape**, byte-for-byte as before: a plain array with **no `kind` key** on any item. This is the property the deep-equality unit test pins, now confirmed on the deployed build.
+2. [x] **`scope=derivatives` → real derivative hits.** The arm is reachable in prod, not just wired.
+3. [x] **`scope=all` → 10 document items followed by 10 derivative items**, each carrying `kind`. Concatenated in that order, as designed — not interleaved by score.
+4. [x] **`scope=bogus` → 400.** The DTO enum rejects an unknown scope rather than silently falling back to `documents`.
+5. [x] **`organization_id` absent from every `_source`** — the C2 omission rule holds on the deployed index, so `must_not exists organization_id` still evaluates the way the public branch depends on.
+6. [x] **Derivative hits carry `visibility: public_editorial`** — nothing outside the public branch surfaced.
+
+### Both prod index rebuilds verified (job 3, four indices)
+
+7. [x] Documents **17,135/17,135 → 85,977 sections**; `vectorsCopied: 12196` (the #308 measured-count fix reporting a real number, not 0); uploads **2**; derivatives **99,994/99,994**; `aliasSwapped: true`; **`aliasesSkipped: []`**; `court_key=supreme_court` exactly **7,443** — the #308 `court_key` fix confirmed against the corpus.
+8. [x] Blue/green allocated `*_v3_r1` targets because `*_v3` already existed. That is exactly what #311's prod-run note predicted and what the #312 `describeTopology` fix stopped reporting as a false mismatch — expected, not a symptom.
+
+### Correction recorded the same day: what the deploy actually made reachable
+
+9. [x] **The deploy did NOT make ~100k derivatives searchable, and earlier notes here implying that were wrong.** Only the **13,017** `public_editorial` rows match a visibility branch. The other **86,977** are `visibility='private'` with `organization_id` NULL, so they match **neither** branch of `buildDerivativeVisibilityFilter` — not the public branch (wrong visibility), not the org branch (no owning org). They are indexed and invisible to every caller. That is the filter working as designed; the ~87,000-row figure from the Phase C scoping was always the set that must reach nobody.
+10. [x] Whether those 86,977 rows are a generation-pipeline gap or intended drafts is an **open product question for brick**, logged in PENDING_TASKS.md — a product decision, not an engineering task. If the generator should have marked them `public_editorial` on approval, real search recall is ~13% of what anyone assumes; if they are deliberate drafts, only the expectation needs correcting.
+11. [x] Also logged for Phase D: `limit` is applied **per corpus** in `federatedSearch`, so `scope=all&limit=10` returns **20** items. Intentional — two concatenated BM25 lists cannot share one limit without one corpus starving the other — but a client that slices to `limit` would drop the entire derivative section.
