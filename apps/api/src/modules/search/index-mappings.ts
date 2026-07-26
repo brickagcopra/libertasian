@@ -369,7 +369,26 @@ export interface IndexTopologyEntry {
   buildMapping: (dimension: number) => Record<string, unknown>;
 }
 
-/** The three logical indices, in creation order. */
+/**
+ * The derivatives index entry.
+ *
+ * C1 defined this deliberately OUTSIDE `INDEX_TOPOLOGY` so shipping the mapping
+ * changed nothing about what the rebuild job did. C2 adds it to the topology
+ * below, which is what makes the rebuild job create, populate and alias it.
+ */
+export const DERIVATIVES_INDEX_ENTRY: IndexTopologyEntry = {
+  alias: DERIVATIVES_INDEX,
+  physical: DERIVATIVES_INDEX_PHYSICAL,
+  buildMapping: () => buildDerivativesIndexMapping(),
+};
+
+/**
+ * The four logical indices, in creation order.
+ *
+ * The derivatives entry is last on purpose: the keyword index is the one that
+ * fixes search, so it is built and verified first, and a derivatives failure
+ * cannot delay or destabilise it.
+ */
 export const INDEX_TOPOLOGY: readonly IndexTopologyEntry[] = [
   {
     alias: KEYWORD_INDEX,
@@ -386,19 +405,5 @@ export const INDEX_TOPOLOGY: readonly IndexTopologyEntry[] = [
     physical: USER_UPLOADS_INDEX_PHYSICAL,
     buildMapping: () => buildUserUploadsIndexMapping(),
   },
+  DERIVATIVES_INDEX_ENTRY,
 ] as const;
-
-/**
- * The derivatives index, defined but deliberately NOT yet in INDEX_TOPOLOGY.
- *
- * Adding it to the topology array is what makes the rebuild job create and
- * populate it — that wiring, along with the query path and tenant/visibility
- * filtering, is C2. Keeping the entry separate means C1 ships the mapping with
- * zero change to what the rebuild job does today: the existing three indices
- * are built exactly as before. C2 appends this to INDEX_TOPOLOGY.
- */
-export const DERIVATIVES_INDEX_ENTRY: IndexTopologyEntry = {
-  alias: DERIVATIVES_INDEX,
-  physical: DERIVATIVES_INDEX_PHYSICAL,
-  buildMapping: () => buildDerivativesIndexMapping(),
-};

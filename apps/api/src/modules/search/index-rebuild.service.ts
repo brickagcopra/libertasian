@@ -4,7 +4,10 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { extractSearchableText } from './derivative-extract';
 import {
+  DERIVATIVES_INDEX,
+  DERIVATIVES_INDEX_PHYSICAL,
   INDEX_TOPOLOGY,
   KEYWORD_INDEX,
   KEYWORD_INDEX_PHYSICAL,
@@ -13,12 +16,21 @@ import {
   VECTOR_INDEX,
   VECTOR_INDEX_PHYSICAL,
 } from './index-mappings';
-import { OpenSearchService, type IndexDocumentPayload } from './opensearch.service';
+import {
+  OpenSearchService,
+  type DerivativeDocumentPayload,
+  type IndexDocumentPayload,
+} from './opensearch.service';
 
 export const INDEX_REBUILD_QUEUE = 'search-index-rebuild';
 
 /** Per CLAUDE.md: bulk indexing batch size 500. */
 const REINDEX_BATCH_SIZE = 500;
+
+/** Per CLAUDE.md: relax refresh to 30s during bulk ingestion, then restore. */
+const BULK_REFRESH_INTERVAL = '30s';
+/** The steady-state value declared in BASE_SETTINGS; restored after bulk. */
+const STEADY_REFRESH_INTERVAL = '5s';
 
 /**
  * The verified doc count must land within this fraction of the count we
@@ -62,6 +74,7 @@ export interface IndexRebuildProgress {
     | 'reindexing_documents'
     | 'reindexing_vectors'
     | 'reindexing_uploads'
+    | 'reindexing_derivatives'
     | 'verifying'
     | 'swapping_alias'
     | 'completed'
@@ -72,8 +85,16 @@ export interface IndexRebuildProgress {
   /** Verified destination count — what `_count` says landed, not what `_reindex` claimed. */
   vectorsCopied: number;
   uploadsCopied: number;
+  /** Derivative rows read out of PostgreSQL so far. */
+  derivativesProcessed: number;
+  /** Non-deleted `derivative_artifacts` rows in PostgreSQL — the source floor. */
+  derivativesTotal: number;
+  /** Derivative documents accepted by `_bulk`. */
+  derivativesPushed: number;
   vectorCopy: IndexCopyOutcome | null;
   uploadCopy: IndexCopyOutcome | null;
+  /** Measured source/dest reconciliation for the derivatives index. */
+  derivativeCopy: IndexCopyOutcome | null;
   message: string;
 }
 
@@ -81,6 +102,7 @@ export interface IndexRebuildResult extends IndexRebuildProgress {
   keywordTarget: string;
   vectorTarget: string;
   uploadsTarget: string;
+  derivativesTarget: string;
   verifiedCount: number;
   /** True when the KEYWORD alias was repointed. */
   aliasSwapped: boolean;
@@ -224,8 +246,12 @@ export class IndexRebuildService {
       docsPushed: 0,
       vectorsCopied: 0,
       uploadsCopied: 0,
+      derivativesProcessed: 0,
+      derivativesTotal: 0,
+      derivativesPushed: 0,
       vectorCopy: null,
       uploadCopy: null,
+      derivativeCopy: null,
       message: 'Preparing rebuild',
     };
     const push = async (patch: Partial<IndexRebuildProgress>) => {
@@ -245,6 +271,10 @@ export class IndexRebuildService {
       USER_UPLOADS_INDEX,
       USER_UPLOADS_INDEX_PHYSICAL,
     );
+    const derivativesTarget = await this.allocateTargetIndex(
+      DERIVATIVES_INDEX,
+      DERIVATIVES_INDEX_PHYSICAL,
+    );
 
     // ---- 1. create the new physical indices with explicit mappings ----
     await push({ phase: 'creating_indices', message: `Creating ${keywordTarget}` });
@@ -253,6 +283,7 @@ export class IndexRebuildService {
       [keywordTarget, INDEX_TOPOLOGY[0]!],
       [vectorTarget, INDEX_TOPOLOGY[1]!],
       [uploadsTarget, INDEX_TOPOLOGY[2]!],
+      [derivativesTarget, INDEX_TOPOLOGY[3]!],
     ] as const) {
       await this.openSearch.createPhysicalIndex(target, entry.buildMapping(dimension));
     }
@@ -290,6 +321,39 @@ export class IndexRebuildService {
       uploadsCopied: uploadCopy.destCount,
       uploadCopy,
       message: `Upload copy ${uploadCopy.status}: ${uploadCopy.destCount}/${uploadCopy.sourceCount}`,
+    });
+
+    // ---- 3b. build the derivatives index from PostgreSQL ----
+    // Unlike vectors/uploads this is a rebuild, not a copy: `content_json` is
+    // the system of record and the extractor is pure, so the index is fully
+    // reproducible. It runs LAST so a derivative failure cannot delay or
+    // destabilise the keyword index, which is the one that fixes search.
+    const derivativesTotal = await this.prisma.derivativeArtifact.count({
+      where: { deletedAt: null },
+    });
+    await push({
+      phase: 'reindexing_derivatives',
+      derivativesTotal,
+      message: `Indexing ${derivativesTotal} derivative artifacts from PostgreSQL`,
+    });
+
+    const derivativeCopy = await this.indexDerivativesFromPostgres(
+      derivativesTarget,
+      derivativesTotal,
+      async (processed, pushedDerivatives) => {
+        await push({
+          derivativesProcessed: processed,
+          derivativesPushed: pushedDerivatives,
+          message: `Indexed ${processed}/${derivativesTotal} derivative artifacts`,
+        });
+      },
+    );
+    await push({
+      derivativeCopy,
+      derivativesPushed: derivativeCopy.reportedCreated ?? 0,
+      message:
+        `Derivative index ${derivativeCopy.status}: ` +
+        `${derivativeCopy.destCount}/${derivativeCopy.sourceCount}`,
     });
 
     // ---- 4. verify BEFORE anything destructive happens ----
@@ -342,6 +406,7 @@ export class IndexRebuildService {
         keywordTarget,
         vectorTarget,
         uploadsTarget,
+        derivativesTarget,
         verifiedCount,
         aliasSwapped: false,
         aliasesSkipped: [],
@@ -359,6 +424,7 @@ export class IndexRebuildService {
     for (const [alias, target, copy] of [
       [VECTOR_INDEX, vectorTarget, vectorCopy],
       [USER_UPLOADS_INDEX, uploadsTarget, uploadCopy],
+      [DERIVATIVES_INDEX, derivativesTarget, derivativeCopy],
     ] as const) {
       if (copy.status === 'verified' || copy.status === 'source_missing') {
         await this.swapOne(alias, target);
@@ -386,6 +452,7 @@ export class IndexRebuildService {
       keywordTarget,
       vectorTarget,
       uploadsTarget,
+      derivativesTarget,
       verifiedCount,
       aliasSwapped: true,
       aliasesSkipped,
@@ -562,6 +629,188 @@ export class IndexRebuildService {
     }
 
     return docsPushed;
+  }
+
+  /**
+   * Stream every non-deleted derivative artifact from PostgreSQL into `target`
+   * and verify the result the same way #308 verifies a copy: by MEASURING both
+   * sides, never by trusting what the write path reported.
+   *
+   * The returned `IndexCopyOutcome` reuses the copy vocabulary deliberately —
+   * `sourceCount` is the PostgreSQL row count, `destCount` is `_count` on the
+   * destination after a refresh, and `reportedCreated` is what `_bulk` claimed
+   * it accepted. As with `_reindex`'s `created: 0`, the claim is recorded for
+   * diagnosis and the measurement is what decides the status. `runRebuild` then
+   * refuses to swap the alias for anything that is not `verified`.
+   *
+   * Per-item bulk failures throw out of `bulkIndexDerivatives` rather than
+   * being counted; that error is caught here and surfaces as `failed`, so the
+   * derivatives alias stays on its previous target and the rest of the rebuild
+   * still completes.
+   */
+  private async indexDerivativesFromPostgres(
+    target: string,
+    sourceCount: number,
+    onProgress: (processed: number, pushed: number) => Promise<void>,
+  ): Promise<IndexCopyOutcome> {
+    const base = { source: 'postgres:derivative_artifacts', dest: target };
+    const batchSize = this.config.get<number>(
+      'SEARCH_INDEX_REBUILD_BATCH_SIZE',
+      REINDEX_BATCH_SIZE,
+    );
+
+    let processed = 0;
+    let pushed = 0;
+
+    try {
+      // Relax refresh while bulk-loading; restore it in `finally` so a failure
+      // cannot leave a 30s-stale index behind an alias.
+      await this.openSearch.setRefreshInterval(target, BULK_REFRESH_INTERVAL);
+
+      try {
+        let cursor: string | undefined;
+        for (;;) {
+          const rows = await this.prisma.derivativeArtifact.findMany({
+            take: batchSize,
+            ...(cursor && { skip: 1, cursor: { id: cursor } }),
+            where: { deletedAt: null },
+            orderBy: { id: 'asc' },
+            select: {
+              id: true,
+              derivativeType: true,
+              title: true,
+              contentJson: true,
+              sourceDocumentId: true,
+              organizationId: true,
+              visibility: true,
+              audience: true,
+              language: true,
+              taxonomyVersion: true,
+              confidenceScore: true,
+              publishedAt: true,
+              createdAt: true,
+              subjectAssignments: {
+                select: { subject: { select: { code: true } } },
+              },
+            },
+          });
+
+          if (rows.length === 0) break;
+          cursor = rows[rows.length - 1]!.id;
+
+          const payloads = rows.map((row) => this.toDerivativePayload(row));
+          const result = await this.openSearch.bulkIndexDerivatives(payloads, target);
+
+          pushed += result.indexed;
+          processed += rows.length;
+          await onProgress(processed, pushed);
+        }
+      } finally {
+        await this.openSearch.setRefreshInterval(target, STEADY_REFRESH_INTERVAL);
+      }
+    } catch (error) {
+      const message = (error as Error).message;
+      this.logger.error(`Derivative indexing into ${target} failed: ${message}`);
+      return {
+        ...base,
+        status: 'failed',
+        sourceCount,
+        destCount: 0,
+        reportedCreated: pushed,
+        error: message,
+      };
+    }
+
+    if (sourceCount === 0) {
+      this.logger.warn('No derivative artifacts in PostgreSQL — destination starts empty');
+      return { ...base, status: 'source_missing', sourceCount: 0, destCount: 0, reportedCreated: 0 };
+    }
+
+    await this.openSearch.refreshIndex(target);
+    const destCount = await this.openSearch.countIndex(target);
+
+    // Exactly one OpenSearch document per source row, so unlike the keyword
+    // index there is no fan-out to reason about: the tolerance covers rows
+    // written or soft-deleted mid-run, nothing else.
+    const minAcceptable = Math.floor(sourceCount * (1 - VERIFY_TOLERANCE));
+    if (destCount < minAcceptable) {
+      const message =
+        `Derivative index ${target} holds ${destCount} of ${sourceCount} artifacts ` +
+        `(expected >= ${minAcceptable})`;
+      this.logger.error(message);
+      return {
+        ...base,
+        status: 'mismatch',
+        sourceCount,
+        destCount,
+        reportedCreated: pushed,
+        error: message,
+      };
+    }
+
+    if (pushed !== destCount) {
+      this.logger.warn(
+        `_bulk into ${target} reported ${pushed} accepted but the index holds ` +
+          `${destCount} — trusting the count.`,
+      );
+    }
+    this.logger.log(`Indexed derivatives → ${target}: ${destCount}/${sourceCount}`);
+
+    return { ...base, status: 'verified', sourceCount, destCount, reportedCreated: pushed };
+  }
+
+  /**
+   * Map one PostgreSQL row to its indexed document.
+   *
+   * Body text comes from the C1 extractor — the shapes are NOT re-derived here.
+   * That is what keeps the MCQ answer-key rule in exactly one place: the
+   * extractor never emits `isCorrect`/`rationale`/`explanation`, and the
+   * mapping has no field to hold them.
+   *
+   * `organization_id` is set only for a row that actually has one. A null org
+   * must produce an ABSENT field, because the public branch of
+   * `buildDerivativeVisibilityFilter` is `must_not exists organization_id`.
+   */
+  private toDerivativePayload(row: {
+    id: string;
+    derivativeType: string;
+    title: string;
+    contentJson: unknown;
+    sourceDocumentId: string | null;
+    organizationId: string | null;
+    visibility: string;
+    audience: string;
+    language: string;
+    taxonomyVersion: string | null;
+    confidenceScore: number | null;
+    publishedAt: Date | null;
+    createdAt: Date;
+    subjectAssignments: { subject: { code: string } }[];
+  }): DerivativeDocumentPayload {
+    const blocks = extractSearchableText(row.derivativeType, row.contentJson);
+    const subjectCodes = row.subjectAssignments.map(
+      (assignment) => assignment.subject.code,
+    );
+
+    return {
+      derivative_id: row.id,
+      derivative_type: row.derivativeType,
+      title: row.title,
+      ...(blocks.length > 0 && { body_text: blocks.join('\n\n') }),
+      ...(row.sourceDocumentId && { source_document_id: row.sourceDocumentId }),
+      // Spread-on-truthy, not `?? undefined`: the key must be absent, and an
+      // explicit `undefined` would still be a key on the object literal.
+      ...(row.organizationId && { organization_id: row.organizationId }),
+      visibility: row.visibility,
+      audience: row.audience,
+      language: row.language,
+      ...(row.taxonomyVersion && { taxonomy_version: row.taxonomyVersion }),
+      ...(subjectCodes.length > 0 && { subject_codes: subjectCodes }),
+      ...(row.confidenceScore !== null && { confidence_score: row.confidenceScore }),
+      is_published: row.publishedAt !== null,
+      created_at: row.createdAt.toISOString(),
+      ...(row.publishedAt && { published_at: row.publishedAt.toISOString() }),
+    };
   }
 
   private toBasePayload(document: {

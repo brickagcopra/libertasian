@@ -41,8 +41,15 @@ export class IndexRebuildProcessor extends WorkerHost {
           keywordTarget: result.keywordTarget,
           vectorTarget: result.vectorTarget,
           uploadsTarget: result.uploadsTarget,
+          derivativesTarget: result.derivativesTarget,
           verifiedCount: result.verifiedCount,
+          derivativesTotal: result.derivativesTotal,
+          derivativesIndexed: result.derivativeCopy?.destCount ?? 0,
+          derivativeStatus: result.derivativeCopy?.status ?? null,
           aliasSwapped: result.aliasSwapped,
+          // Empty on a clean run. A non-empty list means an index was built but
+          // failed verification, so its alias still points at the old target.
+          aliasesSkipped: result.aliasesSkipped,
           dryRun: job.data.dryRun,
         },
       });

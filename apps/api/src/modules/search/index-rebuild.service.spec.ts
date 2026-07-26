@@ -5,6 +5,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import {
+  DERIVATIVES_INDEX,
+  DERIVATIVES_INDEX_PHYSICAL,
   KEYWORD_INDEX,
   KEYWORD_INDEX_PHYSICAL,
   USER_UPLOADS_INDEX,
@@ -33,11 +35,42 @@ interface OpenSearchMock {
   resolveAliasTargets: jest.Mock;
   createPhysicalIndex: jest.Mock;
   bulkIndexDocuments: jest.Mock;
+  bulkIndexDerivatives: jest.Mock;
+  setRefreshInterval: jest.Mock;
   reindexInto: jest.Mock;
   refreshIndex: jest.Mock;
   countIndex: jest.Mock;
   swapAlias: jest.Mock;
   deleteIndex: jest.Mock;
+}
+
+interface PrismaMock {
+  legalDocument: { count: jest.Mock; findMany: jest.Mock };
+  derivativeArtifact: { count: jest.Mock; findMany: jest.Mock };
+}
+
+/** A `derivative_artifacts` row as the rebuild job selects it. */
+function buildDerivative(id: string, overrides: Record<string, unknown> = {}) {
+  return {
+    id,
+    derivativeType: 'case_digest',
+    title: `Digest ${id}`,
+    contentJson: {
+      summary: 'Petitioner challenges the validity of a warrantless search.',
+      ruling: 'The Court held the search invalid.',
+    },
+    sourceDocumentId: 'doc-1',
+    organizationId: null,
+    visibility: 'public_editorial',
+    audience: 'both',
+    language: 'en',
+    taxonomyVersion: 'study_8',
+    confidenceScore: 0.91,
+    publishedAt: new Date('2026-05-01T00:00:00.000Z'),
+    createdAt: new Date('2026-04-20T00:00:00.000Z'),
+    subjectAssignments: [{ subject: { code: 'criminal_law' } }],
+    ...overrides,
+  };
 }
 
 function buildDocument(id: string) {
@@ -73,10 +106,12 @@ describe('IndexRebuildService', () => {
   let service: IndexRebuildService;
   let calls: CallLog;
   let openSearch: OpenSearchMock;
-  let prisma: { legalDocument: { count: jest.Mock; findMany: jest.Mock } };
+  let prisma: PrismaMock;
   let queue: { add: jest.Mock; getJob: jest.Mock };
   let verifiedCount: number;
   let pushedCount: number;
+  /** Count returned for the derivatives destination index. */
+  let derivativeDestCount: number;
   /** What a mocked `reindexInto` reports as measured on both sides. */
   let copyCounts: { reportedCreated: number | null; sourceCount: number; destCount: number };
 
@@ -84,6 +119,7 @@ describe('IndexRebuildService', () => {
     calls = [];
     verifiedCount = 2; // 1 doc payload + 1 section payload
     pushedCount = 2;
+    derivativeDestCount = 1; // one derivative row in the default fixture
     // The production shape: `_reindex` claims created: 0 while the copy in fact
     // moved every document. The counts are the truth.
     copyCounts = { reportedCreated: 0, sourceCount: 12_196, destCount: 12_196 };
@@ -100,6 +136,13 @@ describe('IndexRebuildService', () => {
         calls.push(`bulk:${target}:${docs.length}`);
         return { indexed: pushedCount, errors: 0 };
       }),
+      bulkIndexDerivatives: jest.fn(async (docs: unknown[], target: string) => {
+        calls.push(`bulkDerivatives:${target}:${docs.length}`);
+        return { indexed: docs.length };
+      }),
+      setRefreshInterval: jest.fn(async (name: string, interval: string) => {
+        calls.push(`refreshInterval:${name}:${interval}`);
+      }),
       reindexInto: jest.fn(async (source: string, dest: string) => {
         calls.push(`reindex:${source}->${dest}`);
         return copyCounts;
@@ -109,7 +152,7 @@ describe('IndexRebuildService', () => {
       }),
       countIndex: jest.fn(async (name: string) => {
         calls.push(`count:${name}`);
-        return verifiedCount;
+        return name.startsWith(DERIVATIVES_INDEX) ? derivativeDestCount : verifiedCount;
       }),
       swapAlias: jest.fn(async (options: { alias: string; target: string; removeConcreteIndex?: boolean }) => {
         calls.push(
@@ -129,6 +172,13 @@ describe('IndexRebuildService', () => {
         findMany: jest
           .fn()
           .mockResolvedValueOnce([buildDocument('doc-1')])
+          .mockResolvedValue([]),
+      },
+      derivativeArtifact: {
+        count: jest.fn(async () => 1),
+        findMany: jest
+          .fn()
+          .mockResolvedValueOnce([buildDerivative('der-1')])
           .mockResolvedValue([]),
       },
     };
@@ -183,12 +233,20 @@ describe('IndexRebuildService', () => {
         `create:${KEYWORD_INDEX_PHYSICAL}`,
         `create:${VECTOR_INDEX_PHYSICAL}`,
         `create:${USER_UPLOADS_INDEX_PHYSICAL}`,
+        `create:${DERIVATIVES_INDEX_PHYSICAL}`,
         `bulk:${KEYWORD_INDEX_PHYSICAL}:2`,
+        // Derivative phase: relax refresh, bulk, restore refresh, then measure.
+        `refreshInterval:${DERIVATIVES_INDEX_PHYSICAL}:30s`,
+        `bulkDerivatives:${DERIVATIVES_INDEX_PHYSICAL}:1`,
+        `refreshInterval:${DERIVATIVES_INDEX_PHYSICAL}:5s`,
+        `refresh:${DERIVATIVES_INDEX_PHYSICAL}`,
+        `count:${DERIVATIVES_INDEX_PHYSICAL}`,
         `refresh:${KEYWORD_INDEX_PHYSICAL}`,
         `count:${KEYWORD_INDEX_PHYSICAL}`,
         `swap:${KEYWORD_INDEX}->${KEYWORD_INDEX_PHYSICAL}`,
         `swap:${VECTOR_INDEX}->${VECTOR_INDEX_PHYSICAL}`,
         `swap:${USER_UPLOADS_INDEX}->${USER_UPLOADS_INDEX_PHYSICAL}`,
+        `swap:${DERIVATIVES_INDEX}->${DERIVATIVES_INDEX_PHYSICAL}`,
       ]);
     });
 
@@ -427,6 +485,206 @@ describe('IndexRebuildService', () => {
       expect(
         calls.some((call) => call.startsWith(`swap:${VECTOR_INDEX}->${VECTOR_INDEX_PHYSICAL}`)),
       ).toBe(true);
+    });
+  });
+
+  describe('derivative ingestion', () => {
+    /** The payload the service handed to `_bulk` for the first derivative. */
+    const firstPayload = (): Record<string, unknown> => {
+      const [docs] = openSearch.bulkIndexDerivatives.mock.calls[0] as [
+        Record<string, unknown>[],
+        string,
+      ];
+      return docs[0]!;
+    };
+
+    it('paginates by keyset, never OFFSET, and excludes soft-deleted rows', async () => {
+      prisma.derivativeArtifact.findMany.mockReset();
+      prisma.derivativeArtifact.findMany
+        .mockResolvedValueOnce([buildDerivative('der-1'), buildDerivative('der-2')])
+        .mockResolvedValueOnce([buildDerivative('der-3')])
+        .mockResolvedValue([]);
+      prisma.derivativeArtifact.count.mockResolvedValue(3);
+      derivativeDestCount = 3;
+
+      await run();
+
+      const [first, second] = prisma.derivativeArtifact.findMany.mock.calls as [
+        [Record<string, unknown>],
+        [Record<string, unknown>],
+      ];
+      // No `skip` on the first page; cursor + skip:1 thereafter. `skip` as an
+      // OFFSET (skip: n for page n) would be the anti-pattern.
+      expect(first[0]['skip']).toBeUndefined();
+      expect(first[0]['cursor']).toBeUndefined();
+      expect(first[0]['orderBy']).toEqual({ id: 'asc' });
+      expect(second[0]['cursor']).toEqual({ id: 'der-2' });
+      expect(second[0]['skip']).toBe(1);
+
+      for (const [args] of prisma.derivativeArtifact.findMany.mock.calls as [
+        Record<string, unknown>,
+      ][]) {
+        expect(args['where']).toEqual({ deletedAt: null });
+      }
+      expect(prisma.derivativeArtifact.count).toHaveBeenCalledWith({
+        where: { deletedAt: null },
+      });
+    });
+
+    it('reads and writes in batches of 500 (CLAUDE.md bulk size)', async () => {
+      await run();
+
+      const [args] = prisma.derivativeArtifact.findMany.mock.calls[0] as [
+        Record<string, unknown>,
+      ];
+      expect(args['take']).toBe(500);
+
+      const [, target] = openSearch.bulkIndexDerivatives.mock.calls[0] as [
+        unknown[],
+        string,
+      ];
+      expect(target).toBe(DERIVATIVES_INDEX_PHYSICAL);
+    });
+
+    it('restores the refresh interval even when the bulk write throws', async () => {
+      openSearch.bulkIndexDerivatives.mockRejectedValue(
+        new Error('strict_dynamic_mapping_exception: [rationale]'),
+      );
+
+      await run();
+
+      expect(calls).toContain(`refreshInterval:${DERIVATIVES_INDEX_PHYSICAL}:30s`);
+      expect(calls).toContain(`refreshInterval:${DERIVATIVES_INDEX_PHYSICAL}:5s`);
+    });
+
+    it('takes body text from the C1 extractor', async () => {
+      await run();
+      const payload = firstPayload();
+      expect(payload['body_text']).toContain(
+        'Petitioner challenges the validity of a warrantless search.',
+      );
+      expect(payload['body_text']).toContain('The Court held the search invalid.');
+    });
+
+    it('OMITS organization_id entirely when the row has none', async () => {
+      await run();
+      const payload = firstPayload();
+      // Not null, not '', not a sentinel — the key must be absent, because the
+      // public branch of the visibility filter is `must_not exists`.
+      expect(Object.prototype.hasOwnProperty.call(payload, 'organization_id')).toBe(false);
+    });
+
+    it('sets organization_id when the row has one', async () => {
+      prisma.derivativeArtifact.findMany.mockReset();
+      prisma.derivativeArtifact.findMany
+        .mockResolvedValueOnce([buildDerivative('der-1', { organizationId: 'org-a' })])
+        .mockResolvedValue([]);
+
+      await run();
+      expect(firstPayload()['organization_id']).toBe('org-a');
+    });
+
+    it('derives is_published from publishedAt', async () => {
+      prisma.derivativeArtifact.findMany.mockReset();
+      prisma.derivativeArtifact.findMany
+        .mockResolvedValueOnce([
+          buildDerivative('der-1'),
+          buildDerivative('der-2', { publishedAt: null }),
+        ])
+        .mockResolvedValue([]);
+      prisma.derivativeArtifact.count.mockResolvedValue(2);
+      derivativeDestCount = 2;
+
+      await run();
+      const [docs] = openSearch.bulkIndexDerivatives.mock.calls[0] as [
+        Record<string, unknown>[],
+        string,
+      ];
+      expect(docs[0]!['is_published']).toBe(true);
+      expect(docs[1]!['is_published']).toBe(false);
+      expect(Object.prototype.hasOwnProperty.call(docs[1]!, 'published_at')).toBe(false);
+    });
+
+    it('reports verified counts measured on both sides', async () => {
+      prisma.derivativeArtifact.count.mockResolvedValue(99_994);
+      derivativeDestCount = 99_994;
+      prisma.derivativeArtifact.findMany.mockReset();
+      prisma.derivativeArtifact.findMany
+        .mockResolvedValueOnce([buildDerivative('der-1')])
+        .mockResolvedValue([]);
+
+      const { result } = await run();
+
+      expect(result.derivativeCopy).toMatchObject({
+        source: 'postgres:derivative_artifacts',
+        dest: DERIVATIVES_INDEX_PHYSICAL,
+        status: 'verified',
+        sourceCount: 99_994,
+        destCount: 99_994,
+      });
+      expect(result.derivativesTotal).toBe(99_994);
+      expect(result.aliasesSkipped).toEqual([]);
+    });
+
+    it('reports mismatch and does NOT swap the alias when the count is short', async () => {
+      prisma.derivativeArtifact.count.mockResolvedValue(1_000);
+      derivativeDestCount = 10;
+
+      const { result } = await run();
+
+      expect(result.derivativeCopy?.status).toBe('mismatch');
+      expect(result.aliasesSkipped).toEqual([DERIVATIVES_INDEX]);
+      expect(calls).not.toContain(
+        `swap:${DERIVATIVES_INDEX}->${DERIVATIVES_INDEX_PHYSICAL}`,
+      );
+      // The keyword index still went live — a derivative failure must not
+      // block the index that actually fixes search.
+      expect(calls).toContain(`swap:${KEYWORD_INDEX}->${KEYWORD_INDEX_PHYSICAL}`);
+      expect(result.aliasSwapped).toBe(true);
+    });
+
+    it('treats a per-item bulk rejection as failure, not as partial success', async () => {
+      openSearch.bulkIndexDerivatives.mockRejectedValue(
+        new Error('rejected 1 of 500 derivative(s): strict_dynamic_mapping_exception'),
+      );
+
+      const { result } = await run();
+
+      expect(result.derivativeCopy?.status).toBe('failed');
+      expect(result.derivativeCopy?.error).toMatch(/strict_dynamic_mapping_exception/);
+      expect(result.aliasesSkipped).toEqual([DERIVATIVES_INDEX]);
+      expect(calls).not.toContain(
+        `swap:${DERIVATIVES_INDEX}->${DERIVATIVES_INDEX_PHYSICAL}`,
+      );
+    });
+
+    it('reports source_missing rather than mismatch when there are no rows', async () => {
+      prisma.derivativeArtifact.count.mockResolvedValue(0);
+      prisma.derivativeArtifact.findMany.mockReset();
+      prisma.derivativeArtifact.findMany.mockResolvedValue([]);
+
+      const { result } = await run();
+
+      expect(result.derivativeCopy?.status).toBe('source_missing');
+      // source_missing is a legitimate empty, so the alias DOES swap.
+      expect(result.aliasesSkipped).toEqual([]);
+      expect(calls).toContain(`swap:${DERIVATIVES_INDEX}->${DERIVATIVES_INDEX_PHYSICAL}`);
+    });
+
+    it('streams derivative progress alongside the document counters', async () => {
+      const { progress } = await run();
+      const derivativePhase = progress.filter(
+        (entry) => entry.phase === 'reindexing_derivatives',
+      );
+      expect(derivativePhase.length).toBeGreaterThan(0);
+
+      const last = progress[progress.length - 1]!;
+      expect(last.derivativesTotal).toBe(1);
+      expect(last.derivativesProcessed).toBe(1);
+      expect(last.derivativesPushed).toBe(1);
+      // The pre-existing counters are still reported.
+      expect(last.documentsTotal).toBe(1);
+      expect(last.docsPushed).toBe(2);
     });
   });
 

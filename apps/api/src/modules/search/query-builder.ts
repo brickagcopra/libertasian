@@ -41,6 +41,95 @@ export function buildVectorCourtClause(courtKey: string): Record<string, unknown
   };
 }
 
+/**
+ * The only visibility value a derivative may carry to be world-readable.
+ * Mirrors `derivative_artifacts.visibility` (private | public_editorial | unlisted).
+ */
+export const PUBLIC_DERIVATIVE_VISIBILITY = 'public_editorial';
+
+/**
+ * Visibility values a member of the OWNING organization may see.
+ *
+ * This is an allowlist, and that is the point: it is enumerated in a `terms`
+ * clause, so a row carrying a value that is not on this list — a typo, a value
+ * from a future migration, anything unrecognised — matches no branch and is
+ * excluded. Nothing is passed through by default. Widening access is an edit
+ * to this array, which is a reviewable act.
+ */
+export const ORG_SCOPED_DERIVATIVE_VISIBILITIES: readonly string[] = [
+  'private',
+  'unlisted',
+  'public_editorial',
+];
+
+/**
+ * The authenticated principal, reduced to the single claim this filter may use.
+ *
+ * `organizationId` MUST come from verified JWT claims (`JwtPayload`). It must
+ * never be read from a request body, query string, or header — a client-supplied
+ * organization id turns this filter into an org-enumeration primitive.
+ */
+export interface DerivativeSearchPrincipal {
+  organizationId: string;
+}
+
+/**
+ * Authorization filter for derivative search. Every derivative query MUST be
+ * wrapped in this — it is the tenant-isolation boundary for the derivatives
+ * index (CLAUDE.md: "Cross-tenant data access is a critical vulnerability").
+ *
+ * Two explicit branches, no implicit fallthrough:
+ *
+ *  - **public** — `visibility = public_editorial` AND `organization_id` does not
+ *    exist on the document. The `must_not exists` half is not redundant: an
+ *    org-owned row marked `public_editorial` is still that org's row, and
+ *    without this clause it would leak to the whole internet. This is also why
+ *    the indexer must OMIT `organization_id` rather than write `''` — `exists`
+ *    is false only for an absent field, so a sentinel value would flip every
+ *    null-org row out of the public branch.
+ *  - **org-scoped** — the public branch OR (`organization_id` = the caller's own
+ *    org AND visibility on the allowlist above).
+ *
+ * A caller with no principal, or a principal with no usable organization id,
+ * gets the public branch and nothing else. That case is written out explicitly
+ * below rather than falling out of a missing `else`.
+ */
+export function buildDerivativeVisibilityFilter(
+  user: DerivativeSearchPrincipal | null,
+): Record<string, unknown> {
+  const publicClause = {
+    bool: {
+      must: [{ term: { visibility: PUBLIC_DERIVATIVE_VISIBILITY } }],
+      must_not: [{ exists: { field: 'organization_id' } }],
+    },
+  };
+  const publicOnly = { bool: { should: [publicClause], minimum_should_match: 1 } };
+
+  // Branch 1 — unauthenticated.
+  if (user === null) return publicOnly;
+
+  // Branch 1 (cont.) — authenticated but without a usable org claim. Explicit:
+  // a malformed principal is treated as the public, never as a wildcard.
+  const organizationId = user.organizationId;
+  if (typeof organizationId !== 'string' || organizationId.length === 0) {
+    return publicOnly;
+  }
+
+  // Branch 2 — authenticated, scoped to the caller's own organization only.
+  const ownOrgClause = {
+    bool: {
+      must: [
+        { term: { organization_id: organizationId } },
+        { terms: { visibility: [...ORG_SCOPED_DERIVATIVE_VISIBILITIES] } },
+      ],
+    },
+  };
+
+  return {
+    bool: { should: [publicClause, ownOrgClause], minimum_should_match: 1 },
+  };
+}
+
 export interface RankingWeights {
   officialBoost: number;
   trustOfficial: number;

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 
 import {
   OpenSearchService,
+  DERIVATIVES_INDEX,
   KEYWORD_INDEX,
   KEYWORD_INDEX_PHYSICAL,
   VECTOR_INDEX,
@@ -28,6 +29,7 @@ const mockClient = {
     create: jest.fn(),
     delete: jest.fn(),
     refresh: jest.fn(),
+    putSettings: jest.fn(),
   },
 };
 
@@ -91,10 +93,13 @@ describe('OpenSearchService', () => {
 
       const result = await service.ensureIndexes();
 
+      // Four since C2 added the derivatives index to INDEX_TOPOLOGY — boot
+      // bootstrap walks the same topology the rebuild job does.
       expect(result.created).toEqual([
         KEYWORD_INDEX,
         VECTOR_INDEX,
         USER_UPLOADS_INDEX,
+        DERIVATIVES_INDEX,
       ]);
       expect(mockClient.indices.create).toHaveBeenCalledWith(
         expect.objectContaining({ index: KEYWORD_INDEX_PHYSICAL }),
@@ -112,7 +117,7 @@ describe('OpenSearchService', () => {
 
       const result = await service.ensureIndexes();
 
-      expect(result.existing).toHaveLength(3);
+      expect(result.existing).toHaveLength(4);
       expect(mockClient.indices.create).not.toHaveBeenCalled();
       expect(mockClient.indices.putAlias).not.toHaveBeenCalled();
     });
@@ -129,6 +134,7 @@ describe('OpenSearchService', () => {
         KEYWORD_INDEX,
         VECTOR_INDEX,
         USER_UPLOADS_INDEX,
+        DERIVATIVES_INDEX,
       ]);
       expect(mockClient.indices.create).not.toHaveBeenCalled();
       expect(mockClient.indices.delete).not.toHaveBeenCalled();
@@ -338,6 +344,135 @@ describe('OpenSearchService', () => {
   });
 
   // ---- removeDocument ----
+
+  // ---- bulkIndexDerivatives ----
+
+  describe('bulkIndexDerivatives', () => {
+    const derivative = (overrides: Record<string, unknown> = {}) => ({
+      derivative_id: 'der-1',
+      derivative_type: 'case_digest',
+      title: 'Digest',
+      body_text: 'Body',
+      visibility: 'public_editorial',
+      is_published: true,
+      created_at: '2026-04-20T00:00:00.000Z',
+      ...overrides,
+    });
+
+    /** The document half of the `_bulk` NDJSON body (odd indices are actions). */
+    const writtenDoc = (): Record<string, unknown> => {
+      const [{ body }] = mockClient.bulk.mock.calls[0] as [
+        { body: Record<string, unknown>[] },
+      ];
+      return body[1]!;
+    };
+
+    it('returns zero and skips the round-trip for an empty array', async () => {
+      const result = await service.bulkIndexDerivatives([], 'derivative_artifacts_v3');
+      expect(result).toEqual({ indexed: 0 });
+      expect(mockClient.bulk).not.toHaveBeenCalled();
+    });
+
+    it('indexes by derivative_id into the supplied target', async () => {
+      mockClient.bulk.mockResolvedValue({ body: { errors: false, items: [] } });
+
+      const result = await service.bulkIndexDerivatives(
+        [derivative()],
+        'derivative_artifacts_v3',
+      );
+
+      expect(result).toEqual({ indexed: 1 });
+      const [{ body }] = mockClient.bulk.mock.calls[0] as [
+        { body: Record<string, unknown>[] },
+      ];
+      expect(body[0]).toEqual({
+        index: { _index: 'derivative_artifacts_v3', _id: 'der-1' },
+      });
+    });
+
+    // The behavioural difference from bulkIndexDocuments, and the reason this
+    // is a separate method: a rejected item means the documents no longer match
+    // the strict mapping — which is how a regressed extractor emitting an MCQ
+    // answer key would surface. Counting it would demote the control to a log.
+    it('THROWS on a per-item failure rather than counting it as an error', async () => {
+      mockClient.bulk.mockResolvedValue({
+        body: {
+          errors: true,
+          items: [
+            { index: { error: null } },
+            {
+              index: {
+                error: {
+                  type: 'strict_dynamic_mapping_exception',
+                  reason: 'mapping set to strict, dynamic introduction of [rationale]',
+                },
+              },
+            },
+          ],
+        },
+      });
+
+      await expect(
+        service.bulkIndexDerivatives(
+          [derivative(), derivative({ derivative_id: 'der-2' })],
+          'derivative_artifacts_v3',
+        ),
+      ).rejects.toThrow(/rejected 1 of 2 derivative\(s\)/);
+    });
+
+    it('surfaces the rejection reason so the cause is diagnosable', async () => {
+      mockClient.bulk.mockResolvedValue({
+        body: {
+          errors: true,
+          items: [{ index: { error: { type: 'strict_dynamic_mapping_exception' } } }],
+        },
+      });
+
+      await expect(
+        service.bulkIndexDerivatives([derivative()], 'derivative_artifacts_v3'),
+      ).rejects.toThrow(/strict_dynamic_mapping_exception/);
+    });
+
+    describe('organization_id omission', () => {
+      beforeEach(() => {
+        mockClient.bulk.mockResolvedValue({ body: { errors: false, items: [] } });
+      });
+
+      it('writes organization_id when it is a non-empty string', async () => {
+        await service.bulkIndexDerivatives(
+          [derivative({ organization_id: 'org-a' })],
+          'derivative_artifacts_v3',
+        );
+        expect(writtenDoc()['organization_id']).toBe('org-a');
+      });
+
+      it.each([
+        ['undefined', undefined],
+        ['an empty string', ''],
+      ])('strips organization_id when it is %s', async (_label, value) => {
+        await service.bulkIndexDerivatives(
+          [derivative({ organization_id: value })],
+          'derivative_artifacts_v3',
+        );
+        // Absent, not null: `exists` is true for any present non-null value,
+        // so an empty string would flip the row out of the public branch.
+        expect(
+          Object.prototype.hasOwnProperty.call(writtenDoc(), 'organization_id'),
+        ).toBe(false);
+      });
+    });
+  });
+
+  describe('setRefreshInterval', () => {
+    it('puts the interval on the named index', async () => {
+      mockClient.indices.putSettings.mockResolvedValue({ body: {} });
+      await service.setRefreshInterval('derivative_artifacts_v3', '30s');
+      expect(mockClient.indices.putSettings).toHaveBeenCalledWith({
+        index: 'derivative_artifacts_v3',
+        body: { index: { refresh_interval: '30s' } },
+      });
+    });
+  });
 
   describe('removeDocument', () => {
     it('should delete by query on document_id', async () => {
