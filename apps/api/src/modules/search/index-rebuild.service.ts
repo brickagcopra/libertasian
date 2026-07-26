@@ -38,6 +38,22 @@ const STEADY_REFRESH_INTERVAL = '5s';
  */
 const VERIFY_TOLERANCE = 0.01;
 
+/**
+ * Whether `target` is a legitimate physical index for the expected base name.
+ *
+ * Accepts the base itself (`legal_documents_keyword_v3`) and any blue/green
+ * re-run of the SAME version (`..._v3_r1`, `..._v3_r12`). Rejects anything else,
+ * including a different version (`..._v2`) and a lookalike suffix
+ * (`..._v3_r1x`, `..._v3_rX`) — a genuinely wrong target must still report as a
+ * mismatch, otherwise the boolean is worthless.
+ */
+export function isExpectedPhysicalTarget(expected: string, target: string): boolean {
+  if (target === expected) return true;
+  if (!target.startsWith(`${expected}_r`)) return false;
+  const suffix = target.slice(expected.length + 2);
+  return suffix.length > 0 && /^\d+$/.test(suffix);
+}
+
 export interface IndexRebuildJobData {
   triggeredByUserId: string;
   organizationId: string;
@@ -215,17 +231,43 @@ export class IndexRebuildService {
     return { alias, previousTargets, target: targetIndex };
   }
 
-  /** List physical indices behind each alias so an operator can pick a rollback target. */
+  /**
+   * List physical indices behind each alias so an operator can pick a rollback
+   * target.
+   *
+   * `matchesExpected` exists because `expectedPhysical` is the BASE name
+   * (`<alias>_v3`) while `allocateTargetIndex` is blue/green: rebuilding at an
+   * unchanged INDEX_VERSION allocates `<alias>_v3_r1`, `_r2`, … since the base
+   * name is still occupied by the index currently serving traffic. Comparing
+   * against the base name therefore reported all four aliases as mismatched
+   * immediately after a correct, verified re-run — a false alarm precisely when
+   * an operator most needs to trust this endpoint.
+   *
+   * The raw `expectedPhysical` and `currentTargets` are still reported verbatim,
+   * so the boolean is a convenience and never the only thing an operator sees.
+   */
   async describeTopology(): Promise<
-    { alias: string; expectedPhysical: string; currentTargets: string[]; isAlias: boolean }[]
+    {
+      alias: string;
+      expectedPhysical: string;
+      currentTargets: string[];
+      isAlias: boolean;
+      matchesExpected: boolean;
+    }[]
   > {
     const rows = [];
     for (const entry of INDEX_TOPOLOGY) {
+      const currentTargets = await this.openSearch.resolveAliasTargets(entry.alias);
       rows.push({
         alias: entry.alias,
         expectedPhysical: entry.physical,
-        currentTargets: await this.openSearch.resolveAliasTargets(entry.alias),
+        currentTargets,
         isAlias: await this.openSearch.aliasExists(entry.alias),
+        matchesExpected:
+          currentTargets.length > 0 &&
+          currentTargets.every((target) =>
+            isExpectedPhysicalTarget(entry.physical, target),
+          ),
       });
     }
     return rows;

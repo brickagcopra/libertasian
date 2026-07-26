@@ -130,6 +130,74 @@ export function buildDerivativeVisibilityFilter(
   };
 }
 
+export interface BuildDerivativeQueryOptions {
+  query: string;
+  /**
+   * REQUIRED. The output of `buildDerivativeVisibilityFilter`. Typed as
+   * non-optional on purpose: a derivative query with no visibility filter is a
+   * cross-tenant read, so it must be impossible to build one by forgetting an
+   * argument rather than merely discouraged in a comment.
+   */
+  visibilityFilter: Record<string, unknown>;
+  from?: number;
+  size?: number;
+}
+
+/**
+ * BM25 query for the derivatives index.
+ *
+ * **BM25 only — there is no kNN arm here and there must not be one.** The
+ * derivatives index carries no `knn_vector` field: not indexing embeddings for
+ * ~100k short, heavily-titled artifacts was a deliberate cost decision in C1.
+ * A kNN clause against this index matches nothing.
+ *
+ * The visibility filter goes in `filter`, not `must`, so it is a hard boolean
+ * gate that contributes nothing to the score — a scoring clause could in
+ * principle be outweighed, a filter clause cannot.
+ *
+ * Highlighting is restricted to `title` and `body_text`. Those are the only two
+ * analysed fields in the mapping, and naming them explicitly means a future
+ * mapping addition cannot start surfacing fragments from a field nobody
+ * reviewed for disclosure.
+ */
+export function buildDerivativeQueryBody(
+  options: BuildDerivativeQueryOptions,
+): Record<string, unknown> {
+  const { query, visibilityFilter, from = 0, size = 20 } = options;
+
+  return {
+    query: {
+      bool: {
+        must: [
+          {
+            multi_match: {
+              query,
+              // Title carries the citation-ish label a user is most likely to
+              // type; body_text is the extracted prose.
+              fields: ['title^3', 'body_text'],
+              type: 'best_fields',
+              operator: 'or',
+            },
+          },
+        ],
+        filter: [visibilityFilter],
+      },
+    },
+    highlight: {
+      fields: {
+        title: {},
+        body_text: { fragment_size: 200, number_of_fragments: 3 },
+      },
+      pre_tags: ['<mark>'],
+      post_tags: ['</mark>'],
+    },
+    from,
+    size,
+    // Same 5s ceiling as the document arms (CLAUDE.md: degrade gracefully).
+    timeout: '5s',
+  };
+}
+
 export interface RankingWeights {
   officialBoost: number;
   trustOfficial: number;

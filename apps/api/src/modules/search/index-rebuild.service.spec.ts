@@ -17,6 +17,7 @@ import {
 import {
   INDEX_REBUILD_QUEUE,
   IndexRebuildService,
+  isExpectedPhysicalTarget,
   type IndexRebuildProgress,
 } from './index-rebuild.service';
 import { OpenSearchService } from './opensearch.service';
@@ -685,6 +686,103 @@ describe('IndexRebuildService', () => {
       // The pre-existing counters are still reported.
       expect(last.documentsTotal).toBe(1);
       expect(last.docsPushed).toBe(2);
+    });
+  });
+
+  describe('isExpectedPhysicalTarget', () => {
+    const base = 'legal_documents_keyword_v3';
+
+    it.each([
+      ['the base name itself', base],
+      ['a first blue/green re-run', `${base}_r1`],
+      ['a double-digit re-run', `${base}_r12`],
+    ])('accepts %s', (_label, target) => {
+      expect(isExpectedPhysicalTarget(base, target)).toBe(true);
+    });
+
+    it.each([
+      ['a different version', 'legal_documents_keyword_v2'],
+      ['a different alias', 'legal_documents_vector_v3'],
+      ['a non-numeric suffix', `${base}_rX`],
+      ['a trailing-garbage suffix', `${base}_r1x`],
+      ['an empty re-run number', `${base}_r`],
+      ['a suffix without the _r marker', `${base}_1`],
+      ['a prefix collision', `${base}x`],
+      ['an empty string', ''],
+    ])('rejects %s', (_label, target) => {
+      expect(isExpectedPhysicalTarget(base, target)).toBe(false);
+    });
+  });
+
+  describe('describeTopology', () => {
+    const targetsFor = (targets: Record<string, string[]>) => {
+      openSearch.resolveAliasTargets.mockImplementation(
+        async (alias: string) => targets[alias] ?? [],
+      );
+      openSearch.aliasExists.mockResolvedValue(true);
+    };
+
+    it('reports a match when the alias is on the base physical name', async () => {
+      targetsFor({ [KEYWORD_INDEX]: [KEYWORD_INDEX_PHYSICAL] });
+
+      const rows = await service.describeTopology();
+      const keyword = rows.find((row) => row.alias === KEYWORD_INDEX)!;
+
+      expect(keyword.matchesExpected).toBe(true);
+      // Raw names stay visible for the operator.
+      expect(keyword.expectedPhysical).toBe(KEYWORD_INDEX_PHYSICAL);
+      expect(keyword.currentTargets).toEqual([KEYWORD_INDEX_PHYSICAL]);
+    });
+
+    // The false-mismatch bug: prod is on `*_v3_r1` after a correct re-run at an
+    // unchanged INDEX_VERSION, and the endpoint called all four aliases wrong.
+    it('reports a match on a blue/green _r1 target', async () => {
+      targetsFor({ [KEYWORD_INDEX]: [`${KEYWORD_INDEX_PHYSICAL}_r1`] });
+
+      const rows = await service.describeTopology();
+      const keyword = rows.find((row) => row.alias === KEYWORD_INDEX)!;
+
+      expect(keyword.matchesExpected).toBe(true);
+      expect(keyword.currentTargets).toEqual([`${KEYWORD_INDEX_PHYSICAL}_r1`]);
+    });
+
+    it('reports a mismatch for a genuinely wrong target', async () => {
+      targetsFor({ [KEYWORD_INDEX]: ['legal_documents_keyword_v2'] });
+
+      const rows = await service.describeTopology();
+      expect(rows.find((row) => row.alias === KEYWORD_INDEX)!.matchesExpected).toBe(false);
+    });
+
+    it('reports a mismatch when the alias resolves to nothing', async () => {
+      targetsFor({});
+      const rows = await service.describeTopology();
+      for (const row of rows) {
+        expect(row.matchesExpected).toBe(false);
+        expect(row.currentTargets).toEqual([]);
+      }
+    });
+
+    it('requires EVERY target to match when an alias fans out', async () => {
+      targetsFor({
+        [KEYWORD_INDEX]: [`${KEYWORD_INDEX_PHYSICAL}_r1`, 'legal_documents_keyword_v2'],
+      });
+      expect(
+        (await service.describeTopology()).find((row) => row.alias === KEYWORD_INDEX)!
+          .matchesExpected,
+      ).toBe(false);
+    });
+
+    it('covers all four aliases', async () => {
+      targetsFor({
+        [KEYWORD_INDEX]: [`${KEYWORD_INDEX_PHYSICAL}_r1`],
+        [VECTOR_INDEX]: [`${VECTOR_INDEX_PHYSICAL}_r1`],
+        [USER_UPLOADS_INDEX]: [`${USER_UPLOADS_INDEX_PHYSICAL}_r1`],
+        [DERIVATIVES_INDEX]: [`${DERIVATIVES_INDEX_PHYSICAL}_r1`],
+      });
+
+      const rows = await service.describeTopology();
+      expect(rows).toHaveLength(4);
+      expect(rows.every((row) => row.matchesExpected)).toBe(true);
     });
   });
 

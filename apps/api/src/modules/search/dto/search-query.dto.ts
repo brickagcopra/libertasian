@@ -25,6 +25,16 @@ import {
 const DOCUMENT_TYPES: string[] = [...DOCUMENT_TYPE_VALUES];
 const COURTS: string[] = [...COURT_VALUES];
 
+/**
+ * Corpora a single `POST /search` call may address. `documents` is the default
+ * and reproduces pre-C3 behaviour exactly; see the `scope` field below.
+ */
+export const SEARCH_SCOPES = ['documents', 'derivatives', 'all'] as const;
+export type SearchScope = (typeof SEARCH_SCOPES)[number];
+
+/** Mutable copy for `@IsIn`, same reason as DOCUMENT_TYPES above. */
+const SCOPES: string[] = [...SEARCH_SCOPES];
+
 export class SearchQueryDto {
   @ApiProperty({ description: 'Search query string' })
   @IsString()
@@ -126,4 +136,19 @@ export class SearchQueryDto {
   @IsIn(['search', 'alac', 'irac', 'concise', 'free_form'])
   @IsOptional()
   mode?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Which corpora to search. `documents` (the default) is the legal-document ' +
+      'corpus and is exactly the pre-C3 behaviour. `derivatives` searches ' +
+      'derivative artifacts (digests, outlines, flashcards, model answers). ' +
+      '`all` searches both, and results then carry a `kind` discriminator. ' +
+      'OMITTING this field returns the legacy response shape byte-for-byte — ' +
+      'no `kind`, no added meta — so pre-C3 clients are unaffected.',
+    enum: SCOPES,
+    default: 'documents',
+  })
+  @IsIn(SCOPES)
+  @IsOptional()
+  scope?: SearchScope;
 }
