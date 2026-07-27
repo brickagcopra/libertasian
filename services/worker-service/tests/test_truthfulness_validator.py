@@ -65,6 +65,71 @@ class TestAutoPublish:
         assert official_check.passed
 
 
+# ─── Advisory Citation Check ─────────────────────────────────────────────
+#
+# citation_mapping is advisory. It was demoted after prod measurement showed
+# the resolver's real-world resolution ratio is ~0 (median 0.000, mean 0.024
+# over ~16 citations per document), so the 0.8 bar failed 13,025 of 13,093
+# drafts and blocked auto-publish entirely from 2026-05-30 onward.
+#
+# These tests use resolution ratios that are typical of the live corpus, not
+# of a fixture. A fixture where citations resolve at 90% would pass under the
+# old blocking rule and prove nothing about the corpus this runs on.
+
+
+class TestCitationCheckIsAdvisory:
+    """A failing citation check must never block auto-publish on its own."""
+
+    def test_zero_resolved_citations_still_publishes(self) -> None:
+        """The median live document: ~16 citations, none resolved."""
+        result = _validate(total_citations=16, resolved_citations=0)
+        assert result.verdict == Verdict.PUBLISH
+
+    def test_partial_citation_resolution_still_publishes(self) -> None:
+        result = _validate(total_citations=10, resolved_citations=5)
+        assert result.verdict == Verdict.PUBLISH
+
+    def test_citation_check_is_marked_advisory(self) -> None:
+        result = _validate()
+        citation_check = next(c for c in result.checks if c.name == "citation_mapping")
+        assert citation_check.advisory
+
+    def test_every_other_check_is_blocking(self) -> None:
+        result = _validate()
+        advisory_names = {c.name for c in result.checks if c.advisory}
+        assert advisory_names == {"citation_mapping"}
+
+    def test_publish_reasons_record_the_advisory_failure(self) -> None:
+        """Publishing over a failed citation check must say so on the record."""
+        result = _validate(total_citations=16, resolved_citations=0)
+        assert any("Advisory (non-blocking)" in r for r in result.reasons)
+        assert any("citation_mapping" in r for r in result.reasons)
+
+    def test_advisory_failure_still_lowers_confidence_score(self) -> None:
+        """The score reports the document; it is not the gate."""
+        result = _validate(total_citations=16, resolved_citations=0)
+        assert result.confidence_score == pytest.approx(5 / 6, abs=0.01)
+
+    def test_citation_failure_plus_blocking_failure_goes_to_review(self) -> None:
+        """Advisory reasons ride along with a verdict something else decided."""
+        result = _validate(
+            total_citations=16,
+            resolved_citations=0,
+            source_trust_level="medium",
+        )
+        assert result.verdict == Verdict.HUMAN_REVIEW
+        assert any(r.startswith("Failed: official_source") for r in result.reasons)
+        assert any("Advisory (non-blocking)" in r for r in result.reasons)
+
+    def test_citation_failure_does_not_override_quarantine(self) -> None:
+        result = _validate(
+            total_citations=16,
+            resolved_citations=0,
+            open_flags=[{"severity": "high", "status": "open"}],
+        )
+        assert result.verdict == Verdict.QUARANTINE
+
+
 # ─── Human Review Tests ──────────────────────────────────────────────────
 
 
@@ -101,11 +166,6 @@ class TestHumanReview:
     def test_low_ocr_above_quarantine_triggers_review(self) -> None:
         """OCR 0.5 is below publish threshold (0.8) but above quarantine (0.4)."""
         result = _validate(ocr_confidence=0.5)
-        assert result.verdict == Verdict.HUMAN_REVIEW
-
-    def test_partial_citation_resolution_triggers_review(self) -> None:
-        """Less than 80% citations resolved → review."""
-        result = _validate(total_citations=10, resolved_citations=5)
         assert result.verdict == Verdict.HUMAN_REVIEW
 
     def test_single_low_severity_flag_triggers_review(self) -> None:

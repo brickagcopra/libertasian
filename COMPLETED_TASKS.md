@@ -1,8 +1,24 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-07-27 (#317 and #318 merged, #316 closed, #319 opened: essays were storing fabricated section IDs and the essay scorer was not checking them)
+> Last updated: 2026-07-27 (branch `fix/unreachable-autopublish-gate`: the auto-publish citation gate was unreachable and had stranded 76% of the corpus out of search since 2026-05-30; #321 opened for the resolver underneath it)
 
 ---
+
+## 2026-07-27 — `fix/unreachable-autopublish-gate`: 76% of the corpus was invisible to search
+
+**The finding.** `legal_documents` holds 13,093 `draft` vs 4,042 `published` rows. The drafts are complete: every one has sections (avg 3.3), 13,038 have citations, all have a `source_id` from a `trust_level='high'` source, exactly one is missing a `decision_date`. Published rows stop at `created_at` 2026-05-30; drafts continue to 2026-07-10. Consequence verified live: searching the exact title "Jeffrey Gramatica vs. People of the Philippines" returns "People of the Philippines vs. Jeffrey Dereco y Hayag", and "G.R. No. 260233" returns an unrelated COMELEC case. Both documents exist — they are just not published, so they are not in OpenSearch.
+
+**The cause.** `truthfulness_validator.py` Check 5 required `resolved_citations / total_citations >= 0.8`, and `Verdict.PUBLISH` required `all(c.passed for c in checks)`. The measured resolution ratio is median **0.000**, mean 0.024 (draft) / 0.001 (published), p90 0.100, over ~16 citations per document. It failed **13,025 of 13,093** drafts — and **3,909 of the 4,042** already-published documents, which predate the check. The gate is unreachable for this corpus; nothing could ever clear it.
+
+### What shipped
+
+1. [x] **`citation_mapping` demoted to advisory.** `ADVISORY_CHECKS` is the single source of truth; `CheckResult.advisory` is derived from it in `_check()`, never set at a call site. `official_source`, `document_complete`, `text_integrity`, `metadata_confidence` and `no_conflict_flags` stay blocking, and the quarantine rules (critically low OCR, open high-severity flag, missing title AND sections) still outrank everything.
+2. [x] **A failing advisory check is recorded, not suppressed.** It appends an `Advisory (non-blocking): …` reason to whatever verdict the blocking checks produced, still counts against `confidence_score` (an auto-published document that failed only this check records 5/6), and lands in the audit metadata. It just cannot, alone, hold a document back.
+3. [x] **Backfill task `ingestion.backfill_autopublish_drafts`** (`src/tasks/autopublish_backfill_tasks.py`) re-runs `validate_document` over every `status='draft'` row under the corrected rules, publishes the ones that pass, and triggers OpenSearch indexing per publish with the same audit entry the live pipeline writes. **Dry-run by default.** One keyset page query supplies every validator input (trust level, section count, open flags, citation counts) instead of four queries per document; the cursor casts to `uuid`, not `text`, which is what killed the re-score script on prod.
+4. [x] **It deliberately does not quarantine, does not touch published rows, and does not go near the citation resolver.** A `QUARANTINE` verdict is reported and the row left alone — quarantining thousands of rows in a sweep is an editorial decision, not a side effect of a search fix.
+5. [x] **CLI: `uv run python -m src.scripts.backfill_autopublish_drafts`** — same code path as the task, prints the verdict distribution, how many would publish, how many of those the old gate was holding, and which blocking checks account for the rest. `--apply` requires `AUTOPUBLISH_BACKFILL_ALLOW_WRITE=1`.
+6. [x] **#321 opened for the actual defect:** the resolver resolves ~0% of ~16 citations per document. Demoting the gate restores search visibility; it does not make the citation signal mean anything. That work must first measure what share of unresolved citations point outside the corpus at all — that ceiling decides what any future threshold can say.
+7. [x] Tests: 25 new (`test_autopublish_backfill.py`) + 8 on the advisory rule. **They are not the acceptance evidence, on purpose** — a fixture where citations resolve at 90% passes every one of them while saying nothing about a corpus that resolves at 0%. Fixture rows carry the live shape: 16 citations, 0 resolved.
 
 ## 2026-07-27 — #319: essays cited section IDs that do not exist
 

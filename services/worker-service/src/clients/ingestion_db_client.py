@@ -14,7 +14,7 @@ from typing import Any
 
 import psycopg2.extras
 
-from .db_client import get_connection
+from .db_client import get_connection, get_read_connection
 
 logger = logging.getLogger(__name__)
 
@@ -564,6 +564,60 @@ def get_citation_counts(doc_id: str) -> dict[str, int]:
         if row:
             return {"total": int(row["total"]), "resolved": int(row["resolved"])}
         return {"total": 0, "resolved": 0}
+
+
+def get_draft_documents_for_validation_after(
+    after_cursor: str | None,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Keyset page of ``status='draft'`` documents with every validation input.
+
+    One row carries everything ``validate_document`` needs — trust level,
+    section count, open flags, citation counts — so a corpus-wide re-validation
+    costs one query per page instead of four per document. Ordered by ``id``
+    ASC; feed the last ``id`` back as ``after_cursor``.
+
+    The cursor placeholders cast to ``uuid``, not ``text``.
+    ``legal_documents.id`` is ``@db.Uuid`` and PostgreSQL has no ``uuid > text``
+    operator, so a ``::text`` cast raises ``operator does not exist`` on the
+    first page. Casting to uuid also keeps the comparison consistent with
+    ``ORDER BY id ASC``, since uuid ordering is not text ordering.
+    """
+    with get_read_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """SELECT d.id, d.title, d.document_type, d.court, d.decision_date,
+                      d.gr_no, d.status, d.truthfulness_status, d.is_published,
+                      d.source_id, s.trust_level AS source_trust_level,
+                      (SELECT COUNT(*)
+                         FROM legal_document_sections sec
+                        WHERE sec.legal_document_id = d.id) AS section_count,
+                      (SELECT COUNT(*)
+                         FROM citations c
+                        WHERE c.from_document_id = d.id) AS total_citations,
+                      (SELECT COUNT(c.to_document_id)
+                         FROM citations c
+                        WHERE c.from_document_id = d.id) AS resolved_citations,
+                      COALESCE(
+                          (SELECT json_agg(json_build_object(
+                                      'id', f.id,
+                                      'flag_type', f.flag_type,
+                                      'severity', f.severity,
+                                      'status', f.status))
+                             FROM editorial_flags f
+                            WHERE f.legal_document_id = d.id
+                              AND f.status = 'open'),
+                          '[]'::json
+                      ) AS open_flags
+                 FROM legal_documents d
+                 LEFT JOIN sources s ON s.id = d.source_id
+                WHERE d.status = 'draft'
+                  AND (%s::uuid IS NULL OR d.id > %s::uuid)
+                ORDER BY d.id ASC
+                LIMIT %s""",
+            (after_cursor, after_cursor, limit),
+        )
+        return [dict(row) for row in cur.fetchall()]
 
 
 # ─── Validation / Auto-Publish Write Operations ────────────────────────
