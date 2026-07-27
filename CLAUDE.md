@@ -399,8 +399,12 @@ async streamAnswer(@Query() dto: AnswerQueryDto): Observable<MessageEvent> {
 ### Digest Generation
 
 - Every digest field (facts, issues, ruling, doctrine, dispositive) MUST have source section references stored in `provenance_records`.
-- Confidence score is computed from: source passage coverage ratio + citation mapping completeness + OCR quality (if from scan).
+- Confidence score is computed from: source passage coverage ratio + citation mapping completeness + OCR quality (if from scan), weighted 0.5 / 0.3 / 0.2. Implementation: `services/worker-service/src/scoring.py`.
 - If `confidence_score < 0.7`: set `review_status = 'needs_human_review'`. If `confidence_score >= 0.7` AND source is official: eligible for auto-approval.
+- **Know the corpus geometry before touching this formula.** Source documents average **3.4 sections** (measured on prod 2026-07-26; mcq 3.4, essay 3.4, flashcard 3.4, doctrine 4.4). On a 3-section source, coverage can only be 0, 1/3, 2/3 or 1, so the score can only be 0.5 / 0.667 / 0.833 / 1.0 and the 0.70 bar reduces to "cite 2 of the 3 sections". Whether that is the editorial standard we want is an open product question.
+- **`ocr_quality` is a constant in practice.** No generation task passes it (`grep ocr_quality services/worker-service/src/tasks/` returns nothing), so every pipeline-produced derivative scores with 1.0 and the term adds a flat 0.2 to everything rather than discriminating between artifacts.
+- **Never validate a change to this formula against fixtures alone.** A 40-section test fixture once made a coverage fix look correct while it moved 7 rows out of 29,471 on the real corpus, and a follow-up weighting change projected essay_prompt from 37% to 95.5% above the bar before it was caught by measurement. Project any change over live rows first, and treat the resulting per-type distribution as the acceptance evidence.
+- When revisiting this, prefer fixing what the terms measure over moving the 0.70 threshold.
 - Digests from user scans: `visibility = 'private'` always. Never auto-promote to `'public_editorial'`.
 
 ### RAG Pipeline
