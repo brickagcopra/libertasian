@@ -1,10 +1,10 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-07-27 (branch `fix/unreachable-autopublish-gate`: the auto-publish citation gate was unreachable and had stranded 76% of the corpus out of search since 2026-05-30; #321 opened for the resolver underneath it)
+> Last updated: 2026-07-27 (#322 MERGED `5addc51`: the auto-publish citation gate was unreachable and had stranded 76% of the corpus out of search since 2026-05-30. Dry run over prod confirms 11,561 of 13,093 drafts publish under the corrected rules. #321 opened for the resolver underneath it, #323 for the 1,531 rows still short a `court`.)
 
 ---
 
-## 2026-07-27 — `fix/unreachable-autopublish-gate`: 76% of the corpus was invisible to search
+## 2026-07-27 — #322: 76% of the corpus was invisible to search
 
 **The finding.** `legal_documents` holds 13,093 `draft` vs 4,042 `published` rows. The drafts are complete: every one has sections (avg 3.3), 13,038 have citations, all have a `source_id` from a `trust_level='high'` source, exactly one is missing a `decision_date`. Published rows stop at `created_at` 2026-05-30; drafts continue to 2026-07-10. Consequence verified live: searching the exact title "Jeffrey Gramatica vs. People of the Philippines" returns "People of the Philippines vs. Jeffrey Dereco y Hayag", and "G.R. No. 260233" returns an unrelated COMELEC case. Both documents exist — they are just not published, so they are not in OpenSearch.
 
@@ -19,6 +19,13 @@
 5. [x] **CLI: `uv run python -m src.scripts.backfill_autopublish_drafts`** — same code path as the task, prints the verdict distribution, how many would publish, how many of those the old gate was holding, and which blocking checks account for the rest. `--apply` requires `AUTOPUBLISH_BACKFILL_ALLOW_WRITE=1`.
 6. [x] **#321 opened for the actual defect:** the resolver resolves ~0% of ~16 citations per document. Demoting the gate restores search visibility; it does not make the citation signal mean anything. That work must first measure what share of unresolved citations point outside the corpus at all — that ceiling decides what any future threshold can say.
 7. [x] Tests: 25 new (`test_autopublish_backfill.py`) + 8 on the advisory rule. **They are not the acceptance evidence, on purpose** — a fixture where citations resolve at 90% passes every one of them while saying nothing about a corpus that resolves at 0%. Fixture rows carry the live shape: 16 citations, 0 resolved.
+
+### The acceptance evidence — dry run over live prod rows
+
+8. [x] **13,093 drafts scanned → 11,561 would publish (88.3%), and the citation gate alone was holding every one of them.** 1,532 route to `human_review`, **0 quarantine**. Merged on that evidence, not on CI (`5addc51`, squash, branch deleted).
+9. [x] **The 1,532 that still don't publish are one field short, not broken:** 1,531 fail `metadata_confidence` because `court` is null (1,525 of them `document_type='decision'`), and exactly 1 fails `document_complete` on a missing `decision_date` — the same one row the pre-change measurement found.
+10. [x] **Leaving `metadata_confidence` blocking was the right call.** The concern going in was that it might be a second unreachable gate hiding behind the first; it is not. It held 1,531 documents that genuinely lack `court` while letting 11,561 complete ones through — real incompleteness, not phantom failures. Recorded in #323: the check requires ≥80% of **three** fields and 2/3 = 0.667 < 0.8, so it is effectively "all three or fail". The fix is to populate `court`, not to loosen the bar.
+11. [x] **What remains is a prod op, not code.** The `--apply` (11,561 publishes + one OpenSearch index call each) is unrun and belongs behind `--limit` first. See PENDING_TASKS.md.
 
 ## 2026-07-27 — #319: essays cited section IDs that do not exist
 
