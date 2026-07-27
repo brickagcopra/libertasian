@@ -24,6 +24,10 @@
 
 827 passed. Same 5 pre-existing `test_chain_post_ingestion_per_doc_derivatives` failures (need a live broker) and the `test_parsers.py` collection error, both unchanged.
 
+**Merged `d1c3343`, 15/15 CI. Not yet verified against live rows** — `essay_generation.v2` has no rows until the next essay generation run. That acceptance step is tracked in PENDING_TASKS.md; do not read the merge as proof the fix works in prod.
+
+Prod aggregate for the published tail, recorded in **#320**: 170 of 5,249 `public_editorial` essays (3.2%) carry ≥1 dangling ref, mean 1.91 of 5.02, confidence 0.500–1.000; 4 fully fabricated. The incidental finding there is larger than the tail itself — `derivatives-review.service.ts:54-67` promotes to `public_editorial` on approve **without reading `confidenceScore`**, while `auto-promote.service.ts:47-51` gates on 0.70. That is how four 0.500 artifacts were published.
+
 ---
 
 ## 2026-07-27 — #317 merged, #318 merged with the MCQ row struck, #316 closed
