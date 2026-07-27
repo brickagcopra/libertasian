@@ -10,7 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { Throttle } from '@nestjs/throttler';
+import { SkipThrottle, Throttle } from '@nestjs/throttler';
 import type { JwtPayload } from '@libertasian/types';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -273,9 +273,21 @@ export class SearchController {
   /**
    * Internal endpoint for worker-service to trigger OpenSearch indexing
    * after auto-publish. Authenticated via X-Internal-Api-Key (no JWT).
+   *
+   * `@SkipThrottle()` — this is a service-to-service call, not user traffic,
+   * and it is keyed by the worker container's IP, so a bulk publish run puts
+   * every document through one bucket. The #322 backfill sustained 250–350
+   * calls/min against the 300/min general bucket: 5,220 of 11,561 triggers
+   * came back 429, and the worker's client discarded them with no retry, so
+   * those documents went live in PostgreSQL and stayed unsearchable. A 429
+   * here is silent data loss rather than backpressure, because the caller has
+   * already committed the publish. The route stays protected by
+   * `InternalApiGuard` (X-Internal-Api-Key), same reasoning as the
+   * class-level `@SkipThrottle()` on `InternalDerivativesController`.
    */
   @Post('internal/index/:id')
   @ApiOperation({ summary: 'Index a document (internal service-to-service)' })
+  @SkipThrottle()
   @UseGuards(InternalApiGuard)
   async internalIndexDocument(@Param('id') documentId: string) {
     this.logger.log(

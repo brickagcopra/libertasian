@@ -8,6 +8,8 @@ over internal HTTP for operations like OpenSearch indexing.
 from __future__ import annotations
 
 import logging
+import random
+import time
 from typing import Any
 
 import httpx
@@ -15,6 +17,10 @@ import httpx
 from ..config import settings
 
 logger = logging.getLogger(__name__)
+
+# Longest we will honour from a Retry-After header. The header is server-
+# supplied; without a cap a bogus value parks a Celery worker for hours.
+MAX_RETRY_AFTER_SEC = 60.0
 
 
 def _strip_none(obj: Any) -> Any:
@@ -36,41 +42,133 @@ _INTERNAL_HEADERS = {
 }
 
 
+def _is_retryable_status(status_code: int) -> bool:
+    """429 and 5xx are transient. Every other 4xx is a caller bug.
+
+    401 means the shared secret is wrong and 404 means the document is not
+    there — retrying either just multiplies the same failure.
+    """
+    return status_code == 429 or status_code >= 500
+
+
+def _retry_after_seconds(response: httpx.Response) -> float | None:
+    """Delay requested by the server, in seconds, or None.
+
+    Only the delta-seconds form of Retry-After is honoured; that is what the
+    NestJS throttler emits. An HTTP-date, a negative value or junk falls back
+    to the caller's own backoff rather than being guessed at.
+    """
+    raw = response.headers.get("Retry-After")
+    if raw is None:
+        return None
+    try:
+        seconds = float(raw.strip())
+    except (TypeError, ValueError):
+        return None
+    if seconds < 0:
+        return None
+    return min(seconds, MAX_RETRY_AFTER_SEC)
+
+
+def _backoff_delay(attempt: int) -> float:
+    """Exponential backoff with full jitter for ``attempt`` (1-based).
+
+    Jitter matters more than the mean delay here: a bulk publish run fails a
+    whole burst of calls at once, and an unjittered backoff marches them back
+    into the gateway in lockstep.
+    """
+    base = settings.opensearch_index_retry_base_delay
+    return random.uniform(0.0, base * (2 ** (attempt - 1)))
+
+
 def trigger_opensearch_index(document_id: str) -> bool:
     """Call NestJS internal endpoint to index a document in OpenSearch.
 
-    Returns True if indexing was triggered successfully, False otherwise.
-    Non-blocking to the publish flow — failures are logged but not raised.
+    Retries up to ``settings.opensearch_index_max_attempts`` times on 429,
+    5xx, timeouts and connection errors, with jittered exponential backoff
+    (``settings.opensearch_index_retry_base_delay``) and honouring
+    ``Retry-After`` when the server sends one. 401 and 404 are not retried.
+
+    Returns True if indexing was triggered successfully, False after every
+    attempt has been spent. Non-blocking to the publish flow — failures are
+    logged but not raised. The final status code (or transport error) is
+    logged: before this, a 429 and a 500 were indistinguishable after the
+    fact, which is why the #322 backfill's 5,220 failures needed a prod
+    query to diagnose.
     """
     url = f"{settings.nestjs_api_url}/search/internal/index/{document_id}"
+    attempts = max(1, settings.opensearch_index_max_attempts)
+    last_outcome = "no attempt made"
 
-    try:
-        with httpx.Client(timeout=30) as client:
-            response = client.post(
-                url,
-                headers={"X-Internal-Api-Key": settings.internal_api_key},
+    for attempt in range(1, attempts + 1):
+        delay: float | None = None
+        try:
+            with httpx.Client(timeout=30) as client:
+                response = client.post(
+                    url,
+                    headers={"X-Internal-Api-Key": settings.internal_api_key},
+                )
+
+            if response.status_code in (200, 201):
+                if attempt > 1:
+                    logger.info(
+                        "Triggered OpenSearch indexing for document %s on "
+                        "attempt %d/%d",
+                        document_id, attempt, attempts,
+                    )
+                else:
+                    logger.info(
+                        "Triggered OpenSearch indexing for document %s",
+                        document_id,
+                    )
+                return True
+
+            last_outcome = f"HTTP {response.status_code}"
+            if not _is_retryable_status(response.status_code):
+                logger.warning(
+                    "OpenSearch index trigger returned %d for document %s "
+                    "(not retryable): %s",
+                    response.status_code,
+                    document_id,
+                    response.text[:200],
+                )
+                return False
+
+            delay = _retry_after_seconds(response)
+
+        except httpx.TransportError as exc:
+            # TransportError is the retryable branch of httpx's tree: it covers
+            # TimeoutException, ConnectError/ReadError and ProtocolError. Its
+            # siblings under RequestError (DecodingError, TooManyRedirects) are
+            # not transient and fall through to the catch-all below.
+            last_outcome = f"{type(exc).__name__}: {exc}"
+        except Exception:
+            logger.exception(
+                "Failed to trigger OpenSearch indexing for document %s",
+                document_id,
             )
+            return False
 
-        if response.status_code == 200 or response.status_code == 201:
-            logger.info(
-                "Triggered OpenSearch indexing for document %s", document_id,
-            )
-            return True
+        if attempt >= attempts:
+            break
 
+        sleep_for = delay if delay is not None else _backoff_delay(attempt)
         logger.warning(
-            "OpenSearch index trigger returned %d for document %s: %s",
-            response.status_code,
-            document_id,
-            response.text[:200],
+            "OpenSearch index trigger for document %s failed (%s), attempt "
+            "%d/%d — retrying in %.2fs",
+            document_id, last_outcome, attempt, attempts, sleep_for,
         )
-        return False
+        if sleep_for > 0:
+            time.sleep(sleep_for)
 
-    except Exception:
-        logger.exception(
-            "Failed to trigger OpenSearch indexing for document %s",
-            document_id,
-        )
-        return False
+    logger.error(
+        "OpenSearch index trigger for document %s gave up after %d attempts; "
+        "last outcome: %s. The document is published in PostgreSQL but not "
+        "searchable — recover it with "
+        "src.scripts.reindex_failed_publishes.",
+        document_id, attempts, last_outcome,
+    )
+    return False
 
 
 def update_job_status(
