@@ -97,6 +97,52 @@ export const DOCUMENT_TYPE_FILTER_OPTIONS: readonly DocumentTypeValue[] = [
 ] as const;
 
 /**
+ * Coarse filter groups for compact UIs (the mobile filter chip row), in display
+ * order. Each group expands to the concrete `document_type` values it covers, so
+ * a chip filters on everything in its class instead of on one abstract label.
+ *
+ * This exists because mobile used to send the legacy class values (`case`,
+ * `statute`, `article`, `outline`) directly. The DTO accepts them — they are
+ * still in `DOCUMENT_TYPE_VALUES` — but production holds ZERO rows of any of
+ * them, so every chip except "All" silently emptied the results list.
+ *
+ * An empty `types` array means "no `documentType` filter at all"; clients MUST
+ * omit the key rather than send `[]`.
+ */
+export const DOCUMENT_TYPE_GROUPS: readonly {
+  label: string;
+  types: readonly DocumentTypeValue[];
+}[] = [
+  { label: 'All', types: [] },
+  { label: 'Decisions', types: ['decision'] },
+  {
+    label: 'Statutes',
+    types: [
+      'codal',
+      'constitution',
+      'republic_act',
+      'commonwealth_act',
+      'batas_pambansa',
+      'presidential_decree',
+      'executive_order',
+      'proclamation',
+      'administrative_order',
+    ],
+  },
+  {
+    label: 'Rules',
+    types: [
+      'rules_of_court',
+      'rule',
+      'resolution',
+      'administrative_matter',
+      'administrative_case',
+    ],
+  },
+  { label: 'Bar Q&A', types: ['bar_exam_questions'] },
+] as const;
+
+/**
  * Every accepted `court` filter value, in snake_case.
  *
  * These are *keys*, not the strings PostgreSQL stores. `legal_documents.court`
