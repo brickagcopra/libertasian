@@ -11,6 +11,13 @@ shape?
 Every type computes `citation_mapping_completeness` as
 `items_that_cite / total_items`, but "cite" means different things:
 
+**Fixed in `fix/essay-citation-hallucination`.** `compute_essay_confidence_score`
+now validates IDs like the other four, so the `cite=1.0` column below is the
+validated ratio for every type. The presence-only reading is still computed and
+printed, because it is what produced the score stored on every essay row
+written before that change, and the gap between the two columns is the finding
+this script was written to size. What follows describes the pre-fix behaviour.
+
 `essay_prompt` — **PRESENCE ONLY, NOT VALIDATED**::
 
     sections_with_citations = sum(
@@ -72,9 +79,9 @@ measuring it.
 
 ## What is printed, per type
 
-- `citation as scored` — the value the live scorer uses
-- `citation validated` — the same ratio with every ID checked against the
-  source document, which for essay_prompt is a different number
+- `citation as scored` — the value the live scorer uses (validated, all types)
+- `citation presence` — the same ratio counting any non-empty list, which is
+  what the essay scorer used to do and what its stored scores reflect
 - the gap: artifacts scoring 1.0 as-scored but below 1.0 validated
 - `coverage` and `source sections`, for context
 - a self-check count: rows where the stored/recomputed score does not equal
@@ -139,12 +146,21 @@ class TermStats:
     def __init__(self, dtype: str, unit: str = "rows") -> None:
         self.dtype = dtype
         self.unit = unit
+        # What the live scorer computes. Since fix/essay-citation-hallucination
+        # that is the validated ratio for all four types, so `as_scored` and
+        # `validated` now agree by construction and the self-check below can
+        # compare against either.
         self.as_scored: list[float] = []
         self.validated: list[float] = []
+        # What the pre-fix essay scorer computed: a non-empty citedSectionIds
+        # list counts whatever is in it. Kept because it is the size of the
+        # historical gap, and every essay row written before the fix still
+        # carries a score computed this way.
+        self.presence: list[float] = []
         self.coverage: list[float] = []
         self.sections: list[int] = []
         self.items: list[int] = []
-        self.inflated = 0  # as_scored == 1.0 but validated < 1.0
+        self.inflated = 0  # presence == 1.0 but validated < 1.0
         self.unusable = 0
         self.self_check_failed = 0
 
@@ -152,16 +168,18 @@ class TermStats:
         self,
         as_scored: float,
         validated: float,
+        presence: float,
         coverage: float,
         sections: int,
         items: int,
     ) -> None:
         self.as_scored.append(as_scored)
         self.validated.append(validated)
+        self.presence.append(presence)
         self.coverage.append(coverage)
         self.sections.append(sections)
         self.items.append(items)
-        if as_scored >= 1.0 > validated:
+        if presence >= 1.0 > validated:
             self.inflated += 1
 
 
@@ -306,13 +324,16 @@ def measure(
         validated_hits = sum(
             1 for ids, _presence in items if any(i in source_ids for i in ids)
         )
-        if dtype == "essay_prompt":
-            as_scored_hits = sum(1 for _ids_, presence in items if presence)
-        else:
-            as_scored_hits = validated_hits
+        # Every type's live scorer now validates. essay_prompt did not until
+        # fix/essay-citation-hallucination, so its pre-fix reading is kept
+        # separately rather than deleted: stored essay scores were computed
+        # that way, and the distance between the two columns is the finding.
+        presence_hits = sum(1 for _ids_, presence in items if presence)
+        as_scored_hits = validated_hits
 
         as_scored = as_scored_hits / len(items)
         validated = validated_hits / len(items)
+        presence = presence_hits / len(items)
 
         distinct_valid = {i for ids, _p in items for i in ids if i in source_ids}
         # doctrine_extract carries ONE source_section_id per doctrine, so its
@@ -338,7 +359,9 @@ def measure(
             stats.self_check_failed += 1
             continue
 
-        stats.record(as_scored, validated, coverage, len(sections), len(items))
+        stats.record(
+            as_scored, validated, presence, coverage, len(sections), len(items)
+        )
 
     return stats
 
@@ -353,7 +376,7 @@ def print_report(all_stats: list[TermStats]) -> None:
 
     header = (
         f"{'type':<18}{'n':>8}{'cite=1.0':>12}{'cite=0':>9}{'mean':>8}"
-        f"{'valid=1.0':>12}{'INFLATED':>10}{'cov mean':>10}{'sections':>10}"
+        f"{'presence=1':>12}{'INFLATED':>10}{'cov mean':>10}{'sections':>10}"
     )
     print(header)
     print("-" * len(header))
@@ -367,7 +390,7 @@ def print_report(all_stats: list[TermStats]) -> None:
             f"{_exactly_one(s.as_scored) / n:>11.1%}"
             f"{_zero(s.as_scored) / n:>8.1%}"
             f"{_mean(s.as_scored):>8.3f}"
-            f"{_exactly_one(s.validated) / n:>11.1%}"
+            f"{_exactly_one(s.presence) / n:>11.1%}"
             f"{s.inflated:>10}"
             f"{_mean(s.coverage):>10.3f}"
             f"{_mean([float(x) for x in s.sections]):>10.1f}"
@@ -375,9 +398,15 @@ def print_report(all_stats: list[TermStats]) -> None:
     print("-" * len(header))
     print()
     print("cite=1.0   share of artifacts where citation_mapping_completeness is 1.0")
-    print("valid=1.0  same, but every ID checked against the source document")
-    print("INFLATED   artifacts scoring 1.0 that would not with IDs validated")
-    print("           (structurally 0 for every type except essay_prompt)")
+    print("           as the live scorer computes it — every ID checked against")
+    print("           the source document, for every type")
+    print("presence=1 same, counting a non-empty citedSectionIds list whatever is")
+    print("           in it. This is what the essay scorer did before")
+    print("           fix/essay-citation-hallucination, and what produced the")
+    print("           scores stored on every essay row written before it")
+    print("INFLATED   artifacts where those two disagree: scored 1.0 on presence,")
+    print("           below 1.0 once the IDs are checked. Structurally 0 for")
+    print("           flashcard and doctrine_extract, which always validated")
     print()
 
     for s in all_stats:

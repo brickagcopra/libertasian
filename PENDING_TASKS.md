@@ -1,10 +1,26 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-07-26 (search Phases A–C3 all merged: #306 #307 #308 #310 #311 #312; C3 squashed to `025e538`, deployed and live-verified on prod. Remaining search work is a client UI for `scope` and C4 fusion behind the reranker — but see the reachability note first: only 13,017 of 99,994 derivatives match any visibility branch. Also new: #313 fixed the confidence scorer, #315 gated the re-score script, and the re-score itself is CLOSED as not worth running — 7 rows of 29,471 move. What replaces it is a product decision about what the 0.70 editorial bar should mean; see the top section.)
+> Last updated: 2026-07-27 (#319 opened: essays were storing fabricated section IDs — 59.2% of 67,515 citation refs resolve to no section row — and the essay scorer counted a non-empty list without checking it. #317 merged, #318 merged with the MCQ row struck, #316 closed. See the new top section for what still needs a prod run and what needs brick's decision.)
+>
+> Previously: 2026-07-26 (search Phases A–C3 all merged: #306 #307 #308 #310 #311 #312; C3 squashed to `025e538`, deployed and live-verified on prod. Remaining search work is a client UI for `scope` and C4 fusion behind the reranker — but see the reachability note first: only 13,017 of 99,994 derivatives match any visibility branch. Also new: #313 fixed the confidence scorer, #315 gated the re-score script, and the re-score itself is CLOSED as not worth running — 7 rows of 29,471 move. What replaces it is a product decision about what the 0.70 editorial bar should mean; see the top section.)
 
 Verification rules used for this prune: every PR reference checked with `gh pr view <n> --json state,mergedAt`; every branch reference checked against `git branch -r --no-merged origin/main` after `git fetch --prune`. Items that could not be verified were MOVED to "Needs verification", not deleted.
 
 ---
+
+## #319 essay citation fix — open follow-ups (do these in order)
+
+- [ ] **Merge and deploy #319, then run the acceptance script against prod.** CI proves a fabricated ID is stripped and scored accordingly; it cannot prove the model stopped emitting them or that the strip is reached live.
+      ```bash
+      cd services/worker-service
+      uv run python -m src.scripts.report_essay_dangling_citations --split-by-version
+      ```
+      Read it this way: the `essay_generation.v2` bucket should show **0 dangling refs**. A non-zero count there means those rows came from a worker predating the deploy — check `created_at` before reading it as the fix failing. The `v1` bucket will not improve; those rows are already written. The script cannot write (no `--apply`, no `UPDATE`, test-enforced), so it is safe against prod.
+- [ ] **brick's call: the 170 published essays with dangling citations.** `--published` prints them as a markdown table, worst-first. Not actionable from the dev workspace — it only has `localhost:5432`. Two facts for the decision: their stored scores were computed under presence-only citation mapping and are no longer reproducible under the live scorer; but they cleared 0.70, which under the old formula required real coverage, so most should have genuine grounding *as well as* dangling refs. That makes it a correction problem more than a retraction one. The `dangling/refs` column separates "one bad ref among five" from "nothing resolves".
+- [ ] **Decide whether a wholly ungrounded essay should be written at all.** `_build_provenance_records` still falls back to `sections[0]` — naming a section the artifact never cited — because the NestJS write endpoint rejects an empty `provenanceRecords` (`internal-derivatives.service.ts:214`). Removing the fallback would make such an essay fail the write instead. Arguably correct; a policy change, not a scoring fix, so #319 left it and flagged it in a comment. Score is unaffected either way.
+- [ ] **Re-measure whether the other four types also fabricate.** #319 establishes that flashcard/MCQ *store* clean IDs because they filter at write time, not because their models behave. Nobody has measured how many IDs those filters are dropping. If the rate is anything like the essay rate, the same prompt fix (closed list + permission to leave empty) belongs in `flashcard_generation_v1` and `mcq_generation_v1`, and the drop counts are worth logging.
+- [ ] **`mcq_question` citations are unmeasurable from persisted rows.** `writeMcqBatch` stores `{questionStem, options, explanation}` only. Measuring them requires either persisting `supportingSectionIds` or reading them back out of `provenance_records` — a change, not a measurement. Blocks any future audit of MCQ grounding.
+- [ ] **Reconsider #316's coverage taper after the above.** Closed, not merged; branch `feat/coverage-weight-short-sources` kept. Its 3.4-section geometry finding is sound, but its projection ran over a corpus where 59.2% of essay citation refs were fake, so the numbers in its table describe a corpus that no longer exists.
 
 ## Editorial standard for derivative confidence (product decision for brick)
 

@@ -51,7 +51,10 @@ it does not. Applying that run would have destroyed 46,081 valid scores.
 
 - `flashcard` — `supportingSectionIds` per card, already filtered at write time
   to UUIDs present in the source (`_build_derivative_cards`).
-- `essay_prompt` — `citedSectionIds` per model-answer outline section.
+- `essay_prompt` — `citedSectionIds` per model-answer outline section. Stored
+  scores were produced when this term counted a non-empty list without
+  checking the IDs resolved, so the reproduction check runs it under
+  `CITATION_MODE_PRESENCE`; a new score uses the validated rule.
 - `doctrine_extract` — one `source_section_id` per doctrine, snake_case.
 - `mcq_question` — `supportingSectionIds` per question, but aggregated across
   the batch before scoring.
@@ -114,6 +117,7 @@ import psycopg2.extras
 from ..clients import ingestion_db_client as db
 from ..clients.db_client import get_connection
 from ..scoring import (
+    CITATION_MODE_PRESENCE,
     COVERAGE_MODE_DOCUMENT,
     compute_doctrine_confidence_score,
     compute_essay_confidence_score,
@@ -330,9 +334,19 @@ def verify_type(
     the stored values — through the same extraction the new score would use. A
     type that cannot reproduce what is already in the column is being read
     wrongly, whatever the new number looks like.
+
+    ``essay_prompt`` additionally needs ``CITATION_MODE_PRESENCE``: every
+    stored essay score was produced when the citation term counted a
+    non-empty ``citedSectionIds`` list without checking the IDs existed.
+    Reproducing under the validated rule would recompute a different number
+    for every row carrying a fabricated ID and report the type as
+    unreadable, on a difference this codebase deliberately introduced.
     """
     result = VerifyResult(dtype)
     scorer = SCORERS[dtype]
+    legacy_kwargs: dict[str, Any] = {"coverage_mode": COVERAGE_MODE_DOCUMENT}
+    if dtype == "essay_prompt":
+        legacy_kwargs["citation_mode"] = CITATION_MODE_PRESENCE
 
     for row in _iter_artifacts([dtype], sample):
         stored = row.get("confidence_score")
@@ -345,7 +359,7 @@ def verify_type(
         legacy = scorer(
             content=content,
             source_sections=sections,
-            coverage_mode=COVERAGE_MODE_DOCUMENT,
+            **legacy_kwargs,
         )
         result.checked += 1
         if abs(legacy - float(stored)) <= tolerance:

@@ -1,6 +1,36 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-07-25 (search Phase B merged; Phase A prod dry-run results recorded; two Phase A bugs fixed in #308)
+> Last updated: 2026-07-27 (#317 and #318 merged, #316 closed, #319 opened: essays were storing fabricated section IDs and the essay scorer was not checking them)
+
+---
+
+## 2026-07-27 — #319: essays cited section IDs that do not exist
+
+**The finding.** Essay citations live at `content_json->'modelAnswer'->'outlineSections'[]->'citedSectionIds'`. Of 67,515 refs across 14,029 essays on prod: 27,523 resolve to a section of the essay's own source document, **0** resolve to a section of any other document, **39,992 (59.2%) resolve to nothing in `legal_document_sections` at all**. Zero cross-document hits is what settles it — invented UUIDs, not provenance the join missed.
+
+**The root cause was not the prompt withholding IDs.** `essay_generation_v1.build_sections_text` emits `[Section {id} | ...]` headers, byte-identical to flashcard/MCQ/outline. What the essay task lacked is the filter the others have always had: `_build_derivative_cards` and `_build_passing_question_entries` drop unknown IDs before the write. The essay task passed LLM output straight into `contentJson` and `modelAnswerJson`, filtering only when building provenance records. **Every model invents IDs; only essays stored them.**
+
+**Second defect, independent:** `compute_essay_confidence_score` counted `bool(citedSectionIds)`. The other four validate. That is why `essay_prompt` read 99.0% on `citation_mapping_completeness`.
+
+**The 0.70 gate was working the whole time.** `source_passage_coverage` is the one term that always validated, so a dangling citation gave coverage 0 → 0.5 → below bar. That alone explains the visibility split (public_editorial 3.2% dangling vs private 93.3%): ungrounded essays were refused *promotion*, never refused *storage*.
+
+- **Prompt → `essay_generation.v2`** — an `AVAILABLE SECTION IDS` closed list next to the instructions; the `"section-uuid-1"` placeholders removed from the schema example (no other prompt models an ID shape); and "Do not write unsourced paragraphs" replaced with an explicit permission to leave the list empty. Version bump is what segments `model_runs` for verification.
+- **`_strip_unknown_section_ids`** runs before validation, scoring, provenance and the write. No back-filling — an empty list routes the artifact to human review via the existing uncited-paragraph warning.
+- **Scorer validates**, with `CITATION_MODE_PRESENCE` kept for one caller: `rescore_derivatives` must reproduce a stored score before overwriting it, and stored essay scores were produced under presence.
+- **No weight, no threshold, no `SECTIONS_PER_ITEM` change.** A wholly fabricated essay goes 0.5 → 0.2; both far below 0.70, so nothing approvable becomes unapprovable.
+- **`report_essay_dangling_citations.py`** (read-only, greppable no-write test) verifies against live rows, split by `prompt_template_version`.
+- `test_essay_confidence_score.test_invalid_section_ids_excluded` **asserted `score == 1.0`** — it was pinning the bug. Rewritten.
+- `measure_scoring_terms` self-check follows the corrected scorer; left alone it would have failed every essay row with a fabricated ID and silently excluded exactly the rows it exists to find.
+
+827 passed. Same 5 pre-existing `test_chain_post_ingestion_per_doc_derivatives` failures (need a live broker) and the `test_parsers.py` collection error, both unchanged.
+
+---
+
+## 2026-07-27 — #317 merged, #318 merged with the MCQ row struck, #316 closed
+
+- **#317** (docs) merged as-is: measured corpus geometry and the constant OCR term recorded in `scoring.py`.
+- **#318** merged after striking `mcq_question` from the measurement output. `writeMcqBatch` persists `content_json` as `{questionStem, options, explanation}` — **`supportingSectionIds` never reaches the row**; the IDs the generation-time scorer read exist only in the write payload. So a per-row reading could only ever report `cite=0`, a statement about the write schema that contradicts the scores stored on those same rows. Now in `EXCLUDED` alongside `subject_outline`. The deleted test's fixture put `supportingSectionIds` on an mcq row, which is what made the batch path look correct.
+- **#316** (coverage-weight taper) **closed, not merged**, branch kept. Its measurement holds up — sources average 3.4 sections and the bar really does reduce to "cite 2 of 3" there. But its projection ran against a corpus where 59.2% of essay citation refs were fabricated, so retuning weights on top of an unvalidated term would have moved scores without making any of them mean more. Worth re-measuring after #319 deploys.
 
 ---
 
