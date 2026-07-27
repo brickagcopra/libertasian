@@ -395,6 +395,7 @@ async streamAnswer(@Query() dto: AnswerQueryDto): Observable<MessageEvent> {
 - Updated documents create new `legal_document_versions` rows. NEVER overwrite existing version rows.
 - Citation text normalization: strip whitespace, normalize "G.R. No." variations (GR, G.R., GRN) to canonical `G.R. No. XXXXXX` format.
 - Section segmentation must preserve original page boundaries (`page_start`, `page_end`) for provenance.
+- **Auto-publish gates must be reachable on the real corpus.** `truthfulness_validator.citation_mapping` required an 80% citation resolution ratio while the resolver's measured ratio is median 0.000 / mean 0.024 over ~16 citations per document (prod 2026-07-27). It failed 13,025 of 13,093 drafts and 3,909 of the 4,042 already-published documents, stopped auto-publish dead on 2026-05-30, and left 76% of `legal_documents` out of OpenSearch — an exact-title search returned a different case. It is now advisory (`ADVISORY_CHECKS`): reported, scored, never blocking on its own. Before adding or tightening any blocking check, measure its pass rate over live rows; a threshold no document can clear is an outage, not a quality control.
 
 ### Digest Generation
 

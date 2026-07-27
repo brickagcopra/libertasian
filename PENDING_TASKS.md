@@ -1,12 +1,26 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-07-27 (#319 MERGED `d1c3343` — essays were storing fabricated section IDs, 59.2% of 67,515 citation refs resolved to no section row, and the essay scorer counted a non-empty list without checking it. #317 merged, #318 merged with the MCQ row struck, #316 closed, #320 opened for the 170 published essays. **#319's acceptance evidence is still outstanding: `essay_generation.v2` has no rows yet, so the fix is deployed but unverified.** See the top section.)
+> Last updated: 2026-07-27 (**new, top of the list:** `fix/unreachable-autopublish-gate` — an unreachable auto-publish gate has kept 76% of the corpus out of search since 2026-05-30. The dry run over prod is the outstanding acceptance step; #321 opened for the citation resolver underneath it. Previously: #319 MERGED `d1c3343` — essays were storing fabricated section IDs, 59.2% of 67,515 citation refs resolved to no section row, and the essay scorer counted a non-empty list without checking it. #317 merged, #318 merged with the MCQ row struck, #316 closed, #320 opened for the 170 published essays. **#319's acceptance evidence is still outstanding: `essay_generation.v2` has no rows yet, so the fix is deployed but unverified.** See the top section.)
 >
 > Previously: 2026-07-26 (search Phases A–C3 all merged: #306 #307 #308 #310 #311 #312; C3 squashed to `025e538`, deployed and live-verified on prod. Remaining search work is a client UI for `scope` and C4 fusion behind the reranker — but see the reachability note first: only 13,017 of 99,994 derivatives match any visibility branch. Also new: #313 fixed the confidence scorer, #315 gated the re-score script, and the re-score itself is CLOSED as not worth running — 7 rows of 29,471 move. What replaces it is a product decision about what the 0.70 editorial bar should mean; see the top section.)
 
 Verification rules used for this prune: every PR reference checked with `gh pr view <n> --json state,mergedAt`; every branch reference checked against `git branch -r --no-merged origin/main` after `git fetch --prune`. Items that could not be verified were MOVED to "Needs verification", not deleted.
 
 ---
+
+## Search visibility — `fix/unreachable-autopublish-gate` (do this first)
+
+76% of `legal_documents` (13,093 of 17,135) sits in `status='draft'` and is therefore absent from OpenSearch: searching a stranded document's exact title returns a different case. Cause: `citation_mapping` was a blocking auto-publish check requiring an 80% citation resolution ratio, against a resolver whose measured ratio is median 0.000 / mean 0.024. It failed 13,025 of 13,093 drafts and 3,909 of the 4,042 documents already published. Auto-publish stopped on 2026-05-30 while ingestion ran to 2026-07-10. The check is now advisory and a backfill re-validates the stranded rows.
+
+- [ ] **ACCEPTANCE — run the dry run over live prod rows. This is the evidence; unit tests are not.** Nothing here is verified until this output exists.
+      ```bash
+      cd services/worker-service
+      uv run python -m src.scripts.backfill_autopublish_drafts
+      ```
+      Read it this way: **`WOULD PUBLISH` is the number that matters**, and `of which the old blocking citation gate was holding` should account for essentially all of it (~13,025 by the earlier measurement). Anything large under `Blocking checks failed` is a *different* problem the citation gate was masking — read which check before treating it as noise. Quarantine verdicts are reported, never acted on. The script writes nothing without `--apply` **and** `AUTOPUBLISH_BACKFILL_ALLOW_WRITE=1`, so it is safe against prod.
+- [ ] **Then decide whether to `--apply`.** It publishes documents into the public corpus and fires one OpenSearch index call each. Prod op, brick's call — and worth doing behind `--limit` first to confirm indexing actually lands before sweeping 13k rows. `index_failures` counts documents that are published in PostgreSQL but still not searchable; those need the index trigger re-run.
+- [ ] **#321 — the citation resolver resolves ~0% of ~16 citations per document.** This is the real defect; the search outage was its symptom, and demoting the gate does not fix it. Before any threshold is written against this signal again, measure what share of unresolved citations point at documents not in the corpus at all — that ceiling decides what the ratio can ever mean. Suspects in order: whether `citation.resolve_for_document` is dispatched at all for most docs, whether `normalized_citation` matches the form the resolver looks up, then genuine corpus gaps.
+- [ ] **Deliberately out of scope, note if revisiting:** the 3,909 published documents that also fail the citation check are left alone (they are searchable; re-validating could only take that away), and no row is quarantined by the sweep.
 
 ## #319 essay citation fix — open follow-ups (do these in order)
 
