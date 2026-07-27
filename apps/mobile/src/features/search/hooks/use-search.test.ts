@@ -2,6 +2,7 @@ import { renderHook, waitFor } from '@testing-library/react-native';
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { apiClient } from '../../../lib/api-client';
+import { documentTypeFilter } from '../document-types';
 import { useSearch, useSuggestions } from './use-search';
 
 jest.mock('../../../lib/api-client', () => ({
@@ -67,6 +68,58 @@ describe('useSearch', () => {
     const items = result.current.data?.data ?? [];
     expect(items).toHaveLength(2);
     expect(items[0]?.id).toBe('a');
+  });
+
+  // The filter chips used to send legacy abstract values ('case', 'statute', …)
+  // that the DTO accepts but no production row carries, so every chip but "All"
+  // returned an empty list. They now post the concrete types in the group.
+  it('posts a group chip as the full documentType array', async () => {
+    mockPost.mockResolvedValueOnce({
+      success: true,
+      data: [],
+      meta: { total: 0, page: 1, limit: 20, hasNext: false },
+    });
+    const { result } = renderHook(
+      () =>
+        useSearch({
+          query: 'estafa',
+          ...documentTypeFilter('Statutes'),
+          limit: 20,
+        }),
+      { wrapper: createWrapper() },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockPost).toHaveBeenCalledWith('/search', {
+      query: 'estafa',
+      documentType: [
+        'codal',
+        'constitution',
+        'republic_act',
+        'commonwealth_act',
+        'batas_pambansa',
+        'presidential_decree',
+        'executive_order',
+        'proclamation',
+        'administrative_order',
+      ],
+      limit: 20,
+    });
+  });
+
+  it('omits documentType entirely for the "All" chip', async () => {
+    mockPost.mockResolvedValueOnce({
+      success: true,
+      data: [],
+      meta: { total: 0, page: 1, limit: 20, hasNext: false },
+    });
+    const { result } = renderHook(
+      () => useSearch({ query: 'estafa', ...documentTypeFilter('All'), limit: 20 }),
+      { wrapper: createWrapper() },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockPost).toHaveBeenCalledWith('/search', { query: 'estafa', limit: 20 });
+    const body = mockPost.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(Object.keys(body)).not.toContain('documentType');
   });
 
   it('is disabled when query is empty', () => {

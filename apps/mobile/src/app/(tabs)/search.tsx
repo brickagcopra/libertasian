@@ -5,8 +5,14 @@ import { router } from 'expo-router';
 import {
   SearchScreen,
   type SearchResult,
-  type SearchResultKind,
 } from '@/components/screens/SearchScreen';
+import {
+  DEFAULT_SEARCH_FILTER_LABEL,
+  SEARCH_FILTER_LABELS,
+  documentTypeFilter,
+  kindFor,
+  kindLabelFor,
+} from '@/features/search/document-types';
 import { useSearch } from '@/features/search/hooks/use-search';
 import { useSearchHistory } from '@/features/search/hooks/use-search-history';
 import { useRecentlyViewed } from '@/features/documents/hooks/use-recently-viewed';
@@ -22,31 +28,10 @@ import type {
   SearchTab,
 } from '@/features/search/types';
 
-const FILTERS = ['All', 'Cases', 'Articles', 'Statutes', 'Outlines'] as const;
-type FilterLabel = (typeof FILTERS)[number];
-
 const TONES: PhotoTone[] = ['warm', 'cool', 'sage', 'plum', 'sand', 'lime', 'ink'];
 
 function toneFor(index: number): PhotoTone {
   return TONES[index % TONES.length] ?? 'warm';
-}
-
-function kindFor(documentType: string): SearchResultKind {
-  if (documentType === 'case') return 'CASE';
-  if (documentType === 'statute' || documentType === 'codal') return 'STATUTE';
-  if (documentType === 'outline') return 'OUTLINE';
-  return 'ARTICLE';
-}
-
-function chipToDocType(label: FilterLabel): string | undefined {
-  // documentType values must match the API enum on
-  // apps/api/src/modules/search/dto/search-query.dto.ts:24:
-  // ['case','statute','codal','article','outline']
-  if (label === 'Cases') return 'case';
-  if (label === 'Statutes') return 'statute';
-  if (label === 'Articles') return 'article';
-  if (label === 'Outlines') return 'outline';
-  return undefined;
 }
 
 function toResult(item: SearchResultItem, index: number): SearchResult {
@@ -56,6 +41,7 @@ function toResult(item: SearchResultItem, index: number): SearchResult {
   return {
     id: item.id,
     kind: kindFor(item.source.document_type),
+    kindLabel: kindLabelFor(item.source.document_type),
     title: item.source.short_title ?? item.source.title,
     subtitle,
     tone: toneFor(index),
@@ -66,7 +52,9 @@ export default function SearchRoute() {
   const { theme } = useTheme();
   const [query, setQuery] = useState('');
   const [submittedQuery, setSubmittedQuery] = useState('');
-  const [activeFilter, setActiveFilter] = useState<FilterLabel>('All');
+  const [activeFilter, setActiveFilter] = useState<string>(
+    DEFAULT_SEARCH_FILTER_LABEL,
+  );
   const [searchTab, setSearchTab] = useState<SearchTab>('fulltext');
 
   const { history, addEntry, removeEntry, clearHistory } = useSearchHistory();
@@ -76,7 +64,7 @@ export default function SearchRoute() {
   const filters = useMemo<SearchFilters>(
     () => ({
       query: submittedQuery,
-      ...(chipToDocType(activeFilter) ? { documentType: chipToDocType(activeFilter) } : {}),
+      ...documentTypeFilter(activeFilter),
       limit: 20,
     }),
     [submittedQuery, activeFilter],
@@ -274,9 +262,9 @@ export default function SearchRoute() {
         setSubmittedQuery('');
       }}
       hideCancel
-      filters={FILTERS as unknown as string[]}
+      filters={SEARCH_FILTER_LABELS}
       activeFilter={activeFilter}
-      onFilterChange={(f) => setActiveFilter(f as FilterLabel)}
+      onFilterChange={setActiveFilter}
       results={results}
       onPressResult={(id) => router.push(`/reader/${id}`)}
       renderResultAction={renderResultAction}

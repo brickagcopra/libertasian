@@ -14,6 +14,8 @@ export type SearchResultKind = 'CASE' | 'ARTICLE' | 'OUTLINE' | 'STATUTE';
 export interface SearchResult {
   id: string;
   kind: SearchResultKind;
+  /** Precise badge text (e.g. "DECISION"). Falls back to `kind` when absent. */
+  kindLabel?: string;
   title: string;
   subtitle: string;
   tone?: PhotoTone;
@@ -349,7 +351,7 @@ export function SearchScreen({
                           color: theme.accent,
                         }}
                       >
-                        {r.kind}
+                        {r.kindLabel ?? r.kind}
                       </Text>
                       <Text
                         numberOfLines={1}

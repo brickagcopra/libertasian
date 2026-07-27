@@ -1,6 +1,11 @@
 export interface SearchFilters {
   query: string;
-  documentType?: string;
+  /**
+   * Single value, comma list, or array — the API DTO normalises all three to
+   * `string[]`. The filter chips send the full array of concrete types in a
+   * group (see `features/search/document-types.ts`).
+   */
+  documentType?: string | string[];
   court?: string;
   ponente?: string;
   grNo?: string;
