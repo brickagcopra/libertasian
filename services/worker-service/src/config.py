@@ -97,6 +97,15 @@ class Settings(BaseSettings):
     nestjs_api_url: str = "http://localhost:3001/api/v1"
     internal_api_key: str = ""
 
+    # OpenSearch index-trigger retry. The trigger runs AFTER the publish has
+    # been committed to PostgreSQL, so a dropped call leaves a live document
+    # unsearchable — during the #322 backfill 5,220 of 11,561 triggers came
+    # back 429 from the gateway throttler and were discarded with no retry.
+    # The route no longer throttles the worker; these bounds are the belt to
+    # that braces, and cover 5xx and transport errors as well.
+    opensearch_index_max_attempts: int = Field(default=4, ge=1, le=10)
+    opensearch_index_retry_base_delay: float = Field(default=0.5, ge=0.0, le=60.0)
+
     model_config = {"env_prefix": "WORKER_", "env_file": ".env", "extra": "ignore"}
 
 
