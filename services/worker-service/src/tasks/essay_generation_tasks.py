@@ -13,6 +13,7 @@ Per CLAUDE.md:
 
 from __future__ import annotations
 
+import copy
 import datetime
 import json
 import logging
@@ -77,6 +78,7 @@ def generate_essay_prompt(
     4. Build prompt
     5. Call LLM (temperature=0.2)
     6. Parse JSON
+    6b. Strip citedSectionIds that do not resolve to a retrieved section
     7. Run EssayPromptValidator
     8. Record model run
     9. Write via NestJS internal endpoint
@@ -184,6 +186,25 @@ def generate_essay_prompt(
                 model_name=model_name,
             )
             return {"status": "failed", "reason": "abstained"}
+
+        # Step 6b: Drop citedSectionIds the source cannot back, before
+        # anything reads them. Validation, scoring, provenance and the write
+        # payload all run off `content`, so this has to happen first.
+        source_section_ids = {
+            str(s["id"]) for s in sections_with_text if s.get("id")
+        }
+        content, kept, dropped = _strip_unknown_section_ids(
+            content, source_section_ids,
+        )
+        if dropped:
+            logger.warning(
+                "generate_essay_prompt: dropped %d unresolvable citedSectionIds "
+                "(kept %d) job=%s document=%s",
+                dropped,
+                kept,
+                job_id,
+                document_id,
+            )
 
         # Step 7: Validate with EssayPromptValidator
         source_doc_snapshot = LegalDocumentSnapshot(
@@ -391,6 +412,79 @@ def _fail_job(
     nestjs_client.update_job_status(job_id, "failed", **kwargs)
 
 
+def _strip_unknown_section_ids(
+    content: dict[str, Any],
+    source_section_ids: set[str],
+) -> tuple[dict[str, Any], int, int]:
+    """Filter ``citedSectionIds`` to IDs the retrieved source actually has.
+
+    Returns ``(cleaned_content, kept, dropped)``. The input is not modified —
+    the caller's ``content`` may be the very dict the LLM client handed back,
+    and everything downstream (validation, scoring, provenance, the write
+    payload) should read one agreed-upon object rather than depend on when
+    the rewrite happened.
+
+    The flashcard and MCQ tasks have always done this — see
+    ``flashcard_generation_tasks._build_derivative_cards`` and
+    ``mcq_generation_tasks._build_passing_question_entries``, both of which
+    drop non-UUID / unknown ``supportingSectionIds`` before the write. The
+    essay task did not: it passed the LLM output straight through to
+    ``contentJson`` and ``modelAnswerJson``, filtering only when it built
+    provenance records. So the fabricated IDs never reached
+    ``provenance_records`` but were stored verbatim in the artifact, where
+    the renderers and the search extractor read them.
+
+    That, not a missing list of IDs in the prompt, is why essays carry
+    dangling citations and the other types do not. Both prompts have always
+    enumerated the section IDs; both models have always invented some.
+
+    A section left with an empty list is genuinely unsourced and is left
+    that way. Back-filling it with an arbitrary section would manufacture
+    exactly the provenance this function exists to remove, and the
+    validator already flags an uncited paragraph as a warning, which routes
+    the artifact to human review.
+
+    Unlike the flashcard and MCQ filters this does not also parse each ID as
+    a UUID. Those need it because their source-set check is conditional; the
+    membership test here is unconditional, and ``source_section_ids`` is
+    built from ``legal_document_sections.id`` rows, so "is in the set"
+    already implies "is a real section UUID". A separate parse would only
+    add a second reason to reject something the set has already rejected.
+    """
+    kept = 0
+    dropped = 0
+    cleaned = copy.deepcopy(content)
+
+    model_answer = cleaned.get("modelAnswer")
+    if not isinstance(model_answer, dict):
+        return cleaned, kept, dropped
+
+    outline_sections = model_answer.get("outlineSections")
+    if not isinstance(outline_sections, list):
+        return cleaned, kept, dropped
+
+    for outline_section in outline_sections:
+        if not isinstance(outline_section, dict):
+            continue
+        raw_sids = outline_section.get("citedSectionIds")
+        if not isinstance(raw_sids, list):
+            continue
+
+        filtered: list[str] = []
+        for sid in raw_sids:
+            if not isinstance(sid, str) or sid not in source_section_ids:
+                dropped += 1
+                continue
+            if sid in filtered:
+                continue
+            filtered.append(sid)
+            kept += 1
+
+        outline_section["citedSectionIds"] = filtered
+
+    return cleaned, kept, dropped
+
+
 def _build_provenance_records(
     content: dict[str, Any],
     document_id: str,
@@ -414,7 +508,15 @@ def _build_provenance_records(
                         "provenanceType": "source_passage",
                     })
 
-    # Ensure at least one provenance record
+    # Ensure at least one provenance record.
+    #
+    # NOTE: this is the one place left that names a section the artifact did
+    # not cite. The NestJS write endpoint rejects an empty provenanceRecords
+    # list (internal-derivatives.service.ts:214), so an essay that grounded
+    # nothing cannot be written without it. Whether such an essay should be
+    # written at all is a policy question, not a scoring one — see the PR.
+    # Its confidence score is unaffected either way: the scorer reads
+    # citedSectionIds, not this list.
     if not provenance and sections:
         provenance.append({
             "sourceDocumentId": document_id,

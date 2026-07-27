@@ -73,6 +73,31 @@ SECTIONS_PER_ITEM_SINGLE_REF: int = 1
 COVERAGE_MODE_CITABLE = "citable"
 COVERAGE_MODE_DOCUMENT = "document"
 
+# Citation-mapping modes. Only essay_prompt has ever had more than one.
+#
+# VALIDATED is the live one: an item counts as cited when at least one of the
+# IDs it carries exists in the source document. flashcard, mcq_question,
+# doctrine_extract and subject_outline have always worked this way.
+#
+# essay_prompt did not. It counted ``bool(section["citedSectionIds"])`` — a
+# non-empty list, whatever was in it — so an outline section citing a
+# fabricated UUID scored exactly like one citing correctly, and the term
+# measured whether the model had obeyed an output-format instruction. Measured
+# on prod 2026-07-27: 39,992 of 67,515 essay citation refs (59.2%) resolved to
+# no row in legal_document_sections, and none resolved to a section of any
+# other document, so they were invented rather than mis-attributed. The term
+# read 99.0% across the corpus regardless.
+#
+# PRESENCE preserves that behaviour for one caller only, for the same reason
+# COVERAGE_MODE_DOCUMENT exists: rescore_derivatives must reproduce the score
+# already stored on a row before it is allowed to overwrite it, and every
+# stored essay score was produced under presence. A reproduction check that
+# silently recomputes under the new rule proves nothing.
+#
+# Never score a new artifact with PRESENCE.
+CITATION_MODE_VALIDATED = "validated"
+CITATION_MODE_PRESENCE = "presence"
+
 
 def compute_source_passage_coverage(
     *,
@@ -166,6 +191,7 @@ def compute_essay_confidence_score(
     source_sections: list[dict[str, Any]],
     ocr_quality: float = 1.0,
     coverage_mode: str = COVERAGE_MODE_CITABLE,
+    citation_mode: str = CITATION_MODE_VALIDATED,
 ) -> float:
     """Compute confidence score for an essay prompt derivative.
 
@@ -173,13 +199,17 @@ def compute_essay_confidence_score(
     - Source passage coverage: unique valid cited section IDs / total source
       sections
     - Citation mapping completeness: outline sections with at least one
-      citation / total outline sections
+      cited section ID **that exists in the source document** / total outline
+      sections
 
     Args:
         content: Parsed LLM output with modelAnswer.outlineSections.
         source_sections: Source document sections (each must have an "id" key).
         ocr_quality: OCR quality of the source document. Defaults to 1.0
             for non-scan sources.
+        citation_mode: ``CITATION_MODE_VALIDATED`` (the live rule, matching
+            the other four types) or ``CITATION_MODE_PRESENCE`` (reproduction
+            of stored scores only — see :data:`CITATION_MODE_PRESENCE`).
 
     Returns:
         Confidence score clamped to [0, 1].
@@ -212,11 +242,24 @@ def compute_essay_confidence_score(
     # Citation mapping completeness ratio
     outline_section_count = len(outline_sections)
     if outline_section_count > 0:
-        sections_with_citations = sum(
-            1
-            for s in outline_sections
-            if isinstance(s, dict) and s.get("citedSectionIds")
-        )
+        if citation_mode == CITATION_MODE_PRESENCE:
+            # Reproduction only — see CITATION_MODE_PRESENCE. Counts a
+            # non-empty list whatever is in it, including invented IDs.
+            sections_with_citations = sum(
+                1
+                for s in outline_sections
+                if isinstance(s, dict) and s.get("citedSectionIds")
+            )
+        else:
+            sections_with_citations = sum(
+                1
+                for s in outline_sections
+                if isinstance(s, dict)
+                and any(
+                    sid in source_section_ids
+                    for sid in (s.get("citedSectionIds") or [])
+                )
+            )
         citation_mapping_completeness = (
             sections_with_citations / outline_section_count
         )

@@ -84,7 +84,13 @@ class TestReadOnly:
 
 
 class TestEssayPresenceVsValidated:
-    """The finding this script exists to quantify."""
+    """The finding this script exists to quantify.
+
+    Since fix/essay-citation-hallucination the live scorer validates, so
+    `as_scored` tracks `validated`. `presence` keeps the pre-fix reading —
+    the one every stored essay score was produced under — so the size of the
+    gap stays visible.
+    """
 
     def _essay(self, cited: list[list[str]]) -> dict[str, Any]:
         return {
@@ -96,7 +102,7 @@ class TestEssayPresenceVsValidated:
             }
         }
 
-    def test_hallucinated_ids_score_as_fully_cited(self, fake_db) -> None:
+    def test_hallucinated_ids_no_longer_score_as_fully_cited(self, fake_db) -> None:
         """Every section cites something; none of it exists in the source."""
         fake_db["rows"] = [
             _row("a" * 36, "essay_prompt", self._essay([["nope-1"], ["nope-2"]]))
@@ -104,11 +110,13 @@ class TestEssayPresenceVsValidated:
 
         stats = mst.measure("essay_prompt", None, {})
 
-        assert stats.as_scored == [1.0]
+        assert stats.as_scored == [0.0]
         assert stats.validated == [0.0]
+        # What the row's stored score was computed from, and the gap it left.
+        assert stats.presence == [1.0]
         assert stats.inflated == 1
 
-    def test_real_ids_agree_on_both_measures(self, fake_db) -> None:
+    def test_real_ids_agree_on_every_measure(self, fake_db) -> None:
         fake_db["rows"] = [
             _row("a" * 36, "essay_prompt", self._essay([["sec-000"], ["sec-001"]]))
         ]
@@ -117,6 +125,7 @@ class TestEssayPresenceVsValidated:
 
         assert stats.as_scored == [1.0]
         assert stats.validated == [1.0]
+        assert stats.presence == [1.0]
         assert stats.inflated == 0
 
     def test_empty_citation_lists_score_zero(self, fake_db) -> None:
@@ -125,6 +134,26 @@ class TestEssayPresenceVsValidated:
         stats = mst.measure("essay_prompt", None, {})
 
         assert stats.as_scored == [0.0]
+        assert stats.presence == [0.0]
+        assert stats.inflated == 0
+
+    def test_the_self_check_agrees_with_the_live_scorer(self, fake_db) -> None:
+        """The regression this test class caught when the scorer changed.
+
+        The self-check compares the script's reading against the live scorer.
+        Leaving `as_scored` on presence would have made every essay row with a
+        fabricated ID fail it and be silently excluded — the script would have
+        reported a clean corpus by dropping exactly the rows it exists to find.
+        """
+        fake_db["rows"] = [
+            _row("a" * 36, "essay_prompt", self._essay([["sec-000"], ["nope"]]))
+        ]
+
+        stats = mst.measure("essay_prompt", None, {})
+
+        assert stats.self_check_failed == 0
+        assert stats.as_scored == [0.5]
+        assert stats.presence == [1.0]
 
 
 class TestValidatedTypesCannotInflate:

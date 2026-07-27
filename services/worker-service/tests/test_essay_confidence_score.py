@@ -12,6 +12,8 @@ import pytest
 
 from src.scoring import (
     CITATION_MAPPING_COMPLETENESS_WEIGHT,
+    CITATION_MODE_PRESENCE,
+    CITATION_MODE_VALIDATED,
     OCR_QUALITY_WEIGHT,
     SOURCE_PASSAGE_COVERAGE_WEIGHT,
     compute_derivative_confidence_score,
@@ -192,7 +194,13 @@ class TestComputeEssayConfidenceScore:
         assert score == expected
 
     def test_invalid_section_ids_excluded(self) -> None:
-        """Cited section IDs not in source are excluded from coverage."""
+        """An unresolvable ID counts for neither term.
+
+        Before the citation term validated, this case scored 1.0: the "Law"
+        section's list was non-empty, so it counted as cited even though
+        nothing in it existed. That is what let 59.2% of live essay citation
+        refs be fabricated while the term read 99.0% across the corpus.
+        """
         content: dict[str, Any] = {
             "modelAnswer": {
                 "outlineSections": [
@@ -206,9 +214,11 @@ class TestComputeEssayConfidenceScore:
             content=content,
             source_sections=sections,
         )
-        # coverage: 1/1 = 1.0, citation: 2/2 = 1.0 (both have *some* citedSectionIds)
-        # ocr: 1.0 -> 1.0
-        assert score == 1.0
+        # coverage: 1 valid id / min(1 section, 2 items * 2) = 1.0
+        # citation: 1 of 2 outline sections cites something real = 0.5
+        # ocr: 1.0
+        expected = round(1.0 * 0.5 + 0.5 * 0.3 + 1.0 * 0.2, 4)
+        assert score == expected == 0.85
 
     def test_no_model_answer(self) -> None:
         """Content with no modelAnswer -> zero coverage + zero citation."""
@@ -266,3 +276,131 @@ class TestComputeEssayConfidenceScore:
         # 1.0*0.5 + 1.0*0.3 + 0.95*0.2 = 0.5 + 0.3 + 0.19 = 0.99
         assert score >= 0.7
         assert score == 0.99
+
+
+# ---------------------------------------------------------------------------
+# Citation mapping: validated vs presence
+# ---------------------------------------------------------------------------
+
+
+class TestCitationMappingValidatesIds:
+    """The essay term must measure grounding, not output format.
+
+    Measured on prod 2026-07-27: 39,992 of 67,515 essay citation refs (59.2%)
+    resolved to no row in ``legal_document_sections``, none resolved to a
+    section of a different document, and ``citation_mapping_completeness``
+    still read 99.0% for the type. It was counting
+    ``bool(section["citedSectionIds"])``.
+    """
+
+    SECTIONS = [
+        {"id": "sec-001", "plain_text": "text"},
+        {"id": "sec-002", "plain_text": "text"},
+        {"id": "sec-003", "plain_text": "text"},
+    ]
+
+    def _content(self, cited: list[list[str]]) -> dict[str, Any]:
+        return {
+            "modelAnswer": {
+                "outlineSections": [
+                    {"heading": f"H{i}", "paragraphs": ["p"], "citedSectionIds": ids}
+                    for i, ids in enumerate(cited)
+                ],
+            },
+        }
+
+    def test_wholly_fabricated_citations_score_the_ocr_floor(self) -> None:
+        """Every section cites; nothing resolves. Both terms are zero."""
+        fabricated = [
+            ["1e0a1c2e-0000-4000-8000-000000000001"],
+            ["1e0a1c2e-0000-4000-8000-000000000002"],
+        ]
+        score = compute_essay_confidence_score(
+            content=self._content(fabricated),
+            source_sections=self.SECTIONS,
+        )
+        # Only the constant OCR term survives.
+        assert score == OCR_QUALITY_WEIGHT == 0.2
+
+    def test_presence_mode_still_reads_the_old_value(self) -> None:
+        """The reproduction path must recompute what was stored, not the truth.
+
+        Same input as above. Under presence both lists are non-empty, so
+        citation is 1.0 and the score is 0.5 — the value that landed in the
+        column for rows like this, and the value rescore_derivatives must be
+        able to reproduce before it may write.
+        """
+        fabricated = [
+            ["1e0a1c2e-0000-4000-8000-000000000001"],
+            ["1e0a1c2e-0000-4000-8000-000000000002"],
+        ]
+        score = compute_essay_confidence_score(
+            content=self._content(fabricated),
+            source_sections=self.SECTIONS,
+            citation_mode=CITATION_MODE_PRESENCE,
+        )
+        assert score == round(
+            0.0 * SOURCE_PASSAGE_COVERAGE_WEIGHT
+            + 1.0 * CITATION_MAPPING_COMPLETENESS_WEIGHT
+            + 1.0 * OCR_QUALITY_WEIGHT,
+            4,
+        )
+        assert score == 0.5
+
+    def test_validated_is_the_default(self) -> None:
+        """No caller has to opt in to the correct behaviour."""
+        fabricated = [["1e0a1c2e-0000-4000-8000-000000000001"]]
+        assert compute_essay_confidence_score(
+            content=self._content(fabricated),
+            source_sections=self.SECTIONS,
+        ) == compute_essay_confidence_score(
+            content=self._content(fabricated),
+            source_sections=self.SECTIONS,
+            citation_mode=CITATION_MODE_VALIDATED,
+        )
+
+    def test_a_partially_fabricated_section_still_counts(self) -> None:
+        """One real ID grounds the section; the junk beside it is ignored."""
+        mixed = [["sec-001", "1e0a1c2e-0000-4000-8000-000000000001"]]
+        score = compute_essay_confidence_score(
+            content=self._content(mixed),
+            source_sections=self.SECTIONS,
+        )
+        # coverage: 1 valid / min(3, 1 item * 2) = 0.5, citation: 1/1 = 1.0
+        assert score == round(0.5 * 0.5 + 1.0 * 0.3 + 1.0 * 0.2, 4)
+
+    def test_empty_lists_and_fabricated_lists_score_alike(self) -> None:
+        """An invented ID buys nothing an honest blank would not.
+
+        This is the property that makes the prompt change safe: telling the
+        model it may leave citedSectionIds empty cannot lower a score below
+        what inventing an ID would have produced.
+        """
+        blank = compute_essay_confidence_score(
+            content=self._content([[], []]),
+            source_sections=self.SECTIONS,
+        )
+        invented = compute_essay_confidence_score(
+            content=self._content(
+                [
+                    ["1e0a1c2e-0000-4000-8000-000000000001"],
+                    ["1e0a1c2e-0000-4000-8000-000000000002"],
+                ]
+            ),
+            source_sections=self.SECTIONS,
+        )
+        assert blank == invented
+
+    def test_a_grounded_essay_is_unaffected(self) -> None:
+        """The change must not move scores for essays that cite honestly."""
+        grounded = [["sec-001"], ["sec-002"], ["sec-003"]]
+        score = compute_essay_confidence_score(
+            content=self._content(grounded),
+            source_sections=self.SECTIONS,
+        )
+        assert score == 1.0
+        assert score == compute_essay_confidence_score(
+            content=self._content(grounded),
+            source_sections=self.SECTIONS,
+            citation_mode=CITATION_MODE_PRESENCE,
+        )
