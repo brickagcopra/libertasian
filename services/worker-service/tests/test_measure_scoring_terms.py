@@ -187,22 +187,24 @@ class TestSelfCheck:
         assert len(stats.as_scored) == 1
 
 
-class TestMcqIsMeasuredPerBatch:
-    def test_questions_are_grouped_into_one_batch(self, fake_db) -> None:
-        fake_db["rows"] = [
-            _row(
-                f"{i:036d}",
-                "mcq_question",
-                {"questionStem": f"Q{i}", "supportingSectionIds": ["sec-000"]},
-            )
-            for i in range(5)
-        ]
+class TestMcqIsNotMeasured:
+    """mcq_question rows do not persist the IDs, so there is nothing to read.
 
-        stats = mst.measure_mcq_batches(None, {})
+    ``writeMcqBatch`` stores ``{questionStem, options, explanation}``. A
+    per-row citation reading is therefore 0 for every mcq artifact — a fact
+    about the write schema, not about the corpus — and it contradicts the
+    score stored on the same row.
+    """
 
-        assert stats.unit == "batches"
-        assert len(stats.as_scored) == 1
-        assert stats.items == [5]
+    def test_mcq_is_not_a_measurable_type(self) -> None:
+        assert "mcq_question" not in mst.SCORERS
+        assert "mcq_question" in mst.EXCLUDED
+
+    def test_no_per_batch_measurement_remains(self) -> None:
+        assert not hasattr(mst, "measure_mcq_batches")
+
+    def test_the_reason_names_the_write_schema(self) -> None:
+        assert "supportingSectionIds" in mst.EXCLUDED["mcq_question"]
 
 
 class TestReport:
@@ -221,3 +223,18 @@ class TestReport:
         assert "ocr_quality: CONSTANT 1.0" in out
         assert "EXCLUDED" in out
         assert "subject_outline" in out
+
+    def test_excluded_types_are_named_with_their_reason(self, fake_db, capsys) -> None:
+        fake_db["rows"] = [
+            _row(
+                "a" * 36,
+                "flashcard",
+                {"cards": [{"front": "Q", "back": "A", "supportingSectionIds": ["sec-000"]}]},
+            )
+        ]
+
+        mst.main_with_args(["--type", "flashcard"])
+
+        out = capsys.readouterr().out
+        assert "mcq_question" in out
+        assert "supportingSectionIds is not persisted" in out

@@ -26,7 +26,7 @@ Every type computes `citation_mapping_completeness` as
   (prompts/essay_generation_v1.py:31), so this term is close to a measure of
   whether the model obeyed an output-format instruction.
 
-`flashcard` / `mcq_question` / `subject_outline` — validated::
+`flashcard` / `mcq_question` / `subject_outline` — validated at generation::
 
     any(sid in source_section_ids for sid in item.get("supportingSectionIds") or [])
 
@@ -44,6 +44,23 @@ in the validators, and warnings map to HUMAN_REVIEW, not QUARANTINE. Those rows
 are persisted with `review_status='needs_human_review'` and remain candidates
 for the approval sweep. So a low citation value is *possible* in the corpus;
 this measures how often it happens.
+
+## `mcq_question` cannot be measured from persisted rows
+
+It is excluded, and the exclusion is a property of the data, not a limitation
+worth working around. `internal-derivatives.service.ts:writeMcqBatch` writes
+each question's `content_json` as `{questionStem, options, explanation}` —
+**`supportingSectionIds` is not persisted at all**. The IDs exist only in the
+write payload the worker sends, which is where the generation-time scorer read
+them from.
+
+So any per-row reading of an mcq artifact finds zero citations and reports
+`cite=0` for the whole type, which is a statement about the write schema
+rather than about the corpus, and it flatly contradicts the scores stored on
+those same rows. Reporting it next to four types where the number does mean
+something invites exactly the wrong conclusion. Measuring mcq citations
+requires either persisting the IDs or reading them back out of
+`provenance_records`; both are changes, not measurements.
 
 ## `ocr_quality` needs no measurement
 
@@ -76,7 +93,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-from collections import defaultdict
 from typing import Any
 
 import psycopg2.extras
@@ -92,7 +108,6 @@ from ..scoring import (
     compute_doctrine_confidence_score,
     compute_essay_confidence_score,
     compute_flashcard_confidence_score,
-    compute_mcq_confidence_score,
 )
 
 logger = logging.getLogger(__name__)
@@ -104,13 +119,18 @@ SCORERS = {
     "flashcard": compute_flashcard_confidence_score,
     "essay_prompt": compute_essay_confidence_score,
     "doctrine_extract": compute_doctrine_confidence_score,
-    "mcq_question": compute_mcq_confidence_score,
 }
 
 EXCLUDED = {
     "subject_outline": (
         "scored against multiple source documents; the row keeps only the "
         "primary source_document_id"
+    ),
+    "mcq_question": (
+        "supportingSectionIds is not persisted on the row — writeMcqBatch "
+        "stores {questionStem, options, explanation} only — so any per-row "
+        "citation reading is 0 by construction and contradicts the stored "
+        "score, which was computed over the write payload"
     ),
 }
 
@@ -187,7 +207,9 @@ def _iter_artifacts(types: list[str], limit: int | None) -> Any:
         last_id = str(rows[-1]["id"])
 
 
-def _sections_for(document_id: str, cache: dict[str, list[dict[str, Any]]]):
+def _sections_for(
+    document_id: str, cache: dict[str, list[dict[str, Any]]]
+) -> list[dict[str, Any]]:
     if document_id not in cache:
         sections = db.get_document_sections_for_digest(document_id)
         cache[document_id] = [
@@ -235,7 +257,6 @@ def _items_for(dtype: str, content: dict[str, Any]) -> list[tuple[list[str], boo
 
     key_by_type = {
         "flashcard": ("cards", "supportingSectionIds"),
-        "mcq_question": ("questions", "supportingSectionIds"),
     }
     if dtype in key_by_type:
         list_key, id_key = key_by_type[dtype]
@@ -322,51 +343,6 @@ def measure(
     return stats
 
 
-def measure_mcq_batches(
-    limit: int | None, cache: dict[str, list[dict[str, Any]]]
-) -> TermStats:
-    """MCQ is scored per batch, so measure per batch."""
-    stats = TermStats("mcq_question", unit="batches")
-    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
-
-    for row in _iter_artifacts(["mcq_question"], limit):
-        key = row.get("derivative_generation_job_id") or row.get("source_document_id")
-        if not key:
-            stats.unusable += 1
-            continue
-        groups[str(key)].append(row)
-
-    for rows in groups.values():
-        questions = [c for c in (_content(r.get("content_json")) for r in rows) if c]
-        document_id = rows[0].get("source_document_id")
-        if not questions or not document_id:
-            stats.unusable += 1
-            continue
-        sections = _sections_for(str(document_id), cache)
-        if not sections:
-            stats.unusable += 1
-            continue
-
-        source_ids = {s["id"] for s in sections}
-        hits = sum(
-            1
-            for q in questions
-            if any(i in source_ids for i in _ids(q.get("supportingSectionIds")))
-        )
-        ratio = hits / len(questions)
-        distinct = {
-            i
-            for q in questions
-            for i in _ids(q.get("supportingSectionIds"))
-            if i in source_ids
-        }
-        citable = min(len(source_ids), len(questions) * 2)
-        coverage = min(len(distinct) / citable, 1.0) if citable else 0.0
-        stats.record(ratio, ratio, coverage, len(sections), len(questions))
-
-    return stats
-
-
 def print_report(all_stats: list[TermStats]) -> None:
     print()
     print("MEASUREMENT — no rows were modified.")
@@ -434,12 +410,9 @@ def main_with_args(argv: list[str] | None = None) -> int:
 
     selected = args.types or sorted(SCORERS)
     cache: dict[str, list[dict[str, Any]]] = {}
-    results: list[TermStats] = []
-    for dtype in selected:
-        if dtype == "mcq_question":
-            results.append(measure_mcq_batches(args.limit, cache))
-        else:
-            results.append(measure(dtype, args.limit, cache))
+    results: list[TermStats] = [
+        measure(dtype, args.limit, cache) for dtype in selected
+    ]
 
     print_report(results)
     return 0
