@@ -22,29 +22,39 @@ OCR_QUALITY_WEIGHT: float = 0.2
 
 # Sections one generated item can be expected to ground itself in.
 #
-# These exist because source_passage_coverage used to be divided by EVERY
-# section of the source document, which made the term unreachable for any
-# artifact smaller than its source: a 5-card deck over a 40-section decision
-# can cite a handful of sections at most, so coverage was structurally under
-# 0.25 and the score could not clear the 0.70 auto-approval bar however well
-# grounded the deck was. Measured on prod 2026-07-26, the per-type maxima were
-# flashcard 0.692, essay_prompt 0.688, doctrine_extract 0.667 and
-# subject_outline 0.655 — every one of them exactly 0.5 + coverage * 0.5, i.e.
-# citation mapping and OCR were already perfect and coverage alone held them
-# under the bar. (mcq_question is scored differently in practice: one artifact
-# is written per question but the score is computed once over the whole
-# generated set and copied onto every row, so an mcq row's stored score is a
-# property of its batch, not of its own content.)
+# THE MEASURED CORPUS (prod, 2026-07-26). Source documents average **3.4
+# sections**: mcq 3.4, essay 3.4, flashcard 3.4, doctrine 4.4. Check any change
+# to this file against that number, not against an intuition about long
+# decisions — the difference has already produced one wrong fix.
 #
-# The denominator is now what the artifact could plausibly cite: its own item
-# count times the sections an item is expected to cite. The generation prompts
+# These constants come from #313, which fixed a real bug: coverage used to be
+# divided by every section of the source document, so an artifact smaller than
+# its source could not push the term up. But the fixture that motivated it
+# assumed a 40-section decision, which is the INVERSE of this corpus. Because
+# item_count * 2 (10 or more for any normal artifact) almost never binds
+# against 3.4 sections, the min() denominator equals source_section_count for
+# ~99.97% of rows: #313 is correct and very nearly inert here, and re-scoring
+# the existing corpus under it moved 7 rows out of 29,471.
+#
+# What that leaves, measured: on a 3-section source coverage can only be 0,
+# 1/3, 2/3 or 1, so the score can only be 0.5, 0.667, 0.833 or 1.0 and the 0.70
+# bar reduces to "cite 2 of the 3 sections". Whether that is the editorial
+# standard we want is an open product question, NOT something to fix by
+# re-tuning these constants on a hunch — a taper attempt (#316) inverted the
+# defect and pushed essay_prompt from 37% to 95.5% above the bar, because the
+# terms that would receive any freed weight are themselves near-constant.
+#
+# The denominator is what the artifact could plausibly cite: its own item count
+# times the sections an item is expected to cite. The generation prompts
 # require "at least one source section ID" per item (see prompts/*.py) and the
 # emitted shapes carry a list, so two is the allowance for list-valued shapes.
 # doctrine_extract carries a SINGLE source_section_id per doctrine, so one.
 #
-# This keeps the CLAUDE.md weights (0.5 / 0.3 / 0.2) and still fails a badly
-# grounded artifact: an item count of N with only N/5 distinct valid citations
-# scores 0.1 coverage, which lands at 0.55 and stays out of auto-approval.
+# (mcq_question is scored differently in practice: one artifact is written per
+# question but the score is computed once over the whole generated set and
+# copied onto every row — confirmed at 100% on prod, all 14,099 MCQ source
+# documents carry exactly one distinct score across their rows. An mcq row's
+# stored score is a property of its batch, not of its own content.)
 SECTIONS_PER_ITEM: int = 2
 SECTIONS_PER_ITEM_SINGLE_REF: int = 1
 
@@ -127,6 +137,12 @@ def compute_derivative_confidence_score(
             Range [0, 1].
         ocr_quality: OCR quality score of the source document. Defaults to
             1.0 for non-scan sources. Range [0, 1].
+
+            NOTE: no generation task passes this argument — grep `ocr_quality`
+            under src/tasks/ and you will find nothing. Every pipeline-produced
+            derivative therefore scores with ocr_quality = 1.0, so this term is
+            a constant 0.2 added to every artifact rather than a signal. It
+            only varies if a caller supplies it, which nothing currently does.
 
     Returns:
         Confidence score clamped to [0, 1], rounded to 4 decimal places.
