@@ -376,7 +376,13 @@ for (const state of NON_TERMINAL_STATES) {
 
 // ---- States that grant platform access ----
 
-const ACCESSIBLE_STATES = new Set<SubscriptionState>([
+/**
+ * The single source of truth for "this subscription still grants its
+ * plan_code". PROVISIONING is deliberately absent: a row that has not been
+ * paid for yet must never resolve to its tier. Do not copy this list —
+ * import it.
+ */
+export const ACCESSIBLE_STATES = new Set<SubscriptionState>([
   SubscriptionState.TRIALING,
   SubscriptionState.ACTIVE,
   SubscriptionState.PAST_DUE,
@@ -385,6 +391,9 @@ const ACCESSIBLE_STATES = new Set<SubscriptionState>([
   SubscriptionState.COMPLIMENTARY,
   SubscriptionState.MIGRATING,
 ]);
+
+/** The same set as an array, for Prisma `status: { in: ... }` filters. */
+export const ACCESSIBLE_STATE_VALUES: string[] = Array.from(ACCESSIBLE_STATES);
 
 // ==========================================================================
 // Pure Functions
