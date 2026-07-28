@@ -22,16 +22,25 @@ jest.mock('@/features/study/hooks/use-codals', () => ({
   useOfflineCodals: (filters: unknown) => mockUseOfflineFallback(filters),
 }));
 
+const mockIsOffline = jest.fn(() => false);
+const mockSaveForOffline = jest.fn();
+const mockRemoveOffline = jest.fn();
 jest.mock('@/features/study/hooks/use-offline-codals', () => ({
   useOfflineCodals: () => ({
-    isOffline: jest.fn(() => false),
-    saveForOffline: jest.fn(),
-    removeOffline: jest.fn(),
+    isOffline: (...args: unknown[]) => mockIsOffline(...(args as [])),
+    saveForOffline: (...args: unknown[]) => mockSaveForOffline(...args),
+    removeOffline: (...args: unknown[]) => mockRemoveOffline(...args),
     saving: null,
     lastError: null,
     clearError: jest.fn(),
     offlineIds: new Set(),
   }),
+}));
+
+// Offline-save gate — default unlocked; the gate block flips `locked`.
+const mockUseCanUseOffline = jest.fn(() => ({ locked: false, planName: 'Free' }));
+jest.mock('@/features/billing/hooks/use-can-use-offline', () => ({
+  useCanUseOffline: () => mockUseCanUseOffline(),
 }));
 
 const mockUseNetworkState = jest.fn(() => ({
@@ -51,9 +60,19 @@ jest.mock('@/components/offline-banner', () => ({
 }));
 
 jest.mock('@/features/study/components/codal-card', () => ({
-  CodalCard: ({ item }: { item: { title: string; shortTitle?: string } }) => {
+  CodalCard: ({
+    item,
+    onToggleOffline,
+  }: {
+    item: { id: string; title: string; shortTitle?: string };
+    onToggleOffline: () => void;
+  }) => {
     const { Text } = require('react-native');
-    return <Text>{item.shortTitle ?? item.title}</Text>;
+    return (
+      <Text testID={`toggle-offline-${item.id}`} onPress={onToggleOffline}>
+        {item.shortTitle ?? item.title}
+      </Text>
+    );
   },
 }));
 
@@ -67,7 +86,11 @@ function createWrapper() {
 }
 
 describe('CodalListScreen', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockIsOffline.mockReturnValue(false);
+    mockUseCanUseOffline.mockReturnValue({ locked: false, planName: 'Free' });
+  });
 
   it('shows loading state', () => {
     mockUseNetworkState.mockReturnValue({ isConnected: true, isInternetReachable: true, type: 'wifi' });
@@ -246,5 +269,57 @@ describe('CodalListScreen', () => {
 
     const { queryByTestId } = render(<CodalListScreen />, { wrapper: createWrapper() });
     expect(queryByTestId('offline-banner')).toBeNull();
+  });
+
+  describe('offline download gate (offlineReading entitlement)', () => {
+    const codal = { id: 'codal-1', title: 'Civil Code', shortTitle: 'Civil Code' };
+
+    function renderWithOneCodal() {
+      mockUseNetworkState.mockReturnValue({
+        isConnected: true,
+        isInternetReachable: true,
+        type: 'wifi',
+      });
+      mockUseInfiniteCodals.mockReturnValue({
+        data: { pages: [{ data: [codal] }] },
+        isLoading: false,
+        hasNextPage: false,
+        fetchNextPage: jest.fn(),
+        isFetchingNextPage: false,
+      });
+      return render(<CodalListScreen />, { wrapper: createWrapper() });
+    }
+
+    it('below-edu: download opens the upsell and never writes to storage', () => {
+      mockUseCanUseOffline.mockReturnValue({ locked: true, planName: 'Free' });
+
+      const { getByTestId, getByText } = renderWithOneCodal();
+      fireEvent.press(getByTestId('toggle-offline-codal-1'));
+
+      expect(getByText('Available on Edu plans and above')).toBeTruthy();
+      expect(getByText(/Download codals and read them offline anywhere/)).toBeTruthy();
+      expect(mockSaveForOffline).not.toHaveBeenCalled();
+    });
+
+    it('below-edu: an already-downloaded codal can still be removed', () => {
+      mockUseCanUseOffline.mockReturnValue({ locked: true, planName: 'Free' });
+      mockIsOffline.mockReturnValue(true);
+
+      const { getByTestId, queryByText } = renderWithOneCodal();
+      fireEvent.press(getByTestId('toggle-offline-codal-1'));
+
+      expect(mockRemoveOffline).toHaveBeenCalledWith('codal-1');
+      expect(queryByText('Available on Edu plans and above')).toBeNull();
+    });
+
+    it('edu+: download saves without an upsell', () => {
+      mockUseCanUseOffline.mockReturnValue({ locked: false, planName: 'Edu' });
+
+      const { getByTestId, queryByText } = renderWithOneCodal();
+      fireEvent.press(getByTestId('toggle-offline-codal-1'));
+
+      expect(mockSaveForOffline).toHaveBeenCalledWith('codal-1', 'civil_law');
+      expect(queryByText('Available on Edu plans and above')).toBeNull();
+    });
   });
 });

@@ -304,6 +304,34 @@ export interface PlanInfo {
 
 // ─── Plan Helpers ─────────────────────────────────────────
 
+/**
+ * Entitlement keys that describe a restriction rather than a benefit and must
+ * never render as a plan-card bullet with a check next to it.
+ * `previewOnly` is the free tier's public-corpus cap.
+ */
+const NON_BENEFIT_ENTITLEMENT_KEYS = new Set(['previewOnly']);
+
+/**
+ * True when an entitlement should appear as a plan-card bullet.
+ *
+ * Mirrors the web pricing card filter: a bullet is a *benefit*, so drop the
+ * zero-valued numerics ("0 active matters") and the false booleans ("team
+ * collaboration" on Free) that the comparison table renders as "—", plus the
+ * restriction-shaped keys above. Without this, Free listed 14 features it
+ * does not have, each with a green checkmark.
+ */
+export function isPlanCardBullet(entitlement: PlanEntitlementDetail): boolean {
+  if (!entitlement.description) return false;
+  if (NON_BENEFIT_ENTITLEMENT_KEYS.has(entitlement.key)) return false;
+  if (entitlement.valueType === 'numeric' && entitlement.numericValue === 0) {
+    return false;
+  }
+  if (entitlement.valueType === 'boolean' && entitlement.booleanValue === false) {
+    return false;
+  }
+  return true;
+}
+
 /** Convert a PlanDetail from the API into the legacy PlanInfo shape */
 export function planDetailToPlanInfo(plan: PlanDetail): PlanInfo {
   const monthlyPrice = plan.prices.find(
@@ -319,7 +347,7 @@ export function planDetailToPlanInfo(plan: PlanDetail): PlanInfo {
     monthlyPrice: monthlyPrice ? monthlyPrice.amount / 100 : 0,
     annualPrice: annualPrice ? annualPrice.amount / 100 : 0,
     features: plan.entitlements
-      .filter((e) => e.description)
+      .filter(isPlanCardBullet)
       .map((e) => e.description as string),
     highlight: plan.code === 'pro',
   };

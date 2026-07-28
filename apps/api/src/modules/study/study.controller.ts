@@ -18,7 +18,9 @@ import type { Response } from 'express';
 import type { JwtPayload } from '@libertasian/types';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { RequiredSubscription } from '../../common/decorators/subscription.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { SubscriptionGuard } from '../../common/guards/subscription.guard';
 import { TrackEvent } from '../analytics';
 import { AuditService } from '../audit/audit.service';
 import { StudyExportService } from './study-export.service';
@@ -289,13 +291,15 @@ export class StudyController {
   // =========================================================================
 
   @Post('flashcard-sets/:setId/generate-ai')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, SubscriptionGuard)
+  @RequiredSubscription('edu')
   @ApiBearerAuth()
   @ApiOperation({
-    summary: 'Generate AI flashcards for a set',
+    summary: 'Generate AI flashcards for a set (Edu plan or higher)',
     description:
       'Calls the RAG service to generate flashcards from legal corpus content. ' +
-      'Generated cards are saved directly to the specified flashcard set.',
+      'Generated cards are saved directly to the specified flashcard set. ' +
+      'Requires the `flashcardGeneration` entitlement (Edu tier and above).',
   })
   async generateAiFlashcards(
     @Param('setId', ParseUUIDPipe) setId: string,
@@ -564,9 +568,12 @@ export class StudyController {
   }
 
   @Get('syllabi/:id/progress')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, SubscriptionGuard)
+  @RequiredSubscription('edu')
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get user progress for a syllabus' })
+  @ApiOperation({
+    summary: 'Get user progress for a syllabus (Edu plan or higher)',
+  })
   async getSyllabusProgress(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: JwtPayload,
@@ -576,9 +583,12 @@ export class StudyController {
   }
 
   @Put('syllabi/topics/:topicId/progress')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, SubscriptionGuard)
+  @RequiredSubscription('edu')
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Mark a syllabus topic as studied/completed' })
+  @ApiOperation({
+    summary: 'Mark a syllabus topic as studied/completed (Edu plan or higher)',
+  })
   async upsertSyllabusTopicProgress(
     @Param('topicId', ParseUUIDPipe) topicId: string,
     @Body() dto: SyllabusTopicProgressDto,
@@ -603,9 +613,12 @@ export class StudyController {
   }
 
   @Get('bar-readiness')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, SubscriptionGuard)
+  @RequiredSubscription('edu')
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get overall bar exam readiness score' })
+  @ApiOperation({
+    summary: 'Get overall bar exam readiness score (Edu plan or higher)',
+  })
   async getBarExamReadiness(@CurrentUser() user: JwtPayload) {
     const readiness = await this.studyService.getBarExamReadiness(user.sub);
     return { success: true, data: readiness };
@@ -730,9 +743,12 @@ export class StudyController {
   // =========================================================================
 
   @Put('progress/:entityType/:entityId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, SubscriptionGuard)
+  @RequiredSubscription('edu')
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Upsert study progress for an entity' })
+  @ApiOperation({
+    summary: 'Upsert study progress for an entity (Edu plan or higher)',
+  })
   async upsertProgress(
     @Param('entityType') entityType: string,
     @Param('entityId', ParseUUIDPipe) entityId: string,

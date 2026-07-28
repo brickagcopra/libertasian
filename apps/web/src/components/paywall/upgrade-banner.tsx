@@ -63,6 +63,22 @@ export function extractSearchQuota403(error: unknown): PaywallSearch403 | null {
   };
 }
 
+/**
+ * True when an error is SubscriptionGuard's tier rejection — a 403 whose
+ * message reads "This feature requires a <tier> subscription or higher."
+ *
+ * Kept distinct from an RBAC/permission 403, which must keep rendering the
+ * "access denied" copy: a role problem is not fixed by upgrading a plan.
+ */
+export function isSubscriptionTier403(error: unknown): boolean {
+  if (!(error instanceof ApiClientError)) return false;
+  if (error.statusCode !== 403) return false;
+  const body = (error.body ?? {}) as Record<string, unknown>;
+  const message =
+    typeof body['message'] === 'string' ? body['message'] : error.message;
+  return /requires an? .+ subscription/i.test(message);
+}
+
 const CORPUS_LABELS: Record<PaywallCorpus, { singular: string; plural: string }> = {
   documents: { singular: 'document', plural: 'documents' },
   digests: { singular: 'digest', plural: 'digests' },

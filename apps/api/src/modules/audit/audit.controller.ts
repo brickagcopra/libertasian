@@ -11,6 +11,7 @@ import {
   SubscriptionGuard,
 } from '../../common/guards';
 import { RequiredPermissions } from '../../common/decorators/permissions.decorator';
+import { RequiredSubscription } from '../../common/decorators/subscription.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ListAllAuditLogsQueryDto } from './dto';
@@ -20,9 +21,18 @@ interface AuthUser {
   organizationId: string;
 }
 
+/**
+ * Audit log read/export endpoints.
+ *
+ * `auditLogs` is a team/enterprise entitlement (false on free/edu/pro in
+ * plan-seed), so the whole controller carries `@RequiredSubscription('team')`.
+ * SubscriptionGuard was already in the chain but inert without the decorator.
+ * Platform admins bypass the tier gate by design (SubscriptionGuard).
+ */
 @ApiTags('Audit Logs')
 @Controller('audit-logs')
 @UseGuards(JwtAuthGuard, MfaGuard, TenantGuard, PermissionsGuard, SubscriptionGuard)
+@RequiredSubscription('team')
 export class AuditController {
   constructor(private readonly prisma: PrismaService) {}
 

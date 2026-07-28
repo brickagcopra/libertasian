@@ -25,6 +25,10 @@ import {
 } from '@/features/settings/hooks/use-rbac';
 import { PermissionGate } from '@/components/layout/permission-gate';
 import { PlatformAdminGate } from '@/components/layout/platform-admin-gate';
+import {
+  UpgradeBanner,
+  isSubscriptionTier403,
+} from '@/components/paywall/upgrade-banner';
 import type { FullAuditLogItem, ListAllAuditLogsParams } from '@/features/settings/hooks/use-rbac';
 
 import { Button } from '@/components/ui/button';
@@ -165,7 +169,7 @@ function AuditLogsContent() {
     return p;
   }, [currentCursor, selectedAction, selectedEntityType, dateFrom, dateTo]);
 
-  const { data, isLoading, isError } = useAuditLogs(queryParams);
+  const { data, isLoading, isError, error } = useAuditLogs(queryParams);
   const { data: entityTypes } = useAuditEntityTypes();
   const { data: actions } = useAuditActions();
   const exportMutation = useExportAuditLogsCsv();
@@ -227,6 +231,26 @@ function AuditLogsContent() {
     dateTo;
 
   const pageNumber = cursorStack.length + 1;
+
+  // `auditLogs` is a Team+ entitlement, enforced by SubscriptionGuard on
+  // GET /audit-logs. Show the upsell rather than "Failed to load audit logs".
+  //
+  // Today this branch is defense-in-depth only: PlatformAdminGate above
+  // admits nobody but platform admins, and platform admins bypass
+  // SubscriptionGuard by design — so the 403 cannot currently occur here.
+  // It becomes live the moment this page opens up to Team orgs, which is
+  // the whole point of putting audit logs on a plan. UpgradeBanner also
+  // hard-gates on useCanAccessPaidFeature, so an admin would see nothing.
+  if (isSubscriptionTier403(error)) {
+    return (
+      <UpgradeBanner
+        variant="modal"
+        corpus="derivatives"
+        message="Audit logs are available on Team plans and above. Upgrade to review every action taken in your organization."
+        surface="settings/audit-logs"
+      />
+    );
+  }
 
   return (
     <div className="space-y-6">
