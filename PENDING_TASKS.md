@@ -64,6 +64,8 @@ The re-score that led here is **closed — not worth running** (below). What it 
 - [ ] **Activate Cards** as a payment channel
 - [ ] **Edu-plan billing launch** — blocked on Xendit sandbox setup
 - [ ] Xendit webhook end-to-end test with test payment methods; confirm Nginx webhook route in prod (Session 191 leftover)
+- [ ] #326 deployed the `teamCollaboration` gate on `POST /organizations/:id/members/invite` (Team tier or higher). The internal LIBERTASIAN org `00000000-0000-0000-0000-000000000001` has NO subscription row, so `getPlanCode` resolves it to `free` and it can no longer send invites. Fix is a one-row `subscriptions` insert attaching the `team` plan to that org, or an `entitlement_overrides` admin_override on `teamCollaboration`. Prod-side task — brick/prod Claude, not local.
+- [ ] Same gate: `Bri Agcopra's Workspace` (2 members, no subscription) is in the same state. Decide whether it needs a plan or stays free.
 
 ## Mobile (next EAS build / store readiness)
 

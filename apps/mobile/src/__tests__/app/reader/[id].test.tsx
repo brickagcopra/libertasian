@@ -53,11 +53,21 @@ jest.mock('@/features/billing/hooks/use-can-use-bookmarks-annotations', () => ({
     mockUseCanUseBookmarksAnnotations(...args),
 }));
 
+// Offline-save gate — default unlocked so pre-existing tests exercise the
+// normal save path. The offline paywall block flips `locked` per test.
+const mockUseCanUseOffline = jest.fn();
+jest.mock('@/features/billing/hooks/use-can-use-offline', () => ({
+  useCanUseOffline: (...args: unknown[]) => mockUseCanUseOffline(...args),
+}));
+
+const mockIsOffline = jest.fn(() => false);
+const mockSaveForOffline = jest.fn();
+const mockRemoveOffline = jest.fn();
 jest.mock('@/features/study/hooks/use-offline-codals', () => ({
   useOfflineCodals: () => ({
-    isOffline: jest.fn(() => false),
-    saveForOffline: jest.fn(),
-    removeOffline: jest.fn(),
+    isOffline: (...args: unknown[]) => mockIsOffline(...(args as [])),
+    saveForOffline: (...args: unknown[]) => mockSaveForOffline(...args),
+    removeOffline: (...args: unknown[]) => mockRemoveOffline(...args),
     saving: null,
   }),
 }));
@@ -92,6 +102,8 @@ beforeEach(() => {
     locked: false,
     planName: 'Free',
   });
+  mockUseCanUseOffline.mockReturnValue({ locked: false, planName: 'Free' });
+  mockIsOffline.mockReturnValue(false);
 });
 
 function baseDoc(overrides: Partial<Record<string, unknown>> = {}) {
@@ -538,6 +550,51 @@ describe('ReaderRoute — Edu+ paywall (bookmarks + annotations)', () => {
       fireEvent.press(getByText('See plans'));
 
       expect(router.push).toHaveBeenCalledWith('/settings/plans');
+    });
+  });
+
+  describe('offline saving gate', () => {
+    it('below-edu: "Save offline" opens the upsell and never writes to storage', () => {
+      mockUseCanUseOffline.mockReturnValue({ locked: true, planName: 'Free' });
+
+      const { getByLabelText, getByText } = render(<ReaderRoute />, {
+        wrapper: createWrapper(),
+      });
+
+      fireEvent.press(getByLabelText('Save offline'));
+
+      expect(getByText('Available on Edu plans and above')).toBeTruthy();
+      expect(
+        getByText(/Save documents for offline reading anywhere/),
+      ).toBeTruthy();
+      expect(mockSaveForOffline).not.toHaveBeenCalled();
+    });
+
+    it('below-edu: an already-saved document can still be removed', async () => {
+      mockUseCanUseOffline.mockReturnValue({ locked: true, planName: 'Free' });
+      mockIsOffline.mockReturnValue(true);
+
+      const { getByLabelText, queryByText } = render(<ReaderRoute />, {
+        wrapper: createWrapper(),
+      });
+
+      fireEvent.press(getByLabelText('Saved offline'));
+
+      await waitFor(() => expect(mockRemoveOffline).toHaveBeenCalledWith('doc-1'));
+      expect(queryByText('Available on Edu plans and above')).toBeNull();
+    });
+
+    it('edu+: "Save offline" saves without an upsell', async () => {
+      mockUseCanUseOffline.mockReturnValue({ locked: false, planName: 'Edu' });
+
+      const { getByLabelText, queryByText } = render(<ReaderRoute />, {
+        wrapper: createWrapper(),
+      });
+
+      fireEvent.press(getByLabelText('Save offline'));
+
+      await waitFor(() => expect(mockSaveForOffline).toHaveBeenCalled());
+      expect(queryByText('Available on Edu plans and above')).toBeNull();
     });
   });
 

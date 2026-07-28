@@ -44,6 +44,8 @@ import {
 } from '@/features/annotations/colors';
 import type { Annotation, AnnotationColor } from '@/features/annotations/types';
 import { useCanUseBookmarksAnnotations } from '@/features/billing/hooks/use-can-use-bookmarks-annotations';
+import { useCanUseOffline } from '@/features/billing/hooks/use-can-use-offline';
+import { PlanUpsellSheet } from '@/features/billing/components/plan-upsell-sheet';
 import { useDigests, useGenerateDigest } from '@/features/digests/hooks/use-digests';
 import { useRecentlyViewed } from '@/features/documents/hooks/use-recently-viewed';
 import { useOfflineCodals } from '@/features/study/hooks/use-offline-codals';
@@ -251,7 +253,14 @@ export default function ReaderRoute() {
   // While the subscription is loading/undetermined this reports locked:false
   // and the 402/403 Alert catches below remain the fallback.
   const { locked: paywallLocked, planName } = useCanUseBookmarksAnnotations();
-  const [upsellOpen, setUpsellOpen] = useState(false);
+  // Saving a document for offline reading is the `offlineReading` entitlement
+  // (Edu+). Same proactive-paywall treatment; removing an already-saved
+  // document stays available on every plan so cached content is never stranded.
+  const { locked: offlineLocked } = useCanUseOffline();
+  /** Which feature opened the Edu+ upsell sheet; null = sheet closed. */
+  const [upsellFeature, setUpsellFeature] = useState<
+    'bookmarks' | 'offline' | null
+  >(null);
 
   // Annotations — whole-paragraph highlights (see buildParagraphs).
   const { data: annotations } = useAnnotations(documentId);
@@ -328,7 +337,7 @@ export default function ReaderRoute() {
       return;
     }
     if (paywallLocked) {
-      setUpsellOpen(true);
+      setUpsellFeature('bookmarks');
       return;
     }
     setBookmarkSheetOpen(true);
@@ -337,7 +346,7 @@ export default function ReaderRoute() {
   const handleParagraphLongPress = useCallback(
     (sectionId: string, paragraphText: string, startOffset?: number) => {
       if (paywallLocked) {
-        setUpsellOpen(true);
+        setUpsellFeature('bookmarks');
         return;
       }
       setAnnotationColor('yellow');
@@ -425,6 +434,12 @@ export default function ReaderRoute() {
 
   const handleToggleOffline = useCallback(async () => {
     if (!doc) return;
+    // Gate NEW saves only — removal (and reading what is already cached)
+    // stays available on every plan.
+    if (!documentIsOffline && offlineLocked) {
+      setUpsellFeature('offline');
+      return;
+    }
     try {
       if (documentIsOffline) {
         await removeOffline(doc.id);
@@ -434,7 +449,7 @@ export default function ReaderRoute() {
     } catch {
       Alert.alert('Error', 'Failed to update offline storage.');
     }
-  }, [doc, documentIsOffline, removeOffline, saveForOffline]);
+  }, [doc, documentIsOffline, offlineLocked, removeOffline, saveForOffline]);
 
   const handleGenerateDigest = useCallback(() => {
     if (existingDigestId) {
@@ -816,53 +831,19 @@ export default function ReaderRoute() {
         </View>
       </Modal>
 
-      {/* Edu+ upsell sheet — bookmark button / paragraph long-press for
-          below-Edu orgs. Proactive paywall: no create request ever fires. */}
-      <Modal
-        visible={upsellOpen}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setUpsellOpen(false)}
-      >
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
-          <View
-            style={{
-              backgroundColor: theme.bg,
-              padding: 22,
-              paddingBottom: 36,
-              borderTopLeftRadius: 24,
-              borderTopRightRadius: 24,
-            }}
-          >
-            <Text style={{ fontFamily: theme.serif, fontSize: 24, letterSpacing: -0.5, color: theme.ink }}>
-              Available on Edu plans and above
-            </Text>
-            <Text style={{ marginTop: 6, fontFamily: 'Inter_400Regular', fontSize: 13, color: theme.inkSoft }}>
-              You&apos;re on the {planName} plan. Save bookmarks and highlight
-              passages with notes.
-            </Text>
-            <View style={{ height: 18 }} />
-            <Button
-              label="See plans"
-              variant="primary"
-              full
-              onPress={() => {
-                setUpsellOpen(false);
-                router.push('/settings/plans');
-              }}
-            />
-            <View style={{ height: 8 }} />
-            <Pressable
-              onPress={() => setUpsellOpen(false)}
-              style={{ paddingVertical: 12, alignItems: 'center' }}
-            >
-              <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 14, color: theme.inkSoft }}>
-                Not now
-              </Text>
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
+      {/* Edu+ upsell sheet — bookmark button / paragraph long-press / save
+          offline for below-Edu orgs. Proactive paywall: no create request
+          ever fires and nothing is written to offline storage. */}
+      <PlanUpsellSheet
+        visible={upsellFeature !== null}
+        planName={planName}
+        message={
+          upsellFeature === 'offline'
+            ? 'Save documents for offline reading anywhere.'
+            : 'Save bookmarks and highlight passages with notes.'
+        }
+        onClose={() => setUpsellFeature(null)}
+      />
     </>
   );
 }

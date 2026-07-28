@@ -5,6 +5,7 @@ import {
   UpgradeBanner,
   extractPaywall402,
   extractSearchQuota403,
+  isSubscriptionTier403,
 } from './upgrade-banner';
 import { ApiClientError } from '@/lib/api-client';
 
@@ -281,6 +282,54 @@ describe('UpgradeBanner', () => {
       expect(
         extractSearchQuota403(new ApiClientError('q', 403, {})),
       ).toBeNull();
+    });
+  });
+
+  describe('isSubscriptionTier403', () => {
+    it('matches SubscriptionGuard tier rejections', () => {
+      expect(
+        isSubscriptionTier403(
+          new ApiClientError('Forbidden', 403, {
+            statusCode: 403,
+            message:
+              'This feature requires a team subscription or higher. Current plan: free.',
+          }),
+        ),
+      ).toBe(true);
+
+      // "an enterprise" — the article varies with the tier name.
+      expect(
+        isSubscriptionTier403(
+          new ApiClientError(
+            'This feature requires an enterprise subscription or higher. Current plan: pro.',
+            403,
+          ),
+        ),
+      ).toBe(true);
+    });
+
+    it('does not match an RBAC/permission 403', () => {
+      // A role problem is not fixed by upgrading a plan, so this must keep
+      // rendering the access-denied copy rather than an upsell.
+      expect(
+        isSubscriptionTier403(
+          new ApiClientError('Forbidden', 403, {
+            statusCode: 403,
+            message: 'Insufficient permissions',
+          }),
+        ),
+      ).toBe(false);
+    });
+
+    it('does not match other statuses or non-ApiClientError values', () => {
+      expect(
+        isSubscriptionTier403(
+          new ApiClientError('This feature requires a team subscription', 402),
+        ),
+      ).toBe(false);
+      expect(isSubscriptionTier403(new Error('boom'))).toBe(false);
+      expect(isSubscriptionTier403(null)).toBe(false);
+      expect(isSubscriptionTier403(undefined)).toBe(false);
     });
   });
 });

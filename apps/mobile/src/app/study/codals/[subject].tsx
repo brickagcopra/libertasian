@@ -16,6 +16,8 @@ import {
   type CodalTabGroup,
 } from '../../../features/study/hooks/use-codals';
 import { useOfflineCodals } from '../../../features/study/hooks/use-offline-codals';
+import { useCanUseOffline } from '../../../features/billing/hooks/use-can-use-offline';
+import { PlanUpsellSheet } from '../../../features/billing/components/plan-upsell-sheet';
 import { useNetworkState } from '../../../hooks/use-network-state';
 import { OfflineBanner } from '../../../components/offline-banner';
 import { CodalCard } from '../../../features/study/components/codal-card';
@@ -60,6 +62,12 @@ export default function CodalListScreen() {
   const { isOffline, saveForOffline, removeOffline, saving } =
     useOfflineCodals();
 
+  // Saving a codal for offline reading is the `offlineReading` entitlement
+  // (Edu+). Below-Edu orgs get the upsell sheet instead; removing an
+  // already-saved codal stays available so cached content is never stranded.
+  const { locked: offlineLocked, planName } = useCanUseOffline();
+  const [upsellOpen, setUpsellOpen] = useState(false);
+
   // Online: fetch from API
   const {
     data,
@@ -95,11 +103,15 @@ export default function CodalListScreen() {
     async (codalId: string) => {
       if (isOffline(codalId)) {
         await removeOffline(codalId);
-      } else {
-        await saveForOffline(codalId, subjectCode);
+        return;
       }
+      if (offlineLocked) {
+        setUpsellOpen(true);
+        return;
+      }
+      await saveForOffline(codalId, subjectCode);
     },
-    [isOffline, removeOffline, saveForOffline, subjectCode],
+    [isOffline, offlineLocked, removeOffline, saveForOffline, subjectCode],
   );
 
   const renderItem = useCallback(
@@ -228,6 +240,15 @@ export default function CodalListScreen() {
           />
         )}
       </View>
+
+      {/* Edu+ upsell — shown instead of writing a new codal to offline
+          storage. Already-downloaded codals are untouched. */}
+      <PlanUpsellSheet
+        visible={upsellOpen}
+        planName={planName}
+        message="Download codals and read them offline anywhere."
+        onClose={() => setUpsellOpen(false)}
+      />
     </>
   );
 }

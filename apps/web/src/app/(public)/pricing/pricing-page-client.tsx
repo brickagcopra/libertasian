@@ -66,6 +66,13 @@ const CATEGORY_ORDER = [
   'Practice & Collaboration',
 ];
 
+/**
+ * Entitlement keys that describe a restriction rather than a benefit, so they
+ * never belong in a plan card's bullet list. Kept in sync with the mobile
+ * plan-card filter (`isPlanCardBullet` in apps/mobile/.../billing/types.ts).
+ */
+const NON_BENEFIT_ENTITLEMENT_KEYS = new Set(['previewOnly']);
+
 /** Convert a camelCase entitlement key to a display label */
 function formatEntitlementKey(key: string): string {
   return key
@@ -508,10 +515,13 @@ function DynamicPlanCard({
   //   - boolean === false (e.g. team collaboration off for this tier)
   // Otherwise a false boolean renders with a green check, making a premium
   // feature look included when the table correctly shows "—".
+  // `previewOnly` is dropped outright: it is the free tier's corpus *cap*,
+  // so a check next to "Preview-only public corpus access" reads as a perk.
   const features = plan.entitlements
     .filter(
       (e) =>
         e.description &&
+        !NON_BENEFIT_ENTITLEMENT_KEYS.has(e.key) &&
         !(e.valueType === 'numeric' && e.numericValue === 0) &&
         !(e.valueType === 'boolean' && e.booleanValue === false),
     )

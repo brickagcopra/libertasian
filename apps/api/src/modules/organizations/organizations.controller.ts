@@ -15,7 +15,9 @@ import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger'
 import type { JwtPayload } from '@libertasian/types';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { RequiredSubscription } from '../../common/decorators/subscription.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { SubscriptionGuard } from '../../common/guards/subscription.guard';
 import { AuditService } from '../audit/audit.service';
 import {
   CreateOrganizationDto,
@@ -136,8 +138,18 @@ export class OrganizationsController {
     return { success: true, data: invites };
   }
 
+  /**
+   * Adding seats is the `teamCollaboration` entitlement (team/enterprise only),
+   * so only this route is tier-gated. Listing, role changes and removal stay
+   * ungated so existing members never lose access when a plan lapses.
+   */
   @Post(':id/members/invite')
-  @ApiOperation({ summary: 'Invite a user to the organization (owner/admin only)' })
+  @UseGuards(SubscriptionGuard)
+  @RequiredSubscription('team')
+  @ApiOperation({
+    summary:
+      'Invite a user to the organization (owner/admin only, Team plan or higher)',
+  })
   async inviteMember(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: InviteMemberDto,

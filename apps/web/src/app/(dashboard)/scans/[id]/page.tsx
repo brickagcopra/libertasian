@@ -9,6 +9,10 @@ import { useAttachToMatter } from '@/features/scans/hooks/use-attach-to-matter';
 import { useGenerateFlashcardsFromScan } from '@/features/scans/hooks/use-generate-flashcards';
 import { useGenerateOutlineFromScan } from '@/features/scans/hooks/use-generate-outline';
 import type { OutlineSection } from '@/features/scans/types';
+import {
+  UpgradeBanner,
+  isSubscriptionTier403,
+} from '@/components/paywall/upgrade-banner';
 import { ROUTES } from '@/lib/constants';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -133,9 +137,18 @@ export default function ScanDetailPage() {
         cardType: flashcardCardType,
         count: flashcardCount,
       },
-      { onSuccess: () => { setShowFlashcardDialog(false); setFlashcardSetIdInput(''); } },
+      {
+        onSuccess: () => { setShowFlashcardDialog(false); setFlashcardSetIdInput(''); },
+        // AI flashcard generation is an Edu+ entitlement. Swap the dialog
+        // for the upsell rather than leaving the button silently dead.
+        onError: (err) => {
+          if (isSubscriptionTier403(err)) setShowFlashcardDialog(false);
+        },
+      },
     );
   }, [id, flashcardSetIdInput, flashcardCardType, flashcardCount, flashcardMutation]);
+
+  const flashcardTierLocked = isSubscriptionTier403(flashcardMutation.error);
 
   const handleGenerateOutline = useCallback(() => {
     if (!id) return;
@@ -634,6 +647,15 @@ export default function ScanDetailPage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {flashcardTierLocked && (
+        <UpgradeBanner
+          variant="modal"
+          corpus="derivatives"
+          message="AI flashcard generation is available on Edu plans and above. Upgrade to turn your scans into study sets."
+          surface="scans/detail/generate-flashcards"
+        />
+      )}
     </div>
   );
 }
