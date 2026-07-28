@@ -419,7 +419,20 @@ export class LifecycleEventProcessorService {
     });
   }
 
+  /**
+   * NO-OP when the org still holds any subscription in an accessible state.
+   * The fallback row is dated now and would win the createdAt-desc ordering in
+   * getActiveSubscription, demoting a live paid or complimentary subscription
+   * to free.
+   */
   private async createFreeTierFallback(organizationId: string): Promise<void> {
+    if (await this.subscriptionsService.hasAccessibleSubscription(organizationId)) {
+      this.logger.log(
+        `Free-tier fallback skipped for org ${organizationId}: an accessible subscription already exists`,
+      );
+      return;
+    }
+
     const freeEntitlements = this.subscriptionsService.getDefaultEntitlements('free');
     await this.prisma.subscription.create({
       data: {

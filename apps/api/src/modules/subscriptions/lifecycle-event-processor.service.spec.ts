@@ -25,6 +25,21 @@ describe('LifecycleEventProcessorService', () => {
   };
   let lifecycleService: jest.Mocked<SubscriptionLifecycleService>;
   let notificationsService: { sendRenewalReminder: jest.Mock };
+  let subscriptionsService: { hasAccessibleSubscription: jest.Mock };
+
+  const cancellationEndEvent = () => ({
+    id: 'evt-cancel-1',
+    eventType: 'cancellation_end',
+    attempts: 0,
+    maxAttempts: 3,
+    subscription: {
+      id: 'sub-1',
+      status: 'cancelling',
+      organizationId: 'org-1',
+      planCode: 'pro',
+      xenditSubscriptionId: 'repl_1',
+    },
+  });
 
   const renewalEvent = (xenditSubscriptionId: string | null) => ({
     id: 'evt-1',
@@ -111,7 +126,10 @@ describe('LifecycleEventProcessorService', () => {
         },
         {
           provide: SubscriptionsService,
-          useValue: { getDefaultEntitlements: jest.fn().mockReturnValue({}) },
+          useValue: {
+            getDefaultEntitlements: jest.fn().mockReturnValue({}),
+            hasAccessibleSubscription: jest.fn().mockResolvedValue(false),
+          },
         },
         {
           provide: NotificationsService,
@@ -123,6 +141,46 @@ describe('LifecycleEventProcessorService', () => {
     service = module.get(LifecycleEventProcessorService);
     lifecycleService = module.get(SubscriptionLifecycleService);
     notificationsService = module.get(NotificationsService);
+    subscriptionsService = module.get(SubscriptionsService);
+  });
+
+  // ---- cancellation_end (CANCELLING -> CANCELLED at currentPeriodEnd) ----
+
+  describe('cancellation_end events', () => {
+    beforeEach(() => {
+      prisma.subscriptionLifecycleEvent.findMany.mockResolvedValue([cancellationEndEvent()]);
+    });
+
+    it('cancels the subscription and creates the free fallback', async () => {
+      await service.processDueEvents();
+
+      expect(lifecycleService.executeTransition).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subscriptionId: 'sub-1',
+          action: SubscriptionAction.CANCEL_IMMEDIATELY,
+        }),
+      );
+      expect(prisma.subscription.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ planCode: 'free' }) }),
+      );
+    });
+
+    it('does NOT create the free fallback when an accessible subscription remains', async () => {
+      subscriptionsService.hasAccessibleSubscription.mockResolvedValue(true);
+
+      await service.processDueEvents();
+
+      expect(lifecycleService.executeTransition).toHaveBeenCalledWith(
+        expect.objectContaining({ action: SubscriptionAction.CANCEL_IMMEDIATELY }),
+      );
+      expect(prisma.subscription.create).not.toHaveBeenCalled();
+      expect(prisma.subscriptionLifecycleEvent.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'evt-cancel-1' },
+          data: expect.objectContaining({ status: 'completed' }),
+        }),
+      );
+    });
   });
 
   // DOUBLE-RENEWAL GUARD: the critical money-safety test.
