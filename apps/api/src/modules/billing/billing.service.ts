@@ -126,11 +126,25 @@ export class BillingService {
       promotionId: dto.promotionId,
     });
 
-    // Prevent downgrade via checkout — check current plan
+    // Prevent downgrade via checkout — check current plan.
+    //
+    // A subscription the user has ALREADY elected to end must not gate their
+    // next one. Before getActiveSubscription resolved accessible states, a
+    // cancelling org returned no row here and any checkout was allowed.
+    // Without this exemption, widening the status set silently blocks a
+    // cancelling pro user from re-subscribing on edu — or re-buying the same
+    // plan — until their period ends, and sends them to support instead.
+    // Conditions are inlined rather than hoisted into a boolean so TypeScript
+    // narrows `currentSub` to non-null for the isUpgrade call.
     const currentSub = await this.subscriptionsService.getActiveSubscription(
       organizationId,
     );
-    if (currentSub && !this.isUpgrade(currentSub.planCode, dto.planCode)) {
+    if (
+      currentSub &&
+      !currentSub.cancelAtPeriodEnd &&
+      currentSub.status !== SubscriptionState.CANCELLING &&
+      !this.isUpgrade(currentSub.planCode, dto.planCode)
+    ) {
       throw new BadRequestException(
         'Cannot downgrade via checkout. Contact support for plan changes.',
       );
@@ -706,18 +720,11 @@ export class BillingService {
 
           // CANCEL_IMMEDIATELY moves the sub to CANCELLED but does not create a
           // free-tier row; mirror cancelSubscription() so the org lands on free
-          // instead of having no active subscription at all.
-          const freeEntitlements =
-            this.subscriptionsService.getDefaultEntitlements('free');
-          await this.prisma.subscription.create({
-            data: {
-              organizationId: payment.organizationId,
-              planCode: 'free',
-              status: 'active',
-              seats: 1,
-              entitlementsJson: freeEntitlements as unknown as Prisma.InputJsonValue,
-            },
-          });
+          // instead of having no active subscription at all. Routed through
+          // createFreeFallback so the "don't clobber an accessible row" guard
+          // applies here too — a refund on one subscription must not demote a
+          // second, still-valid one.
+          await this.createFreeFallback(payment.organizationId);
 
           // Invalidate cached entitlements so revoked limits take effect now.
           await this.entitlementService.invalidateEntitlementCache(
@@ -1149,8 +1156,22 @@ export class BillingService {
     }
   }
 
-  /** Create the free-tier fallback subscription after an immediate cancel. */
+  /**
+   * Create the free-tier fallback subscription after an immediate cancel.
+   *
+   * NO-OP when the org still holds any subscription in an accessible state.
+   * The fallback row is dated now, so it would otherwise win the
+   * createdAt-desc ordering in getActiveSubscription and demote a live paid,
+   * trialing or complimentary subscription to free.
+   */
   private async createFreeFallback(organizationId: string) {
+    if (await this.subscriptionsService.hasAccessibleSubscription(organizationId)) {
+      this.logger.log(
+        `Free-tier fallback skipped for org ${organizationId}: an accessible subscription already exists`,
+      );
+      return;
+    }
+
     const freeEntitlements = this.subscriptionsService.getDefaultEntitlements('free');
     await this.prisma.subscription.create({
       data: {
@@ -1274,6 +1295,21 @@ export class BillingService {
 
     if (sub.planCode === 'free') {
       throw new BadRequestException('Cannot cancel a free plan');
+    }
+
+    // Idempotent no-op: the caller asked to cancel at period end and the row is
+    // ALREADY scheduled to do exactly that. CANCELLING has no REQUEST_CANCEL
+    // edge, so falling through would issue a redundant Xendit deactivate and
+    // then 400 out of the state machine. A repeated cancel is a normal
+    // double-submit, not an error.
+    // Only the cancelAtPeriodEnd branch returns early — CANCELLING ->
+    // CANCEL_IMMEDIATELY IS valid (subscription-state-machine.ts:297) and is a
+    // legitimate escalation from a scheduled cancel to an immediate one.
+    if (cancelAtPeriodEnd && sub.status === SubscriptionState.CANCELLING) {
+      this.logger.log(
+        `cancelSubscription: subscription ${sub.id} is already CANCELLING; returning existing row`,
+      );
+      return sub;
     }
 
     const action = cancelAtPeriodEnd

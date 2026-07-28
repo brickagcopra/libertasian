@@ -3,6 +3,10 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FeatureFlagService } from '../feature-flags/feature-flags.service';
 import { PlansService } from '../plans/plans.service';
+import {
+  ACCESSIBLE_STATE_VALUES,
+  SubscriptionState,
+} from './subscription-state-machine';
 import { SubscriptionsService } from './subscriptions.service';
 
 describe('SubscriptionsService', () => {
@@ -58,6 +62,23 @@ describe('SubscriptionsService', () => {
     featureFlagService = module.get(FeatureFlagService);
   });
 
+  /**
+   * Prisma double that actually HONOURS the status filter, in both the old
+   * (`status: 'active'`) and new (`status: { in: [...] }`) shapes. Without
+   * this the per-state tests below would pass against the buggy query too.
+   * Rows are supplied in createdAt-desc order; the first match wins.
+   */
+  const withRows = (...rows: Array<Record<string, unknown>>) => {
+    (prisma.subscription.findFirst as jest.Mock).mockImplementation(
+      ({ where }: { where: { status?: string | { in?: string[] } } }) => {
+        const filter = where.status;
+        const allows = (s: string) =>
+          typeof filter === 'string' ? filter === s : (filter?.in?.includes(s) ?? true);
+        return Promise.resolve(rows.find((r) => allows(r['status'] as string)) ?? null);
+      },
+    );
+  };
+
   // ---- getActiveSubscription ----
 
   describe('getActiveSubscription', () => {
@@ -68,16 +89,41 @@ describe('SubscriptionsService', () => {
 
       expect(result).toEqual(mockSubscription);
       expect(prisma.subscription.findFirst).toHaveBeenCalledWith({
-        where: { organizationId: 'org-1', status: 'active' },
-        orderBy: { createdAt: 'desc' },
+        where: {
+          organizationId: 'org-1',
+          status: { in: ACCESSIBLE_STATE_VALUES },
+        },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       });
     });
 
-    it('should return null when no active subscription', async () => {
+    it('never treats a provisioning row as accessible', async () => {
+      withRows({ ...mockSubscription, status: SubscriptionState.PROVISIONING });
+
+      await expect(service.getActiveSubscription('org-1')).resolves.toBeNull();
+    });
+
+    it('should return null when no accessible subscription', async () => {
       (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(null);
 
       const result = await service.getActiveSubscription('org-no-sub');
       expect(result).toBeNull();
+    });
+  });
+
+  // ---- hasAccessibleSubscription ----
+
+  describe('hasAccessibleSubscription', () => {
+    it('is true when an accessible row exists', async () => {
+      withRows({ ...mockSubscription, status: SubscriptionState.CANCELLING });
+
+      await expect(service.hasAccessibleSubscription('org-1')).resolves.toBe(true);
+    });
+
+    it('is false when the only row is in a non-accessible state', async () => {
+      withRows({ ...mockSubscription, status: SubscriptionState.CANCELLED });
+
+      await expect(service.hasAccessibleSubscription('org-1')).resolves.toBe(false);
     });
   });
 
@@ -89,6 +135,81 @@ describe('SubscriptionsService', () => {
 
       const code = await service.getPlanCode('org-1');
       expect(code).toBe('pro');
+    });
+
+    // REGRESSION: with the query filtering on the literal string 'active',
+    // every state below except ACTIVE resolved to 'free'.
+    it.each([
+      SubscriptionState.TRIALING,
+      SubscriptionState.ACTIVE,
+      SubscriptionState.PAST_DUE,
+      SubscriptionState.GRACE_PERIOD,
+      SubscriptionState.CANCELLING,
+      SubscriptionState.COMPLIMENTARY,
+      SubscriptionState.MIGRATING,
+    ])('resolves a %s subscription to its own plan code, not free', async (status) => {
+      withRows({ ...mockSubscription, status });
+
+      await expect(service.getPlanCode('org-1')).resolves.toBe('pro');
+    });
+
+    it('keeps the paid tier for a CANCELLING sub until currentPeriodEnd', async () => {
+      // Access is time-bounded by the `cancellation_end` lifecycle event, which
+      // flips CANCELLING -> CANCELLED at currentPeriodEnd. Before it fires the
+      // row is accessible; after it fires the status no longer is.
+      const periodEnd = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+      withRows({
+        ...mockSubscription,
+        status: SubscriptionState.CANCELLING,
+        cancelAtPeriodEnd: true,
+        currentPeriodEnd: periodEnd,
+      });
+      await expect(service.getPlanCode('org-1')).resolves.toBe('pro');
+
+      // ...and once cancellation_end has run, it drops to free.
+      withRows({
+        ...mockSubscription,
+        status: SubscriptionState.CANCELLED,
+        currentPeriodEnd: periodEnd,
+      });
+      await expect(service.getPlanCode('org-1')).resolves.toBe('free');
+    });
+
+    // Guards prod org 0ead67bb (App Store reviewer demo): a complimentary pro
+    // row sitting above two older active free rows on the same org.
+    it('keeps a complimentary row above older free rows on the same org', async () => {
+      withRows(
+        { ...mockSubscription, id: 'sub-comp', planCode: 'pro', status: SubscriptionState.COMPLIMENTARY },
+        { ...mockSubscription, id: 'sub-free-1', planCode: 'free', status: SubscriptionState.ACTIVE },
+        { ...mockSubscription, id: 'sub-free-2', planCode: 'free', status: SubscriptionState.ACTIVE },
+      );
+
+      await expect(service.getPlanCode('org-reviewer')).resolves.toBe('pro');
+    });
+
+    // The EXACT prod shape of the reviewer demo account: sub 6741e44f is
+    // status='active' + plan_code='pro' (NOT 'complimentary'), sitting above
+    // two older active free rows on org 0ead67bb. Any ordering refactor that
+    // breaks the go-live key swap must fail here.
+    it('keeps the reviewer demo row (active pro) above its older active free rows', async () => {
+      withRows(
+        {
+          ...mockSubscription,
+          id: '6741e44f-7445-4347-869e-550b9845be3f',
+          organizationId: '0ead67bb-d7a0-45a6-9d0c-723cfe98f839',
+          planCode: 'pro',
+          status: SubscriptionState.ACTIVE,
+          xenditSubscriptionId: null,
+          currentPeriodEnd: new Date('2030-01-01'),
+        },
+        { ...mockSubscription, id: 'sub-free-old-1', planCode: 'free', status: SubscriptionState.ACTIVE },
+        { ...mockSubscription, id: 'sub-free-old-2', planCode: 'free', status: SubscriptionState.ACTIVE },
+      );
+
+      await expect(
+        service.getPlanCode('0ead67bb-d7a0-45a6-9d0c-723cfe98f839'),
+      ).resolves.toBe('pro');
     });
 
     it('should default to free when no subscription', async () => {

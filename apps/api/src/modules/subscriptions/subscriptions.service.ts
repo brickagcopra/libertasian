@@ -3,6 +3,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FeatureFlagService } from '../feature-flags/feature-flags.service';
 import { PlansService } from '../plans/plans.service';
+import { ACCESSIBLE_STATE_VALUES } from './subscription-state-machine';
 
 /**
  * LEGACY FALLBACK — Tier hierarchy: higher index = higher tier.
@@ -52,13 +53,43 @@ export class SubscriptionsService {
   ) {}
 
   /**
-   * Get the active subscription for an organization.
+   * Get the subscription that currently grants the organization its tier.
+   *
+   * Resolves against ACCESSIBLE_STATES, not the literal string 'active'.
+   * Filtering on 'active' alone dropped TRIALING, PAST_DUE, GRACE_PERIOD,
+   * CANCELLING, COMPLIMENTARY and MIGRATING rows on the floor, so an org that
+   * cancelled at period end lost its paid tier the instant the state machine
+   * moved it to CANCELLING — despite having paid through currentPeriodEnd.
+   * PROVISIONING stays excluded (it is absent from ACCESSIBLE_STATES).
+   *
+   * Ordering is unchanged: newest row wins. A paid row does NOT outrank a
+   * newer free row — see createFreeFallback, which no longer creates a
+   * competing free row while an accessible one exists.
    */
   async getActiveSubscription(organizationId: string) {
     return this.prisma.subscription.findFirst({
-      where: { organizationId, status: 'active' },
-      orderBy: { createdAt: 'desc' },
+      where: { organizationId, status: { in: ACCESSIBLE_STATE_VALUES } },
+      // `id` is a deterministic tiebreaker: two rows created in the same
+      // transaction can share a createdAt, and tier resolution must not be
+      // nondeterministic.
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     });
+  }
+
+  /**
+   * True when the org already holds a subscription in an accessible state.
+   *
+   * Guards free-tier fallback creation. A fallback row is stamped with the
+   * current timestamp, so it wins the createdAt-desc ordering in
+   * getActiveSubscription and silently demotes a still-valid paid or
+   * complimentary subscription to free.
+   */
+  async hasAccessibleSubscription(organizationId: string): Promise<boolean> {
+    const existing = await this.prisma.subscription.findFirst({
+      where: { organizationId, status: { in: ACCESSIBLE_STATE_VALUES } },
+      select: { id: true },
+    });
+    return existing !== null;
   }
 
   /**

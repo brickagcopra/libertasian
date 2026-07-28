@@ -11,7 +11,10 @@ import { UsageQuotaService } from '../subscriptions/usage-quota.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SubscriptionLifecycleService } from '../subscriptions/subscription-lifecycle.service';
-import { SubscriptionAction } from '../subscriptions/subscription-state-machine';
+import {
+  SubscriptionAction,
+  SubscriptionState,
+} from '../subscriptions/subscription-state-machine';
 import { BillingService } from './billing.service';
 import { XenditApiError, XenditService } from './xendit.service';
 
@@ -168,6 +171,7 @@ describe('BillingService', () => {
           useValue: {
             getActiveSubscription: jest.fn(),
             getDefaultEntitlements: jest.fn(),
+            hasAccessibleSubscription: jest.fn().mockResolvedValue(false),
           },
         },
         {
@@ -395,6 +399,47 @@ describe('BillingService', () => {
       );
       expect(xenditService.createSubscriptionSession).toHaveBeenCalledWith(
         expect.objectContaining({ customerId: 'cust-1' }),
+      );
+    });
+
+    // ---- downgrade gate vs. a subscription the user already elected to end ----
+
+    it('still blocks a downgrade for an org on an ACTIVE higher plan', async () => {
+      subscriptionsService.getActiveSubscription.mockResolvedValue({
+        planCode: 'pro',
+        status: SubscriptionState.ACTIVE,
+        cancelAtPeriodEnd: false,
+      } as never);
+
+      await expect(
+        service.createCheckout('org-1', { ...dto, planCode: 'edu' }, 'user-1'),
+      ).rejects.toThrow('Cannot downgrade via checkout');
+    });
+
+    it('lets a CANCELLING pro org check out edu (winding-down sub must not gate the next one)', async () => {
+      subscriptionsService.getActiveSubscription.mockResolvedValue({
+        planCode: 'pro',
+        status: SubscriptionState.CANCELLING,
+        cancelAtPeriodEnd: true,
+      } as never);
+      subscriptionsService.getDefaultEntitlements.mockReturnValue({} as never);
+
+      await expect(
+        service.createCheckout('org-1', { ...dto, planCode: 'edu' }, 'user-1'),
+      ).resolves.toHaveProperty('checkoutSessionId', 'ps-1');
+    });
+
+    it('lets a cancelAtPeriodEnd org re-buy the SAME plan', async () => {
+      subscriptionsService.getActiveSubscription.mockResolvedValue({
+        planCode: 'pro',
+        status: SubscriptionState.ACTIVE,
+        cancelAtPeriodEnd: true,
+      } as never);
+      subscriptionsService.getDefaultEntitlements.mockReturnValue({} as never);
+
+      await expect(service.createCheckout('org-1', dto, 'user-1')).resolves.toHaveProperty(
+        'checkoutSessionId',
+        'ps-1',
       );
     });
 
@@ -1887,6 +1932,54 @@ describe('BillingService', () => {
         );
         expect(entitlementService.invalidateEntitlementCache).toHaveBeenCalledWith('org-1');
       });
+
+      // The reviewer-demo shape: a complimentary pro row on the same org must
+      // not be demoted by a fallback dated now.
+      it('does NOT create the free fallback when the org still holds an accessible subscription', async () => {
+        (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(activeSub);
+        subscriptionsService.hasAccessibleSubscription.mockResolvedValue(true as never);
+
+        await service.handlePlanDeactivated({ id: 'repl_1' });
+
+        expect(lifecycleService.executeTransition).toHaveBeenCalledWith(
+          expect.objectContaining({ action: SubscriptionAction.CANCEL_IMMEDIATELY }),
+        );
+        expect(prisma.subscription.create).not.toHaveBeenCalled();
+      });
+    });
+
+    // ---- repeat cancel (double-submit) ----
+
+    it('cancelSubscription(atPeriodEnd) on an already-CANCELLING sub is an idempotent no-op', async () => {
+      subscriptionsService.getActiveSubscription.mockResolvedValue({
+        ...activeSub,
+        status: SubscriptionState.CANCELLING,
+        cancelAtPeriodEnd: true,
+      } as never);
+
+      const result = await service.cancelSubscription('org-1', 'user-1', true);
+
+      expect(result).toEqual(
+        expect.objectContaining({ id: SUB_ID, status: SubscriptionState.CANCELLING }),
+      );
+      // No redundant call into a live money system, and no invalid transition.
+      expect(xenditService.cancelSubscription).not.toHaveBeenCalled();
+      expect(lifecycleService.executeTransition).not.toHaveBeenCalled();
+    });
+
+    it('cancelSubscription(immediate) on a CANCELLING sub still escalates to CANCEL_IMMEDIATELY', async () => {
+      subscriptionsService.getActiveSubscription.mockResolvedValue({
+        ...activeSub,
+        status: SubscriptionState.CANCELLING,
+        cancelAtPeriodEnd: true,
+      } as never);
+      (prisma.organization.findUnique as jest.Mock).mockResolvedValue(null);
+
+      await service.cancelSubscription('org-1', 'user-1', false);
+
+      expect(lifecycleService.executeTransition).toHaveBeenCalledWith(
+        expect.objectContaining({ action: SubscriptionAction.CANCEL_IMMEDIATELY }),
+      );
     });
 
     it('cancelSubscription deactivates the Xendit plan in addition to the internal transition', async () => {
