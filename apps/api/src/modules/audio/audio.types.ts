@@ -1,5 +1,16 @@
-/** Content kinds that can be synthesized to audio. */
-export const AUDIO_CONTENT_TYPES = ['digest', 'bar_exam_answer'] as const;
+/**
+ * Content kinds that can be synthesized to audio.
+ *
+ * `legal_document` covers BOTH codals and decisions — they are rows in the same
+ * table, distinguished only by `document_type`. No derivative type is
+ * narratable, so flashcards are unreachable by construction rather than by
+ * exclusion logic.
+ */
+export const AUDIO_CONTENT_TYPES = [
+  'digest',
+  'bar_exam_answer',
+  'legal_document',
+] as const;
 export type AudioContentType = (typeof AUDIO_CONTENT_TYPES)[number];
 
 export function isAudioContentType(value: string): value is AudioContentType {

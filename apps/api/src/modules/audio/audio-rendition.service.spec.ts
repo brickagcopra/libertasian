@@ -11,6 +11,8 @@ import { sanitizeRulingText } from './sanitize-ruling.util';
 interface PrismaMock {
   digest: { findUnique: jest.Mock };
   barExamAnswer: { findUnique: jest.Mock };
+  legalDocument: { findUnique: jest.Mock };
+  legalDocumentSection: { findMany: jest.Mock };
   audioRendition: { findUnique: jest.Mock; findFirst: jest.Mock; upsert: jest.Mock };
 }
 
@@ -18,6 +20,8 @@ function build() {
   const prisma: PrismaMock = {
     digest: { findUnique: jest.fn() },
     barExamAnswer: { findUnique: jest.fn() },
+    legalDocument: { findUnique: jest.fn() },
+    legalDocumentSection: { findMany: jest.fn() },
     audioRendition: {
       findUnique: jest.fn(),
       findFirst: jest.fn(),
@@ -391,6 +395,98 @@ describe('AudioRenditionService', () => {
       await service.requestGeneration('digest', 'd1', 'en', true);
       const opts = queue.add.mock.calls[0]?.[2] as { jobId?: string };
       expect(opts.jobId).toBeUndefined();
+    });
+  });
+
+  describe('resolveText — legal_document (codals and decisions)', () => {
+    const PUBLISHED = { title: 'Tanada v. Angara', status: 'published' };
+
+    it('resolves sections in ordering sequence', async () => {
+      const { service, prisma } = build();
+      prisma.legalDocument.findUnique.mockResolvedValue(PUBLISHED);
+      prisma.legalDocumentSection.findMany.mockResolvedValue([
+        { id: 's1', sectionLabel: 'Article I', sectionType: 'article', plainText: 'First body.' },
+        { id: 's2', sectionLabel: 'Article II', sectionType: 'article', plainText: 'Second body.' },
+      ]);
+
+      const { doc } = await service.resolveText('legal_document', 'doc-1');
+
+      expect(prisma.legalDocumentSection.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ orderBy: { ordering: 'asc' } }),
+      );
+      expect(doc.sections.map((s) => s.key)).toEqual(['s1', 's2']);
+      expect(doc.sections[0]?.heading).toBe('Article I');
+      expect(doc.title).toBe('Tanada v. Angara');
+    });
+
+    it('resolves a many-section decision fully and falls back to sectionType', async () => {
+      const { service, prisma } = build();
+      prisma.legalDocument.findUnique.mockResolvedValue(PUBLISHED);
+      prisma.legalDocumentSection.findMany.mockResolvedValue(
+        Array.from({ length: 40 }, (_, i) => ({
+          id: `s${i}`,
+          sectionLabel: null,
+          sectionType: 'body',
+          plainText: `Paragraph ${i} of the decision.`,
+        })),
+      );
+
+      const { doc } = await service.resolveText('legal_document', 'doc-2');
+
+      expect(doc.sections).toHaveLength(40);
+      expect(doc.sections[0]?.heading).toBe('body');
+    });
+
+    it('skips sections with blank or null plain text', async () => {
+      const { service, prisma } = build();
+      prisma.legalDocument.findUnique.mockResolvedValue(PUBLISHED);
+      prisma.legalDocumentSection.findMany.mockResolvedValue([
+        { id: 's1', sectionLabel: 'Kept', sectionType: 'article', plainText: 'Real body.' },
+        { id: 's2', sectionLabel: 'Blank', sectionType: 'article', plainText: '   ' },
+        { id: 's3', sectionLabel: 'Null', sectionType: 'article', plainText: null },
+      ]);
+
+      const { doc } = await service.resolveText('legal_document', 'doc-3');
+
+      expect(doc.sections.map((s) => s.key)).toEqual(['s1']);
+    });
+
+    it('reports public_editorial visibility without reading a column', async () => {
+      const { service, prisma } = build();
+      prisma.legalDocument.findUnique.mockResolvedValue(PUBLISHED);
+      prisma.legalDocumentSection.findMany.mockResolvedValue([
+        { id: 's1', sectionLabel: 'A', sectionType: 'article', plainText: 'Body.' },
+      ]);
+
+      const { visibility } = await service.resolveText('legal_document', 'doc-5');
+
+      // legal_documents has no visibility column; publication is `status`.
+      expect(visibility).toBe('public_editorial');
+      const select = prisma.legalDocument.findUnique.mock.calls[0]?.[0] as {
+        select: Record<string, boolean>;
+      };
+      expect(select.select).not.toHaveProperty('visibility');
+    });
+
+    it('throws when the document is not published', async () => {
+      const { service, prisma } = build();
+      prisma.legalDocument.findUnique.mockResolvedValue({
+        ...PUBLISHED,
+        status: 'draft',
+      });
+
+      await expect(service.resolveText('legal_document', 'doc-4')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('throws when the document does not exist', async () => {
+      const { service, prisma } = build();
+      prisma.legalDocument.findUnique.mockResolvedValue(null);
+
+      await expect(service.resolveText('legal_document', 'missing')).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 });
