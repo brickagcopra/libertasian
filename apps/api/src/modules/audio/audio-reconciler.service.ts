@@ -7,6 +7,7 @@ import { statfs } from 'fs/promises';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { AudioRenditionService } from './audio-rendition.service';
+import { AudioStorageService } from './audio-storage.service';
 import {
   AUDIO_JOB,
   AUDIO_QUEUE,
@@ -69,6 +70,7 @@ export class AudioReconcilerService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly renditions: AudioRenditionService,
+    private readonly storage: AudioStorageService,
     private readonly config: ConfigService,
     @InjectQueue(AUDIO_QUEUE) private readonly queue: Queue,
   ) {}
@@ -107,22 +109,43 @@ export class AudioReconcilerService {
       return;
     }
 
-    const free = await this.freeDiskBytes();
-    if (free !== null && free < MIN_FREE_DISK_BYTES) {
-      this.logger.error({
-        event: 'audio_reconcile_disk_guard',
-        freeBytes: free,
-        minRequiredBytes: MIN_FREE_DISK_BYTES,
-        message: 'Refusing to enqueue audio: free disk below threshold',
+    // The disk guard measures a LOCAL volume, so it only means something while
+    // renditions are written there. Once storage is remote, audio is streamed
+    // straight to the bucket and nothing audio-related touches this filesystem —
+    // enforcing the threshold then would halt the backfill over an unrelated
+    // local disk issue. Skipped in one place, from the storage service's own
+    // flag, so location and guard can never disagree.
+    const remote = this.storage.isRemote;
+    let free: number | null = null;
+
+    if (remote) {
+      this.logger.log({
+        event: 'audio_reconcile_disk_guard_skipped',
+        message:
+          'Disk guard skipped: audio storage is remote (AUDIO_S3_ENDPOINT set), ' +
+          'so local free space does not bound how much audio can be stored',
       });
-      return;
+    } else {
+      free = await this.freeDiskBytes();
+      if (free !== null && free < MIN_FREE_DISK_BYTES) {
+        this.logger.error({
+          event: 'audio_reconcile_disk_guard',
+          freeBytes: free,
+          minRequiredBytes: MIN_FREE_DISK_BYTES,
+          message: 'Refusing to enqueue audio: free disk below threshold',
+        });
+        return;
+      }
     }
 
     await this.logCumulativeBytes();
 
     let remaining = this.batchSize;
     for (const tier of TIERS) {
-      if (tier.n === 3 && free === null) {
+      // `!remote` matters: in remote mode `free` is deliberately never measured,
+      // so without it this branch would read "unmeasurable" and refuse tier 3
+      // forever — the opposite of what moving storage off-box achieves.
+      if (tier.n === 3 && !remote && free === null) {
         // The guard exists FOR tier 3: ~158 GB of decisions against 142 GB free
         // on the local MinIO volume. Tiers 1-2 total ~12 GB and may proceed on
         // an unmeasurable path, but letting tier 3 through would defeat the

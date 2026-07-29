@@ -71,8 +71,14 @@ export class AudioStorageService {
     );
   }
 
-  /** True when audio has its own bucket rather than sharing the uploads one. */
-  get isDedicated(): boolean {
+  /**
+   * True when audio objects go to a remote bucket instead of the local MinIO
+   * volume. The single source of truth for that question — callers must read it
+   * from here rather than re-reading AUDIO_S3_ENDPOINT, so storage location and
+   * the decisions that depend on it (e.g. the reconciler's local disk guard)
+   * can never disagree.
+   */
+  get isRemote(): boolean {
     return this.client !== null;
   }
 

@@ -6,6 +6,7 @@ import { statfs } from 'fs/promises';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AudioReconcilerService } from './audio-reconciler.service';
 import { AudioRenditionService } from './audio-rendition.service';
+import { AudioStorageService } from './audio-storage.service';
 
 // Mocked so the disk guard is deterministic. Without this the suite reads the
 // real filesystem and its behaviour depends on the machine it runs on.
@@ -21,7 +22,12 @@ const freeSpace = (gb: number) => ({ bavail: (gb * GB) / 4096, bsize: 4096 });
  * order: the cumulative-volume query, then per enabled tier a COUNT followed
  * by an id list.
  */
-function build(env: Record<string, string>, results: unknown[][]) {
+function build(
+  env: Record<string, string>,
+  results: unknown[][],
+  /** Storage location. Local (the default) is what every environment runs. */
+  isRemote = false,
+) {
   const queryRaw = jest.fn();
   results.forEach((rows) => queryRaw.mockResolvedValueOnce(rows));
   queryRaw.mockResolvedValue([]);
@@ -29,6 +35,7 @@ function build(env: Record<string, string>, results: unknown[][]) {
   const prisma = { $queryRaw: queryRaw };
   const queue = { add: jest.fn() };
   const renditions = { voiceId: 'af_heart' };
+  const storage = { isRemote };
   const config = {
     get: (key: string, fallback?: string) => env[key] ?? fallback,
   } as unknown as ConfigService;
@@ -36,6 +43,7 @@ function build(env: Record<string, string>, results: unknown[][]) {
   const service = new AudioReconcilerService(
     prisma as unknown as PrismaService,
     renditions as unknown as AudioRenditionService,
+    storage as unknown as AudioStorageService,
     config,
     queue as unknown as Queue,
   );
@@ -191,6 +199,79 @@ describe('AudioReconcilerService', () => {
         ([, data]) => (data as { contentId: string }).contentId,
       );
       expect(enqueued).toContain('decision-1');
+    });
+  });
+
+  // Once AUDIO_S3_ENDPOINT routes renditions to a remote bucket, nothing
+  // audio-related touches the local volume, so a local free-space number no
+  // longer describes the real limit and must not be able to halt the backfill.
+  describe('disk guard with remote storage', () => {
+    const REMOTE = true;
+
+    it('does not consult the local filesystem at all', async () => {
+      statfsMock.mockResolvedValue(freeSpace(1));
+      const { service, queue } = build(
+        ON_WITH_DECISIONS,
+        [VOLUME, [{ count: 1n }], [{ id: 'digest-1' }], [{ count: 0n }], []],
+        REMOTE,
+      );
+
+      await service.reconcile();
+
+      expect(statfsMock).not.toHaveBeenCalled();
+      // 1 GB free would have bailed before the first query in local mode.
+      expect(
+        queue.add.mock.calls.map(([, d]) => (d as { contentId: string }).contentId),
+      ).toContain('digest-1');
+    });
+
+    it('logs the skip once per tick', async () => {
+      const logSpy = jest
+        .spyOn(Logger.prototype, 'log')
+        .mockImplementation(() => undefined);
+      const { service } = build(ON, [VOLUME, [{ count: 0n }], [], [{ count: 0n }], []], REMOTE);
+
+      await service.reconcile();
+
+      const skips = logSpy.mock.calls
+        .map(([arg]) => arg as Record<string, unknown>)
+        .filter((arg) => arg?.['event'] === 'audio_reconcile_disk_guard_skipped');
+      expect(skips).toHaveLength(1);
+      expect(String(skips[0]?.['message'])).toContain('remote');
+
+      logSpy.mockRestore();
+    });
+
+    it('still enqueues tier 3 when the local volume is unmeasurable', async () => {
+      // In local mode this is the ONE case tier 3 is refused for. Remote storage
+      // is exactly the fix for that constraint, so it must no longer apply.
+      statfsMock.mockRejectedValue(new Error('ENOSYS'));
+      const { service, queue } = build(
+        ON_WITH_DECISIONS,
+        [VOLUME, [{ count: 0n }], [], [{ count: 0n }], [], [{ count: 1n }], [{ id: 'decision-1' }]],
+        REMOTE,
+      );
+
+      await service.reconcile();
+
+      expect(
+        queue.add.mock.calls.map(([, d]) => (d as { contentId: string }).contentId),
+      ).toContain('decision-1');
+    });
+
+    it('leaves the two feature flags as the only gate on tier 3', async () => {
+      // Remote storage removes the disk constraint, NOT the flag requirement.
+      const { service, queue } = build(
+        ON,
+        [VOLUME, [{ count: 0n }], [], [{ count: 0n }], []],
+        REMOTE,
+      );
+
+      await service.reconcile();
+
+      expect(
+        queue.add.mock.calls.map(([, d]) => (d as { contentId: string }).contentId),
+      ).not.toContain('decision-1');
     });
   });
 

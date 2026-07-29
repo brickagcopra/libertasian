@@ -74,7 +74,7 @@ describe('AudioStorageService', () => {
       const { service } = build();
 
       expect(s3ClientCtor).not.toHaveBeenCalled();
-      expect(service.isDedicated).toBe(false);
+      expect(service.isRemote).toBe(false);
     });
 
     it('delegates upload verbatim', async () => {
@@ -110,7 +110,7 @@ describe('AudioStorageService', () => {
     it('builds its own client from the AUDIO_S3_* credentials', () => {
       const { service } = build(R2_ENV);
 
-      expect(service.isDedicated).toBe(true);
+      expect(service.isRemote).toBe(true);
       expect(s3ClientCtor).toHaveBeenCalledTimes(1);
       expect(s3ClientCtor).toHaveBeenCalledWith(
         expect.objectContaining({
