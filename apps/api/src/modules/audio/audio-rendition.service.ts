@@ -12,6 +12,7 @@ import {
   CODAL_DOCUMENT_TYPES,
   READALONG_SCHEMA_VERSION,
   audioContentHashInput,
+  audioJobId,
   type AudioContentType,
   type AudioGenerationJobData,
 } from './audio.types';
@@ -313,7 +314,7 @@ export class AudioRenditionService {
     await this.queue.add(AUDIO_JOB, data, {
       jobId: force
         ? undefined
-        : `${contentType}:${contentId}:${language}:${this.defaultVoiceId}`,
+        : audioJobId(contentType, contentId, language, this.defaultVoiceId),
       attempts: 3,
       backoff: { type: 'exponential', delay: 5000 },
       removeOnComplete: 100,

@@ -5,6 +5,7 @@ import { Queue } from 'bullmq';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AudioRenditionService } from './audio-rendition.service';
 import { AudioStorageService } from './audio-storage.service';
+import { audioJobId } from './audio.types';
 import type { TtsClient } from './tts.client';
 import { sanitizeRulingText } from './sanitize-ruling.util';
 
@@ -389,7 +390,11 @@ describe('AudioRenditionService', () => {
       const { service, queue } = build();
       await service.requestGeneration('digest', 'd1', 'en', false);
       const opts = queue.add.mock.calls[0]?.[2] as { jobId?: string };
-      expect(opts.jobId).toBe('digest:d1:en:Matthew');
+      expect(opts.jobId).toBe(audioJobId('digest', 'd1', 'en', 'Matthew'));
+      // This assertion previously pinned the literal 'digest:d1:en:Matthew',
+      // which BullMQ rejects — see audio-job-id.spec.ts, where the id is run
+      // through the real validator instead of this mocked queue.
+      expect(opts.jobId).not.toContain(':');
     });
 
     it('omits the jobId for forced regen so it always runs', async () => {
