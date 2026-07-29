@@ -1,5 +1,6 @@
 import { ConfigService } from '@nestjs/config';
 import { Job, Queue } from 'bullmq';
+import { statfs } from 'fs/promises';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { AudioReconcilerService } from './audio-reconciler.service';
@@ -7,6 +8,20 @@ import { AudioRenditionService } from './audio-rendition.service';
 import { AudioStorageService } from './audio-storage.service';
 import { audioJobId } from './audio.types';
 import type { TtsClient } from './tts.client';
+
+/**
+ * Reports a FULL volume (0 bytes free), the worst case for the reconciler's disk
+ * guard. These tests are about job ids and must not depend on the host at all —
+ * an earlier version of this spec read the real filesystem and so passed locally
+ * while failing on a CI runner with < 20 GiB free on '/'. With the guard skipped
+ * (remote storage) the enqueue must happen even on a full disk; if a change ever
+ * makes it consult the volume again, these tests fail everywhere instead of only
+ * on small hosts.
+ */
+jest.mock('fs/promises', () => ({
+  statfs: jest.fn().mockResolvedValue({ bavail: 0, bsize: 4096 }),
+}));
+const statfsMock = statfs as unknown as jest.Mock;
 
 /**
  * The job-id contract, tested against BullMQ ITSELF rather than a mock.
@@ -97,7 +112,12 @@ describe('audio job id', () => {
       const service = new AudioReconcilerService(
         { $queryRaw: queryRaw } as unknown as PrismaService,
         { voiceId: 'Matthew' } as unknown as AudioRenditionService,
-        { isRemote: false } as unknown as AudioStorageService,
+        // isRemote: true skips the disk guard by design — and matches prod, where
+        // audio lives on R2. With isRemote: false the guard measures the LOCAL
+        // volume, which would make this a test of the host's free space rather
+        // than of the job id. Tier 3 is still gated by decisionsEnabled=false, so
+        // the $queryRaw sequence below is unaffected either way.
+        { isRemote: true } as unknown as AudioStorageService,
         {
           get: (key: string, fallback?: string) =>
             key === 'AUDIO_RECONCILER_ENABLED' ? 'true' : fallback,
@@ -137,6 +157,19 @@ describe('audio job id', () => {
       expect(fromReconciler).toBeDefined();
       expect(fromReconciler).toBe(fromRequest);
       expect(fromReconciler).toBe(audioJobId('digest', CONTENT_ID, 'en', 'Matthew'));
+    });
+
+    // The disk-independence proof, kept as an assertion rather than a one-off
+    // manual run: statfs is mocked to report a FULL volume above, so if this
+    // spec ever consults it again the tests fail on every host, not just small
+    // ones. Nothing about a job id should read the filesystem.
+    it('never consult the filesystem, even with 0 bytes free', async () => {
+      statfsMock.mockClear();
+
+      const id = await reconcilerJobId();
+
+      expect(id).toBe(audioJobId('digest', CONTENT_ID, 'en', 'Matthew'));
+      expect(statfsMock).not.toHaveBeenCalled();
     });
 
     it('produce ids BullMQ accepts — the enqueue that threw on prod', async () => {
