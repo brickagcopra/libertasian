@@ -31,6 +31,30 @@ export const AUDIO_QUEUE = 'audio-generation';
 export const AUDIO_JOB = 'generate-audio';
 
 /**
+ * The "codals" tier: codes and statutory issuances.
+ *
+ * Deliberately EXCLUDES 'administrative_matter' and 'administrative_case' —
+ * those are issuances, not codes. Adding them later is a one-line change here.
+ */
+export const CODAL_DOCUMENT_TYPES = [
+  'codal',
+  'constitution',
+  'republic_act',
+  'presidential_decree',
+  'executive_order',
+  'rules_of_court',
+] as const;
+
+/**
+ * Every `document_type` audio covers. Anything outside this list is out of
+ * scope and must not be narrated — notably 'bar_exam_questions'.
+ */
+export const NARRATABLE_DOCUMENT_TYPES = [
+  ...CODAL_DOCUMENT_TYPES,
+  'decision',
+] as const;
+
+/**
  * Read-along manifest schema version. Folded into the content hash so that a
  * bump invalidates EVERY existing rendition row (whose hash predates the bump)
  * and forces a clean regeneration on the next synthesis pass — the supported

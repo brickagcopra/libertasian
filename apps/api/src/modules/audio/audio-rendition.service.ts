@@ -9,6 +9,7 @@ import { S3Service } from '../uploads/s3.service';
 import {
   AUDIO_JOB,
   AUDIO_QUEUE,
+  CODAL_DOCUMENT_TYPES,
   READALONG_SCHEMA_VERSION,
   audioContentHashInput,
   type AudioContentType,
@@ -89,6 +90,36 @@ export class AudioRenditionService {
   /** The voice every rendition is keyed on (single configured default). */
   get voiceId(): string {
     return this.defaultVoiceId;
+  }
+
+  /**
+   * Whether audio generation is on for a content item.
+   *
+   * Only the DECISION tier is gated behind the second flag, because only it
+   * has a storage problem (~158 GB against a 142 GB volume). Codals total
+   * ~1.7 GB and pass on `AUDIO_RECONCILER_ENABLED` alone, so publishing one
+   * narrates it immediately instead of waiting for the hourly tick.
+   *
+   * `documentType` is required for legal_document and ignored otherwise; an
+   * unrecognised type is out of scope and returns false.
+   */
+  isGenerationEnabled(
+    contentType: AudioContentType,
+    documentType?: string,
+  ): boolean {
+    if (this.config.get<string>('AUDIO_RECONCILER_ENABLED', 'false') !== 'true') {
+      return false;
+    }
+    if (contentType !== 'legal_document') return true;
+
+    if (documentType === 'decision') {
+      return (
+        this.config.get<string>('AUDIO_RECONCILE_DECISIONS', 'false') === 'true'
+      );
+    }
+    return (CODAL_DOCUMENT_TYPES as readonly string[]).includes(
+      documentType ?? '',
+    );
   }
 
   /**

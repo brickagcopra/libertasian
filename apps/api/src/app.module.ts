@@ -203,6 +203,15 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
         TTS_PROVIDER: Joi.string().valid('polly', 'kokoro').default('polly'),
         TTS_SERVICE_URL: Joi.string().default('http://tts-service:8003'),
         KOKORO_VOICE_ID: Joi.string().default('af_heart'),
+        // Reconciler. BOTH default false; tier 3 (decisions) requires BOTH.
+        AUDIO_RECONCILER_ENABLED: Joi.string()
+          .valid('true', 'false')
+          .default('false'),
+        AUDIO_RECONCILE_DECISIONS: Joi.string()
+          .valid('true', 'false')
+          .default('false'),
+        AUDIO_RECONCILE_BATCH: Joi.number().integer().min(1).default(200),
+        AUDIO_STORAGE_PATH: Joi.string().default('/'),
       }),
     }),
 
