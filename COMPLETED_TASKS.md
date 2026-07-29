@@ -10852,3 +10852,35 @@ Each test states what the old denominator produced, so reintroducing it fails th
 ### What this exposed instead
 
 14. [x] **The real finding is about the corpus, not the scorer.** Generations cite ~**1 of ~3.4** available sections, and on a 3-section source with `0.5 + coverage*0.5` the only reachable scores are **0.5 / 0.667 / 0.833 / 1.0**. So the 0.70 bar is operationally "**cite 2 of 3 sections**" — a coarse, near-binary gate rather than the graded quality signal it reads as. That is a product decision about the editorial standard, not a bug, and it is the open item that replaces the re-score.
+
+## Session 211 — Kokoro prod readiness: synthesis was broken from day one, plus R2 audio storage (2026-07-29)
+
+**PR:** #334 OPEN — `feature/audio-r2-and-kokoro-readiness`. Not deployed, not merged, no flag flipped (`TTS_PROVIDER=polly`; `AUDIO_RECONCILER_ENABLED` / `AUDIO_RECONCILE_DECISIONS` / `AUDIO_RECONCILE_DRY_RUN` all `false`; all five `AUDIO_S3_*` unset). Follows #329–#332.
+
+### What the first prod run of the tts-service found
+
+1. [x] **Synthesis did not work at all, and the health check hid it.** kokoro's G2P (`misaki/en.py`) looks for the spaCy pipeline `en_core_web_sm` and, when absent, calls `spacy.cli.download()` **at runtime**. The runner stage has no pip/uv and runs as non-root, so spaCy `sys.exit(1)`s → `SystemExit` → **every `/synthesize` returned 500**, while `/health` returned 200 throughout because G2P initialises lazily on first synthesis. The lesson generalises: for this service a green health check is not evidence that synthesis works. `en_core_web_sm` 3.8.0 is now a locked dependency, pinned to the spacy minor (3.8.14) with a comment that both must move together.
+2. [x] **Weights were re-downloading on every container recreate.** `HF_HOME` was created **empty** and no compose volume backed it, so the service could not start at all with HuggingFace unreachable. The preload now runs **after `USER appuser`** so the cache is owned by the runtime user, and because constructing the pipeline also loads misaki's spaCy G2P, a missing model now fails the **build** rather than returning 500 from every request.
+3. [x] **Offline acceptance passed** — `docker run --network none`: `/health` 200 **and** a real 3-segment `/synthesize` 200, 12 s wall → **27.98 s of audio**, 169,776 B at 48.6 kbps with valid mp3 frame sync, **3 `ssml` marks + 62 `word` marks**. The read-along contract survives the Polly→Kokoro swap.
+
+### Two capacity constants were wrong, one by ~3.7x
+
+4. [x] **Throughput is ~0.97x realtime at 4 threads, not 3.59x.** Measured 1,793 chars → 131.0 s of audio in 135–142 s wall with CPU at 400–450%, i.e. **threading was configured correctly and the constant was simply never measured**. Plan capacity against ~1x realtime per worker.
+5. [x] **af_heart yields 13.7 chars/audio-second, not 15.0** (Polly's Matthew was 15.8, so the same corpus narrates ~15% longer on Kokoro). `ESTIMATED_SECONDS_PER_ITEM` rebased to **116 / 13,000 / 1,870 s**; the pinned dry-run expectation moves 489.7 → **420.8** h. The divisor is now measurement; the per-item character counts remain corpus arithmetic, and the comment says which is which.
+6. [x] **Memory 4G → 8G** — one worker mid-synthesis reached **2.9 GiB**, so two concurrent workers would likely have OOMed at the old limit. `cpus` left at 8.
+7. [x] **`AUDIO_PROCESSOR_CONCURRENCY`, default 2.** `@Processor(AUDIO_QUEUE)` carried no options, so BullMQ's default concurrency of 1 fed synthesis strictly one job at a time and **one of the two TTS workers was always idle**. Read from `process.env` rather than `ConfigService` because the decorator evaluates before the DI container exists; Joi still validates it with the same default and a guard prevents a `NaN` concurrency.
+
+### Audio objects → Cloudflare R2 (default path unchanged)
+
+8. [x] **`AudioStorageService`** exposes only `upload` and `getSignedUrl`. `AUDIO_S3_ENDPOINT` **unset** → delegates to the injected `S3Service` and constructs no second client; that is the default in every environment today and it is covered by tests. **Set** → own `S3Client` from `AUDIO_S3_*`, region default `auto`, `forcePathStyle: true`, presigning **against the same endpoint it uploads to** (no `S3_PUBLIC_ENDPOINT` equivalent — that workaround exists for MinIO-behind-nginx and would break the SigV4 Host match on R2).
+9. [x] **Only audio moves.** `AudioRenditionService` was the sole call site (verified by grepping the three object-key fields and every `S3Service` injection). All 302 renditions are `public_editorial`; private uploads and camera scans stay on MinIO. `S3_REGION` also became configurable, unset preserving the previously hardcoded `us-east-1` — asserted in a test, since SigV4 signs the region on both clients.
+10. [x] **CSP: `R2_ENDPOINT_ORIGIN` placeholder in BOTH `media-src` and `connect-src`.** The player streams the mp3 through `<audio>` (media-src) **and** `fetch()`es the marks manifest (connect-src). Signed R2 URLs are cross-origin, so missing either directive makes the browser block the request with **no server-side error** — the failure mode is a silently dead player.
+
+### Flagged, not fixed (see PENDING_TASKS.md)
+
+11. [x] **Switching storage is NOT retroactive.** Object keys live in `audio_renditions` and are signed against whichever backend is active now, so the 302 existing MinIO renditions must be copied to R2 **before** `AUDIO_S3_ENDPOINT` is set, or their signed URLs 404 while the rows still read `ready`. Nothing here self-heals the way the `TTS_PROVIDER` switch does (distinct `voiceId` → new rows). No migration script written.
+12. [x] **The reconciler's disk guard stops describing the real limit** once audio is off-box — it `statfs`es a local path, and tier 3's ~158 GB-vs-142 GB constraint is precisely what R2 removes. It needs to become a bucket quota check before decisions are enabled. Noted in code; behaviour unchanged.
+
+### Verification
+
+13. [x] `pnpm --filter api test`: **189 suites / 3,964 tests passed**, 0 failed. `pnpm --filter api lint` (`tsc --noEmit`): clean. `docker compose -f docker-compose.prod.yml config`: valid. nginx config still parses (`nginx -t` reaches cert loading).
