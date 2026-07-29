@@ -95,6 +95,8 @@ export class AudioRenditionService {
    * Assemble the spoken document for a content item.
    *  - digest → titled document with named sections (Facts/Issues/Ruling/
    *    Doctrine/Dispositive); empty sections are skipped.
+   *  - legal_document → one chapter per `legal_document_sections` row in
+   *    `ordering` sequence. Serves codals and decisions alike.
    *  - bar_exam_answer → a single untitled section holding the answer text.
    * Throws NotFoundException if the content row does not exist.
    */
@@ -102,6 +104,10 @@ export class AudioRenditionService {
     contentType: AudioContentType,
     contentId: string,
   ): Promise<ResolvedContent> {
+    if (contentType === 'legal_document') {
+      return this.resolveLegalDocument(contentId);
+    }
+
     if (contentType === 'digest') {
       const digest = await this.prisma.digest.findUnique({
         where: { id: contentId },
@@ -155,6 +161,59 @@ export class AudioRenditionService {
     return {
       doc: { sections: [{ key: 'answer', body: answer.answerText }] },
       visibility: answer.visibility,
+    };
+  }
+
+  /**
+   * Build the spoken document for a legal document from its sections.
+   *
+   * Only published documents are narratable — an unpublished one would put
+   * unreviewed text into the public audio corpus. Sections with no plain text
+   * are skipped rather than emitting a heading with nothing under it.
+   */
+  private async resolveLegalDocument(contentId: string): Promise<ResolvedContent> {
+    const document = await this.prisma.legalDocument.findUnique({
+      where: { id: contentId },
+      select: { title: true, status: true },
+    });
+    if (!document) {
+      throw new NotFoundException(`Legal document ${contentId} not found`);
+    }
+    if (document.status !== 'published') {
+      throw new NotFoundException(
+        `Legal document ${contentId} is not published (status=${document.status})`,
+      );
+    }
+
+    const sections = await this.prisma.legalDocumentSection.findMany({
+      where: { legalDocumentId: contentId },
+      orderBy: { ordering: 'asc' },
+      select: { id: true, sectionLabel: true, sectionType: true, plainText: true },
+    });
+
+    // [sectionKey, display heading, value] — the same chapter shape the digest
+    // branch produces, so the manifest/read-along contract is identical.
+    const chapters: Array<[string, string, string | null]> = sections.map((section) => [
+      section.id,
+      section.sectionLabel ?? section.sectionType,
+      section.plainText,
+    ]);
+
+    const spokenSections = chapters
+      .filter(([, , value]) => value !== null && value.trim().length > 0)
+      .map(([key, heading, value]) => ({
+        key,
+        heading,
+        body: (value ?? '').trim(),
+      }));
+
+    const title =
+      document.title && document.title.trim().length > 0 ? document.title : undefined;
+    // `legal_documents` has NO visibility column — publication is expressed by
+    // `status`, and this branch has already refused anything not 'published'.
+    return {
+      doc: { title, sections: spokenSections },
+      visibility: 'public_editorial',
     };
   }
 
