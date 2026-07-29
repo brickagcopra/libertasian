@@ -38,19 +38,28 @@ const BYTES_PER_AUDIO_SECOND = (48 * 1000) / 8;
 const MIN_FREE_DISK_BYTES = 20 * 1024 ** 3;
 
 /**
- * Rough seconds of audio one item of each tier produces. Average characters per
- * item (measured on the prod corpus) divided by 15.0 chars per audio-second
- * (measured in the Phase 0 spike). ARITHMETIC, NOT MEASUREMENT — correct these
- * once real Kokoro throughput on prod hardware is known.
+ * Rough seconds of audio one item of each tier produces: average characters per
+ * item divided by chars per audio-second.
  *
- *   tier 1  digest    ~2,032 chars/item                      → ~135 s
- *   tier 2  codals    ~178,000 chars/doc  (4.27M / 24)       → ~11,900 s
- *   tier 3  decision  ~25,600 chars/doc   (396.08M / 15,464) → ~1,710 s
+ * The chars/sec divisor is now MEASURED, not assumed — Kokoro's af_heart yields
+ * 13.7 chars per audio-second on prod (2026-07-29: 1,793 chars → 131.0 s of
+ * audio), replacing the Phase 0 spike's 15.0. Polly's Matthew was 15.8, so the
+ * same corpus narrates ~15% longer on Kokoro.
+ *
+ * The per-item character counts remain CORPUS ARITHMETIC (totals ÷ row counts),
+ * so these are estimates — but the conversion factor behind them is no longer a
+ * guess. Note these are seconds of AUDIO, not wall clock: at the measured ~0.97x
+ * realtime throughput (see services/tts-service/src/config.py) wall clock per
+ * worker is roughly the same number again.
+ *
+ *   tier 1  digest    ~1,592 chars/item                      → ~116 s
+ *   tier 2  codals    ~178,000 chars/doc  (4.27M / 24)       → ~13,000 s
+ *   tier 3  decision  ~25,600 chars/doc   (396.08M / 15,464) → ~1,870 s
  */
 const ESTIMATED_SECONDS_PER_ITEM: Record<Tier['n'], number> = {
-  1: 135,
-  2: 11_900,
-  3: 1_710,
+  1: 116,
+  2: 13_000,
+  3: 1_870,
 };
 
 @Injectable()
@@ -310,6 +319,11 @@ export class AudioReconcilerService {
    * Free bytes on the MinIO volume. Returns null when the path cannot be
    * measured — the guard then fails OPEN, because the two feature flags already
    * gate every enqueue and tiers 1-2 need only ~12.3 GB.
+   *
+   * NOTE: this measures a LOCAL path. Once AUDIO_S3_ENDPOINT routes audio to an
+   * external bucket (see AudioStorageService), local free space no longer bounds
+   * how much audio can be stored and this guard stops describing the real limit
+   * — it would need to become a quota/billing check against that bucket instead.
    */
   private async freeDiskBytes(): Promise<number | null> {
     const path = this.config.get<string>('AUDIO_STORAGE_PATH', '/');

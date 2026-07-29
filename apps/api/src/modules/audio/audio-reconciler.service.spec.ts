@@ -234,8 +234,10 @@ describe('AudioReconcilerService', () => {
           wouldEnqueue: 1,
           remainingGap: 13058,
           sampleIds: ['digest-1'],
-          // 13,058 × 135 s / 3600 — arithmetic, pinned so a constant edit shows up.
-          estimatedHoursForTier: 489.7,
+          // 13,058 × 116 s / 3600 — arithmetic, pinned so a constant edit shows
+          // up. 116 s/item comes from the MEASURED 13.7 chars/audio-second on
+          // Kokoro's af_heart (prod 2026-07-29).
+          estimatedHoursForTier: 420.8,
         }),
       );
     });

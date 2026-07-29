@@ -5,7 +5,7 @@ import { Queue } from 'bullmq';
 import * as crypto from 'crypto';
 
 import { PrismaService } from '../../prisma/prisma.service';
-import { S3Service } from '../uploads/s3.service';
+import { AudioStorageService } from './audio-storage.service';
 import {
   AUDIO_JOB,
   AUDIO_QUEUE,
@@ -68,7 +68,7 @@ export class AudioRenditionService {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(TTS_CLIENT) private readonly tts: TtsClient,
-    private readonly s3: S3Service,
+    private readonly s3: AudioStorageService,
     private readonly config: ConfigService,
     @InjectQueue(AUDIO_QUEUE) private readonly queue: Queue,
   ) {

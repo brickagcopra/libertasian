@@ -298,8 +298,8 @@ name = "curated-transformers"
 version = "0.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'darwin'" },
-    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
+    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version < '3.15' and sys_platform == 'darwin'" },
+    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version >= '3.15' or sys_platform != 'darwin'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/70/06/6c12c149a7f737dacc76b4c3949dbc7ff87d622567b86996896ae4d104aa/curated-transformers-0.1.1.tar.gz", hash = "sha256:4671f03314df30efda2ec2b59bc7692ea34fcea44cb65382342c16684e8a2119", size = 16313, upload-time = "2023-05-24T07:29:22.801Z" }
 wheels = [
@@ -368,6 +368,14 @@ name = "docopt"
 version = "0.6.2"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/a2/55/8f8cab2afd404cf578136ef2cc5dfb50baa1761b68c9da1fb1e4eed343c9/docopt-0.6.2.tar.gz", hash = "sha256:49b3a825280bd66b3aa83585ef59c4a8c82f2c8a522dbe754a8bc8d08c85c491", size = 25901, upload-time = "2014-06-16T11:18:57.406Z" }
+
+[[package]]
+name = "en-core-web-sm"
+version = "3.8.0"
+source = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
+wheels = [
+    { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl", hash = "sha256:1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85" },
+]
 
 [[package]]
 name = "espeakng-loader"
@@ -617,8 +625,8 @@ dependencies = [
     { name = "loguru" },
     { name = "misaki", extra = ["en"] },
     { name = "numpy" },
-    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'darwin'" },
-    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
+    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version < '3.15' and sys_platform == 'darwin'" },
+    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version >= '3.15' or sys_platform != 'darwin'" },
     { name = "transformers" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/e8/48/88b8cdf28b068d070195c2817175549dee48e7682e3ab8994bee5f69217e/kokoro-0.9.4.tar.gz", hash = "sha256:fbf633262797f8cf46fdac3315cf9cade67dc8b762c0feccf334892772fb9ac4", size = 26215928, upload-time = "2025-04-05T22:01:35.294Z" }
@@ -692,14 +700,15 @@ name = "libertasian-tts-service"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "en-core-web-sm" },
     { name = "fastapi" },
     { name = "kokoro" },
     { name = "lameenc" },
     { name = "numpy" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
-    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'darwin'" },
-    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
+    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version < '3.15' and sys_platform == 'darwin'" },
+    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version >= '3.15' or sys_platform != 'darwin'" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -714,6 +723,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "en-core-web-sm", url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28.0" },
     { name = "kokoro", specifier = ">=0.9.2" },
@@ -1797,8 +1807,8 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "curated-tokenizers" },
     { name = "curated-transformers" },
-    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'darwin'" },
-    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
+    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version < '3.15' and sys_platform == 'darwin'" },
+    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version >= '3.15' or sys_platform != 'darwin'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d8/b3/a4fd3cf28008cbe1d95463b5c76a0d9c8da7b9ad4f06289c2be4aae62052/spacy_curated_transformers-0.3.1.tar.gz", hash = "sha256:7e53fccf64260e641b0a3f2b65b6d98381b86cef6eeb21ce279e8db849e8525d", size = 218990, upload-time = "2025-05-28T10:29:32.69Z" }
 wheels = [
@@ -1977,17 +1987,16 @@ name = "torch"
 version = "2.13.0"
 source = { registry = "https://download.pytorch.org/whl/cpu" }
 resolution-markers = [
-    "python_full_version >= '3.15' and sys_platform == 'darwin'",
     "python_full_version < '3.15' and sys_platform == 'darwin'",
 ]
 dependencies = [
-    { name = "filelock" },
-    { name = "fsspec" },
-    { name = "jinja2" },
-    { name = "networkx" },
-    { name = "setuptools" },
-    { name = "sympy" },
-    { name = "typing-extensions" },
+    { name = "filelock", marker = "python_full_version < '3.15' and sys_platform == 'darwin'" },
+    { name = "fsspec", marker = "python_full_version < '3.15' and sys_platform == 'darwin'" },
+    { name = "jinja2", marker = "python_full_version < '3.15' and sys_platform == 'darwin'" },
+    { name = "networkx", marker = "python_full_version < '3.15' and sys_platform == 'darwin'" },
+    { name = "setuptools", marker = "python_full_version < '3.15' and sys_platform == 'darwin'" },
+    { name = "sympy", marker = "python_full_version < '3.15' and sys_platform == 'darwin'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.15' and sys_platform == 'darwin'" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.13.0-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:2fe228aba290d14b9f31b049be550dbd469c3fd3013d7a19705b30454da97027", upload-time = "2026-07-08T12:26:18Z" },
@@ -2003,15 +2012,16 @@ source = { registry = "https://download.pytorch.org/whl/cpu" }
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform != 'darwin'",
     "python_full_version < '3.15' and sys_platform != 'darwin'",
+    "python_full_version >= '3.15' and sys_platform == 'darwin'",
 ]
 dependencies = [
-    { name = "filelock" },
-    { name = "fsspec" },
-    { name = "jinja2" },
-    { name = "networkx" },
-    { name = "setuptools" },
-    { name = "sympy" },
-    { name = "typing-extensions" },
+    { name = "filelock", marker = "python_full_version >= '3.15' or sys_platform != 'darwin'" },
+    { name = "fsspec", marker = "python_full_version >= '3.15' or sys_platform != 'darwin'" },
+    { name = "jinja2", marker = "python_full_version >= '3.15' or sys_platform != 'darwin'" },
+    { name = "networkx", marker = "python_full_version >= '3.15' or sys_platform != 'darwin'" },
+    { name = "setuptools", marker = "python_full_version >= '3.15' or sys_platform != 'darwin'" },
+    { name = "sympy", marker = "python_full_version >= '3.15' or sys_platform != 'darwin'" },
+    { name = "typing-extensions", marker = "python_full_version >= '3.15' or sys_platform != 'darwin'" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.13.0%2Bcpu-cp312-cp312-linux_s390x.whl", hash = "sha256:ffadde149901c8afa138daa38d898264003cfcf1a3336ca5cd964b5af227d867", upload-time = "2026-07-08T19:28:41Z" },

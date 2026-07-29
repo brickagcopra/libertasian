@@ -9,6 +9,7 @@ import { AudioGenerationProcessor } from './audio-generation.processor';
 import { AudioPublishListener } from './audio-publish.listener';
 import { AudioReconcilerService } from './audio-reconciler.service';
 import { AudioRenditionService } from './audio-rendition.service';
+import { AudioStorageService } from './audio-storage.service';
 import { AUDIO_QUEUE } from './audio.types';
 import { KokoroClient } from './kokoro.client';
 import { toSsml } from './legal-ssml.util';
@@ -30,9 +31,11 @@ export const LEGAL_SSML_NORMALIZER = Symbol('LEGAL_SSML_NORMALIZER');
  * Phase 2: the `audio-generation` BullMQ queue + processor, the synthesis
  * service, and the read/force-render controller.
  *
- * S3Service (via UploadsModule) stores the mp3 + speech-mark objects;
- * DigestsService enforces digest access rules at read time. PrismaService,
- * AuditService, and EntitlementService come from their @Global modules.
+ * AudioStorageService stores the mp3 + speech-mark objects — it delegates to
+ * S3Service (via UploadsModule) unless AUDIO_S3_ENDPOINT routes audio to its own
+ * bucket. DigestsService enforces digest access rules at read time.
+ * PrismaService, AuditService, and EntitlementService come from their @Global
+ * modules.
  */
 @Module({
   imports: [
@@ -45,6 +48,7 @@ export const LEGAL_SSML_NORMALIZER = Symbol('LEGAL_SSML_NORMALIZER');
     PollyClient,
     PollyTtsAdapter,
     KokoroClient,
+    AudioStorageService,
     AudioRenditionService,
     AudioGenerationProcessor,
     AudioPublishListener,
