@@ -1,22 +1,32 @@
 /**
  * Legal SSML normalizer — production-grade legal narration.
  *
- * Pure, dependency-free transformation of raw legal prose (digests and bar-exam
- * answers) into Amazon Polly-ready SSML plus a plain normalized-text projection.
- * No NestJS, no class-validator, no I/O — safe to unit-test and to call from a
- * worker without bootstrapping the DI container.
+ * Transformation of raw legal prose (digests, bar-exam answers and legal
+ * document sections) into Amazon Polly-ready SSML, a plain normalized-text
+ * projection, and a spoken-literal projection for non-SSML TTS backends.
+ * No class-validator, no I/O, and no DI container required — safe to unit-test
+ * and to call from a worker. (A bare `Logger` is used for one debug-level
+ * lexicon warning; it needs no DI bootstrap.)
  *
- * The two outputs serve different consumers:
+ * The three outputs serve different consumers:
  *   - `ssml`           → fed to Polly's SynthesizeSpeech (TextType: 'ssml').
  *   - `normalizedText` → the human-readable spoken form; used for charCount,
  *                        content hashing, and transcript display.
+ *   - spoken segments  → plain text for backends with no SSML support (Kokoro),
+ *                        via {@link toSpokenSegments}.
  *
  * SSML is structure-aware: a {@link SpokenDocument} renders a title, named
  * section headings, paragraphs (`<p>`) and sentences (`<s>`) with deliberate
  * pacing — far less robotic than a flat blob with fixed breaks. Only tags the
  * neural engine accepts are used (`<p>`, `<s>`, `<break>`, `<prosody rate>`,
  * `<say-as>`, `<phoneme>`, `<sub>`); `<emphasis>`/`<prosody pitch>` are avoided.
+ *
+ * INVARIANT: `normalizedText` is the content-hash input for every existing
+ * rendition. The spoken-literal projection is strictly additive — it must never
+ * feed back into `plain`/`ssml`, or every stored contentHash would change and
+ * the whole corpus would silently re-synthesize.
  */
+import { Logger } from '@nestjs/common';
 
 /** A Latin legal term and the pronunciation hint Polly should use for it. */
 export interface LatinTerm {
@@ -93,14 +103,25 @@ export const LATIN_LEXICON: readonly LatinTerm[] = [
   { term: 'amicus curiae', alias: 'uh-MEE-kus KYOOR-ee-eye' },
   { term: 'habeas corpus', alias: 'HAY-bee-us KOR-pus' },
   { term: 'obiter dictum', alias: 'OH-bih-ter DIK-tum' },
-  { term: 'stare decisis', ipa: 'ˈstɑːriː dɪˈsaɪsɪs' },
+  // Carries BOTH: Polly keeps the `<phoneme>` (latinTag prefers `ipa`, so its
+  // SSML is unchanged), while the non-SSML path uses the alias. Measured in the
+  // Kokoro spike: without an alias its G2P renders this as the English verb
+  // "stare" + "de-SIS-iz" (stˈɛɹ dᵻsˈɪsiz).
+  { term: 'stare decisis', ipa: 'ˈstɑːriː dɪˈsaɪsɪs', alias: 'STAH-ree dih-SY-sis' },
   { term: 'prima facie', alias: 'PRY-muh FAY-shee' },
+  // `certiorari` and `res ipsa loquitur` need no alias — Kokoro's own G2P
+  // already matches these IPA strings closely (verified in the spike).
   { term: 'certiorari', ipa: 'ˌsɜːrʃiəˈrɛəri' },
   { term: 'ex parte', alias: 'eks PAR-tay' },
   { term: 'mandamus', alias: 'man-DAY-mus' },
   { term: 'ponente', alias: 'poh-NEN-teh' },
   { term: 'en banc', alias: 'on bonk' },
 ];
+
+/** Pause lengths, shared by the SSML `<break>` tags and `leadSilenceMs`. */
+const TITLE_TRAIL_BREAK_MS = 900;
+const HEADING_LEAD_BREAK_MS = 700;
+const HEADING_TRAIL_BREAK_MS = 400;
 
 /**
  * Private-use sentinels bracketing a citation/number digit run inside the
@@ -355,22 +376,117 @@ const toPlainNums = (value: string): string => value.replace(NUM_TOKEN_RE, '$1')
 const toSsmlNums = (value: string): string =>
   value.replace(NUM_TOKEN_RE, '<say-as interpret-as="digits">$1</say-as>');
 
-/** Spoken projections (plain + SSML) of a single cleaned text fragment. */
-const renderSpoken = (cleaned: string): { plain: string; ssml: string } => {
+const spokenLogger = new Logger('LegalSsmlUtil');
+
+const DIGIT_WORDS = [
+  'zero', 'one', 'two', 'three', 'four',
+  'five', 'six', 'seven', 'eight', 'nine',
+] as const;
+
+/** "168338" → "one six eight three three eight" (the `<say-as digits>` equivalent). */
+const spellDigits = (digits: string): string =>
+  digits
+    .split('')
+    .map((d) => DIGIT_WORDS[Number(d)] ?? d)
+    .join(' ');
+
+const toLiteralNums = (value: string): string =>
+  value.replace(NUM_TOKEN_RE, (_match, digits: string) => spellDigits(digits));
+
+/**
+ * Statutory paragraph form: "5(2)" → "five, paragraph two". Polly renders this
+ * acceptably from the raw text, but Kokoro speaks the parenthesis inline
+ * ("five(two"), so the non-SSML projection spells it out. Runs BEFORE
+ * {@link toLiteralNums} so it only ever sees bare (un-sentinelled) digit runs.
+ */
+const PARAGRAPH_FORM_RE = /(\d+)\s*\((\d+)\)/g;
+const expandParagraphForms = (value: string): string =>
+  value.replace(
+    PARAGRAPH_FORM_RE,
+    (_match, outer: string, inner: string) =>
+      `${spellDigits(outer)}, paragraph ${spellDigits(inner)}`,
+  );
+
+/**
+ * Philippine civil-service position levels ("Cashier I", "Administrative
+ * Officer V"). Without this Kokoro reads the trailing numeral as the letter
+ * "eye". Deliberately gated on an explicit position-noun allowlist so a
+ * sentence-medial pronoun "I" is never rewritten.
+ */
+const ROMAN_WORDS: Readonly<Record<string, string>> = {
+  I: 'One', II: 'Two', III: 'Three', IV: 'Four', V: 'Five',
+  VI: 'Six', VII: 'Seven', VIII: 'Eight', IX: 'Nine', X: 'Ten',
+};
+const POSITION_TITLES = [
+  'Accountant', 'Administrator', 'Aide', 'Analyst', 'Architect', 'Assistant',
+  'Associate', 'Attorney', 'Auditor', 'Cashier', 'Chemist', 'Clerk', 'Dentist',
+  'Director', 'Economist', 'Engineer', 'Examiner', 'Inspector', 'Instructor',
+  'Librarian', 'Manager', 'Nurse', 'Officer', 'Physician', 'Planner',
+  'Psychologist', 'Specialist', 'Statistician', 'Stenographer', 'Supervisor',
+  'Teacher', 'Technician', 'Trainer', 'Utility', 'Veterinarian', 'Warden',
+];
+// Numeral alternatives are longest-first so "IV"/"IX" are not shadowed by "I".
+const POSITION_ROMAN_RE = new RegExp(
+  `\\b(${POSITION_TITLES.join('|')})\\s+(VIII|VII|VI|IV|IX|III|II|I|X|V)\\b`,
+  'g',
+);
+const expandPositionRomans = (value: string): string =>
+  value.replace(
+    POSITION_ROMAN_RE,
+    (_match, title: string, roman: string) =>
+      `${title} ${ROMAN_WORDS[roman] ?? roman}`,
+  );
+
+/** Terms already reported as alias-less — keeps the debug log to once per term. */
+const aliasGapLogged = new Set<string>();
+
+/**
+ * Replace each Latin term with its spoken respelling. An entry carrying only
+ * `ipa` has no plain-text equivalent, so the matched word is emitted unchanged
+ * and reported once at debug so aliases can be backfilled.
+ */
+const substituteLatinAliases = (value: string): string =>
+  LATIN_LEXICON.reduce((acc, entry) => {
+    const pattern = new RegExp(`\\b${escapeRegExp(entry.term)}\\b`, 'gi');
+    return acc.replace(pattern, (matched) => {
+      if (entry.alias) return entry.alias;
+      if (!aliasGapLogged.has(entry.term)) {
+        aliasGapLogged.add(entry.term);
+        spokenLogger.debug(
+          `Latin term "${entry.term}" has ipa but no alias; emitting verbatim on the non-SSML path`,
+        );
+      }
+      return matched;
+    });
+  }, value);
+
+/** Plain-text projection for TTS backends with no SSML support. */
+const toSpokenLiteral = (spoken: string): string =>
+  toLiteralNums(
+    expandParagraphForms(expandPositionRomans(substituteLatinAliases(spoken))),
+  );
+
+/** Spoken projections (plain + SSML + literal) of a single cleaned fragment. */
+const renderSpoken = (
+  cleaned: string,
+): { plain: string; ssml: string; literal: string } => {
   const spoken = expandSpoken(cleaned);
   return {
     plain: toPlainNums(spoken),
     ssml: wrapLatinTerms(toSsmlNums(escapeXml(spoken))),
+    literal: toSpokenLiteral(spoken),
   };
 };
 
 /** Render an inline fragment (title/heading): collapsed, no `<p>`/`<s>` frame. */
-const renderInline = (text: string): { plain: string; ssml: string } => {
+const renderInline = (
+  text: string,
+): { plain: string; ssml: string; literal: string } => {
   const collapsed = cleanProse(text).replace(/\s+/g, ' ').trim();
   return renderSpoken(collapsed);
 };
 
-/** One read-along unit: its original display text + spoken plain/SSML forms. */
+/** One read-along unit: its original display text + spoken projections. */
 interface RenderedSentence {
   /** Original, un-normalized sentence text — the manifest/display source. */
   readonly display: string;
@@ -378,6 +494,8 @@ interface RenderedSentence {
   readonly plain: string;
   /** Spoken SSML fragment (no `<s>` frame, no `<mark>`). */
   readonly ssml: string;
+  /** Spoken plain-text fragment for non-SSML backends. */
+  readonly literal: string;
 }
 
 /**
@@ -432,34 +550,55 @@ export interface SsmlResult {
  *   - Peso amounts (`₱`/`PHP`/`P`) re-voiced as "… pesos".
  *   - All-caps words de-shouted to Title Case; Latin terms given pronunciations.
  */
-export function toSsmlDocument(
-  doc: SpokenDocument,
-  _opts?: ToSsmlOptions,
-): SsmlResult {
-  const sections = Array.isArray(doc?.sections) ? doc.sections : [];
-  const plainBlocks: string[] = [];
-  const ssmlParts: string[] = [];
-  const manifest: ManifestEntry[] = [];
+/**
+ * One ordered, id-assigned unit of a walked {@link SpokenDocument}. Ids are
+ * assigned HERE and nowhere else, so every projection built from the same walk
+ * is guaranteed to agree on id values and order by construction.
+ */
+type DocNode =
+  | {
+      readonly kind: 'title';
+      readonly id: string;
+      readonly display: string;
+      readonly plain: string;
+      readonly ssml: string;
+      readonly literal: string;
+    }
+  | {
+      readonly kind: 'heading';
+      readonly id: string;
+      readonly sectionKey: string;
+      readonly display: string;
+      readonly plain: string;
+      readonly ssml: string;
+      readonly literal: string;
+    }
+  | {
+      readonly kind: 'paragraph';
+      readonly sectionKey: string;
+      readonly paragraphIndex: number;
+      readonly sentences: ReadonlyArray<{ readonly id: string } & RenderedSentence>;
+    };
 
-  // Single monotonic id counter shared across title, headings and sentences so
-  // manifest order == mark order == (post-join) segment order, by construction.
+/**
+ * Walk a document once, assigning the monotonic `seg-N` ids. Both
+ * {@link toSsmlDocument} and {@link toSpokenSegments} consume this, which is
+ * what makes their id sequences identical rather than merely parallel.
+ */
+const walkDocument = (doc: SpokenDocument): DocNode[] => {
+  const nodes: DocNode[] = [];
   let seq = 0;
   const nextId = (): string => `seg-${seq++}`;
 
   const titleText = (doc?.title ?? '').trim();
   if (titleText.length > 0) {
-    const { plain, ssml } = renderInline(titleText);
-    if (plain.length > 0) {
-      const id = nextId();
-      plainBlocks.push(plain);
-      // Title keeps its slower 96% rate; drc + x-loud make it audibly distinct.
-      ssmlParts.push(
-        `<mark name="${id}"/><p><amazon:effect name="drc"><prosody volume="x-loud" rate="96%">${ssml}</prosody></amazon:effect></p><break time="900ms"/>`,
-      );
-      manifest.push({ id, kind: 'title', sectionKey: 'title', text: titleText });
+    const rendered = renderInline(titleText);
+    if (rendered.plain.length > 0) {
+      nodes.push({ kind: 'title', id: nextId(), display: titleText, ...rendered });
     }
   }
 
+  const sections = Array.isArray(doc?.sections) ? doc.sections : [];
   sections.forEach((section, index) => {
     // Skip a section whose body renders to nothing — its heading would be a
     // dangling marker with no content to introduce.
@@ -473,51 +612,143 @@ export function toSsmlDocument(
       `section-${index}`;
 
     if (headingText.length > 0) {
-      const { plain, ssml } = renderInline(headingText);
-      if (plain.length > 0) {
-        const id = nextId();
-        plainBlocks.push(ensureStop(plain));
-        // Section markers: a long lead-in pause, then a drc + x-loud + slowed
-        // delivery so the heading stands out from the body it introduces.
-        // (`<emphasis>` / `<prosody pitch>` are rejected on neural — never used.)
-        ssmlParts.push(
-          `<break time="700ms"/><mark name="${id}"/><amazon:effect name="drc"><prosody volume="x-loud" rate="90%"><p>${ensureStop(ssml)}</p></prosody></amazon:effect><break time="400ms"/>`,
-        );
-        manifest.push({
-          id,
+      const rendered = renderInline(headingText);
+      if (rendered.plain.length > 0) {
+        nodes.push({
           kind: 'heading',
+          id: nextId(),
           sectionKey,
-          // The exact on-page display heading — NOT the spoken/normalized form.
-          text: headingText,
+          display: headingText,
+          ...rendered,
         });
       }
     }
 
     paragraphs.forEach((sentences, paragraphIndex) => {
-      const parts: string[] = [];
-      const plain: string[] = [];
-      for (const sentence of sentences) {
-        const id = nextId();
-        parts.push(`<mark name="${id}"/><s>${sentence.ssml}</s>`);
-        plain.push(sentence.plain);
-        manifest.push({
-          id,
-          kind: 'sentence',
-          sectionKey,
-          text: sentence.display,
-          paragraphIndex,
-        });
-      }
-      plainBlocks.push(plain.join(' '));
-      ssmlParts.push(`<p>${parts.join('')}</p>`);
+      nodes.push({
+        kind: 'paragraph',
+        sectionKey,
+        paragraphIndex,
+        sentences: sentences.map((sentence) => ({ id: nextId(), ...sentence })),
+      });
     });
   });
+
+  return nodes;
+};
+
+export function toSsmlDocument(
+  doc: SpokenDocument,
+  _opts?: ToSsmlOptions,
+): SsmlResult {
+  const plainBlocks: string[] = [];
+  const ssmlParts: string[] = [];
+  const manifest: ManifestEntry[] = [];
+
+  for (const node of walkDocument(doc)) {
+    if (node.kind === 'title') {
+      plainBlocks.push(node.plain);
+      // Title keeps its slower 96% rate; drc + x-loud make it audibly distinct.
+      ssmlParts.push(
+        `<mark name="${node.id}"/><p><amazon:effect name="drc"><prosody volume="x-loud" rate="96%">${node.ssml}</prosody></amazon:effect></p><break time="${TITLE_TRAIL_BREAK_MS}ms"/>`,
+      );
+      manifest.push({
+        id: node.id,
+        kind: 'title',
+        sectionKey: 'title',
+        text: node.display,
+      });
+      continue;
+    }
+
+    if (node.kind === 'heading') {
+      plainBlocks.push(ensureStop(node.plain));
+      // Section markers: a long lead-in pause, then a drc + x-loud + slowed
+      // delivery so the heading stands out from the body it introduces.
+      // (`<emphasis>` / `<prosody pitch>` are rejected on neural — never used.)
+      ssmlParts.push(
+        `<break time="${HEADING_LEAD_BREAK_MS}ms"/><mark name="${node.id}"/><amazon:effect name="drc"><prosody volume="x-loud" rate="90%"><p>${ensureStop(node.ssml)}</p></prosody></amazon:effect><break time="${HEADING_TRAIL_BREAK_MS}ms"/>`,
+      );
+      manifest.push({
+        id: node.id,
+        kind: 'heading',
+        sectionKey: node.sectionKey,
+        // The exact on-page display heading — NOT the spoken/normalized form.
+        text: node.display,
+      });
+      continue;
+    }
+
+    const parts: string[] = [];
+    const plain: string[] = [];
+    for (const sentence of node.sentences) {
+      parts.push(`<mark name="${sentence.id}"/><s>${sentence.ssml}</s>`);
+      plain.push(sentence.plain);
+      manifest.push({
+        id: sentence.id,
+        kind: 'sentence',
+        sectionKey: node.sectionKey,
+        text: sentence.display,
+        paragraphIndex: node.paragraphIndex,
+      });
+    }
+    plainBlocks.push(plain.join(' '));
+    ssmlParts.push(`<p>${parts.join('')}</p>`);
+  }
 
   return {
     ssml: `<speak>${ssmlParts.join('')}</speak>`,
     normalizedText: plainBlocks.join('\n\n'),
     manifest,
   };
+}
+
+/** One plain-text unit for a non-SSML TTS backend. */
+export interface SpokenSegment {
+  /** Matches the `<mark name="seg-N"/>` id `toSsmlDocument` emits, same order. */
+  readonly id: string;
+  /** Plain spoken text — no tags, digits spelled, Latin aliases substituted. */
+  readonly text: string;
+  /** Silence to prepend before this segment, mirroring the SSML `<break>`s. */
+  readonly leadSilenceMs: number;
+}
+
+/**
+ * Project a document to plain spoken segments for a backend with no SSML
+ * support. Every `<break>` in the SSML becomes `leadSilenceMs` on the segment
+ * that follows it, so pacing survives the loss of the tags; `<prosody>`,
+ * `<amazon:effect>`, `<p>` and `<s>` have no plain-text equivalent and are
+ * dropped.
+ */
+export function toSpokenSegments(doc: SpokenDocument): SpokenSegment[] {
+  const segments: SpokenSegment[] = [];
+  let pendingSilenceMs = 0;
+
+  const push = (id: string, text: string): void => {
+    segments.push({ id, text, leadSilenceMs: pendingSilenceMs });
+    pendingSilenceMs = 0;
+  };
+
+  for (const node of walkDocument(doc)) {
+    if (node.kind === 'title') {
+      push(node.id, node.literal);
+      // `<break>` follows the title mark → lands on the NEXT segment.
+      pendingSilenceMs += TITLE_TRAIL_BREAK_MS;
+      continue;
+    }
+    if (node.kind === 'heading') {
+      // `<break>` precedes the heading mark → lands on the heading itself.
+      pendingSilenceMs += HEADING_LEAD_BREAK_MS;
+      push(node.id, ensureStop(node.literal));
+      pendingSilenceMs += HEADING_TRAIL_BREAK_MS;
+      continue;
+    }
+    for (const sentence of node.sentences) {
+      push(sentence.id, sentence.literal);
+    }
+  }
+
+  return segments;
 }
 
 /**

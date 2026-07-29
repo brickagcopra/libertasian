@@ -1,4 +1,10 @@
-import { LATIN_LEXICON, toSsml, toSsmlDocument } from './legal-ssml.util';
+import {
+  LATIN_LEXICON,
+  toSpokenSegments,
+  toSsml,
+  toSsmlDocument,
+  type SpokenDocument,
+} from './legal-ssml.util';
 
 describe('toSsml — legal SSML normalizer', () => {
   it('wraps output in a single <speak> root', () => {
@@ -429,5 +435,96 @@ describe('toSsml — legal SSML normalizer', () => {
   it('returns an empty <speak> for empty input', () => {
     expect(toSsml('').ssml).toBe('<speak></speak>');
     expect(toSsml('').normalizedText).toBe('');
+  });
+});
+
+describe('toSpokenSegments — plain projection for non-SSML backends', () => {
+  const textOf = (doc: SpokenDocument): string =>
+    toSpokenSegments(doc)
+      .map((s) => s.text)
+      .join(' ');
+
+  it('spells a G.R. citation number digit by digit', () => {
+    const out = textOf({ sections: [{ body: 'See G.R. No. 168338 for the rule.' }] });
+    expect(out).toContain('one six eight three three eight');
+    expect(out).not.toContain('168338');
+  });
+
+  it('spells a Republic Act number digit by digit', () => {
+    const out = textOf({ sections: [{ body: 'Enacted under R.A. No. 9285 today.' }] });
+    expect(out).toContain('nine two eight five');
+  });
+
+  it('expands the statutory paragraph form', () => {
+    const out = textOf({ sections: [{ body: 'Under Section 5(2) of the statute.' }] });
+    expect(out).toContain('five, paragraph two');
+    expect(out).not.toContain('5(2)');
+  });
+
+  it('substitutes a Latin alias as plain text', () => {
+    const out = textOf({ sections: [{ body: 'The writ of habeas corpus was issued.' }] });
+    expect(out).toContain('HAY-bee-us KOR-pus');
+  });
+
+  it('substitutes the stare decisis alias', () => {
+    const out = textOf({ sections: [{ body: 'The doctrine of stare decisis controls.' }] });
+    expect(out).toContain('STAH-ree dih-SY-sis');
+  });
+
+  it('emits an ipa-only term with no alias unchanged', () => {
+    const out = textOf({ sections: [{ body: 'A petition for certiorari was filed.' }] });
+    expect(out).toContain('certiorari');
+  });
+
+  it('speaks a position-level Roman numeral as a number', () => {
+    const out = textOf({ sections: [{ body: 'He served as Cashier I for years.' }] });
+    expect(out).toContain('Cashier One');
+  });
+
+  it('leaves a sentence-medial "I" alone', () => {
+    const out = textOf({ sections: [{ body: 'The Court I address here is bound.' }] });
+    expect(out).toContain('Court I');
+  });
+
+  it('turns breaks into leadSilenceMs on the following segment', () => {
+    const segments = toSpokenSegments({
+      title: 'A Case Title',
+      sections: [{ heading: 'Facts', body: 'The first sentence stands alone.' }],
+    });
+    expect(segments[0]?.leadSilenceMs).toBe(0);
+    // 900ms after the title + 700ms before the heading.
+    expect(segments[1]?.leadSilenceMs).toBe(1600);
+    // 400ms after the heading.
+    expect(segments[2]?.leadSilenceMs).toBe(400);
+  });
+
+  it('emits ids identical to the SSML manifest, in the same order', () => {
+    const doc: SpokenDocument = {
+      title: 'National Tobacco Administration versus Castillo',
+      sections: [
+        {
+          key: 'facts',
+          heading: 'Facts',
+          body: 'One sentence here. And a second one follows.',
+        },
+        {
+          key: 'ruling',
+          heading: 'Ruling',
+          body: 'The Court held otherwise.\n\nA second paragraph follows here.',
+        },
+      ],
+    };
+    expect(toSpokenSegments(doc).map((s) => s.id)).toEqual(
+      toSsmlDocument(doc).manifest.map((m) => m.id),
+    );
+  });
+
+  it('leaves normalizedText untouched by the literal-only rules', () => {
+    const doc: SpokenDocument = {
+      sections: [{ body: 'Cashier I served under Section 5(2) of the law.' }],
+    };
+    const { normalizedText } = toSsmlDocument(doc);
+    expect(normalizedText).toContain('Cashier I');
+    expect(normalizedText).toContain('5(2)');
   });
 });
