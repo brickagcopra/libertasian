@@ -90,6 +90,21 @@ export class AudioReconcilerService {
 
     let remaining = this.batchSize;
     for (const tier of TIERS) {
+      if (tier.n === 3 && free === null) {
+        // The guard exists FOR tier 3: ~158 GB of decisions against 142 GB free
+        // on the local MinIO volume. Tiers 1-2 total ~12 GB and may proceed on
+        // an unmeasurable path, but letting tier 3 through would defeat the
+        // only case the guard was written for.
+        this.logger.error({
+          event: 'audio_reconcile_disk_unmeasurable',
+          tier: tier.n,
+          path: this.config.get<string>('AUDIO_STORAGE_PATH', '/'),
+          message:
+            'Refusing tier 3: free disk could not be measured. Tiers 1-2 proceed.',
+        });
+        continue;
+      }
+
       if (tier.n === 3 && !this.decisionsEnabled) {
         this.logger.warn({
           event: 'audio_reconcile_tier_skipped',

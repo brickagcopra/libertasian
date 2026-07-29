@@ -1,9 +1,19 @@
 import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
+import { statfs } from 'fs/promises';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { AudioReconcilerService } from './audio-reconciler.service';
 import { AudioRenditionService } from './audio-rendition.service';
+
+// Mocked so the disk guard is deterministic. Without this the suite reads the
+// real filesystem and its behaviour depends on the machine it runs on.
+jest.mock('fs/promises', () => ({ statfs: jest.fn() }));
+const statfsMock = statfs as unknown as jest.Mock;
+
+const GB = 1024 ** 3;
+/** statfs result for a volume with `gb` free (bsize 4096). */
+const freeSpace = (gb: number) => ({ bavail: (gb * GB) / 4096, bsize: 4096 });
 
 /**
  * Queues a scripted sequence of $queryRaw results. The reconciler issues, in
@@ -39,6 +49,12 @@ const ON_WITH_DECISIONS = {
 };
 
 describe('AudioReconcilerService', () => {
+  beforeEach(() => {
+    // Healthy volume by default; individual tests override.
+    statfsMock.mockReset();
+    statfsMock.mockResolvedValue(freeSpace(100));
+  });
+
   it('does nothing when the reconciler flag is false', async () => {
     const { service, queue, queryRaw } = build({}, []);
     await service.reconcile();
@@ -121,6 +137,60 @@ describe('AudioReconcilerService', () => {
     await service.reconcile();
 
     expect(queue.add).toHaveBeenCalledTimes(2);
+  });
+
+  describe('disk guard', () => {
+    it('enqueues nothing when free disk is measured and below the threshold', async () => {
+      statfsMock.mockResolvedValue(freeSpace(5));
+      const { service, queue, queryRaw } = build(ON_WITH_DECISIONS, [VOLUME]);
+
+      await service.reconcile();
+
+      expect(queue.add).not.toHaveBeenCalled();
+      // Bails before even the cumulative-volume query.
+      expect(queryRaw).not.toHaveBeenCalled();
+    });
+
+    it('refuses ONLY tier 3 when free disk cannot be measured', async () => {
+      statfsMock.mockRejectedValue(new Error('ENOSYS'));
+      const { service, queue } = build(ON_WITH_DECISIONS, [
+        VOLUME,
+        [{ count: 1n }], // tier 1 count
+        [{ id: 'digest-1' }], // tier 1 ids
+        [{ count: 1n }], // tier 2 count
+        [{ id: 'codal-1' }], // tier 2 ids
+      ]);
+
+      await service.reconcile();
+
+      const enqueued = queue.add.mock.calls.map(
+        ([, data]) => (data as { contentId: string }).contentId,
+      );
+      // Tiers 1-2 need ~12 GB and proceed; tier 3 is the case the guard exists for.
+      expect(enqueued).toContain('digest-1');
+      expect(enqueued).toContain('codal-1');
+      expect(enqueued).not.toContain('decision-1');
+    });
+
+    it('still enqueues tier 3 when free disk is measured and healthy', async () => {
+      statfsMock.mockResolvedValue(freeSpace(200));
+      const { service, queue } = build(ON_WITH_DECISIONS, [
+        VOLUME,
+        [{ count: 0n }],
+        [],
+        [{ count: 0n }],
+        [],
+        [{ count: 1n }],
+        [{ id: 'decision-1' }],
+      ]);
+
+      await service.reconcile();
+
+      const enqueued = queue.add.mock.calls.map(
+        ([, data]) => (data as { contentId: string }).contentId,
+      );
+      expect(enqueued).toContain('decision-1');
+    });
   });
 
   it('counts the UNCAPPED gap separately from the capped id list', async () => {
