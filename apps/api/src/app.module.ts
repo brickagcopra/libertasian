@@ -115,6 +115,9 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
         S3_ACCESS_KEY: Joi.string().default('libertasian'),
         S3_SECRET_KEY: Joi.string().default('libertasian_dev_secret'),
         S3_BUCKET_UPLOADS: Joi.string().default('libertasian-uploads'),
+        // Unset keeps the previously hardcoded 'us-east-1' (MinIO ignores it,
+        // but SigV4 still signs it).
+        S3_REGION: Joi.string().optional(),
         // OCR Service (Python)
         OCR_SERVICE_URL: Joi.string().default('http://localhost:8002'),
         // RAG Service (Python)
@@ -215,6 +218,17 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
           .valid('true', 'false')
           .default('false'),
         AUDIO_STORAGE_PATH: Joi.string().default('/'),
+        // Must not exceed TTS_WORKERS — see AudioGenerationProcessor.
+        AUDIO_PROCESSOR_CONCURRENCY: Joi.number().integer().min(1).default(2),
+        // Dedicated audio bucket (Cloudflare R2). NO DEFAULTS: leaving
+        // AUDIO_S3_ENDPOINT unset makes AudioStorageService delegate to the
+        // shared MinIO S3Service, which is the current behaviour everywhere.
+        // Private uploads and camera scans never move off MinIO.
+        AUDIO_S3_ENDPOINT: Joi.string().optional(),
+        AUDIO_S3_ACCESS_KEY: Joi.string().optional(),
+        AUDIO_S3_SECRET_KEY: Joi.string().optional(),
+        AUDIO_S3_BUCKET: Joi.string().optional(),
+        AUDIO_S3_REGION: Joi.string().optional(),
       }),
     }),
 

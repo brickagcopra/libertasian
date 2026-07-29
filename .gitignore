@@ -19,6 +19,9 @@ apps/mobile/ios/
 .env
 .env.local
 .env.*.local
+# Timestamped backups made while editing prod's .env — these hold LIVE secrets
+# (DB, JWT, Xendit, AWS, R2) and were stageable by `git add -A` until now.
+.env.bak.*
 
 # IDE
 .vscode/

@@ -9,6 +9,17 @@ dependencies = [
     "pydantic>=2.10.0",
     "pydantic-settings>=2.7.0",
     "kokoro>=0.9.2",
+    # HARD RUNTIME REQUIREMENT, not an optimisation. kokoro's G2P
+    # (misaki/en.py:501) looks for the spaCy pipeline `en_core_web_sm` and, when
+    # it is absent, calls spacy.cli.download() AT RUNTIME. The runner image has
+    # no pip/uv and runs as non-root, so that download calls sys.exit(1) and
+    # EVERY /synthesize returns 500 while /health still returns 200 (G2P inits
+    # lazily on first synthesis). Measured on prod 2026-07-29.
+    #
+    # spaCy models are pinned to the spacy MINOR version, so 3.8.x here must
+    # move together with the resolved spacy (currently 3.8.14). Bumping one
+    # without the other breaks model loading.
+    "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
     "numpy>=1.26.0",
     # Declared EXPLICITLY (not left transitive via kokoro) so the CPU index
     # pin in [tool.uv.sources] actually binds. A source pin only applies to a

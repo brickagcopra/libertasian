@@ -13,10 +13,15 @@ class Settings(BaseSettings):
     tts_model_repo: str = "hexgrad/Kokoro-82M"
     tts_default_voice: str = "af_heart"
 
-    # Concurrency. Kokoro-82M barely scales with threads — the Phase 0 spike
-    # measured only ~16% more RTF going from 4 to 12 threads (3.59x -> 4.28x on
-    # an 8k-char decision) — so throughput comes from running SEVERAL NARROW
-    # workers rather than one wide one.
+    # Concurrency. Kokoro-82M barely scales with threads, so throughput comes
+    # from running SEVERAL NARROW workers rather than one wide one.
+    #
+    # MEASURED ON PROD (2026-07-29), superseding the Phase 0 spike's 3.59x @ 4
+    # threads / 4.28x @ 12 — that figure was wrong by ~3.7x. Real warm
+    # throughput at 4 threads is ~0.97x REALTIME: 1,793 chars produced 131.0 s
+    # of audio in 135-142 s of wall clock, with CPU at 400-450% (i.e. threading
+    # is configured correctly; the old constant was simply not measured).
+    # Plan capacity against ~1x realtime per worker, not 3.6x.
     #
     # 2x4 = 8 threads by default, not 3x4 = 12: the prod box is 12 vCPU and
     # also serves the API. Tune upward only after measuring on the VPS.

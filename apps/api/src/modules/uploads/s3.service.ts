@@ -30,7 +30,10 @@ export class S3Service {
       'libertasian-uploads',
     );
 
-    const region = 'us-east-1';
+    // MinIO ignores the region but SigV4 still signs it, so it must match on
+    // both clients. Configurable for S3-compatible backends that validate it;
+    // leaving S3_REGION unset preserves the previous hardcoded value exactly.
+    const region = this.config.get<string>('S3_REGION', 'us-east-1');
     const credentials = {
       accessKeyId: this.config.get<string>('S3_ACCESS_KEY', 'libertasian'),
       secretAccessKey: this.config.get<string>(

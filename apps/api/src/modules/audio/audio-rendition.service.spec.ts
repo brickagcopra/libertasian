@@ -3,8 +3,8 @@ import { NotFoundException } from '@nestjs/common';
 import { Queue } from 'bullmq';
 
 import { PrismaService } from '../../prisma/prisma.service';
-import { S3Service } from '../uploads/s3.service';
 import { AudioRenditionService } from './audio-rendition.service';
+import { AudioStorageService } from './audio-storage.service';
 import type { TtsClient } from './tts.client';
 import { sanitizeRulingText } from './sanitize-ruling.util';
 
@@ -40,7 +40,7 @@ function build(env: Record<string, string> = {}) {
   const service = new AudioRenditionService(
     prisma as unknown as PrismaService,
     tts as unknown as TtsClient,
-    s3 as unknown as S3Service,
+    s3 as unknown as AudioStorageService,
     config,
     queue as unknown as Queue,
   );
@@ -409,7 +409,7 @@ describe('AudioRenditionService', () => {
       return new AudioRenditionService(
         prisma,
         { synthesize: jest.fn() } as unknown as TtsClient,
-        {} as unknown as S3Service,
+        {} as unknown as AudioStorageService,
         config,
         {} as unknown as Queue,
       );

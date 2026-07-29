@@ -6,11 +6,15 @@ import { S3Service } from './s3.service';
 // Mock @aws-sdk/client-s3 — each client records the endpoint it was built
 // with so presign tests can assert which origin the URL is signed against.
 const mockSend = jest.fn();
+const s3ClientCtor = jest.fn();
 jest.mock('@aws-sdk/client-s3', () => ({
-  S3Client: jest.fn().mockImplementation((config) => ({
-    send: mockSend,
-    __endpoint: config?.endpoint,
-  })),
+  S3Client: jest.fn().mockImplementation((config) => {
+    s3ClientCtor(config);
+    return {
+      send: mockSend,
+      __endpoint: config?.endpoint,
+    };
+  }),
   PutObjectCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'PutObject' })),
   GetObjectCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'GetObject' })),
   DeleteObjectCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'DeleteObject' })),
@@ -35,6 +39,7 @@ describe('S3Service', () => {
 
   beforeEach(async () => {
     mockSend.mockReset();
+    s3ClientCtor.mockReset();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -55,6 +60,41 @@ describe('S3Service', () => {
     }).compile();
 
     service = module.get<S3Service>(S3Service);
+  });
+
+  // ---- region ----
+
+  describe('region', () => {
+    it('defaults to us-east-1, the value it used before becoming configurable', () => {
+      // Both clients must agree: SigV4 signs the region even though MinIO
+      // ignores it, so a mismatch would break presigned URLs.
+      for (const [config] of s3ClientCtor.mock.calls) {
+        expect(config.region).toBe('us-east-1');
+      }
+      expect(s3ClientCtor).toHaveBeenCalled();
+    });
+
+    it('uses S3_REGION when set', async () => {
+      s3ClientCtor.mockReset();
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          S3Service,
+          {
+            provide: ConfigService,
+            useValue: {
+              get: jest.fn((key: string, defaultValue?: string) =>
+                key === 'S3_REGION' ? 'apac' : defaultValue,
+              ),
+            },
+          },
+        ],
+      }).compile();
+      module.get<S3Service>(S3Service);
+
+      expect(s3ClientCtor).toHaveBeenCalledWith(
+        expect.objectContaining({ region: 'apac' }),
+      );
+    });
   });
 
   // ---- sanitizeFilename ----
