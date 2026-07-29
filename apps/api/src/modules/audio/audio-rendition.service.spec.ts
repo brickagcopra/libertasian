@@ -16,7 +16,9 @@ interface PrismaMock {
   audioRendition: { findUnique: jest.Mock; findFirst: jest.Mock; upsert: jest.Mock };
 }
 
-function build() {
+/** `env` overrides config lookups; empty (the default) means every key falls
+ *  back to its production default, i.e. Polly/Matthew. */
+function build(env: Record<string, string> = {}) {
   const prisma: PrismaMock = {
     digest: { findUnique: jest.fn() },
     barExamAnswer: { findUnique: jest.fn() },
@@ -32,7 +34,7 @@ function build() {
   const s3 = { upload: jest.fn(), getSignedUrl: jest.fn() };
   const queue = { add: jest.fn() };
   const config: ConfigService = {
-    get: (_key: string, def?: string): string | undefined => def,
+    get: (key: string, def?: string): string | undefined => env[key] ?? def,
   } as unknown as ConfigService;
 
   const service = new AudioRenditionService(
@@ -541,6 +543,112 @@ describe('AudioRenditionService', () => {
       await expect(service.resolveText('legal_document', 'missing')).rejects.toThrow(
         NotFoundException,
       );
+    });
+  });
+
+  describe('getRendition — surviving a provider switch', () => {
+    /**
+     * In-memory stand-in for `audio_renditions` that HONOURS the where clause,
+     * so the voice and status filters are genuinely exercised rather than
+     * asserted against a hand-rigged return value.
+     */
+    function seedRenditions(
+      prisma: PrismaMock,
+      rows: Array<{ id: string; voiceId: string; status: string }>,
+    ) {
+      prisma.audioRendition.findUnique.mockImplementation(
+        ({
+          where,
+        }: {
+          where: { contentType_contentId_language_voiceId: { voiceId: string } };
+        }) =>
+          rows.find(
+            (r) =>
+              r.voiceId === where.contentType_contentId_language_voiceId.voiceId,
+          ) ?? null,
+      );
+      prisma.audioRendition.findFirst.mockImplementation(
+        ({ where }: { where: { status?: string } }) =>
+          rows.find((r) => r.status === where.status) ?? null,
+      );
+    }
+
+    // Prod's incumbent is Polly/Matthew (TTS_PROVIDER unset → 'polly',
+    // POLLY_VOICE_ID default 'Matthew'); af_heart is the INCOMING Kokoro voice.
+    // The migration fixtures below therefore run with TTS_PROVIDER=kokoro so the
+    // active voice is af_heart and the leftover rows are Matthew's.
+    const AFTER_FLIP = { TTS_PROVIDER: 'kokoro' };
+
+    it('returns the active-voice rendition without falling back', async () => {
+      const { service, prisma } = build();
+      seedRenditions(prisma, [
+        { id: 'r-active', voiceId: 'Matthew', status: 'ready' },
+      ]);
+
+      const found = await service.getRendition('digest', 'd1', 'en');
+
+      expect(found).toEqual(expect.objectContaining({ id: 'r-active' }));
+      expect(prisma.audioRendition.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('falls back to a ready rendition left by the previous voice', async () => {
+      const { service, prisma } = build(AFTER_FLIP);
+      // What prod looks like the moment TTS_PROVIDER flips: 302 Polly rows, none
+      // yet under the new active voice.
+      seedRenditions(prisma, [
+        { id: 'r-polly', voiceId: 'Matthew', status: 'ready' },
+      ]);
+
+      const found = await service.getRendition('digest', 'd1', 'en');
+
+      expect(service.voiceId).toBe('af_heart');
+      expect(found).toEqual(expect.objectContaining({ id: 'r-polly' }));
+      const args = prisma.audioRendition.findFirst.mock.calls[0]?.[0] as {
+        where: Record<string, unknown>;
+      };
+      expect(args.where['status']).toBe('ready');
+      expect(args.where).not.toHaveProperty('voiceId');
+    });
+
+    it('does not let a non-ready active-voice row mask a ready previous-voice one', async () => {
+      const { service, prisma } = build(AFTER_FLIP);
+      // Kokoro synthesis in flight while Polly audio is still serviceable.
+      seedRenditions(prisma, [
+        { id: 'r-kokoro', voiceId: 'af_heart', status: 'pending' },
+        { id: 'r-polly', voiceId: 'Matthew', status: 'ready' },
+      ]);
+
+      const found = await service.getRendition('digest', 'd1', 'en');
+
+      expect(found).toEqual(expect.objectContaining({ id: 'r-polly' }));
+    });
+
+    it('returns the non-ready active row when nothing ready exists, so the caller enqueues', async () => {
+      const { service, prisma } = build(AFTER_FLIP);
+      seedRenditions(prisma, [
+        { id: 'r-kokoro', voiceId: 'af_heart', status: 'pending' },
+      ]);
+
+      const found = await service.getRendition('digest', 'd1', 'en');
+
+      // Not 'ready', so the controller still treats this as a miss.
+      expect(found).toEqual(expect.objectContaining({ status: 'pending' }));
+    });
+
+    it('returns null when the only other-voice row is PENDING, so the caller enqueues', async () => {
+      const { service, prisma } = build();
+      seedRenditions(prisma, [
+        { id: 'r-pending', voiceId: 'af_heart', status: 'pending' },
+      ]);
+
+      await expect(service.getRendition('digest', 'd1', 'en')).resolves.toBeNull();
+    });
+
+    it('returns null when no rendition exists at all', async () => {
+      const { service, prisma } = build();
+      seedRenditions(prisma, []);
+
+      await expect(service.getRendition('digest', 'd1', 'en')).resolves.toBeNull();
     });
   });
 });

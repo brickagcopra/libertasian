@@ -211,6 +211,9 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
           .valid('true', 'false')
           .default('false'),
         AUDIO_RECONCILE_BATCH: Joi.number().integer().min(1).default(200),
+        AUDIO_RECONCILE_DRY_RUN: Joi.string()
+          .valid('true', 'false')
+          .default('false'),
         AUDIO_STORAGE_PATH: Joi.string().default('/'),
       }),
     }),

@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
 import { statfs } from 'fs/promises';
@@ -190,6 +191,78 @@ describe('AudioReconcilerService', () => {
         ([, data]) => (data as { contentId: string }).contentId,
       );
       expect(enqueued).toContain('decision-1');
+    });
+  });
+
+  describe('dry run', () => {
+    let logSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      logSpy = jest
+        .spyOn(Logger.prototype, 'log')
+        .mockImplementation(() => undefined);
+    });
+    afterEach(() => logSpy.mockRestore());
+
+    const dryRunLogs = () =>
+      logSpy.mock.calls
+        .map(([arg]) => arg as Record<string, unknown>)
+        .filter((arg) => arg?.['event'] === 'audio_reconcile_dry_run');
+
+    it('runs every query and logs tiers 1-2 but enqueues nothing', async () => {
+      const { service, queue, queryRaw } = build(
+        { ...ON, AUDIO_RECONCILE_DRY_RUN: 'true' },
+        [
+          VOLUME,
+          [{ count: 13058n }], // tier 1 count — the real prod digest gap
+          [{ id: 'digest-1' }],
+          [{ count: 24n }], // tier 2 count
+          [{ id: 'codal-1' }],
+        ],
+      );
+
+      await service.reconcile();
+
+      expect(queue.add).not.toHaveBeenCalled();
+      // The whole point of the dry run: the gap queries still ran.
+      expect(queryRaw).toHaveBeenCalled();
+
+      const logs = dryRunLogs();
+      expect(logs.map((l) => l['tier'])).toEqual([1, 2]);
+      expect(logs[0]).toEqual(
+        expect.objectContaining({
+          wouldEnqueue: 1,
+          remainingGap: 13058,
+          sampleIds: ['digest-1'],
+          // 13,058 × 135 s / 3600 — arithmetic, pinned so a constant edit shows up.
+          estimatedHoursForTier: 489.7,
+        }),
+      );
+    });
+
+    it('enqueues normally when DRY_RUN is false', async () => {
+      const { service, queue } = build(
+        { ...ON, AUDIO_RECONCILE_DRY_RUN: 'false' },
+        [VOLUME, [{ count: 1n }], [{ id: 'digest-1' }], [{ count: 0n }], []],
+      );
+
+      await service.reconcile();
+
+      expect(queue.add).toHaveBeenCalledTimes(1);
+      expect(dryRunLogs()).toHaveLength(0);
+    });
+
+    it('does nothing at all when DRY_RUN is set but the reconciler is off', async () => {
+      const { service, queue, queryRaw } = build(
+        { AUDIO_RECONCILE_DRY_RUN: 'true' },
+        [],
+      );
+
+      await service.reconcile();
+
+      expect(queue.add).not.toHaveBeenCalled();
+      expect(queryRaw).not.toHaveBeenCalled();
+      expect(dryRunLogs()).toHaveLength(0);
     });
   });
 
