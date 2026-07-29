@@ -7,12 +7,17 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import type { Prisma } from '@prisma/client';
 import { Queue } from 'bullmq';
 
 import { PaywallException } from '../../common/exceptions/paywall.exception';
 import { RedisService } from '../../common/services/redis.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  CONTENT_PUBLISHED_EVENT,
+  type ContentPublishedEvent,
+} from '../audio/audio.events';
 import {
   AssignReviewerDto,
   BatchApproveDto,
@@ -43,6 +48,7 @@ export class DigestsService {
   constructor(
     private readonly prisma: PrismaService,
     @InjectQueue('digests') private readonly digestQueue: Queue,
+    private readonly events: EventEmitter2,
     @Optional() private readonly redis?: RedisService,
   ) {}
 
@@ -1034,6 +1040,15 @@ export class DigestsService {
     }
 
     await this.prisma.$transaction(txOps);
+
+    // Emitted only after the transaction commits, so a rollback never leaves a
+    // queued job for content that was not actually published.
+    for (const digestId of promotableIds) {
+      this.events.emit(CONTENT_PUBLISHED_EVENT, {
+        contentType: 'digest',
+        contentId: digestId,
+      } satisfies ContentPublishedEvent);
+    }
 
     return { processed: foundIds.length, digestIds: foundIds };
   }

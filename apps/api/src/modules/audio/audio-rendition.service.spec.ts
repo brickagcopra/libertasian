@@ -398,6 +398,60 @@ describe('AudioRenditionService', () => {
     });
   });
 
+  describe('isGenerationEnabled — tier gating', () => {
+    function gate(env: Record<string, string>) {
+      const prisma = {} as unknown as PrismaService;
+      const config = {
+        get: (key: string, fallback?: string) => env[key] ?? fallback,
+      } as unknown as ConfigService;
+      return new AudioRenditionService(
+        prisma,
+        { synthesize: jest.fn() } as unknown as TtsClient,
+        {} as unknown as S3Service,
+        config,
+        {} as unknown as Queue,
+      );
+    }
+
+    const ON = { AUDIO_RECONCILER_ENABLED: 'true' };
+    const ON_WITH_DECISIONS = { ...ON, AUDIO_RECONCILE_DECISIONS: 'true' };
+
+    it('refuses everything while the reconciler flag is false', () => {
+      const service = gate({});
+      expect(service.isGenerationEnabled('digest')).toBe(false);
+      expect(service.isGenerationEnabled('legal_document', 'codal')).toBe(false);
+    });
+
+    it('lets a codal through on AUDIO_RECONCILER_ENABLED alone', () => {
+      const service = gate(ON);
+      expect(service.isGenerationEnabled('legal_document', 'codal')).toBe(true);
+      expect(service.isGenerationEnabled('legal_document', 'republic_act')).toBe(
+        true,
+      );
+      expect(service.isGenerationEnabled('legal_document', 'rules_of_court')).toBe(
+        true,
+      );
+    });
+
+    it('holds a decision behind the second flag', () => {
+      expect(gate(ON).isGenerationEnabled('legal_document', 'decision')).toBe(false);
+      expect(
+        gate(ON_WITH_DECISIONS).isGenerationEnabled('legal_document', 'decision'),
+      ).toBe(true);
+    });
+
+    it('refuses out-of-scope document types even with both flags on', () => {
+      const service = gate(ON_WITH_DECISIONS);
+      expect(
+        service.isGenerationEnabled('legal_document', 'bar_exam_questions'),
+      ).toBe(false);
+      expect(
+        service.isGenerationEnabled('legal_document', 'administrative_matter'),
+      ).toBe(false);
+      expect(service.isGenerationEnabled('legal_document', undefined)).toBe(false);
+    });
+  });
+
   describe('resolveText — legal_document (codals and decisions)', () => {
     const PUBLISHED = { title: 'Tanada v. Angara', status: 'published' };
 

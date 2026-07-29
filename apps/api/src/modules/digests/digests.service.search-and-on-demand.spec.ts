@@ -1,5 +1,6 @@
 import { NotFoundException } from '@nestjs/common';
 import { getQueueToken } from '@nestjs/bullmq';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Test, type TestingModule } from '@nestjs/testing';
 
 import { PrismaService } from '../../prisma/prisma.service';
@@ -38,6 +39,7 @@ describe('DigestsService — search + generateOnDemand (PR2)', () => {
         DigestsService,
         { provide: PrismaService, useValue: prisma },
         { provide: getQueueToken('digests'), useValue: { add: jest.fn() } },
+        { provide: EventEmitter2, useValue: { emit: jest.fn() } },
       ],
     }).compile();
 

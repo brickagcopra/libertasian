@@ -5,12 +5,17 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import type { Prisma } from '@prisma/client';
 
 import { PaywallException } from '../../common/exceptions/paywall.exception';
 import { RedisService } from '../../common/services/redis.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import {
+  CONTENT_PUBLISHED_EVENT,
+  type ContentPublishedEvent,
+} from '../audio/audio.events';
 import {
   CreateLegalDocumentDto,
   UpdateLegalDocumentDto,
@@ -30,6 +35,7 @@ export class DocumentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly events: EventEmitter2,
     @Optional() private readonly redis?: RedisService,
   ) {}
 
@@ -451,6 +457,13 @@ export class DocumentsService {
         isPublished: true,
       },
     });
+
+    // Domain event, not a direct AudioModule import — a direct dependency
+    // would create a documents -> audio -> digests cycle.
+    this.events.emit(CONTENT_PUBLISHED_EVENT, {
+      contentType: 'legal_document',
+      contentId: id,
+    } satisfies ContentPublishedEvent);
 
     // Auto-enqueue derivative generation jobs (fire-and-forget — never
     // block the publish response).

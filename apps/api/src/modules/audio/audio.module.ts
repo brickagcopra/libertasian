@@ -6,6 +6,8 @@ import { DigestsModule } from '../digests/digests.module';
 import { UploadsModule } from '../uploads/uploads.module';
 import { AudioController } from './audio.controller';
 import { AudioGenerationProcessor } from './audio-generation.processor';
+import { AudioPublishListener } from './audio-publish.listener';
+import { AudioReconcilerService } from './audio-reconciler.service';
 import { AudioRenditionService } from './audio-rendition.service';
 import { AUDIO_QUEUE } from './audio.types';
 import { KokoroClient } from './kokoro.client';
@@ -45,6 +47,8 @@ export const LEGAL_SSML_NORMALIZER = Symbol('LEGAL_SSML_NORMALIZER');
     KokoroClient,
     AudioRenditionService,
     AudioGenerationProcessor,
+    AudioPublishListener,
+    AudioReconcilerService,
     { provide: LEGAL_SSML_NORMALIZER, useValue: toSsml },
     {
       // Polly is the default and stays the default. Only an explicit
