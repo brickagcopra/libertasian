@@ -248,13 +248,29 @@ export class AudioRenditionService {
     };
   }
 
-  /** Look up the rendition for the configured voice (any status). */
+  /**
+   * Look up the rendition to serve.
+   *
+   * Prefers the configured voice, then falls back to ANY ready rendition for the
+   * same content. Without the fallback, changing TTS_PROVIDER (and therefore
+   * defaultVoiceId) makes every rendition produced by the previous backend
+   * invisible in a single deploy.
+   *
+   * A served fallback also stops the read path from enqueueing work for
+   * that content. That is intended ONLY while the reconciler is running:
+   * its gap queries key on `ar.voice_id = <active voice>`, so
+   * fallback-served rows are still counted as gaps and still get
+   * re-synthesized. AUDIO_RECONCILER_ENABLED is currently false on prod —
+   * with it off, this fallback makes a TTS_PROVIDER flip permanent, because
+   * nothing else ever enqueues the migration. Enable the reconciler in the
+   * same change window as any provider switch.
+   */
   async getRendition(
     contentType: AudioContentType,
     contentId: string,
     language: string,
   ) {
-    return this.prisma.audioRendition.findUnique({
+    const active = await this.prisma.audioRendition.findUnique({
       where: {
         contentType_contentId_language_voiceId: {
           contentType,
@@ -264,6 +280,17 @@ export class AudioRenditionService {
         },
       },
     });
+    if (active?.status === 'ready') return active;
+
+    // `status: 'ready'` ONLY. A pending or failed row from a previous voice must
+    // not mask the active voice's absence, or synthesis would never be enqueued.
+    // Falling through on a non-ready ACTIVE row matters for the same reason in
+    // reverse: it must not mask a ready row the previous backend left behind.
+    const fallback = await this.prisma.audioRendition.findFirst({
+      where: { contentType, contentId, language, status: 'ready' },
+      orderBy: { createdAt: 'desc' },
+    });
+    return fallback ?? active;
   }
 
   /**

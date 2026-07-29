@@ -37,6 +37,22 @@ const BYTES_PER_AUDIO_SECOND = (48 * 1000) / 8;
 /** Refuse to enqueue below this much free space on the MinIO volume. */
 const MIN_FREE_DISK_BYTES = 20 * 1024 ** 3;
 
+/**
+ * Rough seconds of audio one item of each tier produces. Average characters per
+ * item (measured on the prod corpus) divided by 15.0 chars per audio-second
+ * (measured in the Phase 0 spike). ARITHMETIC, NOT MEASUREMENT — correct these
+ * once real Kokoro throughput on prod hardware is known.
+ *
+ *   tier 1  digest    ~2,032 chars/item                      → ~135 s
+ *   tier 2  codals    ~178,000 chars/doc  (4.27M / 24)       → ~11,900 s
+ *   tier 3  decision  ~25,600 chars/doc   (396.08M / 15,464) → ~1,710 s
+ */
+const ESTIMATED_SECONDS_PER_ITEM: Record<Tier['n'], number> = {
+  1: 135,
+  2: 11_900,
+  3: 1_710,
+};
+
 @Injectable()
 export class AudioReconcilerService {
   private readonly logger = new Logger(AudioReconcilerService.name);
@@ -57,6 +73,13 @@ export class AudioReconcilerService {
     return (
       this.enabled &&
       this.config.get<string>('AUDIO_RECONCILE_DECISIONS', 'false') === 'true'
+    );
+  }
+
+  /** Log what WOULD be enqueued without enqueueing. Requires the reconciler on. */
+  private get dryRun(): boolean {
+    return (
+      this.config.get<string>('AUDIO_RECONCILE_DRY_RUN', 'false') === 'true'
     );
   }
 
@@ -131,11 +154,35 @@ export class AudioReconcilerService {
 
       if (remaining <= 0) continue;
       const ids = await this.gapIdsForTier(tier, remaining);
+
+      if (this.dryRun) {
+        this.logger.log({
+          event: 'audio_reconcile_dry_run',
+          tier: tier.n,
+          label: tier.label,
+          wouldEnqueue: ids.length,
+          remainingGap: total,
+          sampleIds: ids.slice(0, 5),
+          estimatedHoursForTier: +(
+            (total * this.estimatedSecondsPerItem(tier)) /
+            3600
+          ).toFixed(1),
+          message: 'DRY RUN: nothing enqueued',
+        });
+        remaining -= ids.length;
+        continue;
+      }
+
       for (const id of ids) {
         await this.enqueue(tier, id);
       }
       remaining -= ids.length;
     }
+  }
+
+  /** Estimated seconds of audio one item of this tier produces. */
+  private estimatedSecondsPerItem(tier: Tier): number {
+    return ESTIMATED_SECONDS_PER_ITEM[tier.n];
   }
 
   /** Document types belonging to a legal-document tier. */
