@@ -368,6 +368,38 @@ services:
           memory: 2G
 
   # ====================
+  # TTS Service (Kokoro-82M)
+  # ====================
+  # Internal only: `expose`, never `ports`, and NOT referenced by nginx. The
+  # API is its sole client.
+  tts-service:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.tts
+    container_name: libertasian-tts-service
+    restart: always
+    expose:
+      - "8003"
+    environment:
+      TTS_DEFAULT_VOICE: ${KOKORO_VOICE_ID:-af_heart}
+      TTS_WORKERS: ${TTS_WORKERS:-2}
+      TTS_THREADS_PER_WORKER: ${TTS_THREADS_PER_WORKER:-4}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks: [ai]
+    deploy:
+      resources:
+        limits:
+          # 2 workers x 4 threads = 8 of the box's 12 vCPU, leaving headroom
+          # for the API. Raise only after measuring on the VPS.
+          cpus: "8"
+          memory: 4G
+
+  # ====================
   # Worker Service (Celery)
   # ====================
   worker-service:

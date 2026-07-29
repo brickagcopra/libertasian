@@ -1,0 +1,58 @@
+# ==========================================================================
+# LIBERTASIAN TTS Service — Multi-stage production Dockerfile
+# Python 3.12 + FastAPI + Kokoro-82M
+#
+# CPU-ONLY BY CONSTRUCTION. The prod VPS is 12 vCPU AMD EPYC / 47 GB RAM with
+# NO GPU, so torch is declared explicitly in pyproject.toml and pinned to the
+# CPU wheel index; this image never derives from a CUDA base.
+# ==========================================================================
+
+# Stage 1: Dependencies
+FROM python:3.12-slim AS deps
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+WORKDIR /app
+
+# Lockfile first so the layer caches on source-only changes.
+COPY services/tts-service/pyproject.toml services/tts-service/uv.lock ./
+
+# --frozen fails the build if the lock and pyproject.toml have drifted.
+RUN uv sync --frozen --no-dev --no-install-project
+
+# Stage 2: Production
+FROM python:3.12-slim AS runner
+
+# espeak-ng is Kokoro's grapheme-to-phoneme fallback for out-of-vocabulary
+# words — without it, unusual legal terms silently degrade. (LAME is statically
+# bundled in the lameenc wheel, so no libmp3lame package is needed.)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    espeak-ng \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=deps /app/.venv /app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
+
+COPY services/tts-service/src ./src
+
+# Model weights live on a writable cache dir owned by the runtime user.
+ENV HF_HOME=/app/.cache/huggingface
+RUN groupadd -g 1001 appgroup \
+    && useradd -u 1001 -g appgroup -s /bin/sh appuser \
+    && mkdir -p "$HF_HOME" \
+    && chown -R appuser:appgroup /app
+USER appuser
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+EXPOSE 8003
+
+# Model load is ~13s cold, so allow a generous start period before probing.
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=60s \
+    CMD curl -f http://localhost:8003/health || exit 1
+
+CMD ["sh", "-c", "uvicorn src.main:app --host 0.0.0.0 --port 8003 --workers ${TTS_WORKERS:-2}"]
