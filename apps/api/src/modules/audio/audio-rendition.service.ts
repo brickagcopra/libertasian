@@ -1,5 +1,5 @@
 import { InjectQueue } from '@nestjs/bullmq';
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
 import * as crypto from 'crypto';
@@ -15,12 +15,13 @@ import {
   type AudioGenerationJobData,
 } from './audio.types';
 import {
+  toSpokenSegments,
   toSsmlDocument,
   type ManifestEntry,
   type SpokenDocument,
 } from './legal-ssml.util';
-import { PollyClient } from './polly.client';
 import { sanitizeRulingText } from './sanitize-ruling.util';
+import { TTS_CLIENT, type TtsClient } from './tts.client';
 
 /** Public read projection of a rendition, with short-lived signed URLs. */
 export interface AudioRenditionReadModel {
@@ -65,13 +66,24 @@ export class AudioRenditionService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly polly: PollyClient,
+    @Inject(TTS_CLIENT) private readonly tts: TtsClient,
     private readonly s3: S3Service,
     private readonly config: ConfigService,
     @InjectQueue(AUDIO_QUEUE) private readonly queue: Queue,
   ) {
-    this.defaultVoiceId = this.config.get<string>('POLLY_VOICE_ID', 'Matthew');
-    this.engine = this.config.get<string>('POLLY_ENGINE', 'neural');
+    // voiceId and engine MUST track the active provider. The unique key is
+    // (contentType, contentId, language, voiceId), so a distinct Kokoro voiceId
+    // is exactly what makes its renditions land as NEW rows instead of
+    // overwriting the 302 existing Polly ones.
+    const provider = this.config.get<string>('TTS_PROVIDER', 'polly');
+    this.defaultVoiceId =
+      provider === 'kokoro'
+        ? this.config.get<string>('KOKORO_VOICE_ID', 'af_heart')
+        : this.config.get<string>('POLLY_VOICE_ID', 'Matthew');
+    this.engine =
+      provider === 'kokoro'
+        ? 'kokoro'
+        : this.config.get<string>('POLLY_ENGINE', 'neural');
   }
 
   /** The voice every rendition is keyed on (single configured default). */
@@ -225,7 +237,10 @@ export class AudioRenditionService {
       }
     }
 
-    const { audio, marks } = await this.polly.synthesize(ssml, voiceId);
+    const { audio, marks } = await this.tts.synthesize(
+      { ssml, segments: toSpokenSegments(doc) },
+      voiceId,
+    );
     const durationMs = this.lastWordMarkTime(marks);
     const charCount = normalizedText.length;
 

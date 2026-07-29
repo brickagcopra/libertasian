@@ -5,7 +5,7 @@ import { Queue } from 'bullmq';
 import { PrismaService } from '../../prisma/prisma.service';
 import { S3Service } from '../uploads/s3.service';
 import { AudioRenditionService } from './audio-rendition.service';
-import { PollyClient } from './polly.client';
+import type { TtsClient } from './tts.client';
 import { sanitizeRulingText } from './sanitize-ruling.util';
 
 interface PrismaMock {
@@ -24,7 +24,7 @@ function build() {
       upsert: jest.fn(),
     },
   };
-  const polly = { synthesize: jest.fn() };
+  const tts = { synthesize: jest.fn() };
   const s3 = { upload: jest.fn(), getSignedUrl: jest.fn() };
   const queue = { add: jest.fn() };
   const config: ConfigService = {
@@ -33,12 +33,12 @@ function build() {
 
   const service = new AudioRenditionService(
     prisma as unknown as PrismaService,
-    polly as unknown as PollyClient,
+    tts as unknown as TtsClient,
     s3 as unknown as S3Service,
     config,
     queue as unknown as Queue,
   );
-  return { service, prisma, polly, s3, queue };
+  return { service, prisma, tts, s3, queue };
 }
 
 const DIGEST_ROW = {
@@ -71,10 +71,10 @@ describe('AudioRenditionService', () => {
 
   describe('generate — happy path (digest)', () => {
     it('synthesizes, uploads mp3 + marks, and persists a ready rendition', async () => {
-      const { service, prisma, polly, s3 } = build();
+      const { service, prisma, tts, s3 } = build();
       prisma.digest.findUnique.mockResolvedValue(DIGEST_ROW);
       prisma.audioRendition.findFirst.mockResolvedValue(null);
-      polly.synthesize.mockResolvedValue({
+      tts.synthesize.mockResolvedValue({
         audio: Buffer.from('MP3BYTES'),
         marks: MARKS,
       });
@@ -91,11 +91,21 @@ describe('AudioRenditionService', () => {
         language: 'en',
       });
 
-      expect(polly.synthesize).toHaveBeenCalledTimes(1);
-      // SSML passed to Polly should be wrapped + expand "v." → "versus".
-      const ssmlArg = polly.synthesize.mock.calls[0]?.[0] as string;
-      expect(ssmlArg.startsWith('<speak>')).toBe(true);
-      expect(ssmlArg).toContain('versus');
+      expect(tts.synthesize).toHaveBeenCalledTimes(1);
+      // The call site is provider-agnostic: BOTH projections are passed, and
+      // each backend consumes the one it understands.
+      const input = tts.synthesize.mock.calls[0]?.[0] as {
+        ssml: string;
+        segments: Array<{ id: string; text: string; leadSilenceMs: number }>;
+      };
+      expect(input.ssml.startsWith('<speak>')).toBe(true);
+      expect(input.ssml).toContain('versus');
+      // Segment ids must line up with the SSML marks the same document emits.
+      expect(input.segments.length).toBeGreaterThan(0);
+      expect(input.segments[0]?.id).toBe('seg-0');
+      expect(input.segments.every((s) => typeof s.leadSilenceMs === 'number')).toBe(
+        true,
+      );
 
       expect(s3.upload).toHaveBeenCalledTimes(3);
       const keys = s3.upload.mock.calls.map((c) => c[0] as string);
@@ -123,10 +133,10 @@ describe('AudioRenditionService', () => {
     });
 
     it('uploads a readalong.json joining ssml marks onto the manifest', async () => {
-      const { service, prisma, polly, s3 } = build();
+      const { service, prisma, tts, s3 } = build();
       prisma.digest.findUnique.mockResolvedValue(DIGEST_ROW);
       prisma.audioRendition.findFirst.mockResolvedValue(null);
-      polly.synthesize.mockResolvedValue({
+      tts.synthesize.mockResolvedValue({
         audio: Buffer.from('MP3BYTES'),
         marks: MARKS,
       });
@@ -178,10 +188,10 @@ describe('AudioRenditionService', () => {
     });
 
     it('folds READALONG_SCHEMA_VERSION into the content hash', async () => {
-      const { service, prisma, polly, s3 } = build();
+      const { service, prisma, tts, s3 } = build();
       prisma.digest.findUnique.mockResolvedValue(DIGEST_ROW);
       prisma.audioRendition.findFirst.mockResolvedValue(null);
-      polly.synthesize.mockResolvedValue({
+      tts.synthesize.mockResolvedValue({
         audio: Buffer.from('MP3BYTES'),
         marks: MARKS,
       });
@@ -240,7 +250,7 @@ describe('AudioRenditionService', () => {
 
   describe('generate — content-hash short-circuit', () => {
     it('returns the existing ready rendition without calling Polly or S3', async () => {
-      const { service, prisma, polly, s3 } = build();
+      const { service, prisma, tts, s3 } = build();
       prisma.digest.findUnique.mockResolvedValue(DIGEST_ROW);
       prisma.audioRendition.findFirst.mockResolvedValue({
         id: 'cached-1',
@@ -254,19 +264,19 @@ describe('AudioRenditionService', () => {
       });
 
       expect(result.id).toBe('cached-1');
-      expect(polly.synthesize).not.toHaveBeenCalled();
+      expect(tts.synthesize).not.toHaveBeenCalled();
       expect(s3.upload).not.toHaveBeenCalled();
       expect(prisma.audioRendition.upsert).not.toHaveBeenCalled();
     });
 
     it('bypasses the short-circuit when force is set', async () => {
-      const { service, prisma, polly, s3 } = build();
+      const { service, prisma, tts, s3 } = build();
       prisma.digest.findUnique.mockResolvedValue(DIGEST_ROW);
       prisma.audioRendition.findFirst.mockResolvedValue({
         id: 'cached-1',
         status: 'ready',
       });
-      polly.synthesize.mockResolvedValue({ audio: Buffer.from('x'), marks: MARKS });
+      tts.synthesize.mockResolvedValue({ audio: Buffer.from('x'), marks: MARKS });
       prisma.audioRendition.upsert.mockResolvedValue({ id: 'rend-2' });
 
       await service.generate({
@@ -277,7 +287,7 @@ describe('AudioRenditionService', () => {
       });
 
       expect(prisma.audioRendition.findFirst).not.toHaveBeenCalled();
-      expect(polly.synthesize).toHaveBeenCalledTimes(1);
+      expect(tts.synthesize).toHaveBeenCalledTimes(1);
       expect(s3.upload).toHaveBeenCalledTimes(3);
     });
   });

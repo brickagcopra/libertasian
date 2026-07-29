@@ -198,6 +198,11 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
         // engine. 'true' (default) wraps SSML for a news-anchor tone; 'false'
         // disables. Never applied on generative/long-form engines.
         POLLY_NEWSCASTER: Joi.string().valid('true', 'false').default('true'),
+        // Self-hosted TTS. Defaults keep Polly active; flipping TTS_PROVIDER
+        // to 'kokoro' is the single switch that changes backends.
+        TTS_PROVIDER: Joi.string().valid('polly', 'kokoro').default('polly'),
+        TTS_SERVICE_URL: Joi.string().default('http://tts-service:8003'),
+        KOKORO_VOICE_ID: Joi.string().default('af_heart'),
       }),
     }),
 
