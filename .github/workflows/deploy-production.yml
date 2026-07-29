@@ -60,6 +60,8 @@ jobs:
             dockerfile: infrastructure/docker/Dockerfile.worker
           - service: embedding-service
             dockerfile: infrastructure/docker/Dockerfile.embedding
+          - service: tts-service
+            dockerfile: infrastructure/docker/Dockerfile.tts
     steps:
       - uses: actions/checkout@v4
 

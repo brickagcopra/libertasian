@@ -84,11 +84,13 @@ jobs:
             dockerfile: infrastructure/docker/Dockerfile.worker
           - service: embedding-service
             dockerfile: infrastructure/docker/Dockerfile.embedding
+          - service: tts-service
+            dockerfile: infrastructure/docker/Dockerfile.tts
     steps:
       - uses: actions/checkout@v4
 
-      # embedding-service and worker-service bundle large ML deps
-      # (torch, sentence-transformers) and the resulting image plus
+      # embedding-service, worker-service and tts-service bundle large ML
+      # deps (torch, sentence-transformers) and the resulting image plus
       # Trivy's layer export exceeds the default runner disk. Free up
       # the pre-installed tooling we don't need before building.
       - name: Free disk space on runner
