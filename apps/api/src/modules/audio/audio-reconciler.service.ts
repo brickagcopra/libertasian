@@ -12,6 +12,7 @@ import {
   AUDIO_JOB,
   AUDIO_QUEUE,
   CODAL_DOCUMENT_TYPES,
+  audioJobId,
   type AudioContentType,
 } from './audio.types';
 
@@ -300,13 +301,26 @@ export class AudioReconcilerService {
     return rows.map((r) => r.id);
   }
 
-  /** Enqueue one item at the tier's priority. */
+  /**
+   * Enqueue one item at the tier's priority.
+   *
+   * `language` is bound once and passed to BOTH the payload and the job id: the
+   * id is the dedupe key, so it must match what {@link
+   * AudioRenditionService.requestGeneration} produces for the same content or a
+   * user request during a backfill synthesizes the same audio a second time.
+   */
   private async enqueue(tier: Tier, contentId: string): Promise<void> {
+    const language = 'en';
     await this.queue.add(
       AUDIO_JOB,
-      { contentType: tier.contentType, contentId, language: 'en', force: false },
+      { contentType: tier.contentType, contentId, language, force: false },
       {
-        jobId: `${tier.contentType}:${contentId}:en:${this.renditions.voiceId}`,
+        jobId: audioJobId(
+          tier.contentType,
+          contentId,
+          language,
+          this.renditions.voiceId,
+        ),
         priority: tier.priority,
         attempts: 3,
         backoff: { type: 'exponential', delay: 5000 },

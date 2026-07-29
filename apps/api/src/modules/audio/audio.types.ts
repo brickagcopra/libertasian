@@ -31,6 +31,41 @@ export const AUDIO_QUEUE = 'audio-generation';
 export const AUDIO_JOB = 'generate-audio';
 
 /**
+ * Separator for {@link audioJobId}. MUST NOT BE ':' — Redis uses the colon as
+ * its key separator, so BullMQ rejects custom job ids containing one
+ * (`Job.validateOptions`: "Custom Id cannot contain :", bullmq 5.71.0
+ * `classes/job.js:1038`). A colon here throws on EVERY enqueue, and because the
+ * specs mock the queue no test catches it — the mock accepts any string.
+ *
+ * The check is `id.includes(':') && id.split(':').length !== 3`, a carve-out for
+ * legacy repeatable jobs, so a two-colon id would sneak through today. Do not
+ * rely on that: the library's own TODO says the next breaking change tightens it
+ * to a plain `includes(':')`.
+ */
+const AUDIO_JOB_ID_SEPARATOR = '__';
+
+/**
+ * The deterministic BullMQ job id for one unit of audio work.
+ *
+ * This id IS the dedupe key: while a job with it is queued or active, BullMQ
+ * drops a second `add` with the same id. Both enqueue sites — the reconciler
+ * backfill and the on-demand `requestGeneration` — must therefore produce
+ * IDENTICAL ids for the same content, which is what makes a running backfill
+ * job absorb a concurrent user request instead of synthesizing it twice.
+ *
+ * Forced (admin) regen deliberately passes no jobId at all, so it is never
+ * deduped and always runs.
+ */
+export function audioJobId(
+  contentType: AudioContentType,
+  contentId: string,
+  language: string,
+  voiceId: string,
+): string {
+  return [contentType, contentId, language, voiceId].join(AUDIO_JOB_ID_SEPARATOR);
+}
+
+/**
  * The "codals" tier: codes and statutory issuances.
  *
  * Deliberately EXCLUDES 'administrative_matter' and 'administrative_case' —
