@@ -7,6 +7,12 @@
 # the rented-GPU tier-1 backfill, where prod measured 41.5 items/hour and a
 # 2,238-char digest could not finish inside any sane per-request budget.
 #
+# DELIBERATELY NOT IN CI. Both security-scan.yml's container matrix and
+# deploy-production.yml build `Dockerfile.tts` only: this image is never deployed
+# to prod, and at 34.3 GB its CUDA layers exceed even the runner disk that
+# workflow already goes out of its way to free. Trivy-scan it on the box you rent
+# before you run it there.
+#
 # Single-stage on purpose: uv downloads a managed CPython 3.12 (the CUDA bases
 # ship a different system Python), and splitting the interpreter from the venv
 # across stages buys a little image size at the cost of a fragile copy. This is
