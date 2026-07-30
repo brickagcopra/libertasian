@@ -4227,6 +4227,9 @@ model AudioRendition {
   durationMs     Int?     @map("duration_ms")
   charCount      Int?     @map("char_count")
   status         String   @default("pending") @db.VarChar(20)
+  /// Classified reason a `failed` row failed (TtsFailureReason + detail). Never
+  /// contains document text. Cleared when the rendition later succeeds.
+  failureReason  String?  @map("failure_reason") @db.VarChar(200)
   visibility     String   @default("public_editorial") @db.VarChar(30)
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
 

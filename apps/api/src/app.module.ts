@@ -206,6 +206,22 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
         TTS_PROVIDER: Joi.string().valid('polly', 'kokoro').default('polly'),
         TTS_SERVICE_URL: Joi.string().default('http://tts-service:8003'),
         KOKORO_VOICE_ID: Joi.string().default('af_heart'),
+        // Bearer token for the API → tts-service hop. OPTIONAL and unset in
+        // prod, where the call never leaves the Docker network; both sides
+        // no-op when it is absent, so this deploys with no coordination. It is
+        // REQUIRED on both sides when the TTS host is remote (rented GPU),
+        // because the endpoint is then reachable off-box.
+        TTS_AUTH_TOKEN: Joi.string().optional().allow(''),
+        // Wall-clock seconds per second of audio, the multiplier behind the
+        // length-proportional synthesis timeout. Default 2.5 is prod's measured
+        // CPU worst case with headroom; a GPU host should set ~0.25.
+        KOKORO_REALTIME_FACTOR: Joi.number().positive().optional(),
+        // Hard cap on one /synthesize call. Text whose budget exceeds it is
+        // refused before the call rather than started and abandoned.
+        KOKORO_TIMEOUT_CEILING_MS: Joi.number()
+          .integer()
+          .positive()
+          .optional(),
         // Reconciler. BOTH default false; tier 3 (decisions) requires BOTH.
         AUDIO_RECONCILER_ENABLED: Joi.string()
           .valid('true', 'false')

@@ -384,6 +384,12 @@ services:
       TTS_DEFAULT_VOICE: ${KOKORO_VOICE_ID:-af_heart}
       TTS_WORKERS: ${TTS_WORKERS:-2}
       TTS_THREADS_PER_WORKER: ${TTS_THREADS_PER_WORKER:-4}
+      # No GPU on this box: 'auto' passes no device to KPipeline, leaving
+      # kokoro's own selection exactly as before this knob existed.
+      TTS_DEVICE: ${TTS_DEVICE:-auto}
+      # Empty here by design — this hop never leaves the internal network. The
+      # API reads the same variable, so both sides are on or off together.
+      TTS_AUTH_TOKEN: ${TTS_AUTH_TOKEN:-}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
       interval: 30s

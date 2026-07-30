@@ -28,6 +28,24 @@ class Settings(BaseSettings):
     tts_workers: int = 2
     tts_threads_per_worker: int = 4
 
+    # Torch device for the Kokoro pipeline.
+    #
+    # "auto" (the default, and prod's setting) passes NO device to KPipeline, so
+    # kokoro keeps its own selection — byte-identical behaviour to before this
+    # knob existed. The GPU image sets "cuda" EXPLICITLY: a silent fallback to
+    # CPU on a rented GPU box would look like a working service while producing
+    # ~1x realtime, which is the entire reason for renting the box.
+    tts_device: str = "auto"
+
+    # Bearer token required on /synthesize. Empty (the default, and prod's
+    # setting) disables the check, because in prod this endpoint is reachable
+    # only from the API over the internal Docker network. It MUST be set on any
+    # deployment where the TTS host is remote.
+    #
+    # /health is deliberately NOT behind it — the container HEALTHCHECK curls it
+    # with no credentials.
+    tts_auth_token: str = ""
+
     model_config = {"env_prefix": "", "case_sensitive": False}
 
 

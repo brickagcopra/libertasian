@@ -4,11 +4,17 @@ import base64
 import logging
 
 import torch
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 
+from .auth import auth_enabled, require_tts_token
 from .config import settings
 from .schemas import HealthResponse, SynthesizeRequest, SynthesizeResponse
-from .synthesis import KokoroSynthesizer, MissingWordTimingsError, synthesize_document
+from .synthesis import (
+    KokoroSynthesizer,
+    MissingWordTimingsError,
+    resolved_device,
+    synthesize_document,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,6 +37,17 @@ app = FastAPI(
 
 synthesizer = KokoroSynthesizer()
 
+# Logged once at import so a misconfigured deployment is visible in the first
+# lines of the container log rather than inferred from throughput. A GPU host
+# that silently fell back to CPU is the failure this exists to catch.
+logger.info(
+    "TTS starting: device=%s cuda_available=%s auth=%s threads=%d",
+    resolved_device() or "kokoro-default",
+    torch.cuda.is_available(),
+    "on" if auth_enabled() else "off",
+    settings.tts_threads_per_worker,
+)
+
 
 @app.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
@@ -42,7 +59,11 @@ async def health() -> HealthResponse:
     )
 
 
-@app.post("/synthesize", response_model=SynthesizeResponse)
+@app.post(
+    "/synthesize",
+    response_model=SynthesizeResponse,
+    dependencies=[Depends(require_tts_token)],
+)
 async def synthesize(request: SynthesizeRequest) -> SynthesizeResponse:
     """Synthesize a document to mp3 plus Polly-format speech marks."""
     segments = [(s.id, s.text, s.leadSilenceMs) for s in request.segments]

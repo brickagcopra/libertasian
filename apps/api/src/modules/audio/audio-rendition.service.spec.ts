@@ -14,7 +14,13 @@ interface PrismaMock {
   barExamAnswer: { findUnique: jest.Mock };
   legalDocument: { findUnique: jest.Mock };
   legalDocumentSection: { findMany: jest.Mock };
-  audioRendition: { findUnique: jest.Mock; findFirst: jest.Mock; upsert: jest.Mock };
+  audioRendition: {
+    findUnique: jest.Mock;
+    findFirst: jest.Mock;
+    upsert: jest.Mock;
+    update: jest.Mock;
+    create: jest.Mock;
+  };
 }
 
 /** `env` overrides config lookups; empty (the default) means every key falls
@@ -29,6 +35,8 @@ function build(env: Record<string, string> = {}) {
       findUnique: jest.fn(),
       findFirst: jest.fn(),
       upsert: jest.fn(),
+      update: jest.fn(),
+      create: jest.fn(),
     },
   };
   const tts = { synthesize: jest.fn() };
@@ -654,6 +662,77 @@ describe('AudioRenditionService', () => {
       seedRenditions(prisma, []);
 
       await expect(service.getRendition('digest', 'd1', 'en')).resolves.toBeNull();
+    });
+  });
+
+  describe('recordFailure', () => {
+    const JOB = { contentType: 'digest' as const, contentId: 'd1', language: 'en' };
+
+    it('creates a failed row carrying the classified reason', async () => {
+      const { service, prisma } = build();
+      prisma.audioRendition.findUnique.mockResolvedValue(null);
+
+      await service.recordFailure(
+        JOB,
+        'timeout',
+        'exceeded 621668ms budget for 2238 chars',
+      );
+
+      const args = prisma.audioRendition.create.mock.calls[0]?.[0] as {
+        data: Record<string, unknown>;
+      };
+      expect(args.data).toMatchObject({
+        contentType: 'digest',
+        contentId: 'd1',
+        status: 'failed',
+        failureReason: 'timeout: exceeded 621668ms budget for 2238 chars',
+      });
+      expect(prisma.audioRendition.update).not.toHaveBeenCalled();
+    });
+
+    it('updates an existing non-ready row instead of creating a second one', async () => {
+      const { service, prisma } = build();
+      prisma.audioRendition.findUnique.mockResolvedValue({
+        id: 'r-1',
+        status: 'pending',
+      });
+
+      await service.recordFailure(JOB, 'text_too_long', '25600 chars');
+
+      expect(prisma.audioRendition.create).not.toHaveBeenCalled();
+      const args = prisma.audioRendition.update.mock.calls[0]?.[0] as {
+        data: Record<string, unknown>;
+      };
+      expect(args.data).toEqual({
+        status: 'failed',
+        failureReason: 'text_too_long: 25600 chars',
+      });
+    });
+
+    it('never downgrades a ready rendition', async () => {
+      const { service, prisma } = build();
+      prisma.audioRendition.findUnique.mockResolvedValue({
+        id: 'r-1',
+        status: 'ready',
+      });
+
+      await service.recordFailure(JOB, 'transient', 'tts-service returned 500');
+
+      // A forced regen that fails must leave serviceable audio in circulation.
+      expect(prisma.audioRendition.update).not.toHaveBeenCalled();
+      expect(prisma.audioRendition.create).not.toHaveBeenCalled();
+    });
+
+    it('truncates the reason to the column width', async () => {
+      const { service, prisma } = build();
+      prisma.audioRendition.findUnique.mockResolvedValue(null);
+
+      await service.recordFailure(JOB, 'permanent', 'x'.repeat(500));
+
+      const args = prisma.audioRendition.create.mock.calls[0]?.[0] as {
+        data: { failureReason: string };
+      };
+      expect(args.data.failureReason).toHaveLength(200);
     });
   });
 });

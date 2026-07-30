@@ -62,6 +62,18 @@ class _Token:
     end_s: float
 
 
+def resolved_device() -> str | None:
+    """Torch device to pass to KPipeline, or None to leave kokoro's own choice.
+
+    "auto" returns None so the CPU deployment behaves exactly as it did before
+    this setting existed. An explicit value (the GPU image sets "cuda") is passed
+    through, which also means a GPU host with no visible device fails LOUDLY at
+    first synthesis instead of quietly running on CPU at ~1x realtime.
+    """
+    configured = settings.tts_device.strip().lower()
+    return None if configured in ("", "auto") else configured
+
+
 class KokoroSynthesizer:
     """Lazily-initialised Kokoro pipelines, one per language code."""
 
@@ -71,8 +83,20 @@ class KokoroSynthesizer:
     def _pipeline(self, voice: str) -> KPipeline:
         lang = _LANG_BY_PREFIX.get(voice[:1], "a")
         if lang not in self._pipelines:
-            logger.info("Loading Kokoro pipeline lang=%s repo=%s", lang, settings.tts_model_repo)
-            self._pipelines[lang] = KPipeline(lang_code=lang, repo_id=settings.tts_model_repo)
+            device = resolved_device()
+            logger.info(
+                "Loading Kokoro pipeline lang=%s repo=%s device=%s",
+                lang,
+                settings.tts_model_repo,
+                device or "kokoro-default",
+            )
+            kwargs: dict[str, object] = {
+                "lang_code": lang,
+                "repo_id": settings.tts_model_repo,
+            }
+            if device is not None:
+                kwargs["device"] = device
+            self._pipelines[lang] = KPipeline(**kwargs)
         return self._pipelines[lang]
 
     def synthesize_segment(self, text: str, voice: str) -> tuple[np.ndarray, list[_Token]]:
