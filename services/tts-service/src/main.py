@@ -8,13 +8,15 @@ from fastapi import Depends, FastAPI, HTTPException
 
 from .auth import auth_enabled, require_tts_token
 from .config import settings
-from .schemas import HealthResponse, SynthesizeRequest, SynthesizeResponse
-from .synthesis import (
-    KokoroSynthesizer,
-    MissingWordTimingsError,
-    resolved_device,
-    synthesize_document,
+from .device import (
+    cuda_available,
+    device_name,
+    effective_threads,
+    effective_workers,
+    resolve_device,
 )
+from .schemas import HealthResponse, SynthesizeRequest, SynthesizeResponse
+from .synthesis import KokoroSynthesizer, MissingWordTimingsError, synthesize_document
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,8 +24,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Each uvicorn worker is deliberately narrow — see Settings.tts_threads_per_worker.
-torch.set_num_threads(settings.tts_threads_per_worker)
+# Thread count is device-shaped: narrow on CPU (several workers share 12 vCPU),
+# wider on GPU (one process owns the card). See src/device.py.
+torch.set_num_threads(effective_threads())
 
 # Voices this build is known to serve; kept explicit so /health is meaningful
 # without touching the network.
@@ -41,21 +44,29 @@ synthesizer = KokoroSynthesizer()
 # lines of the container log rather than inferred from throughput. A GPU host
 # that silently fell back to CPU is the failure this exists to catch.
 logger.info(
-    "TTS starting: device=%s cuda_available=%s auth=%s threads=%d",
-    resolved_device() or "kokoro-default",
-    torch.cuda.is_available(),
+    "TTS starting: device=%s cuda_available=%s device_name=%s "
+    "workers=%d threads=%d auth=%s",
+    resolve_device(),
+    cuda_available(),
+    device_name() or "-",
+    effective_workers(),
+    effective_threads(),
     "on" if auth_enabled() else "off",
-    settings.tts_threads_per_worker,
 )
 
 
 @app.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
-    """Liveness probe."""
+    """Liveness probe, and the deployment's own account of its hardware."""
     return HealthResponse(
         status="ok",
         model=settings.tts_model_repo,
         voice_count=len(LOADED_VOICES),
+        device=resolve_device(),
+        cuda_available=cuda_available(),
+        device_name=device_name(),
+        workers=effective_workers(),
+        threads_per_worker=effective_threads(),
     )
 
 

@@ -26,27 +26,40 @@
 # RUN (GPU host: NVIDIA driver + nvidia-container-toolkit required):
 #
 #   docker run --rm --gpus all -p 8003:8003 \
-#     -e TTS_DEVICE=cuda \
-#     -e TTS_WORKERS=1 -e TTS_THREADS_PER_WORKER=8 \
 #     -e TTS_AUTH_TOKEN="$TTS_AUTH_TOKEN" \
 #     libertasian-tts:gpu
 #
-# TTS_WORKERS=1: workers do NOT share the model, so N workers cost N x ~2.9 GiB
-# of VRAM for no extra throughput on a single device. Scale with batch size on
-# the caller side (AUDIO_PROCESSOR_CONCURRENCY), not with uvicorn workers.
+# TTS_DEVICE/TTS_WORKERS/TTS_THREADS_PER_WORKER are NOT required: `ENV
+# TTS_DEVICE=cuda` is baked below, and src/serve.py sizes uvicorn to the resolved
+# device (1 worker x 8 threads on CUDA). Set TTS_WORKERS only to override — e.g.
+# a multi-GPU host. On a single card a second worker is a second full copy of the
+# weights (~2.9 GiB measured) for no extra throughput.
+#
+# WITH ONE WORKER, SYNTHESIS IS STRICTLY SERIAL. `/synthesize` calls
+# synthesize_document synchronously inside an async handler, so it holds the
+# event loop for the whole request: a second request queues behind the first and
+# /health does not answer until the current synthesis finishes (the CPU image has
+# the same property, twice over). Two consequences for a GPU run:
+#   - set AUDIO_PROCESSOR_CONCURRENCY=1 on the API to match. Extra in-flight jobs
+#     buy nothing here, they just wait inside this service.
+#   - a HEALTHCHECK during a long synthesis can time out. The probe below allows
+#     3 x 10s before reporting unhealthy; nothing restarts on that in compose,
+#     but do not read one failed probe as the service being down mid-backfill.
 #
 # TTS_AUTH_TOKEN is effectively MANDATORY here: unlike prod, port 8003 on a
 # rented box is reachable from off-host. Leaving it unset serves synthesis to
 # anyone who finds the port. The API must send the same value.
 #
 # ACCEPTANCE (same bar as the CPU image, plus the device check):
-#   1. GET  /health                       -> 200
+#   1. GET  /health                       -> 200, and the body itself must read
+#      `"device":"cuda","cuda_available":true` with a real `device_name`
 #   2. POST /synthesize with no token     -> 401 (when TTS_AUTH_TOKEN is set)
-#   3. POST /synthesize with the token    -> 200, and the container log's first
-#      lines read `device=cuda cuda_available=True`
+#   3. POST /synthesize with the token    -> 200
 #   4. `nvidia-smi` on the host shows the process holding VRAM during synthesis
-# A 200 from /synthesize with `cuda_available=False` means the container never
+# `device=cuda` with `cuda_available=false` on /health means the container never
 # got the device — check `--gpus all` and the toolkit, do not accept the run.
+# That combination is exactly why those fields are on /health: throughput is a
+# slow and ambiguous way to discover it.
 # ==========================================================================
 
 # CUDA_BASE and TORCH_CUDA_INDEX MUST agree: the cuXXX wheel variant has to match
@@ -146,4 +159,7 @@ EXPOSE 8003
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=60s \
     CMD curl -f http://localhost:8003/health || exit 1
 
-CMD ["sh", "-c", "uvicorn src.main:app --host 0.0.0.0 --port 8003 --workers ${TTS_WORKERS:-1}"]
+# src.serve resolves the device BEFORE launching and sizes uvicorn to it, which a
+# shell `--workers ${TTS_WORKERS:-N}` cannot do — that number is fixed before any
+# device is known. TTS_WORKERS still overrides.
+CMD ["python", "-m", "src.serve"]

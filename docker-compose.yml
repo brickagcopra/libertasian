@@ -161,6 +161,8 @@ services:
       - "8003:8003"
     environment:
       TTS_DEFAULT_VOICE: af_heart
+      # Explicit CPU shape; src/device.py would resolve the same 2 x 4 on a box
+      # with no GPU. /health reports what was actually resolved.
       TTS_WORKERS: "2"
       TTS_THREADS_PER_WORKER: "4"
     healthcheck:
