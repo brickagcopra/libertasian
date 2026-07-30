@@ -34,10 +34,23 @@ class SynthesizeResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    """Liveness payload."""
+    """Liveness payload, plus enough to VERIFY a GPU deployment.
+
+    `device` is what the model actually loads onto and `cuda_available` is what
+    torch can see, so the two together distinguish the three states that used to
+    be indistinguishable from outside: running on GPU, running on CPU because no
+    device is visible, and configured for CUDA on a container that never got one
+    (`device=cuda` with `cuda_available=false` — synthesis will fail).
+    """
 
     model_config = ConfigDict(strict=True)
 
     status: str
     model: str
     voice_count: int
+    device: str
+    cuda_available: bool
+    # Marketing name of the active CUDA device (e.g. "NVIDIA L4"); null on CPU.
+    device_name: str | None = None
+    workers: int
+    threads_per_worker: int

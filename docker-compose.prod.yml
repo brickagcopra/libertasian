@@ -382,8 +382,19 @@ services:
       - "8003"
     environment:
       TTS_DEFAULT_VOICE: ${KOKORO_VOICE_ID:-af_heart}
+      # Passed EXPLICITLY, so the CPU shape stays pinned here rather than
+      # depending on what src/device.py would resolve. Leaving them unset would
+      # reach the same 2 x 4 on this box (no GPU) — stating them keeps the
+      # measured prod shape visible in the deployment, not just in code.
       TTS_WORKERS: ${TTS_WORKERS:-2}
       TTS_THREADS_PER_WORKER: ${TTS_THREADS_PER_WORKER:-4}
+      # No GPU on this box, so 'auto' resolves to cpu. It resolves EXPLICITLY
+      # now (and /health reports the result), rather than being left to kokoro's
+      # internal fallback.
+      TTS_DEVICE: ${TTS_DEVICE:-auto}
+      # Empty here by design — this hop never leaves the internal network. The
+      # API reads the same variable, so both sides are on or off together.
+      TTS_AUTH_TOKEN: ${TTS_AUTH_TOKEN:-}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
       interval: 30s

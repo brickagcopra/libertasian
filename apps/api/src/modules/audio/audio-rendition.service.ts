@@ -23,7 +23,11 @@ import {
   type SpokenDocument,
 } from './legal-ssml.util';
 import { sanitizeRulingText } from './sanitize-ruling.util';
-import { TTS_CLIENT, type TtsClient } from './tts.client';
+import {
+  TTS_CLIENT,
+  type TtsClient,
+  type TtsFailureReason,
+} from './tts.client';
 
 /** Public read projection of a rendition, with short-lived signed URLs. */
 export interface AudioRenditionReadModel {
@@ -422,6 +426,8 @@ export class AudioRenditionService {
         durationMs,
         charCount,
         status: 'ready',
+        // A previous failure no longer describes this row.
+        failureReason: null,
         visibility,
       },
     });
@@ -430,6 +436,82 @@ export class AudioRenditionService {
       `Rendition ready ${rendition.id} (${contentType}:${contentId}, ${charCount} chars, ${durationMs ?? '?'}ms)`,
     );
     return rendition;
+  }
+
+  /**
+   * Record why a synthesis attempt gave up, on the rendition row itself.
+   *
+   * Called once per job, after BullMQ's last attempt — a mid-retry write would
+   * publish a `failed` status that the next attempt may immediately contradict.
+   *
+   * NEVER downgrades a `ready` row: a forced regeneration that fails must not
+   * take existing, serviceable audio out of circulation. The reconciler's gap
+   * queries key on `status = 'ready'`, so a row left `failed` is still counted
+   * as a gap and re-enqueued on a later tick.
+   */
+  async recordFailure(
+    data: AudioGenerationJobData,
+    reason: TtsFailureReason | 'error',
+    detail: string,
+  ): Promise<void> {
+    const { contentType, contentId } = data;
+    const language = data.language || 'en';
+    const voiceId = this.defaultVoiceId;
+    // VarChar(200); the detail never carries document text (see KokoroClient).
+    const failureReason = `${reason}: ${detail}`.slice(0, 200);
+
+    const where = {
+      contentType_contentId_language_voiceId: {
+        contentType,
+        contentId,
+        language,
+        voiceId,
+      },
+    };
+
+    const existing = await this.prisma.audioRendition.findUnique({ where });
+    if (existing?.status === 'ready') {
+      this.logger.warn({
+        event: 'audio_failure_not_recorded',
+        contentType,
+        contentId,
+        reason,
+        message: 'Attempt failed but a ready rendition exists; leaving it ready',
+      });
+      return;
+    }
+
+    if (existing) {
+      await this.prisma.audioRendition.update({
+        where,
+        data: { status: 'failed', failureReason },
+      });
+    } else {
+      await this.prisma.audioRendition.create({
+        data: {
+          contentType,
+          contentId,
+          // No audio was produced, so there is no object to point at. The read
+          // model returns null URLs for every non-ready status.
+          contentHash: '',
+          language,
+          voiceId,
+          engine: this.engine,
+          audioObjectKey: '',
+          status: 'failed',
+          failureReason,
+        },
+      });
+    }
+
+    this.logger.error({
+      event: 'audio_rendition_failed',
+      contentType,
+      contentId,
+      voiceId,
+      reason,
+      detail,
+    });
   }
 
   /** Build the client read model, signing the object keys with a short TTL. */

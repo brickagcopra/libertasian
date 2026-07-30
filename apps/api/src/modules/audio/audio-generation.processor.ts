@@ -1,9 +1,10 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
-import { Job } from 'bullmq';
+import { Job, UnrecoverableError } from 'bullmq';
 
 import { AudioRenditionService } from './audio-rendition.service';
 import { AUDIO_QUEUE, type AudioGenerationJobData } from './audio.types';
+import { TtsSynthesisError, type TtsFailureReason } from './tts.client';
 
 /** BullMQ's own default; one in-flight job leaves a second TTS worker idle. */
 const DEFAULT_CONCURRENCY = 2;
@@ -51,7 +52,49 @@ export class AudioGenerationProcessor extends WorkerHost {
       this.logger.error(
         `Audio generation failed for ${contentType}:${contentId}: ${message}`,
       );
+
+      // A permanently-classified failure will fail identically on every BullMQ
+      // retry — a 2,238-char digest burned 15 min of 8-core CPU proving that
+      // three times over. UnrecoverableError still marks the job failed, it just
+      // consumes no further attempts.
+      if (err instanceof TtsSynthesisError && err.reason !== 'transient') {
+        await this.recordFailure(job, err.reason, err.detail);
+        throw new UnrecoverableError(err.message);
+      }
+
+      if (this.isLastAttempt(job)) {
+        const reason = err instanceof TtsSynthesisError ? err.reason : 'error';
+        const detail = err instanceof TtsSynthesisError ? err.detail : message;
+        await this.recordFailure(job, reason, detail);
+      }
       throw err; // let BullMQ handle retries
+    }
+  }
+
+  /**
+   * Whether BullMQ has no attempts left after this one. `attemptsMade` is not
+   * yet incremented for the in-flight attempt, hence the +1.
+   */
+  private isLastAttempt(job: Job<AudioGenerationJobData>): boolean {
+    const allowed = job.opts?.attempts ?? 1;
+    return job.attemptsMade + 1 >= allowed;
+  }
+
+  /**
+   * Persist the reason. Wrapped so a database problem while recording the
+   * failure cannot mask the failure itself in the logs.
+   */
+  private async recordFailure(
+    job: Job<AudioGenerationJobData>,
+    reason: TtsFailureReason | 'error',
+    detail: string,
+  ): Promise<void> {
+    try {
+      await this.renditions.recordFailure(job.data, reason, detail);
+    } catch (recordErr) {
+      const message =
+        recordErr instanceof Error ? recordErr.message : 'Unknown error';
+      this.logger.error(`Could not record audio failure reason: ${message}`);
     }
   }
 }

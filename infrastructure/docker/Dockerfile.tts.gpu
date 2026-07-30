@@ -1,0 +1,165 @@
+# ==========================================================================
+# LIBERTASIAN TTS Service — GPU (CUDA) build
+# Python 3.12 + FastAPI + Kokoro-82M on CUDA
+#
+# SEPARATE FROM Dockerfile.tts BY DESIGN. The prod VPS is 12 vCPU AMD EPYC with
+# NO GPU, so `Dockerfile.tts` stays CPU-only and unchanged; this file exists for
+# the rented-GPU tier-1 backfill, where prod measured 41.5 items/hour and a
+# 2,238-char digest could not finish inside any sane per-request budget.
+#
+# DELIBERATELY NOT IN CI. Both security-scan.yml's container matrix and
+# deploy-production.yml build `Dockerfile.tts` only: this image is never deployed
+# to prod, and at 34.3 GB its CUDA layers exceed even the runner disk that
+# workflow already goes out of its way to free. Trivy-scan it on the box you rent
+# before you run it there.
+#
+# Single-stage on purpose: uv downloads a managed CPython 3.12 (the CUDA bases
+# ship a different system Python), and splitting the interpreter from the venv
+# across stages buys a little image size at the cost of a fragile copy. This is
+# a backfill image, not a service image on a size budget.
+#
+# BUILD (from the repo root — the context is the monorepo root, like every other
+# image here). No GPU is needed to BUILD; the weight bake runs on CPU:
+#
+#   docker build -f infrastructure/docker/Dockerfile.tts.gpu -t libertasian-tts:gpu .
+#
+# RUN (GPU host: NVIDIA driver + nvidia-container-toolkit required):
+#
+#   docker run --rm --gpus all -p 8003:8003 \
+#     -e TTS_AUTH_TOKEN="$TTS_AUTH_TOKEN" \
+#     libertasian-tts:gpu
+#
+# TTS_DEVICE/TTS_WORKERS/TTS_THREADS_PER_WORKER are NOT required: `ENV
+# TTS_DEVICE=cuda` is baked below, and src/serve.py sizes uvicorn to the resolved
+# device (1 worker x 8 threads on CUDA). Set TTS_WORKERS only to override — e.g.
+# a multi-GPU host. On a single card a second worker is a second full copy of the
+# weights (~2.9 GiB measured) for no extra throughput.
+#
+# WITH ONE WORKER, SYNTHESIS IS STRICTLY SERIAL. `/synthesize` calls
+# synthesize_document synchronously inside an async handler, so it holds the
+# event loop for the whole request: a second request queues behind the first and
+# /health does not answer until the current synthesis finishes (the CPU image has
+# the same property, twice over). Two consequences for a GPU run:
+#   - set AUDIO_PROCESSOR_CONCURRENCY=1 on the API to match. Extra in-flight jobs
+#     buy nothing here, they just wait inside this service.
+#   - a HEALTHCHECK during a long synthesis can time out. The probe below allows
+#     3 x 10s before reporting unhealthy; nothing restarts on that in compose,
+#     but do not read one failed probe as the service being down mid-backfill.
+#
+# TTS_AUTH_TOKEN is effectively MANDATORY here: unlike prod, port 8003 on a
+# rented box is reachable from off-host. Leaving it unset serves synthesis to
+# anyone who finds the port. The API must send the same value.
+#
+# ACCEPTANCE (same bar as the CPU image, plus the device check):
+#   1. GET  /health                       -> 200, and the body itself must read
+#      `"device":"cuda","cuda_available":true` with a real `device_name`
+#   2. POST /synthesize with no token     -> 401 (when TTS_AUTH_TOKEN is set)
+#   3. POST /synthesize with the token    -> 200
+#   4. `nvidia-smi` on the host shows the process holding VRAM during synthesis
+# `device=cuda` with `cuda_available=false` on /health means the container never
+# got the device — check `--gpus all` and the toolkit, do not accept the run.
+# That combination is exactly why those fields are on /health: throughput is a
+# slow and ambiguous way to discover it.
+# ==========================================================================
+
+# CUDA_BASE and TORCH_CUDA_INDEX MUST agree: the cuXXX wheel variant has to match
+# the CUDA major/minor of the base image and be supported by the host driver.
+# Override BOTH together, never one.
+ARG CUDA_BASE=nvidia/cuda:12.9.1-cudnn-runtime-ubuntu24.04
+FROM ${CUDA_BASE}
+
+# Pinned to the SAME version the CPU lockfile resolves (services/tts-service/
+# uv.lock). Only the build variant differs — a version drift between the two
+# images would mean the GPU backfill runs a model stack prod never sees.
+#
+# cu129, not cu128: torch 2.13.0 is published for cu126 / cu129 / cu130 but NOT
+# cu128 (verified against download.pytorch.org, 2026-07-29), so cu128 would fail
+# this build outright. Check the index before changing this pair.
+ARG TORCH_VERSION=2.13.0
+ARG TORCH_CUDA_INDEX=https://download.pytorch.org/whl/cu129
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# espeak-ng is Kokoro's grapheme-to-phoneme fallback for out-of-vocabulary words
+# — without it, unusual legal terms silently degrade. curl is for the
+# healthcheck. (LAME is statically bundled in the lameenc wheel.)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    espeak-ng \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Managed interpreter at a fixed, copyable path rather than under /root.
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv-python
+RUN uv python install 3.12
+
+# Lockfile first so the layer caches on source-only changes.
+COPY services/tts-service/pyproject.toml services/tts-service/uv.lock ./
+
+# --frozen fails the build if the lock and pyproject.toml have drifted. This
+# installs the CPU torch wheel the lock pins; the next layer swaps it.
+RUN uv sync --frozen --no-dev --no-install-project --python 3.12
+
+# Swap in the CUDA build of the SAME torch version. The lockfile pins torch to
+# the CPU index (see [tool.uv.sources] in pyproject.toml), and a source pin is
+# not overridable per-environment — reinstalling the one package from the CUDA
+# index is what keeps ONE lockfile serving both images. Nothing else in the
+# dependency tree changes.
+RUN uv pip install --python /app/.venv/bin/python \
+    --index-url ${TORCH_CUDA_INDEX} \
+    --reinstall-package torch \
+    "torch==${TORCH_VERSION}"
+
+ENV PATH="/app/.venv/bin:$PATH"
+
+# Fail the BUILD, not the first synthesis, if the swap above silently left the
+# CPU wheel in place. `torch.version.cuda` is populated by the wheel itself and
+# needs no GPU present, so this is checkable on a CPU builder.
+RUN python -c "\
+import torch;\
+assert torch.version.cuda, f'not a CUDA build of torch: {torch.__version__}';\
+print('torch', torch.__version__, 'cuda', torch.version.cuda)"
+
+COPY services/tts-service/src ./src
+
+# Model weights live on a writable cache dir owned by the runtime user.
+ENV HF_HOME=/app/.cache/huggingface
+RUN groupadd -g 1001 appgroup \
+    && useradd -u 1001 -g appgroup -s /bin/sh appuser \
+    && mkdir -p "$HF_HOME" \
+    && chown -R appuser:appgroup /app
+USER appuser
+
+# Bake the Kokoro weights and the default voice into the image — same rationale
+# as the CPU image: without it HF_HOME starts EMPTY, the weights re-download on
+# every container recreate, and the service cannot start at all when HF is
+# unreachable. Runs AFTER `USER appuser` so the cache is owned by the runtime
+# user, and on CPU (device is not forced here) so the build needs no GPU.
+RUN python -c "\
+import spacy; spacy.load('en_core_web_sm');\
+from kokoro import KPipeline;\
+from src.config import settings;\
+p = KPipeline(lang_code='a', repo_id=settings.tts_model_repo);\
+p.load_voice(settings.tts_default_voice);\
+print('preloaded', settings.tts_model_repo, settings.tts_default_voice)"
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# The GPU deployment's reason for existing. Overridable, but never 'auto' here:
+# a silent CPU fallback on a rented GPU box is the failure mode to avoid.
+ENV TTS_DEVICE=cuda
+
+EXPOSE 8003
+
+# Model load is ~13s cold, so allow a generous start period before probing.
+# /health is intentionally unauthenticated — this curl carries no token.
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=60s \
+    CMD curl -f http://localhost:8003/health || exit 1
+
+# src.serve resolves the device BEFORE launching and sizes uvicorn to it, which a
+# shell `--workers ${TTS_WORKERS:-N}` cannot do — that number is fixed before any
+# device is known. TTS_WORKERS still overrides.
+CMD ["python", "-m", "src.serve"]

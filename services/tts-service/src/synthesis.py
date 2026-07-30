@@ -20,6 +20,7 @@ import numpy as np
 from kokoro import KPipeline
 
 from .config import settings
+from .device import resolve_device
 
 logger = logging.getLogger(__name__)
 
@@ -71,8 +72,22 @@ class KokoroSynthesizer:
     def _pipeline(self, voice: str) -> KPipeline:
         lang = _LANG_BY_PREFIX.get(voice[:1], "a")
         if lang not in self._pipelines:
-            logger.info("Loading Kokoro pipeline lang=%s repo=%s", lang, settings.tts_model_repo)
-            self._pipelines[lang] = KPipeline(lang_code=lang, repo_id=settings.tts_model_repo)
+            # ALWAYS passed, never left to kokoro's internal fallback: the
+            # device the model lands on is a deployment fact worth stating, and
+            # an explicit `cuda` on a box with no device raises here instead of
+            # silently serving from CPU. See src/device.py.
+            device = resolve_device()
+            logger.info(
+                "Loading Kokoro pipeline lang=%s repo=%s device=%s",
+                lang,
+                settings.tts_model_repo,
+                device,
+            )
+            self._pipelines[lang] = KPipeline(
+                lang_code=lang,
+                repo_id=settings.tts_model_repo,
+                device=device,
+            )
         return self._pipelines[lang]
 
     def synthesize_segment(self, text: str, voice: str) -> tuple[np.ndarray, list[_Token]]:

@@ -30,3 +30,35 @@ export interface TtsClient {
 
 /** DI token for the active TTS backend, selected by `TTS_PROVIDER`. */
 export const TTS_CLIENT = Symbol('TTS_CLIENT');
+
+/**
+ * Why a synthesis attempt gave up.
+ *
+ *  - `timeout`       — ran out of wall-clock budget (compute-bound, deterministic)
+ *  - `transient`     — network error / 5xx / 429; retried
+ *  - `permanent`     — 4xx or a contract violation; not retryable
+ *  - `text_too_long` — refused before the call: no allowed budget could cover it
+ */
+export type TtsFailureReason =
+  | 'timeout'
+  | 'transient'
+  | 'permanent'
+  | 'text_too_long';
+
+/**
+ * A classified synthesis failure.
+ *
+ * The `reason` is persisted onto the rendition row (`failure_reason`) so a
+ * failed rendition says WHY instead of only that it failed — the difference
+ * between "this document is too long for one call" and "the TTS host was down"
+ * decides whether re-running the reconciler can ever help.
+ */
+export class TtsSynthesisError extends Error {
+  constructor(
+    readonly reason: TtsFailureReason,
+    readonly detail: string,
+  ) {
+    super(`TTS synthesis failed [${reason}]: ${detail}`);
+    this.name = 'TtsSynthesisError';
+  }
+}
