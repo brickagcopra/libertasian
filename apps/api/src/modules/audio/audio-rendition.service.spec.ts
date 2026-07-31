@@ -10,6 +10,7 @@ import type { TtsClient } from './tts.client';
 import { sanitizeRulingText } from './sanitize-ruling.util';
 
 interface PrismaMock {
+  $queryRaw: jest.Mock;
   digest: { findUnique: jest.Mock };
   barExamAnswer: { findUnique: jest.Mock };
   legalDocument: { findUnique: jest.Mock };
@@ -27,6 +28,7 @@ interface PrismaMock {
  *  back to its production default, i.e. Polly/Matthew. */
 function build(env: Record<string, string> = {}) {
   const prisma: PrismaMock = {
+    $queryRaw: jest.fn(),
     digest: { findUnique: jest.fn() },
     barExamAnswer: { findUnique: jest.fn() },
     legalDocument: { findUnique: jest.fn() },
@@ -1037,6 +1039,132 @@ describe('AudioRenditionService', () => {
       seedRenditions(prisma, []);
 
       await expect(service.getRendition('digest', 'd1', 'en')).resolves.toBeNull();
+    });
+  });
+
+  /**
+   * Prod 2026-07-31: 4 failed rows out of 21,094, all `output_too_large` — the
+   * Civil Code, Administrative Code, NIRC and Rules of Court. Re-running them
+   * cannot change the outcome, so the read path must stop asking.
+   */
+  describe('isPermanentlyFailed', () => {
+    it('is true for a failed row whose reason is terminal by design', () => {
+      const { service } = build();
+      expect(
+        service.isPermanentlyFailed({
+          status: 'failed',
+          failureReason:
+            'output_too_large: 810815 chars project to ~343MiB of mp3',
+        }),
+      ).toBe(true);
+      expect(
+        service.isPermanentlyFailed({
+          status: 'failed',
+          failureReason: 'text_too_long: segment seg-1 alone is 40000 chars',
+        }),
+      ).toBe(true);
+    });
+
+    it.each(['timeout', 'transient', 'permanent', 'error', 'future_reason'])(
+      'treats the unrecognized reason %s as RETRYABLE',
+      (reason) => {
+        const { service } = build();
+        // A network blip, or a reason a future backend introduces, must not be
+        // mistaken for a permanent refusal and silently stop retrying.
+        expect(
+          service.isPermanentlyFailed({
+            status: 'failed',
+            failureReason: `${reason}: tts-service returned 500`,
+          }),
+        ).toBe(false);
+      },
+    );
+
+    it('is false for a failed row with no reason recorded', () => {
+      const { service } = build();
+      expect(
+        service.isPermanentlyFailed({ status: 'failed', failureReason: null }),
+      ).toBe(false);
+    });
+
+    it('is false for any non-failed status, and for no row at all', () => {
+      const { service } = build();
+      const reason = 'output_too_large: 810815 chars';
+      expect(service.isPermanentlyFailed({ status: 'ready', failureReason: reason })).toBe(
+        false,
+      );
+      expect(
+        service.isPermanentlyFailed({ status: 'pending', failureReason: reason }),
+      ).toBe(false);
+      expect(service.isPermanentlyFailed(null)).toBe(false);
+      expect(service.isPermanentlyFailed(undefined)).toBe(false);
+    });
+
+    it('matches on the reason PREFIX, not the whole stored string', () => {
+      const { service } = build();
+      // The column stores `${reason}: ${detail}`, and the detail carries
+      // per-document char and byte counts.
+      expect(
+        service.isPermanentlyFailed({
+          status: 'failed',
+          failureReason: 'output_too_large: 374364 chars project to ~159MiB',
+        }),
+      ).toBe(true);
+      // A reason that merely CONTAINS the token is not the same reason.
+      expect(
+        service.isPermanentlyFailed({
+          status: 'failed',
+          failureReason: 'transient: upstream said output_too_large',
+        }),
+      ).toBe(false);
+    });
+  });
+
+  describe('hasCompleteSectionAudio', () => {
+    it('is true when every narratable section has a ready rendition', async () => {
+      const { service, prisma } = build();
+      // The prod shape: 4,857 sections, 2 of them empty and excluded by the
+      // query, 4,855 covered.
+      prisma.$queryRaw.mockResolvedValue([{ total: 4855n, missing: 0n }]);
+
+      await expect(service.hasCompleteSectionAudio('doc-1', 'en')).resolves.toBe(
+        true,
+      );
+    });
+
+    it('is false while any narratable section is still missing', async () => {
+      const { service, prisma } = build();
+      prisma.$queryRaw.mockResolvedValue([{ total: 4855n, missing: 12n }]);
+
+      await expect(service.hasCompleteSectionAudio('doc-1', 'en')).resolves.toBe(
+        false,
+      );
+    });
+
+    it('is false when there are no narratable sections at all', async () => {
+      const { service, prisma } = build();
+      prisma.$queryRaw.mockResolvedValue([{ total: 0n, missing: 0n }]);
+
+      // Nothing to offer is not the same as covered — claiming coverage would
+      // send the client hunting for renditions that do not exist.
+      await expect(service.hasCompleteSectionAudio('doc-1', 'en')).resolves.toBe(
+        false,
+      );
+    });
+
+    it('excludes empty sections and does not filter by voice', async () => {
+      const { service, prisma } = build();
+      prisma.$queryRaw.mockResolvedValue([{ total: 1n, missing: 0n }]);
+
+      await service.hasCompleteSectionAudio('doc-1', 'en');
+
+      const sql = String(prisma.$queryRaw.mock.calls[0]?.[0]);
+      expect(sql).toContain('btrim(s.plain_text)');
+      expect(sql).toContain("ar.content_type = 'legal_document_section'");
+      expect(sql).toContain("ar.status = 'ready'");
+      // getRendition serves ANY ready rendition for the language, so coverage
+      // must not go false the moment TTS_PROVIDER flips.
+      expect(sql).not.toContain('voice_id');
     });
   });
 

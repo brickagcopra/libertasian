@@ -11,7 +11,13 @@
 
 export type AudioContentType = 'digest' | 'bar_exam_answer';
 
-export type AudioRenditionStatus = 'ready' | 'pending';
+/**
+ * `unavailable` means synthesis failed for a reason re-running cannot change
+ * (e.g. `output_too_large`). The server answers 200 and does NOT enqueue —
+ * clients must stop polling and surface the state instead of spinning. When
+ * `useSectionAudio` is true the same content is narrated section by section.
+ */
+export type AudioRenditionStatus = 'ready' | 'pending' | 'unavailable';
 
 /**
  * `data` payload of the `{ success, data }` envelope returned by the endpoint
@@ -32,6 +38,13 @@ export interface AudioRenditionReadModel {
   durationMs: number | null;
   language: string;
   voiceId: string;
+  /** Why synthesis will never succeed. Present only when status is `unavailable`. */
+  failureReason?: string | null;
+  /**
+   * True when this content cannot be narrated whole but every one of its
+   * sections has audio — play `legal_document_section` renditions instead.
+   */
+  useSectionAudio?: boolean;
 }
 
 // --- Segment read-along manifest (mirrors apps/web/src/features/audio/types.ts)
