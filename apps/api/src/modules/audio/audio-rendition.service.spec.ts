@@ -13,7 +13,7 @@ interface PrismaMock {
   digest: { findUnique: jest.Mock };
   barExamAnswer: { findUnique: jest.Mock };
   legalDocument: { findUnique: jest.Mock };
-  legalDocumentSection: { findMany: jest.Mock };
+  legalDocumentSection: { findMany: jest.Mock; findUnique: jest.Mock };
   audioRendition: {
     findUnique: jest.Mock;
     findFirst: jest.Mock;
@@ -30,7 +30,7 @@ function build(env: Record<string, string> = {}) {
     digest: { findUnique: jest.fn() },
     barExamAnswer: { findUnique: jest.fn() },
     legalDocument: { findUnique: jest.fn() },
-    legalDocumentSection: { findMany: jest.fn() },
+    legalDocumentSection: { findMany: jest.fn(), findUnique: jest.fn() },
     audioRendition: {
       findUnique: jest.fn(),
       findFirst: jest.fn(),
@@ -760,6 +760,177 @@ describe('AudioRenditionService', () => {
       await expect(service.resolveText('legal_document', 'missing')).rejects.toThrow(
         NotFoundException,
       );
+    });
+  });
+
+  /**
+   * The four large statutory documents (Administrative Code 1,229 sections,
+   * Civil Code 2,533, NIRC 401, Rules of Court — Civil Procedure 694) are
+   * narrated one section at a time. Section text averages 306-1,309 chars,
+   * below the digest average that already works.
+   */
+  describe('resolveText — legal_document_section', () => {
+    const SECTION = {
+      sectionLabel: 'Article 1156',
+      sectionType: 'article',
+      plainText: 'An obligation is a juridical necessity to give.',
+      legalDocument: {
+        title: 'Civil Code of the Philippines',
+        status: 'published',
+      },
+    };
+
+    it('resolves one section of a published parent', async () => {
+      const { service, prisma } = build();
+      prisma.legalDocumentSection.findUnique.mockResolvedValue(SECTION);
+
+      const { doc, visibility } = await service.resolveText(
+        'legal_document_section',
+        'sec-1',
+      );
+
+      // ONE chapter, shaped exactly like the whole-document branch: the
+      // section's own id as the key, so a segment keeps the same identity it
+      // would have had inside a whole-document rendition.
+      expect(doc.sections).toHaveLength(1);
+      expect(doc.sections[0]).toEqual({
+        key: 'sec-1',
+        heading: 'Article 1156',
+        body: 'An obligation is a juridical necessity to give.',
+      });
+      expect(visibility).toBe('public_editorial');
+    });
+
+    it('announces the parent document in the spoken title', async () => {
+      const { service, prisma } = build();
+      prisma.legalDocumentSection.findUnique.mockResolvedValue(SECTION);
+
+      const { doc } = await service.resolveText('legal_document_section', 'sec-1');
+
+      // Played standalone, "Article 1156" alone says nothing about which code.
+      expect(doc.title).toBe('Civil Code of the Philippines — Article 1156');
+    });
+
+    it('falls back to sectionType when the section has no label', async () => {
+      const { service, prisma } = build();
+      prisma.legalDocumentSection.findUnique.mockResolvedValue({
+        ...SECTION,
+        sectionLabel: null,
+      });
+
+      const { doc } = await service.resolveText('legal_document_section', 'sec-1');
+
+      expect(doc.sections[0]?.heading).toBe('article');
+      expect(doc.title).toBe('Civil Code of the Philippines — article');
+    });
+
+    it('throws when the parent document is not published', async () => {
+      const { service, prisma } = build();
+      prisma.legalDocumentSection.findUnique.mockResolvedValue({
+        ...SECTION,
+        legalDocument: { title: 'Draft Code', status: 'draft' },
+      });
+
+      // Narrating an unpublished document a section at a time would be an
+      // obvious way around the whole-document publication guard.
+      await expect(
+        service.resolveText('legal_document_section', 'sec-1'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('throws when the section does not exist', async () => {
+      const { service, prisma } = build();
+      prisma.legalDocumentSection.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.resolveText('legal_document_section', 'missing'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it.each([null, '', '   \n\t '])(
+      'refuses a section whose plainText is %p rather than synthesizing silence',
+      async (plainText) => {
+        const { service, prisma, tts } = build();
+        prisma.legalDocumentSection.findUnique.mockResolvedValue({
+          ...SECTION,
+          plainText,
+        });
+
+        await expect(
+          service.resolveText('legal_document_section', 'sec-1'),
+        ).rejects.toBeInstanceOf(NotFoundException);
+        expect(tts.synthesize).not.toHaveBeenCalled();
+      },
+    );
+
+    it('synthesizes and persists a section rendition end to end', async () => {
+      const { service, prisma, tts, s3 } = build();
+      prisma.legalDocumentSection.findUnique.mockResolvedValue(SECTION);
+      prisma.audioRendition.findFirst.mockResolvedValue(null);
+      tts.synthesize.mockResolvedValue({
+        audio: Buffer.from('MP3BYTES'),
+        marks: MARKS,
+      });
+      prisma.audioRendition.upsert.mockImplementation(
+        (args: { create: Record<string, unknown> }) => ({
+          id: 'rend-sec',
+          ...args.create,
+        }),
+      );
+
+      await service.generate({
+        contentType: 'legal_document_section',
+        contentId: 'sec-1',
+        language: 'en',
+      });
+
+      // Object keys are namespaced by content type, so a section rendition can
+      // never collide with its parent document's.
+      const keys = s3.upload.mock.calls.map((c) => c[0] as string);
+      expect(keys).toContain('audio/legal_document_section/sec-1/Matthew-en.mp3');
+
+      const create = prisma.audioRendition.upsert.mock.calls[0]?.[0]
+        .create as Record<string, unknown>;
+      expect(create).toMatchObject({
+        contentType: 'legal_document_section',
+        contentId: 'sec-1',
+        status: 'ready',
+        visibility: 'public_editorial',
+      });
+    });
+
+    it('hands the 38,479-char outlier to the client, which chunks it', async () => {
+      const { service, prisma, tts } = build();
+      // NIRC's largest section. It is far under the 150 MiB output ceiling
+      // (~16 MiB), so the client batches it — this must NOT be refused here.
+      prisma.legalDocumentSection.findUnique.mockResolvedValue({
+        ...SECTION,
+        sectionLabel: 'Section 34',
+        plainText: 'a'.repeat(38_479),
+      });
+      prisma.audioRendition.findFirst.mockResolvedValue(null);
+      tts.synthesize.mockResolvedValue({
+        audio: Buffer.from('MP3BYTES'),
+        marks: MARKS,
+      });
+      prisma.audioRendition.upsert.mockResolvedValue({ id: 'rend-big' });
+
+      await service.generate({
+        contentType: 'legal_document_section',
+        contentId: 'sec-big',
+        language: 'en',
+      });
+
+      // Reached the TTS client at all — the whole document it belongs to
+      // cannot, which is the entire reason this content type exists. The
+      // batching itself is proven in kokoro.client.spec.ts.
+      expect(tts.synthesize).toHaveBeenCalledTimes(1);
+      const input = tts.synthesize.mock.calls[0]?.[0] as {
+        segments: Array<{ text: string }>;
+      };
+      expect(
+        input.segments.reduce((n, s) => n + s.text.length, 0),
+      ).toBeGreaterThan(38_000);
     });
   });
 

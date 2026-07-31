@@ -23,9 +23,14 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { DigestsService } from '../digests/digests.service';
+import { DocumentsService } from '../documents/documents.service';
 import { EntitlementService } from '../subscriptions/entitlement.service';
 import { AudioRenditionService } from './audio-rendition.service';
-import { isAudioContentType, type AudioContentType } from './audio.types';
+import {
+  AUDIO_CONTENT_TYPES,
+  isAudioContentType,
+  type AudioContentType,
+} from './audio.types';
 
 /** Validate + normalize the optional ?language query param. */
 function normalizeLanguage(raw?: string): string {
@@ -44,6 +49,7 @@ export class AudioController {
   constructor(
     private readonly renditions: AudioRenditionService,
     private readonly digests: DigestsService,
+    private readonly documents: DocumentsService,
     private readonly entitlements: EntitlementService,
     private readonly audit: AuditService,
     private readonly prisma: PrismaService,
@@ -139,16 +145,36 @@ export class AudioController {
   private parseContentType(raw: string): AudioContentType {
     if (!isAudioContentType(raw)) {
       throw new BadRequestException(
-        `Unsupported contentType '${raw}' (expected 'digest' or 'bar_exam_answer')`,
+        `Unsupported contentType '${raw}' (expected one of ${AUDIO_CONTENT_TYPES.join(', ')})`,
       );
     }
     return raw;
   }
 
   /**
+   * The caller's preview-only status, resolved exactly as
+   * `DocumentsController.resolvePreviewOnly` does
+   * (`documents.controller.ts:64`): a platform admin is never preview-only,
+   * everyone else takes it from their organization's effective entitlements.
+   *
+   * Duplicating the RESOLUTION rather than the GATE is deliberate — the gate
+   * itself stays in DocumentsService, so a change to what free users may read
+   * moves audio with it.
+   */
+  private async isPreviewOnly(user: JwtPayload): Promise<boolean> {
+    if (user.isPlatformAdmin === true) return false;
+    const ent = await this.entitlements.resolveEffectiveEntitlements(
+      user.organizationId,
+    );
+    return ent.previewOnly === true;
+  }
+
+  /**
    * Enforce content access + paywall before serving/triggering audio.
    *  - digest: reuse DigestsService access rules (owner/org/public_editorial),
    *    which blocks cross-org private content. Digest audio is free.
+   *  - legal_document / legal_document_section: reuse the DOCUMENTS gate, so
+   *    hearing text is allowed exactly where reading it is.
    *  - bar_exam_answer: only approved + public_editorial answers are eligible,
    *    and non-admins on a preview-only (free) plan are upsold.
    * Platform admins bypass the entitlement gate (not the content existence).
@@ -162,6 +188,38 @@ export class AudioController {
       // Throws Forbidden/NotFound per existing digest visibility rules.
       await this.digests.findById(contentId, user.sub, user.organizationId);
       return; // free plan may stream digest audio
+    }
+
+    if (contentType === 'legal_document_section') {
+      // Audio for a section is gated EXACTLY like READING that section:
+      // GET /documents/:id/sections/:sectionId → DocumentsService.getSection
+      // (`documents.service.ts:301`), whose only gate is the free-plan preview
+      // cap in assertPreviewAllowed — a preview-only caller may read one
+      // document per document_type and 402s on the rest. No new gate is
+      // invented here, and none is skipped: the parent lookup below only finds
+      // WHICH document to gate on.
+      const section = await this.prisma.legalDocumentSection.findUnique({
+        where: { id: contentId },
+        select: { legalDocumentId: true },
+      });
+      if (!section) {
+        throw new NotFoundException(`Section ${contentId} not found`);
+      }
+      await this.documents.getSection(
+        section.legalDocumentId,
+        contentId,
+        await this.isPreviewOnly(user),
+      );
+      return;
+    }
+
+    if (contentType === 'legal_document') {
+      // Same gate one level up (`documents.service.ts:73`, findById). Before
+      // this, `legal_document` had NO branch here and fell through to the
+      // bar-exam lookup below, so every codal rendition the reconciler has
+      // produced answered 404 `answer_not_available` on read.
+      await this.documents.findById(contentId, await this.isPreviewOnly(user));
+      return;
     }
 
     const answer = await this.prisma.barExamAnswer.findFirst({

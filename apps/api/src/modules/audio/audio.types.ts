@@ -5,11 +5,25 @@
  * table, distinguished only by `document_type`. No derivative type is
  * narratable, so flashcards are unreachable by construction rather than by
  * exclusion logic.
+ *
+ * `legal_document_section` narrates ONE `legal_document_sections` row. The four
+ * large statutory documents (Administrative Code, Civil Code, NIRC, Rules of
+ * Court — Civil Procedure) cannot be narrated whole: each would encode to a
+ * single 159-344 MiB file of 7-16 h continuous audio, which is both refused by
+ * the output guard and not how a reference work is read. Their 4,857 sections
+ * average 306-1,309 chars — BELOW the 2,032-char digest average that already
+ * works — so per section is the natural unit, and it is what the reader
+ * navigates by anyway.
+ *
+ * `audio_renditions` is already polymorphic (`content_type` varchar(30),
+ * `content_id` varchar(255), unique on (content_type, content_id, language,
+ * voice_id)), so a new member here needs NO migration.
  */
 export const AUDIO_CONTENT_TYPES = [
   'digest',
   'bar_exam_answer',
   'legal_document',
+  'legal_document_section',
 ] as const;
 export type AudioContentType = (typeof AUDIO_CONTENT_TYPES)[number];
 
