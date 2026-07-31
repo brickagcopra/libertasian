@@ -95,12 +95,35 @@ describe('audio job id', () => {
    * already — the reconciler hardcoded 'en' while the rendition service passed
    * `language` — so this drives the REAL services rather than comparing two
    * calls to the helper, which would pass even if a call site stopped using it.
+   *
+   * The reconciler now enqueues THROUGH AudioRenditionService, so agreement is
+   * structural rather than coincidental. These still drive both entry points
+   * end to end: a reconciler that stopped delegating would fail here.
    */
   describe('both enqueue sites', () => {
     const CONTENT_ID = 'd1';
 
+    /** A real AudioRenditionService over a mocked queue. Defaults to Matthew. */
+    function renditionService(queue: { add: jest.Mock; getJob: jest.Mock }) {
+      return new AudioRenditionService(
+        {} as unknown as PrismaService,
+        {} as unknown as TtsClient,
+        {} as unknown as AudioStorageService,
+        {
+          // Defaults resolve to Polly/Matthew.
+          get: (_key: string, fallback?: string) => fallback,
+        } as unknown as ConfigService,
+        queue as unknown as Queue,
+      );
+    }
+
+    const mockQueue = () => ({
+      add: jest.fn(),
+      getJob: jest.fn().mockResolvedValue(null),
+    });
+
     async function reconcilerJobId(): Promise<string | undefined> {
-      const queue = { add: jest.fn() };
+      const queue = mockQueue();
       const queryRaw = jest.fn();
       // volume, tier-1 count, tier-1 ids, then empty for tiers 2-3.
       queryRaw
@@ -110,8 +133,11 @@ describe('audio job id', () => {
         .mockResolvedValue([]);
 
       const service = new AudioReconcilerService(
-        { $queryRaw: queryRaw } as unknown as PrismaService,
-        { voiceId: 'Matthew' } as unknown as AudioRenditionService,
+        {
+          $queryRaw: queryRaw,
+          audioRendition: { findMany: jest.fn().mockResolvedValue([]) },
+        } as unknown as PrismaService,
+        renditionService(queue),
         // isRemote: true skips the disk guard by design — and matches prod, where
         // audio lives on R2. With isRemote: false the guard measures the LOCAL
         // volume, which would make this a test of the host's free space rather
@@ -122,7 +148,6 @@ describe('audio job id', () => {
           get: (key: string, fallback?: string) =>
             key === 'AUDIO_RECONCILER_ENABLED' ? 'true' : fallback,
         } as unknown as ConfigService,
-        queue as unknown as Queue,
       );
 
       await service.reconcile();
@@ -131,19 +156,8 @@ describe('audio job id', () => {
     }
 
     async function requestGenerationJobId(): Promise<string | undefined> {
-      const queue = { add: jest.fn() };
-      const service = new AudioRenditionService(
-        {} as unknown as PrismaService,
-        {} as unknown as TtsClient,
-        {} as unknown as AudioStorageService,
-        {
-          // Defaults resolve to Polly/Matthew, matching the voiceId above.
-          get: (_key: string, fallback?: string) => fallback,
-        } as unknown as ConfigService,
-        queue as unknown as Queue,
-      );
-
-      await service.requestGeneration('digest', CONTENT_ID, 'en');
+      const queue = mockQueue();
+      await renditionService(queue).requestGeneration('digest', CONTENT_ID, 'en');
       const opts = queue.add.mock.calls[0]?.[2] as { jobId?: string };
       return opts?.jobId;
     }
