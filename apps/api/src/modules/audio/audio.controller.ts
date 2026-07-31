@@ -30,6 +30,7 @@ import {
   AUDIO_CONTENT_TYPES,
   isAudioContentType,
   type AudioContentType,
+  type AudioRenditionReadStatus,
 } from './audio.types';
 
 /** Validate + normalize the optional ?language query param. */
@@ -61,6 +62,9 @@ export class AudioController {
     description:
       'Returns signed (short-TTL) audio + speech-mark URLs when ready, ' +
       'otherwise enqueues synthesis and responds 202 with status "pending". ' +
+      'Content whose synthesis failed terminally (e.g. output_too_large) ' +
+      'answers 200 with status "unavailable" and is NOT re-enqueued; when its ' +
+      'sections are individually narrated, `useSectionAudio` is true. ' +
       'Digest audio is free; bar-exam-answer audio is gated by entitlement.',
   })
   async getRendition(
@@ -85,6 +89,37 @@ export class AudioController {
       return {
         success: true,
         data: await this.renditions.buildReadModel(rendition),
+      };
+    }
+
+    // Terminal failure: answer 200 `unavailable` and enqueue NOTHING.
+    //
+    // Every other non-ready case falls through to requestGeneration below. For
+    // a row that failed for a reason re-running cannot change, that turned each
+    // client GET into a fresh job burning 3 attempts to reproduce the identical
+    // failure — and `claimJobId` (50b5b30) removes the retained terminal BullMQ
+    // record, so the deterministic job id no longer blocks the repeat either.
+    // Prod has 4 such rows, all `output_too_large`, all fully narrated per
+    // section instead.
+    if (this.renditions.isPermanentlyFailed(rendition)) {
+      return {
+        success: true,
+        data: {
+          status: 'unavailable' satisfies AudioRenditionReadStatus,
+          audioUrl: null,
+          marksUrl: null,
+          readalongUrl: null,
+          durationMs: null,
+          language,
+          voiceId: rendition?.voiceId ?? this.renditions.voiceId,
+          failureReason: rendition?.failureReason ?? null,
+          // The whole document is refused, but its sections are narrated
+          // individually — tell the client to switch rather than leaving it
+          // with only "no".
+          useSectionAudio:
+            contentType === 'legal_document' &&
+            (await this.renditions.hasCompleteSectionAudio(contentId, language)),
+        },
       };
     }
 

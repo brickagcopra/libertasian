@@ -13,6 +13,7 @@ import {
   READALONG_SCHEMA_VERSION,
   audioContentHashInput,
   audioJobId,
+  isPermanentlyRefused,
   type AudioContentType,
   type AudioGenerationJobData,
 } from './audio.types';
@@ -31,6 +32,7 @@ import {
 
 /** Public read projection of a rendition, with short-lived signed URLs. */
 export interface AudioRenditionReadModel {
+  /** One of {@link AudioRenditionReadStatus}; `string` because it is a DB column. */
   status: string;
   audioUrl: string | null;
   marksUrl: string | null;
@@ -39,6 +41,17 @@ export interface AudioRenditionReadModel {
   durationMs: number | null;
   language: string;
   voiceId: string;
+  /**
+   * Why synthesis will never succeed. Set ONLY on the `unavailable` response —
+   * a ready rendition has nothing to explain.
+   */
+  failureReason?: string | null;
+  /**
+   * True when whole-item audio is refused but every one of the item's sections
+   * has a ready rendition, so the client should play `legal_document_section`
+   * renditions instead of showing a dead end.
+   */
+  useSectionAudio?: boolean;
 }
 
 /** One timed read-along segment in the persisted `readalong.json` manifest. */
@@ -400,6 +413,71 @@ export class AudioRenditionService {
       orderBy: { createdAt: 'desc' },
     });
     return fallback ?? active;
+  }
+
+  /**
+   * Whether this rendition failed for a reason RE-RUNNING CANNOT CHANGE.
+   *
+   * Prod 2026-07-31: 21,094 ready rows, 4 failed — the Civil Code,
+   * Administrative Code, NIRC and Rules of Court, all `output_too_large`
+   * (374k-811k chars projecting 159-344 MiB of mp3 against a 150 MiB ceiling).
+   * All four are fully narrated per section instead, so those failures are the
+   * designed outcome, not an incident.
+   *
+   * An UNRECOGNISED reason is treated as retryable. A row that failed on a
+   * network blip, a timeout, or a reason added by a future backend must still
+   * get another attempt; only reasons this codebase knows to be terminal
+   * ({@link REFUSED_FAILURE_REASONS}) stop the retry.
+   */
+  isPermanentlyFailed(
+    rendition:
+      | { status: string; failureReason?: string | null }
+      | null
+      | undefined,
+  ): boolean {
+    if (!rendition || rendition.status !== 'failed') return false;
+    return isPermanentlyRefused(rendition.failureReason);
+  }
+
+  /**
+   * Whether every narratable section of a legal document already has audio, so
+   * a client refused the whole-document rendition can play it section by
+   * section instead of being told only that it cannot listen.
+   *
+   * "Narratable" excludes sections with empty `plain_text` — the same filter
+   * the reconciler's section tier applies, so the 2 empty rows out of prod's
+   * 4,857 do not make a fully-covered document read as incomplete.
+   *
+   * Deliberately NOT filtered by voice: `getRendition` serves any ready
+   * rendition for the language, so coverage means "the client can play it",
+   * not "the active voice produced it". Without that, a provider switch would
+   * flip this to false while perfectly serviceable audio existed.
+   */
+  async hasCompleteSectionAudio(
+    contentId: string,
+    language: string,
+  ): Promise<boolean> {
+    const [row] = await this.prisma.$queryRaw<
+      Array<{ total: bigint; missing: bigint }>
+    >`
+      SELECT
+        COUNT(*) AS total,
+        COUNT(*) FILTER (WHERE ar.id IS NULL) AS missing
+      FROM legal_document_sections s
+      LEFT JOIN audio_renditions ar
+        ON ar.content_type = 'legal_document_section'
+       AND ar.content_id = s.id::text
+       AND ar.language = ${language}
+       AND ar.status = 'ready'
+      WHERE s.legal_document_id = ${contentId}::uuid
+        AND s.plain_text IS NOT NULL
+        AND btrim(s.plain_text) <> ''
+    `;
+    const total = Number(row?.total ?? 0);
+    const missing = Number(row?.missing ?? 0);
+    // A document with no narratable sections is not "covered" — it just has
+    // nothing to offer, and claiming coverage would send the client hunting.
+    return total > 0 && missing === 0;
   }
 
   /**

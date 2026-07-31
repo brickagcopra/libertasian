@@ -80,6 +80,17 @@ export function audioJobId(
 }
 
 /**
+ * Status the READ endpoint reports to a client.
+ *
+ *  - `ready`       — signed URLs are included; play it.
+ *  - `pending`     — synthesis was enqueued (202); poll.
+ *  - `unavailable` — this content will NEVER have whole-item audio. Returned
+ *                    200 with a `failureReason`, and with NO enqueue: the
+ *                    client must stop asking. See {@link REFUSED_FAILURE_REASONS}.
+ */
+export type AudioRenditionReadStatus = 'ready' | 'pending' | 'unavailable';
+
+/**
  * Failure reasons that describe the CONTENT, not the attempt.
  *
  * A rendition that failed for one of these cannot be changed by running the job

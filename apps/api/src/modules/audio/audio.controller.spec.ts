@@ -40,6 +40,8 @@ function build() {
     requestGeneration: jest.fn(),
     buildReadModel: jest.fn(),
     resolveText: jest.fn(),
+    isPermanentlyFailed: jest.fn().mockReturnValue(false),
+    hasCompleteSectionAudio: jest.fn().mockResolvedValue(false),
     voiceId: 'Matthew',
   };
   const digests = { findById: jest.fn() };
@@ -339,6 +341,230 @@ describe('AudioController', () => {
       expect(out.data.status).toBe('ready');
       expect(documents.findById).toHaveBeenCalledWith('doc-1', false);
       expect(prisma.barExamAnswer.findFirst).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * Prod 2026-07-31: 21,094 ready renditions, 4 failed — the Civil Code,
+   * Administrative Code, NIRC and Rules of Court, all `output_too_large`, all
+   * fully narrated per section instead. Before this guard every client GET on
+   * those four fell through to requestGeneration and burned 3 attempts
+   * reproducing the identical failure.
+   */
+  describe('getRendition — terminal failures must not re-enqueue', () => {
+    const FAILED = {
+      status: 'failed',
+      voiceId: 'af_heart',
+      failureReason:
+        'output_too_large: 810815 chars project to ~343MiB of mp3, above the 150MiB output ceiling',
+    };
+
+    /** Wire the real predicate, so the spec exercises the actual reason list. */
+    function buildWithRealPredicate() {
+      const ctx = build();
+      ctx.renditions.isPermanentlyFailed.mockImplementation(
+        (r: { status: string; failureReason?: string | null } | null) =>
+          new AudioRenditionService(
+            {} as never,
+            {} as never,
+            {} as never,
+            { get: (_k: string, d?: string) => d } as never,
+            {} as never,
+          ).isPermanentlyFailed(r),
+      );
+      return ctx;
+    }
+
+    it('returns 200 unavailable and enqueues NOTHING', async () => {
+      const { controller, renditions, documents, entitlements } =
+        buildWithRealPredicate();
+      const { res, status } = makeRes();
+      entitlements.resolveEffectiveEntitlements.mockResolvedValue({
+        previewOnly: false,
+      });
+      documents.findById.mockResolvedValue({ id: 'doc-1' });
+      renditions.getRendition.mockResolvedValue(FAILED);
+      renditions.hasCompleteSectionAudio.mockResolvedValue(true);
+
+      const out = await controller.getRendition(
+        'legal_document',
+        'doc-1',
+        'en',
+        makeUser(),
+        res,
+      );
+
+      expect(renditions.requestGeneration).not.toHaveBeenCalled();
+      // 200, not 202: there is nothing in flight to poll for.
+      expect(status).not.toHaveBeenCalled();
+      expect(out.data).toMatchObject({
+        status: 'unavailable',
+        audioUrl: null,
+        failureReason: FAILED.failureReason,
+        voiceId: 'af_heart',
+        language: 'en',
+      });
+    });
+
+    it('tells the client to use per-section audio when the sections are covered', async () => {
+      const { controller, renditions, documents, entitlements } =
+        buildWithRealPredicate();
+      const { res } = makeRes();
+      entitlements.resolveEffectiveEntitlements.mockResolvedValue({
+        previewOnly: false,
+      });
+      documents.findById.mockResolvedValue({ id: 'doc-1' });
+      renditions.getRendition.mockResolvedValue(FAILED);
+      renditions.hasCompleteSectionAudio.mockResolvedValue(true);
+
+      const out = await controller.getRendition(
+        'legal_document',
+        'doc-1',
+        'en',
+        makeUser(),
+        res,
+      );
+
+      expect(out.data.useSectionAudio).toBe(true);
+      expect(renditions.hasCompleteSectionAudio).toHaveBeenCalledWith(
+        'doc-1',
+        'en',
+      );
+    });
+
+    it('does not claim section audio when the sections are not covered', async () => {
+      const { controller, renditions, documents, entitlements } =
+        buildWithRealPredicate();
+      const { res } = makeRes();
+      entitlements.resolveEffectiveEntitlements.mockResolvedValue({
+        previewOnly: false,
+      });
+      documents.findById.mockResolvedValue({ id: 'doc-1' });
+      renditions.getRendition.mockResolvedValue(FAILED);
+      renditions.hasCompleteSectionAudio.mockResolvedValue(false);
+
+      const out = await controller.getRendition(
+        'legal_document',
+        'doc-1',
+        'en',
+        makeUser(),
+        res,
+      );
+
+      expect(out.data.useSectionAudio).toBe(false);
+      expect(renditions.requestGeneration).not.toHaveBeenCalled();
+    });
+
+    it('never claims section audio for a digest', async () => {
+      const { controller, renditions, digests } = buildWithRealPredicate();
+      const { res } = makeRes();
+      digests.findById.mockResolvedValue({ id: 'd1' });
+      renditions.getRendition.mockResolvedValue(FAILED);
+
+      const out = await controller.getRendition('digest', 'd1', 'en', makeUser(), res);
+
+      expect(out.data.useSectionAudio).toBe(false);
+      // A digest has no sections to fall back to, so nothing is even asked.
+      expect(renditions.hasCompleteSectionAudio).not.toHaveBeenCalled();
+      expect(renditions.requestGeneration).not.toHaveBeenCalled();
+    });
+
+    it.each(['timeout', 'transient', 'permanent', 'error', 'brand_new_reason'])(
+      'still re-enqueues a row failed with the unrecognized reason %s',
+      async (reason) => {
+        const { controller, renditions, digests } = buildWithRealPredicate();
+        const { res, status } = makeRes();
+        digests.findById.mockResolvedValue({ id: 'd1' });
+        renditions.getRendition.mockResolvedValue({
+          status: 'failed',
+          voiceId: 'Matthew',
+          failureReason: `${reason}: tts-service returned 500`,
+        });
+
+        const out = await controller.getRendition(
+          'digest',
+          'd1',
+          'en',
+          makeUser(),
+          res,
+        );
+
+        // Unknown means retryable: a network blip or a reason a future backend
+        // adds must not be mistaken for a permanent refusal.
+        expect(renditions.requestGeneration).toHaveBeenCalledTimes(1);
+        expect(status).toHaveBeenCalledWith(HttpStatus.ACCEPTED);
+        expect(out.data.status).toBe('pending');
+      },
+    );
+
+    it('still re-enqueues a failed row with no reason recorded', async () => {
+      const { controller, renditions, digests } = buildWithRealPredicate();
+      const { res } = makeRes();
+      digests.findById.mockResolvedValue({ id: 'd1' });
+      renditions.getRendition.mockResolvedValue({
+        status: 'failed',
+        voiceId: 'Matthew',
+        failureReason: null,
+      });
+
+      await controller.getRendition('digest', 'd1', 'en', makeUser(), res);
+
+      expect(renditions.requestGeneration).toHaveBeenCalledTimes(1);
+    });
+
+    it('still re-enqueues a PENDING row (nothing terminal about it)', async () => {
+      const { controller, renditions, digests } = buildWithRealPredicate();
+      const { res } = makeRes();
+      digests.findById.mockResolvedValue({ id: 'd1' });
+      renditions.getRendition.mockResolvedValue({
+        status: 'pending',
+        voiceId: 'Matthew',
+        failureReason: null,
+      });
+
+      await controller.getRendition('digest', 'd1', 'en', makeUser(), res);
+
+      expect(renditions.requestGeneration).toHaveBeenCalledTimes(1);
+    });
+
+    it('still re-enqueues when there is no rendition row at all', async () => {
+      const { controller, renditions, digests } = buildWithRealPredicate();
+      const { res } = makeRes();
+      digests.findById.mockResolvedValue({ id: 'd1' });
+      renditions.getRendition.mockResolvedValue(null);
+
+      await controller.getRendition('digest', 'd1', 'en', makeUser(), res);
+
+      expect(renditions.requestGeneration).toHaveBeenCalledTimes(1);
+    });
+
+    it('lets an admin force render override a permanent failure', async () => {
+      const { controller, renditions, audit } = buildWithRealPredicate();
+      const { res, status } = makeRes();
+      renditions.resolveText.mockResolvedValue({
+        text: 'x',
+        visibility: 'public_editorial',
+      });
+
+      await controller.forceRender(
+        'legal_document',
+        'doc-1',
+        'en',
+        makeUser({ isPlatformAdmin: true }),
+        '127.0.0.1',
+        res,
+      );
+
+      // The read path stops asking; a deliberate admin retry must not.
+      expect(renditions.requestGeneration).toHaveBeenCalledWith(
+        'legal_document',
+        'doc-1',
+        'en',
+        true,
+      );
+      expect(renditions.getRendition).not.toHaveBeenCalled();
+      expect(status).toHaveBeenCalledWith(HttpStatus.ACCEPTED);
+      expect(audit.log).toHaveBeenCalled();
     });
   });
 
