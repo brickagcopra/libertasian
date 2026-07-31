@@ -24,6 +24,14 @@ interface AudioPlayerProps {
   onEnded?: () => void;
   /** When provided, renders a "Continue playing" toggle bound to this state. */
   continueToggle?: { enabled: boolean; onChange: (enabled: boolean) => void };
+  /** Label on the "Continue playing" toggle. Defaults to the digest wording. */
+  continueLabel?: string;
+  /**
+   * Copy for the 402 upsell. Defaults to the bar-answer wording; the document
+   * reader passes its own, because a section 402 means the reader is past their
+   * free-document cap, not that narration itself is a Pro feature.
+   */
+  paywallMessage?: string;
 }
 
 const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5] as const;
@@ -36,7 +44,10 @@ function formatTime(ms: number): string {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
-function PaywallUpsell() {
+const DEFAULT_PAYWALL_MESSAGE =
+  'Listen with Pro — narrated audio for bar answers.';
+
+function PaywallUpsell({ message }: { message: string }) {
   return (
     <div
       className="flex items-center justify-between gap-3 rounded-lg border bg-muted/30 px-4 py-2.5"
@@ -44,7 +55,7 @@ function PaywallUpsell() {
     >
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Sparkles className="size-4 text-primary" />
-        <span>Listen with Pro — narrated audio for bar answers.</span>
+        <span>{message}</span>
       </div>
       <Button variant="outline" size="sm" asChild>
         <Link href="/pricing">See plans</Link>
@@ -68,6 +79,8 @@ export function AudioPlayer({
   autoPlay = false,
   onEnded,
   continueToggle,
+  continueLabel = 'Continue playing next digest',
+  paywallMessage = DEFAULT_PAYWALL_MESSAGE,
 }: AudioPlayerProps) {
   const [enabled, setEnabled] = useState(autoPlay);
   const queryClient = useQueryClient();
@@ -177,7 +190,7 @@ export function AudioPlayer({
   }
 
   if (isPaywalled) {
-    return <PaywallUpsell />;
+    return <PaywallUpsell message={paywallMessage} />;
   }
 
   if (isTakingTooLong && data?.status === 'pending') {
@@ -294,7 +307,7 @@ export function AudioPlayer({
                   type="checkbox"
                   checked={continueToggle.enabled}
                   onChange={(e) => continueToggle.onChange(e.target.checked)}
-                  aria-label="Continue playing next digest"
+                  aria-label={continueLabel}
                   data-testid="audio-continue-checkbox"
                   className="size-3.5 cursor-pointer accent-primary"
                 />
