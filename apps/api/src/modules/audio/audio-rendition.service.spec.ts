@@ -811,6 +811,31 @@ describe('AudioRenditionService', () => {
       });
     });
 
+    it('persists output_too_large exactly like text_too_long', async () => {
+      const { service, prisma } = build();
+      prisma.audioRendition.findUnique.mockResolvedValue(null);
+
+      // The 810,815-char codal: refused before synthesis because its audio
+      // would not fit the container heap. The reason has to land on the row —
+      // the reconciler's gap query keys on status='ready', so it re-enqueues
+      // this content hourly and `failure_reason` is the only record of why
+      // every one of those attempts stops immediately.
+      await service.recordFailure(
+        JOB,
+        'output_too_large',
+        '810815 chars project to ~343MiB of mp3, above the 150MiB output ceiling',
+      );
+
+      const args = prisma.audioRendition.create.mock.calls[0]?.[0] as {
+        data: Record<string, unknown>;
+      };
+      expect(args.data).toMatchObject({
+        status: 'failed',
+        failureReason:
+          'output_too_large: 810815 chars project to ~343MiB of mp3, above the 150MiB output ceiling',
+      });
+    });
+
     it('never downgrades a ready rendition', async () => {
       const { service, prisma } = build();
       prisma.audioRendition.findUnique.mockResolvedValue({

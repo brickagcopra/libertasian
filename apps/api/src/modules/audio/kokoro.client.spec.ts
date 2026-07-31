@@ -255,25 +255,45 @@ describe('KokoroClient', () => {
 
   describe('chunking a document past the ceiling', () => {
     /**
-     * Every batch answers with its own audio marker and three marks, so the
-     * merged result can be checked for BOTH completeness (all batches present,
-     * in order) and correct mark offsetting across the seams.
+     * Bytes every mocked batch returns, and the duration they encode to.
+     *
+     * 4,800 bytes is EXACTLY 800 ms at the 48 kbps CBR that
+     * services/tts-service/src/synthesis.py pins — the arithmetic the client is
+     * expected to do. It is deliberately unrelated to the batch's char count,
+     * so a char-derived offset cannot accidentally produce these numbers.
      */
-    const mockPerBatchResponses = (): void => {
+    const BATCH_BYTES = 4_800;
+    const BATCH_MS = 800;
+
+    /**
+     * Every batch answers with its own audio marker (padded to BATCH_BYTES) and
+     * three marks, so the merged result can be checked for BOTH completeness
+     * (all batches present, in order) and correct mark offsetting at the seams.
+     *
+     * `markTimes` stay far below BATCH_MS by default, so any offset that came
+     * from the marks rather than from the bytes is immediately visible.
+     */
+    const mockPerBatchResponses = (
+      markTimes: [number, number, number] = [0, 100, 200],
+    ): void => {
       fetchMock.mockImplementation((_url: string, init: { body: string }) => {
         const body = JSON.parse(init.body) as {
           segments: Array<{ id: string }>;
         };
         const first = body.segments[0]?.id ?? '';
         const last = body.segments[body.segments.length - 1]?.id ?? '';
+        const marker = `[${first}..${last}]`;
+        const audio = Buffer.from(
+          marker + '#'.repeat(BATCH_BYTES - marker.length),
+        );
         return Promise.resolve({
           ok: true,
           json: async () => ({
-            audio: Buffer.from(`[${first}..${last}]`).toString('base64'),
+            audio: audio.toString('base64'),
             marks: [
-              `{"time":0,"type":"ssml","value":"${first}"}`,
-              `{"time":1500,"type":"word","value":"end"}`,
-              `{"time":1600,"type":"ssml","value":"${last}"}`,
+              `{"time":${markTimes[0]},"type":"ssml","value":"${first}"}`,
+              `{"time":${markTimes[1]},"type":"word","value":"end"}`,
+              `{"time":${markTimes[2]},"type":"ssml","value":"${last}"}`,
             ].join('\n'),
           }),
         });
@@ -288,9 +308,20 @@ describe('KokoroClient', () => {
           }).segments,
       );
 
+    /** The batch markers in order, with the padding stripped back out. */
+    const audioMarkers = (audio: Buffer): string =>
+      audio.toString('utf-8').replace(/#/g, '');
+
     // The GPU factor prod runs at. 400,000 chars sits inside the 105,130-810,815
     // char range of the 13 published codals that could never be synthesized.
-    const GPU = { KOKORO_REALTIME_FACTOR: '0.25' };
+    //
+    // 400,000 chars project to ~169 MiB, past the DEFAULT 150 MiB output guard,
+    // so these fixtures raise it explicitly — the guard is exercised on its own
+    // terms below rather than incidentally here.
+    const GPU = {
+      KOKORO_REALTIME_FACTOR: '0.25',
+      KOKORO_MAX_OUTPUT_BYTES: String(400 * 1024 * 1024),
+    };
 
     it('splits a 400k-char document into batches instead of refusing it', async () => {
       mockPerBatchResponses();
@@ -326,7 +357,7 @@ describe('KokoroClient', () => {
         client.synthesize(documentOfSegments(400_000, 2_000)),
       );
 
-      expect(result.audio.toString()).toBe(
+      expect(audioMarkers(result.audio)).toBe(
         '[seg-0..seg-37]' +
           '[seg-38..seg-75]' +
           '[seg-76..seg-113]' +
@@ -334,9 +365,20 @@ describe('KokoroClient', () => {
           '[seg-152..seg-189]' +
           '[seg-190..seg-199]',
       );
+      expect(result.audio.length).toBe(6 * BATCH_BYTES);
     });
 
-    it('offsets each batch of marks so times increase across the boundary', async () => {
+    /** The `{time, value}` marks of a merged result, in emitted order. */
+    const mergedMarks = (
+      marks: Buffer,
+    ): Array<{ time: number; value: string }> =>
+      marks
+        .toString('utf-8')
+        .split('\n')
+        .filter((line) => line.trim().length > 0)
+        .map((line) => JSON.parse(line) as { time: number; value: string });
+
+    it('derives each offset from the encoded BYTES, not from the char count', async () => {
       mockPerBatchResponses();
       const client = new KokoroClient(configFor(GPU));
 
@@ -344,24 +386,58 @@ describe('KokoroClient', () => {
         client.synthesize(documentOfSegments(400_000, 2_000)),
       );
 
-      const marks = result.marks
-        .toString('utf-8')
-        .split('\n')
-        .filter((line) => line.trim().length > 0)
-        .map((line) => JSON.parse(line) as { time: number; value: string });
+      const times = mergedMarks(result.marks).map((m) => m.time);
 
-      // Three marks per batch, none dropped by the merge.
-      expect(marks).toHaveLength(18);
-      const times = marks.map((m) => m.time);
+      // 4,800 B at 48 kbps CBR is exactly 800 ms, so batch k starts at k*800.
+      expect(times.slice(0, 6)).toEqual([0, 100, 200, 800, 900, 1000]);
+      // The old estimate read the batch's 76,000 chars at 13.5 chars/s and put
+      // this mark at 5,629,630 ms. The real rate is 13.85, so that estimate ran
+      // ~2.6% long and compounded to ~25 min of drift over the largest
+      // document. Nothing char-derived can produce 800.
+      expect(times[3]).toBe(800);
+      expect(times[3]).not.toBe(5_629_630);
+    });
+
+    it('merges 3 batches at exact byte-derived offsets', async () => {
+      mockPerBatchResponses();
+      const client = new KokoroClient(configFor(GPU));
+
+      // 100 segments → 38 + 38 + 24. At 200,000 chars this also sits under the
+      // DEFAULT output guard, so no override is doing the work here.
+      const result = await settle(
+        client.synthesize(documentOfSegments(200_000, 2_000)),
+      );
+
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(mergedMarks(result.marks).map((m) => m.time)).toEqual([
+        0,
+        100,
+        200,
+        BATCH_MS,
+        BATCH_MS + 100,
+        BATCH_MS + 200,
+        2 * BATCH_MS,
+        2 * BATCH_MS + 100,
+        2 * BATCH_MS + 200,
+      ]);
+    });
+
+    it('keeps marks monotonic when a batch’s marks outrun its own audio', async () => {
+      // 5,000 ms of marks against 800 ms of encoded audio. Using the bytes
+      // alone would place the next batch at 800 ms, BEHIND a mark already
+      // emitted at 5,000 — the read-along would rewind at the seam.
+      mockPerBatchResponses([0, 100, 5_000]);
+      const client = new KokoroClient(configFor(GPU));
+
+      const result = await settle(
+        client.synthesize(documentOfSegments(200_000, 2_000)),
+      );
+
+      const times = mergedMarks(result.marks).map((m) => m.time);
       expect([...times].sort((a, b) => a - b)).toEqual(times);
-
-      // The first batch is unshifted; every later one starts strictly after the
-      // audio that precedes it, so read-along never rewinds at a seam.
-      expect(times.slice(0, 3)).toEqual([0, 1500, 1600]);
-      expect(times[3]).toBeGreaterThan(times[2] ?? 0);
-      // 76,000 chars at the measured 13.5 chars/s of audio.
-      expect(times[3]).toBe(5_629_630);
-      expect(marks[3]?.value).toBe('seg-38');
+      expect(times).toEqual([
+        0, 100, 5_000, 5_000, 5_100, 10_000, 10_000, 10_100, 15_000,
+      ]);
     });
 
     it('keeps the per-batch timeout retry behaviour', async () => {
@@ -419,6 +495,94 @@ describe('KokoroClient', () => {
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(postedBatches()[0]).toHaveLength(4);
+    });
+  });
+
+  describe('output size guard', () => {
+    it('refuses the largest codal up front, before any synthesis', async () => {
+      const client = new KokoroClient(configFor({ KOKORO_REALTIME_FACTOR: '0.25' }));
+
+      // ~810,815 chars: the largest published codal. ~16.3 h of audio → ~343
+      // MiB of mp3, which synthesizeInBatches would hold once in its parts
+      // array and again in the Buffer.concat result, against a 1,048 MB heap.
+      const err = (await settle(
+        client.synthesize(documentOfSegments(810_000, 2_000)).catch((e) => e),
+      )) as TtsSynthesisError;
+
+      expect(err).toBeInstanceOf(TtsSynthesisError);
+      expect(err.reason).toBe('output_too_large');
+      expect(err.detail).toContain('343MiB');
+      expect(err.detail).toContain('150MiB');
+      // Refused, not started and abandoned — the same discipline the timeout
+      // ceiling follows.
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('honours a raised KOKORO_MAX_OUTPUT_BYTES', async () => {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        json: async () => ({ audio: '', marks: '' }),
+      });
+      const client = new KokoroClient(
+        configFor({
+          KOKORO_REALTIME_FACTOR: '0.25',
+          KOKORO_MAX_OUTPUT_BYTES: String(500 * 1024 * 1024),
+        }),
+      );
+
+      await expect(
+        settle(client.synthesize(documentOfSegments(810_000, 2_000))),
+      ).resolves.toBeDefined();
+      expect(fetchMock).toHaveBeenCalled();
+    });
+
+    it('aborts mid-run when cumulative output crosses the ceiling', async () => {
+      // 1 MB per batch, against a cap only just above the char-based
+      // projection: the up-front check passes and the backstop is what stops
+      // the run. This is the case the projection cannot catch — a document that
+      // narrates slower than the assumed 13.5 chars per second of audio.
+      fetchMock.mockImplementation(() =>
+        Promise.resolve({
+          ok: true,
+          json: async () => ({
+            audio: Buffer.alloc(1_000_000, 0x61).toString('base64'),
+            marks: '{"time":0,"type":"ssml","value":"seg-0"}',
+          }),
+        }),
+      );
+
+      // Ceiling pinned to the 60 s floor so every 300-char segment is its own
+      // batch. 6,000 chars project to 2,666,667 B, just under the cap.
+      const client = new KokoroClient(
+        configFor({
+          KOKORO_TIMEOUT_CEILING_MS: '60000',
+          KOKORO_MAX_OUTPUT_BYTES: '2700000',
+        }),
+      );
+
+      const err = (await settle(
+        client.synthesize(documentOfSegments(6_000, 300)).catch((e) => e),
+      )) as TtsSynthesisError;
+
+      expect(err).toBeInstanceOf(TtsSynthesisError);
+      expect(err.reason).toBe('output_too_large');
+      // Stopped AT the crossing batch — 3 MB received against a 2.7 MB cap —
+      // not after all 20 batches were synthesized and held.
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(err.detail).toContain('batch 3/20');
+    });
+
+    it('lets an ordinary digest through untouched', async () => {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        json: async () => ({ audio: '', marks: '' }),
+      });
+
+      // The 2,032-char corpus average projects to under 1 MiB.
+      const client = new KokoroClient(configFor({}));
+      await settle(client.synthesize(inputOfChars(2_032)));
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     });
   });
 

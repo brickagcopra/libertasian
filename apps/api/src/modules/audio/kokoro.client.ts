@@ -18,8 +18,43 @@ interface KokoroSynthesizeResponse {
  * MEASURED on prod 2026-07-29: af_heart yields 13.5 characters per second of
  * audio. This is a property of the voice, not of the hardware, so it is a
  * constant here while the wall-clock factor below is configurable.
+ *
+ * A much larger later sample (28,944,457 chars over 580.5 audio hours) puts the
+ * true rate at 13.85, so this runs ~2.6% short of a second of audio per second.
+ * That bias is only ever applied to SIZING decisions — the timeout budget and
+ * the projected output size — where erring long is the safe direction, and it
+ * is deliberately NOT used to place marks on a timeline: see
+ * {@link mp3DurationMs}, which measures rather than estimates.
  */
 const CHARS_PER_AUDIO_SECOND = 13.5;
+
+/**
+ * The CBR bitrate every mp3 this client receives is encoded at.
+ *
+ * SOURCE OF TRUTH: `services/tts-service/src/synthesis.py` — `MP3_BITRATE_KBPS`
+ * (line 38) and `encode_mp3()` (lines 131-143), which pins `set_vbr(VBR_OFF)`
+ * on a mono stream and states in its own comment that the guarantee is
+ * deliberate and not env-tunable. Constant bitrate is what makes a batch's
+ * duration a division on its encoded length instead of a guess.
+ *
+ * If synthesis.py ever changes the bitrate or enables VBR, every duration this
+ * client derives becomes wrong — change them together.
+ */
+const MP3_BITRATE_KBPS = 48;
+
+/** Encoded bytes per second of audio at the pinned CBR bitrate. */
+const MP3_BYTES_PER_SECOND = (MP3_BITRATE_KBPS * 1000) / 8;
+
+/**
+ * EXACT duration, in ms, of `byteLength` bytes of the pinned-CBR mp3 stream.
+ *
+ * 48 kbit/s is 48 bits per millisecond, so this is arithmetic on the bytes the
+ * encoder actually produced — including the lead silences, which are encoded
+ * frames like any other audio and must NOT be added again by the caller.
+ */
+function mp3DurationMs(byteLength: number): number {
+  return Math.round((byteLength * 8) / MP3_BITRATE_KBPS);
+}
 
 /**
  * Wall-clock seconds spent per second of audio produced.
@@ -59,6 +94,22 @@ const TIMEOUT_RETRY_MULTIPLIER = 1.5;
  * the dead end {@link KokoroClient.synthesize} avoids for unchunked requests.
  */
 const BATCH_BUDGET_FRACTION = 0.8;
+
+/**
+ * Cap on the total encoded audio ONE synthesize() call may produce, in bytes.
+ *
+ * Chunking removed the time limit on a document but not the memory limit. The
+ * API container is capped at 2 GB (`HostConfig.Memory = 2147483648`) with a
+ * 1,048 MB Node heap; the largest published codal is 810,815 chars → ~16.3 h of
+ * audio → ~350 MB of mp3, which `synthesizeInBatches` would hold once in
+ * `audioParts` and then AGAIN in the `Buffer.concat` result (~700 MB), on top of
+ * each batch's base64 response string. Two of the 13 codals are that size.
+ *
+ * 150 MiB (~7 hours of narration) leaves the concat headroom inside the heap.
+ * Override with KOKORO_MAX_OUTPUT_BYTES once the audio path streams to storage
+ * instead of assembling one buffer.
+ */
+const DEFAULT_MAX_OUTPUT_BYTES = 150 * 1024 * 1024;
 
 /**
  * Length-proportional timeout budget for `chars` characters of spoken text.
@@ -101,6 +152,7 @@ export class KokoroClient implements TtsClient {
   private readonly authToken: string;
   private readonly realtimeFactor: number;
   private readonly ceilingMs: number;
+  private readonly maxOutputBytes: number;
 
   /** Attempts for TRANSIENT failures only (network error, 5xx, 429). */
   private static readonly MAX_ATTEMPTS = 3;
@@ -121,6 +173,10 @@ export class KokoroClient implements TtsClient {
       this.config.get<string>('KOKORO_TIMEOUT_CEILING_MS'),
       DEFAULT_CEILING_MS,
     );
+    this.maxOutputBytes = this.positiveNumber(
+      this.config.get<string>('KOKORO_MAX_OUTPUT_BYTES'),
+      DEFAULT_MAX_OUTPUT_BYTES,
+    );
   }
 
   async synthesize(
@@ -130,6 +186,20 @@ export class KokoroClient implements TtsClient {
     const voice = voiceId ?? this.defaultVoiceId;
     const chars = KokoroClient.charCount(input);
     const budgetMs = kokoroTimeoutBudgetMs(chars, this.realtimeFactor);
+
+    // Refuse an output the container cannot hold BEFORE synthesizing any of it.
+    // The projection is arithmetic on the char count at the pinned bitrate, so
+    // it costs nothing — whereas discovering the limit at the last batch means
+    // having already allocated hundreds of MB and burned the GPU time that
+    // produced them. Same discipline as the timeout ceiling: refuse, or finish.
+    const projectedBytes = KokoroClient.projectedOutputBytes(chars);
+    if (projectedBytes > this.maxOutputBytes) {
+      throw new TtsSynthesisError(
+        'output_too_large',
+        `${chars} chars project to ~${KokoroClient.mib(projectedBytes)}MiB of mp3, ` +
+          `above the ${KokoroClient.mib(this.maxOutputBytes)}MiB output ceiling`,
+      );
+    }
 
     // Too long for ONE call is not too long to narrate: split it. At the default
     // factor a single call covers ~9,720 chars, which is above the 2,032-char
@@ -234,6 +304,7 @@ export class KokoroClient implements TtsClient {
     const audioParts: Buffer[] = [];
     const markLines: string[] = [];
     let offsetMs = 0;
+    let totalBytes = 0;
 
     for (const [index, batch] of batches.entries()) {
       const batchChars = KokoroClient.segmentChars(batch);
@@ -243,9 +314,24 @@ export class KokoroClient implements TtsClient {
         kokoroTimeoutBudgetMs(batchChars, this.realtimeFactor),
         batchChars,
       );
+
+      // Backstop for the up-front projection: it assumes 13.5 chars per second
+      // of audio, and a voice or a document that narrates slower than that would
+      // overshoot. Checked BEFORE retaining the batch so the run stops at the
+      // ceiling rather than one whole batch past it.
+      totalBytes += result.audio.length;
+      if (totalBytes > this.maxOutputBytes) {
+        throw new TtsSynthesisError(
+          'output_too_large',
+          `batch ${index + 1}/${batches.length} took encoded output to ` +
+            `${KokoroClient.mib(totalBytes)}MiB, above the ` +
+            `${KokoroClient.mib(this.maxOutputBytes)}MiB output ceiling`,
+        );
+      }
+
       markLines.push(...KokoroClient.shiftMarkTimes(result.marks, offsetMs));
       audioParts.push(result.audio);
-      offsetMs += KokoroClient.batchDurationMs(result.marks, batch);
+      offsetMs += KokoroClient.batchDurationMs(result.audio, result.marks);
       this.logger.debug(
         `Batch ${index + 1}/${batches.length}: ${batchChars} chars, ` +
           `${result.audio.length}B audio, next offset ${offsetMs}ms`,
@@ -302,29 +388,45 @@ export class KokoroClient implements TtsClient {
   }
 
   /**
-   * How far the merged timeline advances after a batch.
+   * How far the merged timeline advances after a batch — MEASURED, not guessed.
    *
-   * Marks end at the ONSET of the last word, not at the end of the audio, so
-   * using the last mark alone would make every later batch drift progressively
-   * early. The measured {@link CHARS_PER_AUDIO_SECOND} plus the batch's lead
-   * silences give an independent estimate of its true length; taking the larger
-   * of the two keeps the merged marks monotonic.
+   * The encoded length divided by the pinned CBR bitrate is the batch's exact
+   * duration, so offsets do not accumulate error across batches. The earlier
+   * char-rate estimate ran ~2.6% long (13.5 assumed against 13.85 measured) and
+   * compounded batch over batch: ~25 minutes of read-along drift by the end of
+   * the largest document.
+   *
+   * `lastMarkTimeMs` survives only as a monotonicity floor. Marks end at the
+   * ONSET of the last word, so it is normally well below the true duration and
+   * never selected; it matters only if a response's marks somehow ran past its
+   * own audio, where letting the next batch start earlier would rewind the
+   * read-along at the seam.
    */
-  private static batchDurationMs(
-    marks: Buffer,
-    batch: TtsSynthesisInput['segments'],
-  ): number {
-    const leadSilenceMs = batch.reduce(
-      (total, segment) => total + Math.max(0, segment.leadSilenceMs),
-      0,
-    );
-    const estimatedMs = Math.ceil(
-      (KokoroClient.segmentChars(batch) / CHARS_PER_AUDIO_SECOND) * 1000 +
-        leadSilenceMs,
-    );
+  private static batchDurationMs(audio: Buffer, marks: Buffer): number {
     // `marks` is the batch's own, unshifted response, so its times are already
     // relative to the start of this batch.
-    return Math.max(estimatedMs, KokoroClient.lastMarkTimeMs(marks));
+    return Math.max(
+      mp3DurationMs(audio.length),
+      KokoroClient.lastMarkTimeMs(marks),
+    );
+  }
+
+  /**
+   * Encoded bytes `chars` of spoken text are expected to produce.
+   *
+   * Char count → seconds of audio at the measured voice rate → bytes at the
+   * pinned CBR bitrate. Deliberately the SAME bitrate arithmetic the exact
+   * measurement uses, so the projection and the backstop cannot disagree about
+   * anything except the chars-per-second term.
+   */
+  private static projectedOutputBytes(chars: number): number {
+    const audioSeconds = Math.max(0, chars) / CHARS_PER_AUDIO_SECOND;
+    return Math.ceil(audioSeconds * MP3_BYTES_PER_SECOND);
+  }
+
+  /** Bytes as whole MiB, for error text a human has to act on. */
+  private static mib(bytes: number): number {
+    return Math.round(bytes / (1024 * 1024));
   }
 
   /** Latest `time` across every parseable mark line, or 0 when there are none. */

@@ -222,6 +222,11 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
           .integer()
           .positive()
           .optional(),
+        // Cap on the total mp3 bytes ONE synthesis may produce. Chunking bounds
+        // how long a document may take, not how much audio it assembles in
+        // memory; the largest codal encodes to ~350 MB against a 1,048 MB heap.
+        // Defaults to 150 MiB in KokoroClient.
+        KOKORO_MAX_OUTPUT_BYTES: Joi.number().integer().positive().optional(),
         // Reconciler. BOTH default false; tier 3 (decisions) requires BOTH.
         AUDIO_RECONCILER_ENABLED: Joi.string()
           .valid('true', 'false')

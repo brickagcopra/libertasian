@@ -40,12 +40,16 @@ export const TTS_CLIENT = Symbol('TTS_CLIENT');
  *  - `text_too_long` — refused before the call: one indivisible segment is
  *                      longer than any allowed budget could cover. A long
  *                      DOCUMENT is chunked instead (see KokoroClient).
+ *  - `output_too_large` — refused before the call: the audio the whole document
+ *                      would encode to does not fit the API container's heap.
+ *                      Chunking bounds synthesis TIME, not output SIZE.
  */
 export type TtsFailureReason =
   | 'timeout'
   | 'transient'
   | 'permanent'
-  | 'text_too_long';
+  | 'text_too_long'
+  | 'output_too_large';
 
 /**
  * A classified synthesis failure.
