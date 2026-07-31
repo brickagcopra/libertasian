@@ -40,14 +40,25 @@ const DEFAULT_REALTIME_FACTOR = 2.5;
 const FLOOR_MS = 60_000;
 
 /**
- * Absolute cap on one synthesis call. A request whose budget would exceed it is
- * refused BEFORE the HTTP call rather than started and abandoned — see
- * {@link kokoroTimeoutBudgetMs}.
+ * Absolute cap on ONE synthesis call — not on the document.
+ *
+ * A request whose budget would exceed it is split into consecutive batches
+ * rather than started and abandoned; only a single segment that cannot fit is
+ * refused. See {@link KokoroClient.synthesizeInBatches}.
  */
 const DEFAULT_CEILING_MS = 1_800_000;
 
 /** How much larger the single timeout retry's budget is than the first try's. */
 const TIMEOUT_RETRY_MULTIPLIER = 1.5;
+
+/**
+ * Share of the ceiling one batch of a chunked request is allowed to plan for.
+ *
+ * The headroom is what the single enlarged timeout retry spends: a batch
+ * planned at the full ceiling could never be retried larger, which is exactly
+ * the dead end {@link KokoroClient.synthesize} avoids for unchunked requests.
+ */
+const BATCH_BUDGET_FRACTION = 0.8;
 
 /**
  * Length-proportional timeout budget for `chars` characters of spoken text.
@@ -118,22 +129,33 @@ export class KokoroClient implements TtsClient {
   ): Promise<SynthesisResult> {
     const voice = voiceId ?? this.defaultVoiceId;
     const chars = KokoroClient.charCount(input);
-    let budgetMs = kokoroTimeoutBudgetMs(chars, this.realtimeFactor);
+    const budgetMs = kokoroTimeoutBudgetMs(chars, this.realtimeFactor);
 
-    // Refuse up front rather than spend the ceiling and abandon the result. At
-    // the default factor this caps one call at ~9,720 chars, which is above the
-    // 2,032-char digest average but BELOW the ~25,600-char decision average —
-    // decisions need a faster backend (lower KOKORO_REALTIME_FACTOR) or a
-    // higher ceiling, and this says so instead of timing out silently.
+    // Too long for ONE call is not too long to narrate: split it. At the default
+    // factor a single call covers ~9,720 chars, which is above the 2,032-char
+    // digest average but far below the 105,130-810,815 chars of the 13 published
+    // codals — those needed ~1,947s to ~15,015s against a 1,800s ceiling and so
+    // could never pass, no matter how often the reconciler re-enqueued them.
     if (budgetMs > this.ceilingMs) {
-      throw new TtsSynthesisError(
-        'text_too_long',
-        `${chars} chars needs ~${Math.round(budgetMs / 1000)}s, above the ${Math.round(
-          this.ceilingMs / 1000,
-        )}s ceiling`,
-      );
+      return this.synthesizeInBatches(input, voice, chars);
     }
 
+    return this.synthesizeWithRetries(input, voice, budgetMs, chars);
+  }
+
+  /**
+   * Synthesize one request that already fits the ceiling, with the retry policy.
+   *
+   * `chars` is passed rather than recomputed so a batch's error text reports the
+   * batch's own length.
+   */
+  private async synthesizeWithRetries(
+    input: TtsSynthesisInput,
+    voice: string,
+    initialBudgetMs: number,
+    chars: number,
+  ): Promise<SynthesisResult> {
+    let budgetMs = initialBudgetMs;
     let transientAttempts = 0;
     let timeoutRetried = false;
 
@@ -187,9 +209,180 @@ export class KokoroClient implements TtsClient {
     }
   }
 
+  /**
+   * Synthesize a document too long for one call as consecutive batches.
+   *
+   * Batches are cut on segment boundaries only — a segment is one sentence or
+   * heading and splitting inside it would produce audible mid-sentence seams and
+   * a `<mark>` with nothing to point at. The MP3 buffers are concatenated in
+   * order (Kokoro emits constant-bitrate frames, so a frame-aligned append plays
+   * as one file) and the marks are merged with each batch's times shifted by the
+   * audio that precedes it, which is what keeps read-along highlighting aligned
+   * past the first batch.
+   */
+  private async synthesizeInBatches(
+    input: TtsSynthesisInput,
+    voice: string,
+    chars: number,
+  ): Promise<SynthesisResult> {
+    const batches = this.planBatches(input.segments);
+    this.logger.log(
+      `Chunking ${chars} chars into ${batches.length} batches for ${voice} ` +
+        `(per-batch budget <= ${Math.round(this.ceilingMs * BATCH_BUDGET_FRACTION)}ms)`,
+    );
+
+    const audioParts: Buffer[] = [];
+    const markLines: string[] = [];
+    let offsetMs = 0;
+
+    for (const [index, batch] of batches.entries()) {
+      const batchChars = KokoroClient.segmentChars(batch);
+      const result = await this.synthesizeWithRetries(
+        { ssml: input.ssml, segments: batch },
+        voice,
+        kokoroTimeoutBudgetMs(batchChars, this.realtimeFactor),
+        batchChars,
+      );
+      markLines.push(...KokoroClient.shiftMarkTimes(result.marks, offsetMs));
+      audioParts.push(result.audio);
+      offsetMs += KokoroClient.batchDurationMs(result.marks, batch);
+      this.logger.debug(
+        `Batch ${index + 1}/${batches.length}: ${batchChars} chars, ` +
+          `${result.audio.length}B audio, next offset ${offsetMs}ms`,
+      );
+    }
+
+    return {
+      audio: Buffer.concat(audioParts),
+      marks: Buffer.from(markLines.join('\n'), 'utf-8'),
+    };
+  }
+
+  /**
+   * Group segments into consecutive batches that each fit the per-batch budget.
+   *
+   * A segment that alone exceeds the ceiling is the ONLY remaining
+   * `text_too_long`: no grouping can help it, so refusing is still honest.
+   */
+  private planBatches(
+    segments: TtsSynthesisInput['segments'],
+  ): Array<TtsSynthesisInput['segments']> {
+    const perBatchCeilingMs = this.ceilingMs * BATCH_BUDGET_FRACTION;
+    const batches: Array<Array<TtsSynthesisInput['segments'][number]>> = [];
+    let current: Array<TtsSynthesisInput['segments'][number]> = [];
+    let currentChars = 0;
+
+    for (const segment of segments) {
+      const segmentChars = segment.text.length;
+      const aloneMs = kokoroTimeoutBudgetMs(segmentChars, this.realtimeFactor);
+      if (aloneMs > this.ceilingMs) {
+        throw new TtsSynthesisError(
+          'text_too_long',
+          `segment ${segment.id} alone is ${segmentChars} chars, needing ~${Math.round(
+            aloneMs / 1000,
+          )}s above the ${Math.round(this.ceilingMs / 1000)}s ceiling`,
+        );
+      }
+      const withSegmentMs = kokoroTimeoutBudgetMs(
+        currentChars + segmentChars,
+        this.realtimeFactor,
+      );
+      // `current.length` guards the floor case: a lone segment always starts a
+      // batch, even when the 60s floor already exceeds the per-batch budget.
+      if (current.length > 0 && withSegmentMs > perBatchCeilingMs) {
+        batches.push(current);
+        current = [];
+        currentChars = 0;
+      }
+      current.push(segment);
+      currentChars += segmentChars;
+    }
+    if (current.length > 0) batches.push(current);
+    return batches;
+  }
+
+  /**
+   * How far the merged timeline advances after a batch.
+   *
+   * Marks end at the ONSET of the last word, not at the end of the audio, so
+   * using the last mark alone would make every later batch drift progressively
+   * early. The measured {@link CHARS_PER_AUDIO_SECOND} plus the batch's lead
+   * silences give an independent estimate of its true length; taking the larger
+   * of the two keeps the merged marks monotonic.
+   */
+  private static batchDurationMs(
+    marks: Buffer,
+    batch: TtsSynthesisInput['segments'],
+  ): number {
+    const leadSilenceMs = batch.reduce(
+      (total, segment) => total + Math.max(0, segment.leadSilenceMs),
+      0,
+    );
+    const estimatedMs = Math.ceil(
+      (KokoroClient.segmentChars(batch) / CHARS_PER_AUDIO_SECOND) * 1000 +
+        leadSilenceMs,
+    );
+    // `marks` is the batch's own, unshifted response, so its times are already
+    // relative to the start of this batch.
+    return Math.max(estimatedMs, KokoroClient.lastMarkTimeMs(marks));
+  }
+
+  /** Latest `time` across every parseable mark line, or 0 when there are none. */
+  private static lastMarkTimeMs(marks: Buffer): number {
+    let latest = 0;
+    for (const line of marks.toString('utf-8').split(/\r?\n/)) {
+      const time = KokoroClient.markTime(line);
+      if (time !== null && time > latest) latest = time;
+    }
+    return latest;
+  }
+
+  /**
+   * Re-emit a batch's NDJSON marks with every `time` advanced by `offsetMs`.
+   *
+   * Lines that are blank are dropped; lines that do not parse, or carry no
+   * numeric `time`, are passed through untouched rather than discarded — this
+   * client does not own the mark vocabulary.
+   */
+  private static shiftMarkTimes(marks: Buffer, offsetMs: number): string[] {
+    const lines: string[] = [];
+    for (const raw of marks.toString('utf-8').split(/\r?\n/)) {
+      const trimmed = raw.trim();
+      if (!trimmed) continue;
+      const time = KokoroClient.markTime(trimmed);
+      if (time === null || offsetMs === 0) {
+        lines.push(trimmed);
+        continue;
+      }
+      const record = JSON.parse(trimmed) as Record<string, unknown>;
+      lines.push(JSON.stringify({ ...record, time: time + offsetMs }));
+    }
+    return lines;
+  }
+
+  /** The numeric `time` of one NDJSON mark line, or null if it has none. */
+  private static markTime(line: string): number | null {
+    const trimmed = line.trim();
+    if (!trimmed) return null;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      return null;
+    }
+    if (typeof parsed !== 'object' || parsed === null) return null;
+    const time = (parsed as Record<string, unknown>)['time'];
+    return typeof time === 'number' ? time : null;
+  }
+
   /** Characters of spoken text in the request — what synthesis cost scales with. */
   private static charCount(input: TtsSynthesisInput): number {
-    return input.segments.reduce((total, segment) => total + segment.text.length, 0);
+    return KokoroClient.segmentChars(input.segments);
+  }
+
+  /** Characters of spoken text across a list of segments. */
+  private static segmentChars(segments: TtsSynthesisInput['segments']): number {
+    return segments.reduce((total, segment) => total + segment.text.length, 0);
   }
 
   /** Issue one POST /synthesize with the caller's timeout budget. */

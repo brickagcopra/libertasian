@@ -264,13 +264,36 @@ describe('AudioRenditionService', () => {
   });
 
   describe('generate — content-hash short-circuit', () => {
+    /** A ready row for the SAME content item the caller asked about. */
+    const SELF_MATCH = {
+      id: 'cached-1',
+      contentType: 'digest',
+      contentId: 'digest-1',
+      status: 'ready',
+    };
+
+    /**
+     * A ready row whose text hashes identically but belongs to ANOTHER digest —
+     * 16 prod digests are byte-identical to an already-voiced one.
+     */
+    const OTHER_MATCH = {
+      id: 'cached-twin',
+      contentType: 'digest',
+      contentId: 'digest-TWIN',
+      contentHash: 'deadbeef',
+      engine: 'kokoro',
+      audioObjectKey: 'audio/digest/digest-TWIN/af_heart-en.mp3',
+      marksObjectKey: 'audio/digest/digest-TWIN/af_heart-en.marks.json',
+      readalongObjectKey: 'audio/digest/digest-TWIN/af_heart-en.readalong.json',
+      durationMs: 94_000,
+      charCount: 1_270,
+      status: 'ready',
+    };
+
     it('returns the existing ready rendition without calling Polly or S3', async () => {
       const { service, prisma, tts, s3 } = build();
       prisma.digest.findUnique.mockResolvedValue(DIGEST_ROW);
-      prisma.audioRendition.findFirst.mockResolvedValue({
-        id: 'cached-1',
-        status: 'ready',
-      });
+      prisma.audioRendition.findFirst.mockResolvedValue(SELF_MATCH);
 
       const result = await service.generate({
         contentType: 'digest',
@@ -284,13 +307,92 @@ describe('AudioRenditionService', () => {
       expect(prisma.audioRendition.upsert).not.toHaveBeenCalled();
     });
 
+    it('writes an ALIAS row when the hash matches a different contentId', async () => {
+      const { service, prisma, tts, s3 } = build();
+      prisma.digest.findUnique.mockResolvedValue(DIGEST_ROW);
+      prisma.audioRendition.findFirst.mockResolvedValue(OTHER_MATCH);
+      prisma.audioRendition.upsert.mockImplementation(
+        (args: { create: Record<string, unknown> }) => ({
+          id: 'alias-1',
+          ...args.create,
+        }),
+      );
+
+      const result = await service.generate({
+        contentType: 'digest',
+        contentId: 'digest-1',
+        language: 'en',
+      });
+
+      // The whole point: audio that already exists is neither re-synthesized
+      // nor re-uploaded.
+      expect(tts.synthesize).not.toHaveBeenCalled();
+      expect(s3.upload).not.toHaveBeenCalled();
+
+      const args = prisma.audioRendition.upsert.mock.calls[0]?.[0] as {
+        where: Record<string, unknown>;
+        create: Record<string, unknown>;
+        update: Record<string, unknown>;
+      };
+      // Upserted on the EXISTING unique key — no schema change needed.
+      expect(args.where).toEqual({
+        contentType_contentId_language_voiceId: {
+          contentType: 'digest',
+          contentId: 'digest-1',
+          language: 'en',
+          voiceId: 'Matthew',
+        },
+      });
+      // The row belongs to the REQUESTED content and reuses the twin's objects
+      // verbatim.
+      expect(args.create).toMatchObject({
+        contentType: 'digest',
+        contentId: 'digest-1',
+        language: 'en',
+        voiceId: 'Matthew',
+        status: 'ready',
+        contentHash: 'deadbeef',
+        engine: 'kokoro',
+        audioObjectKey: 'audio/digest/digest-TWIN/af_heart-en.mp3',
+        marksObjectKey: 'audio/digest/digest-TWIN/af_heart-en.marks.json',
+        readalongObjectKey:
+          'audio/digest/digest-TWIN/af_heart-en.readalong.json',
+        durationMs: 94_000,
+        charCount: 1_270,
+        visibility: 'public_editorial',
+      });
+      // A row left `failed` by earlier futile attempts now has real audio.
+      expect(args.update['failureReason']).toBeNull();
+
+      // getRendition looks up by contentId, so the returned row must be the one
+      // that carries the REQUESTED contentId — not the twin's.
+      expect(result.id).toBe('alias-1');
+      expect(result.contentId).toBe('digest-1');
+    });
+
+    it('bypasses the alias path entirely when force is set', async () => {
+      const { service, prisma, tts, s3 } = build();
+      prisma.digest.findUnique.mockResolvedValue(DIGEST_ROW);
+      prisma.audioRendition.findFirst.mockResolvedValue(OTHER_MATCH);
+      tts.synthesize.mockResolvedValue({ audio: Buffer.from('x'), marks: MARKS });
+      prisma.audioRendition.upsert.mockResolvedValue({ id: 'rend-3' });
+
+      await service.generate({
+        contentType: 'digest',
+        contentId: 'digest-1',
+        language: 'en',
+        force: true,
+      });
+
+      expect(prisma.audioRendition.findFirst).not.toHaveBeenCalled();
+      expect(tts.synthesize).toHaveBeenCalledTimes(1);
+      expect(s3.upload).toHaveBeenCalledTimes(3);
+    });
+
     it('bypasses the short-circuit when force is set', async () => {
       const { service, prisma, tts, s3 } = build();
       prisma.digest.findUnique.mockResolvedValue(DIGEST_ROW);
-      prisma.audioRendition.findFirst.mockResolvedValue({
-        id: 'cached-1',
-        status: 'ready',
-      });
+      prisma.audioRendition.findFirst.mockResolvedValue(SELF_MATCH);
       tts.synthesize.mockResolvedValue({ audio: Buffer.from('x'), marks: MARKS });
       prisma.audioRendition.upsert.mockResolvedValue({ id: 'rend-2' });
 

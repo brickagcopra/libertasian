@@ -37,7 +37,9 @@ export const TTS_CLIENT = Symbol('TTS_CLIENT');
  *  - `timeout`       — ran out of wall-clock budget (compute-bound, deterministic)
  *  - `transient`     — network error / 5xx / 429; retried
  *  - `permanent`     — 4xx or a contract violation; not retryable
- *  - `text_too_long` — refused before the call: no allowed budget could cover it
+ *  - `text_too_long` — refused before the call: one indivisible segment is
+ *                      longer than any allowed budget could cover. A long
+ *                      DOCUMENT is chunked instead (see KokoroClient).
  */
 export type TtsFailureReason =
   | 'timeout'

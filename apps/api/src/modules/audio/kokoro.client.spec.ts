@@ -14,6 +14,22 @@ const inputOfChars = (chars: number): TtsSynthesisInput => ({
   segments: [{ id: 'seg-0', text: 'a'.repeat(chars), leadSilenceMs: 0 }],
 });
 
+/**
+ * A document of `totalChars` split into equal segments of `segmentChars` —
+ * the shape of a published codal, whose sections are the segments.
+ */
+const documentOfSegments = (
+  totalChars: number,
+  segmentChars: number,
+): TtsSynthesisInput => ({
+  ssml: '<speak/>',
+  segments: Array.from({ length: totalChars / segmentChars }, (_, i) => ({
+    id: `seg-${i}`,
+    text: 'a'.repeat(segmentChars),
+    leadSilenceMs: 0,
+  })),
+});
+
 const configFor = (values: Record<string, string>): ConfigService =>
   ({
     get: (key: string, fallback?: string) => values[key] ?? fallback,
@@ -193,10 +209,10 @@ describe('KokoroClient', () => {
       expect(err.detail).toContain('2238 chars');
     });
 
-    it('refuses text no allowed budget can cover, before calling out', async () => {
+    it('refuses a SINGLE segment no allowed budget can cover, before calling out', async () => {
       const client = new KokoroClient(configFor({}));
-      // ~25,600 chars is the average DECISION; at the CPU factor its budget is
-      // ~4,740s, well past the 1,800s ceiling.
+      // One indivisible 25,600-char segment: at the CPU factor its budget is
+      // ~4,740s, well past the 1,800s ceiling, and no grouping can help it.
       const err = (await settle(
         client.synthesize(inputOfChars(25_600)).catch((e) => e),
       )) as TtsSynthesisError;
@@ -234,6 +250,175 @@ describe('KokoroClient', () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(err.reason).toBe('timeout');
       expect(err.detail).not.toContain('enlarged retry');
+    });
+  });
+
+  describe('chunking a document past the ceiling', () => {
+    /**
+     * Every batch answers with its own audio marker and three marks, so the
+     * merged result can be checked for BOTH completeness (all batches present,
+     * in order) and correct mark offsetting across the seams.
+     */
+    const mockPerBatchResponses = (): void => {
+      fetchMock.mockImplementation((_url: string, init: { body: string }) => {
+        const body = JSON.parse(init.body) as {
+          segments: Array<{ id: string }>;
+        };
+        const first = body.segments[0]?.id ?? '';
+        const last = body.segments[body.segments.length - 1]?.id ?? '';
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            audio: Buffer.from(`[${first}..${last}]`).toString('base64'),
+            marks: [
+              `{"time":0,"type":"ssml","value":"${first}"}`,
+              `{"time":1500,"type":"word","value":"end"}`,
+              `{"time":1600,"type":"ssml","value":"${last}"}`,
+            ].join('\n'),
+          }),
+        });
+      });
+    };
+
+    const postedBatches = (): Array<Array<{ id: string; text: string }>> =>
+      fetchMock.mock.calls.map(
+        (call) =>
+          (JSON.parse((call as [string, { body: string }])[1].body) as {
+            segments: Array<{ id: string; text: string }>;
+          }).segments,
+      );
+
+    // The GPU factor prod runs at. 400,000 chars sits inside the 105,130-810,815
+    // char range of the 13 published codals that could never be synthesized.
+    const GPU = { KOKORO_REALTIME_FACTOR: '0.25' };
+
+    it('splits a 400k-char document into batches instead of refusing it', async () => {
+      mockPerBatchResponses();
+      const client = new KokoroClient(configFor(GPU));
+
+      await settle(client.synthesize(documentOfSegments(400_000, 2_000)));
+
+      // 80% of the 1,800s ceiling at 0.25x realtime is 77,760 chars, i.e. 38
+      // of these 2,000-char segments; 200 segments therefore need 6 batches.
+      const batches = postedBatches();
+      expect(batches).toHaveLength(6);
+      expect(batches.map((b) => b.length)).toEqual([38, 38, 38, 38, 38, 10]);
+
+      // Consecutive, complete, and never split mid-segment.
+      const posted = batches.flat();
+      expect(posted.map((s) => s.id)).toEqual(
+        Array.from({ length: 200 }, (_, i) => `seg-${i}`),
+      );
+      expect(posted.every((s) => s.text.length === 2_000)).toBe(true);
+      // No batch may plan past the per-batch budget.
+      expect(
+        batches.every(
+          (b) => b.reduce((n, s) => n + s.text.length, 0) <= 77_760,
+        ),
+      ).toBe(true);
+    });
+
+    it('returns ONE concatenated audio buffer carrying every batch in order', async () => {
+      mockPerBatchResponses();
+      const client = new KokoroClient(configFor(GPU));
+
+      const result = await settle(
+        client.synthesize(documentOfSegments(400_000, 2_000)),
+      );
+
+      expect(result.audio.toString()).toBe(
+        '[seg-0..seg-37]' +
+          '[seg-38..seg-75]' +
+          '[seg-76..seg-113]' +
+          '[seg-114..seg-151]' +
+          '[seg-152..seg-189]' +
+          '[seg-190..seg-199]',
+      );
+    });
+
+    it('offsets each batch of marks so times increase across the boundary', async () => {
+      mockPerBatchResponses();
+      const client = new KokoroClient(configFor(GPU));
+
+      const result = await settle(
+        client.synthesize(documentOfSegments(400_000, 2_000)),
+      );
+
+      const marks = result.marks
+        .toString('utf-8')
+        .split('\n')
+        .filter((line) => line.trim().length > 0)
+        .map((line) => JSON.parse(line) as { time: number; value: string });
+
+      // Three marks per batch, none dropped by the merge.
+      expect(marks).toHaveLength(18);
+      const times = marks.map((m) => m.time);
+      expect([...times].sort((a, b) => a - b)).toEqual(times);
+
+      // The first batch is unshifted; every later one starts strictly after the
+      // audio that precedes it, so read-along never rewinds at a seam.
+      expect(times.slice(0, 3)).toEqual([0, 1500, 1600]);
+      expect(times[3]).toBeGreaterThan(times[2] ?? 0);
+      // 76,000 chars at the measured 13.5 chars/s of audio.
+      expect(times[3]).toBe(5_629_630);
+      expect(marks[3]?.value).toBe('seg-38');
+    });
+
+    it('keeps the per-batch timeout retry behaviour', async () => {
+      // First batch 503s once, then every call succeeds: the transient retry is
+      // per batch, not per document.
+      let calls = 0;
+      fetchMock.mockImplementation(() => {
+        calls += 1;
+        if (calls === 1) return Promise.resolve({ ok: false, status: 503 });
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ audio: '', marks: '' }),
+        });
+      });
+
+      const client = new KokoroClient(configFor(GPU));
+      await expect(
+        settle(client.synthesize(documentOfSegments(400_000, 2_000))),
+      ).resolves.toBeDefined();
+
+      // 6 batches + the one retried batch.
+      expect(fetchMock).toHaveBeenCalledTimes(7);
+    });
+
+    it('refuses only the oversized segment, not the whole document', async () => {
+      mockPerBatchResponses();
+      const client = new KokoroClient(configFor({}));
+      // Small segments the CPU factor can batch, plus one that alone needs
+      // ~7,400s — no grouping can make that fit.
+      const doc: TtsSynthesisInput = {
+        ssml: '<speak/>',
+        segments: [
+          { id: 'seg-0', text: 'a'.repeat(2_000), leadSilenceMs: 0 },
+          { id: 'seg-1', text: 'a'.repeat(40_000), leadSilenceMs: 0 },
+          { id: 'seg-2', text: 'a'.repeat(2_000), leadSilenceMs: 0 },
+        ],
+      };
+
+      const err = (await settle(
+        client.synthesize(doc).catch((e) => e),
+      )) as TtsSynthesisError;
+
+      expect(err).toBeInstanceOf(TtsSynthesisError);
+      expect(err.reason).toBe('text_too_long');
+      expect(err.detail).toContain('seg-1');
+      // Planning happens before any HTTP call, so nothing is half-synthesized.
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('does not chunk a document that already fits', async () => {
+      mockPerBatchResponses();
+      const client = new KokoroClient(configFor({}));
+
+      await settle(client.synthesize(documentOfSegments(4_000, 1_000)));
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(postedBatches()[0]).toHaveLength(4);
     });
   });
 

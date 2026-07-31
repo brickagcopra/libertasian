@@ -55,6 +55,26 @@ interface ReadAlongManifest {
   readonly segments: ReadAlongSegment[];
 }
 
+/**
+ * The already-voiced rendition an alias row copies its audio from.
+ *
+ * Structural rather than `Prisma.AudioRendition` so the copy is limited, in the
+ * type, to the columns that describe the AUDIO — never the identity columns of
+ * the row being aliased.
+ */
+interface AliasSource {
+  readonly id: string;
+  readonly contentType: string;
+  readonly contentId: string;
+  readonly contentHash: string;
+  readonly engine: string;
+  readonly audioObjectKey: string;
+  readonly marksObjectKey: string | null;
+  readonly readalongObjectKey: string | null;
+  readonly durationMs: number | null;
+  readonly charCount: number | null;
+}
+
 /** Resolved spoken document for a content item plus its visibility. */
 interface ResolvedContent {
   doc: SpokenDocument;
@@ -351,11 +371,25 @@ export class AudioRenditionService {
       const ready = await this.prisma.audioRendition.findFirst({
         where: { contentHash, voiceId, language, status: 'ready' },
       });
-      if (ready) {
+      if (
+        ready &&
+        ready.contentType === contentType &&
+        ready.contentId === contentId
+      ) {
         this.logger.debug(
           `Short-circuit: ready rendition ${ready.id} matches hash for ${contentType}:${contentId}`,
         );
         return ready;
+      }
+      if (ready) {
+        return this.writeAliasRendition(
+          ready,
+          contentType,
+          contentId,
+          language,
+          voiceId,
+          visibility,
+        );
       }
     }
 
@@ -436,6 +470,64 @@ export class AudioRenditionService {
       `Rendition ready ${rendition.id} (${contentType}:${contentId}, ${charCount} chars, ${durationMs ?? '?'}ms)`,
     );
     return rendition;
+  }
+
+  /**
+   * Point a second content item at audio that already exists for identical text.
+   *
+   * 16 prod digests are byte-identical to an already-voiced one, so the content
+   * hash matches a row belonging to a DIFFERENT contentId. Returning that row
+   * (what this used to do) left the requested contentId with no row at all:
+   * `getRendition` looks up by contentId, found nothing, answered 202 "pending"
+   * and re-enqueued — the player spun forever and every page view added another
+   * futile job.
+   *
+   * The alias reuses the source's object keys VERBATIM: the bytes are identical,
+   * so re-uploading them under a second key would double the storage and the
+   * synthesis cost to no effect. It is therefore NOT safe to delete an object
+   * because one rendition row was deleted — check for aliases on the same keys.
+   */
+  private async writeAliasRendition(
+    source: AliasSource,
+    contentType: AudioContentType,
+    contentId: string,
+    language: string,
+    voiceId: string,
+    visibility: string,
+  ) {
+    const audio = {
+      contentHash: source.contentHash,
+      engine: source.engine,
+      audioObjectKey: source.audioObjectKey,
+      marksObjectKey: source.marksObjectKey,
+      readalongObjectKey: source.readalongObjectKey,
+      durationMs: source.durationMs,
+      charCount: source.charCount,
+      status: 'ready',
+      visibility,
+    };
+
+    const alias = await this.prisma.audioRendition.upsert({
+      where: {
+        contentType_contentId_language_voiceId: {
+          contentType,
+          contentId,
+          language,
+          voiceId,
+        },
+      },
+      create: { contentType, contentId, language, voiceId, ...audio },
+      // A row that previously failed for this contentId now has serviceable
+      // audio, so its failure no longer describes it.
+      update: { ...audio, failureReason: null },
+    });
+
+    this.logger.debug(
+      `Alias rendition ${alias.id} written for ${contentType}:${contentId}, ` +
+        `reusing ${source.contentType}:${source.contentId} (rendition ${source.id}) ` +
+        `on identical content hash — no TTS call, no upload`,
+    );
+    return alias;
   }
 
   /**
