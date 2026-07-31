@@ -1,18 +1,15 @@
-import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { Queue } from 'bullmq';
 import { statfs } from 'fs/promises';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { AudioRenditionService } from './audio-rendition.service';
 import { AudioStorageService } from './audio-storage.service';
 import {
-  AUDIO_JOB,
-  AUDIO_QUEUE,
   CODAL_DOCUMENT_TYPES,
-  audioJobId,
+  REFUSED_FAILURE_REASONS,
+  isPermanentlyRefused,
   type AudioContentType,
 } from './audio.types';
 
@@ -35,6 +32,13 @@ const TIERS: readonly Tier[] = [
 
 /** Bytes per second of audio at the pinned 48 kbps encode. */
 const BYTES_PER_AUDIO_SECOND = (48 * 1000) / 8;
+
+/**
+ * The language the backfill narrates in. Bound once and used for BOTH the
+ * enqueue and the refused-rendition lookup, so the two can never disagree about
+ * which row describes the work this tick is about to schedule.
+ */
+const RECONCILE_LANGUAGE = 'en';
 
 /** Refuse to enqueue below this much free space on the MinIO volume. */
 const MIN_FREE_DISK_BYTES = 20 * 1024 ** 3;
@@ -73,7 +77,6 @@ export class AudioReconcilerService {
     private readonly renditions: AudioRenditionService,
     private readonly storage: AudioStorageService,
     private readonly config: ConfigService,
-    @InjectQueue(AUDIO_QUEUE) private readonly queue: Queue,
   ) {}
 
   private get enabled(): boolean {
@@ -142,6 +145,7 @@ export class AudioReconcilerService {
     await this.logCumulativeBytes();
 
     let remaining = this.batchSize;
+    let refusedThisTick = 0;
     for (const tier of TIERS) {
       // `!remote` matters: in remote mode `free` is deliberately never measured,
       // so without it this branch would read "unmeasurable" and refuse tier 3
@@ -187,30 +191,90 @@ export class AudioReconcilerService {
 
       if (remaining <= 0) continue;
       const ids = await this.gapIdsForTier(tier, remaining);
+      const { enqueueable, refused } = await this.partitionRefused(tier, ids);
+      refusedThisTick += refused.length;
 
       if (this.dryRun) {
         this.logger.log({
           event: 'audio_reconcile_dry_run',
           tier: tier.n,
           label: tier.label,
-          wouldEnqueue: ids.length,
+          wouldEnqueue: enqueueable.length,
           remainingGap: total,
-          sampleIds: ids.slice(0, 5),
+          sampleIds: enqueueable.slice(0, 5),
           estimatedHoursForTier: +(
             (total * this.estimatedSecondsPerItem(tier)) /
             3600
           ).toFixed(1),
           message: 'DRY RUN: nothing enqueued',
         });
-        remaining -= ids.length;
+        remaining -= enqueueable.length;
         continue;
       }
 
-      for (const id of ids) {
+      for (const id of enqueueable) {
         await this.enqueue(tier, id);
       }
-      remaining -= ids.length;
+      // Refused ids cost no synthesis, so they must not consume the tick's
+      // batch budget — otherwise 4 permanently-refused codals would silently
+      // shrink every tick's real workload.
+      remaining -= enqueueable.length;
     }
+
+    if (refusedThisTick > 0) {
+      // The gap query counts anything without a `ready` rendition, so refused
+      // content stays in `remainingGap` forever by design. Without this line
+      // that residual reads as a stalled backfill instead of a closed question.
+      this.logger.warn({
+        event: 'audio_reconcile_permanently_refused',
+        skipped: refusedThisTick,
+        reasons: [...REFUSED_FAILURE_REASONS],
+        message:
+          'Skipped content whose rendition failed for a reason re-running cannot ' +
+          'change; it remains in the gap by design. An admin force render still ' +
+          'bypasses this and runs.',
+      });
+    }
+  }
+
+  /**
+   * Split a tier's gap ids into what to enqueue and what is permanently refused.
+   *
+   * Without this, part 1 of this change makes things WORSE: the 4 codals that
+   * fail `output_too_large` were only being held back by the stale job ids that
+   * blocked every re-enqueue. Once those stop blocking, the hourly tick would
+   * retry all 4 forever, each attempt reproducing the identical refusal.
+   *
+   * One query per tier, keyed on the same (voice, language) the enqueue uses.
+   */
+  private async partitionRefused(
+    tier: Tier,
+    ids: string[],
+  ): Promise<{ enqueueable: string[]; refused: string[] }> {
+    if (ids.length === 0) return { enqueueable: [], refused: [] };
+
+    const failed = await this.prisma.audioRendition.findMany({
+      where: {
+        contentType: tier.contentType,
+        contentId: { in: ids },
+        language: RECONCILE_LANGUAGE,
+        voiceId: this.renditions.voiceId,
+        status: 'failed',
+      },
+      select: { contentId: true, failureReason: true },
+    });
+
+    const refusedIds = new Set(
+      failed
+        .filter((row) => isPermanentlyRefused(row.failureReason))
+        .map((row) => row.contentId),
+    );
+    if (refusedIds.size === 0) return { enqueueable: ids, refused: [] };
+
+    return {
+      enqueueable: ids.filter((id) => !refusedIds.has(id)),
+      refused: ids.filter((id) => refusedIds.has(id)),
+    };
   }
 
   /** Estimated seconds of audio one item of this tier produces. */
@@ -304,29 +368,19 @@ export class AudioReconcilerService {
   /**
    * Enqueue one item at the tier's priority.
    *
-   * `language` is bound once and passed to BOTH the payload and the job id: the
-   * id is the dedupe key, so it must match what {@link
-   * AudioRenditionService.requestGeneration} produces for the same content or a
-   * user request during a backfill synthesizes the same audio a second time.
+   * Delegates to {@link AudioRenditionService.requestGeneration} — the single
+   * enqueue path — so the job id, retry policy and retention cannot drift from
+   * what the on-demand read path produces. The id IS the dedupe key: a divergent
+   * id here would make a user request during a backfill synthesize the same
+   * audio a second time. Priority is the only thing this tier layer contributes.
    */
   private async enqueue(tier: Tier, contentId: string): Promise<void> {
-    const language = 'en';
-    await this.queue.add(
-      AUDIO_JOB,
-      { contentType: tier.contentType, contentId, language, force: false },
-      {
-        jobId: audioJobId(
-          tier.contentType,
-          contentId,
-          language,
-          this.renditions.voiceId,
-        ),
-        priority: tier.priority,
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 5000 },
-        removeOnComplete: 100,
-        removeOnFail: 500,
-      },
+    await this.renditions.requestGeneration(
+      tier.contentType,
+      contentId,
+      RECONCILE_LANGUAGE,
+      false,
+      tier.priority,
     );
   }
 

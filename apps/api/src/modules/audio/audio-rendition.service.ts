@@ -319,15 +319,24 @@ export class AudioRenditionService {
   }
 
   /**
-   * Enqueue a synthesis job. A deterministic jobId dedupes concurrent
-   * requests for the same content while one is already queued/active; a
-   * forced (admin) regen uses a fresh jobId so it always runs.
+   * Enqueue a synthesis job. THE single enqueue path.
+   *
+   * The on-demand read path, the publish listener and the hourly reconciler all
+   * route through here, so the job id, retry policy and retention are defined
+   * once. `priority` is the only knob a caller varies: the reconciler tiers it
+   * so a 15,464-document decision backfill can never starve a newly published
+   * digest.
+   *
+   * A deterministic jobId dedupes concurrent requests for the same content while
+   * one is queued or active; a forced (admin) regen uses no jobId at all, so it
+   * is never deduped, never blocked, and always runs.
    */
   async requestGeneration(
     contentType: AudioContentType,
     contentId: string,
     language: string,
     force = false,
+    priority?: number,
   ): Promise<void> {
     const data: AudioGenerationJobData = {
       contentType,
@@ -335,15 +344,80 @@ export class AudioRenditionService {
       language,
       force,
     };
+    const jobId = force
+      ? undefined
+      : audioJobId(contentType, contentId, language, this.defaultVoiceId);
+
+    if (jobId && !(await this.claimJobId(jobId))) return;
+
     await this.queue.add(AUDIO_JOB, data, {
-      jobId: force
-        ? undefined
-        : audioJobId(contentType, contentId, language, this.defaultVoiceId),
+      jobId,
+      priority,
       attempts: 3,
       backoff: { type: 'exponential', delay: 5000 },
       removeOnComplete: 100,
       removeOnFail: 500,
     });
+  }
+
+  /**
+   * Make a deterministic job id usable, and say whether to enqueue at all.
+   *
+   * Drops a same-id job that has already FINISHED, so the id can be reused.
+   *
+   * BullMQ refuses `add` for an id that exists in any state — including
+   * `completed` and `failed` — while both retention settings deliberately keep
+   * terminal records (100 completed, 500 failed). A retained record therefore
+   * blocks its content from ever being re-enqueued, and because retention is a
+   * ring buffer the behaviour is positional: an id still inside the
+   * last-100-completed window is blocked, an evicted one is not. That is the
+   * opposite of what the id is documented to do — dedupe "while a job with it is
+   * queued or active".
+   *
+   * MEASURED on prod 2026-07-31: 16 digests sat in the reconciler's gap while
+   * every hourly tick "enqueued" them into a void — no processor log, no state
+   * change. `EXISTS bull:audio-generation:digest__<uuid>__en__af_heart` returned
+   * 1 with `finishedOn` set. Deleting those keys by hand and re-triggering
+   * produced 16 alias rows immediately; the same block held the 13 failed
+   * codals. This removal is what retires that manual Redis surgery.
+   *
+   * Waiting, active and delayed jobs are left ALONE and the enqueue is skipped —
+   * that is the dedupe the id exists for. BullMQ would no-op the `add` anyway;
+   * returning false states the intent in our own code and saves a round trip.
+   *
+   * getJob → remove → add is NOT atomic: two callers can both observe the same
+   * terminal job and both proceed. The accepted worst case is one redundant
+   * synthesis, never corruption — `generate()` short-circuits on the content
+   * hash and the rendition row is an upsert on a unique key.
+   *
+   * @returns whether the caller should go on to `add` the job.
+   */
+  private async claimJobId(jobId: string): Promise<boolean> {
+    try {
+      const existing = await this.queue.getJob(jobId);
+      if (!existing) return true;
+
+      const state = await existing.getState();
+      if (state === 'completed' || state === 'failed') {
+        await existing.remove();
+        this.logger.debug(
+          `Removed ${state} job ${jobId} so this content can be enqueued again`,
+        );
+        return true;
+      }
+
+      this.logger.debug(
+        `Job ${jobId} is already ${state}; not enqueueing a duplicate`,
+      );
+      return false;
+    } catch (err) {
+      // Fail OPEN. A Redis hiccup here must not stop the enqueue attempt; the
+      // worst case is exactly the pre-existing behaviour, where `add` no-ops on
+      // the stale id.
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      this.logger.warn(`Could not clear terminal job ${jobId}: ${message}`);
+      return true;
+    }
   }
 
   /**

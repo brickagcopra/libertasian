@@ -66,6 +66,42 @@ export function audioJobId(
 }
 
 /**
+ * Failure reasons that describe the CONTENT, not the attempt.
+ *
+ * A rendition that failed for one of these cannot be changed by running the job
+ * again: the text is longer than any single synthesis budget can cover, or its
+ * audio is larger than the container can assemble. Prod has 4 such codals
+ * (374,364 / 535,553 / 796,129 / 810,815 chars), all `output_too_large`.
+ *
+ * `permanent` is deliberately ABSENT. It covers 4xx responses and contract
+ * violations — a wrong TTS_AUTH_TOKEN, a malformed payload — which a config
+ * change or a deploy fixes, and the next tick SHOULD then pick the content up.
+ * `timeout`, `transient` and `error` are retryable by construction.
+ */
+export const REFUSED_FAILURE_REASONS = [
+  'text_too_long',
+  'output_too_large',
+] as const;
+
+/**
+ * Whether an `audio_renditions.failure_reason` describes permanently refused
+ * content.
+ *
+ * The column holds `${reason}: ${detail}` (see
+ * `AudioRenditionService.recordFailure`), so this matches on the reason prefix
+ * rather than the whole string — the detail carries chars and byte counts that
+ * differ per document.
+ */
+export function isPermanentlyRefused(
+  failureReason: string | null | undefined,
+): boolean {
+  if (!failureReason) return false;
+  return REFUSED_FAILURE_REASONS.some((reason) =>
+    failureReason.startsWith(`${reason}:`),
+  );
+}
+
+/**
  * The "codals" tier: codes and statutory issuances.
  *
  * Deliberately EXCLUDES 'administrative_matter' and 'administrative_case' —

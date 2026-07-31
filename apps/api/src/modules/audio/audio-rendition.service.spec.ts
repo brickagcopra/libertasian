@@ -41,7 +41,9 @@ function build(env: Record<string, string> = {}) {
   };
   const tts = { synthesize: jest.fn() };
   const s3 = { upload: jest.fn(), getSignedUrl: jest.fn() };
-  const queue = { add: jest.fn() };
+  // `getJob` defaults to "no such job", the state of an id that has never been
+  // used or whose terminal record has already been evicted from retention.
+  const queue = { add: jest.fn(), getJob: jest.fn().mockResolvedValue(null) };
   const config: ConfigService = {
     get: (key: string, def?: string): string | undefined => env[key] ?? def,
   } as unknown as ConfigService;
@@ -512,6 +514,106 @@ describe('AudioRenditionService', () => {
       await service.requestGeneration('digest', 'd1', 'en', true);
       const opts = queue.add.mock.calls[0]?.[2] as { jobId?: string };
       expect(opts.jobId).toBeUndefined();
+      // No id means nothing to collide with, so nothing to look up either.
+      expect(queue.getJob).not.toHaveBeenCalled();
+    });
+
+    it('passes the caller priority through (the reconciler tiers)', async () => {
+      const { service, queue } = build();
+      await service.requestGeneration('legal_document', 'ld1', 'en', false, 10);
+      const opts = queue.add.mock.calls[0]?.[2] as { priority?: number };
+      expect(opts.priority).toBe(10);
+    });
+  });
+
+  /**
+   * BullMQ refuses `add` for an id that exists in ANY state, and retention keeps
+   * 100 completed / 500 failed records. On prod 2026-07-31 that silently blocked
+   * 16 digests and 13 codals from EVER being re-enqueued: the hourly tick
+   * "enqueued" them into a void until the Redis keys were deleted by hand.
+   */
+  describe('requestGeneration — terminal job ids must not block re-enqueue', () => {
+    /** A BullMQ job stand-in in `state`, recording whether it was removed. */
+    const jobIn = (state: string) => ({
+      getState: jest.fn().mockResolvedValue(state),
+      remove: jest.fn().mockResolvedValue(undefined),
+    });
+
+    it('removes a COMPLETED job with the same id, then adds', async () => {
+      const { service, queue } = build();
+      const stale = jobIn('completed');
+      queue.getJob.mockResolvedValue(stale);
+
+      await service.requestGeneration('digest', 'd1', 'en');
+
+      expect(queue.getJob).toHaveBeenCalledWith(
+        audioJobId('digest', 'd1', 'en', 'Matthew'),
+      );
+      expect(stale.remove).toHaveBeenCalledTimes(1);
+      expect(queue.add).toHaveBeenCalledTimes(1);
+      const opts = queue.add.mock.calls[0]?.[2] as { jobId?: string };
+      expect(opts.jobId).toBe(audioJobId('digest', 'd1', 'en', 'Matthew'));
+    });
+
+    it('removes a FAILED job with the same id, then adds', async () => {
+      const { service, queue } = build();
+      const stale = jobIn('failed');
+      queue.getJob.mockResolvedValue(stale);
+
+      await service.requestGeneration('legal_document', 'ld1', 'en');
+
+      expect(stale.remove).toHaveBeenCalledTimes(1);
+      expect(queue.add).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['active', 'waiting', 'delayed', 'prioritized', 'waiting-children'])(
+      'leaves a %s job alone and does not re-add it',
+      async (state) => {
+        const { service, queue } = build();
+        const inFlight = jobIn(state);
+        queue.getJob.mockResolvedValue(inFlight);
+
+        await service.requestGeneration('digest', 'd1', 'en');
+
+        // This is the dedupe the deterministic id exists for: work is already
+        // scheduled, so a second add would synthesize the same audio twice.
+        expect(inFlight.remove).not.toHaveBeenCalled();
+        expect(queue.add).not.toHaveBeenCalled();
+      },
+    );
+
+    it('adds normally when no job with the id exists', async () => {
+      const { service, queue } = build();
+      queue.getJob.mockResolvedValue(null);
+
+      await service.requestGeneration('digest', 'd1', 'en');
+
+      expect(queue.add).toHaveBeenCalledTimes(1);
+    });
+
+    it('lets an admin force render through a permanently-failed job', async () => {
+      const { service, queue } = build();
+      // What the 4 output_too_large codals look like in Redis: a retained
+      // FAILED record under the deterministic id. The reconciler now skips this
+      // content by design; the admin override must still reach the worker.
+      queue.getJob.mockResolvedValue(jobIn('failed'));
+
+      await service.requestGeneration('legal_document', 'ld1', 'en', true);
+
+      expect(queue.add).toHaveBeenCalledTimes(1);
+      const opts = queue.add.mock.calls[0]?.[2] as { jobId?: string };
+      expect(opts.jobId).toBeUndefined();
+    });
+
+    it('still adds when the lookup itself fails (fails OPEN)', async () => {
+      const { service, queue } = build();
+      queue.getJob.mockRejectedValue(new Error('READONLY: replica'));
+
+      await service.requestGeneration('digest', 'd1', 'en');
+
+      // Worst case is the pre-existing behaviour — add no-ops on a stale id —
+      // which is strictly better than a Redis blip dropping the request.
+      expect(queue.add).toHaveBeenCalledTimes(1);
     });
   });
 
