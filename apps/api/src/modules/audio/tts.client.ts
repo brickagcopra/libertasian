@@ -37,13 +37,19 @@ export const TTS_CLIENT = Symbol('TTS_CLIENT');
  *  - `timeout`       — ran out of wall-clock budget (compute-bound, deterministic)
  *  - `transient`     — network error / 5xx / 429; retried
  *  - `permanent`     — 4xx or a contract violation; not retryable
- *  - `text_too_long` — refused before the call: no allowed budget could cover it
+ *  - `text_too_long` — refused before the call: one indivisible segment is
+ *                      longer than any allowed budget could cover. A long
+ *                      DOCUMENT is chunked instead (see KokoroClient).
+ *  - `output_too_large` — refused before the call: the audio the whole document
+ *                      would encode to does not fit the API container's heap.
+ *                      Chunking bounds synthesis TIME, not output SIZE.
  */
 export type TtsFailureReason =
   | 'timeout'
   | 'transient'
   | 'permanent'
-  | 'text_too_long';
+  | 'text_too_long'
+  | 'output_too_large';
 
 /**
  * A classified synthesis failure.

@@ -51,7 +51,12 @@ describe('AudioGenerationProcessor', () => {
     expect(renditions.recordFailure).not.toHaveBeenCalled();
   });
 
-  it.each<TtsFailureReason>(['timeout', 'permanent', 'text_too_long'])(
+  it.each<TtsFailureReason>([
+    'timeout',
+    'permanent',
+    'text_too_long',
+    'output_too_large',
+  ])(
     'stops retrying a %s failure and persists the reason',
     async (reason) => {
       const { processor, renditions } = build();
