@@ -15,16 +15,41 @@ import {
 
 /** One reconciliation tier, highest priority first. */
 interface Tier {
-  readonly n: 1 | 2 | 3;
+  /**
+   * Stable tier LABEL, not a rank — it appears in every log line, so tiers are
+   * never renumbered. The array order below is what decides which tier draws
+   * from the tick's batch budget first.
+   */
+  readonly n: 1 | 2 | 3 | 4;
   readonly label: string;
   readonly contentType: AudioContentType;
   /** Lower number = higher BullMQ priority. */
   readonly priority: number;
 }
 
+/**
+ * Statutory document types narrated PER SECTION (tier 4) instead of whole.
+ *
+ * All four documents that need this are codals, and every other codal is a
+ * reference work read the same way, so the set IS {@link CODAL_DOCUMENT_TYPES}.
+ * Tier 2 derives its own set by SUBTRACTING this one, so the two can never
+ * both claim a document — see {@link documentTypesFor}.
+ */
+const SECTION_TIER_DOCUMENT_TYPES: readonly string[] = CODAL_DOCUMENT_TYPES;
+
 const TIERS: readonly Tier[] = [
   { n: 1, label: 'digest', contentType: 'digest', priority: 1 },
   { n: 2, label: 'codals', contentType: 'legal_document', priority: 2 },
+  // Tier 4 sits here, before decisions: 4,857 sections of published statutory
+  // text are the work that is actually blocked today, and they must not queue
+  // behind a 15,464-document decision backfill. Its priority is BELOW digests
+  // (1) so that backfill can never starve a publish, and above decisions.
+  {
+    n: 4,
+    label: 'statutory_sections',
+    contentType: 'legal_document_section',
+    priority: 3,
+  },
   // Tier 3 is enqueued at a deliberately lower priority so a 15,464-document
   // decision backfill can never starve a newly published digest.
   { n: 3, label: 'decision', contentType: 'legal_document', priority: 10 },
@@ -61,11 +86,18 @@ const MIN_FREE_DISK_BYTES = 20 * 1024 ** 3;
  *   tier 1  digest    ~1,592 chars/item                      → ~116 s
  *   tier 2  codals    ~178,000 chars/doc  (4.27M / 24)       → ~13,000 s
  *   tier 3  decision  ~25,600 chars/doc   (396.08M / 15,464) → ~1,870 s
+ *   tier 4  sections  ~504 chars/section  (2.45M / 4,857)    → ~37 s
+ *
+ * Tier 4's per-item figure is MEASURED on the four documents it covers
+ * (prod 2026-07-31): Administrative Code 1,229 sections avg 638, Civil Code
+ * 2,533 avg 306, NIRC 401 avg 1,309, Rules of Court — Civil Procedure 694
+ * avg 531.
  */
 const ESTIMATED_SECONDS_PER_ITEM: Record<Tier['n'], number> = {
   1: 116,
   2: 13_000,
   3: 1_870,
+  4: 37,
 };
 
 @Injectable()
@@ -282,9 +314,27 @@ export class AudioReconcilerService {
     return ESTIMATED_SECONDS_PER_ITEM[tier.n];
   }
 
-  /** Document types belonging to a legal-document tier. */
+  /**
+   * Document types belonging to a legal-document tier.
+   *
+   * CRITICAL: tier 2 SUBTRACTS {@link SECTION_TIER_DOCUMENT_TYPES}. Without
+   * that, a statutory document would be counted in tier 2's gap as one
+   * whole-document item AND in tier 4's gap as N sections — the same text
+   * enqueued twice, synthesized twice, and stored twice. Deriving the exclusion
+   * here rather than hardcoding a second list means the two tiers cannot drift
+   * into overlapping.
+   *
+   * With today's sets this leaves tier 2 empty: every codal type is narrated
+   * per section. Tier 2 stays in place as the home for any future statutory
+   * type that is short enough to narrate whole; it reports a gap of 0 until
+   * then. Documents that ALREADY have a ready whole-document rendition keep
+   * serving it — tier 2 having no work does not withdraw anything.
+   */
   private documentTypesFor(tier: Tier): string[] {
-    return tier.n === 2 ? [...CODAL_DOCUMENT_TYPES] : ['decision'];
+    if (tier.n !== 2) return ['decision'];
+    return CODAL_DOCUMENT_TYPES.filter(
+      (type) => !SECTION_TIER_DOCUMENT_TYPES.includes(type),
+    );
   }
 
   /** Uncapped count of a tier's published content lacking a ready rendition. */
@@ -301,6 +351,26 @@ export class AudioReconcilerService {
             SELECT 1 FROM audio_renditions ar
             WHERE ar.content_type = 'digest'
               AND ar.content_id = d.id::text
+              AND ar.voice_id = ${voiceId}
+              AND ar.status = 'ready'
+          )
+      `;
+      return Number(row?.count ?? 0);
+    }
+
+    if (tier.n === 4) {
+      const [row] = await this.prisma.$queryRaw<Array<{ count: bigint }>>`
+        SELECT COUNT(*) AS count
+        FROM legal_document_sections s
+        JOIN legal_documents ld ON ld.id = s.legal_document_id
+        WHERE ld.status = 'published'
+          AND ld.document_type = ANY(${[...SECTION_TIER_DOCUMENT_TYPES]}::text[])
+          AND s.plain_text IS NOT NULL
+          AND btrim(s.plain_text) <> ''
+          AND NOT EXISTS (
+            SELECT 1 FROM audio_renditions ar
+            WHERE ar.content_type = 'legal_document_section'
+              AND ar.content_id = s.id::text
               AND ar.voice_id = ${voiceId}
               AND ar.status = 'ready'
           )
@@ -342,6 +412,31 @@ export class AudioReconcilerService {
               AND ar.status = 'ready'
           )
         ORDER BY d.created_at ASC
+        LIMIT ${limit}
+      `;
+      return rows.map((r) => r.id);
+    }
+
+    if (tier.n === 4) {
+      // `ordering` then id: the backfill fills a document front to back, so a
+      // partially-narrated document is playable from its first article rather
+      // than pocked with gaps.
+      const rows = await this.prisma.$queryRaw<Array<{ id: string }>>`
+        SELECT s.id
+        FROM legal_document_sections s
+        JOIN legal_documents ld ON ld.id = s.legal_document_id
+        WHERE ld.status = 'published'
+          AND ld.document_type = ANY(${[...SECTION_TIER_DOCUMENT_TYPES]}::text[])
+          AND s.plain_text IS NOT NULL
+          AND btrim(s.plain_text) <> ''
+          AND NOT EXISTS (
+            SELECT 1 FROM audio_renditions ar
+            WHERE ar.content_type = 'legal_document_section'
+              AND ar.content_id = s.id::text
+              AND ar.voice_id = ${voiceId}
+              AND ar.status = 'ready'
+          )
+        ORDER BY ld.created_at ASC, s.ordering ASC, s.id ASC
         LIMIT ${limit}
       `;
       return rows.map((r) => r.id);

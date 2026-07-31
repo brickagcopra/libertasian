@@ -72,6 +72,10 @@ const enqueuedPriorities = (renditions: {
   );
 
 const VOLUME = [{ count: 0n, duration_ms: 0n }];
+// $queryRaw results are scripted POSITIONALLY, in the TIERS array order:
+// volume, then a COUNT + id list per enabled tier — 1 (digests), 2 (codals),
+// 4 (statutory sections), 3 (decisions). Tier 4 sits before tier 3 so 4,857
+// sections are not queued behind a 15,464-document decision backfill.
 const ON = { AUDIO_RECONCILER_ENABLED: 'true' };
 const ON_WITH_DECISIONS = {
   AUDIO_RECONCILER_ENABLED: 'true',
@@ -114,6 +118,8 @@ describe('AudioReconcilerService', () => {
       [],
       [{ count: 0n }],
       [],
+      [{ count: 0n }], // tier 4 runs BEFORE tier 3 (see the TIERS array)
+      [],
       [{ count: 1n }],
       [{ id: 'decision-1' }],
     ]);
@@ -135,6 +141,8 @@ describe('AudioReconcilerService', () => {
       [{ count: 1n }],
       [{ id: 'digest-1' }],
       [{ count: 0n }],
+      [],
+      [{ count: 0n }], // tier 4
       [],
       [{ count: 1n }],
       [{ id: 'decision-1' }],
@@ -203,6 +211,8 @@ describe('AudioReconcilerService', () => {
         [],
         [{ count: 0n }],
         [],
+        [{ count: 0n }], // tier 4
+        [],
         [{ count: 1n }],
         [{ id: 'decision-1' }],
       ]);
@@ -258,7 +268,17 @@ describe('AudioReconcilerService', () => {
       statfsMock.mockRejectedValue(new Error('ENOSYS'));
       const { service, renditions } = build(
         ON_WITH_DECISIONS,
-        [VOLUME, [{ count: 0n }], [], [{ count: 0n }], [], [{ count: 1n }], [{ id: 'decision-1' }]],
+        [
+          VOLUME,
+          [{ count: 0n }],
+          [],
+          [{ count: 0n }],
+          [],
+          [{ count: 0n }], // tier 4
+          [],
+          [{ count: 1n }],
+          [{ id: 'decision-1' }],
+        ],
         REMOTE,
       );
 
@@ -315,7 +335,8 @@ describe('AudioReconcilerService', () => {
       expect(queryRaw).toHaveBeenCalled();
 
       const logs = dryRunLogs();
-      expect(logs.map((l) => l['tier'])).toEqual([1, 2]);
+      // Tier 4 (statutory sections) reports too; tier 3 stays flag-gated off.
+      expect(logs.map((l) => l['tier'])).toEqual([1, 2, 4]);
       expect(logs[0]).toEqual(
         expect.objectContaining({
           wouldEnqueue: 1,
@@ -525,6 +546,155 @@ describe('AudioReconcilerService', () => {
       expect(renditions.requestGeneration).not.toHaveBeenCalled();
 
       logSpy.mockRestore();
+    });
+  });
+
+  /**
+   * The four large statutory documents cannot be narrated whole (one 159-344
+   * MiB file of 7-16 h audio each), so tier 4 narrates their 4,857 sections
+   * individually. The danger is counting the same text twice — once as a
+   * document in tier 2 and again as N sections in tier 4.
+   */
+  describe('tier 4 — statutory sections', () => {
+    /** VOLUME, tier 1, tier 2, tier 4, tier 3 — the array order of TIERS. */
+    const sequence = (tier4: unknown[][]) => [
+      VOLUME,
+      [{ count: 0n }], // tier 1 count
+      [], // tier 1 ids
+      [{ count: 0n }], // tier 2 count
+      [], // tier 2 ids
+      ...tier4,
+    ];
+
+    it('enqueues sections as legal_document_section', async () => {
+      const { service, renditions } = build(
+        ON,
+        sequence([[{ count: 2n }], [{ id: 'sec-1' }, { id: 'sec-2' }]]),
+      );
+
+      await service.reconcile();
+
+      expect(renditions.requestGeneration.mock.calls).toEqual([
+        ['legal_document_section', 'sec-1', 'en', false, 3],
+        ['legal_document_section', 'sec-2', 'en', false, 3],
+      ]);
+    });
+
+    it('runs on AUDIO_RECONCILER_ENABLED alone, like digests', async () => {
+      // Sections belong to statutory documents, so the decision storage flag
+      // has nothing to say about them.
+      const { service, renditions } = build(ON, sequence([[{ count: 1n }], [{ id: 'sec-1' }]]));
+
+      await service.reconcile();
+
+      expect(enqueuedIds(renditions)).toEqual(['sec-1']);
+    });
+
+    it('gives sections a LOWER priority than digests', async () => {
+      const { service, renditions } = build(ON, [
+        VOLUME,
+        [{ count: 1n }],
+        [{ id: 'digest-1' }],
+        [{ count: 0n }],
+        [],
+        [{ count: 1n }],
+        [{ id: 'sec-1' }],
+      ]);
+
+      await service.reconcile();
+
+      const priorities = enqueuedPriorities(renditions);
+      // A 4,857-item backfill must never starve a publish.
+      expect(priorities.get('digest-1') as number).toBeLessThan(
+        priorities.get('sec-1') as number,
+      );
+    });
+
+    it('leaves tier 2 no statutory document types to count', async () => {
+      const { service, queryRaw } = build(
+        ON,
+        sequence([[{ count: 0n }], []]),
+      );
+
+      await service.reconcile();
+
+      // $queryRaw calls: 0 volume, 1 tier-1 count, 2 tier-1 ids, 3 tier-2
+      // count, 4 tier-2 ids, 5 tier-4 count, 6 tier-4 ids. The FIRST bound
+      // value of a legal-document query is its document_type array.
+      const tier2Types = queryRaw.mock.calls[3]?.[1] as string[];
+      const tier4Types = queryRaw.mock.calls[5]?.[1] as string[];
+
+      // THE double-count guard: every type tier 4 claims is subtracted from
+      // tier 2, so no document is both one whole item and N section items.
+      expect(tier4Types).toEqual(
+        expect.arrayContaining(['codal', 'constitution', 'republic_act']),
+      );
+      expect(tier2Types).toEqual([]);
+      expect(
+        tier2Types.filter((t) => tier4Types.includes(t)),
+      ).toEqual([]);
+    });
+
+    it('never enqueues a statutory document and its sections in one tick', async () => {
+      // What a real tick looks like for the Civil Code: tier 2 finds nothing
+      // because its type list is empty, tier 4 finds the sections.
+      const { service, renditions } = build(
+        ON,
+        sequence([[{ count: 2n }], [{ id: 'civil-sec-1' }, { id: 'civil-sec-2' }]]),
+      );
+
+      await service.reconcile();
+
+      const types = renditions.requestGeneration.mock.calls.map(
+        (call) => call[0] as string,
+      );
+      expect(types).toEqual([
+        'legal_document_section',
+        'legal_document_section',
+      ]);
+      expect(types).not.toContain('legal_document');
+    });
+
+    it('counts only published parents with non-empty section text', async () => {
+      const { service, queryRaw } = build(ON, sequence([[{ count: 5n }], []]));
+
+      await service.reconcile();
+
+      const countSql = String(queryRaw.mock.calls[5]?.[0]);
+      expect(countSql).toContain('legal_document_sections');
+      expect(countSql).toContain("ld.status = 'published'");
+      expect(countSql).toContain('btrim(s.plain_text)');
+      expect(countSql).toContain("ar.content_type = 'legal_document_section'");
+      // Uncapped, like every other tier's gap count.
+      expect(countSql).not.toContain('LIMIT');
+    });
+
+    it('orders the backfill front to back within a document', async () => {
+      const { service, queryRaw } = build(ON, sequence([[{ count: 5n }], []]));
+
+      await service.reconcile();
+
+      // A partially-narrated document should be playable from its first
+      // article, not pocked with gaps.
+      expect(String(queryRaw.mock.calls[6]?.[0])).toContain('s.ordering ASC');
+    });
+
+    it('skips a section permanently refused, like every other tier', async () => {
+      const { service, renditions } = build(
+        ON,
+        sequence([[{ count: 2n }], [{ id: 'sec-huge' }, { id: 'sec-ok' }]]),
+        false,
+        [
+          {
+            contentId: 'sec-huge',
+            failureReason: 'output_too_large: 38479 chars',
+          },
+        ],
+      );
+
+      await service.reconcile();
+
+      expect(enqueuedIds(renditions)).toEqual(['sec-ok']);
     });
   });
 

@@ -127,6 +127,10 @@ export class AudioRenditionService {
    *
    * `documentType` is required for legal_document and ignored otherwise; an
    * unrecognised type is out of scope and returns false.
+   *
+   * `legal_document_section` passes on `AUDIO_RECONCILER_ENABLED` alone, like
+   * digests: its parent is always a statutory document (the decision tier is
+   * narrated whole), so the decision storage flag has nothing to say about it.
    */
   isGenerationEnabled(
     contentType: AudioContentType,
@@ -153,6 +157,9 @@ export class AudioRenditionService {
    *    Doctrine/Dispositive); empty sections are skipped.
    *  - legal_document → one chapter per `legal_document_sections` row in
    *    `ordering` sequence. Serves codals and decisions alike.
+   *  - legal_document_section → the SAME chapter shape, for exactly one of
+   *    those rows, so a section narrated on its own is byte-identical in
+   *    structure to the same section inside a whole-document rendition.
    *  - bar_exam_answer → a single untitled section holding the answer text.
    * Throws NotFoundException if the content row does not exist.
    */
@@ -162,6 +169,10 @@ export class AudioRenditionService {
   ): Promise<ResolvedContent> {
     if (contentType === 'legal_document') {
       return this.resolveLegalDocument(contentId);
+    }
+
+    if (contentType === 'legal_document_section') {
+      return this.resolveLegalDocumentSection(contentId);
     }
 
     if (contentType === 'digest') {
@@ -269,6 +280,79 @@ export class AudioRenditionService {
     // `status`, and this branch has already refused anything not 'published'.
     return {
       doc: { title, sections: spokenSections },
+      visibility: 'public_editorial',
+    };
+  }
+
+  /**
+   * Build the spoken document for ONE `legal_document_sections` row.
+   *
+   * The publication guard is the parent document's, applied identically to
+   * {@link resolveLegalDocument}: an unpublished document must not put
+   * unreviewed text into the public audio corpus, and narrating it a section at
+   * a time would be an obvious way around that.
+   *
+   * Emits exactly one chapter in the shape the whole-document branch produces —
+   * `[sectionId, sectionLabel ?? sectionType, plainText]` — so the SSML,
+   * manifest and read-along contracts are unchanged and a section keyed by its
+   * own id lines up with the same segment key it would have had inside a
+   * whole-document rendition.
+   *
+   * The spoken title is prefixed with the parent document's title because these
+   * renditions are played standalone: "Civil Code of the Philippines — Article
+   * 1156" tells the listener what they are hearing, where a bare "Article 1156"
+   * does not.
+   */
+  private async resolveLegalDocumentSection(
+    contentId: string,
+  ): Promise<ResolvedContent> {
+    const section = await this.prisma.legalDocumentSection.findUnique({
+      where: { id: contentId },
+      select: {
+        sectionLabel: true,
+        sectionType: true,
+        plainText: true,
+        legalDocument: { select: { title: true, status: true } },
+      },
+    });
+    if (!section) {
+      throw new NotFoundException(`Legal document section ${contentId} not found`);
+    }
+
+    const document = section.legalDocument;
+    if (!document) {
+      throw new NotFoundException(
+        `Legal document section ${contentId} has no parent document`,
+      );
+    }
+    if (document.status !== 'published') {
+      throw new NotFoundException(
+        `Legal document section ${contentId} belongs to an unpublished document (status=${document.status})`,
+      );
+    }
+
+    const body = (section.plainText ?? '').trim();
+    if (body.length === 0) {
+      // The whole-document branch SKIPS empty sections; a per-section request
+      // has nothing left to skip to, and synthesizing it would bill a TTS call
+      // to produce silence and a rendition row that plays as a dead 0-second
+      // file. 404 says what is actually true: there is nothing to narrate.
+      throw new NotFoundException(
+        `Legal document section ${contentId} has no plain text to narrate`,
+      );
+    }
+
+    const heading = section.sectionLabel ?? section.sectionType;
+    const documentTitle = document.title?.trim();
+    const title =
+      documentTitle && documentTitle.length > 0
+        ? `${documentTitle} — ${heading}`
+        : heading;
+
+    return {
+      doc: { title, sections: [{ key: contentId, heading, body }] },
+      // `legal_documents` has NO visibility column — publication is expressed by
+      // `status`, and this branch has already refused anything not 'published'.
       visibility: 'public_editorial',
     };
   }

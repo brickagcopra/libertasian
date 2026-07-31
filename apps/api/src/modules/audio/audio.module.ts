@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import { DigestsModule } from '../digests/digests.module';
+import { DocumentsModule } from '../documents/documents.module';
 import { UploadsModule } from '../uploads/uploads.module';
 import { AudioController } from './audio.controller';
 import { AudioGenerationProcessor } from './audio-generation.processor';
@@ -33,7 +34,8 @@ export const LEGAL_SSML_NORMALIZER = Symbol('LEGAL_SSML_NORMALIZER');
  *
  * AudioStorageService stores the mp3 + speech-mark objects — it delegates to
  * S3Service (via UploadsModule) unless AUDIO_S3_ENDPOINT routes audio to its own
- * bucket. DigestsService enforces digest access rules at read time.
+ * bucket. DigestsService enforces digest access rules at read time, and
+ * DocumentsService the statutory-document and per-section ones.
  * PrismaService, AuditService, and EntitlementService come from their @Global
  * modules.
  */
@@ -42,6 +44,9 @@ export const LEGAL_SSML_NORMALIZER = Symbol('LEGAL_SSML_NORMALIZER');
     BullModule.registerQueue({ name: AUDIO_QUEUE }),
     UploadsModule,
     DigestsModule,
+    // DocumentsService owns the read gate for statutory text; the audio read
+    // path reuses it verbatim rather than restating who may hear what.
+    DocumentsModule,
   ],
   controllers: [AudioController],
   providers: [
