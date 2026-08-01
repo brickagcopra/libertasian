@@ -1,6 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Audio, type AVPlaybackStatus } from 'expo-av';
-import { router } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -42,7 +41,10 @@ interface AudioPlayerBarProps {
   autoStart?: boolean;
   /** Called when narration finishes naturally (drives the section chain). */
   onEnded?: () => void;
-  /** Copy for the 402 upsell. Defaults to the bar-answer Pro wording. */
+  /**
+   * Copy for the 402 not-included notice. Must be a neutral statement — no
+   * plan name, no price, no instruction on where to buy.
+   */
   paywallMessage?: string;
   /** Copy for the terminal `unavailable` state. */
   unavailableMessage?: string;
@@ -50,7 +52,10 @@ interface AudioPlayerBarProps {
 
 const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5] as const;
 
-const DEFAULT_PAYWALL_MESSAGE = 'Listen with Pro — narrated audio for bar answers.';
+// Names no plan and offers no purchase: Apple 3.1.1 and Play Payments treat
+// "Listen with Pro" plus a "See plans" button as an external-purchase entry
+// point, even when the button only opens an in-app screen.
+const DEFAULT_PAYWALL_MESSAGE = 'Narrated audio is not included in your plan.';
 const DEFAULT_UNAVAILABLE_MESSAGE = 'Narration isn’t available for this content.';
 
 /** Auto-recoveries closer together than this are treated as a hard failure. */
@@ -434,17 +439,12 @@ export function AudioPlayerBar({
         style={[styles.noticeRow, { backgroundColor: theme.surfaceMuted, borderColor: theme.line }]}
       >
         <View style={styles.noticeTextRow}>
-          <Ionicons name="sparkles-outline" size={14} color={theme.accent} />
+          <Ionicons name="lock-closed-outline" size={14} color={theme.inkSoft} />
           <Text style={[styles.noticeText, { color: theme.inkSoft }]}>{paywallMessage}</Text>
         </View>
-        <Pressable
-          onPress={() => router.push('/subscription')}
-          accessibilityRole="button"
-          accessibilityLabel="See plans"
-          style={[styles.noticeAction, { borderColor: theme.line, backgroundColor: theme.surface }]}
-        >
-          <Text style={[styles.noticeActionLabel, { color: theme.ink }]}>See plans</Text>
-        </Pressable>
+        {/* The "See plans" action was removed with the purchase path: it routed
+            to a screen that sold, and a route to a purchase is itself an
+            entry point. The notice now only states the fact. */}
       </View>
     );
   }

@@ -61,7 +61,7 @@ export function SuggestedBarAnswerRenderer({ data }: { data: DerivativeDetail })
       </View>
 
       {data.isGated ? (
-        <GatedNotice typeLabel="Suggested bar answer" upgradeTier={data.upgradeTier} />
+        <GatedNotice typeLabel="Suggested bar answer" />
       ) : (
         <>
           {answer ? (

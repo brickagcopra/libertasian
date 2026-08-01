@@ -29,7 +29,7 @@ describe('SampleContractRenderer', () => {
   });
 
   it('gates recitals, clauses, schedules, and signatures', () => {
-    const { queryByText } = render(
+    const { queryByText , queryAllByText } = render(
       <SampleContractRenderer
         data={makeDetail('sample_contract', SAMPLE_CONTRACT_CONTENT, {
           isGated: true,
@@ -41,18 +41,23 @@ describe('SampleContractRenderer', () => {
     expect(queryByText('Parties')).toBeTruthy();
     expect(queryByText('Recitals')).toBeNull();
     expect(queryByText('Term')).toBeNull();
-    expect(queryByText(/Unlock full content/i)).toBeTruthy();
+    // The notice heads AND bodies with this phrase, hence getAllByText.
+        expect(queryAllByText(/Not included in your plan/i).length).toBeGreaterThan(0);
+        // Neutral notice only: no plan named, no price, no purchase action
+        // (Apple 3.1.1 / Play Payments).
+        expect(queryByText(/Upgrade/i)).toBeNull();
+        expect(queryByText(/Unlock full content/i)).toBeNull();
   });
 
   it('falls back to Unavailable when contentJson is missing', () => {
-    const { queryByText } = render(
+    const { queryByText , queryAllByText } = render(
       <SampleContractRenderer data={makeDetail('sample_contract', undefined)} />,
     );
     expect(queryByText(/Content unavailable/i)).toBeTruthy();
   });
 
   it('falls back to Unavailable when contractType is missing', () => {
-    const { queryByText } = render(
+    const { queryByText , queryAllByText } = render(
       <SampleContractRenderer
         data={makeDetail('sample_contract', { clauses: [{ heading: 'Orphan' }] })}
       />,

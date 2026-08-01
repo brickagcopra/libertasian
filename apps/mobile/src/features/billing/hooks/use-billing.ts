@@ -1,64 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../../../lib/api-client';
 import type {
-  CreateCheckoutInput,
   CancelSubscriptionInput,
   PaymentMethodDetail,
   InvoiceDetail,
-  CheckoutPreviewInput,
-  CheckoutPreviewData,
-  ValidateCouponInput,
-  CouponValidationResult,
-  EligiblePromotionsInput,
-  PromotionEligibilityResult,
 } from '../types';
 
-interface CheckoutData {
-  checkoutUrl: string;
-  checkoutSessionId: string;
-  paymentId: string;
-}
-
-// ─── Checkout Preview ─────────────────────────────────────
-
-export function useCheckoutPreview() {
-  return useMutation({
-    mutationFn: (input: CheckoutPreviewInput) =>
-      apiClient.post<CheckoutPreviewData>('/billing/checkout/preview', input),
-  });
-}
-
-// ─── Coupon Validation ────────────────────────────────────
-
-export function useValidateCoupon() {
-  return useMutation({
-    mutationFn: (input: ValidateCouponInput) =>
-      apiClient.post<CouponValidationResult>('/coupons/validate', input),
-  });
-}
-
-// ─── Eligible Promotions ──────────────────────────────────
-
-export function useEligiblePromotions() {
-  return useMutation({
-    mutationFn: (input: EligiblePromotionsInput) =>
-      apiClient.post<PromotionEligibilityResult[]>('/promotions/eligible', input),
-  });
-}
-
-// ─── Checkout ──────────────────────────────────────────────
-
-export function useCreateCheckout() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (input: CreateCheckoutInput) =>
-      apiClient.post<CheckoutData>('/billing/checkout', input),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['billing'] });
-    },
-  });
-}
+/**
+ * Billing hooks the mobile app still needs — all of them READ or CANCEL.
+ *
+ * The checkout, checkout-preview, coupon-validation and promotion-eligibility
+ * hooks were removed: Apple Guideline 3.1.1 and Google Play's Payments policy
+ * forbid selling digital content outside the store, and nothing in the app
+ * may price, sell, or link to an external purchase. The API endpoints
+ * themselves are untouched — the web app still uses them.
+ */
 
 // ─── Cancel Subscription ───────────────────────────────────
 
@@ -133,10 +89,4 @@ export function useInvoice(invoiceId: string) {
 }
 
 // Re-export types for convenience
-export type {
-  PaymentMethodDetail,
-  InvoiceDetail,
-  CheckoutPreviewInput,
-  ValidateCouponInput,
-  EligiblePromotionsInput,
-};
+export type { PaymentMethodDetail, InvoiceDetail };

@@ -4,9 +4,9 @@ import {
   Text,
   TouchableOpacity,
   Image,
-  Linking,
   StyleSheet,
 } from 'react-native';
+import { isCreativeAllowed, openCreativeUrl } from '../lib/creative-url-guard';
 import type { AdCreative } from '../types';
 
 interface AdInlineBannerProps {
@@ -35,10 +35,16 @@ export function AdInlineBanner({
 
   const handleCtaPress = () => {
     onClick();
-    if (creative.ctaUrl?.startsWith('http')) {
-      Linking.openURL(creative.ctaUrl);
-    }
+    // Refuses purchase/pricing/checkout destinations (Apple 3.1.1 /
+    // Play Payments). Creatives are server-authored and can change after
+    // the binary ships.
+    openCreativeUrl(creative.ctaUrl);
   };
+
+  // Inline banners are mounted directly by screen components rather than
+  // through AdRenderer, so they carry their own copy of the suppression
+  // check — the renderer's guard would not cover them.
+  if (!isCreativeAllowed(creative)) return null;
 
   const bgColor = creative.bgColor || '#f0f9ff';
   const textColor = creative.textColor || '#111827';

@@ -80,7 +80,13 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
     ConfigModule.forRoot({
       isGlobal: true,
       validationSchema: Joi.object({
-        NODE_ENV: Joi.string().valid('development', 'staging', 'production').default('development'),
+        // 'test' is accepted so the e2e suite can boot the real AppModule
+        // under CI's NODE_ENV=test. Every NODE_ENV branch in this app tests
+        // for 'production' or 'development' explicitly, so 'test' behaves as
+        // a non-production, non-development environment throughout.
+        NODE_ENV: Joi.string()
+          .valid('development', 'test', 'staging', 'production')
+          .default('development'),
         APP_PORT: Joi.number().default(3001),
         APP_URL: Joi.string().default('http://localhost:3000'),
         DATABASE_URL: Joi.string().required(),

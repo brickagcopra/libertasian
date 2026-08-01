@@ -191,15 +191,20 @@ describe('ScanResult', () => {
     expect(getByText('Generating Digest...')).toBeTruthy();
   });
 
-  it('shows upgrade prompt when showUpgradePrompt is true', () => {
-    const { getByText } = render(
+  it('states digests are not included, naming no plan, when showUpgradePrompt is true', () => {
+    const { getByText, queryByText } = render(
       <ScanResult
         {...defaultProps}
         canGenerateDigest={false}
         showUpgradePrompt={true}
       />,
     );
-    expect(getByText(/Upgrade to Edu or Pro plan/)).toBeTruthy();
+    expect(
+      getByText(/AI digests from scans are not included in your plan/),
+    ).toBeTruthy();
+    // No plan named and no upsell (Apple 3.1.1 / Play Payments).
+    expect(queryByText(/Upgrade/i)).toBeNull();
+    expect(queryByText(/Edu or Pro/i)).toBeNull();
   });
 
   it('shows digest error', () => {

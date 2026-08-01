@@ -86,69 +86,12 @@ describe('Billing Flow E2E', () => {
     });
   });
 
-  describe('Checkout flow', () => {
-    it('should create checkout session (Xendit)', async () => {
-      mockPost.mockResolvedValueOnce({
-        checkoutUrl: 'https://checkout.xendit.co/v2/abc123',
-        invoiceId: 'inv-xendit-1',
-        expiresAt: '2026-03-25T11:00:00Z',
-      });
+  // The 'Checkout flow' block was removed with the mobile purchase path.
+  // It asserted that a Xendit checkout URL and coupon discounts came back
+  // from the API — behaviour the app must no longer have at all under Apple
+  // Guideline 3.1.1 / Google Play Payments. The endpoints still exist and
+  // still serve the web app; the mobile client simply never calls them.
 
-      const result = await mockPost('/billing/checkout', {
-        planId: 'pro',
-        interval: 'monthly',
-      });
-
-      expect(result.checkoutUrl).toBeDefined();
-      expect(result.checkoutUrl).toContain('xendit');
-    });
-
-    it('should apply coupon at checkout', async () => {
-      mockPost.mockResolvedValueOnce({
-        checkoutUrl: 'https://checkout.xendit.co/v2/abc456',
-        originalPrice: 999,
-        discountedPrice: 799,
-        couponApplied: 'LAUNCH20',
-      });
-
-      const result = await mockPost('/billing/checkout', {
-        planId: 'pro',
-        interval: 'monthly',
-        couponCode: 'LAUNCH20',
-      });
-
-      expect(result.discountedPrice).toBeLessThan(result.originalPrice);
-    });
-
-    it('should validate coupon before checkout', async () => {
-      mockPost.mockResolvedValueOnce({
-        valid: true,
-        discount: { type: 'percentage', value: 20 },
-        expiresAt: '2026-06-30',
-      });
-
-      const result = await mockPost('/billing/coupons/validate', {
-        code: 'LAUNCH20',
-        planId: 'pro',
-      });
-
-      expect(result.valid).toBe(true);
-    });
-
-    it('should reject invalid coupon', async () => {
-      mockPost.mockResolvedValueOnce({
-        valid: false,
-        reason: 'Coupon expired',
-      });
-
-      const result = await mockPost('/billing/coupons/validate', {
-        code: 'EXPIRED',
-        planId: 'pro',
-      });
-
-      expect(result.valid).toBe(false);
-    });
-  });
 
   describe('Usage tracking', () => {
     it('should fetch usage summary', async () => {

@@ -76,7 +76,7 @@ export function MCQRenderer({ data }: { data: DerivativeDetail }) {
       </View>
 
       {data.isGated ? (
-        <GatedNotice typeLabel="MCQ" upgradeTier={data.upgradeTier} />
+        <GatedNotice typeLabel="MCQ" />
       ) : (
         <View style={styles.controls}>
           <Pressable

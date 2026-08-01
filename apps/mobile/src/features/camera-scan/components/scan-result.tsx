@@ -20,6 +20,11 @@ interface ScanResultProps {
   isGeneratingDigest: boolean;
   canGenerateDigest: boolean;
   digestError?: string | null;
+  /**
+   * Show the neutral "not included in your plan" notice instead of the
+   * generate action. Named `showUpgradePrompt` for continuity with its
+   * callers; it no longer prompts an upgrade — nothing in the app may.
+   */
   showUpgradePrompt?: boolean;
   onGenerateFlashcards?: () => void;
   isGeneratingFlashcards?: boolean;
@@ -332,10 +337,14 @@ export function ScanResult({
             )}
           </>
         ) : showUpgradePrompt ? (
+          // Names no plan and offers no purchase (Apple 3.1.1 / Play
+          // Payments). It still says what the user DOES have — the OCR text —
+          // which is information, not an upsell.
           <View style={styles.upgradePrompt}>
             <Ionicons name="lock-closed" size={16} color="#d97706" />
             <Text style={styles.upgradeText}>
-              Upgrade to Edu or Pro plan to generate AI digests from scans. OCR text is available above.
+              AI digests from scans are not included in your plan. The OCR text
+              above is available.
             </Text>
           </View>
         ) : null}

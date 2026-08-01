@@ -56,7 +56,11 @@ describe('DigestDetailRoute (Phase 3 DigestDetailScreen)', () => {
     });
     const { getByText, queryByText } = render(<DigestDetailRoute />, { wrapper: createWrapper() });
     expect(getByText('Premium digest')).toBeTruthy();
-    expect(getByText('Upgrade to read full case digests.')).toBeTruthy();
+    expect(
+      getByText('Full case digests are not included in your plan.'),
+    ).toBeTruthy();
+    // No purchase steering (Apple 3.1.1 / Play Payments).
+    expect(queryByText(/Upgrade/i)).toBeNull();
     expect(queryByText('Digest not found')).toBeNull();
   });
 

@@ -13,7 +13,7 @@ import { SAMPLE_PLEADING_CONTENT, makeDetail } from './__fixtures__/fixtures';
 
 describe('SamplePleadingRenderer', () => {
   it('renders caption, parties, sections, prayer, and verification toggle', () => {
-    const { queryByText } = render(
+    const { queryByText , queryAllByText } = render(
       <SamplePleadingRenderer
         data={makeDetail('sample_pleading', SAMPLE_PLEADING_CONTENT)}
       />,
@@ -29,7 +29,7 @@ describe('SamplePleadingRenderer', () => {
   });
 
   it('gates everything after the caption', () => {
-    const { queryByText } = render(
+    const { queryByText , queryAllByText } = render(
       <SamplePleadingRenderer
         data={makeDetail('sample_pleading', SAMPLE_PLEADING_CONTENT, {
           isGated: true,
@@ -40,18 +40,23 @@ describe('SamplePleadingRenderer', () => {
     expect(queryByText('SUPREME COURT OF THE PHILIPPINES')).toBeTruthy();
     expect(queryByText('Parties')).toBeNull();
     expect(queryByText('Prayer')).toBeNull();
-    expect(queryByText(/Unlock full content/i)).toBeTruthy();
+    // The notice heads AND bodies with this phrase, hence getAllByText.
+        expect(queryAllByText(/Not included in your plan/i).length).toBeGreaterThan(0);
+        // Neutral notice only: no plan named, no price, no purchase action
+        // (Apple 3.1.1 / Play Payments).
+        expect(queryByText(/Upgrade/i)).toBeNull();
+        expect(queryByText(/Unlock full content/i)).toBeNull();
   });
 
   it('falls back to Unavailable when contentJson is malformed', () => {
-    const { queryByText } = render(
+    const { queryByText , queryAllByText } = render(
       <SamplePleadingRenderer data={makeDetail('sample_pleading', 42)} />,
     );
     expect(queryByText(/Content unavailable/i)).toBeTruthy();
   });
 
   it('falls back to Unavailable when pleadingType and caption are missing', () => {
-    const { queryByText } = render(
+    const { queryByText , queryAllByText } = render(
       <SamplePleadingRenderer
         data={makeDetail('sample_pleading', { prayer: 'WHEREFORE...' })}
       />,
