@@ -32,9 +32,26 @@ interface AudioPlayerBarProps {
   contentId: string;
   /** Optional label shown above the seek bar in the ready transport. */
   title?: string;
+  /**
+   * Skip the internal Listen gate and start playing as soon as the rendition
+   * loads. For callers whose OWN control is the user intent (the reader's
+   * per-section button), where a second Listen inside the bar would be a
+   * dead-end. Never set this on a bar the user has not asked to hear: the
+   * first not-ready GET enqueues paid synthesis.
+   */
+  autoStart?: boolean;
+  /** Called when narration finishes naturally (drives the section chain). */
+  onEnded?: () => void;
+  /** Copy for the 402 upsell. Defaults to the bar-answer Pro wording. */
+  paywallMessage?: string;
+  /** Copy for the terminal `unavailable` state. */
+  unavailableMessage?: string;
 }
 
 const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5] as const;
+
+const DEFAULT_PAYWALL_MESSAGE = 'Listen with Pro — narrated audio for bar answers.';
+const DEFAULT_UNAVAILABLE_MESSAGE = 'Narration isn’t available for this content.';
 
 /** Auto-recoveries closer together than this are treated as a hard failure. */
 const RECOVERY_COOLDOWN_MS = 8_000;
@@ -106,7 +123,8 @@ function SeekBar({ positionMs, durationMs, onSeek, trackColor, fillColor }: Seek
 }
 
 /**
- * Mobile "Listen" player for a digest or bar answer. Ports the web player at
+ * Mobile "Listen" player for a digest, bar answer, or one section of a
+ * statutory document. Ports the web player at
  * apps/web/src/features/audio/components/audio-player.tsx.
  *
  * For DIGESTS it also publishes read-along state (position ticks every 250ms,
@@ -125,11 +143,19 @@ function SeekBar({ positionMs, durationMs, onSeek, trackColor, fillColor }: Seek
  * position, invalidate + refetch the rendition (fresh URLs), reload the sound
  * at the saved position, and resume if it was playing.
  */
-export function AudioPlayerBar({ contentType, contentId, title }: AudioPlayerBarProps) {
+export function AudioPlayerBar({
+  contentType,
+  contentId,
+  title,
+  autoStart = false,
+  onEnded,
+  paywallMessage = DEFAULT_PAYWALL_MESSAGE,
+  unavailableMessage = DEFAULT_UNAVAILABLE_MESSAGE,
+}: AudioPlayerBarProps) {
   const { theme } = useTheme();
   const queryClient = useQueryClient();
 
-  const [enabled, setEnabled] = useState(false);
+  const [enabled, setEnabled] = useState(autoStart);
   const [isPlaying, setIsPlaying] = useState(false);
   const [positionMs, setPositionMs] = useState(0);
   const [soundDurationMs, setSoundDurationMs] = useState(0);
@@ -144,6 +170,15 @@ export function AudioPlayerBar({ contentType, contentId, title }: AudioPlayerBar
   const resumeRef = useRef<{ atMs: number; wasPlaying: boolean } | null>(null);
   const recoveringRef = useRef(false);
   const lastRecoveryAtRef = useRef(0);
+  // Auto-start fires ONCE, on the first rendition load. Read through refs so
+  // neither prop can re-run the load effect below and reload the sound
+  // mid-playback (a new `onEnded` identity every parent render otherwise
+  // would).
+  const autoStartRef = useRef(autoStart);
+  autoStartRef.current = autoStart;
+  const autoStartedRef = useRef(false);
+  const onEndedRef = useRef(onEnded);
+  onEndedRef.current = onEnded;
 
   const { data, isLoading, isError, error, isTakingTooLong, refetch } = useAudioRendition({
     contentType,
@@ -212,6 +247,7 @@ export function AudioPlayerBar({ contentType, contentId, title }: AudioPlayerBar
       if (status.didJustFinish) {
         isPlayingRef.current = false;
         setIsPlaying(false);
+        onEndedRef.current?.();
       }
       if (readAlongKey) {
         readAlongStore.setState({
@@ -245,11 +281,18 @@ export function AudioPlayerBar({ contentType, contentId, title }: AudioPlayerBar
       const resume = resumeRef.current;
       resumeRef.current = null;
 
+      // An expired-URL recovery restores what the listener was doing; only a
+      // genuinely first load honours `autoStart`, so a mid-playback re-signing
+      // never restarts a paused player.
+      const shouldAutoStart = autoStartRef.current && !autoStartedRef.current;
+      const shouldPlay = resume?.wasPlaying ?? shouldAutoStart;
+      if (shouldAutoStart) autoStartedRef.current = true;
+
       try {
         const { sound } = await Audio.Sound.createAsync(
           { uri: audioUrl },
           {
-            shouldPlay: resume?.wasPlaying ?? false,
+            shouldPlay,
             positionMillis: resume?.atMs ?? 0,
             rate: rateRef.current,
             shouldCorrectPitch: true,
@@ -268,7 +311,7 @@ export function AudioPlayerBar({ contentType, contentId, title }: AudioPlayerBar
           positionRef.current = resume.atMs;
           setPositionMs(resume.atMs);
         }
-        if (resume?.wasPlaying) claimAudioFocus(focusHandle);
+        if (shouldPlay) claimAudioFocus(focusHandle);
       } catch {
         if (!cancelled) {
           // Load itself failed (URL already expired / network) — manual retry.
@@ -354,6 +397,36 @@ export function AudioPlayerBar({ contentType, contentId, title }: AudioPlayerBar
     );
   }
 
+  /*
+   * TERMINAL. `unavailable` is the server saying synthesis will never succeed
+   * for this content (e.g. `output_too_large`): it answers 200 and does NOT
+   * enqueue. Mirrors web audio-player.tsx:214 and must sit AHEAD of the
+   * pending/loading gates — behind them it read as "still preparing", which
+   * spins forever because `useAudioRendition` only polls while the status is
+   * `pending`. (Before the paywall gate too, though that pair is mutually
+   * exclusive: `unavailable` is a 200 with data, a 402 is an error with none.)
+   * Until now `unavailable` fell all the way through to the final `return
+   * null` and the player silently vanished.
+   *
+   * No Retry button, deliberately: re-requesting cannot change the outcome, and
+   * with TTS on-box at concurrency 1 an invited re-request is pure waste.
+   */
+  if (data?.status === 'unavailable') {
+    return (
+      <View
+        testID="audio-unavailable"
+        style={[styles.noticeRow, { backgroundColor: theme.surfaceMuted, borderColor: theme.line }]}
+      >
+        <View style={styles.noticeTextRow}>
+          <Ionicons name="volume-mute-outline" size={14} color={theme.inkFaint} />
+          <Text style={[styles.noticeText, { color: theme.inkSoft }]}>
+            {unavailableMessage}
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
   if (isPaywalled) {
     return (
       <View
@@ -362,9 +435,7 @@ export function AudioPlayerBar({ contentType, contentId, title }: AudioPlayerBar
       >
         <View style={styles.noticeTextRow}>
           <Ionicons name="sparkles-outline" size={14} color={theme.accent} />
-          <Text style={[styles.noticeText, { color: theme.inkSoft }]}>
-            Listen with Pro — narrated audio for bar answers.
-          </Text>
+          <Text style={[styles.noticeText, { color: theme.inkSoft }]}>{paywallMessage}</Text>
         </View>
         <Pressable
           onPress={() => router.push('/subscription')}

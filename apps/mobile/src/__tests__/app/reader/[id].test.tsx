@@ -72,6 +72,16 @@ jest.mock('@/features/study/hooks/use-offline-codals', () => ({
   }),
 }));
 
+// Audio rendition hook — the ONLY thing in the reader that hits the audio
+// endpoint. Mocked so the section-audio tests can assert exactly which content
+// ids were requested (and that nothing is requested on render: the first
+// not-ready GET enqueues paid synthesis).
+const mockUseAudioRendition = jest.fn();
+jest.mock('@/features/audio/hooks/use-audio-rendition', () => ({
+  useAudioRendition: (opts: unknown) => mockUseAudioRendition(opts),
+  audioRenditionQueryKey: (t: string, i: string) => ['audio-rendition', t, i],
+}));
+
 jest.mock('@/features/documents/components/content-disclaimer', () => ({
   ContentDisclaimer: ({ contentClass }: { contentClass: string }) => {
     const { Text } = require('react-native');
@@ -104,6 +114,14 @@ beforeEach(() => {
   });
   mockUseCanUseOffline.mockReturnValue({ locked: false, planName: 'Free' });
   mockIsOffline.mockReturnValue(false);
+  mockUseAudioRendition.mockReturnValue({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+    error: null,
+    isTakingTooLong: false,
+    refetch: jest.fn(),
+  });
 });
 
 function baseDoc(overrides: Partial<Record<string, unknown>> = {}) {
@@ -630,5 +648,167 @@ describe('ReaderRoute — Edu+ paywall (bookmarks + annotations)', () => {
       expect(getByText('Add a note')).toBeTruthy();
       expect(queryByText('Available on Edu plans and above')).toBeNull();
     });
+  });
+});
+
+// -- Per-section audio ------------------------------------------------------
+
+describe('ReaderRoute — per-section audio', () => {
+  const READY_RENDITION = {
+    status: 'ready' as const,
+    audioUrl: 'https://s3.example.com/a.mp3?sig=abc',
+    marksUrl: null,
+    readalongUrl: null,
+    durationMs: 90_000,
+    language: 'en',
+    voiceId: 'Ruth',
+  };
+
+  function sectionsFor(count: number) {
+    return Array.from({ length: count }, (_, i) => ({
+      id: `s-${i + 1}`,
+      legalDocumentId: 'doc-1',
+      parentSectionId: null,
+      sectionType: 'article',
+      sectionLabel: `Article ${i + 1}`,
+      ordering: i + 1,
+      plainText: `Body of article ${i + 1}.`,
+      htmlText: null,
+      pageStart: null,
+      pageEnd: null,
+      tokenCount: null,
+      createdAt: '2024-01-15T00:00:00Z',
+    }));
+  }
+
+  /** Distinct content ids the audio hook was asked to fetch (enabled only). */
+  function requestedIds(): string[] {
+    return [
+      ...new Set(
+        mockUseAudioRendition.mock.calls
+          .map(([opts]) => opts as { contentId: string; enabled: boolean })
+          .filter((opts) => opts.enabled)
+          .map((opts) => opts.contentId),
+      ),
+    ];
+  }
+
+  function renderCodal(sectionCount = 3) {
+    mockUseDocument.mockReturnValue({
+      data: baseDoc({ documentType: 'codal', title: 'Civil Code' }),
+      isLoading: false,
+      error: null,
+    });
+    mockUseDocumentSections.mockReturnValue({
+      data: sectionsFor(sectionCount),
+      isLoading: false,
+    });
+    return render(<ReaderRoute />, { wrapper: createWrapper() });
+  }
+
+  it('offers a Listen button per section on a codal', () => {
+    const { getByTestId } = renderCodal();
+
+    expect(getByTestId('section-listen-s-1')).toBeTruthy();
+    expect(getByTestId('section-listen-s-2')).toBeTruthy();
+    expect(getByTestId('section-listen-s-3')).toBeTruthy();
+  });
+
+  it('offers no section audio on a decision, which is narrated whole', () => {
+    mockUseDocument.mockReturnValue({
+      data: baseDoc({ documentType: 'case_decision' }),
+      isLoading: false,
+      error: null,
+    });
+    mockUseDocumentSections.mockReturnValue({
+      data: sectionsFor(3),
+      isLoading: false,
+    });
+
+    const { queryByTestId } = render(<ReaderRoute />, { wrapper: createWrapper() });
+
+    expect(queryByTestId('section-listen-s-1')).toBeNull();
+    expect(queryByTestId('section-audio-bar')).toBeNull();
+  });
+
+  it('offers no section audio for a codal-class type outside the narrated set', () => {
+    // `statute` is in the reader's CODAL_DOCUMENT_TYPES (digest-UI gate) but
+    // NOT in SECTION_NARRATED_DOCUMENT_TYPES. Conflating the two sets would
+    // offer Listen on sections that have no rendition.
+    mockUseDocument.mockReturnValue({
+      data: baseDoc({ documentType: 'statute' }),
+      isLoading: false,
+      error: null,
+    });
+    mockUseDocumentSections.mockReturnValue({
+      data: sectionsFor(2),
+      isLoading: false,
+    });
+
+    const { queryByTestId } = render(<ReaderRoute />, { wrapper: createWrapper() });
+
+    expect(queryByTestId('section-listen-s-1')).toBeNull();
+    expect(queryByTestId('section-audio-bar')).toBeNull();
+  });
+
+  it('requests NO audio on render, and exactly one section after a press', () => {
+    const { getByTestId } = renderCodal();
+
+    // The first not-ready GET enqueues paid TTS synthesis. Rendering a
+    // document must never do that — only an explicit tap may.
+    expect(mockUseAudioRendition).not.toHaveBeenCalled();
+
+    fireEvent.press(getByTestId('section-listen-s-2'));
+
+    expect(requestedIds()).toEqual(['s-2']);
+  });
+
+  it('mounts exactly one player for a many-section document', async () => {
+    // The Civil Code has 2,533 sections; one bar each is a memory problem even
+    // if none of them fetched.
+    mockUseAudioRendition.mockReturnValue({
+      data: READY_RENDITION,
+      isLoading: false,
+      isError: false,
+      error: null,
+      isTakingTooLong: false,
+      refetch: jest.fn(),
+    });
+    const { getByTestId, getAllByTestId } = renderCodal(40);
+
+    fireEvent.press(getByTestId('section-listen-s-7'));
+
+    await waitFor(() => expect(getAllByTestId('audio-player')).toHaveLength(1));
+    expect(requestedIds()).toEqual(['s-7']);
+  });
+
+  it('switches the single player to another section without stacking players', async () => {
+    mockUseAudioRendition.mockReturnValue({
+      data: READY_RENDITION,
+      isLoading: false,
+      isError: false,
+      error: null,
+      isTakingTooLong: false,
+      refetch: jest.fn(),
+    });
+    const { getByTestId, getAllByTestId } = renderCodal(5);
+
+    fireEvent.press(getByTestId('section-listen-s-1'));
+    await waitFor(() => expect(getAllByTestId('audio-player')).toHaveLength(1));
+
+    fireEvent.press(getByTestId('section-listen-s-4'));
+
+    await waitFor(() => expect(requestedIds()).toEqual(['s-1', 's-4']));
+    expect(getAllByTestId('audio-player')).toHaveLength(1);
+  });
+
+  it('starts at the first section from "Play whole document"', () => {
+    const { getByTestId } = renderCodal();
+
+    fireEvent.press(getByTestId('play-whole-document'));
+
+    expect(requestedIds()).toEqual(['s-1']);
+    // Chaining is on, so the reader is offered a way back out of it.
+    expect(getByTestId('section-audio-stop-chain')).toBeTruthy();
   });
 });

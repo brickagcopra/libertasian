@@ -9,7 +9,16 @@
  * inline highlighting.
  */
 
-export type AudioContentType = 'digest' | 'bar_exam_answer';
+/**
+ * `legal_document_section` is one rendition per section of a statutory
+ * document — which documents those are is decided by document type, see
+ * `lib/section-audio.ts`. It is narrated by the same endpoint and read model;
+ * only the granularity differs.
+ */
+export type AudioContentType =
+  | 'digest'
+  | 'bar_exam_answer'
+  | 'legal_document_section';
 
 /**
  * `unavailable` means synthesis failed for a reason re-running cannot change
