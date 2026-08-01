@@ -53,7 +53,7 @@ export function OnePageSummaryRenderer({ data }: { data: DerivativeDetail }) {
       </View>
 
       {data.isGated ? (
-        <GatedNotice typeLabel="One-page summary" upgradeTier={data.upgradeTier} />
+        <GatedNotice typeLabel="One-page summary" />
       ) : (
         <>
           {keyPoints.length > 0 ? (

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Linking } from 'react-native';
-import { render, fireEvent, waitFor } from '@testing-library/react-native';
+import { render, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 jest.mock('@/lib/api-client', () => ({
@@ -20,49 +20,28 @@ jest.mock('react-native-safe-area-context', () => ({
 import { router } from 'expo-router';
 import { apiClient } from '@/lib/api-client';
 import PlansScreen from '@/app/settings/plans';
-import type { CheckoutPreviewData, SubscriptionDetail } from '@/features/billing/types';
+import type { SubscriptionDetail } from '@/features/billing/types';
 
 const mockGet = apiClient.get as jest.MockedFunction<typeof apiClient.get>;
 const mockPost = apiClient.post as jest.MockedFunction<typeof apiClient.post>;
 const mockCanGoBack = router.canGoBack as jest.MockedFunction<typeof router.canGoBack>;
 
-const freeSubscription: SubscriptionDetail = {
-  id: 'sub1',
-  planCode: 'free',
-  status: 'active',
-  billingPeriod: 'monthly',
-  currentPeriodStart: null,
-  currentPeriodEnd: null,
-  seats: 1,
-  cancelAtPeriodEnd: false,
-  canceledAt: null,
-  trialStart: null,
-  trialEnd: null,
-  createdAt: '2024-01-15T00:00:00Z',
-};
-
-const proPreview: CheckoutPreviewData = {
-  basePriceAmount: 99900,
-  couponId: null,
-  couponCode: null,
-  couponDiscountAmount: 0,
-  promotionId: null,
-  promotionDiscountAmount: 0,
-  totalDiscountAmount: 0,
-  finalAmount: 99900,
-  currency: 'PHP',
-  planCode: 'pro',
-  billingPeriod: 'monthly',
-  planName: 'Pro',
-  planId: 'plan-pro',
-  discountsStacked: false,
-  lineItems: [],
-  calculatedAt: '2026-07-09T00:00:00Z',
-  currentPlanCode: 'free',
-  isUpgrade: true,
-  isDowngrade: false,
-  isNewSubscription: true,
-};
+function subscriptionOn(planCode: string): SubscriptionDetail {
+  return {
+    id: 'sub1',
+    planCode,
+    status: 'active',
+    billingPeriod: 'monthly',
+    currentPeriodStart: null,
+    currentPeriodEnd: null,
+    seats: 1,
+    cancelAtPeriodEnd: false,
+    canceledAt: null,
+    trialStart: null,
+    trialEnd: null,
+    createdAt: '2024-01-15T00:00:00Z',
+  };
+}
 
 function createWrapper() {
   const queryClient = new QueryClient({
@@ -78,273 +57,116 @@ function createWrapper() {
   };
 }
 
-async function openProPreview(utils: ReturnType<typeof render>) {
-  // Fallback PLANS order: free (no CTA), edu, pro, team, enterprise —
-  // index 1 of the Upgrade buttons is the highlighted Pro card.
-  const upgradeButtons = await waitFor(() => utils.getAllByText('Upgrade'));
-  fireEvent.press(upgradeButtons[1]);
-  await waitFor(() => utils.getByText('Upgrade to Pro'));
-}
-
-describe('PlansScreen', () => {
+/**
+ * This screen used to list every plan with prices and open a Xendit checkout
+ * in the system browser. Apple Guideline 3.1.1 and Google Play's Payments
+ * policy forbid that, and forbid steering users to an external purchase, so
+ * the screen is now a read-only view of the plan the account already has.
+ *
+ * Most of these tests assert ABSENCE. That is deliberate: a regression here
+ * is a store rejection on an already-submitted binary, not a cosmetic bug.
+ */
+describe('PlansScreen — read-only current plan', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockCanGoBack.mockReturnValue(false);
     mockGet.mockImplementation((url: string) => {
       if (url === '/plans') return Promise.resolve({ success: true, data: [] });
-      if (url === '/promotions/active') return Promise.resolve({ success: true, data: [] });
       if (url === '/billing/subscription') {
-        return Promise.resolve({ success: true, data: freeSubscription });
+        return Promise.resolve(subscriptionOn('free'));
       }
       return Promise.reject(new Error(`Unexpected GET ${url}`));
     });
-    mockPost.mockImplementation((url: string) => {
-      if (url === '/billing/checkout/preview') return Promise.resolve(proPreview);
-      if (url === '/billing/checkout') {
-        return Promise.resolve({
-          checkoutUrl: 'https://checkout.xendit.co/web/session-1',
-          checkoutSessionId: 'cs1',
-          paymentId: 'p1',
-        });
-      }
-      return Promise.reject(new Error(`Unexpected POST ${url}`));
+  });
+
+  function renderScreen() {
+    return render(<PlansScreen />, { wrapper: createWrapper() });
+  }
+
+  describe('what it shows', () => {
+    it("renders the account's current plan name", async () => {
+      const utils = renderScreen();
+
+      await waitFor(() => expect(utils.getByText('Free')).toBeTruthy());
+      expect(utils.getByText('Current plan')).toBeTruthy();
     });
-    jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
-  });
 
-  it('renders the header and plan cards', async () => {
-    const utils = render(<PlansScreen />, { wrapper: createWrapper() });
+    it('lists what the current plan includes', async () => {
+      const utils = renderScreen();
 
-    expect(utils.getByText('Plans')).toBeTruthy();
-    await waitFor(() => expect(utils.getByText('Pro')).toBeTruthy());
-    expect(utils.getByText('Edu')).toBeTruthy();
-    // "Free" appears as both the plan name and its zero price
-    expect(utils.getAllByText('Free').length).toBeGreaterThanOrEqual(2);
-    expect(utils.getByText('Most Popular')).toBeTruthy();
-    expect(utils.getAllByText('Upgrade')).toHaveLength(4);
-  });
-
-  it('switches billing period via the toggle', async () => {
-    const utils = render(<PlansScreen />, { wrapper: createWrapper() });
-    await waitFor(() => expect(utils.getByText('Pro')).toBeTruthy());
-
-    // Monthly by default — Pro shows its monthly price
-    expect(utils.getByText('₱999')).toBeTruthy();
-
-    fireEvent.press(utils.getByText('Annual'));
-    expect(utils.getByText('₱9,990')).toBeTruthy();
-    expect(utils.queryByText('₱999')).toBeNull();
-  });
-
-  it('opens the checkout preview modal when Upgrade is pressed', async () => {
-    const utils = render(<PlansScreen />, { wrapper: createWrapper() });
-
-    await openProPreview(utils);
-
-    expect(mockPost).toHaveBeenCalledWith('/billing/checkout/preview', {
-      planCode: 'pro',
-      billingPeriod: 'monthly',
+      await waitFor(() => expect(utils.getByText("What's included")).toBeTruthy());
     });
-    expect(utils.getByText('Base Price')).toBeTruthy();
-    expect(utils.getByText('Total')).toBeTruthy();
-    expect(utils.getByText('Proceed to Payment')).toBeTruthy();
-  });
 
-  it('confirming checkout posts the https bounce URLs and opens the browser', async () => {
-    const utils = render(<PlansScreen />, { wrapper: createWrapper() });
-
-    await openProPreview(utils);
-    fireEvent.press(utils.getByText('Proceed to Payment'));
-
-    await waitFor(() =>
-      expect(mockPost).toHaveBeenCalledWith('/billing/checkout', {
-        planCode: 'pro',
-        billingPeriod: 'monthly',
-        successUrl: 'https://libertasian.com/billing/mobile/success',
-        cancelUrl: 'https://libertasian.com/billing/mobile/cancel',
-      }),
-    );
-    await waitFor(() =>
-      expect(Linking.openURL).toHaveBeenCalledWith(
-        'https://checkout.xendit.co/web/session-1',
-      ),
-    );
-  });
-
-  describe('coupon input', () => {
-    const validCouponResult = {
-      valid: true,
-      coupon: {
-        id: 'c1',
-        code: 'SAVE20',
-        name: '20% Off',
-        discountType: 'percentage' as const,
-        discountValue: 20,
-        currency: 'PHP',
-      },
-      errors: [],
-    };
-
-    const discountedPreview: CheckoutPreviewData = {
-      ...proPreview,
-      couponId: 'c1',
-      couponCode: 'SAVE20',
-      couponDiscountAmount: 19980,
-      totalDiscountAmount: 19980,
-      finalAmount: 79920,
-    };
-
-    it('applies a valid coupon: validates, refreshes the preview, shows the discount line', async () => {
-      mockPost.mockImplementation((url: string, body?: unknown) => {
-        if (url === '/coupons/validate') return Promise.resolve(validCouponResult);
-        if (url === '/billing/checkout/preview') {
-          const withCoupon = (body as { couponCode?: string })?.couponCode;
-          return Promise.resolve(withCoupon ? discountedPreview : proPreview);
+    it('reflects a paid plan without offering to change it', async () => {
+      mockGet.mockImplementation((url: string) => {
+        if (url === '/plans') return Promise.resolve({ success: true, data: [] });
+        if (url === '/billing/subscription') {
+          return Promise.resolve(subscriptionOn('pro'));
         }
-        return Promise.reject(new Error(`Unexpected POST ${url}`));
+        return Promise.reject(new Error(`Unexpected GET ${url}`));
       });
 
-      const utils = render(<PlansScreen />, { wrapper: createWrapper() });
-      await openProPreview(utils);
+      const utils = renderScreen();
 
-      fireEvent.changeText(utils.getByLabelText('Coupon code'), 'save20');
-      fireEvent.press(utils.getByLabelText('Apply coupon'));
-
-      await waitFor(() =>
-        expect(mockPost).toHaveBeenCalledWith('/coupons/validate', {
-          code: 'SAVE20',
-          planCode: 'pro',
-          billingPeriod: 'monthly',
-        }),
-      );
-      await waitFor(() =>
-        expect(mockPost).toHaveBeenCalledWith('/billing/checkout/preview', {
-          planCode: 'pro',
-          billingPeriod: 'monthly',
-          couponCode: 'SAVE20',
-        }),
-      );
-      // Discount line renders from the refreshed preview
-      await waitFor(() => expect(utils.getByText('Coupon (SAVE20)')).toBeTruthy());
-      expect(utils.getByText('SAVE20 — 20% off')).toBeTruthy();
-    });
-
-    it('passes couponCode into the checkout request after applying', async () => {
-      mockPost.mockImplementation((url: string, body?: unknown) => {
-        if (url === '/coupons/validate') return Promise.resolve(validCouponResult);
-        if (url === '/billing/checkout/preview') {
-          const withCoupon = (body as { couponCode?: string })?.couponCode;
-          return Promise.resolve(withCoupon ? discountedPreview : proPreview);
-        }
-        if (url === '/billing/checkout') {
-          return Promise.resolve({
-            checkoutUrl: 'https://checkout.xendit.co/web/session-1',
-            checkoutSessionId: 'cs1',
-            paymentId: 'p1',
-          });
-        }
-        return Promise.reject(new Error(`Unexpected POST ${url}`));
-      });
-
-      const utils = render(<PlansScreen />, { wrapper: createWrapper() });
-      await openProPreview(utils);
-
-      fireEvent.changeText(utils.getByLabelText('Coupon code'), 'SAVE20');
-      fireEvent.press(utils.getByLabelText('Apply coupon'));
-      await waitFor(() => expect(utils.getByText('Coupon (SAVE20)')).toBeTruthy());
-
-      fireEvent.press(utils.getByText('Proceed to Payment'));
-
-      await waitFor(() =>
-        expect(mockPost).toHaveBeenCalledWith('/billing/checkout', {
-          planCode: 'pro',
-          billingPeriod: 'monthly',
-          successUrl: 'https://libertasian.com/billing/mobile/success',
-          cancelUrl: 'https://libertasian.com/billing/mobile/cancel',
-          couponCode: 'SAVE20',
-        }),
-      );
-    });
-
-    it('shows an inline error for an invalid coupon and still allows plain checkout', async () => {
-      mockPost.mockImplementation((url: string) => {
-        if (url === '/coupons/validate') {
-          return Promise.resolve({
-            valid: false,
-            errors: ['Coupon has expired'],
-          });
-        }
-        if (url === '/billing/checkout/preview') return Promise.resolve(proPreview);
-        if (url === '/billing/checkout') {
-          return Promise.resolve({
-            checkoutUrl: 'https://checkout.xendit.co/web/session-1',
-            checkoutSessionId: 'cs1',
-            paymentId: 'p1',
-          });
-        }
-        return Promise.reject(new Error(`Unexpected POST ${url}`));
-      });
-
-      const utils = render(<PlansScreen />, { wrapper: createWrapper() });
-      await openProPreview(utils);
-
-      fireEvent.changeText(utils.getByLabelText('Coupon code'), 'EXPIRED');
-      fireEvent.press(utils.getByLabelText('Apply coupon'));
-
-      await waitFor(() => expect(utils.getByText('Coupon has expired')).toBeTruthy());
-
-      // Checkout is not blocked and carries no couponCode
-      fireEvent.press(utils.getByText('Proceed to Payment'));
-      await waitFor(() =>
-        expect(mockPost).toHaveBeenCalledWith('/billing/checkout', {
-          planCode: 'pro',
-          billingPeriod: 'monthly',
-          successUrl: 'https://libertasian.com/billing/mobile/success',
-          cancelUrl: 'https://libertasian.com/billing/mobile/cancel',
-        }),
-      );
-    });
-
-    it('removing an applied coupon restores the coupon input', async () => {
-      mockPost.mockImplementation((url: string, body?: unknown) => {
-        if (url === '/coupons/validate') return Promise.resolve(validCouponResult);
-        if (url === '/billing/checkout/preview') {
-          const withCoupon = (body as { couponCode?: string })?.couponCode;
-          return Promise.resolve(withCoupon ? discountedPreview : proPreview);
-        }
-        return Promise.reject(new Error(`Unexpected POST ${url}`));
-      });
-
-      const utils = render(<PlansScreen />, { wrapper: createWrapper() });
-      await openProPreview(utils);
-
-      fireEvent.changeText(utils.getByLabelText('Coupon code'), 'SAVE20');
-      fireEvent.press(utils.getByLabelText('Apply coupon'));
-      await waitFor(() => expect(utils.getByText('SAVE20 — 20% off')).toBeTruthy());
-
-      fireEvent.press(utils.getByLabelText('Remove coupon'));
-
-      await waitFor(() => expect(utils.getByLabelText('Coupon code')).toBeTruthy());
-      expect(utils.queryByText('SAVE20 — 20% off')).toBeNull();
+      await waitFor(() => expect(utils.getByText('Pro')).toBeTruthy());
+      expect(utils.queryByText('Free')).toBeNull();
+      expect(utils.queryByText('Downgrade')).toBeNull();
     });
   });
 
-  it('back button falls back to /settings when there is no history', async () => {
-    const utils = render(<PlansScreen />, { wrapper: createWrapper() });
+  describe('what it must never show (Apple 3.1.1 / Play Payments)', () => {
+    it('shows no price for any plan', async () => {
+      const utils = renderScreen();
 
-    fireEvent.press(utils.getByLabelText('Go back'));
+      await waitFor(() => expect(utils.getByText('Free')).toBeTruthy());
 
-    expect(router.replace).toHaveBeenCalledWith('/settings');
-    expect(router.back).not.toHaveBeenCalled();
-  });
+      // "Free" is the plan NAME here, not a price. Nothing may carry a peso
+      // amount or a billing period.
+      expect(utils.queryByText(/₱/)).toBeNull();
+      expect(utils.queryByText(/\/mo/)).toBeNull();
+      expect(utils.queryByText(/\/yr/)).toBeNull();
+    });
 
-  it('back button pops navigation history when available', async () => {
-    mockCanGoBack.mockReturnValue(true);
-    const utils = render(<PlansScreen />, { wrapper: createWrapper() });
+    it('offers no purchase or plan-change CTA', async () => {
+      const utils = renderScreen();
 
-    fireEvent.press(utils.getByLabelText('Go back'));
+      await waitFor(() => expect(utils.getByText('Free')).toBeTruthy());
 
-    expect(router.back).toHaveBeenCalled();
-    expect(router.replace).not.toHaveBeenCalled();
+      expect(utils.queryByText('Upgrade')).toBeNull();
+      expect(utils.queryByText('Downgrade')).toBeNull();
+      expect(utils.queryByText('Subscribe')).toBeNull();
+      expect(utils.queryByText('Proceed to Payment')).toBeNull();
+    });
+
+    it('has no billing-period toggle and no coupon field', async () => {
+      const utils = renderScreen();
+
+      await waitFor(() => expect(utils.getByText('Free')).toBeTruthy());
+
+      expect(utils.queryByText('Monthly')).toBeNull();
+      expect(utils.queryByText('Annual')).toBeNull();
+      expect(utils.queryByText('Save ~17%')).toBeNull();
+      expect(utils.queryByLabelText('Coupon code')).toBeNull();
+      expect(utils.queryByText('Apply')).toBeNull();
+    });
+
+    it('never opens an external URL', async () => {
+      const utils = renderScreen();
+
+      await waitFor(() => expect(utils.getByText('Free')).toBeTruthy());
+
+      expect(Linking.openURL).not.toHaveBeenCalled();
+    });
+
+    it('never calls a checkout, coupon or promotion endpoint', async () => {
+      const utils = renderScreen();
+
+      await waitFor(() => expect(utils.getByText('Free')).toBeTruthy());
+
+      expect(mockPost).not.toHaveBeenCalled();
+      const requested = mockGet.mock.calls.map((c) => c[0]);
+      expect(requested).not.toContain('/promotions/active');
+      expect(requested.some((u) => String(u).includes('checkout'))).toBe(false);
+    });
   });
 });

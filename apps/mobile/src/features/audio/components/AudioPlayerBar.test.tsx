@@ -104,7 +104,7 @@ describe('AudioPlayerBar', () => {
     expect(refetch).toHaveBeenCalledTimes(1);
   });
 
-  it('renders the Pro upsell on a 402 and routes to /subscription', () => {
+  it('states the content is not included on a 402, with no purchase action', () => {
     mockUseAudioRendition.mockReturnValue(
       baseHookResult({
         isError: true,
@@ -114,8 +114,15 @@ describe('AudioPlayerBar', () => {
     renderPlayer();
     fireEvent.press(screen.getByTestId('listen-button'));
     expect(screen.getByTestId('audio-paywall')).toBeTruthy();
-    fireEvent.press(screen.getByLabelText('See plans'));
-    expect(router.push).toHaveBeenCalledWith('/subscription');
+    expect(
+      screen.getByText('Narrated audio is not included in your plan.'),
+    ).toBeTruthy();
+
+    // The "See plans" button routed to a screen that sold. A route to a
+    // purchase is itself an entry point under Apple 3.1.1 / Play Payments,
+    // so the notice now states the fact and offers nothing.
+    expect(screen.queryByLabelText('See plans')).toBeNull();
+    expect(router.push).not.toHaveBeenCalled();
   });
 
   it('renders a retryable error state for non-402 failures', () => {

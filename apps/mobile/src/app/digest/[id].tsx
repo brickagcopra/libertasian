@@ -177,7 +177,7 @@ export default function DigestDetailRoute() {
         </Text>
         <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 14, color: theme.inkSoft, textAlign: 'center' }}>
           {isPremiumLocked
-            ? 'Upgrade to read full case digests.'
+            ? 'Full case digests are not included in your plan.'
             : "The digest you're looking for could not be loaded."}
         </Text>
         <Pressable

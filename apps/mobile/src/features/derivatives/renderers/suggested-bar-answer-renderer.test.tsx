@@ -13,7 +13,7 @@ import { SUGGESTED_BAR_ANSWER_CONTENT, makeDetail } from './__fixtures__/fixture
 
 describe('SuggestedBarAnswerRenderer', () => {
   it('renders exam metadata, question, answer, annotations, and source', () => {
-    const { queryByText } = render(
+    const { queryByText , queryAllByText } = render(
       <SuggestedBarAnswerRenderer
         data={makeDetail('suggested_bar_answer', SUGGESTED_BAR_ANSWER_CONTENT)}
       />,
@@ -31,7 +31,7 @@ describe('SuggestedBarAnswerRenderer', () => {
   });
 
   it('hides answer and annotations when gated but keeps the question', () => {
-    const { queryByText } = render(
+    const { queryByText , queryAllByText } = render(
       <SuggestedBarAnswerRenderer
         data={makeDetail('suggested_bar_answer', SUGGESTED_BAR_ANSWER_CONTENT, {
           isGated: true,
@@ -42,18 +42,23 @@ describe('SuggestedBarAnswerRenderer', () => {
     expect(queryByText('Question')).toBeTruthy();
     expect(queryByText('Suggested Answer')).toBeNull();
     expect(queryByText('Annotations')).toBeNull();
-    expect(queryByText(/Unlock full content/i)).toBeTruthy();
+    // The notice heads AND bodies with this phrase, hence getAllByText.
+        expect(queryAllByText(/Not included in your plan/i).length).toBeGreaterThan(0);
+        // Neutral notice only: no plan named, no price, no purchase action
+        // (Apple 3.1.1 / Play Payments).
+        expect(queryByText(/Upgrade/i)).toBeNull();
+        expect(queryByText(/Unlock full content/i)).toBeNull();
   });
 
   it('falls back to Unavailable when contentJson is not an object', () => {
-    const { queryByText } = render(
+    const { queryByText , queryAllByText } = render(
       <SuggestedBarAnswerRenderer data={makeDetail('suggested_bar_answer', 'oops')} />,
     );
     expect(queryByText(/Content unavailable/i)).toBeTruthy();
   });
 
   it('falls back to Unavailable when questionText is missing', () => {
-    const { queryByText } = render(
+    const { queryByText , queryAllByText } = render(
       <SuggestedBarAnswerRenderer
         data={makeDetail('suggested_bar_answer', { suggestedAnswer: 'orphan answer' })}
       />,

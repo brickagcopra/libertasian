@@ -66,8 +66,8 @@ export default function SettingsRoute() {
     {
       id: 'plans',
       icon: 'pricetags-outline',
-      label: 'Plans',
-      sub: 'View plans and upgrade',
+      label: 'Your plan',
+      sub: 'See what your plan includes',
       onPress: () => router.push('/settings/plans'),
     },
     {

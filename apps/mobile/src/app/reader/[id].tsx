@@ -374,8 +374,8 @@ export default function ReaderRoute() {
         (error.statusCode === 402 || error.statusCode === 403)
       ) {
         Alert.alert(
-          'Upgrade required',
-          'Bookmarks and annotations are available on Edu plans and above — upgrade to save your work.',
+          'Not included in your plan',
+          'Bookmarks and annotations are not included in your plan.',
         );
       } else {
         Alert.alert('Error', 'Failed to create bookmark.');
@@ -443,13 +443,18 @@ export default function ReaderRoute() {
       setAnnotationTarget(null);
       setAnnotationNote('');
     } catch (error) {
-      // Annotation creation is tier-gated server-side — surface the server's
-      // message for plan/permission rejections instead of a generic error.
+      // Annotation creation is tier-gated server-side. The server message is
+      // deliberately NOT surfaced here: it is written for the web app and may
+      // name a plan or tell the user where to upgrade, which is exactly the
+      // steering Apple 3.1.1 / Play Payments forbid in the app.
       if (
         error instanceof ApiClientError &&
         (error.statusCode === 403 || error.statusCode === 402)
       ) {
-        Alert.alert('Upgrade required', error.serverMessage);
+        Alert.alert(
+          'Not included in your plan',
+          'Annotations are not included in your plan.',
+        );
         return;
       }
       Alert.alert('Error', 'Failed to save the annotation.');
@@ -615,7 +620,7 @@ export default function ReaderRoute() {
           title={sectionInfoById.get(playback.activeSectionId)?.heading}
           autoStart={playback.autoStart}
           onEnded={playback.handleEnded}
-          paywallMessage="You've reached your free document limit — upgrade to listen to this one."
+          paywallMessage="Narration for this document is not included in your plan."
           unavailableMessage="Narration isn’t available for this section."
         />
       ) : (

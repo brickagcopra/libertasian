@@ -3,8 +3,6 @@ import { apiClient } from '../../../lib/api-client';
 import type {
   PlansListResponse,
   PlanDetail,
-  ActivePromotionsResponse,
-  ActivePromotionForPricing,
   PlanInfo,
 } from '../types';
 import { PLANS, planDetailToPlanInfo } from '../types';
@@ -14,7 +12,6 @@ import { PLANS, planDetailToPlanInfo } from '../types';
 export const planKeys = {
   all: ['plans'] as const,
   visible: ['plans', 'visible'] as const,
-  promotions: ['plans', 'promotions', 'active'] as const,
 };
 
 // ─── Plans Hook (Public, No Auth) ─────────────────────────
@@ -64,27 +61,12 @@ export function usePlanInfoList(): {
   return { plans: PLANS, isLoading: false, isFromApi: false };
 }
 
-// ─── Active Promotions Hook (Public, No Auth) ─────────────
-
 /**
- * Fetches active promotions flagged for display on the pricing/plans page.
- * Uses GET /promotions/active (public endpoint).
+ * The active-promotions hook was removed with the purchase path: a promotion
+ * banner is discount marketing for a purchase the app is no longer allowed to
+ * offer (Apple 3.1.1 / Play Payments). GET /promotions/active still serves the
+ * web pricing page.
  */
-export function useActivePromotions() {
-  return useQuery({
-    queryKey: planKeys.promotions,
-    queryFn: async (): Promise<ActivePromotionForPricing[]> => {
-      const res = await apiClient.get<ActivePromotionsResponse>(
-        '/promotions/active',
-        { skipAuth: true },
-      );
-      return res.data;
-    },
-    staleTime: 5 * 60 * 1000,
-    gcTime: 10 * 60 * 1000,
-    retry: 1,
-  });
-}
 
 // Re-export types for convenience
-export type { PlanDetail, ActivePromotionForPricing, PlanInfo };
+export type { PlanDetail, PlanInfo };

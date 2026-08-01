@@ -6,9 +6,9 @@ import {
   Image,
   Modal,
   Animated,
-  Linking,
   StyleSheet,
 } from 'react-native';
+import { openCreativeUrl } from '../lib/creative-url-guard';
 import { Ionicons } from '@expo/vector-icons';
 import type { AdCreative } from '../types';
 
@@ -58,11 +58,10 @@ export function AdModal({
 
   const handleCtaPress = () => {
     onClick();
-    if (creative.ctaUrl) {
-      if (creative.ctaUrl.startsWith('http')) {
-        Linking.openURL(creative.ctaUrl);
-      }
-    }
+    // Refuses purchase/pricing/checkout destinations (Apple 3.1.1 /
+    // Play Payments). Creatives are server-authored and can change after
+    // the binary ships.
+    openCreativeUrl(creative.ctaUrl);
     onDismiss();
   };
 

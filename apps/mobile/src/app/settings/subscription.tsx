@@ -47,9 +47,10 @@ export default function SubscriptionScreen() {
   } = useSubscription();
   const cancelMutation = useCancelSubscription();
 
-  // Entitlement safety net: checkout happens in the system browser, so the
-  // deep link back may never fire. Refresh billing data whenever the app
-  // returns to the foreground.
+  // Entitlement safety net. The app no longer sells, but a plan can still
+  // change while it is backgrounded — bought on the web, or changed by an org
+  // admin. Refresh billing data whenever the app returns to the foreground so
+  // the displayed plan is not stale.
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
@@ -111,18 +112,15 @@ export default function SubscriptionScreen() {
       {isLoading ? (
         <ActivityIndicator color="#1a56db" style={styles.loader} />
       ) : !subscription ? (
+        // No CTA here. "Choose a plan" + a button was an invitation to buy,
+        // which the app may no longer extend (Apple 3.1.1 / Play Payments).
+        // Stating the account's status is fine; selling against it is not.
         <View style={styles.emptyCard}>
           <Ionicons name="card-outline" size={48} color="#9ca3af" />
           <Text style={styles.emptyTitle}>No Active Subscription</Text>
           <Text style={styles.emptyText}>
-            Choose a plan to unlock AI-powered legal research tools.
+            Your account is on the free plan.
           </Text>
-          <TouchableOpacity
-            style={styles.upgradeButton}
-            onPress={() => router.push('/settings/plans')}
-          >
-            <Text style={styles.upgradeButtonText}>View Plans</Text>
-          </TouchableOpacity>
         </View>
       ) : (
         <>
@@ -196,17 +194,20 @@ export default function SubscriptionScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Manage</Text>
             <View style={styles.card}>
+              {/* "Change Plan / Upgrade or downgrade" was removed: it is a
+                  purchase entry point, and the screen it led to no longer
+                  sells. "Your plan" below is read-only. */}
               <TouchableOpacity
                 style={styles.actionRow}
                 onPress={() => router.push('/settings/plans')}
               >
                 <View style={[styles.actionIcon, { backgroundColor: '#eff6ff' }]}>
-                  <Ionicons name="arrow-up-circle-outline" size={20} color="#1a56db" />
+                  <Ionicons name="pricetags-outline" size={20} color="#1a56db" />
                 </View>
                 <View style={styles.actionInfo}>
-                  <Text style={styles.actionLabel}>Change Plan</Text>
+                  <Text style={styles.actionLabel}>Your plan</Text>
                   <Text style={styles.actionSublabel}>
-                    Upgrade or downgrade your subscription
+                    See what your current plan includes
                   </Text>
                 </View>
                 <Ionicons name="chevron-forward" size={18} color="#9ca3af" />

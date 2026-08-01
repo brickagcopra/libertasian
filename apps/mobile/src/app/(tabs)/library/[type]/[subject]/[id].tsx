@@ -89,9 +89,8 @@ export default function LibraryDetailScreen() {
         {data.isGated ? (
           <View style={styles.gatedBadge}>
             <Ionicons name="lock-closed-outline" size={11} color="#92400e" />
-            <Text style={styles.gatedBadgeText}>
-              {data.upgradeTier ?? 'upgrade'}-tier
-            </Text>
+            {/* Locked, without naming the tier that would unlock it. */}
+            <Text style={styles.gatedBadgeText}>Locked</Text>
           </View>
         ) : null}
       </View>

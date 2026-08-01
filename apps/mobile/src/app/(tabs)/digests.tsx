@@ -247,9 +247,11 @@ export default function DigestsTab() {
                 if (digestId) router.push(`/digest/${digestId}`);
               } catch (err) {
                 if (err instanceof ApiClientError && err.statusCode === 402) {
+                  // Neutral statement only — no plan named, no price, no
+                  // steering (Apple 3.1.1 / Play Payments).
                   Alert.alert(
-                    'Upgrade required',
-                    'An active subscription is required to generate digests on demand.',
+                    'Not included in your plan',
+                    'On-demand digest generation is not included in your plan.',
                   );
                   return;
                 }

@@ -84,7 +84,7 @@ export function SamplePleadingRenderer({ data }: { data: DerivativeDetail }) {
       </View>
 
       {data.isGated ? (
-        <GatedNotice typeLabel="Sample pleading" upgradeTier={data.upgradeTier} />
+        <GatedNotice typeLabel="Sample pleading" />
       ) : (
         <>
           {hasPartyInfo ? (

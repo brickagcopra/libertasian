@@ -11,6 +11,7 @@
     "lint": "tsc --noEmit",
     "test": "jest",
     "test:e2e": "dotenv -e ../../.env -- jest --config ./test/jest-e2e.json",
+    "test:e2e:ci": "jest --config ./test/jest-e2e.json --runInBand --forceExit",
     "type-check": "tsc --noEmit",
     "generate:jwt-keys": "ts-node scripts/generate-jwt-keys.ts",
     "prisma:generate": "dotenv -e ../../.env -- prisma generate",

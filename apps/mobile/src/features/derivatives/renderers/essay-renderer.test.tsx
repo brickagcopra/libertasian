@@ -13,7 +13,7 @@ import { ESSAY_CONTENT, makeDetail } from './__fixtures__/fixtures';
 
 describe('EssayRenderer', () => {
   it('renders prompt, suggested time, and model answer sections', () => {
-    const { queryByText } = render(
+    const { queryByText , queryAllByText } = render(
       <EssayRenderer data={makeDetail('essay_prompt', ESSAY_CONTENT)} />,
     );
     expect(queryByText('Prompt')).toBeTruthy();
@@ -27,7 +27,7 @@ describe('EssayRenderer', () => {
   });
 
   it('renders gated notice and hides model answer when isGated=true', () => {
-    const { queryByText } = render(
+    const { queryByText , queryAllByText } = render(
       <EssayRenderer
         data={makeDetail('essay_prompt', ESSAY_CONTENT, {
           isGated: true,
@@ -35,13 +35,18 @@ describe('EssayRenderer', () => {
         })}
       />,
     );
-    expect(queryByText(/Unlock full content/i)).toBeTruthy();
+    // The notice heads AND bodies with this phrase, hence getAllByText.
+        expect(queryAllByText(/Not included in your plan/i).length).toBeGreaterThan(0);
+        // Neutral notice only: no plan named, no price, no purchase action
+        // (Apple 3.1.1 / Play Payments).
+        expect(queryByText(/Upgrade/i)).toBeNull();
+        expect(queryByText(/Unlock full content/i)).toBeNull();
     expect(queryByText('Model Answer')).toBeNull();
     expect(queryByText('Rubric (100 pts)')).toBeNull();
   });
 
   it('renders unavailable when prompt text is missing', () => {
-    const { queryByText } = render(
+    const { queryByText , queryAllByText } = render(
       <EssayRenderer data={makeDetail('essay_prompt', { promptText: '' })} />,
     );
     expect(queryByText(/Content unavailable/i)).toBeTruthy();

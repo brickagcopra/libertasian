@@ -30,7 +30,7 @@ describe('OnePageSummaryRenderer', () => {
   });
 
   it('gates key points, highlights, and quick reference but keeps the bottom line', () => {
-    const { queryByText } = render(
+    const { queryByText , queryAllByText } = render(
       <OnePageSummaryRenderer
         data={makeDetail('one_page_summary', ONE_PAGE_SUMMARY_CONTENT, {
           isGated: true,
@@ -42,18 +42,23 @@ describe('OnePageSummaryRenderer', () => {
     expect(queryByText('Key Points')).toBeNull();
     expect(queryByText('Highlights')).toBeNull();
     expect(queryByText('Quick Reference')).toBeNull();
-    expect(queryByText(/Unlock full content/i)).toBeTruthy();
+    // The notice heads AND bodies with this phrase, hence getAllByText.
+        expect(queryAllByText(/Not included in your plan/i).length).toBeGreaterThan(0);
+        // Neutral notice only: no plan named, no price, no purchase action
+        // (Apple 3.1.1 / Play Payments).
+        expect(queryByText(/Upgrade/i)).toBeNull();
+        expect(queryByText(/Unlock full content/i)).toBeNull();
   });
 
   it('falls back to Unavailable when contentJson is malformed', () => {
-    const { queryByText } = render(
+    const { queryByText , queryAllByText } = render(
       <OnePageSummaryRenderer data={makeDetail('one_page_summary', 'bad')} />,
     );
     expect(queryByText(/Content unavailable/i)).toBeTruthy();
   });
 
   it('falls back to Unavailable when bottomLine is missing', () => {
-    const { queryByText } = render(
+    const { queryByText , queryAllByText } = render(
       <OnePageSummaryRenderer
         data={makeDetail('one_page_summary', { keyPoints: ['stranded'] })}
       />,

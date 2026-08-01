@@ -101,7 +101,7 @@ export function SampleContractRenderer({ data }: { data: DerivativeDetail }) {
       ) : null}
 
       {data.isGated ? (
-        <GatedNotice typeLabel="Sample contract" upgradeTier={data.upgradeTier} />
+        <GatedNotice typeLabel="Sample contract" />
       ) : (
         <>
           {recitals.length > 0 ? (

@@ -13,7 +13,7 @@ import { ESSAY_MODEL_ANSWER_CONTENT, makeDetail } from './__fixtures__/fixtures'
 
 describe('EssayModelAnswerRenderer', () => {
   it('renders prompt reference, ALAC answer, writing tips, and pitfalls', () => {
-    const { queryByText } = render(
+    const { queryByText , queryAllByText } = render(
       <EssayModelAnswerRenderer
         data={makeDetail('essay_model_answer', ESSAY_MODEL_ANSWER_CONTENT)}
       />,
@@ -30,7 +30,7 @@ describe('EssayModelAnswerRenderer', () => {
   });
 
   it('hides answer, tips, and pitfalls when gated but keeps prompt reference', () => {
-    const { queryByText } = render(
+    const { queryByText , queryAllByText } = render(
       <EssayModelAnswerRenderer
         data={makeDetail('essay_model_answer', ESSAY_MODEL_ANSWER_CONTENT, {
           isGated: true,
@@ -42,18 +42,23 @@ describe('EssayModelAnswerRenderer', () => {
     expect(queryByText(/Model Answer \(ALAC Format\)/)).toBeNull();
     expect(queryByText('Writing Tips')).toBeNull();
     expect(queryByText('Common Pitfalls')).toBeNull();
-    expect(queryByText(/Unlock full content/i)).toBeTruthy();
+    // The notice heads AND bodies with this phrase, hence getAllByText.
+        expect(queryAllByText(/Not included in your plan/i).length).toBeGreaterThan(0);
+        // Neutral notice only: no plan named, no price, no purchase action
+        // (Apple 3.1.1 / Play Payments).
+        expect(queryByText(/Upgrade/i)).toBeNull();
+        expect(queryByText(/Unlock full content/i)).toBeNull();
   });
 
   it('falls back to Unavailable when contentJson is malformed', () => {
-    const { queryByText } = render(
+    const { queryByText , queryAllByText } = render(
       <EssayModelAnswerRenderer data={makeDetail('essay_model_answer', null)} />,
     );
     expect(queryByText(/Content unavailable/i)).toBeTruthy();
   });
 
   it('falls back to Unavailable when both promptRef and answer are missing', () => {
-    const { queryByText } = render(
+    const { queryByText , queryAllByText } = render(
       <EssayModelAnswerRenderer
         data={makeDetail('essay_model_answer', { writingTips: ['orphan'] })}
       />,

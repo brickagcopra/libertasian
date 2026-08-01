@@ -34,8 +34,11 @@ export const FAQ_ENTRIES: FaqEntry[] = [
     topic: 'Plans & pricing',
     keywords: ['price', 'pricing', 'plan', 'plans', 'cost', 'free', 'pro', 'subscription', 'upgrade', 'billing'],
     question: 'Plans & pricing',
+    // No prices, no plan comparison, and no link to a pricing page: describing
+    // what to buy and where is the steering Apple 3.1.1 / Play Payments
+    // forbid. Settings → Your plan shows what the account already has.
     answer:
-      'There are two plans: Free gives you about 15 AI answers and 50 searches a day, while Pro raises that to roughly 200 AI answers a day with unlimited search. See the full breakdown at /pricing.',
+      'Your current plan and what it includes are shown under Settings → Your plan. Settings → Usage & quotas shows how much of each limit you have used.',
   },
   {
     id: 'search',

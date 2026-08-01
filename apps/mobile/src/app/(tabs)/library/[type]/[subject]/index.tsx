@@ -68,9 +68,9 @@ export default function LibrarySubjectScreen() {
             {item.isGated ? (
               <View style={styles.gatedBadge}>
                 <Ionicons name="lock-closed-outline" size={11} color="#92400e" />
-                <Text style={styles.gatedBadgeText}>
-                  {item.upgradeTier ?? 'upgrade'}
-                </Text>
+                {/* The badge states that the item is locked. Naming the tier
+                    that unlocks it is steering toward a purchase. */}
+                <Text style={styles.gatedBadgeText}>Locked</Text>
               </View>
             ) : item.confidenceScore !== null && item.confidenceScore >= 0.7 ? (
               <Text style={styles.confidenceText}>

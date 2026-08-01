@@ -53,7 +53,7 @@ export function EssayModelAnswerRenderer({ data }: { data: DerivativeDetail }) {
       ) : null}
 
       {data.isGated ? (
-        <GatedNotice typeLabel="Model Answer" upgradeTier={data.upgradeTier} />
+        <GatedNotice typeLabel="Model Answer" />
       ) : (
         <>
           {outline.length > 0 ? (

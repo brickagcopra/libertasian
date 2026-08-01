@@ -4,6 +4,7 @@ import { useAds } from './ad-provider';
 import { AdModal } from './ad-modal';
 import { AdSlideIn } from './ad-slide-in';
 import { AdFloatingBar } from './ad-floating-bar';
+import { isCreativeAllowed } from '../lib/creative-url-guard';
 
 /**
  * AdRenderer renders overlay-style ads (modal, slide-in, floating bar).
@@ -53,6 +54,12 @@ export function AdRenderer() {
 
     for (const [campaignId, creative] of visibleAds) {
       if (!delayedAds.has(campaignId)) continue;
+
+      // Suppress the whole creative, not just its tap target: an ad reading
+      // "Go Pro for ₱999" is a violation of Apple 3.1.1 / Play Payments even
+      // with a dead button. Creatives are server-authored and can change
+      // after this binary has shipped and been reviewed.
+      if (!isCreativeAllowed(creative)) continue;
 
       const handleDismiss = () => dismissAd(campaignId);
       const handleImpression = () => recordImpression(campaignId, creative.id);

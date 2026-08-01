@@ -147,7 +147,7 @@ function AnswerError({ error }: { error: unknown }) {
         </Text>
       );
     case 402:
-      return <GatedNotice typeLabel="AI model answer" upgradeTier={null} />;
+      return <GatedNotice typeLabel="AI model answer" />;
     case 429:
       return (
         <Text style={styles.neutral}>

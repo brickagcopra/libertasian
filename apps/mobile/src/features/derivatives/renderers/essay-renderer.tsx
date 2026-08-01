@@ -51,7 +51,7 @@ export function EssayRenderer({ data }: { data: DerivativeDetail }) {
       </View>
 
       {data.isGated ? (
-        <GatedNotice typeLabel="Essay prompt" upgradeTier={data.upgradeTier} />
+        <GatedNotice typeLabel="Essay prompt" />
       ) : (
         <>
           {outline.length > 0 ? (
