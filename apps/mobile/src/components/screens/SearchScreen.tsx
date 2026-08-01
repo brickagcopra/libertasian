@@ -3,10 +3,12 @@ import { LinearGradient } from 'expo-linear-gradient';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Chip } from '@/components/ui/Chip';
 import { HeaderAmbient } from '@/components/ui/HeaderAmbient';
 import { TabBar, type TabBarItemId } from '@/components/ui/TabBar';
 import { photoTones, type PhotoTone } from '@/lib/design-tokens';
+import { topInsetPadding, bottomInsetPaddingStacked } from '@/lib/safe-area';
 import { useTheme } from '@/providers/theme-provider';
 
 export type SearchResultKind = 'CASE' | 'ARTICLE' | 'OUTLINE' | 'STATUTE';
@@ -89,6 +91,7 @@ export function SearchScreen({
   onTabPress,
 }: SearchScreenProps) {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const [internalQuery, setInternalQuery] = useState(query);
   const effectiveQuery = onChangeQuery ? query : internalQuery;
   const setQuery = (next: string) => {
@@ -105,8 +108,8 @@ export function SearchScreen({
       <HeaderAmbient />
       <ScrollView
         contentContainerStyle={{
-          paddingTop: 54,
-          paddingBottom: 110,
+          paddingTop: topInsetPadding(insets, 54),
+          paddingBottom: bottomInsetPaddingStacked(insets, 110),
           paddingHorizontal: 18,
         }}
       >

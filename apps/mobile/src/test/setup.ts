@@ -145,3 +145,27 @@ console.warn = (...args: unknown[]) => {
   }
   originalWarn.call(console, ...args);
 };
+
+// react-native-safe-area-context has no provider under jsdom, so
+// useSafeAreaInsets() throws "No safe area value available". Production DOES
+// have one — expo-router's ExpoRoot mounts a real <SafeAreaProvider> — and on
+// an API 36 emulator it measures top=54.1. Mock it globally with plausible
+// non-zero insets so every screen that respects the safe area is testable
+// without each suite re-declaring the same mock.
+//
+// SafeAreaView is passed through as a plain View: on iOS the real component
+// applies padding natively, which jsdom cannot reproduce either way.
+jest.mock('react-native-safe-area-context', () => {
+  const React = require('react');
+  const { View } = require('react-native');
+  const insets = { top: 44, bottom: 34, left: 0, right: 0 };
+  return {
+    SafeAreaProvider: ({ children }: { children: React.ReactNode }) => children,
+    SafeAreaView: ({ children, ...props }: { children?: React.ReactNode }) =>
+      React.createElement(View, props, children),
+    SafeAreaInsetsContext: React.createContext(insets),
+    useSafeAreaInsets: () => insets,
+    useSafeAreaFrame: () => ({ x: 0, y: 0, width: 390, height: 844 }),
+    initialWindowMetrics: { frame: { x: 0, y: 0, width: 390, height: 844 }, insets },
+  };
+});

@@ -1,8 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Pressable, ScrollView, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { HeaderAmbient } from '@/components/ui/HeaderAmbient';
 import { TabBar, type TabBarItemId } from '@/components/ui/TabBar';
+import { topInsetPadding, bottomInsetPaddingStacked } from '@/lib/safe-area';
 import { useTheme } from '@/providers/theme-provider';
 
 export interface HomeFeedItem {
@@ -71,14 +73,15 @@ export function HomeScreen({
   onTabPress,
 }: HomeScreenProps) {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
       <HeaderAmbient />
       <ScrollView
         contentContainerStyle={{
-          paddingTop: 60,
-          paddingBottom: 110,
+          paddingTop: topInsetPadding(insets, 60),
+          paddingBottom: bottomInsetPaddingStacked(insets, 110),
           paddingHorizontal: 18,
         }}
       >

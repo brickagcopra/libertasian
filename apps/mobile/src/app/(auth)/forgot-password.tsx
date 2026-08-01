@@ -11,12 +11,15 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { topInsetPadding, bottomInsetPadding } from '../../lib/safe-area';
 import { Link } from 'expo-router';
 import { useForgotPassword } from '../../features/auth/hooks/use-auth';
 import { APP_NAME } from '../../lib/constants';
 import { ApiClientError } from '../../lib/api-client';
 
 export default function ForgotPasswordScreen() {
+  const insets = useSafeAreaInsets();
   const [email, setEmail] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [success, setSuccess] = useState(false);
@@ -85,7 +88,15 @@ export default function ForgotPasswordScreen() {
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
       >
-        <View style={styles.container}>
+        <View
+          style={[
+            styles.container,
+            {
+              paddingTop: topInsetPadding(insets, CARD_TOP_SPACING),
+              paddingBottom: bottomInsetPadding(insets, CARD_BOTTOM_SPACING),
+            },
+          ]}
+        >
           <View style={styles.header}>
             <Text style={styles.appName}>{APP_NAME}</Text>
             <Text style={styles.title}>Forgot Password</Text>
@@ -151,14 +162,24 @@ export default function ForgotPasswordScreen() {
   );
 }
 
+/**
+ * Design defaults for the centered auth card. Both are overridden at the
+ * usage site with topInsetPadding()/bottomInsetPadding(), so under Android
+ * 15 edge-to-edge the heading can never be clipped by the status bar. Kept
+ * as named constants rather than literals so the override is obviously the
+ * source of truth.
+ */
+const CARD_TOP_SPACING = 80;
+const CARD_BOTTOM_SPACING = 40;
+
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: '#fff' },
   scrollContent: { flexGrow: 1 },
   container: {
     flex: 1,
     paddingHorizontal: 24,
-    paddingTop: 80,
-    paddingBottom: 40,
+    paddingTop: CARD_TOP_SPACING,
+    paddingBottom: CARD_BOTTOM_SPACING,
     justifyContent: 'center',
   },
   successContainer: {

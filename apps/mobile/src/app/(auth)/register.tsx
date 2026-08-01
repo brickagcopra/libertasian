@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { topInsetPadding, bottomInsetPadding } from '@/lib/safe-area';
 import { router } from 'expo-router';
 import { Button } from '@/components/ui/Button';
 import { HeaderAmbient } from '@/components/ui/HeaderAmbient';
@@ -12,6 +14,7 @@ import { ApiClientError } from '@/lib/api-client';
 
 export default function RegisterRoute() {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -82,8 +85,8 @@ export default function RegisterRoute() {
       <HeaderAmbient />
       <ScrollView
         contentContainerStyle={{
-          paddingTop: 64,
-          paddingBottom: 24,
+          paddingTop: topInsetPadding(insets, 64),
+          paddingBottom: bottomInsetPadding(insets, 24),
           paddingHorizontal: 22,
           flexGrow: 1,
         }}

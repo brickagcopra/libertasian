@@ -2,7 +2,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import type { ReactNode } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { HeaderAmbient } from '@/components/ui/HeaderAmbient';
+import { topInsetPadding, bottomInsetPaddingStacked } from '@/lib/safe-area';
 import { useTheme } from '@/providers/theme-provider';
 
 export interface DocumentReaderSection {
@@ -155,6 +157,7 @@ export function DocumentReaderScreen({
   onAnnotationPress,
 }: DocumentReaderScreenProps) {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -270,8 +273,8 @@ export function DocumentReaderScreen({
 
       <ScrollView
         contentContainerStyle={{
-          paddingTop: 110,
-          paddingBottom: 110,
+          paddingTop: topInsetPadding(insets, 110),
+          paddingBottom: bottomInsetPaddingStacked(insets, 110),
           paddingHorizontal: 22,
         }}
       >

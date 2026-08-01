@@ -4,10 +4,9 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
-  StyleSheet,
-  SafeAreaView,
-  Alert,
+  StyleSheet,  Alert,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { UploadProgress } from '../../features/camera-scan/components/upload-progress';
@@ -134,8 +133,11 @@ export default function UploadScreen() {
   const isDone = currentStep === 'complete';
   const isFailed = currentStep === 'failed';
 
+  // react-native-safe-area-context, NOT react-native: RN's SafeAreaView is
+  // a no-op on Android, so under targetSdk 35 edge-to-edge this screen
+  // (which hides the native header) drew under the system bars.
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <View style={styles.header}>
         <TouchableOpacity
           onPress={() => router.back()}

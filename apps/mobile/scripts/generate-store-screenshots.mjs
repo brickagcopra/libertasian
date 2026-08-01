@@ -399,6 +399,10 @@ const SCREENS = [
 const PLATFORMS = [
   { key: 'iphone-6-7', label: 'iPhone 6.7"', width: 1290, height: 2796, topPad: 380, captionFont: 64 },
   { key: 'ipad-12-9', label: 'iPad 12.9"', width: 2048, height: 2732, topPad: 400, captionFont: 78 },
+  // App Store Connect requires a 6.9" iPhone and a 13" iPad set for a NEW
+  // app listing; the 6.7"/12.9" sets above no longer satisfy it on their own.
+  { key: 'iphone-6-9', label: 'iPhone 6.9"', width: 1320, height: 2868, topPad: 390, captionFont: 66 },
+  { key: 'ipad-13', label: 'iPad 13"', width: 2064, height: 2752, topPad: 400, captionFont: 78 },
   { key: 'android-phone', label: 'Android phone', width: 1080, height: 1920, topPad: 320, captionFont: 56 },
   { key: 'android-tablet-7', label: 'Android 7" tablet', width: 1200, height: 1920, topPad: 320, captionFont: 60 },
   { key: 'android-tablet-10', label: 'Android 10" tablet', width: 1600, height: 2560, topPad: 380, captionFont: 72 },
@@ -500,6 +504,14 @@ async function rasterize(svgString, outPath, width, height) {
   const m = await sharp(outPath).metadata();
   if (m.width !== width || m.height !== height) {
     throw new Error(`dim mismatch ${outPath}: ${m.width}x${m.height} want ${width}x${height}`);
+  }
+  // App Store Connect REJECTS screenshots with an alpha channel. `.flatten()`
+  // above removes it, but assert rather than assume: a silent regression here
+  // is a rejected submission, discovered days later.
+  if (m.hasAlpha || m.channels !== 3) {
+    throw new Error(
+      `alpha channel in ${outPath}: channels=${m.channels} hasAlpha=${m.hasAlpha}`,
+    );
   }
 }
 

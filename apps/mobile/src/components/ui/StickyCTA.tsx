@@ -1,6 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import type { ReactNode } from 'react';
 import { Pressable, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { bottomInsetPadding } from '@/lib/safe-area';
 import { useTheme } from '@/providers/theme-provider';
 
 export interface StickyCTAProps {
@@ -19,7 +21,7 @@ export interface StickyCTAProps {
  * StickyCTA — pinned bottom bar used by the Article reader (and digest detail).
  * Pill-shaped dark surface with a progress track and trailing meta label.
  * Place inside a screen with `position: relative`; this absolutely-positions
- * itself with bottom: 16, left: 14, right: 14.
+ * itself with bottom: max(16, safe-area inset), left: 14, right: 14.
  */
 export function StickyCTA({
   progress = 0,
@@ -29,6 +31,7 @@ export function StickyCTA({
   children,
 }: StickyCTAProps) {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const clamped = Math.max(0, Math.min(1, progress));
 
   return (

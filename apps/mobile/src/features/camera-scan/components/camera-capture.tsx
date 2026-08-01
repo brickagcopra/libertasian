@@ -153,6 +153,16 @@ export function CameraCapture({ onCapture, onClose, pageCount }: CameraCapturePr
 const CORNER_SIZE = 24;
 const CORNER_THICKNESS = 3;
 
+/**
+ * Overlay spacing BELOW the safe area, not safe-area padding itself.
+ * CameraCapture only ever renders inside scan/capture.tsx, whose
+ * SafeAreaView (now the react-native-safe-area-context one, which unlike
+ * RN's works on Android) already consumes the status- and nav-bar insets.
+ * Adding insets here too would double-pad and shift iOS.
+ */
+const OVERLAY_TOP_SPACING = 56;
+const OVERLAY_BOTTOM_SPACING = 40;
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -208,7 +218,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingTop: 56,
+    paddingTop: OVERLAY_TOP_SPACING,
     paddingBottom: 12,
     backgroundColor: 'rgba(0,0,0,0.3)',
   },
@@ -279,7 +289,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 40,
-    paddingBottom: 40,
+    paddingBottom: OVERLAY_BOTTOM_SPACING,
     paddingTop: 20,
     backgroundColor: 'rgba(0,0,0,0.3)',
   },

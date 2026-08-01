@@ -1,10 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button } from '@/components/ui/Button';
 import { HeaderAmbient } from '@/components/ui/HeaderAmbient';
 import { Input } from '@/components/ui/Input';
 import { Logo } from '@/components/ui/Logo';
+import { topInsetPadding, bottomInsetPadding } from '@/lib/safe-area';
 import { useTheme } from '@/providers/theme-provider';
 
 export interface LoginScreenProps {
@@ -41,6 +43,7 @@ export function LoginScreen({
   passwordError,
 }: LoginScreenProps) {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const [email, setEmail] = useState(defaultEmail);
   const [password, setPassword] = useState('');
   const [keep, setKeep] = useState(true);
@@ -51,8 +54,8 @@ export function LoginScreen({
       <ScrollView
         style={{ flex: 1 }}
         contentContainerStyle={{
-          paddingTop: 64,
-          paddingBottom: 24,
+          paddingTop: topInsetPadding(insets, 64),
+          paddingBottom: bottomInsetPadding(insets, 24),
           paddingHorizontal: 22,
           flexGrow: 1,
         }}
