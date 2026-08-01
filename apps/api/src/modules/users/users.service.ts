@@ -140,6 +140,7 @@ export class UsersService {
     status: string;
     emailVerified: boolean;
     mfaEnabled: boolean;
+    passwordHash?: string | null;
     onboardingCompletedAt: Date | null;
     userRole: string | null;
     createdAt: Date;
@@ -153,6 +154,11 @@ export class UsersService {
       status: user.status,
       emailVerified: user.emailVerified,
       mfaEnabled: user.mfaEnabled,
+      // Whether a password exists — never the hash. Clients need this to know
+      // which credential to collect: account deletion asks a password account
+      // for its password and a social-only account to echo its email, because
+      // the latter has nothing to compare against.
+      hasPassword: Boolean(user.passwordHash),
       onboardingCompletedAt: user.onboardingCompletedAt,
       userRole: user.userRole,
       createdAt: user.createdAt,

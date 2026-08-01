@@ -17,6 +17,11 @@ export interface ProfileRow {
   label: string;
   sub?: string;
   onPress?: () => void;
+  /**
+   * Renders the row in the destructive red used across the app (#dc2626).
+   * Reserved for irreversible actions — today only "Delete account".
+   */
+  destructive?: boolean;
 }
 
 export interface ProfilePlan {
@@ -52,6 +57,10 @@ const DEFAULT_STATS: ProfileStat[] = [
   { value: '12', label: 'Day streak' },
   { value: '24', label: 'Saved' },
 ];
+
+/** The destructive red already used across the app (99 call sites). */
+const DESTRUCTIVE = '#dc2626';
+const DESTRUCTIVE_SOFT = 'rgba(220,38,38,0.10)';
 
 const DEFAULT_ROWS: ProfileRow[] = [
   { id: 'highlights', icon: 'bookmark-outline', label: 'My highlights', sub: '24 saved' },
@@ -413,19 +422,25 @@ export function ProfileScreen({
                   width: 32,
                   height: 32,
                   borderRadius: 8,
-                  backgroundColor: theme.surfaceMuted,
+                  backgroundColor: row.destructive
+                    ? DESTRUCTIVE_SOFT
+                    : theme.surfaceMuted,
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}
               >
-                <Ionicons name={row.icon} size={16} color={theme.ink} />
+                <Ionicons
+                  name={row.icon}
+                  size={16}
+                  color={row.destructive ? DESTRUCTIVE : theme.ink}
+                />
               </View>
               <View style={{ flex: 1 }}>
                 <Text
                   style={{
                     fontFamily: 'Inter_500Medium',
                     fontSize: 14,
-                    color: theme.ink,
+                    color: row.destructive ? DESTRUCTIVE : theme.ink,
                   }}
                 >
                   {row.label}

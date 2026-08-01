@@ -363,8 +363,9 @@ describe('UsersService', () => {
 
       // users.service.ts:124-136 — sanitize() now also returns
       // onboardingCompletedAt and userRole because completeOnboarding()
-      // was added to the service after this spec was written. Both fields
-      // are non-sensitive and safe for the client to read.
+      // was added to the service after this spec was written, plus
+      // hasPassword for the account-deletion flow. All are non-sensitive and
+      // safe for the client to read.
       expect(result).toEqual({
         id: mockUser.id,
         email: mockUser.email,
@@ -373,11 +374,20 @@ describe('UsersService', () => {
         status: mockUser.status,
         emailVerified: mockUser.emailVerified,
         mfaEnabled: mockUser.mfaEnabled,
+        hasPassword: true,
         onboardingCompletedAt: mockUser.onboardingCompletedAt,
         userRole: mockUser.userRole,
         createdAt: mockUser.createdAt,
         updatedAt: mockUser.updatedAt,
       });
+    });
+
+    it('reports hasPassword false for a social-only account', () => {
+      // Google/Apple accounts carry no hash, so the deletion flow asks them to
+      // echo their email instead of supplying a password.
+      const result = service.sanitize({ ...mockUser, passwordHash: null });
+
+      expect(result.hasPassword).toBe(false);
     });
 
     it('should not include sensitive fields like passwordHash', () => {

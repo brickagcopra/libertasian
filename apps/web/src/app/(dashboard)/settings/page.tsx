@@ -19,6 +19,7 @@ import {
   LockIcon,
   ScrollTextIcon,
   BarChart3Icon,
+  Trash2Icon,
 } from 'lucide-react';
 
 import {
@@ -35,6 +36,7 @@ import {
   useSessions,
   useRevokeSession,
   useRevokeAllSessions,
+  useDeleteAccount,
 } from '@/features/settings/hooks/use-settings';
 import { useHasPermission } from '@/features/settings/hooks/use-rbac';
 import {
@@ -511,7 +513,206 @@ function SecurityTab() {
       <PasswordSection />
       <MfaSection />
       <SessionsSection />
+      <DangerZoneSection />
     </div>
+  );
+}
+
+// ---- Danger Zone ----
+
+/** What the account deletion actually removes, in the user's terms. */
+const DELETED_ITEMS = [
+  'Your profile, email address and password',
+  'Notes, bookmarks and highlights',
+  'Uploaded documents and camera scans',
+  'Private digests you generated',
+  'Matters and workspace data',
+];
+
+const deleteAccountSchema = z.object({
+  confirm: z.literal('DELETE', {
+    errorMap: () => ({ message: 'Type DELETE to confirm' }),
+  }),
+  credential: z.string().min(1, 'Required'),
+});
+
+type DeleteAccountFormData = z.infer<typeof deleteAccountSchema>;
+
+function DangerZoneSection() {
+  const { data: profile } = useProfile();
+  const deleteAccount = useDeleteAccount();
+  const [open, setOpen] = useState(false);
+  const [blockedMessage, setBlockedMessage] = useState('');
+
+  // Social-only accounts (Google/Apple) have no password hash to compare, so
+  // the API asks them to echo their email instead. Default to the password
+  // branch until the profile loads — it is the stricter of the two.
+  const hasPassword = profile?.hasPassword !== false;
+
+  const {
+    register,
+    handleSubmit,
+    formState: { errors, isSubmitting },
+    setError,
+    reset,
+  } = useForm<DeleteAccountFormData>({
+    resolver: zodResolver(deleteAccountSchema),
+  });
+
+  const onSubmit = async (data: DeleteAccountFormData) => {
+    setBlockedMessage('');
+    try {
+      const result = await deleteAccount.mutateAsync({
+        confirm: 'DELETE',
+        ...(hasPassword
+          ? { password: data.credential }
+          : { email: data.credential.trim() }),
+      });
+
+      // Every refresh family is revoked server-side; this session is dead.
+      // Hard-navigate so no cached client state survives.
+      window.location.href = `/login?deleted=1&restoreDays=${result.restoreWindowDays}`;
+    } catch (error) {
+      if (error instanceof ApiClientError && error.statusCode === 409) {
+        // The server names the members who would be stranded. Show it
+        // verbatim — paraphrasing loses the actionable part.
+        setBlockedMessage(error.message);
+      } else if (error instanceof ApiClientError && error.statusCode === 401) {
+        setError('credential', {
+          message: hasPassword
+            ? 'Incorrect password'
+            : 'That email does not match this account',
+        });
+      } else if (error instanceof ApiClientError) {
+        setError('root', { message: error.message });
+      } else {
+        setError('root', { message: 'Failed to delete account' });
+      }
+    }
+  };
+
+  return (
+    <Card className="border-destructive/40">
+      <CardHeader>
+        <CardTitle className="text-destructive">Danger Zone</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div>
+          <p className="text-sm font-medium">Delete account</p>
+          <p className="text-muted-foreground text-xs">
+            Deactivates your account immediately and permanently deletes it,
+            and everything in it, after 30 days.
+          </p>
+        </div>
+
+        <Dialog
+          open={open}
+          onOpenChange={(next) => {
+            setOpen(next);
+            if (!next) {
+              reset();
+              setBlockedMessage('');
+            }
+          }}
+        >
+          <DialogTrigger asChild>
+            <Button variant="destructive" size="sm">
+              <Trash2Icon className="mr-1.5 h-3.5 w-3.5" />
+              Delete account
+            </Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete your account</DialogTitle>
+            </DialogHeader>
+
+            <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+              <div className="space-y-2">
+                <p className="text-muted-foreground text-sm">
+                  Your account is deactivated immediately and you are signed out
+                  everywhere. These are permanently deleted after 30 days:
+                </p>
+                <ul className="text-muted-foreground list-disc space-y-1 pl-5 text-sm">
+                  {DELETED_ITEMS.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+
+              <Alert>
+                <AlertDescription>
+                  <span className="font-medium">
+                    You have 30 days to change your mind.
+                  </span>{' '}
+                  We email you a link that restores your account and everything
+                  in it. After that the deletion is permanent.
+                </AlertDescription>
+              </Alert>
+
+              {blockedMessage && (
+                <Alert variant="destructive">
+                  <AlertDescription data-testid="delete-account-blocked">
+                    {blockedMessage}
+                  </AlertDescription>
+                </Alert>
+              )}
+              {errors.root && (
+                <Alert variant="destructive">
+                  <AlertDescription>{errors.root.message}</AlertDescription>
+                </Alert>
+              )}
+
+              <div className="space-y-2">
+                <Label htmlFor="delete-confirm">Type DELETE to continue</Label>
+                <Input
+                  id="delete-confirm"
+                  autoComplete="off"
+                  placeholder="DELETE"
+                  {...register('confirm')}
+                />
+                {errors.confirm && (
+                  <p className="text-destructive text-xs">
+                    {errors.confirm.message}
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="delete-credential">
+                  {hasPassword ? 'Your password' : 'Your account email'}
+                </Label>
+                <Input
+                  id="delete-credential"
+                  type={hasPassword ? 'password' : 'email'}
+                  autoComplete={hasPassword ? 'current-password' : 'email'}
+                  placeholder={hasPassword ? '' : (profile?.email ?? '')}
+                  {...register('credential')}
+                />
+                {errors.credential && (
+                  <p className="text-destructive text-xs">
+                    {errors.credential.message}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setOpen(false)}
+                  disabled={isSubmitting}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" variant="destructive" disabled={isSubmitting}>
+                  {isSubmitting ? 'Deleting...' : 'Delete my account'}
+                </Button>
+              </div>
+            </form>
+          </DialogContent>
+        </Dialog>
+      </CardContent>
+    </Card>
   );
 }
 

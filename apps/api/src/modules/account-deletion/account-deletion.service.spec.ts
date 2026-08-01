@@ -12,6 +12,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AuthService } from '../auth/auth.service';
 import { XenditService } from '../billing/xendit.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { AccountDeletionService } from './account-deletion.service';
 import {
   ACCOUNT_PURGE_QUEUE,
@@ -52,12 +53,19 @@ describe('AccountDeletionService', () => {
     organization: { updateMany: jest.fn() },
     organizationMember: { findMany: jest.fn() },
     subscription: { findMany: jest.fn(), update: jest.fn() },
+    accountRestoreToken: {
+      create: jest.fn(),
+      findFirst: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
+    },
     $transaction: jest.fn(),
   };
 
   const audit = { log: jest.fn() };
   const auth = { revokeAllSessions: jest.fn() };
   const xendit = { cancelSubscription: jest.fn() };
+  const notifications = { sendAccountRestoreEmail: jest.fn() };
   const queue = { add: jest.fn() };
 
   const dtoWithPassword = (password = 'correct-horse'): DeleteAccountDto =>
@@ -71,6 +79,7 @@ describe('AccountDeletionService', () => {
         { provide: AuditService, useValue: audit },
         { provide: AuthService, useValue: auth },
         { provide: XenditService, useValue: xendit },
+        { provide: NotificationsService, useValue: notifications },
         { provide: getQueueToken(ACCOUNT_PURGE_QUEUE), useValue: queue },
       ],
     }).compile();
@@ -87,6 +96,9 @@ describe('AccountDeletionService', () => {
     prisma.subscription.findMany.mockResolvedValue([]);
     prisma.user.update.mockResolvedValue(undefined);
     prisma.organization.updateMany.mockResolvedValue({ count: 0 });
+    prisma.accountRestoreToken.create.mockResolvedValue({ id: 'tok-row' });
+    prisma.accountRestoreToken.update.mockResolvedValue(undefined);
+    prisma.accountRestoreToken.updateMany.mockResolvedValue({ count: 0 });
   });
 
   // ---- Ownership proof ----
@@ -420,6 +432,226 @@ describe('AccountDeletionService', () => {
         status: 'active',
       });
       expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---- Emailed restore token ----
+
+  describe('restore token issuance', () => {
+    beforeEach(() => {
+      prisma.user.findUnique.mockResolvedValue({
+        ...passwordUser,
+        fullName: 'Juan Dela Cruz',
+      });
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+    });
+
+    it('mints a token expiring exactly when the purge becomes due', async () => {
+      const result = await service.requestDeletion(
+        'user-1',
+        dtoWithPassword(),
+        {},
+      );
+
+      const created = prisma.accountRestoreToken.create.mock.calls[0]?.[0] as {
+        data: { userId: string; tokenHash: string; expiresAt: Date };
+      };
+      expect(created.data.userId).toBe('user-1');
+      // The email's promise and the cron's cutoff must not be able to drift.
+      expect(created.data.expiresAt.getTime()).toBe(
+        result.scheduledPurgeAt.getTime(),
+      );
+      // Only the SHA-256 hash is stored, never the token itself.
+      expect(created.data.tokenHash).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    it('emails the raw token, which is never persisted', async () => {
+      await service.requestDeletion('user-1', dtoWithPassword(), {});
+
+      expect(notifications.sendAccountRestoreEmail).toHaveBeenCalledWith(
+        'juan@example.com',
+        'Juan Dela Cruz',
+        expect.stringMatching(/^[0-9a-f]{64}$/),
+        DELETION_RESTORE_WINDOW_DAYS,
+      );
+
+      const emailed = notifications.sendAccountRestoreEmail.mock
+        .calls[0]?.[2] as string;
+      const stored = (
+        prisma.accountRestoreToken.create.mock.calls[0]?.[0] as {
+          data: { tokenHash: string };
+        }
+      ).data.tokenHash;
+      expect(stored).not.toBe(emailed);
+    });
+
+    it('does not roll the deletion back when the mail hop fails', async () => {
+      notifications.sendAccountRestoreEmail.mockRejectedValue(
+        new Error('SMTP down'),
+      );
+
+      await expect(
+        service.requestDeletion('user-1', dtoWithPassword(), {}),
+      ).resolves.toMatchObject({ status: 'pending_deletion' });
+    });
+  });
+
+  describe('restoreWithToken', () => {
+    const pendingUser = {
+      ...passwordUser,
+      status: 'pending_deletion',
+      deletionRequestedAt: new Date(Date.now() - 3 * DAY_MS),
+    };
+
+    const liveToken = {
+      id: 'tok-1',
+      userId: 'user-1',
+      expiresAt: new Date(Date.now() + 20 * DAY_MS),
+      usedAt: null,
+    };
+
+    it('restores the account and burns the token', async () => {
+      prisma.accountRestoreToken.findFirst.mockResolvedValue(liveToken);
+      prisma.user.findUnique.mockResolvedValue(pendingUser);
+
+      await expect(service.restoreWithToken('a'.repeat(64))).resolves.toEqual({
+        status: 'active',
+      });
+
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { status: 'active', deletionRequestedAt: null },
+        }),
+      );
+      expect(prisma.accountRestoreToken.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'tok-1' },
+          data: expect.objectContaining({ usedAt: expect.any(Date) }),
+        }),
+      );
+    });
+
+    it('looks the token up by hash, never by the raw value', async () => {
+      prisma.accountRestoreToken.findFirst.mockResolvedValue(liveToken);
+      prisma.user.findUnique.mockResolvedValue(pendingUser);
+
+      const raw = 'b'.repeat(64);
+      await service.restoreWithToken(raw);
+
+      const where = prisma.accountRestoreToken.findFirst.mock.calls[0]?.[0] as {
+        where: { tokenHash: string; usedAt: null };
+      };
+      expect(where.where.tokenHash).not.toBe(raw);
+      expect(where.where.tokenHash).toMatch(/^[0-9a-f]{64}$/);
+      expect(where.where.usedAt).toBeNull();
+    });
+
+    it('rejects a second use of the same token', async () => {
+      // A used token no longer matches `usedAt: null`, so the lookup misses.
+      prisma.accountRestoreToken.findFirst.mockResolvedValue(null);
+
+      await expect(service.restoreWithToken('c'.repeat(64))).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects an expired token', async () => {
+      prisma.accountRestoreToken.findFirst.mockResolvedValue({
+        ...liveToken,
+        expiresAt: new Date(Date.now() - DAY_MS),
+      });
+
+      await expect(service.restoreWithToken('d'.repeat(64))).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects an unknown token', async () => {
+      prisma.accountRestoreToken.findFirst.mockResolvedValue(null);
+
+      await expect(service.restoreWithToken('e'.repeat(64))).rejects.toThrow(
+        /Invalid or expired restore link/,
+      );
+    });
+
+    it('gives the same message for unknown, used and expired tokens', async () => {
+      const messages: string[] = [];
+
+      prisma.accountRestoreToken.findFirst.mockResolvedValue(null);
+      await service.restoreWithToken('f'.repeat(64)).catch((e: Error) => {
+        messages.push(e.message);
+      });
+
+      prisma.accountRestoreToken.findFirst.mockResolvedValue({
+        ...liveToken,
+        expiresAt: new Date(Date.now() - DAY_MS),
+      });
+      await service.restoreWithToken('f'.repeat(64)).catch((e: Error) => {
+        messages.push(e.message);
+      });
+
+      // Distinguishing them would tell a token-guessing attacker which guess
+      // was closer.
+      expect(messages).toHaveLength(2);
+      expect(messages[0]).toBe(messages[1]);
+    });
+
+    it('refuses a token for an already-purged account', async () => {
+      prisma.accountRestoreToken.findFirst.mockResolvedValue(liveToken);
+      prisma.user.findUnique.mockResolvedValue({
+        ...passwordUser,
+        status: 'deleted',
+        deletionRequestedAt: new Date(Date.now() - 40 * DAY_MS),
+      });
+
+      await expect(service.restoreWithToken('g'.repeat(64))).rejects.toThrow(
+        /already been permanently deleted/,
+      );
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses once the window has closed even if the token row lingers', async () => {
+      prisma.accountRestoreToken.findFirst.mockResolvedValue(liveToken);
+      prisma.user.findUnique.mockResolvedValue({
+        ...passwordUser,
+        status: 'pending_deletion',
+        deletionRequestedAt: new Date(
+          Date.now() - (DELETION_RESTORE_WINDOW_DAYS + 1) * DAY_MS,
+        ),
+      });
+
+      await expect(service.restoreWithToken('h'.repeat(64))).rejects.toThrow(
+        /window has closed/,
+      );
+    });
+
+    it('burns the token but reports success for an already-restored account', async () => {
+      prisma.accountRestoreToken.findFirst.mockResolvedValue(liveToken);
+      prisma.user.findUnique.mockResolvedValue(passwordUser);
+
+      await expect(service.restoreWithToken('i'.repeat(64))).resolves.toEqual({
+        status: 'active',
+      });
+      expect(prisma.accountRestoreToken.update).toHaveBeenCalledWith({
+        where: { id: 'tok-1' },
+        data: { usedAt: expect.any(Date) },
+      });
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('invalidates any other outstanding link for the same user', async () => {
+      prisma.accountRestoreToken.findFirst.mockResolvedValue(liveToken);
+      prisma.user.findUnique.mockResolvedValue(pendingUser);
+
+      await service.restoreWithToken('j'.repeat(64));
+
+      expect(prisma.accountRestoreToken.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { userId: 'user-1', usedAt: null },
+        }),
+      );
     });
   });
 

@@ -6,6 +6,7 @@ import { Queue } from 'bullmq';
 import { PrismaService } from '../../prisma/prisma.service';
 import { verifyEmailTemplate } from './templates/verify-email';
 import { resetPasswordTemplate } from './templates/reset-password';
+import { accountRestoreTemplate } from './templates/account-restore';
 import { passwordChangedTemplate } from './templates/password-changed';
 import { memberInviteTemplate } from './templates/member-invite';
 import { subscriptionConfirmationTemplate } from './templates/subscription-confirmation';
@@ -52,6 +53,34 @@ export class NotificationsService {
 
     await this.enqueue({ to: email, subject, html });
     this.logger.log(`Password reset email enqueued for ${this.redactEmail(email)}`);
+  }
+
+  /**
+   * Emailed when an account is deactivated by a deletion request.
+   *
+   * This is the ONLY thing that makes the published 30-day restore window
+   * reachable: the delete revokes every refresh family and login refuses a
+   * non-'active' status, so a user who changes their mind on day 20 has no
+   * session to cancel from. Strictly transactional — it is a security notice
+   * about the account itself, so it is not subject to marketing preferences.
+   */
+  async sendAccountRestoreEmail(
+    email: string,
+    fullName: string,
+    token: string,
+    restoreWindowDays: number,
+  ): Promise<void> {
+    const restoreUrl = `${this.appUrl}/restore-account?token=${token}`;
+    const { subject, html } = accountRestoreTemplate({
+      fullName,
+      restoreUrl,
+      restoreWindowDays,
+    });
+
+    await this.enqueue({ to: email, subject, html });
+    this.logger.log(
+      `Account restore email enqueued for ${this.redactEmail(email)}`,
+    );
   }
 
   async sendPasswordChangedEmail(

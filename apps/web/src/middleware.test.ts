@@ -39,6 +39,13 @@ describe('middleware — public-path allowlist', () => {
       '/billing/mobile/success',
       '/billing/mobile/cancel',
       '/email/logo.png',
+      // Store-required deletion surfaces. The restore link is emailed to an
+      // account that CANNOT sign in, so a redirect here would make the
+      // published 30-day window unreachable — the same bug /account-deletion
+      // hit in PR #305.
+      '/account-deletion',
+      '/restore-account',
+      '/restore-account?token=abc',
     ];
 
     for (const path of publicPaths) {

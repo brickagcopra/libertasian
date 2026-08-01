@@ -131,6 +131,16 @@ export default function SettingsRoute() {
       label: 'Sign out',
       onPress: handleLogout,
     },
+    // Danger zone. Apple 5.1.1(v) and Google Play both require this to be
+    // reachable in-app, not only by emailing support.
+    {
+      id: 'delete-account',
+      icon: 'trash-outline',
+      label: 'Delete account',
+      sub: 'Permanently delete your account and data',
+      destructive: true,
+      onPress: () => router.push('/settings/delete-account'),
+    },
   ];
 
   const allRows = [

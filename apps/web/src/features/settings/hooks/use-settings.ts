@@ -13,6 +13,11 @@ interface UserProfile {
   mfaEnabled: boolean;
   emailVerified: boolean;
   createdAt: string;
+  /**
+   * Whether the account has a password set. False for social-only (Google/
+   * Apple) accounts, which prove ownership by echoing their email instead.
+   */
+  hasPassword?: boolean;
 }
 
 interface Organization {
@@ -218,6 +223,67 @@ export function useRevokeAllSessions() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sessions'] });
+    },
+  });
+}
+
+// ---- Account deletion ----
+
+/**
+ * Body for `DELETE /users/me`. Exactly one credential is required and which
+ * one depends on the account: password accounts send `password`, social-only
+ * accounts (Google/Apple, `hasPassword: false`) echo their `email` — there is
+ * no hash on those rows to compare against.
+ */
+export interface DeleteAccountInput {
+  confirm: 'DELETE';
+  password?: string;
+  email?: string;
+}
+
+export interface DeleteAccountResult {
+  status: 'pending_deletion';
+  deletionRequestedAt: string;
+  /** When the account and its private content are permanently purged. */
+  scheduledPurgeAt: string;
+  restoreWindowDays: number;
+}
+
+/**
+ * Delete the signed-in account. The API deactivates it immediately, revokes
+ * every refresh-token family and emails a single-use restore link valid for
+ * the whole 30-day window.
+ *
+ * 409 means the caller is the sole owner of an org other people still work in;
+ * the server message names them and is the actionable text to show.
+ */
+export function useDeleteAccount() {
+  return useMutation({
+    mutationFn: async (data: DeleteAccountInput) => {
+      const res = await apiClient.delete<{
+        success: boolean;
+        data: DeleteAccountResult;
+      }>('/users/me', data);
+      return res.data;
+    },
+  });
+}
+
+/**
+ * Restore an account from the emailed link. PUBLIC — a deactivated account has
+ * no session, which is the entire reason the endpoint takes a token instead.
+ */
+export function useRestoreAccount() {
+  return useMutation({
+    mutationFn: async (token: string) => {
+      const res = await apiClient.post<{
+        success: boolean;
+        data: { status: string };
+        // No auth header is attached when signed out, and the endpoint never
+        // answers 401 (a bad token is a 400), so the client's 401 interceptor
+        // is never triggered from this page.
+      }>('/users/deletion/restore', { token });
+      return res.data;
     },
   });
 }

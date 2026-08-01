@@ -421,3 +421,27 @@ export async function cleanStaleBlogPosts(maxAgeDays = 7): Promise<number> {
   );
   return result.changes;
 }
+
+// ---- Account deletion ----
+
+/**
+ * Drop every locally cached row.
+ *
+ * Called when the user deletes their account: the server purge covers what is
+ * on the server, and this covers what this device kept. Every table is
+ * emptied rather than dropped so the schema (and WAL mode) survives for the
+ * next sign-in.
+ *
+ * Best-effort by design — a failure here must not block the sign-out that
+ * follows it, since the account is already deactivated server-side.
+ */
+export async function clearAllCachedData(): Promise<void> {
+  const database = await getDb();
+  // codal_sections_cache cascades from codals_cache, but deleting it
+  // explicitly keeps this correct if the foreign key is ever relaxed.
+  await database.execAsync(`
+    DELETE FROM codal_sections_cache;
+    DELETE FROM codals_cache;
+    DELETE FROM blog_posts_cache;
+  `);
+}

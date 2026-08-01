@@ -87,9 +87,7 @@ export async function unregisterPushToken(): Promise<void> {
   try {
     const token = await pushTokenStorage.getToken();
     if (token) {
-      await apiClient.delete('/notifications/push-tokens', {
-        body: JSON.stringify({ token }),
-      });
+      await apiClient.delete('/notifications/push-tokens', { token });
     }
   } catch {
     // Best-effort — sign-out proceeds even if the API call fails.

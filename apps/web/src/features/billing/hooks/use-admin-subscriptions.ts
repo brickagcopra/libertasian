@@ -231,9 +231,10 @@ export function useRevokeEntitlementOverride() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, data }: { id: string; data: RevokeEntitlementOverrideInput }) => {
-      return apiClient.delete(`/admin/subscriptions/entitlements/override/${id}`, {
-        body: JSON.stringify(data),
-      });
+      return apiClient.delete(
+        `/admin/subscriptions/entitlements/override/${id}`,
+        data,
+      );
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: adminSubscriptionKeys.all });

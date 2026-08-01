@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 
 import { AuthModule } from '../auth/auth.module';
 import { BillingModule } from '../billing/billing.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { UploadsModule } from '../uploads/uploads.module';
 import { AccountDeletionController } from './account-deletion.controller';
 import { AccountDeletionService } from './account-deletion.service';
@@ -26,6 +27,9 @@ import { AccountPurgeProcessor } from './account-purge.processor';
     AuthModule,
     BillingModule,
     UploadsModule,
+    // NotificationsService emails the single-use restore link — the only thing
+    // that makes the published 30-day window reachable after the session dies.
+    NotificationsModule,
   ],
   controllers: [AccountDeletionController],
   providers: [AccountDeletionService, AccountPurgeProcessor],
