@@ -51,7 +51,7 @@ import { ReadAlongProvider } from '@/features/audio/components/read-along-contex
 import { SectionListenButton } from '@/features/audio/components/section-listen-button';
 import { SectionReadAlongBody } from '@/features/audio/components/section-read-along-body';
 import { useSectionPlayback } from '@/features/audio/hooks/use-section-playback';
-import { hasSectionAudio } from '@/features/audio/lib/section-audio';
+import { hasNarratableText, hasSectionAudio } from '@/features/audio/lib/section-audio';
 import { AiSummaryTab } from './_components/ai-summary-tab';
 import { DigestsTab } from './_components/digests-tab';
 
@@ -491,6 +491,7 @@ export default function ReaderPage() {
                         }}
                         continueLabel="Play the whole document"
                         paywallMessage="You've reached your free document limit — upgrade to listen to this one."
+                        unavailableMessage="Narration isn’t available for this section."
                       />
                     ) : (
                       <div className="flex items-center justify-between gap-3">
@@ -665,6 +666,12 @@ function AnnotatedSection({
 
   const plainText = cleanLegalText(section.plainText ?? 'No content available');
 
+  // A section with an empty `plain_text` (prod has 2 of 4,857) was skipped by
+  // the backfill and has no rendition. Clicking Listen on one would enqueue a
+  // synthesis with nothing to say, so the control is not offered at all.
+  const canListen =
+    audioEnabled && !!onPlaySection && hasNarratableText(section.plainText);
+
   // Build the rendered content with highlights
   const rendered = showAnnotations && annotations.length > 0
     ? renderWithHighlights(plainText, annotations, (a) => {
@@ -678,13 +685,13 @@ function AnnotatedSection({
       id={`section-${section.id}`}
       className="scroll-mt-6 border-b border-gray-100 pb-8 last:border-0"
     >
-      {(section.sectionLabel || (audioEnabled && onPlaySection)) && (
+      {(section.sectionLabel || canListen) && (
         <div className="mb-3 flex items-start justify-between gap-3 border-b border-gray-200 pb-2">
           <h2 className="text-base font-bold capitalize text-foreground">
             {section.sectionLabel}
           </h2>
           {/* Inert button — see SectionListenButton. Nothing here fetches. */}
-          {audioEnabled && onPlaySection && (
+          {canListen && onPlaySection && (
             <SectionListenButton
               sectionId={section.id}
               label={`Listen to ${section.sectionLabel ?? section.sectionType}`}

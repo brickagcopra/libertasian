@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Loader2, Pause, Play, Sparkles, Volume2 } from 'lucide-react';
+import { Loader2, Pause, Play, Sparkles, Volume2, VolumeX } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -32,6 +32,11 @@ interface AudioPlayerProps {
    * free-document cap, not that narration itself is a Pro feature.
    */
   paywallMessage?: string;
+  /**
+   * Copy for the terminal `unavailable` state. Defaults to content-neutral
+   * wording; the document reader passes section wording.
+   */
+  unavailableMessage?: string;
 }
 
 const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5] as const;
@@ -46,6 +51,8 @@ function formatTime(ms: number): string {
 
 const DEFAULT_PAYWALL_MESSAGE =
   'Listen with Pro — narrated audio for bar answers.';
+
+const DEFAULT_UNAVAILABLE_MESSAGE = 'Narration isn’t available for this content.';
 
 function PaywallUpsell({ message }: { message: string }) {
   return (
@@ -81,6 +88,7 @@ export function AudioPlayer({
   continueToggle,
   continueLabel = 'Continue playing next digest',
   paywallMessage = DEFAULT_PAYWALL_MESSAGE,
+  unavailableMessage = DEFAULT_UNAVAILABLE_MESSAGE,
 }: AudioPlayerProps) {
   const [enabled, setEnabled] = useState(autoPlay);
   const queryClient = useQueryClient();
@@ -191,6 +199,29 @@ export function AudioPlayer({
 
   if (isPaywalled) {
     return <PaywallUpsell message={paywallMessage} />;
+  }
+
+  /*
+   * TERMINAL. `unavailable` is the server saying synthesis will never succeed
+   * for this content (e.g. `output_too_large`): it answers 200 and does NOT
+   * enqueue. Checked ahead of the pending/loading gates so this can never be
+   * mistaken for "still preparing" — that state would spin forever, since
+   * `useAudioRendition` only polls while the status is `pending`.
+   *
+   * No Retry button, deliberately: re-requesting cannot change the outcome, and
+   * with TTS on-box at concurrency 1 an invited re-request is pure waste.
+   */
+  if (data?.status === 'unavailable') {
+    return (
+      <div
+        className="flex items-center gap-2 rounded-lg border bg-muted/30 px-4 py-2.5 text-sm text-muted-foreground"
+        data-testid="audio-unavailable"
+        data-failure-reason={data.failureReason ?? undefined}
+      >
+        <VolumeX className="size-4 shrink-0" aria-hidden="true" />
+        <span>{unavailableMessage}</span>
+      </div>
+    );
   }
 
   if (isTakingTooLong && data?.status === 'pending') {

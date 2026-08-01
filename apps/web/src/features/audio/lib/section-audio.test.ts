@@ -70,4 +70,23 @@ describe('buildSectionQueue', () => {
     expect(buildSectionQueue(undefined)).toEqual([]);
     expect(buildSectionQueue([])).toEqual([]);
   });
+
+  it('drops sections with no text, so the chain never enqueues an empty one', () => {
+    // Prod has 2 such sections of 4,857 — the backfill skipped them, and the
+    // chain's warm-up GET is what would enqueue synthesis for them.
+    expect(
+      buildSectionQueue([
+        { id: 'a', ordering: 1, plainText: 'Article 1.' },
+        { id: 'b', ordering: 2, plainText: '' },
+        { id: 'c', ordering: 3, plainText: null },
+        { id: 'd', ordering: 4, plainText: '   \n ' },
+        { id: 'e', ordering: 5, plainText: 'Article 5.' },
+      ]),
+    ).toEqual(['a', 'e']);
+  });
+
+  it('keeps sections whose text the caller did not supply', () => {
+    // `plainText` absent ≠ empty: the caller simply is not carrying the body.
+    expect(buildSectionQueue([{ id: 'a', ordering: 1 }])).toEqual(['a']);
+  });
 });

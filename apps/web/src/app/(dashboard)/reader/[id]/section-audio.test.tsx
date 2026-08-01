@@ -115,7 +115,10 @@ function section(n: number) {
   };
 }
 
-function setDocument(documentType: string, sectionCount: number) {
+function setDocumentSections(
+  documentType: string,
+  sections: ReturnType<typeof section>[],
+) {
   docMocks.useDocument.mockReturnValue({
     data: {
       id: 'doc-1',
@@ -131,10 +134,14 @@ function setDocument(documentType: string, sectionCount: number) {
     isLoading: false,
     error: null,
   });
-  docMocks.useDocumentSections.mockReturnValue({
-    data: Array.from({ length: sectionCount }, (_, i) => section(i + 1)),
-    isLoading: false,
-  });
+  docMocks.useDocumentSections.mockReturnValue({ data: sections, isLoading: false });
+}
+
+function setDocument(documentType: string, sectionCount: number) {
+  setDocumentSections(
+    documentType,
+    Array.from({ length: sectionCount }, (_, i) => section(i + 1)),
+  );
 }
 
 function renderReader() {
@@ -265,6 +272,37 @@ describe('reader — pending and paywall states', () => {
     );
   });
 
+  it('shows a terminal notice for an unavailable section, never "preparing"', () => {
+    setDocument('codal', 2);
+    // PR #341: content that can never be narrated answers 200 `unavailable`
+    // with no enqueue. `useAudioRendition` only polls while `pending`, so
+    // falling through to the preparing state would spin forever.
+    setAudio({
+      data: {
+        ...READY,
+        status: 'unavailable',
+        audioUrl: null,
+        readalongUrl: null,
+        durationMs: null,
+        failureReason: 'output_too_large',
+      },
+    });
+    renderReader();
+
+    fireEvent.click(screen.getByTestId('section-listen-sec-1'));
+
+    const notice = screen.getByTestId('audio-unavailable');
+    expect(notice).toHaveTextContent(/Narration isn.t available for this section/);
+    expect(notice).toHaveAttribute('data-failure-reason', 'output_too_large');
+
+    expect(screen.queryByTestId('audio-pending')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('audio-player')).not.toBeInTheDocument();
+    // Re-requesting cannot change the outcome — no retry affordance at all.
+    expect(
+      screen.queryByRole('button', { name: /retry/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it('renders the paywall affordance on a 402 instead of crashing', () => {
     setDocument('codal', 2);
     setAudio({
@@ -343,6 +381,27 @@ describe('reader — which documents get the controls', () => {
     expect(screen.getByTestId('section-audio-bar')).toBeInTheDocument();
     expect(screen.getByTestId('play-whole-document')).toBeInTheDocument();
     expect(screen.getByTestId('section-listen-sec-1')).toBeInTheDocument();
+  });
+
+  it('offers no Listen button for a section with empty text', () => {
+    // Prod has 2 sections (of 4,857) with empty plain_text, correctly excluded
+    // from the backfill. The button's click is what enqueues synthesis, so on
+    // one of these it would queue a job with nothing to say.
+    setDocumentSections('codal', [
+      { ...section(1), plainText: '' },
+      section(2),
+    ]);
+    renderReader();
+
+    expect(screen.queryByTestId('section-listen-sec-1')).not.toBeInTheDocument();
+    expect(screen.getByTestId('section-listen-sec-2')).toBeInTheDocument();
+
+    // Same guard on the other entry point: the chain skips it too, so
+    // "play whole document" starts at the first section that has text.
+    fireEvent.click(screen.getByTestId('play-whole-document'));
+    expect(audioMocks.useAudioRendition).toHaveBeenCalledWith(
+      expect.objectContaining({ contentId: 'sec-2' }),
+    );
   });
 
   it('hides them for a decision, which is narrated whole', () => {
