@@ -46,6 +46,10 @@ import type { Annotation, AnnotationColor } from '@/features/annotations/types';
 import { useCanUseBookmarksAnnotations } from '@/features/billing/hooks/use-can-use-bookmarks-annotations';
 import { useCanUseOffline } from '@/features/billing/hooks/use-can-use-offline';
 import { PlanUpsellSheet } from '@/features/billing/components/plan-upsell-sheet';
+import { AudioPlayerBar } from '@/features/audio/components/AudioPlayerBar';
+import { SectionListenButton } from '@/features/audio/components/SectionListenButton';
+import { useSectionPlayback } from '@/features/audio/hooks/use-section-playback';
+import { hasNarratableText, hasSectionAudio } from '@/features/audio/lib/section-audio';
 import { useDigests, useGenerateDigest } from '@/features/digests/hooks/use-digests';
 import { useRecentlyViewed } from '@/features/documents/hooks/use-recently-viewed';
 import { useOfflineCodals } from '@/features/study/hooks/use-offline-codals';
@@ -69,6 +73,13 @@ const DOC_TYPE_LABELS: Record<string, string> = {
 // web copy at apps/web/src/app/(dashboard)/reader/[id]/page.tsx
 // and the server taxonomy in apps/api/src/modules/study/study.service.ts
 // (TAB_GROUP_TO_TYPES).
+//
+// NOT the per-section audio gate. This set is BROADER (statute,
+// commonwealth_act, batas_pambansa, proclamation, …) and answers only
+// "hide the digest UI?". Per-section narration is decided by
+// `hasSectionAudio` (SECTION_NARRATED_DOCUMENT_TYPES), which mirrors the
+// API's reconciler tier 4 — the documents that actually have one rendition
+// per section. Never conflate the two.
 const CODAL_DOCUMENT_TYPES = new Set<string>([
   'constitution',
   'codal',
@@ -280,6 +291,47 @@ export default function ReaderRoute() {
   const readerSections = useMemo(
     () => buildReaderSections(sections, annotations),
     [sections, annotations],
+  );
+
+  // Per-section narration. The gate is `hasSectionAudio`, NOT the broader
+  // CODAL_DOCUMENT_TYPES above — see the comment on that constant. The hook is
+  // called unconditionally, above the early returns; it holds only local state
+  // and fetches nothing until a section is explicitly played.
+  //
+  // It is fed the RAW sections, not `readerSections`: the queue must see
+  // `plainText` (to drop the sections that have nothing to narrate) and
+  // `ordering`, and the view model above carries neither.
+  const playback = useSectionPlayback(sections);
+  const sectionAudioEnabled = hasSectionAudio(doc?.documentType);
+
+  /** Raw section + display heading by id, for the button gate and player title. */
+  const sectionInfoById = useMemo(() => {
+    const map = new Map<string, { section: DocumentSection; heading: string }>();
+    (sections ?? [])
+      .slice()
+      .sort((a, b) => a.ordering - b.ordering)
+      .forEach((s, i) => map.set(s.id, { section: s, heading: headingFor(s, i) }));
+    return map;
+  }, [sections]);
+
+  const { activeSectionId, playSection } = playback;
+  const renderSectionAction = useCallback(
+    (sectionId: string) => {
+      const info = sectionInfoById.get(sectionId);
+      // A section the backfill skipped for having no text has no rendition and
+      // never will; offering Listen would enqueue a synthesis with nothing to
+      // say. Same rule that drops it from the "play whole document" queue.
+      if (!info || !hasNarratableText(info.section.plainText)) return null;
+      return (
+        <SectionListenButton
+          sectionId={sectionId}
+          label={`Listen to ${info.heading}`}
+          isActive={activeSectionId === sectionId}
+          onPlay={playSection}
+        />
+      );
+    },
+    [activeSectionId, playSection, sectionInfoById],
   );
 
   const citations = useMemo<DocumentReaderCitation[] | undefined>(() => {
@@ -548,6 +600,80 @@ export default function ReaderRoute() {
     </Pressable>
   ) : null;
 
+  // EXACTLY ONE player for the whole screen. Keyed by the active section so
+  // switching sections unmounts the previous bar (unloading its sound) rather
+  // than reusing it, and mounted only once a section has been chosen — the
+  // player is the only thing that calls `useAudioRendition`, so nothing here
+  // touches the audio endpoint on render.
+  const audioSlot = sectionAudioEnabled ? (
+    <View style={{ gap: 8 }} testID="section-audio-bar">
+      {playback.activeSectionId ? (
+        <AudioPlayerBar
+          key={playback.activeSectionId}
+          contentType="legal_document_section"
+          contentId={playback.activeSectionId}
+          title={sectionInfoById.get(playback.activeSectionId)?.heading}
+          autoStart={playback.autoStart}
+          onEnded={playback.handleEnded}
+          paywallMessage="You've reached your free document limit — upgrade to listen to this one."
+          unavailableMessage="Narration isn’t available for this section."
+        />
+      ) : (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <Text
+            style={{
+              flex: 1,
+              fontFamily: 'Inter_400Regular',
+              fontSize: 12,
+              color: theme.inkSoft,
+            }}
+          >
+            Listen section by section, or play the whole document.
+          </Text>
+          <Pressable
+            onPress={playback.playWholeDocument}
+            accessibilityRole="button"
+            accessibilityLabel="Play whole document"
+            testID="play-whole-document"
+            style={{
+              borderWidth: 1,
+              borderColor: theme.line,
+              backgroundColor: theme.surface,
+              borderRadius: 8,
+              paddingHorizontal: 12,
+              paddingVertical: 6,
+            }}
+          >
+            <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 12, color: theme.ink }}>
+              Play whole
+            </Text>
+          </Pressable>
+        </View>
+      )}
+      {playback.continueEnabled ? (
+        <Pressable
+          onPress={() => playback.setContinueEnabled(false)}
+          accessibilityRole="button"
+          accessibilityLabel="Stop after this section"
+          testID="section-audio-stop-chain"
+          style={{ alignSelf: 'flex-start' }}
+        >
+          <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 11, color: theme.accent }}>
+            Playing whole document · Stop after this section
+          </Text>
+        </Pressable>
+      ) : null}
+      {playback.atEndOfDocument ? (
+        <Text
+          testID="section-audio-end"
+          style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: theme.inkSoft }}
+        >
+          End of document.
+        </Text>
+      ) : null}
+    </View>
+  ) : null;
+
   return (
     <>
       <DocumentReaderScreen
@@ -557,6 +683,8 @@ export default function ReaderRoute() {
         sections={readerSections}
         disclaimerSlot={disclaimerSlot}
         belowMetaSlot={belowMetaSlot}
+        audioSlot={audioSlot}
+        renderSectionAction={sectionAudioEnabled ? renderSectionAction : undefined}
         extraTopActions={extraTopActions}
         citations={citations}
         citationsLoading={citationsLoading}

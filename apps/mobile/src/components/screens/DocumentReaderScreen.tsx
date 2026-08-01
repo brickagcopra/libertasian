@@ -83,6 +83,20 @@ export interface DocumentReaderScreenProps {
   disclaimerSlot?: ReactNode;
   /** Slot rendered below the disclaimer/meta block, above the TLDR (e.g. "View existing digest" CTA). */
   belowMetaSlot?: ReactNode;
+  /**
+   * Screen-level audio slot (the single player plus "Play whole document"),
+   * rendered under `belowMetaSlot`. A slot, not a prop set, so this screen
+   * stays presentational: it imports nothing from the audio feature and
+   * therefore cannot fetch a rendition.
+   */
+  audioSlot?: ReactNode;
+  /**
+   * Trailing control for a section's heading row (the per-section Listen
+   * button). Called once per rendered section; return `null` to render none.
+   * MUST be inert — see SectionListenButton. A hook-bearing control here would
+   * be mounted once per section, and statutory documents run to thousands.
+   */
+  renderSectionAction?: (sectionId: string) => ReactNode;
   /** Extra top-right action buttons rendered before the bookmark + text-size cluster. */
   extraTopActions?: DocumentReaderTopAction[];
   /** Citation list rendered as a collapsible card after the sections. */
@@ -125,6 +139,8 @@ export function DocumentReaderScreen({
   sections = [],
   disclaimerSlot,
   belowMetaSlot,
+  audioSlot,
+  renderSectionAction,
   extraTopActions = [],
   citations,
   citationsLoading = false,
@@ -291,6 +307,7 @@ export function DocumentReaderScreen({
 
         {disclaimerSlot ? <View style={{ marginTop: 14 }}>{disclaimerSlot}</View> : null}
         {belowMetaSlot ? <View style={{ marginTop: 12 }}>{belowMetaSlot}</View> : null}
+        {audioSlot ? <View style={{ marginTop: 12 }}>{audioSlot}</View> : null}
 
         {tldr ? (
           <>
@@ -344,6 +361,7 @@ export function DocumentReaderScreen({
 
         {sections.map((section) => {
           const range = pageRangeText(section);
+          const sectionAction = renderSectionAction?.(section.id) ?? null;
           return (
             <View key={section.id} style={{ marginTop: 22 }}>
               <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
@@ -368,6 +386,9 @@ export function DocumentReaderScreen({
                   >
                     {range}
                   </Text>
+                ) : null}
+                {sectionAction ? (
+                  <View style={{ flex: 1, alignItems: 'flex-end' }}>{sectionAction}</View>
                 ) : null}
               </View>
               {section.paragraphs.map((p, i) => {

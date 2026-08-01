@@ -1,6 +1,7 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { Audio } from 'expo-av';
 import { router } from 'expo-router';
 
 import { ApiClientError } from '../../../lib/api-client';
@@ -13,6 +14,9 @@ jest.mock('../hooks/use-audio-rendition', () => ({
   useAudioRendition: (opts: unknown) => mockUseAudioRendition(opts),
   audioRenditionQueryKey: (t: string, i: string) => ['audio-rendition', t, i],
 }));
+
+/** The expo-av stub from src/test/setup.ts; its 3rd arg is the status callback. */
+const createAsync = Audio.Sound.createAsync as jest.Mock;
 
 const READY: AudioRenditionReadModel = {
   status: 'ready',
@@ -36,13 +40,13 @@ function baseHookResult(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function renderPlayer() {
+function renderPlayer(props: Partial<React.ComponentProps<typeof AudioPlayerBar>> = {}) {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   });
   return render(
     <QueryClientProvider client={qc}>
-      <AudioPlayerBar contentType="bar_exam_answer" contentId="a1" />
+      <AudioPlayerBar contentType="bar_exam_answer" contentId="a1" {...props} />
     </QueryClientProvider>,
   );
 }
@@ -144,5 +148,104 @@ describe('AudioPlayerBar', () => {
     // Rate selector cycles 1 → 1.25.
     fireEvent.press(screen.getByTestId('audio-rate'));
     expect(screen.getByText('1.25×')).toBeTruthy();
+  });
+
+  describe('terminal `unavailable` state', () => {
+    const UNAVAILABLE: AudioRenditionReadModel = {
+      ...READY,
+      status: 'unavailable',
+      audioUrl: null,
+      durationMs: null,
+      failureReason: 'output_too_large',
+    };
+
+    it('renders a terminal notice — not the pending state, and with no Retry', () => {
+      mockUseAudioRendition.mockReturnValue(baseHookResult({ data: UNAVAILABLE }));
+      renderPlayer();
+      fireEvent.press(screen.getByTestId('listen-button'));
+
+      expect(screen.getByTestId('audio-unavailable')).toBeTruthy();
+      // Before this branch existed, `unavailable` fell through to `return null`
+      // and the player silently vanished.
+      expect(screen.queryByTestId('audio-pending')).toBeNull();
+      // Re-requesting cannot change the outcome, so no Retry is offered.
+      expect(screen.queryByLabelText('Retry')).toBeNull();
+    });
+
+    it('is checked ahead of the loading gate, which would spin forever', () => {
+      // `useAudioRendition` polls only while the status is `pending`.
+      mockUseAudioRendition.mockReturnValue(
+        baseHookResult({ data: UNAVAILABLE, isLoading: true }),
+      );
+      renderPlayer();
+      fireEvent.press(screen.getByTestId('listen-button'));
+
+      expect(screen.getByTestId('audio-unavailable')).toBeTruthy();
+      expect(screen.queryByTestId('audio-pending')).toBeNull();
+    });
+
+    it('uses the caller-supplied copy', () => {
+      mockUseAudioRendition.mockReturnValue(baseHookResult({ data: UNAVAILABLE }));
+      renderPlayer({ unavailableMessage: 'Narration isn’t available for this section.' });
+      fireEvent.press(screen.getByTestId('listen-button'));
+
+      expect(screen.getByText('Narration isn’t available for this section.')).toBeTruthy();
+    });
+  });
+
+  describe('autoStart', () => {
+    it('skips the internal Listen gate and fetches immediately', () => {
+      mockUseAudioRendition.mockReturnValue(baseHookResult({ data: READY }));
+      renderPlayer({ autoStart: true });
+
+      // The section button in the reader is the user intent; a second Listen
+      // inside the bar would be a dead end.
+      expect(screen.queryByTestId('listen-button')).toBeNull();
+      expect(mockUseAudioRendition).toHaveBeenLastCalledWith(
+        expect.objectContaining({ enabled: true }),
+      );
+    });
+
+    it('starts playback on load', async () => {
+      mockUseAudioRendition.mockReturnValue(baseHookResult({ data: READY }));
+      renderPlayer({ autoStart: true });
+
+      await waitFor(() => expect(createAsync).toHaveBeenCalled());
+      expect(createAsync.mock.calls[0][1]).toEqual(
+        expect.objectContaining({ shouldPlay: true }),
+      );
+    });
+
+    it('does not auto-start when the caller did not ask for it', async () => {
+      mockUseAudioRendition.mockReturnValue(baseHookResult({ data: READY }));
+      renderPlayer();
+      fireEvent.press(screen.getByTestId('listen-button'));
+
+      await waitFor(() => expect(createAsync).toHaveBeenCalled());
+      expect(createAsync.mock.calls[0][1]).toEqual(
+        expect.objectContaining({ shouldPlay: false }),
+      );
+    });
+  });
+
+  it('fires onEnded when narration finishes naturally', async () => {
+    const onEnded = jest.fn();
+    mockUseAudioRendition.mockReturnValue(baseHookResult({ data: READY }));
+    renderPlayer({ autoStart: true, onEnded });
+
+    await waitFor(() => expect(createAsync).toHaveBeenCalled());
+    const onStatus = createAsync.mock.calls[0][2] as (s: unknown) => void;
+
+    act(() => {
+      onStatus({
+        isLoaded: true,
+        isPlaying: false,
+        positionMillis: 90_000,
+        durationMillis: 90_000,
+        didJustFinish: true,
+      });
+    });
+
+    expect(onEnded).toHaveBeenCalledTimes(1);
   });
 });
