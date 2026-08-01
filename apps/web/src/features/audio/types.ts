@@ -8,7 +8,16 @@
  * the on-screen digest/answer text — it is built entirely from the marks.
  */
 
-export type AudioContentType = 'digest' | 'bar_exam_answer';
+export type AudioContentType =
+  | 'digest'
+  | 'bar_exam_answer'
+  /**
+   * ONE `legal_document_sections` row. The four large statutory documents
+   * cannot be narrated whole — the Civil Code would be a 344 MiB, 16-hour MP3 —
+   * so every published statutory document is voiced one section at a time
+   * (7,661 sections). Reference works are read by article, not scrubbed.
+   */
+  | 'legal_document_section';
 
 /**
  * `unavailable` means synthesis failed for a reason re-running cannot change

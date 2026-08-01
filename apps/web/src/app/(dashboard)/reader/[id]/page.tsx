@@ -46,6 +46,12 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { DigestContentPanel } from '@/features/digests/components/digest-content-panel';
+import { AudioPlayer } from '@/features/audio/components/audio-player';
+import { ReadAlongProvider } from '@/features/audio/components/read-along-context';
+import { SectionListenButton } from '@/features/audio/components/section-listen-button';
+import { SectionReadAlongBody } from '@/features/audio/components/section-read-along-body';
+import { useSectionPlayback } from '@/features/audio/hooks/use-section-playback';
+import { hasNarratableText, hasSectionAudio } from '@/features/audio/lib/section-audio';
 import { AiSummaryTab } from './_components/ai-summary-tab';
 import { DigestsTab } from './_components/digests-tab';
 
@@ -139,6 +145,14 @@ export default function ReaderPage() {
   const isCodalDoc = document ? CODAL_DOCUMENT_TYPES.has(document.documentType) : false;
   const showDigestUI = !isCodalDoc;
 
+  // Per-section narration. NOTE this is a NARROWER set than CODAL_DOCUMENT_TYPES
+  // above (which only decides whether to show digest UI): it mirrors the API's
+  // reconciler tier 4, the documents that actually get one rendition per
+  // section. Called unconditionally, above the early returns, because it is a
+  // hook — it holds only local state until a section is explicitly played.
+  const playback = useSectionPlayback(sections);
+  const sectionAudioEnabled = hasSectionAudio(document?.documentType);
+
   const { data: digestsData } = useDigests(
     { legalDocumentId: id },
     { enabled: showDigestUI },
@@ -224,6 +238,14 @@ export default function ReaderPage() {
   }
 
   const displayType = document.documentType?.replace(/_/g, ' ') ?? 'Document';
+
+  // Display label per section id, for the player's "now playing" line.
+  const sectionTitleById = new Map<string, string>(
+    (sections ?? []).map((section) => [
+      section.id,
+      section.sectionLabel ?? section.sectionType.replace(/_/g, ' '),
+    ]),
+  );
 
   // Group annotations by sectionId
   const annotationsBySection = new Map<string, Annotation[]>();
@@ -442,20 +464,79 @@ export default function ReaderPage() {
             )}
 
             {sections && sections.length > 0 ? (
-              <div className="space-y-8">
-                {sections.map((section) => (
-                  <AnnotatedSection
-                    key={section.id}
-                    section={section}
-                    documentId={id}
-                    annotations={
-                      showAnnotations ? (annotationsBySection.get(section.id) ?? []) : []
-                    }
-                    showAnnotations={showAnnotations}
-                    paywallLocked={paywallLocked}
-                  />
-                ))}
-              </div>
+              /* Provider wraps BOTH the single player and the section bodies:
+                 the player publishes the manifest, the active section body
+                 subscribes and highlights in place. No transcript panel — PR
+                 #243 removed one after the user rejected it. */
+              <ReadAlongProvider>
+                {sectionAudioEnabled && (
+                  <div
+                    className="sticky top-2 z-10 mb-6 space-y-2 rounded-lg border bg-background/95 p-3 shadow-sm backdrop-blur"
+                    data-testid="section-audio-bar"
+                  >
+                    {playback.activeSectionId ? (
+                      /* EXACTLY ONE player for the page. `key` resets its
+                         internal enabled/autoPlayed state as the chain moves,
+                         the same way the digest page keys by digest id. */
+                      <AudioPlayer
+                        key={playback.activeSectionId}
+                        contentType="legal_document_section"
+                        contentId={playback.activeSectionId}
+                        title={sectionTitleById.get(playback.activeSectionId)}
+                        autoPlay={playback.autoStart}
+                        onEnded={playback.handleEnded}
+                        continueToggle={{
+                          enabled: playback.continueEnabled,
+                          onChange: playback.setContinueEnabled,
+                        }}
+                        continueLabel="Play the whole document"
+                        paywallMessage="You've reached your free document limit — upgrade to listen to this one."
+                        unavailableMessage="Narration isn’t available for this section."
+                      />
+                    ) : (
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-xs text-muted-foreground">
+                          Listen section by section, or play the whole document.
+                        </p>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={playback.playWholeDocument}
+                          data-testid="play-whole-document"
+                        >
+                          Play whole document
+                        </Button>
+                      </div>
+                    )}
+                    {playback.atEndOfDocument && (
+                      <p
+                        className="text-xs text-muted-foreground"
+                        data-testid="section-audio-end"
+                      >
+                        End of document.
+                      </p>
+                    )}
+                  </div>
+                )}
+                <div className="space-y-8">
+                  {sections.map((section) => (
+                    <AnnotatedSection
+                      key={section.id}
+                      section={section}
+                      documentId={id}
+                      annotations={
+                        showAnnotations ? (annotationsBySection.get(section.id) ?? []) : []
+                      }
+                      showAnnotations={showAnnotations}
+                      paywallLocked={paywallLocked}
+                      audioEnabled={sectionAudioEnabled}
+                      isNarrating={playback.activeSectionId === section.id}
+                      onPlaySection={playback.playSection}
+                    />
+                  ))}
+                </div>
+              </ReadAlongProvider>
             ) : (
               <Card>
                 <CardContent className="py-8 text-center text-sm text-muted-foreground">
@@ -512,12 +593,20 @@ function AnnotatedSection({
   annotations,
   showAnnotations,
   paywallLocked,
+  audioEnabled = false,
+  isNarrating = false,
+  onPlaySection,
 }: {
   section: DocumentSection;
   documentId: string;
   annotations: Annotation[];
   showAnnotations: boolean;
   paywallLocked: boolean;
+  /** This document is narrated per section (see hasSectionAudio). */
+  audioEnabled?: boolean;
+  /** This section is the one loaded into the page's single player. */
+  isNarrating?: boolean;
+  onPlaySection?: (sectionId: string) => void;
 }) {
   const sectionRef = useRef<HTMLDivElement>(null);
   const createAnnotation = useCreateAnnotation();
@@ -577,6 +666,12 @@ function AnnotatedSection({
 
   const plainText = cleanLegalText(section.plainText ?? 'No content available');
 
+  // A section with an empty `plain_text` (prod has 2 of 4,857) was skipped by
+  // the backfill and has no rendition. Clicking Listen on one would enqueue a
+  // synthesis with nothing to say, so the control is not offered at all.
+  const canListen =
+    audioEnabled && !!onPlaySection && hasNarratableText(section.plainText);
+
   // Build the rendered content with highlights
   const rendered = showAnnotations && annotations.length > 0
     ? renderWithHighlights(plainText, annotations, (a) => {
@@ -590,17 +685,36 @@ function AnnotatedSection({
       id={`section-${section.id}`}
       className="scroll-mt-6 border-b border-gray-100 pb-8 last:border-0"
     >
-      {section.sectionLabel && (
-        <h2 className="mb-3 border-b border-gray-200 pb-2 text-base font-bold capitalize text-foreground">
-          {section.sectionLabel}
-        </h2>
+      {(section.sectionLabel || canListen) && (
+        <div className="mb-3 flex items-start justify-between gap-3 border-b border-gray-200 pb-2">
+          <h2 className="text-base font-bold capitalize text-foreground">
+            {section.sectionLabel}
+          </h2>
+          {/* Inert button — see SectionListenButton. Nothing here fetches. */}
+          {canListen && onPlaySection && (
+            <SectionListenButton
+              sectionId={section.id}
+              label={`Listen to ${section.sectionLabel ?? section.sectionType}`}
+              isActive={isNarrating}
+              onPlay={onPlaySection}
+            />
+          )}
+        </div>
       )}
       <div
         ref={sectionRef}
         className="relative whitespace-pre-wrap text-base leading-7 text-gray-800"
         onMouseUp={handleMouseUp}
       >
-        {rendered}
+        {/* While THIS section narrates, its body is span-wrapped from the
+            manifest so the highlight lands on the text already on screen.
+            Annotation highlights step aside for that one section only, and
+            come back the moment narration moves on. */}
+        {isNarrating ? (
+          <SectionReadAlongBody sectionId={section.id} fallback={rendered} />
+        ) : (
+          rendered
+        )}
 
         {/* Selection Popup — create annotation */}
         {selectionPopup && (
