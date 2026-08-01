@@ -345,6 +345,14 @@ export default function AddDocumentScreen() {
   );
 }
 
+/**
+ * Vertical nudge for the centered loading/empty states. This is NOT
+ * safe-area padding — the screen renders under a native Stack header, which
+ * already consumes the status-bar inset — so it is a plain constant rather
+ * than a topInsetPadding() call.
+ */
+const CENTERED_STATE_TOP_SPACING = 60;
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f3f4f6' },
 
@@ -493,13 +501,13 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingTop: 60,
+    paddingTop: CENTERED_STATE_TOP_SPACING,
   },
   emptyState: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingTop: 60,
+    paddingTop: CENTERED_STATE_TOP_SPACING,
   },
   emptyText: {
     fontSize: 14,

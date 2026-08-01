@@ -68,6 +68,24 @@
       "framePadding": { "top": 400, "bottom": 100, "left": 120, "right": 120 },
       "captionFontSize": 78
     },
+    "iphone-6-9": {
+      "label": "iPhone 6.9\"",
+      "width": 1320,
+      "height": 2868,
+      "required": true,
+      "store": "apple",
+      "framePadding": { "top": 390, "bottom": 80, "left": 60, "right": 60 },
+      "captionFontSize": 66
+    },
+    "ipad-13": {
+      "label": "iPad Pro 13\"",
+      "width": 2064,
+      "height": 2752,
+      "required": true,
+      "store": "apple",
+      "framePadding": { "top": 400, "bottom": 100, "left": 120, "right": 120 },
+      "captionFontSize": 78
+    },
     "android-phone": {
       "label": "Android phone",
       "width": 1080,

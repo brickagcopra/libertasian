@@ -2,11 +2,10 @@ import { useState, useCallback } from 'react';
 import {
   View,
   TouchableOpacity,
-  Text,
-  SafeAreaView,
-  StyleSheet,
+  Text,  StyleSheet,
   Alert,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { CameraCapture } from '../../features/camera-scan/components/camera-capture';
@@ -99,8 +98,11 @@ export default function CaptureScreen() {
     });
   }, [pages]);
 
+  // react-native-safe-area-context, NOT react-native: RN's SafeAreaView is
+  // a no-op on Android, so under targetSdk 35 edge-to-edge this screen
+  // (which hides the native header) drew under the system bars.
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       {mode === 'camera' ? (
         <CameraCapture
           onCapture={handleCapture}

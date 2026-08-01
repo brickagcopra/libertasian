@@ -1,8 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button } from '@/components/ui/Button';
 import { Chip } from '@/components/ui/Chip';
+import { topInsetPadding, bottomInsetPadding } from '@/lib/safe-area';
 import { useTheme } from '@/providers/theme-provider';
 
 export interface SignupSubject {
@@ -56,6 +58,7 @@ export function SignupScreen({
   onContinue,
 }: SignupScreenProps) {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const [internalSelected, setInternalSelected] = useState<string[]>(selectedSubjectIds);
 
   const selected = onToggleSubject ? selectedSubjectIds : internalSelected;
@@ -73,8 +76,8 @@ export function SignupScreen({
     <ScrollView
       style={{ flex: 1, backgroundColor: theme.bg }}
       contentContainerStyle={{
-        paddingTop: 64,
-        paddingBottom: 24,
+        paddingTop: topInsetPadding(insets, 64),
+        paddingBottom: bottomInsetPadding(insets, 24),
         paddingHorizontal: 22,
         flexGrow: 1,
       }}

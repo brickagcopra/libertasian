@@ -2,6 +2,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { topInsetPadding, bottomInsetPadding } from '@/lib/safe-area';
 
 import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
@@ -60,6 +62,7 @@ function getFeatures(role: string): Feature[] {
 
 export default function OnboardingRoute() {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const { user, setUser } = useAuth();
   const [step, setStep] = useState(0);
   const [selectedRole, setSelectedRole] = useState('');
@@ -98,7 +101,7 @@ export default function OnboardingRoute() {
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
       <ScrollView
-        contentContainerStyle={{ paddingTop: 64, paddingBottom: 24, paddingHorizontal: 22, flexGrow: 1 }}
+        contentContainerStyle={{ paddingTop: topInsetPadding(insets, 64), paddingBottom: bottomInsetPadding(insets, 24), paddingHorizontal: 22, flexGrow: 1 }}
         keyboardShouldPersistTaps="handled"
       >
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>

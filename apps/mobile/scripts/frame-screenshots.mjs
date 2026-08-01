@@ -26,7 +26,7 @@
  *   - Footer band: 12 px deep amber accent strip (matches feature graphic).
  *
  * Platform-to-source mapping:
- *   apple platforms (iphone-6-7, ipad-12-9) → raw/<slug>.ios.png
+ *   apple platforms (iphone-6-7, iphone-6-9, ipad-12-9, ipad-13) → raw/<slug>.ios.png
  *   play  platforms (android-*)             → raw/<slug>.android.png
  */
 
@@ -122,6 +122,15 @@ async function frameOne({ rawPath, outPath, platform, screen }) {
     throw new Error(
       `dimension mismatch for ${path.basename(outPath)}: ` +
       `got ${meta.width}x${meta.height}, expected ${width}x${height}`,
+    );
+  }
+  // App Store Connect REJECTS screenshots with an alpha channel. .flatten()
+  // above removes it; assert rather than assume, because the failure surfaces
+  // days later as a rejected submission.
+  if (meta.hasAlpha || meta.channels !== 3) {
+    throw new Error(
+      `alpha channel in ${path.basename(outPath)}: ` +
+      `channels=${meta.channels} hasAlpha=${meta.hasAlpha}`,
     );
   }
   return meta;

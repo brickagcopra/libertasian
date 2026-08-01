@@ -2,9 +2,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import type { ReactNode, Ref } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Photo } from '@/components/ui/Photo';
 import { StickyCTA } from '@/components/ui/StickyCTA';
 import { type PhotoTone } from '@/lib/design-tokens';
+import { topInsetPadding, bottomInsetPaddingStacked } from '@/lib/safe-area';
 import { useTheme } from '@/providers/theme-provider';
 
 export interface DigestSection {
@@ -171,6 +173,7 @@ export function DigestDetailScreen({
   onCTAPress,
 }: DigestDetailScreenProps) {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -281,8 +284,8 @@ export function DigestDetailScreen({
         ref={scrollRef}
         onScrollBeginDrag={onScrollBeginDrag}
         contentContainerStyle={{
-          paddingTop: 230,
-          paddingBottom: 120,
+          paddingTop: topInsetPadding(insets, 230),
+          paddingBottom: bottomInsetPaddingStacked(insets, 120),
           paddingHorizontal: 22,
         }}
       >

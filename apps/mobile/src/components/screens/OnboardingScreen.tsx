@@ -1,7 +1,9 @@
 import { Pressable, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button } from '@/components/ui/Button';
 import { Logo } from '@/components/ui/Logo';
 import { Photo } from '@/components/ui/Photo';
+import { topInsetPadding, bottomInsetPadding } from '@/lib/safe-area';
 import { useTheme } from '@/providers/theme-provider';
 
 export interface OnboardingScreenProps {
@@ -19,14 +21,15 @@ export function OnboardingScreen({
   pageCount = 3,
 }: OnboardingScreenProps) {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
 
   return (
     <View
       style={{
         flex: 1,
         backgroundColor: theme.bg,
-        paddingTop: 64,
-        paddingBottom: 36,
+        paddingTop: topInsetPadding(insets, 64),
+        paddingBottom: bottomInsetPadding(insets, 36),
         paddingHorizontal: 22,
       }}
     >

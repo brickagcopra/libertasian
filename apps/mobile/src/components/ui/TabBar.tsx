@@ -1,5 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Pressable, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { bottomInsetPadding } from '@/lib/safe-area';
 import { useTheme } from '@/providers/theme-provider';
 
 export type TabBarItemId = 'home' | 'docs' | 'search' | 'me';
@@ -29,6 +31,7 @@ const DEFAULT_ITEMS: TabBarItem[] = [
  */
 export function TabBar({ active, onPress, items = DEFAULT_ITEMS }: TabBarProps) {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
 
   return (
     <View
@@ -36,7 +39,7 @@ export function TabBar({ active, onPress, items = DEFAULT_ITEMS }: TabBarProps) 
         position: 'absolute',
         left: 12,
         right: 12,
-        bottom: 14,
+        bottom: bottomInsetPadding(insets, 14),
         height: 64,
         borderRadius: 24,
         backgroundColor: theme.pillBg,
