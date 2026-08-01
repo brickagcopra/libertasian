@@ -22,6 +22,9 @@ const PUBLIC_PATHS = [
   '/terms',
   '/privacy',
   '/account-deletion',
+  // The restore link is emailed to an account that CANNOT sign in — a redirect
+  // to /login here would make the published 30-day window unreachable.
+  '/restore-account',
   '/login',
   '/register',
   '/forgot-password',
@@ -39,7 +42,17 @@ const PUBLIC_PATHS = [
 // /email/ hosts static assets referenced by outgoing transactional emails
 // (logo etc.) — email clients fetch with no session cookie and must get a
 // direct 200, never a redirect.
-const PUBLIC_PREFIXES = ['/shared/', '/blog', '/.well-known/', '/billing/mobile', '/email/'];
+// /restore-account is listed as a prefix too, not only an exact path: the
+// emailed link always carries `?token=`, and any future sub-path must stay
+// reachable without a session for the same reason.
+const PUBLIC_PREFIXES = [
+  '/shared/',
+  '/blog',
+  '/.well-known/',
+  '/billing/mobile',
+  '/email/',
+  '/restore-account',
+];
 
 function isPublicRoute(pathname: string): boolean {
   if (PUBLIC_PATHS.includes(pathname)) return true;

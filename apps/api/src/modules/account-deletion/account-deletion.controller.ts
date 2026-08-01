@@ -19,6 +19,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { TenantGuard } from '../../common/guards/tenant.guard';
 import { AccountDeletionService } from './account-deletion.service';
 import { DeleteAccountDto } from './dto/delete-account.dto';
+import { RestoreAccountDto } from './dto/restore-account.dto';
 
 /**
  * Self-serve account deletion — required by Apple App Store 5.1.1(v) and
@@ -70,11 +71,34 @@ export class AccountDeletionController {
   @Throttle({ default: { ttl: 3_600_000, limit: 10 } })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Cancel a pending account deletion',
-    description: 'Restores the account if the 30-day window has not closed.',
+    summary: 'Cancel a pending account deletion (in-session Undo)',
+    description:
+      'Restores the account for the authenticated caller. Only reachable while ' +
+      'their existing access token is valid — deleting revokes every refresh ' +
+      'family. Use the emailed restore link for the rest of the 30-day window.',
   })
   async cancelDeletion(@CurrentUser() payload: JwtPayload) {
     const data = await this.accountDeletion.cancelDeletion(payload.sub);
+    return { success: true, data };
+  }
+
+  /**
+   * PUBLIC by necessity: a deactivated account cannot log in, so there is no
+   * session to authenticate. Possession of the 256-bit token delivered to the
+   * account's own inbox is the proof of ownership — the same trust model as
+   * password reset. Throttled per IP because it takes no credentials.
+   */
+  @Post('deletion/restore')
+  @Throttle({ default: { ttl: 900_000, limit: 20 } })
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Restore a deleted account from the emailed link',
+    description:
+      'Single-use token, valid until the 30-day window closes. No ' +
+      'authentication — the account cannot sign in while pending deletion.',
+  })
+  async restoreFromEmail(@Body() dto: RestoreAccountDto) {
+    const data = await this.accountDeletion.restoreWithToken(dto.token);
     return { success: true, data };
   }
 }

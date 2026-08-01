@@ -133,8 +133,17 @@ class ApiClient {
     });
   }
 
-  delete<T>(endpoint: string, options?: RequestOptions) {
-    return this.request<T>(endpoint, { ...options, method: 'DELETE' });
+  /**
+   * `body` is optional because most DELETEs address the resource by URL, but
+   * `DELETE /users/me` carries a typed confirmation and a credential — the
+   * subject comes from the JWT, so the body is the only place they can go.
+   */
+  delete<T>(endpoint: string, body?: unknown, options?: RequestOptions) {
+    return this.request<T>(endpoint, {
+      ...options,
+      method: 'DELETE',
+      body: body ? JSON.stringify(body) : undefined,
+    });
   }
 
   /** Upload a file via multipart/form-data with optional progress tracking */

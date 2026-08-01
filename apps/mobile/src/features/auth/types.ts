@@ -13,6 +13,11 @@ export interface AuthUser {
   organizationRole: OrganizationRole | null;
   organizationId: string | null;
   createdAt: string;
+  /**
+   * Whether the account has a password set. False for social-only (Google/
+   * Apple) accounts, which prove ownership by echoing their email instead.
+   */
+  hasPassword?: boolean;
 }
 
 export interface LoginRequest {
@@ -61,4 +66,9 @@ export interface UserProfile {
   organizationRole: OrganizationRole | null;
   organizationId: string | null;
   createdAt: string;
+  /**
+   * Whether the account has a password set. False for social-only (Google/
+   * Apple) accounts, which prove ownership by echoing their email instead.
+   */
+  hasPassword?: boolean;
 }

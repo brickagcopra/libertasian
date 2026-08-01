@@ -10,12 +10,13 @@ import {
 import { Cron, CronExpression } from '@nestjs/schedule';
 import * as bcrypt from 'bcrypt';
 import { Queue } from 'bullmq';
-import { randomUUID } from 'crypto';
+import { createHash, randomBytes, randomUUID } from 'crypto';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AuthService } from '../auth/auth.service';
 import { XenditService } from '../billing/xendit.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import {
   ACCOUNT_PURGE_QUEUE,
   ANONYMIZED_EMAIL_DOMAIN,
@@ -62,6 +63,7 @@ export class AccountDeletionService {
     private readonly auditService: AuditService,
     private readonly authService: AuthService,
     private readonly xenditService: XenditService,
+    private readonly notificationsService: NotificationsService,
     @InjectQueue(ACCOUNT_PURGE_QUEUE) private readonly purgeQueue: Queue,
   ) {}
 
@@ -133,6 +135,10 @@ export class AccountDeletionService {
     // slow third-party call must never hold a DB transaction open.
     await this.cancelSubscriptionsForOrganizations(soloOrganizationIds, userId);
 
+    // The emailed link is what makes the published 30-day window real. The
+    // in-session Undo dies with the caller's access token; this does not.
+    await this.issueRestoreToken(userId, user.email, user.fullName, requestedAt);
+
     await this.auditService.log({
       actorUserId: userId,
       actorType: 'user',
@@ -155,9 +161,13 @@ export class AccountDeletionService {
     return this.describeRequest(requestedAt);
   }
 
-  // ---- Cancel ----
+  // ---- Restore ----
 
-  /** Restore a `pending_deletion` account, if still inside the window. */
+  /**
+   * In-session Undo. Restores a `pending_deletion` account for the
+   * authenticated caller, which only works while their existing access token
+   * is still valid — see {@link restoreWithToken} for the other 30 days.
+   */
   async cancelDeletion(userId: string): Promise<{ status: string }> {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
@@ -169,7 +179,125 @@ export class AccountDeletionService {
       return { status: USER_STATUS_ACTIVE };
     }
 
-    if (user.status !== USER_STATUS_PENDING_DELETION || !user.deletionRequestedAt) {
+    this.assertRestorable(user);
+    await this.restoreAccount(user, 'session');
+
+    return { status: USER_STATUS_ACTIVE };
+  }
+
+  /**
+   * Restore from the emailed single-use token.
+   *
+   * PUBLIC — there is no session to authenticate against, by design: the whole
+   * point is that the account cannot log in. Possession of a 256-bit token
+   * delivered to the account's own inbox is the proof of ownership, exactly as
+   * it is for password reset.
+   */
+  async restoreWithToken(token: string): Promise<{ status: string }> {
+    const tokenHash = this.hashToken(token);
+
+    const record = await this.prisma.accountRestoreToken.findFirst({
+      where: { tokenHash, usedAt: null },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // One message for unknown / already-used / expired. Distinguishing them
+    // would tell an attacker holding a guessed token which guess was closer.
+    if (!record || record.expiresAt < new Date()) {
+      throw new BadRequestException('Invalid or expired restore link.');
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: record.userId },
+    });
+    if (!user) {
+      throw new BadRequestException('Invalid or expired restore link.');
+    }
+
+    if (user.status === USER_STATUS_DELETED) {
+      // The purge already ran: the row is anonymized and its content is gone.
+      // Nothing here can bring it back, and saying so plainly is kinder than a
+      // success page over an empty account.
+      throw new BadRequestException(
+        'This account has already been permanently deleted and cannot be restored.',
+      );
+    }
+
+    if (user.status === USER_STATUS_ACTIVE) {
+      // Already restored (in-session Undo, or support). Burn the token anyway
+      // so it cannot be replayed later, and report success.
+      await this.consumeToken(record.id);
+      return { status: USER_STATUS_ACTIVE };
+    }
+
+    this.assertRestorable(user);
+
+    await this.restoreAccount(user, 'email_token', record.id);
+
+    return { status: USER_STATUS_ACTIVE };
+  }
+
+  /** Shared restore body for both entry points. */
+  private async restoreAccount(
+    user: { id: string; email: string; deletionRequestedAt: Date | null },
+    source: 'session' | 'email_token',
+    restoreTokenId?: string,
+  ): Promise<void> {
+    const requestedAt = user.deletionRequestedAt;
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: user.id },
+        data: {
+          status: USER_STATUS_ACTIVE,
+          deletionRequestedAt: null,
+        },
+      });
+
+      // Un-mark only the orgs marked by THIS request. Matching on the exact
+      // timestamp keeps an unrelated earlier deletion from being undone.
+      if (requestedAt) {
+        await tx.organization.updateMany({
+          where: { deletedAt: requestedAt, billingOwnerUserId: user.id },
+          data: { deletedAt: null },
+        });
+      }
+
+      // Single-use: burning the token inside the same transaction is what
+      // makes a double-submit restore once rather than twice.
+      if (restoreTokenId) {
+        await tx.accountRestoreToken.update({
+          where: { id: restoreTokenId },
+          data: { usedAt: new Date() },
+        });
+      }
+
+      // Any other outstanding link for this user is now meaningless.
+      await tx.accountRestoreToken.updateMany({
+        where: { userId: user.id, usedAt: null },
+        data: { usedAt: new Date() },
+      });
+    });
+
+    await this.auditService.log({
+      actorUserId: user.id,
+      actorType: source === 'session' ? 'user' : 'system',
+      action: 'user.account_deletion_cancelled',
+      entityType: 'user',
+      entityId: user.id,
+      metadata: { email: this.redactEmail(user.email), source },
+    });
+  }
+
+  /** Reject anything that is not a live, still-restorable deletion request. */
+  private assertRestorable(user: {
+    status: string;
+    deletionRequestedAt: Date | null;
+  }): void {
+    if (
+      user.status !== USER_STATUS_PENDING_DELETION ||
+      !user.deletionRequestedAt
+    ) {
       throw new BadRequestException(
         'This account is not pending deletion and cannot be restored.',
       );
@@ -180,36 +308,57 @@ export class AccountDeletionService {
         `The ${DELETION_RESTORE_WINDOW_DAYS}-day restore window has closed.`,
       );
     }
+  }
 
-    const requestedAt = user.deletionRequestedAt;
+  private async consumeToken(id: string): Promise<void> {
+    await this.prisma.accountRestoreToken.update({
+      where: { id },
+      data: { usedAt: new Date() },
+    });
+  }
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.user.update({
-        where: { id: userId },
-        data: {
-          status: USER_STATUS_ACTIVE,
-          deletionRequestedAt: null,
-        },
-      });
+  /**
+   * Mint and email the restore link.
+   *
+   * The token expires at exactly the moment the purge cron becomes eligible to
+   * run on this row — both derive from {@link purgeDueAt}, so the promise in
+   * the email and the behaviour of the cron cannot drift apart.
+   */
+  private async issueRestoreToken(
+    userId: string,
+    email: string,
+    fullName: string,
+    requestedAt: Date,
+  ): Promise<void> {
+    const rawToken = randomBytes(32).toString('hex');
 
-      // Un-mark only the orgs marked by THIS request. Matching on the exact
-      // timestamp keeps an unrelated earlier deletion from being undone.
-      await tx.organization.updateMany({
-        where: { deletedAt: requestedAt, billingOwnerUserId: userId },
-        data: { deletedAt: null },
-      });
+    await this.prisma.accountRestoreToken.create({
+      data: {
+        userId,
+        tokenHash: this.hashToken(rawToken),
+        expiresAt: this.purgeDueAt(requestedAt),
+      },
     });
 
-    await this.auditService.log({
-      actorUserId: userId,
-      actorType: 'user',
-      action: 'user.account_deletion_cancelled',
-      entityType: 'user',
-      entityId: userId,
-      metadata: { email: this.redactEmail(user.email) },
-    });
+    try {
+      await this.notificationsService.sendAccountRestoreEmail(
+        email,
+        fullName || 'User',
+        rawToken,
+        DELETION_RESTORE_WINDOW_DAYS,
+      );
+    } catch (err) {
+      // The deletion itself already succeeded and must not be rolled back over
+      // a mail failure. The row survives; support can re-send from it.
+      this.logger.error(
+        `Failed to enqueue restore email for user ${userId}`,
+        err,
+      );
+    }
+  }
 
-    return { status: USER_STATUS_ACTIVE };
+  private hashToken(token: string): string {
+    return createHash('sha256').update(token).digest('hex');
   }
 
   // ---- Purge ----

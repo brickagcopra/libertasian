@@ -2,6 +2,7 @@ import { INestApplication } from '@nestjs/common';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const request = require('supertest') as typeof import('supertest');
 import { createTestApp, createAuthenticatedUser } from './helpers';
+import { NotificationsService } from '../src/modules/notifications/notifications.service';
 
 /**
  * Self-serve account deletion (Apple 5.1.1(v) / Google Play).
@@ -218,6 +219,64 @@ describe('Account Deletion (E2E)', () => {
         .post('/api/v1/auth/login')
         .send({ email: user.email, password: user.password })
         .expect(201);
+    });
+
+    it('restores from the emailed token with NO authentication, once', async () => {
+      const user = await createAuthenticatedUser(app, {
+        email: `del-token-${Date.now()}@test.com`,
+      });
+
+      // Capture the raw token off the mail hop — only its SHA-256 hash is
+      // persisted, so this is the only place it is observable.
+      const notifications = app.get(NotificationsService);
+      const sent = jest
+        .spyOn(notifications, 'sendAccountRestoreEmail')
+        .mockResolvedValue(undefined);
+
+      await request(app.getHttpServer())
+        .delete('/api/v1/users/me')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .send({ confirm: 'DELETE', password: user.password })
+        .expect(200);
+
+      expect(sent).toHaveBeenCalled();
+      const token = sent.mock.calls[0]?.[2] as string;
+      expect(token).toMatch(/^[0-9a-f]{64}$/);
+
+      // No Authorization header: the account cannot sign in, which is the
+      // whole reason this endpoint is public.
+      const restored = await request(app.getHttpServer())
+        .post('/api/v1/users/deletion/restore')
+        .send({ token })
+        .expect(200);
+      expect(restored.body.data.status).toBe('active');
+
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email: user.email, password: user.password })
+        .expect(201);
+
+      // Single-use.
+      await request(app.getHttpServer())
+        .post('/api/v1/users/deletion/restore')
+        .send({ token })
+        .expect(400);
+
+      sent.mockRestore();
+    });
+
+    it('rejects an unknown restore token', async () => {
+      await request(app.getHttpServer())
+        .post('/api/v1/users/deletion/restore')
+        .send({ token: 'f'.repeat(64) })
+        .expect(400);
+    });
+
+    it('rejects an empty restore token at the DTO', async () => {
+      await request(app.getHttpServer())
+        .post('/api/v1/users/deletion/restore')
+        .send({ token: '' })
+        .expect(400);
     });
 
     it('400s when there is nothing to restore', async () => {

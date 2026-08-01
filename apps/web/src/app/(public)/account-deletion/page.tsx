@@ -8,7 +8,7 @@ export default function AccountDeletionPage() {
   return (
     <article className="prose prose-headings:font-serif prose-headings:tracking-tight prose-h1:text-4xl prose-h2:text-2xl mx-auto max-w-3xl px-6 py-16">
       <h1 className="text-3xl font-bold text-gray-900">Delete Your Account and Data</h1>
-      <p className="mt-2 text-sm text-gray-500">Last updated: July 17, 2026</p>
+      <p className="mt-2 text-sm text-gray-500">Last updated: August 1, 2026</p>
       <p className="mt-4 text-sm text-gray-600">
         This page explains how to request deletion of your <strong>LIBERTASIAN</strong> account
         (developer: LIBERTASIAN Inc.) and the personal data associated with it, what data is
@@ -17,24 +17,38 @@ export default function AccountDeletionPage() {
       </p>
 
       <div className="prose prose-gray mt-10 max-w-none text-sm leading-relaxed text-gray-700">
-        <Section title="How to request account deletion">
+        <Section title="How to delete your account">
+          <p>
+            Deletion is self-serve. You do not need to contact us, and it works the same way in the
+            mobile app and on the web.
+          </p>
           <ol>
             <li>
-              Email our Data Protection Officer at <strong>dpo@libertasian.com</strong> from the
-              email address associated with your LIBERTASIAN account.
+              Go to <strong>Settings &rarr; Delete account</strong> &mdash; in the LIBERTASIAN
+              mobile app, or under Settings &rarr; Security on libertasian.com.
             </li>
             <li>
-              Use the subject line <em>&quot;Account deletion request.&quot;</em>
+              Type <strong>DELETE</strong> to confirm, then enter your password. If you signed up
+              with Google or Apple and have no password, confirm your account email address
+              instead.
             </li>
             <li>
-              We verify that you own the account, then deactivate it and permanently delete it after
-              the 30-day recovery window described below.
+              Your account is deactivated <strong>immediately</strong> and you are signed out
+              everywhere.
             </li>
             <li>
-              We confirm completion by email. The whole process finishes within 30 days of your
-              request.
+              We email you a single-use link that restores your account and everything in it. It
+              works for <strong>30 days</strong>. After that, deletion is permanent and cannot be
+              undone.
             </li>
           </ol>
+          <p>
+            If you cannot reach the in-app option &mdash; for example you have lost access to the
+            device &mdash; email our Data Protection Officer at{' '}
+            <strong>dpo@libertasian.com</strong> from the address on the account, with the subject
+            line <em>&quot;Account deletion request.&quot;</em> We verify ownership and process it
+            the same way.
+          </p>
         </Section>
 
         <Section title="What data is deleted">
@@ -63,8 +77,8 @@ export default function AccountDeletionPage() {
           <ul>
             <li>
               <strong>Account data recovery window:</strong> Retained for 30 days after your
-              deletion request so the account can be restored if the request was made in error, then
-              permanently deleted.
+              deletion request so the account can be restored with the emailed link if the request
+              was made in error, then permanently deleted.
             </li>
             <li>
               <strong>Audit logs:</strong> Retained for a minimum of 2 years as required by the
