@@ -14,6 +14,7 @@ import { RedisModule } from './common/services/redis.module';
 import { ContentDisclaimersModule } from './modules/content-disclaimers/content-disclaimers.module';
 import { DerivativeArtifactModule } from './modules/derivative-artifact/derivative-artifact.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
+import { AccountDeletionModule } from './modules/account-deletion/account-deletion.module';
 import { AiAnswersModule } from './modules/ai-answers/ai-answers.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -312,6 +313,7 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
     MetricsModule,
     AuthModule,
     UsersModule,
+    AccountDeletionModule,
     OrganizationsModule,
     DocumentsModule,
     DigestsModule,
