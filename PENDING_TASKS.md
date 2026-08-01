@@ -1,6 +1,8 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-07-29 (**new, top of the list:** #336 OPEN — the flat 300 s synthesis timeout made a 2,238-char digest permanently unsynthesizable and burned 15 min of 8-core CPU proving it three times. Budget is now length-proportional, retries are classified, and the failure reason is persisted. Plus a **separate** CUDA image for the rented-GPU tier-1 backfill and bearer auth on the TTS hop, both no-ops for prod. **Nothing is deployed and no flag is flipped.** See the audio section.)
+> Last updated: 2026-08-01 (**new, top of the list:** the store-compliance epic — 4 PRs standing between a submitted-but-unreviewed app and a pass. **PR 1 (#343) is up:** self-serve account deletion, which Apple 5.1.1(v) and Play both require and which did not exist. PRs 2–4 (in-app delete UI, removing Apple 3.1.1 purchase entry points, Android 15 edge-to-edge + ASC screenshot sizes) follow in order. **No EAS build is cut by any of them.**)
+>
+> Previously: 2026-07-29 (#336 OPEN — the flat 300 s synthesis timeout made a 2,238-char digest permanently unsynthesizable and burned 15 min of 8-core CPU proving it three times. Budget is now length-proportional, retries are classified, and the failure reason is persisted. Plus a **separate** CUDA image for the rented-GPU tier-1 backfill and bearer auth on the TTS hop, both no-ops for prod. **Nothing is deployed and no flag is flipped.** See the audio section.)
 >
 > Previously: 2026-07-29 (#334 OPEN — the Kokoro tts-service ran on prod for the first time and **synthesis did not work at all**: a missing spaCy model made every `/synthesize` return 500 while `/health` stayed green. Fixed and verified offline, plus two capacity constants that were wrong by ~3.7x, and audio object storage routed to Cloudflare R2 behind an unset-by-default env var. **Nothing is deployed and no flag is flipped.** See the audio section.)
 >
@@ -9,6 +11,23 @@
 > Previously: 2026-07-26 (search Phases A–C3 all merged: #306 #307 #308 #310 #311 #312; C3 squashed to `025e538`, deployed and live-verified on prod. Remaining search work is a client UI for `scope` and C4 fusion behind the reranker — but see the reachability note first: only 13,017 of 99,994 derivatives match any visibility branch. Also new: #313 fixed the confidence scorer, #315 gated the re-score script, and the re-score itself is CLOSED as not worth running — 7 rows of 29,471 move. What replaces it is a product decision about what the 0.70 editorial bar should mean; see the top section.)
 
 Verification rules used for this prune: every PR reference checked with `gh pr view <n> --json state,mergedAt`; every branch reference checked against `git branch -r --no-merged origin/main` after `git fetch --prune`. Items that could not be verified were MOVED to "Needs verification", not deleted.
+
+---
+
+## Store compliance epic — 4 PRs, in order (2026-08-01)
+
+The app is **submitted but unreviewed**: iOS build 11 in TestFlight (ASC app `6788971669`), Android versionCode 6 uploaded to Play. Four things stand between that and a pass. Each is its own PR, branched from `main` and merged before the next. **No EAS build is cut by these PRs** — brick does that once all four are on `main`.
+
+- [x] **PR 1 — `feat(api): self-serve account deletion` (#343).** Apple 5.1.1(v) + Play data-deletion. `DELETE /users/me` and `POST /users/me/deletion/cancel`, 30-day restore window, daily purge cron + idempotent BullMQ job. Matches the already-published `/account-deletion` copy, so that page needed no edits. **Xendit is called only for a non-NULL `xenditSubscriptionId`** — the reviewer account's comp Pro grant has a NULL one.
+- [ ] **PR 2 — `feat(mobile,web): in-app Delete Account UI`.** Mobile `settings/delete-account.tsx` + a red danger-zone entry below Sign out; two-step confirm; signs out and clears MMKV/SQLite. Web: same flow in settings, and `/account-deletion` copy moves from "email us" to "Settings → Delete account (or email support)". **Keep the URL** — Play's data-safety form points at it.
+- [ ] **PR 3 — `fix(mobile): remove external purchase entry points` (Apple 3.1.1).** Delete `useCreateCheckout` + the `Linking.openURL(result.checkoutUrl)` in `settings/plans.tsx:189-192`; that screen becomes a read-only view of the current plan. Sweep the 21 `.tsx` files carrying upgrade/₱/subscribe copy so every paywalled surface reads "Not included in your plan." with no price and no outbound link. **`apps/api` and `apps/web` are untouched — web keeps selling.**
+- [ ] **PR 4 — `fix(mobile): Android 15 edge-to-edge + store screenshot sizes`.** targetSdk 35 draws under the system bars and only `settings/plans.tsx` uses `useSafeAreaInsets` today; replace hardcoded `paddingTop` in 13 screens and fix `scan/capture.tsx` + `scan/upload.tsx` (RN `SafeAreaView` is a no-op on Android). iOS must look identical. Add 6.9" iPhone (1320×2868) and 13" iPad (2064×2752) to `assets/store/screenshots.config.json` and regenerate — ASC requires both for a new app.
+
+### Open questions surfaced by PR 1, for brick
+
+- [ ] **Restore is only reachable for ~15 minutes.** `DELETE /users/me` revokes every refresh family and login refuses a non-`active` status, so `POST /users/me/deletion/cancel` works only while the caller's existing access token is alive. That covers an in-app "Undo", not a user who changes their mind on day 20 — that case needs support today. Widening it means letting `pending_deletion` accounts obtain a restricted token, which is a deliberate change to the auth status gate.
+- [ ] **Run the new e2e suite in CI.** `apps/api/test/account-deletion.e2e-spec.ts` was never executed locally — it needs the full compose stack (OpenSearch/MinIO/ClamAV) and only a throwaway PostgreSQL was available on the dev box.
+- [ ] **`prisma migrate deploy` for `20260801120000_add_user_account_deletion`** in staging and prod before the mobile UI ships. Additive only (3 nullable columns + 2 indexes on `users`, 1 nullable column on `organizations`), verified against a throwaway PG16 with no drift.
 
 ---
 

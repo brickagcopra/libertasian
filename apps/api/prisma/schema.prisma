@@ -40,6 +40,14 @@ model User {
   lastLoginCountry          String?   @map("last_login_country") @db.VarChar(8)
   lastLoginCity             String?   @map("last_login_city") @db.VarChar(128)
   lastLoginRegion           String?   @map("last_login_region") @db.VarChar(64)
+  // Self-serve account deletion (Apple 5.1.1(v) / Play data-deletion).
+  // status moves active -> pending_deletion -> deleted. deletionRequestedAt
+  // starts the 30-day restore window published at /account-deletion;
+  // anonymizedAt records when PII was actually scrubbed, deletedAt when the
+  // purge completed. The deletedAt index is what the purge cron scans.
+  deletionRequestedAt       DateTime? @map("deletion_requested_at") @db.Timestamptz
+  deletedAt                 DateTime? @map("deleted_at") @db.Timestamptz
+  anonymizedAt              DateTime? @map("anonymized_at") @db.Timestamptz
 
   // Relations
   ownedOrganizations         Organization[]            @relation("BillingOwner")
@@ -127,6 +135,8 @@ model User {
   // Bar exam answer reviews (Phase 3a)
   barExamAnswerReviews       BarExamAnswer[]           @relation("BarExamAnswerReviewer")
 
+  @@index([deletedAt], map: "idx_users_deleted_at")
+  @@index([deletionRequestedAt], map: "idx_users_deletion_requested_at")
   @@map("users")
 }
 
@@ -213,6 +223,10 @@ model Organization {
   billingOwnerUserId String?  @map("billing_owner_user_id") @db.Uuid
   createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt          DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  // Set when the org's sole member requested account deletion. The row itself
+  // survives the purge (billing records are retained 5 years per the published
+  // policy); this marks it as no longer a live tenant.
+  deletedAt          DateTime? @map("deleted_at") @db.Timestamptz
 
   // Relations
   billingOwner                User?                        @relation("BillingOwner", fields: [billingOwnerUserId], references: [id])

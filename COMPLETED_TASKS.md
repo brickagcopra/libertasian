@@ -1,8 +1,37 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-07-29 (#336 OPEN: a flat 300 s synthesis timeout made a 2,238-char digest — near the corpus average — permanently unsynthesizable, and retrying it identically three times burned 15 min of 8-core CPU. Budget is now length-proportional, failures are classified, and the reason is persisted. A separate CUDA image and bearer auth on the TTS hop open the rented-GPU route for the tier-1 backfill; both are no-ops for prod.)
+> Last updated: 2026-08-01 (#343 OPEN: the app is submitted but unreviewed on both stores, and Apple 5.1.1(v) and Play both require an in-app account-deletion path that did not exist at all — not a weak one, none. PR 1 of a 4-PR store-compliance epic ships it to the policy already published at `/account-deletion`, so that live page needed no edits.)
+>
+> Previously: 2026-07-29 (#336 OPEN: a flat 300 s synthesis timeout made a 2,238-char digest — near the corpus average — permanently unsynthesizable, and retrying it identically three times burned 15 min of 8-core CPU. Budget is now length-proportional, failures are classified, and the reason is persisted. A separate CUDA image and bearer auth on the TTS hop open the rented-GPU route for the tier-1 backfill; both are no-ops for prod.)
 >
 > Previously: 2026-07-27 (#322 MERGED `5addc51`: the auto-publish citation gate was unreachable and had stranded 76% of the corpus out of search since 2026-05-30. Dry run over prod confirms 11,561 of 13,093 drafts publish under the corrected rules. #321 opened for the resolver underneath it, #323 for the 1,531 rows still short a `court`.)
+
+---
+
+## 2026-08-01 — #343: the store-required account-deletion path did not exist
+
+**The finding.** Apple App Store 5.1.1(v) and Google Play's data-deletion policy both require an in-app way to delete the account. The app has **no such endpoint** — the published `/account-deletion` page tells users to email `dpo@libertasian.com`, which is a valid *supplementary* channel and not a substitute for the in-app one. iOS build 11 is in TestFlight and Android versionCode 6 is uploaded to Play, both awaiting review, so this is a hard blocker rather than a nice-to-have. PR 1 of a 4-PR store-compliance epic.
+
+### What shipped
+
+1. [x] **The API implements the policy that was already published**, rather than inventing a new one: immediate deactivation, 30-day restore window, purge completed within 30 days. The live page needed no edits, so nothing users were told can now be contradicted by behaviour.
+2. [x] **`DELETE /users/me`** — `JwtAuthGuard` + `TenantGuard`, class-validator DTO, `@Throttle` 5/hour. Body `{ confirm: 'DELETE', password?, email? }`. Password accounts must supply a bcrypt-verified password; **social-only accounts have no `passwordHash` to compare**, so they must echo the exact account email (trimmed, case-insensitive) instead. The subject is always the JWT `sub` — there is no `DELETE /users/:id`, and an e2e asserts that stays true.
+3. [x] **Sole owner of a shared org is refused 409, naming the members** (emails redacted per CLAUDE.md), telling them to transfer ownership first. Another active owner means the org survives untouched. No other active members means the org is marked `deleted_at` alongside the account. Deleting the last administrator of a tenant other people work in is the failure this exists to prevent.
+4. [x] **Xendit is called ONLY for a non-NULL `xenditSubscriptionId`.** The reviewer account (`brickagcopra5871+test@gmail.com`, org `0ead67bb-…`) holds a comp Pro grant whose `xendit_subscription_id` is NULL; a blanket cancel call would have thrown on exactly the account App Review uses. Cancellation is local and authoritative; a Xendit outage is logged, never propagated.
+5. [x] **No second auth check was added.** Login and refresh already reject `status !== 'active'` (`auth.service.ts:202/316/401`); an e2e proves that existing gate covers the new `pending_deletion` status rather than duplicating it.
+6. [x] **Migration is additive only** — `users.deletion_requested_at / deleted_at / anonymized_at` (nullable timestamptz) + an index on each column the cron scans, and `organizations.deleted_at`. Statuses `pending_deletion` and `deleted`.
+7. [x] **Purge: daily `@Cron`, batch of 100.** Anonymizes in place (`email → deleted-{uuid}@deleted.libertasian.com`, `fullName → 'Deleted User'`, `phone`/`passwordHash`/`googleId`/`appleId`/`mfaSecret → null`) and enqueues a BullMQ job. **The `users` row is never deleted** — `audit_logs` are append-only and reference `actor_user_id`, and billing records are retained 5 years; anonymizing keeps those foreign keys valid while no personal data survives. One failing row does not stall the batch.
+8. [x] **The purge job is idempotent two ways**: `jobId: purge:{userId}` so a repeated tick cannot queue a second purge, and every step is a `deleteMany` keyed by user id, so a re-run after a partial failure finds nothing left to delete. It removes notes, bookmarks, annotations, uploads (cascading to camera captures, OCR results, processing jobs), private digests, matters, memberships and push tokens, plus the S3 objects behind the uploads — **storage first**, because once the upload rows are gone the keys are unknowable. Published digests are detached (`userId → null`), not deleted: consented corpus content is not personal data.
+
+### Acceptance evidence
+
+9. [x] **4,113 api unit tests pass, 192 suites** (21 new), `tsc --noEmit` clean. The new tests cover both ownership-proof paths, the 409 including its redaction, the another-owner case, solo-org marking, **both** the NULL and non-NULL Xendit branches, a Xendit outage, idempotency, restore inside and outside the window, the anonymization field-by-field, and a batch draining past a failing row.
+10. [x] **Migration verified against a throwaway PostgreSQL 16** via `migrate deploy` (the local dev DB has known history drift — see the standing note), then `migrate diff --from-schema-datamodel` reports **no drift on `users` or `organizations`**; the two pre-existing diff entries are unrelated and predate this branch.
+11. [ ] **The e2e suite has not been run.** `apps/api/test/account-deletion.e2e-spec.ts` needs the full compose stack (OpenSearch/MinIO/ClamAV) and only a throwaway PostgreSQL was available on the dev box. It must pass in CI before this is trusted.
+
+### Known limitation, stated rather than papered over
+
+12. [ ] **Restore is reachable for ~15 minutes, not 30 days.** The delete revokes every refresh family and login refuses a non-`active` status, so `POST /users/me/deletion/cancel` only works while the caller's existing access token is alive (`JwtStrategy` does not re-read status). That is enough for an in-app "Undo" and is what PR 2's UI will use. A user who changes their mind on day 20 needs support intervention. Widening it means issuing a restricted token to `pending_deletion` accounts — a deliberate change to the auth status gate, not a bug fix, so it is a product decision and not made here.
 
 ---
 

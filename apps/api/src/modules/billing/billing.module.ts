@@ -11,6 +11,9 @@ import { WebhookController } from './webhook.controller';
   imports: [CouponsModule, PromotionsModule],
   controllers: [BillingController, WebhookController],
   providers: [BillingService, XenditService],
-  exports: [BillingService],
+  // XenditService is exported for AccountDeletionModule, which cancels a
+  // deleted user's plan directly rather than going through the full
+  // cancellation flow (emails, state machine, free-tier fallback).
+  exports: [BillingService, XenditService],
 })
 export class BillingModule {}
