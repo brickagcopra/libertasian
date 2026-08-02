@@ -65,7 +65,12 @@
         // NOTE: distinct from google-services.json, which is Firebase CLIENT config
         // (public identifiers, safe to commit) referenced by app.json for FCM push.
         "serviceAccountKeyPath": "./play-service-account.json",
-        "track": "internal"
+        // "alpha" is Play's default CLOSED testing track. It must not be
+        // "internal": internal-track releases do NOT count toward the
+        // 12-testers/14-continuous-days requirement that gates production
+        // access for personal developer accounts, so an internal submit
+        // silently burns days without advancing the clock.
+        "track": "alpha"
       },
       "ios": {
         "appleId": "bma5871@gmail.com",
