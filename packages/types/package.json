@@ -4,10 +4,13 @@
   "private": true,
   "main": "./dist/index.js",
   "types": "./src/index.ts",
-  "files": ["src/", "dist/"],
+  "files": [
+    "src/",
+    "dist/"
+  ],
   "scripts": {
-    "//prepare": "dist/ is gitignored but `main` points at it, so a clean checkout has no runtime entry point. Any consumer that imports a VALUE (not just `import type`, which bundlers erase) then fails to resolve the package. This has now bitten three surfaces: Dockerfile.web (#217), Dockerfile.api (#309), and EAS Build. `prepare` runs on every `pnpm install` in the repo, which fixes it at the source instead of per-consumer.",
-    "prepare": "pnpm build",
+    "//prepare": "dist/ is gitignored but `main` points at it, so a clean checkout has no runtime entry point and any consumer importing a VALUE (not just `import type`, which bundlers erase) fails to resolve the package. Bit Dockerfile.web (#217), Dockerfile.api (#309) and EAS Build. `prepare` fixes it at the source, for every consumer, at install time. The existsSync guard is required: Docker deps stages copy ONLY the package.json files and install before copying source, so tsconfig.build.json is absent and a bare `pnpm build` fails TS5058 and kills the image build. Both Dockerfiles already build this package explicitly after copying source, so skipping there costs nothing. Written inline rather than as a script file because a script file is not copied into those deps stages either.",
+    "prepare": "node -e \"const f=require('fs');if(!f.existsSync('tsconfig.build.json')||!f.existsSync('src/index.ts')){console.log('[@libertasian/types] prepare: sources absent (dependency-only install) - skipping build');process.exit(0)}require('child_process').execSync('pnpm build',{stdio:'inherit'})\"",
     "build": "tsc -p tsconfig.build.json",
     "type-check": "tsc -p tsconfig.build.json --noEmit",
     "lint": "tsc -p tsconfig.build.json --noEmit"

@@ -133,8 +133,15 @@ jobs:
         working-directory: apps/mobile
         run: node -e "require('@libertasian/types')"
 
+      # NODE_ENV must not be `test` here. The job sets it for the API suites,
+      # but babel-preset-expo branches on it: under `test` it skips inlining
+      # EXPO_ROUTER_APP_ROOT, and expo-router's _ctx.android.js then fails to
+      # compile with "Invalid call at line 2: process.env.EXPO_ROUTER_APP_ROOT".
+      # A production bundle is also what EAS actually builds, so this matches.
       - name: Guard — mobile bundle resolves from a clean checkout
         working-directory: apps/mobile
+        env:
+          NODE_ENV: production
         run: npx expo export --platform android --output-dir "$RUNNER_TEMP/bundle-guard"
 
       # apps/api/jest.config.ts has rootDir 'src', so apps/api/test/*.e2e-spec.ts
