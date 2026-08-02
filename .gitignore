@@ -9,6 +9,9 @@ dist/
 out/
 *.tsbuildinfo
 
+# Polly voice-spike audio output (generated, not shipped)
+apps/api/voice-spike-out/
+
 # Expo prebuild output (generated, not source)
 apps/mobile/android/
 apps/mobile/ios/
