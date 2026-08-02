@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { legalDocumentIdOf } from '../../../features/search/document-id';
 import { useSearch } from '../../../features/search/hooks/use-search';
 import { useUploads } from '../../../features/camera-scan/hooks/use-uploads';
 import { useAddMatterDocument } from '../../../features/workspace/hooks/use-matters';
@@ -144,7 +145,7 @@ export default function AddDocumentScreen() {
       try {
         await addDocument.mutateAsync({
           matterId,
-          legalDocumentId: item.id,
+          legalDocumentId: legalDocumentIdOf(item),
           title: item.source.short_title ?? item.source.title,
           role: selectedRole,
         });
@@ -293,7 +294,7 @@ export default function AddDocumentScreen() {
             ) : (
               <FlatList
                 data={searchResults}
-                keyExtractor={(item) => item.id}
+                keyExtractor={legalDocumentIdOf}
                 renderItem={({ item }) => (
                   <LegalDocResult
                     item={item}

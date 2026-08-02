@@ -14,6 +14,7 @@ import {
 import { Stack, router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useGenerateTimeline } from '../../../features/timelines/hooks/use-timelines';
+import { legalDocumentIdOf } from '../../../features/search/document-id';
 import { useSearch } from '../../../features/search/hooks/use-search';
 import type { SearchResultItem } from '../../../features/search/types';
 
@@ -45,10 +46,12 @@ export default function CreateTimelineScreen() {
         Alert.alert('Limit Reached', 'You can include up to 10 documents.');
         return;
       }
-      if (selectedDocs.some((d) => d.id === item.id)) return;
+      // Document id, not the OpenSearch `_id` — this is POSTed as documentIds.
+      const documentId = legalDocumentIdOf(item);
+      if (selectedDocs.some((d) => d.id === documentId)) return;
       setSelectedDocs((prev) => [
         ...prev,
-        { id: item.id, title: item.source.title, citationText: item.source.citation_text ?? null },
+        { id: documentId, title: item.source.title, citationText: item.source.citation_text ?? null },
       ]);
       setSearchQuery('');
     },
@@ -161,11 +164,14 @@ export default function CreateTimelineScreen() {
                   </View>
                 ) : (
                   searchItems
-                    .filter((r) => !selectedDocs.some((d) => d.id === r.id))
+                    .filter(
+                      (r) =>
+                        !selectedDocs.some((d) => d.id === legalDocumentIdOf(r)),
+                    )
                     .slice(0, 6)
                     .map((item) => (
                       <TouchableOpacity
-                        key={item.id}
+                        key={legalDocumentIdOf(item)}
                         style={styles.searchResultItem}
                         onPress={() => handleAddDocument(item)}
                       >
