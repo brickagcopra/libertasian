@@ -257,4 +257,36 @@ describe('IngestionSchedulerService', () => {
     expect(prisma.sourceEndpoint.findFirst).not.toHaveBeenCalled();
     expect(prisma.ingestionJob.create).not.toHaveBeenCalled();
   });
+
+  // ─── cronMatchesNow: step + range + comma-separated forms ──────────
+  // fieldMatches() handles '*/n', 'a-b' and 'a,b,c', but every fixture above
+  // uses only literal values, so none of those branches were covered. The
+  // schedule is admin-editable through the `ingestion_schedule` setting, so
+  // all three forms are reachable in production.
+  //
+  // Observed indirectly via checkSchedules(): on a cron match the service
+  // proceeds to sourceEndpoint.findFirst; on a miss it short-circuits.
+  //
+  // Recovered from PR #2, which was closed as superseded — its seed change
+  // was never adopted, but this coverage was still missing.
+
+  it.each([
+    ['*/30 8-18 * * *', new Date(2026, 3, 10, 9, 30, 0), true],  // step minute + hour in range
+    ['*/30 8-18 * * *', new Date(2026, 3, 10, 7, 0, 0), false],  // hour below range
+    ['0 9,12,15 * * *', new Date(2026, 3, 10, 12, 0, 0), true],  // middle value in list
+    ['0 9,12,15 * * *', new Date(2026, 3, 10, 10, 0, 0), false], // hour not in list
+  ] as const)('cronMatchesNow handles %s at %s → match=%s', async (cron, when, shouldMatch) => {
+    jest.setSystemTime(when);
+    aiSettings.getSetting.mockResolvedValue({
+      key: 'ingestion_schedule',
+      value: { enabled: true, schedules: [{ sourceKey: 'supreme_court_elibrary', cron, enabled: true }] },
+    } as never);
+    (prisma.sourceEndpoint.findFirst as jest.Mock).mockResolvedValue(mockEndpoint);
+    (prisma.ingestionJob.findFirst as jest.Mock).mockResolvedValue(null);
+    (prisma.ingestionJob.create as jest.Mock).mockResolvedValue({ id: 'job-1' });
+
+    await service.checkSchedules();
+
+    expect(prisma.sourceEndpoint.findFirst).toHaveBeenCalledTimes(shouldMatch ? 1 : 0);
+  });
 });
