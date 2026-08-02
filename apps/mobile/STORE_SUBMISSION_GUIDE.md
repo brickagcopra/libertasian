@@ -79,10 +79,10 @@ Play Console → App content → **Sign in details** ("App access"). The app req
 
 ## PART 5 — Upload the Android build & send for review
 
-1. Ensure the Play service account key exists at `apps/mobile/play-service-account.json` (Play Console → Setup → API access → create service-account key; gitignored). `eas.json` submit.production.android already points at it, track `internal`.
+1. Ensure the Play service account key exists at `apps/mobile/play-service-account.json` (Play Console → Setup → API access → create service-account key; gitignored). `eas.json` submit.production.android already points at it, track `alpha` (Play's default **Closed testing** track).
 2. Build + submit: `eas build --profile production --platform android` then `eas submit --profile production --platform android` (versionCode auto-increments via EAS remote).
-   - Or upload the `.aab` manually: Play Console → Test and release → Testing → **Internal testing** → create release → upload bundle.
-3. Play requires a **closed test** before production access for new personal developer accounts — run internal/closed testing first.
+   - Or upload the `.aab` manually: Play Console → Test and release → Testing → **Closed testing** → create release → upload bundle.
+3. Play requires a **closed test** before production access for new personal developer accounts — run **closed testing** specifically. Internal-track releases do **not** count toward it: the rule is ≥ 12 testers opted in continuously for 14 days on a *closed* track. See `SUBMISSION_CHECKLIST.md` § 5.3.
 4. Play Console → **Publishing overview** → review the pending changes (all the declarations above + store listing + data safety) → **Send for review**.
 
 ---

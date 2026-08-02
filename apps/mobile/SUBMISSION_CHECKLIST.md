@@ -194,15 +194,17 @@ After this first manual release, subsequent uploads go through EAS.
 eas submit --profile production --platform android
 ```
 
-Reads `apps/mobile/eas.json` → `submit.production.android`. Uses the service-account JSON from § 1.7 to upload the .aab and push it to the **internal** track (per `track: "internal"` in `eas.json`).
+Reads `apps/mobile/eas.json` → `submit.production.android`. Uses the service-account JSON from § 1.7 to upload the .aab and push it to the **closed** track (per `track: "alpha"` in `eas.json` — `alpha` is Play's default Closed testing track). This must not be `internal`: internal-track releases do not count toward the 12-tester rule in § 5.3.
 
 ### 5.3 12-tester / 14-day closed-test rule (personal accounts only)
 
 If your Play Developer account was created **after 13 Nov 2023** as a personal account, Play requires:
 
 - A **Closed testing** track release (separate from Internal testing) with **at least 12 testers opted in** continuously for **14 days** before you can apply for production access.
-- Promote your internal build to a closed-test track (Play Console → Testing → Closed testing → create track → promote release).
-- Track tester opt-ins from Play Console → Testing → Closed testing → Manage testers. The 14-day clock starts when each tester opts in; uninstalls do not reset the clock.
+- `eas submit` now lands releases directly on the closed track (`alpha`), so no promotion step is needed. If a build predates that change and sits on internal, promote it: Play Console → Testing → Closed testing → create track → promote release.
+- Track tester opt-ins from Play Console → Testing → Closed testing → Manage testers. **The requirement is ≥ 12 testers opted in _continuously_ for a 14-day window — a rolling check across the whole track, not a per-tester clock and not a cumulative count.** If the opted-in count drops below 12 at any point, the window restarts from zero. Uninstalling the app does **not** break opt-in; opting out does.
+- **Pushing new versions to the closed track during the window does _not_ reset the clock.** Ship fixes freely while it runs.
+- The production-access application itself asks how you recruited your testers and what feedback you acted on — keep notes as you go rather than reconstructing them at the end.
 - After ≥ 14 days with ≥ 12 testers, Play Console surfaces an **"Apply for production access"** button.
 
 Organization accounts are exempt from this rule — they can promote to production directly from internal.
