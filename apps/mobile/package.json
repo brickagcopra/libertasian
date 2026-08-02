@@ -9,6 +9,8 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "build": "echo 'mobile build - use EAS Build'",
+    "//eas-build-post-install": "Second lock on the same door as packages/types' `prepare`. @libertasian/types has `main: ./dist/index.js` and dist/ is gitignored, so a clean EAS checkout has no runtime entry point and Metro fails to resolve the first VALUE import (src/features/search/document-types.ts) 90s into EAGER_BUNDLE with an opaque error. POST-install, not pre-install: building needs the workspace devDependencies present. The require() turns a missing dist into a loud, immediate failure at the hook. A no-op when dist is already built.",
+    "eas-build-post-install": "pnpm --filter @libertasian/types build && node -e \"require('@libertasian/types')\"",
     "lint": "tsc --noEmit",
     "test": "jest",
     "type-check": "tsc --noEmit",
