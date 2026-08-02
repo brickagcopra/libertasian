@@ -15,19 +15,41 @@ jest.mock('@expo/vector-icons', () => ({
   },
 }));
 
+const mockUseSearch = jest.fn();
 jest.mock('@/features/search/hooks/use-search', () => ({
-  useSearch: () => ({ data: null, isLoading: false, refetch: jest.fn() }),
+  useSearch: (...args: unknown[]) => mockUseSearch(...args),
 }));
 
 jest.mock('@/features/camera-scan/hooks/use-uploads', () => ({
   useUploads: () => ({ data: { uploads: [] }, isLoading: false, fetchNextPage: jest.fn(), hasNextPage: false }),
 }));
 
+const mockAddMatterDocument = jest.fn().mockResolvedValue({});
 jest.mock('@/features/workspace/hooks/use-matters', () => ({
-  useAddMatterDocument: () => ({ mutateAsync: jest.fn(), isPending: false }),
+  useAddMatterDocument: () => ({ mutateAsync: mockAddMatterDocument, isPending: false }),
 }));
 
 import AddDocumentScreen from '@/app/workspace/matters/add-document';
+import type { SearchResultItem } from '@/features/search/types';
+
+/**
+ * The API sets the OpenSearch `_id` to `section_id ?? document_id`
+ * (opensearch.service.ts:511), so `item.id` is usually a SECTION uuid. Only
+ * `source.document_id` is a legal document id.
+ */
+const sectionHit: SearchResultItem = {
+  id: 'section-aaa',
+  score: 5,
+  source: {
+    document_id: 'doc-aaa',
+    title: 'People v. Reyes',
+    document_type: 'decision',
+    is_official: true,
+    is_published: true,
+    created_at: '2024-01-01T00:00:00Z',
+    section_id: 'section-aaa',
+  },
+};
 
 function createWrapper() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -37,7 +59,10 @@ function createWrapper() {
 }
 
 describe('AddDocumentScreen', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockUseSearch.mockReturnValue({ data: null, isLoading: false, refetch: jest.fn() });
+  });
 
   it('renders role selector chips', () => {
     const { getByText } = render(<AddDocumentScreen />, { wrapper: createWrapper() });
@@ -70,5 +95,24 @@ describe('AddDocumentScreen', () => {
   it('renders search input', () => {
     const { getByPlaceholderText } = render(<AddDocumentScreen />, { wrapper: createWrapper() });
     expect(getByPlaceholderText('Search legal documents...')).toBeTruthy();
+  });
+
+  it('attaches the legal document id, not the OpenSearch section id', () => {
+    mockUseSearch.mockReturnValue({
+      data: { data: [sectionHit] },
+      isLoading: false,
+      refetch: jest.fn(),
+    });
+
+    const { getByPlaceholderText, getByText } = render(<AddDocumentScreen />, {
+      wrapper: createWrapper(),
+    });
+
+    fireEvent.changeText(getByPlaceholderText('Search legal documents...'), 'reyes');
+    fireEvent.press(getByText('People v. Reyes'));
+
+    expect(mockAddMatterDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ legalDocumentId: 'doc-aaa' }),
+    );
   });
 });

@@ -13,6 +13,7 @@ import {
   kindFor,
   kindLabelFor,
 } from '@/features/search/document-types';
+import { legalDocumentIdOf } from '@/features/search/document-id';
 import { useSearch } from '@/features/search/hooks/use-search';
 import { useSearchHistory } from '@/features/search/hooks/use-search-history';
 import { useRecentlyViewed } from '@/features/documents/hooks/use-recently-viewed';
@@ -39,7 +40,9 @@ function toResult(item: SearchResultItem, index: number): SearchResult {
     ?? item.source.gr_no
     ?? item.source.document_type.replace(/_/g, ' ');
   return {
-    id: item.id,
+    // Document id, not the OpenSearch `_id` — see `legalDocumentIdOf`. This id
+    // drives the /reader push and the digest-generation call.
+    id: legalDocumentIdOf(item),
     kind: kindFor(item.source.document_type),
     kindLabel: kindLabelFor(item.source.document_type),
     title: item.source.short_title ?? item.source.title,
@@ -75,7 +78,7 @@ export default function SearchRoute() {
   const items = data?.data ?? [];
   const results = useMemo<SearchResult[]>(() => items.map(toResult), [items]);
   const documentIds = useMemo<string[] | null>(
-    () => (items.length > 0 ? items.map((i) => i.id) : null),
+    () => (items.length > 0 ? items.map(legalDocumentIdOf) : null),
     [items],
   );
 
