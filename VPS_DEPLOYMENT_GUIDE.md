@@ -138,7 +138,7 @@ All infrastructure files are in the repository:
 - [ ] VPS provider account (Hetzner, DigitalOcean, Linode, Contabo, etc.)
 - [ ] GitHub account with repository access (for GHCR image pulls)
 - [ ] Domain name with DNS management access
-- [ ] SMTP provider (for transactional email — Resend, Mailgun, AWS SES, etc.)
+- [ ] SMTP provider (for transactional email — Brevo, Resend, Mailgun, etc.). Verify sender domain with SPF + DKIM records per provider instructions.
 - [ ] Xendit account (for billing — optional, can enable later)
 - [ ] Sentry account (for error tracking — optional)
 
@@ -667,11 +667,11 @@ GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 GOOGLE_CALLBACK_URL=https://api.libertasian.com/api/v1/auth/google/callback
 
-# SMTP
-SMTP_HOST=smtp.your-provider.com
+# SMTP (Brevo — generate SMTP key at https://app.brevo.com → SMTP & API)
+SMTP_HOST=smtp-relay.brevo.com
 SMTP_PORT=587
-SMTP_USER=your-smtp-user
-SMTP_PASS=your-smtp-password
+SMTP_USER=your-brevo-login-email
+SMTP_PASS=your-brevo-smtp-key
 SMTP_FROM=LIBERTASIAN <noreply@libertasian.com>
 
 # AI Services (internal Docker networking)
@@ -959,9 +959,9 @@ receivers:
     email_configs:
       - to: 'alerts@libertasian.com'
         from: 'alertmanager@libertasian.com'
-        smarthost: 'smtp.your-provider.com:587'
-        auth_username: 'your-smtp-user'
-        auth_password: 'your-smtp-password'
+        smarthost: 'smtp-relay.brevo.com:587'
+        auth_username: 'your-brevo-login-email'
+        auth_password: 'your-brevo-smtp-key'
         require_tls: true
         send_resolved: true
 
@@ -969,9 +969,9 @@ receivers:
     email_configs:
       - to: 'oncall@libertasian.com'
         from: 'alertmanager@libertasian.com'
-        smarthost: 'smtp.your-provider.com:587'
-        auth_username: 'your-smtp-user'
-        auth_password: 'your-smtp-password'
+        smarthost: 'smtp-relay.brevo.com:587'
+        auth_username: 'your-brevo-login-email'
+        auth_password: 'your-brevo-smtp-key'
         require_tls: true
         send_resolved: true
     # Optional: Slack webhook
@@ -1661,7 +1661,7 @@ Worker crawl failures do not affect the API:
 | `GOOGLE_CLIENT_ID` | No | OAuth client ID | Config |
 | `GOOGLE_CLIENT_SECRET` | No | OAuth secret | SECRET |
 | `GOOGLE_CALLBACK_URL` | No | `https://api.libertasian.com/api/v1/auth/google/callback` | Config |
-| `SMTP_HOST` | No | `smtp.resend.com` | Config |
+| `SMTP_HOST` | No | `smtp-relay.brevo.com` | Config |
 | `SMTP_PORT` | No | `587` | Config |
 | `SMTP_USER` | No | SMTP username | Config |
 | `SMTP_PASS` | No | SMTP password | SECRET |
