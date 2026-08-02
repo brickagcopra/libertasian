@@ -109,6 +109,41 @@ jobs:
       - name: Run tests
         run: pnpm test
 
+      # The only check that exercises REAL Metro resolution over every runtime
+      # import in the mobile app. Nothing else does: tsc resolves
+      # @libertasian/types via its "types": "./src/index.ts" field, and jest
+      # maps the package straight to source — so a package whose "main" points
+      # at a gitignored, unbuilt dist/ passes both and still fails to bundle.
+      #
+      # That exact bug shipped: the first VALUE import of @libertasian/types
+      # (src/features/search/document-types.ts, 2026-07-27) went unnoticed
+      # until the next EAS build, which died in EAGER_BUNDLE. Same root cause
+      # had already been patched per-consumer in Dockerfile.web (#217) and
+      # Dockerfile.api (#309).
+      #
+      # No `rm -rf packages/types/dist` here, deliberately: dist/ is gitignored,
+      # so a CI runner's checkout never has one. It exists at this point ONLY
+      # because packages/types' `prepare` script built it during the install
+      # above — which is exactly the property under test. Deleting it and not
+      # reinstalling would assert the broken state and fail every run.
+      #
+      # Measured locally: 15s to pass, 16s to fail on the real bug — no native
+      # tooling needed, this is Metro and node only.
+      - name: Guard — @libertasian/types resolves at runtime
+        working-directory: apps/mobile
+        run: node -e "require('@libertasian/types')"
+
+      # NODE_ENV must not be `test` here. The job sets it for the API suites,
+      # but babel-preset-expo branches on it: under `test` it skips inlining
+      # EXPO_ROUTER_APP_ROOT, and expo-router's _ctx.android.js then fails to
+      # compile with "Invalid call at line 2: process.env.EXPO_ROUTER_APP_ROOT".
+      # A production bundle is also what EAS actually builds, so this matches.
+      - name: Guard — mobile bundle resolves from a clean checkout
+        working-directory: apps/mobile
+        env:
+          NODE_ENV: production
+        run: npx expo export --platform android --output-dir "$RUNNER_TEMP/bundle-guard"
+
       # apps/api/jest.config.ts has rootDir 'src', so apps/api/test/*.e2e-spec.ts
       # was never discovered by `pnpm test` and the e2e suite had never executed
       # anywhere. It boots the REAL AppModule and needs nothing beyond the
