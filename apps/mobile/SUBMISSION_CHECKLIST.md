@@ -1,6 +1,6 @@
 # LIBERTASIAN Mobile — Store Submission Runbook
 
-End-to-end ordered runbook for shipping `apps/mobile` (bundle id `com.libertasian.app`) to **App Store / TestFlight** and **Play Store / internal track**. Walk it top-to-bottom on the first submission. Nothing here is required for the current **preview** smoke build — these steps gate the **production** profile.
+End-to-end ordered runbook for shipping `apps/mobile` (bundle id `com.libertasian.app`) to **App Store / TestFlight** and **Play Store / closed (`alpha`) track**. Walk it top-to-bottom on the first submission. Nothing here is required for the current **preview** smoke build — these steps gate the **production** profile.
 
 The work splits into two lanes:
 
@@ -8,7 +8,7 @@ The work splits into two lanes:
 - **Lane B (in repo):** `app.json`, `eas.json`, `store.config.json`, `store/PLAY_LISTING.md`, `store/DATA_SAFETY.md`. Already in place — Lane A unblocks the actual submit.
 
 > **🛑 Safety rule (read before any submit command):**
-> **Never pass `--track production` (Play) or skip TestFlight (Apple) until the build has been tested on the internal track / TestFlight by a human.** First-time submissions go to `internal` (Play) or to TestFlight internal testing (Apple). Promote to external testing and then to production only after smoke-testing the actual signed binary on a real device.
+> **Never pass `--track production` (Play) or skip TestFlight (Apple) until the build has been tested on a testing track / TestFlight by a human.** Submissions go to the **closed `alpha` track** (Play) or to TestFlight internal testing (Apple). Promote to production only after smoke-testing the actual signed binary on a real device.
 
 ---
 
@@ -109,7 +109,7 @@ Do not commit binary assets. Required sizes:
 
 `submit.production.android.serviceAccountKeyPath` → `./play-service-account.json` is already wired. Drop the file from § 1.7 in place.
 
-`submit.production.android.track` is set to `"internal"` — **leave it on `internal`**. Promotion to `production` happens later from the Play Console UI (see § 6.3 safety rule).
+`submit.production.android.track` is set to `"alpha"` — **leave it on `alpha`**, Play's default **Closed testing** track. Closed testing is what feeds the 12-tester / 14-day production-access rule (§ 5.3); **`internal` does NOT count toward it**, so an internal-track submit silently burns days without advancing the clock. Promotion to `production` happens later from the Play Console UI (see § 5.4 safety rule).
 
 ---
 
@@ -176,11 +176,11 @@ The reviewer contact + demo account (`apple.review` block) is **not** in `store.
 
 ---
 
-## 5. Google — Play internal track first
+## 5. Google — Play closed (`alpha`) track
 
 ### 5.1 First AAB upload **must** be manual
 
-Play Console will not accept `eas submit --platform android` until at least one AAB has been uploaded by hand to an internal track. This is a Play platform constraint, not an EAS one.
+Play Console will not accept `eas submit --platform android` until at least one AAB has been uploaded by hand to a testing track. This is a one-time Play platform bootstrap constraint, not an EAS one — and it is the **only** step in this runbook that touches the internal track. Every ongoing submit targets the closed `alpha` track (§ 5.2).
 
 1. Download the `.aab` artifact from the EAS build in § 3.
 2. Play Console → LIBERTASIAN → Test and release → **Testing → Internal testing** → Create new release → upload the .aab → fill release notes → Review release → Roll out to internal.
@@ -228,7 +228,7 @@ Promotion from the Play Console UI:
 4. Update `store/DATA_SAFETY.md` **if** any data collection changed.
 5. `eas build --profile production --platform all`.
 6. `eas submit --profile production --platform ios` → TestFlight → internal smoke → external review → App Store submit.
-7. `eas submit --profile production --platform android` → Play internal track → smoke → promote.
+7. `eas submit --profile production --platform android` → Play closed (`alpha`) track → smoke → promote.
 8. `eas metadata push` if any field in `store.config.json` changed.
 9. Paste Play Console fields from `store/PLAY_LISTING.md` if any field there changed.
 
