@@ -85,6 +85,14 @@ Play Console → App content → **Sign in details** ("App access"). The app req
 3. Play requires a **closed test** before production access for new personal developer accounts — run **closed testing** specifically. Internal-track releases do **not** count toward it: the rule is ≥ 12 testers opted in continuously for 14 days on a *closed* track. See `SUBMISSION_CHECKLIST.md` § 5.3.
 4. Play Console → **Publishing overview** → review the pending changes (all the declarations above + store listing + data safety) → **Send for review**.
 
+> **⚠️ Closed-track submits fail until the app-content declarations are actually submitted.** `eas submit` to `alpha` returns
+> `The app is missing the required metadata to submit the app to Google Play Store`
+> until **Data safety is submitted (not left as a draft)**, **Target audience and content** is completed (Part 3), and **Sign in details** are filled (Part 3). The internal track waives these; closed tracks do not — so a submit that worked on `internal` can still fail on `alpha`.
+>
+> This is what happened to Android submission `1d1d1fe9-49dd-4089-ad05-d4f2baf40add` (versionCode 9, 2026-08-03): the track resolved correctly to `alpha`, but the release was rejected for missing metadata, so **no release reached testers and the 14-day clock did not start**.
+>
+> Do **not** work around it with `android.releaseStatus: "draft"`. A draft release is not distributed to testers, so it cannot advance the 12-tester / 14-day requirement — it burns calendar days while looking like progress, the same trap as submitting to `internal`.
+
 ---
 
 ## PART 6 — Apple App Store Connect (parallel track)
