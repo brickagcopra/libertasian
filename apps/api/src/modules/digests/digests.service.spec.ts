@@ -457,6 +457,24 @@ describe('DigestsService', () => {
       limit: 20,
     };
 
+    // list() is a separate surface from the batch-lookup methods
+    // (findByDocumentIds / countByDocumentIds), which deliberately dropped the
+    // reviewStatus gate. This asserts list() KEEPS it, so the two do not drift
+    // together by accident.
+    it('should keep gating public_editorial on reviewStatus approved', async () => {
+      prismaService.digest.findMany.mockResolvedValue([]);
+
+      await service.list('user-1', 'org-1', listQuery);
+
+      const call = prismaService.digest.findMany.mock.calls[0][0];
+      const orClause = call?.where?.OR as Array<Record<string, unknown>>;
+      expect(orClause).toEqual(
+        expect.arrayContaining([
+          { visibility: 'public_editorial', reviewStatus: 'approved' },
+        ]),
+      );
+    });
+
     it('should return paginated results with hasNext false', async () => {
       const mockDigests = [
         { ...mockDigest, id: 'digest-1', legalDocument: mockLegalDocument },
@@ -1180,7 +1198,10 @@ describe('DigestsService', () => {
       );
     });
 
-    it('should apply visibility rules: public_editorial only when approved', async () => {
+    // visibility is the authorisation boundary; review_status is editorial
+    // workflow state. A public_editorial row is already published, so the batch
+    // lookup must NOT additionally require reviewStatus === 'approved'.
+    it('should apply visibility rules: all public_editorial regardless of reviewStatus', async () => {
       prismaService.digest.findMany.mockResolvedValue([]);
 
       await service.findByDocumentIds(['doc-1'], 'user-1', 'org-1');
@@ -1188,10 +1209,25 @@ describe('DigestsService', () => {
       const call = prismaService.digest.findMany.mock.calls[0][0];
       const orClause = call?.where?.OR;
       expect(orClause).toEqual(
-        expect.arrayContaining([
-          { visibility: 'public_editorial', reviewStatus: 'approved' },
-        ]),
+        expect.arrayContaining([{ visibility: 'public_editorial' }]),
       );
+    });
+
+    it('should NOT gate public_editorial on reviewStatus', async () => {
+      prismaService.digest.findMany.mockResolvedValue([]);
+
+      await service.findByDocumentIds(['doc-1'], 'user-1', 'org-1');
+
+      const call = prismaService.digest.findMany.mock.calls[0][0];
+      const orClause = call?.where?.OR as Array<Record<string, unknown>>;
+      const publicBranch = orClause.find(
+        (branch) => branch['visibility'] === 'public_editorial',
+      );
+      expect(publicBranch).toBeDefined();
+      expect(publicBranch).not.toHaveProperty('reviewStatus');
+      expect(
+        orClause.some((branch) => 'reviewStatus' in branch),
+      ).toBe(false);
     });
 
     it('should order by createdAt desc', async () => {
@@ -1268,8 +1304,22 @@ describe('DigestsService', () => {
       expect(call?.where?.OR).toEqual([
         { userId: 'user-1', visibility: 'private' },
         { organizationId: 'org-1', visibility: 'org' },
-        { visibility: 'public_editorial', reviewStatus: 'approved' },
+        { visibility: 'public_editorial' },
       ]);
+    });
+
+    // The badge must agree with the list it labels: if the count still filtered
+    // on reviewStatus it would under-report what findByDocumentIds returns.
+    it('should NOT gate public_editorial on reviewStatus', async () => {
+      prismaService.digest.count.mockResolvedValue(0);
+
+      await service.countByDocumentIds(['doc-1'], 'user-1', 'org-1');
+
+      const call = prismaService.digest.count.mock.calls[0][0];
+      const orClause = call?.where?.OR as Array<Record<string, unknown>>;
+      expect(
+        orClause.some((branch) => 'reviewStatus' in branch),
+      ).toBe(false);
     });
 
     it('should return 0 for empty input', async () => {
