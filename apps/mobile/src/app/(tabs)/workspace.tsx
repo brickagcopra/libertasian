@@ -10,6 +10,8 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { TabBar } from '@/components/ui/TabBar';
+import { useTabBarNav } from '@/features/navigation/use-tab-bar-nav';
 import { useMatters } from '../../features/workspace/hooks/use-matters';
 import { useNotes } from '../../features/workspace/hooks/use-notes';
 import { useTasks } from '../../features/workspace/hooks/use-tasks';
@@ -194,6 +196,7 @@ function SectionHeader({
 // ─── Main Tab ──────────────────────────────────────────────
 
 export default function WorkspaceTab() {
+  const navigate = useTabBarNav();
   const [refreshing, setRefreshing] = useState(false);
 
   const matters = useMatters({ limit: 5, status: 'active' });
@@ -224,9 +227,14 @@ export default function WorkspaceTab() {
   }, [matters, notes, tasks, memos, comparisons, pleadings, annotations, activity]);
 
   if (isLoading) {
+    // The pill renders here too — a nav bar that vanishes while a tab loads is
+    // the same disappearing-nav problem this screen is being fixed for.
     return (
-      <View style={styles.loadingState}>
-        <ActivityIndicator size="large" color="#1a56db" />
+      <View style={styles.screen}>
+        <View style={styles.loadingState}>
+          <ActivityIndicator size="large" color="#1a56db" />
+        </View>
+        <TabBar active="workspace" onPress={navigate} />
       </View>
     );
   }
@@ -247,7 +255,9 @@ export default function WorkspaceTab() {
   const totalPleadings = pleadingItems.length;
   const totalAnnotations = annotations.data?.length ?? 0;
 
-  return (
+  // Held in a variable rather than returned directly so the floating pill can be
+  // added as a sibling without re-indenting the whole tree.
+  const body = (
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.scrollContent}
@@ -374,11 +384,22 @@ export default function WorkspaceTab() {
       <View style={{ height: 24 }} />
     </ScrollView>
   );
+
+  return (
+    <View style={styles.screen}>
+      {body}
+      {/* Floating pill TabBar — same treatment as (tabs)/digests.tsx. The
+          scrollContent's paddingBottom: 96 keeps the last card clear of it. */}
+      <TabBar active="workspace" onPress={navigate} />
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: '#f3f4f6' },
   container: { flex: 1, backgroundColor: '#f3f4f6' },
-  scrollContent: { padding: 12 },
+  // 96, matching (tabs)/digests.tsx listContent — clears the floating pill.
+  scrollContent: { padding: 12, paddingBottom: 96 },
   loadingState: {
     flex: 1,
     alignItems: 'center',

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import { useTabBarNav } from '@/features/navigation/use-tab-bar-nav';
 import {
   SearchScreen,
   type SearchResult,
@@ -52,6 +53,7 @@ function toResult(item: SearchResultItem, index: number): SearchResult {
 }
 
 export default function SearchRoute() {
+  const navigate = useTabBarNav();
   const { theme } = useTheme();
   const [query, setQuery] = useState('');
   const [submittedQuery, setSubmittedQuery] = useState('');
@@ -276,11 +278,7 @@ export default function SearchRoute() {
       historySlot={historySlot}
       recentlyViewedSlot={recentlyViewedSlot}
       activeTab="search"
-      onTabPress={(id) => {
-        if (id === 'home') router.push('/(tabs)');
-        else if (id === 'docs') router.push('/documents');
-        else if (id === 'me') router.push('/settings');
-      }}
+      onTabPress={navigate}
     />
   );
 }

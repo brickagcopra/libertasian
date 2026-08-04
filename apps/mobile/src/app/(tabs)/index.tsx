@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { router } from 'expo-router';
 import { HomeScreen, type HomeFeedItem } from '@/components/screens/HomeScreen';
+import { useTabBarNav } from '@/features/navigation/use-tab-bar-nav';
 import { useHomeFeed } from '@/features/home/hooks/use-home-feed';
 import { useAuth } from '@/providers/auth-provider';
 import { useTheme } from '@/providers/theme-provider';
@@ -34,6 +35,7 @@ function routeForItem(item: ApiHomeFeedItem): string {
 }
 
 export default function HomeRoute() {
+  const navigate = useTabBarNav();
   const { user } = useAuth();
   const { theme } = useTheme();
   const { data, isLoading, isError } = useHomeFeed();
@@ -96,11 +98,7 @@ export default function HomeRoute() {
       onSeeAllFeed={() => router.push('/(tabs)/digests')}
       onSearchPress={() => router.push('/(tabs)/search')}
       activeTab="home"
-      onTabPress={(id) => {
-        if (id === 'docs') router.push('/documents');
-        else if (id === 'search') router.push('/(tabs)/search');
-        else if (id === 'me') router.push('/settings');
-      }}
+      onTabPress={navigate}
     />
   );
 }

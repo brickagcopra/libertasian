@@ -113,12 +113,18 @@ describe('SettingsRoute (Phase 2 ProfileScreen)', () => {
     expect(router.push).toHaveBeenCalledWith('/settings/api-keys');
   });
 
+  // getAllByText, not getByText: the floating pill TabBar now carries its own
+  // "Digests", "Study" and "Feed" labels, so each of those strings legitimately
+  // appears twice on this screen. "Workspace" stays unique — the bar's slot is
+  // labelled "Work" so eight items fit a 375pt screen.
   it('renders drawer-replacement quick links (Phase 2 IA)', () => {
-    const { getByText } = render(<SettingsRoute />, { wrapper: createWrapper() });
+    const { getAllByText, getByText } = render(<SettingsRoute />, {
+      wrapper: createWrapper(),
+    });
 
-    expect(getByText('Digests')).toBeTruthy();
-    expect(getByText('Study')).toBeTruthy();
-    expect(getByText('Feed')).toBeTruthy();
+    expect(getAllByText('Digests').length).toBeGreaterThan(0);
+    expect(getAllByText('Study').length).toBeGreaterThan(0);
+    expect(getAllByText('Feed').length).toBeGreaterThan(0);
     expect(getByText('Workspace')).toBeTruthy();
   });
 

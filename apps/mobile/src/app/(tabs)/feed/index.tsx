@@ -4,12 +4,15 @@ import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { usePublicFeed, useOrganizationFeed } from '../../../features/feed/hooks/use-feed';
 import { FeedList } from '../../../features/feed/components/feed-list';
+import { TabBar } from '@/components/ui/TabBar';
+import { useTabBarNav } from '@/features/navigation/use-tab-bar-nav';
 import { useTheme } from '@/providers/theme-provider';
 
 type FeedTab = 'organization' | 'public';
 
 export default function FeedIndexScreen() {
   const { theme } = useTheme();
+  const navigate = useTabBarNav();
   const [activeTab, setActiveTab] = useState<FeedTab>('organization');
 
   const orgFeed = useOrganizationFeed();
@@ -83,6 +86,7 @@ export default function FeedIndexScreen() {
         isRefreshing={feed.isRefetching && !feed.isFetchingNextPage}
         fetchNextPage={() => feed.fetchNextPage()}
         onRefresh={handleRefresh}
+        contentBottomPadding={96}
       />
 
       {/* FAB - Create post */}
@@ -93,6 +97,10 @@ export default function FeedIndexScreen() {
       >
         <Ionicons name="add" size={28} color={theme.accentInk} />
       </TouchableOpacity>
+
+      {/* Floating pill TabBar — same treatment as Home/Search/Digests. The
+          list's contentBottomPadding: 96 keeps the last post clear of it. */}
+      <TabBar active="feed" onPress={navigate} />
     </View>
   );
 }
@@ -126,7 +134,9 @@ const styles = StyleSheet.create({
   },
   fab: {
     position: 'absolute',
-    bottom: 20,
+    // 90, matching the shared `Fab` component's default, so the create-post
+    // button clears the floating pill TabBar instead of sitting under it.
+    bottom: 90,
     right: 20,
     width: 56,
     height: 56,
