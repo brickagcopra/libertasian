@@ -1,6 +1,8 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-08-01 (**new, top of the list:** the store-compliance epic — 4 PRs standing between a submitted-but-unreviewed app and a pass. **PR 1 (#343) is up:** self-serve account deletion, which Apple 5.1.1(v) and Play both require and which did not exist. PRs 2–4 (in-app delete UI, removing Apple 3.1.1 purchase entry points, Android 15 edge-to-edge + ASC screenshot sizes) follow in order. **No EAS build is cut by any of them.**)
+> Last updated: 2026-08-03 (**new, top of the list:** three PRs are open and CI-green and none is merged — **#353** digest-tab visibility, **#354** the case-digest search corpus, **#355** the mobile pill nav. #354 does nothing for users until an **index-rebuild job runs on prod after deploy**; #355 is JS-only and rides the next EAS build or OTA. See the section directly below.)
+>
+> Previously: 2026-08-01 (**new, top of the list:** the store-compliance epic — 4 PRs standing between a submitted-but-unreviewed app and a pass. **PR 1 (#343) is up:** self-serve account deletion, which Apple 5.1.1(v) and Play both require and which did not exist. PRs 2–4 (in-app delete UI, removing Apple 3.1.1 purchase entry points, Android 15 edge-to-edge + ASC screenshot sizes) follow in order. **No EAS build is cut by any of them.**)
 >
 > Previously: 2026-07-29 (#336 OPEN — the flat 300 s synthesis timeout made a 2,238-char digest permanently unsynthesizable and burned 15 min of 8-core CPU proving it three times. Budget is now length-proportional, retries are classified, and the failure reason is persisted. Plus a **separate** CUDA image for the rented-GPU tier-1 backfill and bearer auth on the TTS hop, both no-ops for prod. **Nothing is deployed and no flag is flipped.** See the audio section.)
 >
@@ -13,6 +15,16 @@
 Verification rules used for this prune: every PR reference checked with `gh pr view <n> --json state,mergedAt`; every branch reference checked against `git branch -r --no-merged origin/main` after `git fetch --prune`. Items that could not be verified were MOVED to "Needs verification", not deleted.
 
 ---
+
+## Three open PRs from 2026-08-03 — merge order matters (do this first)
+
+All three are branched from `main` and CI-green (17/17 each). Nothing is merged and nothing is deployed. Details in COMPLETED_TASKS.md under 2026-08-03.
+
+- [ ] **Merge #353** (`fix/digest-tab-visibility`, api, 2 files). Unhides 3,521 digests the search Digests tab was filtering out by `review_status` — coverage of published decisions goes 77% → 98%. No client change needed; mobile and web already badge `reviewStatus`. Needs an api deploy to take effect.
+- [ ] **Merge #354** (`feat/case-digests-search-corpus`, 27 files). First index over the 16,995-row `digests` table; before this, no query could match digest text at all. **After deploy, an index-rebuild job must run on prod — brick's call, brick runs it.** Until it does, `scope=digests` returns an empty corpus and the rewired Digests tab shows nothing, which is worse than the current behaviour. **Do not merge #354 without scheduling that rebuild.**
+- [ ] **Merge #355** (`fix/mobile-pill-nav-all-tabs`, mobile, 16 files, JS-only). Test-merges cleanly with #354 despite both touching `(tabs)/search.tsx`.
+- [ ] **Eyeball the eight-slot pill on a 360pt Android screen.** The no-clipping requirement is asserted structurally (`numberOfLines={1}`), not visually. Fold into the next preview-build QA pass rather than cutting a build for it.
+- [ ] **#354 leaves `GET /digests/search` as-is** (`title ILIKE '%q%'` over `"Digest: <CASE CAPTION>"` titles). It is now redundant with the new corpus for every caller that can pass a scope. Decide whether to point it at the index or retire it — not urgent, but it is a second search path that will drift.
 
 ## Store compliance epic — 4 PRs, in order (2026-08-01)
 
@@ -128,7 +140,7 @@ The re-score that led here is **closed — not worth running** (below). What it 
 
 ## Mobile (next EAS build / store readiness)
 
-- [ ] **Next EAS build / OTA must carry** (all JS-only): #289 annotations + highlights, #290 bookmark upgrade-alert copy, #297 anchor-offset fix + multi-annotation view sheet, #302 coupon input + Home search entry + Digests repair + Digests TabBar — no server deploy moves these. #302's api dependency is satisfied: the #301 api deploy went live 2026-07-15, so the Digests list params no longer 400
+- [ ] **Next EAS build / OTA must carry** (all JS-only): #289 annotations + highlights, #290 bookmark upgrade-alert copy, #297 anchor-offset fix + multi-annotation view sheet, #302 coupon input + Home search entry + Digests repair + Digests TabBar — no server deploy moves these. #302's api dependency is satisfied: the #301 api deploy went live 2026-07-15, so the Digests list params no longer 400. **Add #355** (pill nav on all eight tabs) and **#354's mobile half** (Digests tab querying the real search corpus — but that one is inert until the prod index rebuild runs)
 - [ ] **brick: device smoke of TestFlight build 8** — Google + Apple sign-in end-to-end (new user → onboarding, existing → tabs), cancel silent on both, Apple button absent on Android
 - [ ] **Play Store first upload (manual)** — Android .aab from EAS build `4d20323a` (versionCode 3) + store metadata + reviewer account before App Review; service-account submit path stays unused until the first manual upload
 - [ ] Store assets: replace placeholder `assets/icon.png` / `adaptive-icon.png` / `splash-icon.png` with branded assets; add `google-services.json` for Play submission
