@@ -9,7 +9,7 @@ interface SearchTabsProps {
   activeTab: SearchTab;
   onTabChange: (tab: SearchTab) => void;
   resultCount?: number;
-  documentIds: string[] | null;
+  query: string | null;
 }
 
 interface TabConfig {
@@ -28,12 +28,10 @@ export function SearchTabBar({
   activeTab,
   onTabChange,
   resultCount,
-  documentIds,
+  query,
 }: SearchTabsProps) {
-  const { data: digestCount } = useDigestCount(
-    documentIds,
-    !!documentIds && documentIds.length > 0,
-  );
+  // Same query key as the Digests tab's list, so this is one request, not two.
+  const { data: digestCount } = useDigestCount(query ?? '', !!query);
 
   return (
     <View style={styles.container}>

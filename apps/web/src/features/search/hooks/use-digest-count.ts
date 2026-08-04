@@ -1,32 +1,17 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
-
-import { apiClient } from '@/lib/api-client';
-
-interface DigestCountResponse {
-  success: boolean;
-  data: { count: number };
-}
+import { useSearchDigests } from './use-search-digests';
 
 /**
- * Lightweight query to fetch the number of digests matching a set of document IDs.
- * Used to display a count badge on the Digests tab without loading full digest objects.
+ * The count badge on the Digests tab.
+ *
+ * It used to POST `/digests/by-documents/count` — a second round-trip whose
+ * filter had to be kept in lockstep with the list query's by hand. It now reads
+ * `meta.counts.digests` off the SAME `/search` response the list renders, which
+ * TanStack Query serves from cache under the identical query key. One request,
+ * and the badge cannot disagree with the list it labels.
  */
-export function useDigestCount(
-  documentIds: string[] | null,
-  enabled: boolean,
-) {
-  return useQuery({
-    queryKey: ['digest-count', documentIds],
-    queryFn: async () => {
-      if (!documentIds || documentIds.length === 0) return 0;
-      const res = await apiClient.post<DigestCountResponse>('/digests/by-documents/count', {
-        legalDocumentIds: documentIds,
-      });
-      return res.data.count;
-    },
-    enabled: enabled && !!documentIds && documentIds.length > 0,
-    staleTime: 5 * 60 * 1000,
-  });
+export function useDigestCount(query: string, enabled: boolean) {
+  const { data, ...rest } = useSearchDigests(query, enabled);
+  return { ...rest, data: data?.count };
 }

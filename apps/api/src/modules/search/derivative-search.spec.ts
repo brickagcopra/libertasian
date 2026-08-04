@@ -52,6 +52,20 @@ const DERIVATIVE_HIT = {
   highlights: { body_text: ['the <mark>search</mark> invalid'] },
 };
 
+const CASE_DIGEST_HIT = {
+  id: 'dig-1',
+  score: 1.8,
+  source: {
+    digest_id: 'dig-1',
+    digest_type: 'case_digest',
+    title: 'Digest: PEOPLE v. SANTOS',
+    doctrine: 'Estafa requires abuse of confidence.',
+    visibility: 'public_editorial',
+    review_status: 'approved',
+  },
+  highlights: { doctrine: ['<mark>estafa</mark> requires'] },
+};
+
 // --- rows the visibility filter is evaluated against ---------------------
 
 const PUBLIC_NULL_ORG: MatchableDoc = {
@@ -75,6 +89,7 @@ describe('federated derivative search (C3)', () => {
     searchKeyword: jest.Mock;
     searchVector: jest.Mock;
     searchDerivatives: jest.Mock;
+    searchCaseDigests: jest.Mock;
     searchSuggestions: jest.Mock;
     searchExactCitation: jest.Mock;
     indexDocument: jest.Mock;
@@ -105,6 +120,13 @@ describe('federated derivative search (C3)', () => {
         total: 1,
         approximateTotal: false,
         maxScore: 2.1,
+        timedOut: false,
+      }),
+      searchCaseDigests: jest.fn().mockResolvedValue({
+        items: [CASE_DIGEST_HIT],
+        total: 1,
+        approximateTotal: false,
+        maxScore: 1.8,
         timedOut: false,
       }),
       searchSuggestions: jest.fn().mockResolvedValue([]),
@@ -237,13 +259,16 @@ describe('federated derivative search (C3)', () => {
       ]);
     });
 
-    it("scope='all' returns both kinds", async () => {
+    // `all` now spans three corpora — the case-digests index was added after
+    // C3. Documents and derivatives still lead, in that order.
+    it("scope='all' returns every kind", async () => {
       const response = await service.search(dto({ scope: 'all' }), CALLER_A);
 
       const kinds = response.items.map((item) => (item as { kind: string }).kind);
-      expect(kinds).toEqual(['document', 'derivative']);
+      expect(kinds).toEqual(['document', 'derivative', 'digest']);
       expect(openSearch.searchKeyword).toHaveBeenCalled();
       expect(openSearch.searchDerivatives).toHaveBeenCalled();
+      expect(openSearch.searchCaseDigests).toHaveBeenCalled();
     });
 
     it("scope='documents' returns documents only, but with the discriminator", async () => {
@@ -259,8 +284,8 @@ describe('federated derivative search (C3)', () => {
       const response = await service.search(dto({ scope: 'all' }), CALLER_A);
       expect(response.meta).toMatchObject({
         scope: 'all',
-        total: 2,
-        counts: { documents: 1, derivatives: 1 },
+        total: 3,
+        counts: { documents: 1, derivatives: 1, digests: 1 },
         warnings: [],
       });
     });
@@ -435,8 +460,10 @@ describe('federated derivative search (C3)', () => {
       const response = await service.search(dto({ scope: 'all' }), CALLER_A);
 
       // The whole request must NOT fail — document search is the primary surface.
+      // The digest arm is unaffected: each corpus degrades independently.
       expect(response.items.map((item) => (item as { kind: string }).kind)).toEqual([
         'document',
+        'digest',
       ]);
       const meta = response.meta as unknown as { warnings: string[] };
       expect(meta.warnings).toHaveLength(1);

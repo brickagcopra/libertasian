@@ -198,6 +198,87 @@ export function buildDerivativeQueryBody(
   };
 }
 
+export interface BuildCaseDigestQueryOptions {
+  query: string;
+  from?: number;
+  size?: number;
+}
+
+/**
+ * BM25 query for the case-digests index.
+ *
+ * **No visibility filter argument, unlike `buildDerivativeQueryBody` — and that
+ * is deliberate, not an oversight.** The two indices solve authorization at
+ * different layers. The derivatives index is multi-tenant, so it carries
+ * `organization_id` and every query MUST supply a filter. The case-digests index
+ * is single-tenant by construction: the indexer writes only rows with
+ * `visibility = 'public_editorial'`, and the mapping has no `organization_id` or
+ * `user_id` field to hold a tenant identifier at all. There is nothing in it to
+ * filter down to, so a filter argument would be decoration that implies a
+ * boundary this index does not need. The boundary is enforced at WRITE time
+ * (`indexCaseDigestsFromPostgres`), which is the only place it can be enforced
+ * once and for all call sites.
+ *
+ * **BM25 only — no kNN arm, and there must not be one.** The index carries no
+ * `knn_vector` field; a kNN clause here matches nothing.
+ *
+ * Highlighting names its fields explicitly rather than using a wildcard, so a
+ * future mapping addition cannot start surfacing fragments from a field nobody
+ * reviewed for disclosure.
+ */
+export function buildCaseDigestQueryBody(
+  options: BuildCaseDigestQueryOptions,
+): Record<string, unknown> {
+  const { query, from = 0, size = 20 } = options;
+
+  return {
+    query: {
+      bool: {
+        must: [
+          {
+            multi_match: {
+              query,
+              // Title carries the case caption a user is most likely to type.
+              // doctrine and ruling are boosted over the remaining prose: a
+              // query like `estafa` or `negligence` is looking for the holding,
+              // not for a recitation of the facts that mentions the word.
+              fields: [
+                'title^3',
+                'doctrine^2',
+                'ruling^2',
+                'summary^1.5',
+                'issues',
+                'facts',
+                'dispositive',
+                'petitioner_arguments',
+                'respondent_arguments',
+              ],
+              type: 'best_fields',
+              operator: 'or',
+            },
+          },
+        ],
+      },
+    },
+    highlight: {
+      fields: {
+        title: {},
+        summary: { fragment_size: 200, number_of_fragments: 2 },
+        doctrine: { fragment_size: 200, number_of_fragments: 2 },
+        ruling: { fragment_size: 200, number_of_fragments: 2 },
+        issues: { fragment_size: 200, number_of_fragments: 1 },
+        facts: { fragment_size: 200, number_of_fragments: 1 },
+      },
+      pre_tags: ['<mark>'],
+      post_tags: ['</mark>'],
+    },
+    from,
+    size,
+    // Same 5s ceiling as every other arm (CLAUDE.md: degrade gracefully).
+    timeout: '5s',
+  };
+}
+
 export interface RankingWeights {
   officialBoost: number;
   trustOfficial: number;

@@ -6,6 +6,8 @@ import { Queue } from 'bullmq';
 import { PrismaService } from '../../prisma/prisma.service';
 import { extractSearchableText } from './derivative-extract';
 import {
+  CASE_DIGESTS_INDEX,
+  CASE_DIGESTS_INDEX_PHYSICAL,
   DERIVATIVES_INDEX,
   DERIVATIVES_INDEX_PHYSICAL,
   INDEX_TOPOLOGY,
@@ -18,6 +20,7 @@ import {
 } from './index-mappings';
 import {
   OpenSearchService,
+  type CaseDigestDocumentPayload,
   type DerivativeDocumentPayload,
   type IndexDocumentPayload,
 } from './opensearch.service';
@@ -91,6 +94,7 @@ export interface IndexRebuildProgress {
     | 'reindexing_vectors'
     | 'reindexing_uploads'
     | 'reindexing_derivatives'
+    | 'reindexing_case_digests'
     | 'verifying'
     | 'swapping_alias'
     | 'completed'
@@ -107,10 +111,21 @@ export interface IndexRebuildProgress {
   derivativesTotal: number;
   /** Derivative documents accepted by `_bulk`. */
   derivativesPushed: number;
+  /** Case-digest rows read out of PostgreSQL so far. */
+  caseDigestsProcessed: number;
+  /**
+   * `public_editorial` rows in the `digests` table — the source floor. Private
+   * and org-scoped digests are NOT counted here because they are never indexed.
+   */
+  caseDigestsTotal: number;
+  /** Case-digest documents accepted by `_bulk`. */
+  caseDigestsPushed: number;
   vectorCopy: IndexCopyOutcome | null;
   uploadCopy: IndexCopyOutcome | null;
   /** Measured source/dest reconciliation for the derivatives index. */
   derivativeCopy: IndexCopyOutcome | null;
+  /** Measured source/dest reconciliation for the case-digests index. */
+  caseDigestCopy: IndexCopyOutcome | null;
   message: string;
 }
 
@@ -119,6 +134,7 @@ export interface IndexRebuildResult extends IndexRebuildProgress {
   vectorTarget: string;
   uploadsTarget: string;
   derivativesTarget: string;
+  caseDigestsTarget: string;
   verifiedCount: number;
   /** True when the KEYWORD alias was repointed. */
   aliasSwapped: boolean;
@@ -291,9 +307,13 @@ export class IndexRebuildService {
       derivativesProcessed: 0,
       derivativesTotal: 0,
       derivativesPushed: 0,
+      caseDigestsProcessed: 0,
+      caseDigestsTotal: 0,
+      caseDigestsPushed: 0,
       vectorCopy: null,
       uploadCopy: null,
       derivativeCopy: null,
+      caseDigestCopy: null,
       message: 'Preparing rebuild',
     };
     const push = async (patch: Partial<IndexRebuildProgress>) => {
@@ -317,6 +337,10 @@ export class IndexRebuildService {
       DERIVATIVES_INDEX,
       DERIVATIVES_INDEX_PHYSICAL,
     );
+    const caseDigestsTarget = await this.allocateTargetIndex(
+      CASE_DIGESTS_INDEX,
+      CASE_DIGESTS_INDEX_PHYSICAL,
+    );
 
     // ---- 1. create the new physical indices with explicit mappings ----
     await push({ phase: 'creating_indices', message: `Creating ${keywordTarget}` });
@@ -326,6 +350,7 @@ export class IndexRebuildService {
       [vectorTarget, INDEX_TOPOLOGY[1]!],
       [uploadsTarget, INDEX_TOPOLOGY[2]!],
       [derivativesTarget, INDEX_TOPOLOGY[3]!],
+      [caseDigestsTarget, INDEX_TOPOLOGY[4]!],
     ] as const) {
       await this.openSearch.createPhysicalIndex(target, entry.buildMapping(dimension));
     }
@@ -398,6 +423,45 @@ export class IndexRebuildService {
         `${derivativeCopy.destCount}/${derivativeCopy.sourceCount}`,
     });
 
+    // ---- 3c. build the case-digests index from PostgreSQL ----
+    // A rebuild, not a copy, for the same reason as derivatives: the `digests`
+    // table is the system of record and the payload mapping is pure, so the
+    // index is fully reproducible. It runs after derivatives — LAST — so a
+    // digest failure cannot delay or destabilise the keyword index.
+    //
+    // The source count is `public_editorial` ONLY. That is not a filter applied
+    // for convenience: it is the authorization boundary for this index, and it
+    // has to be identical here and in the page loop below, or verification would
+    // compare a count of every digest against an index holding only the public
+    // ones and abort every clean run as a mismatch.
+    const caseDigestsTotal = await this.prisma.digest.count({
+      where: { visibility: 'public_editorial' },
+    });
+    await push({
+      phase: 'reindexing_case_digests',
+      caseDigestsTotal,
+      message: `Indexing ${caseDigestsTotal} case digests from PostgreSQL`,
+    });
+
+    const caseDigestCopy = await this.indexCaseDigestsFromPostgres(
+      caseDigestsTarget,
+      caseDigestsTotal,
+      async (processed, pushedDigests) => {
+        await push({
+          caseDigestsProcessed: processed,
+          caseDigestsPushed: pushedDigests,
+          message: `Indexed ${processed}/${caseDigestsTotal} case digests`,
+        });
+      },
+    );
+    await push({
+      caseDigestCopy,
+      caseDigestsPushed: caseDigestCopy.reportedCreated ?? 0,
+      message:
+        `Case digest index ${caseDigestCopy.status}: ` +
+        `${caseDigestCopy.destCount}/${caseDigestCopy.sourceCount}`,
+    });
+
     // ---- 4. verify BEFORE anything destructive happens ----
     await push({ phase: 'verifying', message: 'Verifying document counts' });
     await this.openSearch.refreshIndex(keywordTarget);
@@ -449,6 +513,7 @@ export class IndexRebuildService {
         vectorTarget,
         uploadsTarget,
         derivativesTarget,
+        caseDigestsTarget,
         verifiedCount,
         aliasSwapped: false,
         aliasesSkipped: [],
@@ -467,6 +532,7 @@ export class IndexRebuildService {
       [VECTOR_INDEX, vectorTarget, vectorCopy],
       [USER_UPLOADS_INDEX, uploadsTarget, uploadCopy],
       [DERIVATIVES_INDEX, derivativesTarget, derivativeCopy],
+      [CASE_DIGESTS_INDEX, caseDigestsTarget, caseDigestCopy],
     ] as const) {
       if (copy.status === 'verified' || copy.status === 'source_missing') {
         await this.swapOne(alias, target);
@@ -495,6 +561,7 @@ export class IndexRebuildService {
       vectorTarget,
       uploadsTarget,
       derivativesTarget,
+      caseDigestsTarget,
       verifiedCount,
       aliasSwapped: true,
       aliasesSkipped,
@@ -799,6 +866,184 @@ export class IndexRebuildService {
     this.logger.log(`Indexed derivatives → ${target}: ${destCount}/${sourceCount}`);
 
     return { ...base, status: 'verified', sourceCount, destCount, reportedCreated: pushed };
+  }
+
+  /**
+   * Stream every `public_editorial` case digest from PostgreSQL into `target`
+   * and verify the result by MEASURING both sides, exactly as the derivatives
+   * phase does — never by trusting what the write path reported.
+   *
+   * **The `visibility` filter is the authorization boundary for this index and
+   * it lives here.** Private and org-scoped digests must never enter it, and the
+   * mapping backs that up by having no `organization_id` or `user_id` field to
+   * hold a tenant identifier. The predicate is repeated on every page rather
+   * than applied once, and it is identical to the one behind the `sourceCount`
+   * the caller measured — if the two ever diverged, verification would compare
+   * mismatched populations and abort every clean run.
+   */
+  private async indexCaseDigestsFromPostgres(
+    target: string,
+    sourceCount: number,
+    onProgress: (processed: number, pushed: number) => Promise<void>,
+  ): Promise<IndexCopyOutcome> {
+    const base = { source: 'postgres:digests', dest: target };
+    const batchSize = this.config.get<number>(
+      'SEARCH_INDEX_REBUILD_BATCH_SIZE',
+      REINDEX_BATCH_SIZE,
+    );
+
+    let processed = 0;
+    let pushed = 0;
+
+    try {
+      // Relax refresh while bulk-loading; restore it in `finally` so a failure
+      // cannot leave a 30s-stale index behind an alias.
+      await this.openSearch.setRefreshInterval(target, BULK_REFRESH_INTERVAL);
+
+      try {
+        let cursor: string | undefined;
+        for (;;) {
+          // Keyset pagination by id, never OFFSET (CLAUDE.md).
+          const rows = await this.prisma.digest.findMany({
+            take: batchSize,
+            ...(cursor && { skip: 1, cursor: { id: cursor } }),
+            where: { visibility: 'public_editorial' },
+            orderBy: { id: 'asc' },
+            select: {
+              id: true,
+              legalDocumentId: true,
+              title: true,
+              digestType: true,
+              summary: true,
+              facts: true,
+              issues: true,
+              ruling: true,
+              doctrine: true,
+              dispositive: true,
+              petitionerArguments: true,
+              respondentArguments: true,
+              visibility: true,
+              reviewStatus: true,
+              sourceOrigin: true,
+              confidenceScore: true,
+              createdAt: true,
+              updatedAt: true,
+            },
+          });
+
+          if (rows.length === 0) break;
+          cursor = rows[rows.length - 1]!.id;
+
+          const payloads = rows.map((row) => this.toCaseDigestPayload(row));
+          const result = await this.openSearch.bulkIndexCaseDigests(payloads, target);
+
+          pushed += result.indexed;
+          processed += rows.length;
+          await onProgress(processed, pushed);
+        }
+      } finally {
+        await this.openSearch.setRefreshInterval(target, STEADY_REFRESH_INTERVAL);
+      }
+    } catch (error) {
+      const message = (error as Error).message;
+      this.logger.error(`Case digest indexing into ${target} failed: ${message}`);
+      return {
+        ...base,
+        status: 'failed',
+        sourceCount,
+        destCount: 0,
+        reportedCreated: pushed,
+        error: message,
+      };
+    }
+
+    if (sourceCount === 0) {
+      this.logger.warn(
+        'No public_editorial case digests in PostgreSQL — destination starts empty',
+      );
+      return { ...base, status: 'source_missing', sourceCount: 0, destCount: 0, reportedCreated: 0 };
+    }
+
+    await this.openSearch.refreshIndex(target);
+    const destCount = await this.openSearch.countIndex(target);
+
+    // Exactly one OpenSearch document per source row — no fan-out to reason
+    // about. The tolerance covers rows written or re-scoped mid-run, nothing else.
+    const minAcceptable = Math.floor(sourceCount * (1 - VERIFY_TOLERANCE));
+    if (destCount < minAcceptable) {
+      const message =
+        `Case digest index ${target} holds ${destCount} of ${sourceCount} digests ` +
+        `(expected >= ${minAcceptable})`;
+      this.logger.error(message);
+      return {
+        ...base,
+        status: 'mismatch',
+        sourceCount,
+        destCount,
+        reportedCreated: pushed,
+        error: message,
+      };
+    }
+
+    if (pushed !== destCount) {
+      this.logger.warn(
+        `_bulk into ${target} reported ${pushed} accepted but the index holds ` +
+          `${destCount} — trusting the count.`,
+      );
+    }
+    this.logger.log(`Indexed case digests → ${target}: ${destCount}/${sourceCount}`);
+
+    return { ...base, status: 'verified', sourceCount, destCount, reportedCreated: pushed };
+  }
+
+  /**
+   * Map one `digests` row to its indexed document.
+   *
+   * Nullable prose columns are spread-on-truthy so an absent field stays absent
+   * rather than being written as `null`. There is no `organization_id` or
+   * `user_id` here and the payload type has no field for one — see
+   * `CaseDigestDocumentPayload`.
+   */
+  private toCaseDigestPayload(row: {
+    id: string;
+    legalDocumentId: string | null;
+    title: string;
+    digestType: string;
+    summary: string | null;
+    facts: string | null;
+    issues: string | null;
+    ruling: string | null;
+    doctrine: string | null;
+    dispositive: string | null;
+    petitionerArguments: string | null;
+    respondentArguments: string | null;
+    visibility: string;
+    reviewStatus: string;
+    sourceOrigin: string;
+    confidenceScore: number | null;
+    createdAt: Date;
+    updatedAt: Date;
+  }): CaseDigestDocumentPayload {
+    return {
+      digest_id: row.id,
+      title: row.title,
+      ...(row.legalDocumentId && { legal_document_id: row.legalDocumentId }),
+      digest_type: row.digestType,
+      ...(row.summary && { summary: row.summary }),
+      ...(row.facts && { facts: row.facts }),
+      ...(row.issues && { issues: row.issues }),
+      ...(row.ruling && { ruling: row.ruling }),
+      ...(row.doctrine && { doctrine: row.doctrine }),
+      ...(row.dispositive && { dispositive: row.dispositive }),
+      ...(row.petitionerArguments && { petitioner_arguments: row.petitionerArguments }),
+      ...(row.respondentArguments && { respondent_arguments: row.respondentArguments }),
+      visibility: row.visibility,
+      review_status: row.reviewStatus,
+      source_origin: row.sourceOrigin,
+      ...(row.confidenceScore !== null && { confidence_score: row.confidenceScore }),
+      created_at: row.createdAt.toISOString(),
+      updated_at: row.updatedAt.toISOString(),
+    };
   }
 
   /**

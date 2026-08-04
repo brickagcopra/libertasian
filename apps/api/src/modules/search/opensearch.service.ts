@@ -7,6 +7,7 @@ import { normalizeCourtKey } from '@libertasian/types';
 import { deriveGrNoDigits, normalizeCitationKey } from './citation-utils';
 import { MCQ_FORBIDDEN_KEYS } from './derivative-extract';
 import {
+  buildCaseDigestQueryBody,
   buildCitationQueryBody,
   buildDerivativeQueryBody,
   buildKeywordQueryBody,
@@ -16,6 +17,7 @@ import {
 } from './query-builder';
 import type { QueryIntent } from './query-intent';
 import {
+  CASE_DIGESTS_INDEX,
   DEFAULT_EMBEDDING_DIM,
   DERIVATIVES_INDEX,
   INDEX_TOPOLOGY,
@@ -56,10 +58,12 @@ export {
   VECTOR_INDEX,
   USER_UPLOADS_INDEX,
   DERIVATIVES_INDEX,
+  CASE_DIGESTS_INDEX,
   KEYWORD_INDEX_PHYSICAL,
   VECTOR_INDEX_PHYSICAL,
   USER_UPLOADS_INDEX_PHYSICAL,
   DERIVATIVES_INDEX_PHYSICAL,
+  CASE_DIGESTS_INDEX_PHYSICAL,
 } from './index-mappings';
 
 export interface UserUploadIndexPayload {
@@ -155,6 +159,41 @@ export interface DerivativeDocumentPayload {
   is_published: boolean;
   created_at: string;
   published_at?: string;
+}
+
+/**
+ * One case digest as it is written to the case-digests index.
+ *
+ * **There is deliberately no `organization_id` and no `user_id` field.** The
+ * mapping has no home for either (it is `dynamic: 'strict'`), and only
+ * `visibility = 'public_editorial'` rows are ever written, so this index holds
+ * no tenant-scoped data to leak. A payload type that cannot express a tenant
+ * identifier is what makes that a compile-time property rather than a review
+ * checklist item.
+ *
+ * `visibility` is present and is always `'public_editorial'`. It is written so
+ * the invariant is inspectable in the index itself rather than only in the code
+ * that filled it.
+ */
+export interface CaseDigestDocumentPayload {
+  digest_id: string;
+  title: string;
+  legal_document_id?: string;
+  digest_type: string;
+  summary?: string;
+  facts?: string;
+  issues?: string;
+  ruling?: string;
+  doctrine?: string;
+  dispositive?: string;
+  petitioner_arguments?: string;
+  respondent_arguments?: string;
+  visibility: string;
+  review_status: string;
+  source_origin: string;
+  confidence_score?: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface VectorDocumentPayload {
@@ -675,6 +714,44 @@ export class OpenSearchService implements OnModuleInit {
     return payload;
   }
 
+  /**
+   * Bulk-write case digests.
+   *
+   * Modelled on `bulkIndexDerivatives`, including the decision that a per-item
+   * failure THROWS rather than being counted. The reason is the same: the
+   * mapping is `dynamic: 'strict'` and has no field for a tenant identifier, so
+   * the way an indexer regression surfaces is precisely a per-item
+   * `strict_dynamic_mapping_exception`. Counting that as "1 error out of 500"
+   * and continuing would turn the control into a log line and let the rest of
+   * the batch — with the alias swap behind it — proceed as if healthy.
+   */
+  async bulkIndexCaseDigests(
+    docs: CaseDigestDocumentPayload[],
+    targetIndex: string,
+  ): Promise<{ indexed: number }> {
+    if (docs.length === 0) return { indexed: 0 };
+
+    const body: Record<string, unknown>[] = [];
+    for (const doc of docs) {
+      body.push({ index: { _index: targetIndex, _id: doc.digest_id } });
+      body.push({ ...doc });
+    }
+
+    const response = await this.client.bulk({ body, refresh: 'false' });
+    if (response.body.errors) {
+      const items = response.body.items as Record<string, Record<string, unknown>>[];
+      const failures = items
+        .filter((item) => item['index']?.['error'])
+        .map((item) => item['index']?.['error']);
+      throw new Error(
+        `Bulk index into ${targetIndex} rejected ${failures.length} of ${docs.length} ` +
+          `case digest(s): ${JSON.stringify(failures.slice(0, 3))}`,
+      );
+    }
+
+    return { indexed: docs.length };
+  }
+
   async removeDocument(documentId: string) {
     try {
       await this.client.deleteByQuery({
@@ -887,6 +964,46 @@ export class OpenSearchService implements OnModuleInit {
         id: hit._id,
         score: hit._score,
         source: sanitizeDerivativeSource(hit._source),
+        ...(hit.highlight && { highlights: hit.highlight }),
+      })),
+    };
+  }
+
+  /**
+   * BM25 search over the case-digests index.
+   *
+   * There is no `visibilityFilter` argument here, and its absence is deliberate
+   * rather than an omission — see `buildCaseDigestQueryBody`. This index holds
+   * only `visibility = 'public_editorial'` rows and its mapping has no field for
+   * a tenant identifier, so the authorization boundary is enforced at write
+   * time. Contrast `searchDerivatives`, whose index IS multi-tenant and whose
+   * filter is therefore a required argument.
+   *
+   * No `_source` sanitizer either, for the same structural reason: the MCQ
+   * answer-key problem does not exist for this corpus. `digests` has no
+   * answer-key column, and the mapping enumerates every field that can be
+   * written.
+   */
+  async searchCaseDigests(options: {
+    query: string;
+    from?: number;
+    size?: number;
+  }): Promise<KeywordSearchResult> {
+    const body = buildCaseDigestQueryBody(options);
+    const response = await this.client.search({ index: CASE_DIGESTS_INDEX, body });
+    const parsed = response.body as OpenSearchResponseBody;
+    const hits = parsed.hits;
+    const total = typeof hits.total === 'number' ? hits.total : hits.total.value;
+
+    return {
+      total,
+      approximateTotal: false,
+      maxScore: hits.max_score,
+      timedOut: parsed.timed_out === true,
+      items: hits.hits.map((hit) => ({
+        id: hit._id,
+        score: hit._score,
+        source: hit._source,
         ...(hit.highlight && { highlights: hit.highlight }),
       })),
     };

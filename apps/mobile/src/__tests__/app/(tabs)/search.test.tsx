@@ -115,9 +115,12 @@ describe('SearchRoute', () => {
     });
   });
 
-  it('feeds the digests tab legal document ids', () => {
+  // The Digests tab searches the case-digest corpus by TEXT now. It used to be
+  // fed the ids of whatever documents the full-text arm returned, which meant a
+  // digest was only reachable if its source decision ranked for the same query.
+  it('feeds the digests tab the query string, not document ids', () => {
     renderWithQuery();
 
-    expect(mockUseDigestCount).toHaveBeenLastCalledWith(['doc-aaa'], true);
+    expect(mockUseDigestCount).toHaveBeenLastCalledWith('reyes', true);
   });
 });

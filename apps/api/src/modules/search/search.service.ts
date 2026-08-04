@@ -75,12 +75,12 @@ export interface SearchResponse {
  * Discriminator attached to items ONLY on a federated request (one that sent
  * `scope`). A request that omits `scope` gets the legacy items untouched.
  */
-export type SearchResultKind = 'document' | 'derivative';
+export type SearchResultKind = 'document' | 'derivative' | 'digest';
 
 /** Federated response metadata. Only present when `scope` was supplied. */
 export interface FederatedSearchMeta extends SearchResponseMeta {
   scope: SearchScope;
-  counts: { documents: number; derivatives: number };
+  counts: { documents: number; derivatives: number; digests: number };
   /**
    * Non-fatal degradations, e.g. the derivative arm timing out. Present and
    * empty on a clean federated run so clients can rely on the field existing.
@@ -157,6 +157,7 @@ export class SearchService {
 
     const wantsDocuments = scope === 'documents' || scope === 'all';
     const wantsDerivatives = scope === 'derivatives' || scope === 'all';
+    const wantsDigests = scope === 'digests' || scope === 'all';
 
     const documentResponse = wantsDocuments
       ? await this.searchDocuments(dto)
@@ -195,31 +196,77 @@ export class SearchService {
       }
     }
 
+    let digestItems: SearchResultItem[] = [];
+    let digestTotal = 0;
+    let digestTimedOut = false;
+
+    if (wantsDigests) {
+      // No visibility filter argument, unlike the derivative arm above, and the
+      // difference is structural rather than an oversight: the case-digests
+      // index holds only `visibility = 'public_editorial'` rows and its mapping
+      // has no field for a tenant identifier. The boundary is enforced when the
+      // index is written, so there is nothing here to filter down to.
+      try {
+        const result = await this.openSearch.searchCaseDigests({
+          query: dto.query,
+          from: page * limit,
+          size: limit,
+        });
+        digestItems = result.items;
+        digestTotal = result.total;
+        digestTimedOut = result.timedOut;
+        if (result.timedOut) {
+          warnings.push('Digest results are partial: the digest search timed out.');
+        }
+      } catch (err: unknown) {
+        // Degrade, do not fail — same contract as the derivative arm. A missing
+        // digests index (it does not exist until the rebuild job has run once)
+        // must not take down document search.
+        const reason = this.isIndexNotFound(err)
+          ? 'the digest index is not available'
+          : 'the digest search failed';
+        this.logger.warn(`Digest arm degraded: ${(err as Error).message}`);
+        warnings.push(`Digest results were omitted because ${reason}.`);
+      }
+    }
+
+    // Concatenated in corpus order — documents, then derivatives, then digests.
+    // Not globally ranked, for the reason given in the method doc: BM25 scores
+    // from indices with different mappings and term statistics are not
+    // comparable, so interleaving them would be inventing a ranking.
     const items: unknown[] = [
       ...(documentResponse?.items ?? []).map((item) => this.withKind(item, 'document')),
       ...derivativeItems.map((item) => this.withKind(item, 'derivative')),
+      ...digestItems.map((item) => this.withKind(item, 'digest')),
     ];
 
     const documentTotal = documentResponse?.meta.total ?? 0;
     const base = documentResponse?.meta;
 
     const meta: FederatedSearchMeta = {
-      total: documentTotal + derivativeTotal,
+      total: documentTotal + derivativeTotal + digestTotal,
       approximateTotal: base?.approximateTotal ?? false,
       maxScore: base?.maxScore ?? null,
       page,
       limit,
-      timedOut: (base?.timedOut ?? false) || derivativeTimedOut,
+      timedOut: (base?.timedOut ?? false) || derivativeTimedOut || digestTimedOut,
       cached: base?.cached ?? false,
       searchType: base?.searchType ?? 'keyword_only',
       intent: base?.intent ?? 'general',
-      // With derivatives in scope, having found derivative hits means the
-      // request was not a miss even if the document arm abstained.
-      abstained: (base?.abstained ?? true) && derivativeItems.length === 0,
+      // Having found hits in ANY corpus in scope means the request was not a
+      // miss, even if the document arm abstained.
+      abstained:
+        (base?.abstained ?? true) &&
+        derivativeItems.length === 0 &&
+        digestItems.length === 0,
       suggestions: base?.suggestions ?? [],
       ...(base?.didYouMean && { didYouMean: base.didYouMean }),
       scope,
-      counts: { documents: documentTotal, derivatives: derivativeTotal },
+      counts: {
+        documents: documentTotal,
+        derivatives: derivativeTotal,
+        digests: digestTotal,
+      },
       warnings,
     };
 

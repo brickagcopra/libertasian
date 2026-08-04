@@ -47,7 +47,7 @@ describe('SearchTabBar', () => {
       <SearchTabBar
         activeTab="fulltext"
         onTabChange={onTabChange}
-        documentIds={null}
+        query={null}
       />,
       { wrapper: createWrapper() },
     );
@@ -62,7 +62,7 @@ describe('SearchTabBar', () => {
       <SearchTabBar
         activeTab="fulltext"
         onTabChange={onTabChange}
-        documentIds={null}
+        query={null}
       />,
       { wrapper: createWrapper() },
     );
@@ -77,7 +77,7 @@ describe('SearchTabBar', () => {
         activeTab="fulltext"
         onTabChange={onTabChange}
         resultCount={42}
-        documentIds={null}
+        query={null}
       />,
       { wrapper: createWrapper() },
     );
@@ -91,7 +91,7 @@ describe('SearchTabBar', () => {
         activeTab="fulltext"
         onTabChange={onTabChange}
         resultCount={0}
-        documentIds={null}
+        query={null}
       />,
       { wrapper: createWrapper() },
     );
@@ -106,7 +106,7 @@ describe('SearchTabBar', () => {
       <SearchTabBar
         activeTab="fulltext"
         onTabChange={onTabChange}
-        documentIds={['doc-1']}
+        query="estafa"
       />,
       { wrapper: createWrapper() },
     );
@@ -121,7 +121,7 @@ describe('SearchTabBar', () => {
       <SearchTabBar
         activeTab="fulltext"
         onTabChange={onTabChange}
-        documentIds={['doc-1']}
+        query="estafa"
       />,
       { wrapper: createWrapper() },
     );
@@ -134,7 +134,7 @@ describe('SearchTabBar', () => {
       <SearchTabBar
         activeTab="fulltext"
         onTabChange={onTabChange}
-        documentIds={null}
+        query={null}
       />,
       { wrapper: createWrapper() },
     );

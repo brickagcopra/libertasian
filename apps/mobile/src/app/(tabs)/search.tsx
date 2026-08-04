@@ -77,10 +77,6 @@ export default function SearchRoute() {
 
   const items = data?.data ?? [];
   const results = useMemo<SearchResult[]>(() => items.map(toResult), [items]);
-  const documentIds = useMemo<string[] | null>(
-    () => (items.length > 0 ? items.map(legalDocumentIdOf) : null),
-    [items],
-  );
 
   // Track query history once a real result set is back.
   useEffect(() => {
@@ -139,7 +135,7 @@ export default function SearchRoute() {
       activeTab={searchTab}
       onTabChange={setSearchTab}
       resultCount={items.length}
-      documentIds={documentIds}
+      query={submittedQuery}
     />
   ) : null;
 
@@ -148,7 +144,7 @@ export default function SearchRoute() {
   if (submittedQuery.trim() && searchTab === 'ai-summary') {
     customResults = <AiSummaryResults query={submittedQuery} />;
   } else if (submittedQuery.trim() && searchTab === 'digests') {
-    customResults = <DigestsResults documentIds={documentIds} />;
+    customResults = <DigestsResults query={submittedQuery} />;
   }
 
   // Empty-query slots: recent searches + recently viewed.

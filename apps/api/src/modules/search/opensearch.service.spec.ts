@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 
 import {
   OpenSearchService,
+  CASE_DIGESTS_INDEX,
   DERIVATIVES_INDEX,
   KEYWORD_INDEX,
   KEYWORD_INDEX_PHYSICAL,
@@ -94,13 +95,14 @@ describe('OpenSearchService', () => {
 
       const result = await service.ensureIndexes();
 
-      // Four since C2 added the derivatives index to INDEX_TOPOLOGY — boot
-      // bootstrap walks the same topology the rebuild job does.
+      // Five: C2 added the derivatives index and the case-digests corpus added
+      // its own — boot bootstrap walks the same topology the rebuild job does.
       expect(result.created).toEqual([
         KEYWORD_INDEX,
         VECTOR_INDEX,
         USER_UPLOADS_INDEX,
         DERIVATIVES_INDEX,
+        CASE_DIGESTS_INDEX,
       ]);
       expect(mockClient.indices.create).toHaveBeenCalledWith(
         expect.objectContaining({ index: KEYWORD_INDEX_PHYSICAL }),
@@ -118,7 +120,7 @@ describe('OpenSearchService', () => {
 
       const result = await service.ensureIndexes();
 
-      expect(result.existing).toHaveLength(4);
+      expect(result.existing).toHaveLength(5);
       expect(mockClient.indices.create).not.toHaveBeenCalled();
       expect(mockClient.indices.putAlias).not.toHaveBeenCalled();
     });
@@ -136,6 +138,7 @@ describe('OpenSearchService', () => {
         VECTOR_INDEX,
         USER_UPLOADS_INDEX,
         DERIVATIVES_INDEX,
+        CASE_DIGESTS_INDEX,
       ]);
       expect(mockClient.indices.create).not.toHaveBeenCalled();
       expect(mockClient.indices.delete).not.toHaveBeenCalled();
