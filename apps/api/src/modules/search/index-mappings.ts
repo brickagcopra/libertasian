@@ -31,12 +31,14 @@ export const KEYWORD_INDEX = 'legal_documents_keyword';
 export const VECTOR_INDEX = 'legal_documents_vector';
 export const USER_UPLOADS_INDEX = 'user_uploads_searchable';
 export const DERIVATIVES_INDEX = 'derivative_artifacts';
+export const CASE_DIGESTS_INDEX = 'case_digests';
 
 /** Current physical index backing each alias. */
 export const KEYWORD_INDEX_PHYSICAL = `${KEYWORD_INDEX}_${INDEX_VERSION}`;
 export const VECTOR_INDEX_PHYSICAL = `${VECTOR_INDEX}_${INDEX_VERSION}`;
 export const USER_UPLOADS_INDEX_PHYSICAL = `${USER_UPLOADS_INDEX}_${INDEX_VERSION}`;
 export const DERIVATIVES_INDEX_PHYSICAL = `${DERIVATIVES_INDEX}_${INDEX_VERSION}`;
+export const CASE_DIGESTS_INDEX_PHYSICAL = `${CASE_DIGESTS_INDEX}_${INDEX_VERSION}`;
 
 /** Default embedding dimension — `BAAI/bge-small-en-v1.5` emits 384. */
 export const DEFAULT_EMBEDDING_DIM = 384;
@@ -363,6 +365,114 @@ export function buildDerivativesIndexMapping(): Record<string, unknown> {
   };
 }
 
+/**
+ * Case digests (~17k rows) — the `digests` table, which is a SEPARATE table from
+ * `derivative_artifacts` and which no index has ever touched. `derivative_artifacts`
+ * holds zero `case_digest` rows, so the derivatives index does not cover these.
+ *
+ * Today the only text search over digests is `GET /digests/search`, which is
+ * `title ILIKE '%q%'`. Digest titles are `"Digest: <CASE CAPTION>"`, so a query
+ * for `estafa`, `negligence`, `rape` or `bigamy` returns zero rows even though
+ * the doctrine and ruling prose contains them. This index makes those bodies
+ * reachable.
+ *
+ * **BM25 only — no `knn_vector` field, deliberately.** Same reasoning as the
+ * derivatives index: digests are short and heavily titled, and are already
+ * reachable semantically through the decision they derive from. Adding a vector
+ * field later is a new physical index plus an alias flip, like any other mapping
+ * change — nothing here is one-way.
+ *
+ * **SECURITY — no `organization_id` and no `user_id`, deliberately.** The
+ * derivatives index omits `organization_id` entirely and prod verification
+ * confirmed 0 of 99,994 docs carry it. This index does the same, and goes
+ * further: the indexer writes ONLY rows with `visibility = 'public_editorial'`,
+ * so no private or org-scoped digest ever enters it. With `dynamic: 'strict'`
+ * that is enforced by OpenSearch rather than by convention — were the indexer to
+ * regress and emit a tenant identifier, the write would fail with
+ * `strict_dynamic_mapping_exception` instead of silently publishing it. An index
+ * that cannot hold a tenant identifier cannot leak one through highlight
+ * fragments, `_source`, `fields` or aggregations. Org-scoped digest search, if
+ * it is ever wanted, is a SEPARATE index with a required visibility filter.
+ */
+export function buildCaseDigestsIndexMapping(): Record<string, unknown> {
+  return {
+    settings: BASE_SETTINGS,
+    mappings: {
+      dynamic: 'strict',
+      properties: {
+        // --- full text: every prose field of a digest ---
+        title: {
+          type: 'text',
+          analyzer: 'legal_analyzer',
+          search_analyzer: 'legal_search_analyzer',
+          fields: {
+            keyword: { type: 'keyword', ignore_above: 512 },
+            suggest: { type: 'search_as_you_type', analyzer: 'legal_analyzer' },
+          },
+        },
+        // No `.keyword` sub-fields on the body fields: none is filtered or
+        // aggregated on, and digest prose is long enough that they would be
+        // pure index bloat. Same call as `body_text` on the derivatives index.
+        summary: {
+          type: 'text',
+          analyzer: 'legal_analyzer',
+          search_analyzer: 'legal_search_analyzer',
+        },
+        facts: {
+          type: 'text',
+          analyzer: 'legal_analyzer',
+          search_analyzer: 'legal_search_analyzer',
+        },
+        issues: {
+          type: 'text',
+          analyzer: 'legal_analyzer',
+          search_analyzer: 'legal_search_analyzer',
+        },
+        ruling: {
+          type: 'text',
+          analyzer: 'legal_analyzer',
+          search_analyzer: 'legal_search_analyzer',
+        },
+        doctrine: {
+          type: 'text',
+          analyzer: 'legal_analyzer',
+          search_analyzer: 'legal_search_analyzer',
+        },
+        dispositive: {
+          type: 'text',
+          analyzer: 'legal_analyzer',
+          search_analyzer: 'legal_search_analyzer',
+        },
+        petitioner_arguments: {
+          type: 'text',
+          analyzer: 'legal_analyzer',
+          search_analyzer: 'legal_search_analyzer',
+        },
+        respondent_arguments: {
+          type: 'text',
+          analyzer: 'legal_analyzer',
+          search_analyzer: 'legal_search_analyzer',
+        },
+
+        // --- identity / filterable metadata ---
+        digest_id: { type: 'keyword' },
+        legal_document_id: { type: 'keyword' },
+        digest_type: { type: 'keyword' },
+        // Always 'public_editorial' by construction — mapped so the value is
+        // inspectable and assertable, not because anything filters on it.
+        visibility: { type: 'keyword' },
+        review_status: { type: 'keyword' },
+        source_origin: { type: 'keyword' },
+
+        // --- numerics / dates ---
+        confidence_score: { type: 'float' },
+        created_at: { type: 'date' },
+        updated_at: { type: 'date' },
+      },
+    },
+  };
+}
+
 export interface IndexTopologyEntry {
   alias: string;
   physical: string;
@@ -383,11 +493,25 @@ export const DERIVATIVES_INDEX_ENTRY: IndexTopologyEntry = {
 };
 
 /**
- * The four logical indices, in creation order.
+ * The case-digests index entry.
  *
- * The derivatives entry is last on purpose: the keyword index is the one that
- * fixes search, so it is built and verified first, and a derivatives failure
- * cannot delay or destabilise it.
+ * Appended to `INDEX_TOPOLOGY` LAST, after the derivatives entry, for the same
+ * reason that entry is after the first three: the keyword index is the one that
+ * fixes search, so it is built and verified first, and a digest failure must not
+ * delay or destabilise it.
+ */
+export const CASE_DIGESTS_INDEX_ENTRY: IndexTopologyEntry = {
+  alias: CASE_DIGESTS_INDEX,
+  physical: CASE_DIGESTS_INDEX_PHYSICAL,
+  buildMapping: () => buildCaseDigestsIndexMapping(),
+};
+
+/**
+ * The five logical indices, in creation order.
+ *
+ * The derivatives and case-digests entries are last on purpose: the keyword
+ * index is the one that fixes search, so it is built and verified first, and a
+ * failure in either derivative corpus cannot delay or destabilise it.
  */
 export const INDEX_TOPOLOGY: readonly IndexTopologyEntry[] = [
   {
@@ -406,4 +530,5 @@ export const INDEX_TOPOLOGY: readonly IndexTopologyEntry[] = [
     buildMapping: () => buildUserUploadsIndexMapping(),
   },
   DERIVATIVES_INDEX_ENTRY,
+  CASE_DIGESTS_INDEX_ENTRY,
 ] as const;

@@ -1,5 +1,8 @@
 import { MCQ_FORBIDDEN_KEYS } from './derivative-extract';
 import {
+  CASE_DIGESTS_INDEX,
+  CASE_DIGESTS_INDEX_ENTRY,
+  CASE_DIGESTS_INDEX_PHYSICAL,
   DERIVATIVES_INDEX,
   DERIVATIVES_INDEX_ENTRY,
   DERIVATIVES_INDEX_PHYSICAL,
@@ -9,6 +12,7 @@ import {
   KEYWORD_INDEX_PHYSICAL,
   USER_UPLOADS_INDEX,
   VECTOR_INDEX,
+  buildCaseDigestsIndexMapping,
   buildDerivativesIndexMapping,
   buildKeywordIndexMapping,
   buildUserUploadsIndexMapping,
@@ -28,6 +32,7 @@ describe('index topology', () => {
       VECTOR_INDEX,
       USER_UPLOADS_INDEX,
       DERIVATIVES_INDEX,
+      CASE_DIGESTS_INDEX,
     ]);
     for (const entry of INDEX_TOPOLOGY) {
       expect(entry.physical).toBe(`${entry.alias}_${INDEX_VERSION}`);
@@ -239,16 +244,94 @@ describe('derivatives index mapping', () => {
     expect(DERIVATIVES_INDEX_ENTRY.physical).toBe(DERIVATIVES_INDEX_PHYSICAL);
   });
 
-  // C2 wired this in. Exact count, not `>=`: a fifth index appearing without a
+  // C2 wired this in. Exact count, not `>=`: a sixth index appearing without a
   // deliberate edit here means something was added to the topology by accident,
   // and every entry in it gets created and aliased by the rebuild job.
-  it('is wired into INDEX_TOPOLOGY as the fourth and last entry', () => {
-    expect(INDEX_TOPOLOGY).toHaveLength(4);
+  it('is wired into INDEX_TOPOLOGY as the fourth entry', () => {
+    expect(INDEX_TOPOLOGY).toHaveLength(5);
     expect(INDEX_TOPOLOGY.map((entry) => entry.alias)).toContain(DERIVATIVES_INDEX);
     expect(INDEX_TOPOLOGY[3]).toBe(DERIVATIVES_INDEX_ENTRY);
   });
 
   it('matches the mapping snapshot', () => {
     expect(buildDerivativesIndexMapping()).toMatchSnapshot();
+  });
+});
+
+describe('case digests index mapping', () => {
+  const props = () =>
+    (buildCaseDigestsIndexMapping()['mappings'] as { properties: Props }).properties;
+
+  it('is strict so a mapping gap fails loudly instead of auto-mapping', () => {
+    const mappings = buildCaseDigestsIndexMapping()['mappings'] as Record<string, unknown>;
+    expect(mappings['dynamic']).toBe('strict');
+  });
+
+  // THE security property of this index. It holds only public_editorial rows,
+  // and it has no field that could carry a tenant identifier. Under
+  // `dynamic: 'strict'` that is enforced by OpenSearch, not by convention: an
+  // indexer regression that emitted one would fail the write with
+  // strict_dynamic_mapping_exception rather than silently publishing it. An
+  // index that cannot HOLD a tenant id cannot leak one through highlight
+  // fragments, _source, fields or aggregations.
+  it.each(['organization_id', 'user_id', 'org_id', 'owner_id', 'assigned_reviewer_user_id'])(
+    'has no %s field — this index is not multi-tenant and must never become so',
+    (field) => {
+      expect(props()[field]).toBeUndefined();
+    },
+  );
+
+  it('maps every prose field as analysed text', () => {
+    for (const field of [
+      'title',
+      'summary',
+      'facts',
+      'issues',
+      'ruling',
+      'doctrine',
+      'dispositive',
+      'petitioner_arguments',
+      'respondent_arguments',
+    ]) {
+      expect(props()[field]?.['type']).toBe('text');
+      expect(props()[field]?.['analyzer']).toBe('legal_analyzer');
+    }
+  });
+
+  it.each([
+    'digest_id',
+    'legal_document_id',
+    'digest_type',
+    'visibility',
+    'review_status',
+    'source_origin',
+  ])('maps %s as keyword so term filters actually match', (field) => {
+    expect(props()[field]).toEqual({ type: 'keyword' });
+  });
+
+  it('maps confidence_score as float and the timestamps as dates', () => {
+    expect(props()['confidence_score']).toEqual({ type: 'float' });
+    expect(props()['created_at']).toEqual({ type: 'date' });
+    expect(props()['updated_at']).toEqual({ type: 'date' });
+  });
+
+  // BM25 only. A kNN clause against this index would match nothing, so the
+  // absence of the field and the absence of the clause have to stay in step.
+  it('has no embedding field — this corpus is BM25 only', () => {
+    const mapping = buildCaseDigestsIndexMapping();
+    expect(props()['embedding_vector']).toBeUndefined();
+    expect(JSON.stringify(mapping)).not.toContain('knn');
+    expect((mapping['settings'] as Record<string, unknown>)['index.knn']).toBeUndefined();
+  });
+
+  it('is wired into INDEX_TOPOLOGY as the fifth and last entry', () => {
+    expect(INDEX_TOPOLOGY).toHaveLength(5);
+    expect(INDEX_TOPOLOGY[4]).toBe(CASE_DIGESTS_INDEX_ENTRY);
+    expect(CASE_DIGESTS_INDEX_ENTRY.alias).toBe(CASE_DIGESTS_INDEX);
+    expect(CASE_DIGESTS_INDEX_ENTRY.physical).toBe(CASE_DIGESTS_INDEX_PHYSICAL);
+  });
+
+  it('matches the mapping snapshot', () => {
+    expect(buildCaseDigestsIndexMapping()).toMatchSnapshot();
   });
 });

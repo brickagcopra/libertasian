@@ -20,8 +20,8 @@ vi.mock('./ai-summary-results', () => ({
 }));
 
 vi.mock('./digests-results', () => ({
-  DigestsResults: ({ documentIds }: { documentIds: string[] | null }) => (
-    <div data-testid="digests-results">{documentIds?.length ?? 0} doc IDs</div>
+  DigestsResults: ({ query }: { query: string | null }) => (
+    <div data-testid="digests-results">Digests for: {query}</div>
   ),
 }));
 
@@ -52,7 +52,6 @@ const defaultProps = {
   error: null,
   page: 1,
   onPageChange: vi.fn(),
-  documentIds: ['doc-1', 'doc-2'],
 };
 
 describe('SearchTabs', () => {
@@ -109,7 +108,9 @@ describe('SearchTabs', () => {
     await user.click(digestsTab);
 
     expect(screen.getByTestId('digests-results')).toBeDefined();
-    expect(screen.getByText('2 doc IDs')).toBeDefined();
+    // The tab is driven by the query string now, not by the ids the full-text
+    // arm happened to return.
+    expect(screen.getByText('Digests for: test query')).toBeDefined();
   });
 
   it('lazy-loads AI Summary only when tab is active', async () => {

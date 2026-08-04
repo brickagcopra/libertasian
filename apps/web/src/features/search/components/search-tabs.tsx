@@ -19,7 +19,6 @@ interface SearchTabsProps {
   error: Error | null;
   page: number;
   onPageChange: (page: number) => void;
-  documentIds: string[] | null;
 }
 
 export function SearchTabs({
@@ -30,13 +29,10 @@ export function SearchTabs({
   error,
   page,
   onPageChange,
-  documentIds,
 }: SearchTabsProps) {
   const [activeTab, setActiveTab] = useState<SearchTab>('fulltext');
-  const { data: digestCount } = useDigestCount(
-    documentIds,
-    !!documentIds && documentIds.length > 0,
-  );
+  // Same query key as the list below, so this is one request, not two.
+  const { data: digestCount } = useDigestCount(query ?? '', !!query);
 
   return (
     <Tabs
@@ -86,9 +82,7 @@ export function SearchTabs({
       </TabsContent>
 
       <TabsContent value="digests">
-        {activeTab === 'digests' && (
-          <DigestsResults documentIds={documentIds} />
-        )}
+        {activeTab === 'digests' && <DigestsResults query={query} />}
       </TabsContent>
     </Tabs>
   );

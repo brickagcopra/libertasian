@@ -29,7 +29,7 @@ const COURTS: string[] = [...COURT_VALUES];
  * Corpora a single `POST /search` call may address. `documents` is the default
  * and reproduces pre-C3 behaviour exactly; see the `scope` field below.
  */
-export const SEARCH_SCOPES = ['documents', 'derivatives', 'all'] as const;
+export const SEARCH_SCOPES = ['documents', 'derivatives', 'digests', 'all'] as const;
 export type SearchScope = (typeof SEARCH_SCOPES)[number];
 
 /** Mutable copy for `@IsIn`, same reason as DOCUMENT_TYPES above. */
@@ -141,8 +141,10 @@ export class SearchQueryDto {
     description:
       'Which corpora to search. `documents` (the default) is the legal-document ' +
       'corpus and is exactly the pre-C3 behaviour. `derivatives` searches ' +
-      'derivative artifacts (digests, outlines, flashcards, model answers). ' +
-      '`all` searches both, and results then carry a `kind` discriminator. ' +
+      'derivative artifacts (outlines, flashcards, model answers). `digests` ' +
+      'searches the case-digest corpus — a SEPARATE table from ' +
+      'derivative_artifacts, which holds no case_digest rows. `all` searches ' +
+      'every corpus, and results then carry a `kind` discriminator. ' +
       'OMITTING this field returns the legacy response shape byte-for-byte — ' +
       'no `kind`, no added meta — so pre-C3 clients are unaffected.',
     enum: SCOPES,

@@ -78,12 +78,6 @@ export default function SearchPage() {
 
   const searchQuota = extractSearchQuota403(error);
 
-  // Deduplicate document IDs from search results
-  const documentIds = useMemo(() => {
-    if (results.length === 0) return null;
-    return [...new Set(results.map((r) => r.source.document_id))];
-  }, [results]);
-
   return (
     <div className="space-y-6">
       <div>
@@ -204,7 +198,6 @@ export default function SearchPage() {
           error={error instanceof Error ? error : error ? new Error(String(error)) : null}
           page={page}
           onPageChange={handlePageChange}
-          documentIds={documentIds}
         />
       )}
 

@@ -5,6 +5,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import {
+  CASE_DIGESTS_INDEX,
+  CASE_DIGESTS_INDEX_PHYSICAL,
   DERIVATIVES_INDEX,
   DERIVATIVES_INDEX_PHYSICAL,
   KEYWORD_INDEX,
@@ -37,6 +39,7 @@ interface OpenSearchMock {
   createPhysicalIndex: jest.Mock;
   bulkIndexDocuments: jest.Mock;
   bulkIndexDerivatives: jest.Mock;
+  bulkIndexCaseDigests: jest.Mock;
   setRefreshInterval: jest.Mock;
   reindexInto: jest.Mock;
   refreshIndex: jest.Mock;
@@ -48,6 +51,32 @@ interface OpenSearchMock {
 interface PrismaMock {
   legalDocument: { count: jest.Mock; findMany: jest.Mock };
   derivativeArtifact: { count: jest.Mock; findMany: jest.Mock };
+  digest: { count: jest.Mock; findMany: jest.Mock };
+}
+
+/** A `digests` row as the rebuild job selects it. */
+function buildCaseDigest(id: string, overrides: Record<string, unknown> = {}) {
+  return {
+    id,
+    legalDocumentId: 'doc-1',
+    title: `Digest: PEOPLE v. SUBJECT ${id}`,
+    digestType: 'case_digest',
+    summary: 'Accused was convicted of estafa under Article 315.',
+    facts: 'The complainant delivered goods on consignment.',
+    issues: 'Whether misappropriation was proven beyond reasonable doubt.',
+    ruling: 'The Court affirmed the conviction.',
+    doctrine: 'Estafa requires abuse of confidence and resulting damage.',
+    dispositive: 'WHEREFORE, the appeal is DENIED.',
+    petitionerArguments: 'Petitioner argued lack of demand.',
+    respondentArguments: 'Respondent argued demand is not an element.',
+    visibility: 'public_editorial',
+    reviewStatus: 'approved',
+    sourceOrigin: 'official_pipeline',
+    confidenceScore: 0.83,
+    createdAt: new Date('2026-04-20T00:00:00.000Z'),
+    updatedAt: new Date('2026-05-01T00:00:00.000Z'),
+    ...overrides,
+  };
 }
 
 /** A `derivative_artifacts` row as the rebuild job selects it. */
@@ -113,6 +142,8 @@ describe('IndexRebuildService', () => {
   let pushedCount: number;
   /** Count returned for the derivatives destination index. */
   let derivativeDestCount: number;
+  /** Count returned for the case-digests destination index. */
+  let caseDigestDestCount: number;
   /** What a mocked `reindexInto` reports as measured on both sides. */
   let copyCounts: { reportedCreated: number | null; sourceCount: number; destCount: number };
 
@@ -121,6 +152,7 @@ describe('IndexRebuildService', () => {
     verifiedCount = 2; // 1 doc payload + 1 section payload
     pushedCount = 2;
     derivativeDestCount = 1; // one derivative row in the default fixture
+    caseDigestDestCount = 1; // one public_editorial digest in the default fixture
     // The production shape: `_reindex` claims created: 0 while the copy in fact
     // moved every document. The counts are the truth.
     copyCounts = { reportedCreated: 0, sourceCount: 12_196, destCount: 12_196 };
@@ -141,6 +173,10 @@ describe('IndexRebuildService', () => {
         calls.push(`bulkDerivatives:${target}:${docs.length}`);
         return { indexed: docs.length };
       }),
+      bulkIndexCaseDigests: jest.fn(async (docs: unknown[], target: string) => {
+        calls.push(`bulkCaseDigests:${target}:${docs.length}`);
+        return { indexed: docs.length };
+      }),
       setRefreshInterval: jest.fn(async (name: string, interval: string) => {
         calls.push(`refreshInterval:${name}:${interval}`);
       }),
@@ -153,7 +189,9 @@ describe('IndexRebuildService', () => {
       }),
       countIndex: jest.fn(async (name: string) => {
         calls.push(`count:${name}`);
-        return name.startsWith(DERIVATIVES_INDEX) ? derivativeDestCount : verifiedCount;
+        if (name.startsWith(DERIVATIVES_INDEX)) return derivativeDestCount;
+        if (name.startsWith(CASE_DIGESTS_INDEX)) return caseDigestDestCount;
+        return verifiedCount;
       }),
       swapAlias: jest.fn(async (options: { alias: string; target: string; removeConcreteIndex?: boolean }) => {
         calls.push(
@@ -180,6 +218,13 @@ describe('IndexRebuildService', () => {
         findMany: jest
           .fn()
           .mockResolvedValueOnce([buildDerivative('der-1')])
+          .mockResolvedValue([]),
+      },
+      digest: {
+        count: jest.fn(async () => 1),
+        findMany: jest
+          .fn()
+          .mockResolvedValueOnce([buildCaseDigest('dig-1')])
           .mockResolvedValue([]),
       },
     };
@@ -235,6 +280,7 @@ describe('IndexRebuildService', () => {
         `create:${VECTOR_INDEX_PHYSICAL}`,
         `create:${USER_UPLOADS_INDEX_PHYSICAL}`,
         `create:${DERIVATIVES_INDEX_PHYSICAL}`,
+        `create:${CASE_DIGESTS_INDEX_PHYSICAL}`,
         `bulk:${KEYWORD_INDEX_PHYSICAL}:2`,
         // Derivative phase: relax refresh, bulk, restore refresh, then measure.
         `refreshInterval:${DERIVATIVES_INDEX_PHYSICAL}:30s`,
@@ -242,12 +288,21 @@ describe('IndexRebuildService', () => {
         `refreshInterval:${DERIVATIVES_INDEX_PHYSICAL}:5s`,
         `refresh:${DERIVATIVES_INDEX_PHYSICAL}`,
         `count:${DERIVATIVES_INDEX_PHYSICAL}`,
+        // Case-digest phase: same shape, and it runs AFTER derivatives and
+        // BEFORE the keyword verification — so a digest failure can never
+        // delay or destabilise the index that fixes search.
+        `refreshInterval:${CASE_DIGESTS_INDEX_PHYSICAL}:30s`,
+        `bulkCaseDigests:${CASE_DIGESTS_INDEX_PHYSICAL}:1`,
+        `refreshInterval:${CASE_DIGESTS_INDEX_PHYSICAL}:5s`,
+        `refresh:${CASE_DIGESTS_INDEX_PHYSICAL}`,
+        `count:${CASE_DIGESTS_INDEX_PHYSICAL}`,
         `refresh:${KEYWORD_INDEX_PHYSICAL}`,
         `count:${KEYWORD_INDEX_PHYSICAL}`,
         `swap:${KEYWORD_INDEX}->${KEYWORD_INDEX_PHYSICAL}`,
         `swap:${VECTOR_INDEX}->${VECTOR_INDEX_PHYSICAL}`,
         `swap:${USER_UPLOADS_INDEX}->${USER_UPLOADS_INDEX_PHYSICAL}`,
         `swap:${DERIVATIVES_INDEX}->${DERIVATIVES_INDEX_PHYSICAL}`,
+        `swap:${CASE_DIGESTS_INDEX}->${CASE_DIGESTS_INDEX_PHYSICAL}`,
       ]);
     });
 
@@ -689,6 +744,260 @@ describe('IndexRebuildService', () => {
     });
   });
 
+  describe('case digest ingestion', () => {
+    /** The payload the service handed to `_bulk` for the first case digest. */
+    const firstPayload = (): Record<string, unknown> => {
+      const [docs] = openSearch.bulkIndexCaseDigests.mock.calls[0] as [
+        Record<string, unknown>[],
+        string,
+      ];
+      return docs[0]!;
+    };
+
+    // THE authorization test for this index. Private and org-scoped digests must
+    // never enter it: the mapping has no organization_id/user_id field, and this
+    // is the write-time half of that guarantee. The predicate must be identical
+    // on the count and on EVERY page, or verification compares mismatched
+    // populations.
+    it('indexes ONLY public_editorial rows, on the count and on every page', async () => {
+      prisma.digest.findMany.mockReset();
+      prisma.digest.findMany
+        .mockResolvedValueOnce([buildCaseDigest('dig-1'), buildCaseDigest('dig-2')])
+        .mockResolvedValueOnce([buildCaseDigest('dig-3')])
+        .mockResolvedValue([]);
+      prisma.digest.count.mockResolvedValue(3);
+      caseDigestDestCount = 3;
+
+      await run();
+
+      expect(prisma.digest.count).toHaveBeenCalledWith({
+        where: { visibility: 'public_editorial' },
+      });
+      for (const [args] of prisma.digest.findMany.mock.calls as [
+        Record<string, unknown>,
+      ][]) {
+        expect(args['where']).toEqual({ visibility: 'public_editorial' });
+      }
+    });
+
+    // The payload type has no field for a tenant identifier; this asserts the
+    // runtime object matches, so nothing can reach the index via a spread.
+    it('never emits organization_id or user_id in the payload', async () => {
+      await run();
+
+      const payload = firstPayload();
+      expect(payload).not.toHaveProperty('organization_id');
+      expect(payload).not.toHaveProperty('user_id');
+      expect(Object.keys(payload)).not.toContain('organizationId');
+      expect(Object.keys(payload)).not.toContain('userId');
+    });
+
+    it('paginates by keyset, never OFFSET', async () => {
+      prisma.digest.findMany.mockReset();
+      prisma.digest.findMany
+        .mockResolvedValueOnce([buildCaseDigest('dig-1'), buildCaseDigest('dig-2')])
+        .mockResolvedValueOnce([buildCaseDigest('dig-3')])
+        .mockResolvedValue([]);
+      prisma.digest.count.mockResolvedValue(3);
+      caseDigestDestCount = 3;
+
+      await run();
+
+      const [first, second] = prisma.digest.findMany.mock.calls as [
+        [Record<string, unknown>],
+        [Record<string, unknown>],
+      ];
+      expect(first[0]['skip']).toBeUndefined();
+      expect(first[0]['cursor']).toBeUndefined();
+      expect(first[0]['orderBy']).toEqual({ id: 'asc' });
+      expect(second[0]['cursor']).toEqual({ id: 'dig-2' });
+      expect(second[0]['skip']).toBe(1);
+    });
+
+    it('reads and writes in batches of 500 (CLAUDE.md bulk size)', async () => {
+      await run();
+
+      const [args] = prisma.digest.findMany.mock.calls[0] as [Record<string, unknown>];
+      expect(args['take']).toBe(500);
+
+      const [, target] = openSearch.bulkIndexCaseDigests.mock.calls[0] as [
+        unknown[],
+        string,
+      ];
+      expect(target).toBe(CASE_DIGESTS_INDEX_PHYSICAL);
+    });
+
+    it('maps every prose field the mapping declares', async () => {
+      await run();
+
+      expect(firstPayload()).toEqual({
+        digest_id: 'dig-1',
+        legal_document_id: 'doc-1',
+        title: 'Digest: PEOPLE v. SUBJECT dig-1',
+        digest_type: 'case_digest',
+        summary: 'Accused was convicted of estafa under Article 315.',
+        facts: 'The complainant delivered goods on consignment.',
+        issues: 'Whether misappropriation was proven beyond reasonable doubt.',
+        ruling: 'The Court affirmed the conviction.',
+        doctrine: 'Estafa requires abuse of confidence and resulting damage.',
+        dispositive: 'WHEREFORE, the appeal is DENIED.',
+        petitioner_arguments: 'Petitioner argued lack of demand.',
+        respondent_arguments: 'Respondent argued demand is not an element.',
+        visibility: 'public_editorial',
+        review_status: 'approved',
+        source_origin: 'official_pipeline',
+        confidence_score: 0.83,
+        created_at: '2026-04-20T00:00:00.000Z',
+        updated_at: '2026-05-01T00:00:00.000Z',
+      });
+    });
+
+    // Absent, not null: a `dynamic: 'strict'` mapping accepts null, but an
+    // absent field is what `exists` and highlight behaviour actually key on.
+    it('omits nullable prose fields rather than writing null', async () => {
+      prisma.digest.findMany.mockReset();
+      prisma.digest.findMany
+        .mockResolvedValueOnce([
+          buildCaseDigest('dig-1', {
+            legalDocumentId: null,
+            summary: null,
+            doctrine: null,
+            dispositive: null,
+            petitionerArguments: null,
+            respondentArguments: null,
+            confidenceScore: null,
+          }),
+        ])
+        .mockResolvedValue([]);
+
+      await run();
+
+      const payload = firstPayload();
+      for (const key of [
+        'legal_document_id',
+        'summary',
+        'doctrine',
+        'dispositive',
+        'petitioner_arguments',
+        'respondent_arguments',
+        'confidence_score',
+      ]) {
+        expect(payload).not.toHaveProperty(key);
+      }
+      // The non-null fields still landed.
+      expect(payload['ruling']).toBe('The Court affirmed the conviction.');
+    });
+
+    // Unreviewed digests are indexed: `visibility` is the authorisation
+    // boundary, `review_status` is editorial workflow state. Clients render a
+    // status badge, so an unreviewed row self-labels.
+    it('indexes rows regardless of review_status', async () => {
+      prisma.digest.findMany.mockReset();
+      prisma.digest.findMany
+        .mockResolvedValueOnce([
+          buildCaseDigest('dig-1', { reviewStatus: 'needs_human_review' }),
+        ])
+        .mockResolvedValue([]);
+
+      await run();
+
+      expect(firstPayload()['review_status']).toBe('needs_human_review');
+    });
+
+    it('restores the refresh interval even when the bulk write throws', async () => {
+      openSearch.bulkIndexCaseDigests.mockRejectedValue(new Error('bulk exploded'));
+
+      await run();
+
+      expect(calls).toContain(`refreshInterval:${CASE_DIGESTS_INDEX_PHYSICAL}:5s`);
+    });
+
+    it('reports verified counts measured on both sides', async () => {
+      prisma.digest.count.mockResolvedValue(16_995);
+      caseDigestDestCount = 16_995;
+      prisma.digest.findMany.mockReset();
+      prisma.digest.findMany
+        .mockResolvedValueOnce([buildCaseDigest('dig-1')])
+        .mockResolvedValue([]);
+
+      const { result } = await run();
+
+      expect(result.caseDigestCopy).toEqual(
+        expect.objectContaining({
+          source: 'postgres:digests',
+          dest: CASE_DIGESTS_INDEX_PHYSICAL,
+          status: 'verified',
+          sourceCount: 16_995,
+          destCount: 16_995,
+        }),
+      );
+    });
+
+    it('reports mismatch and does NOT swap the alias when the count is short', async () => {
+      prisma.digest.count.mockResolvedValue(1000);
+      caseDigestDestCount = 10;
+
+      const { result } = await run();
+
+      expect(result.caseDigestCopy?.status).toBe('mismatch');
+      expect(result.aliasesSkipped).toEqual([CASE_DIGESTS_INDEX]);
+      expect(calls).not.toContain(
+        `swap:${CASE_DIGESTS_INDEX}->${CASE_DIGESTS_INDEX_PHYSICAL}`,
+      );
+    });
+
+    it('treats a per-item bulk rejection as failure, not as partial success', async () => {
+      openSearch.bulkIndexCaseDigests.mockRejectedValue(
+        new Error('rejected 1 of 500 case digest(s): strict_dynamic_mapping_exception'),
+      );
+
+      const { result } = await run();
+
+      expect(result.caseDigestCopy?.status).toBe('failed');
+      expect(result.caseDigestCopy?.error).toMatch(/strict_dynamic_mapping_exception/);
+      expect(result.aliasesSkipped).toEqual([CASE_DIGESTS_INDEX]);
+    });
+
+    it('reports source_missing rather than mismatch when there are no rows', async () => {
+      prisma.digest.count.mockResolvedValue(0);
+      prisma.digest.findMany.mockReset();
+      prisma.digest.findMany.mockResolvedValue([]);
+
+      const { result } = await run();
+
+      expect(result.caseDigestCopy?.status).toBe('source_missing');
+      expect(result.aliasesSkipped).toEqual([]);
+      expect(calls).toContain(`swap:${CASE_DIGESTS_INDEX}->${CASE_DIGESTS_INDEX_PHYSICAL}`);
+    });
+
+    // A digest failure must not take the keyword index down with it — that is
+    // the whole reason this phase runs last.
+    it('does not abort the rebuild when the digest phase fails', async () => {
+      openSearch.bulkIndexCaseDigests.mockRejectedValue(new Error('boom'));
+
+      const { result } = await run();
+
+      expect(result.aliasSwapped).toBe(true);
+      expect(calls).toContain(`swap:${KEYWORD_INDEX}->${KEYWORD_INDEX_PHYSICAL}`);
+    });
+
+    it('streams case digest progress alongside the other counters', async () => {
+      const { progress } = await run();
+      const digestPhase = progress.filter(
+        (entry) => entry.phase === 'reindexing_case_digests',
+      );
+      expect(digestPhase.length).toBeGreaterThan(0);
+
+      const last = progress[progress.length - 1]!;
+      expect(last.caseDigestsTotal).toBe(1);
+      expect(last.caseDigestsProcessed).toBe(1);
+      expect(last.caseDigestsPushed).toBe(1);
+      // The pre-existing counters are untouched.
+      expect(last.derivativesTotal).toBe(1);
+      expect(last.documentsTotal).toBe(1);
+    });
+  });
+
   describe('isExpectedPhysicalTarget', () => {
     const base = 'legal_documents_keyword_v3';
 
@@ -772,16 +1081,17 @@ describe('IndexRebuildService', () => {
       ).toBe(false);
     });
 
-    it('covers all four aliases', async () => {
+    it('covers all five aliases', async () => {
       targetsFor({
         [KEYWORD_INDEX]: [`${KEYWORD_INDEX_PHYSICAL}_r1`],
         [VECTOR_INDEX]: [`${VECTOR_INDEX_PHYSICAL}_r1`],
         [USER_UPLOADS_INDEX]: [`${USER_UPLOADS_INDEX_PHYSICAL}_r1`],
         [DERIVATIVES_INDEX]: [`${DERIVATIVES_INDEX_PHYSICAL}_r1`],
+        [CASE_DIGESTS_INDEX]: [`${CASE_DIGESTS_INDEX_PHYSICAL}_r1`],
       });
 
       const rows = await service.describeTopology();
-      expect(rows).toHaveLength(4);
+      expect(rows).toHaveLength(5);
       expect(rows.every((row) => row.matchesExpected)).toBe(true);
     });
   });

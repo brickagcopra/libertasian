@@ -6,7 +6,7 @@ import { useSearchDigests } from '../hooks/use-search-digests';
 import type { SearchDigestItem } from '../types';
 
 interface DigestsResultsProps {
-  documentIds: string[] | null;
+  query: string | null;
 }
 
 function ReviewStatusBadge({ status }: { status: string }) {
@@ -102,17 +102,14 @@ function DigestCard({ digest }: { digest: SearchDigestItem }) {
   );
 }
 
-export function DigestsResults({ documentIds }: DigestsResultsProps) {
-  const { data, isLoading, error } = useSearchDigests(
-    documentIds,
-    !!documentIds && documentIds.length > 0,
-  );
+export function DigestsResults({ query }: DigestsResultsProps) {
+  const { data, isLoading, error } = useSearchDigests(query ?? '', !!query);
 
-  if (!documentIds || documentIds.length === 0) {
+  if (!query) {
     return (
       <View style={styles.centered}>
         <Text style={styles.emptyText}>
-          Run a search first to find digests for matching documents.
+          Enter a search query to find case digests.
         </Text>
       </View>
     );
@@ -143,9 +140,7 @@ export function DigestsResults({ documentIds }: DigestsResultsProps) {
   if (digests.length === 0) {
     return (
       <View style={styles.centered}>
-        <Text style={styles.emptyText}>
-          No digests found for documents matching your search.
-        </Text>
+        <Text style={styles.emptyText}>No case digests match your search.</Text>
       </View>
     );
   }
