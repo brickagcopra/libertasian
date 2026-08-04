@@ -1,5 +1,6 @@
 import { Alert, View } from 'react-native';
 import { router } from 'expo-router';
+import { useTabBarNav } from '@/features/navigation/use-tab-bar-nav';
 import { ProfileScreen } from '../../components/screens/ProfileScreen';
 import { useAuth } from '../../providers/auth-provider';
 import { useProfile } from '../../features/auth/hooks/use-auth';
@@ -10,6 +11,7 @@ import type { OrganizationRole } from '../../features/auth/types';
 const ADMIN_ROLES: OrganizationRole[] = ['admin', 'editor', 'reviewer'];
 
 export default function SettingsRoute() {
+  const navigate = useTabBarNav();
   const { theme } = useTheme();
   const { user, signOut } = useAuth();
   const { data: profile } = useProfile();
@@ -181,11 +183,7 @@ export default function SettingsRoute() {
         rows={allRows}
         contentTopPadding={12}
         onSettingsPress={() => router.push('/settings/security')}
-        onTabPress={(id) => {
-          if (id === 'home') router.push('/(tabs)');
-          else if (id === 'docs') router.push('/documents');
-          else if (id === 'search') router.push('/(tabs)/search');
-        }}
+        onTabPress={navigate}
       />
     </View>
   );

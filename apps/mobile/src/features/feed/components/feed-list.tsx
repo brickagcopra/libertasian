@@ -25,6 +25,13 @@ interface FeedListProps {
   emptyTitle?: string;
   emptyMessage?: string;
   ListHeaderComponent?: React.ComponentType<unknown>;
+  /**
+   * Extra bottom padding, in points. Opt-in because only the Feed tab renders
+   * the floating pill TabBar over this list — the bookmarks, organization and
+   * user-profile feeds do not, and padding them all would be dead whitespace.
+   * Pass 96 to match `(tabs)/digests.tsx` listContent.
+   */
+  contentBottomPadding?: number;
 }
 
 export function FeedList({
@@ -40,6 +47,7 @@ export function FeedList({
   emptyTitle = 'No posts yet',
   emptyMessage = 'Be the first to share something with the community!',
   ListHeaderComponent,
+  contentBottomPadding,
 }: FeedListProps) {
   const renderItem = useCallback(
     ({ item }: { item: FeedPostItem }) => (
@@ -59,7 +67,11 @@ export function FeedList({
       data={posts}
       renderItem={renderItem}
       keyExtractor={keyExtractor}
-      contentContainerStyle={[styles.content, posts.length === 0 && styles.emptyContent]}
+      contentContainerStyle={[
+        styles.content,
+        posts.length === 0 && styles.emptyContent,
+        contentBottomPadding !== undefined && { paddingBottom: contentBottomPadding },
+      ]}
       refreshControl={
         <RefreshControl
           refreshing={isRefreshing}

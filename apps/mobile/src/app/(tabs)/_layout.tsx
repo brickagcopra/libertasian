@@ -71,6 +71,7 @@ export default function TabsLayout() {
         options={{
           title: 'Library',
           headerShown: false,
+          tabBarStyle: { display: 'none' },
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="library-outline" size={size} color={color} />
           ),
@@ -80,6 +81,7 @@ export default function TabsLayout() {
         name="study"
         options={{
           title: 'Study',
+          tabBarStyle: { display: 'none' },
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="school-outline" size={size} color={color} />
           ),
@@ -89,6 +91,7 @@ export default function TabsLayout() {
         name="scan"
         options={{
           title: 'Scan',
+          tabBarStyle: { display: 'none' },
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="camera-outline" size={size} color={color} />
           ),
@@ -99,6 +102,7 @@ export default function TabsLayout() {
         options={{
           title: 'Feed',
           headerShown: false,
+          tabBarStyle: { display: 'none' },
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="newspaper-outline" size={size} color={color} />
           ),
@@ -108,6 +112,7 @@ export default function TabsLayout() {
         name="workspace"
         options={{
           title: 'Workspace',
+          tabBarStyle: { display: 'none' },
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="briefcase-outline" size={size} color={color} />
           ),

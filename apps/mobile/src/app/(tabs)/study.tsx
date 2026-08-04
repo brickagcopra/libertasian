@@ -10,6 +10,8 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { TabBar } from '@/components/ui/TabBar';
+import { useTabBarNav } from '@/features/navigation/use-tab-bar-nav';
 import { useBarSubjects } from '../../features/study/hooks/use-bar-subjects';
 import { useFlashcardSets } from '../../features/study/hooks/use-flashcard-sets';
 import { useReviewerPacks } from '../../features/study/hooks/use-reviewer-packs';
@@ -27,6 +29,7 @@ function formatStudyTime(totalSecs: number): string {
 }
 
 export default function StudyTab() {
+  const navigate = useTabBarNav();
   const {
     data: subjects,
     isLoading: subjectsLoading,
@@ -51,9 +54,14 @@ export default function StudyTab() {
   }, [refetchSubjects, refetchSets, refetchPacks, refetchReadiness, refetchStudyStats]);
 
   if (subjectsLoading) {
+    // The pill renders here too — a nav bar that vanishes while a tab loads is
+    // the same disappearing-nav problem this screen is being fixed for.
     return (
-      <View style={styles.loadingState}>
-        <ActivityIndicator size="large" color="#1a56db" />
+      <View style={styles.screen}>
+        <View style={styles.loadingState}>
+          <ActivityIndicator size="large" color="#1a56db" />
+        </View>
+        <TabBar active="study" onPress={navigate} />
       </View>
     );
   }
@@ -62,7 +70,9 @@ export default function StudyTab() {
   const flashcardSets = setsData?.data ?? [];
   const reviewerPacks = packsData?.data ?? [];
 
-  return (
+  // Held in a variable rather than returned directly so the floating pill can be
+  // added as a sibling without re-indenting the whole tree.
+  const body = (
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
@@ -311,11 +321,22 @@ export default function StudyTab() {
       </View>
     </ScrollView>
   );
+
+  return (
+    <View style={styles.screen}>
+      {body}
+      {/* Floating pill TabBar — same treatment as (tabs)/digests.tsx. The
+          content's paddingBottom: 96 keeps the last card clear of it. */}
+      <TabBar active="study" onPress={navigate} />
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: '#f3f4f6' },
   container: { flex: 1, backgroundColor: '#f3f4f6' },
-  content: { padding: 12, paddingBottom: 32 },
+  // 96, matching (tabs)/digests.tsx listContent — clears the floating pill.
+  content: { padding: 12, paddingBottom: 96 },
   loadingState: {
     flex: 1,
     alignItems: 'center',

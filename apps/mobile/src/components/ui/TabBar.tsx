@@ -4,7 +4,15 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { bottomInsetPadding } from '@/lib/safe-area';
 import { useTheme } from '@/providers/theme-provider';
 
-export type TabBarItemId = 'home' | 'docs' | 'search' | 'me';
+export type TabBarItemId =
+  | 'home'
+  | 'docs'
+  | 'search'
+  | 'digests'
+  | 'study'
+  | 'feed'
+  | 'workspace'
+  | 'me';
 
 export interface TabBarItem {
   id: TabBarItemId;
@@ -18,16 +26,31 @@ export interface TabBarProps {
   items?: TabBarItem[];
 }
 
+/**
+ * All eight destinations. Scan is deliberately NOT here — it keeps its FAB
+ * (`components/ui/Fab.tsx`), which is the primary capture affordance.
+ */
 const DEFAULT_ITEMS: TabBarItem[] = [
   { id: 'home', label: 'Read', icon: 'home' },
   { id: 'docs', label: 'Library', icon: 'library' },
   { id: 'search', label: 'Search', icon: 'search' },
+  { id: 'digests', label: 'Digests', icon: 'document-text' },
+  { id: 'study', label: 'Study', icon: 'school' },
+  { id: 'feed', label: 'Feed', icon: 'newspaper' },
+  { id: 'workspace', label: 'Work', icon: 'briefcase' },
   { id: 'me', label: 'Me', icon: 'person' },
 ];
 
 /**
  * Floating pill-shaped bottom tab bar. Active item gets an accent background pill.
  * Position absolutely; assumes parent has `position: relative` (most screens do).
+ *
+ * Sizing note: eight slots have to fit a 375pt screen (~44pt each) and stay
+ * legible at 360pt on small Android. Icon 18, label 9, item padding 4 and gap 2
+ * are what make that work — the container height stays 64 and the layout stays
+ * `space-around`. Labels are `numberOfLines={1}` with no ellipsis: "Digests" is
+ * the longest and clipping a character is better than shrinking the type
+ * further. "Work" rather than "Workspace" for the same reason.
  */
 export function TabBar({ active, onPress, items = DEFAULT_ITEMS }: TabBarProps) {
   const { theme } = useTheme();
@@ -66,22 +89,23 @@ export function TabBar({ active, onPress, items = DEFAULT_ITEMS }: TabBarProps) 
             style={{
               flexDirection: 'column',
               alignItems: 'center',
-              gap: 3,
-              paddingHorizontal: 10,
+              gap: 2,
+              paddingHorizontal: 4,
               paddingVertical: 8,
-              borderRadius: 14,
+              borderRadius: 12,
               backgroundColor: isActive ? theme.accent : 'transparent',
             }}
           >
             <Ionicons
               name={isActive ? it.icon : (`${it.icon}-outline` as keyof typeof Ionicons.glyphMap)}
-              size={20}
+              size={18}
               color={isActive ? theme.accentInk : theme.pillInk}
             />
             <Text
+              numberOfLines={1}
               style={{
                 fontFamily: 'Inter_600SemiBold',
-                fontSize: 10,
+                fontSize: 9,
                 color: isActive ? theme.accentInk : theme.pillInk,
               }}
             >

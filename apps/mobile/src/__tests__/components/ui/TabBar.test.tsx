@@ -9,13 +9,44 @@ jest.mock('@expo/vector-icons', () => ({
 }));
 
 describe('TabBar', () => {
-  it('renders all four default labels', () => {
+  it('renders all eight default labels, in order', () => {
     const { getByText } = render(<TabBar active="home" />);
-    expect(getByText('Read')).toBeTruthy();
-    expect(getByText('Library')).toBeTruthy();
-    expect(getByText('Search')).toBeTruthy();
-    expect(getByText('Me')).toBeTruthy();
+    for (const label of ['Read', 'Library', 'Search', 'Digests', 'Study', 'Feed', 'Work', 'Me']) {
+      expect(getByText(label)).toBeTruthy();
+    }
   });
+
+  // Scan keeps its FAB (components/ui/Fab.tsx) — it is deliberately not a slot
+  // in the bar, and adding it would be a ninth item on a 375pt screen.
+  it('does not include a Scan slot', () => {
+    const { queryByText } = render(<TabBar active="home" />);
+    expect(queryByText('Scan')).toBeNull();
+  });
+
+  // Eight slots on a 375pt screen is ~44pt each, so "Digests" is the label most
+  // at risk of clipping at 360pt. One line, no ellipsis: losing a character is
+  // preferable to shrinking the type below 9pt.
+  it('keeps labels to a single line without truncating them', () => {
+    const { getByText } = render(<TabBar active="home" />);
+    expect(getByText('Digests').props.numberOfLines).toBe(1);
+    expect(getByText('Digests').props.ellipsizeMode).toBeUndefined();
+  });
+
+  it.each(['digests', 'study', 'feed', 'workspace'] as const)(
+    'can mark the new %s tab active',
+    (id) => {
+      const labels = {
+        digests: 'Digests',
+        study: 'Study',
+        feed: 'Feed',
+        workspace: 'Work',
+      } as const;
+      const { getByLabelText } = render(<TabBar active={id} />);
+      expect(getByLabelText(labels[id]).props.accessibilityState).toMatchObject({
+        selected: true,
+      });
+    },
+  );
 
   it('marks the active tab with selected accessibilityState', () => {
     const { getByLabelText } = render(<TabBar active="docs" />);

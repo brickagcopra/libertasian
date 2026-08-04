@@ -1,10 +1,50 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-08-01 (#343 OPEN: the app is submitted but unreviewed on both stores, and Apple 5.1.1(v) and Play both require an in-app account-deletion path that did not exist at all — not a weak one, none. PR 1 of a 4-PR store-compliance epic ships it to the policy already published at `/account-deletion`, so that live page needed no edits.)
+> Last updated: 2026-08-03 (three sequenced PRs, all open and all CI-green: **#353** unhid 3,521 digests the search Digests tab was filtering out by `review_status`, **#354** gave the 16,995-row `digests` table its first search index — until now no query could match digest text at all — and **#355** stopped the floating pill nav from vanishing on five of eight tabs. #354 needs an index-rebuild job on prod after deploy.)
+>
+> Previously: 2026-08-01 (#343 OPEN: the app is submitted but unreviewed on both stores, and Apple 5.1.1(v) and Play both require an in-app account-deletion path that did not exist at all — not a weak one, none. PR 1 of a 4-PR store-compliance epic ships it to the policy already published at `/account-deletion`, so that live page needed no edits.)
 >
 > Previously: 2026-07-29 (#336 OPEN: a flat 300 s synthesis timeout made a 2,238-char digest — near the corpus average — permanently unsynthesizable, and retrying it identically three times burned 15 min of 8-core CPU. Budget is now length-proportional, failures are classified, and the reason is persisted. A separate CUDA image and bearer auth on the TTS hop open the rented-GPU route for the tier-1 backfill; both are no-ops for prod.)
 >
 > Previously: 2026-07-27 (#322 MERGED `5addc51`: the auto-publish citation gate was unreachable and had stranded 76% of the corpus out of search since 2026-05-30. Dry run over prod confirms 11,561 of 13,093 drafts publish under the corrected rules. #321 opened for the resolver underneath it, #323 for the 1,531 rows still short a `court`.)
+
+---
+
+## 2026-08-03 — #353 / #354 / #355: the Digests tab was hiding most of its own content, digest text was in no index at all, and the pill nav vanished on five tabs
+
+**Session note.** This session was interrupted by a power cut partway through PR C and resumed from the on-disk transcript; the prompt is preserved at the scratchpad path recorded in the session. All three PRs are **open and CI-green**, none merged.
+
+### #353 — `fix/digest-tab-visibility` (2 files, api only)
+
+1. [x] **`findByDocumentIds` and `countByDocumentIds` no longer gate on `reviewStatus: 'approved'`.** The search screen's Digests tab calls `POST /digests/by-documents`, whose third OR branch was `{ visibility: 'public_editorial', reviewStatus: 'approved' }`. That hid **3,359 `ai_generated` + 162 `needs_human_review`** digests attached to *published* decisions — coverage of published decisions measured **77% instead of 98%** on prod.
+2. [x] **The distinction the comment now states on both methods:** `visibility` is the authorisation boundary; `review_status` is editorial workflow state. Gating a `public_editorial` row on the latter hides content the corpus has already published.
+3. [x] **Deliberately scoped to the two batch-lookup methods.** `list()` (~line 290), `search()` (~line 1365) and the `previewOnly` counts are separate surfaces and were left alone. The spec asserts the clause is **absent** for the two batch methods and **present** for `list()`.
+4. [x] **No client change was needed.** Web already had a `ReviewStatusBadge`, and the mobile equivalent (`apps/mobile/src/features/search/components/digests-results.tsx:12`) already renders all five variants (`approved` / `needs_human_review` / `draft` / `rejected` / fallback), so unreviewed rows self-label. Verified rather than assumed — this is why the PR touches no mobile files.
+
+### #354 — `feat/case-digests-search-corpus` (12 api + 15 client files)
+
+5. [x] **All 16,995 rows of the `digests` table were in no index.** `derivative_artifacts` has zero `case_digest` rows — digests are a separate table the indexer never touched — so **no query could match digest text**. The only text search over digests, `GET /digests/search`, is `title ILIKE '%q%'` against titles of the form `"Digest: <CASE CAPTION>"`, which returns **0** for `estafa`, `negligence`, `rape`, `bigamy`.
+6. [x] **Fifth corpus added by copying the derivative-artifacts pattern from #310/#311/#312 exactly.** `CASE_DIGESTS_INDEX`, `buildCaseDigestsIndexMapping()`, `CASE_DIGESTS_INDEX_ENTRY` appended to `INDEX_TOPOLOGY` **last** — same reasoning as derivatives: a digest failure must not destabilise the keyword index. `dynamic: 'strict'`, BM25 only, **no embedding field and no kNN**.
+7. [x] **`organization_id` and `user_id` are never mapped, and only `visibility = 'public_editorial'` rows are indexed** — private and org-scoped digests must never enter this index. Both are asserted: the mapping spec rejects five tenant-ish field names, and the rebuild spec asserts `indexes ONLY public_editorial rows, on the count and on every page`.
+8. [x] **`reindexing_case_digests` phase** mirrors `reindexing_derivatives` — `caseDigestsProcessed/Total/Pushed`, `caseDigestCopy`, `allocateTargetIndex`, batched at 500, same verify-before-alias-swap contract. `INDEX_VERSION` stays at `v3`; the rebuild job already allocates blue/green `*_v3_rN` targets.
+9. [x] **`SEARCH_SCOPES` gains `'digests'`**; `'documents'` stays the default and an omitted `scope` still returns the byte-for-byte legacy array shape with no `kind` key (asserted).
+10. [x] **Both Digests tabs rewired from batch-lookup to real search** — web and mobile `use-search-digests` now take the **query string** and `POST /search` with `{ query, scope: 'digests', limit: 20 }`, with the count read from `meta.counts.digests` in the same response rather than a second round-trip.
+11. [x] **`opensearch.service.ts:511` (`doc.section_id ?? doc.document_id`) untouched** — that `_id` is load-bearing for dedup and React keys; mobile normalises via `legalDocumentIdOf`.
+
+### #355 — `fix/mobile-pill-nav-all-tabs` (16 files, mobile only, JS-only)
+
+12. [x] **The native tab bar was leaking through on five tabs.** Only `index`, `search` and `digests` set `tabBarStyle: { display: 'none' }`, so navigating from Me to Study, Feed or Workspace mounted expo-router's native 8-item bar and the floating pill disappeared. `library`, `study`, `scan`, `feed`, `workspace` now hide it too.
+13. [x] **`TabBar` goes to eight slots** — Read, Library, Search, Digests, Study, Feed, Work, Me. Sized to fit 375pt (~44pt/slot): icon 20→18, label 10→9, item padding 10→4, gap 3→2, radius 14→12; height 64 and `space-around` unchanged. Labels are one line with **no ellipsis** — clipping a character beats shrinking below 9pt, and "Work" not "Workspace" for the same reason. **Scan is deliberately not a slot** — it keeps its FAB.
+14. [x] **`features/navigation/use-tab-bar-nav.ts` replaces five copies of the `onPress` switch.** Each copy handled a different subset of ids, so which destinations were reachable depended on which screen you were standing on — at four items that was untidiness, at eight it is dead buttons. `docs` still routes to `/documents`, not `/(tabs)/library`: that inconsistency predates the PR and moving Library is a product decision.
+15. [x] **Study and Workspace hold the scroll tree in a `body` variable** instead of wrapping the `ScrollView` inline — identical output, ~20-line diff instead of re-indenting ~250 lines of JSX. **Both render the pill in their loading early-return too**, since a nav bar that vanishes mid-load is the same bug in a different costume.
+16. [x] **Feed's FAB moves to `bottom: 90`** (the shared `Fab` default) and `FeedList` takes an **opt-in** `contentBottomPadding` — the bookmarks, organization and profile feeds don't render the pill and shouldn't get dead whitespace.
+
+### Acceptance evidence
+
+17. [x] **All three PRs CI-green — 17/17 checks each.** Locally before pushing #355: mobile **1,658 tests / 230 suites**, `tsc --noEmit` clean, api **4,131 tests / 192 suites**, web **1,641 tests / 188 files**.
+18. [x] **#354 and #355 test-merge cleanly** (`git merge-tree`), despite both touching `(tabs)/search.tsx`.
+19. [ ] **Not verified on a device:** the 360pt no-clipping check on the eight-slot bar is asserted structurally (`numberOfLines={1}`), not visually. Worth an eyeball on the next preview build.
+20. [ ] **#354 needs an index-rebuild job on prod after deploy** — stated in its PR body. Until that runs, the new corpus is empty and the Digests tab returns nothing.
 
 ---
 

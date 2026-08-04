@@ -8,6 +8,7 @@ import {
   View,
 } from 'react-native';
 import { router } from 'expo-router';
+import { useTabBarNav } from '@/features/navigation/use-tab-bar-nav';
 import { Button } from '@/components/ui/Button';
 import { Chip } from '@/components/ui/Chip';
 import { Fab } from '@/components/ui/Fab';
@@ -74,6 +75,7 @@ function buildItems(docs: DocumentListItem[]): LibraryItem[] {
 }
 
 export default function DocumentsRoute() {
+  const navigate = useTabBarNav();
   const { theme } = useTheme();
   const [activeFilter, setActiveFilter] = useState<FilterLabel>('All');
   const [searchQuery, setSearchQuery] = useState('');
@@ -207,11 +209,7 @@ export default function DocumentsRoute() {
         refreshing={isRefetching}
         onRefresh={handleRefresh}
         contentTopPadding={12}
-        onTabPress={(id) => {
-          if (id === 'home') router.push('/(tabs)');
-          else if (id === 'search') router.push('/(tabs)/search');
-          else if (id === 'me') router.push('/settings');
-        }}
+        onTabPress={navigate}
       />
       {hasNextPage ? (
         <Pressable

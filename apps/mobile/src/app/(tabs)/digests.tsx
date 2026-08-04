@@ -16,6 +16,7 @@ import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Input } from '@/components/ui';
 import { TabBar } from '@/components/ui/TabBar';
+import { useTabBarNav } from '@/features/navigation/use-tab-bar-nav';
 import {
   useDigests,
   useGenerateDigest,
@@ -158,6 +159,7 @@ function DigestCard({ item }: { item: Digest }) {
 }
 
 export default function DigestsTab() {
+  const navigate = useTabBarNav();
   const [digestType, setDigestType] = useState<string | undefined>();
   const [reviewStatus, setReviewStatus] = useState<string | undefined>();
   const [sourceOrigin, setSourceOrigin] = useState<string | undefined>();
@@ -518,17 +520,9 @@ export default function DigestsTab() {
 
       {listBody}
 
-      {/* Floating pill TabBar — same treatment as Home/Search. Digests is
-          reached from Home's "See all", so "Read" (home) stays active. */}
-      <TabBar
-        active="home"
-        onPress={(id) => {
-          if (id === 'home') router.push('/(tabs)');
-          else if (id === 'docs') router.push('/documents');
-          else if (id === 'search') router.push('/(tabs)/search');
-          else if (id === 'me') router.push('/settings');
-        }}
-      />
+      {/* Floating pill TabBar. Digests now has its own slot in the bar, so it
+          marks itself active rather than borrowing "Read". */}
+      <TabBar active="digests" onPress={navigate} />
 
       {/* Sort modal */}
       <Modal
