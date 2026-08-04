@@ -667,7 +667,14 @@ export class DigestsService {
 
   /**
    * Find digests by a batch of legal document IDs.
-   * Applies the same visibility rules as list(): private=owner, org=members, public_editorial=approved.
+   * Visibility rules: private=owner, org=members, public_editorial=anyone.
+   *
+   * `visibility` is the authorisation boundary; `review_status` is editorial
+   * workflow state. Gating a `public_editorial` row on `reviewStatus === 'approved'`
+   * hides content the corpus has already published — on prod that suppressed
+   * 3,359 `ai_generated` + 162 `needs_human_review` digests attached to published
+   * decisions, dropping coverage of published decisions from 98% to 77%.
+   * Clients render a review-status badge, so unreviewed rows self-label.
    */
   async findByDocumentIds(
     documentIds: string[],
@@ -681,7 +688,7 @@ export class DigestsService {
         OR: [
           { userId, visibility: 'private' },
           { organizationId, visibility: 'org' },
-          { visibility: 'public_editorial', reviewStatus: 'approved' },
+          { visibility: 'public_editorial' },
         ],
       },
       orderBy: { createdAt: 'desc' },
@@ -702,6 +709,16 @@ export class DigestsService {
     });
   }
 
+  /**
+   * Count digests attached to a batch of legal document IDs.
+   * Must stay in lockstep with findByDocumentIds() or the tab badge disagrees
+   * with the list it labels.
+   *
+   * Same reasoning as findByDocumentIds(): `visibility` is the authorisation
+   * boundary, `review_status` is editorial workflow state. A `public_editorial`
+   * row is already published, so filtering it on `reviewStatus === 'approved'`
+   * undercounts content the user can see.
+   */
   async countByDocumentIds(
     documentIds: string[],
     userId: string,
@@ -714,7 +731,7 @@ export class DigestsService {
         OR: [
           { userId, visibility: 'private' },
           { organizationId, visibility: 'org' },
-          { visibility: 'public_editorial', reviewStatus: 'approved' },
+          { visibility: 'public_editorial' },
         ],
       },
     });
