@@ -10,7 +10,7 @@ from .exceptions import (
     ValidationError,
 )
 from .formatting import format_passages
-from .opensearch import close_opensearch, get_opensearch
+from .opensearch import close_opensearch, get_opensearch, ping_opensearch
 from .redis_client import close_redis, get_redis
 from .scoring import compute_confidence
 
@@ -29,4 +29,5 @@ __all__ = [
     "get_db_pool",
     "get_opensearch",
     "get_redis",
+    "ping_opensearch",
 ]
