@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 from src.core.retrieval import (
@@ -431,6 +432,85 @@ class TestHybridRetrieve:
             result = await hybrid_retrieve("G.R. No. 12345", QueryIntent.CASE_LOOKUP, top_k=5)
 
         assert result.query_intent == "case_lookup"
+
+
+class TestHybridRetrieveFailureModes:
+    """Which arm is allowed to fail quietly, and which is not.
+
+    Regression cover for the 2026-05 → 2026-08 OpenSearch outage: a cluster the
+    client could not reach at all produced zero passages that were indistinguishable
+    from a query with no matches.
+    """
+
+    @pytest.mark.asyncio
+    async def test_bm25_failure_propagates(self) -> None:
+        """No BM25 means no results — the caller must get an error, not silence."""
+        with patch("src.core.retrieval.opensearch_search", new_callable=AsyncMock) as mock_search:
+            mock_search.side_effect = httpx.ConnectError("certificate verify failed")
+
+            with pytest.raises(httpx.ConnectError):
+                await hybrid_retrieve("test", QueryIntent.GENERAL, top_k=10)
+
+    @pytest.mark.asyncio
+    async def test_knn_failure_degrades_to_bm25_only(self) -> None:
+        """A failed vector arm keeps a complete BM25 result set rather than 500-ing."""
+        os_response = {"hits": {"hits": [_make_os_hit("a", 5.0), _make_os_hit("b", 3.0)]}}
+
+        async def _bm25_ok_knn_fails(index: str, body: dict[str, Any]) -> dict[str, Any]:
+            if index == "legal_documents_vector":
+                raise httpx.ConnectError("knn plugin unavailable")
+            return os_response
+
+        with patch("src.core.retrieval.opensearch_search", side_effect=_bm25_ok_knn_fails):
+            result = await hybrid_retrieve(
+                "test",
+                QueryIntent.GENERAL,
+                top_k=10,
+                embedding=[0.1] * 768,
+            )
+
+        assert result.total_bm25_hits == 2
+        assert result.total_knn_hits == 0
+        assert len(result.passages) == 2
+
+    @pytest.mark.asyncio
+    async def test_knn_failure_is_logged_at_error_level(self, caplog: Any) -> None:
+        os_response = {"hits": {"hits": [_make_os_hit("a", 5.0)]}}
+
+        async def _bm25_ok_knn_fails(index: str, body: dict[str, Any]) -> dict[str, Any]:
+            if index == "legal_documents_vector":
+                raise httpx.ConnectError("knn plugin unavailable")
+            return os_response
+
+        with (
+            patch("src.core.retrieval.opensearch_search", side_effect=_bm25_ok_knn_fails),
+            caplog.at_level("ERROR"),
+        ):
+            await hybrid_retrieve(
+                "test",
+                QueryIntent.GENERAL,
+                top_k=10,
+                embedding=[0.1] * 768,
+            )
+
+        assert any(r.levelname == "ERROR" for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_retrieve_by_query_failure_propagates(self) -> None:
+        """The memo/flashcard/pleading path fails loudly too."""
+        with patch("src.core.retrieval.opensearch_search", new_callable=AsyncMock) as mock_search:
+            mock_search.side_effect = httpx.ConnectError("certificate verify failed")
+
+            with pytest.raises(httpx.ConnectError):
+                await retrieve_by_query("negligence", top_k=5)
+
+    @pytest.mark.asyncio
+    async def test_retrieve_by_document_id_failure_propagates(self) -> None:
+        with patch("src.core.retrieval.opensearch_search", new_callable=AsyncMock) as mock_search:
+            mock_search.side_effect = httpx.ConnectError("certificate verify failed")
+
+            with pytest.raises(httpx.ConnectError):
+                await retrieve_by_document_id("doc-1", top_k=5)
 
 
 # ===========================================================================

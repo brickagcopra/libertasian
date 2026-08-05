@@ -11,6 +11,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import httpx
+
 from ..shared.opensearch import opensearch_search
 from .schemas import Passage, SearchResult
 from .types import QueryIntent
@@ -50,12 +52,29 @@ async def hybrid_retrieve(
     Returns:
         SearchResult with fused and authority-boosted passages.
     """
-    # Run BM25 and kNN in parallel if embedding is available
+    # BM25 is the load-bearing arm: if it fails, the caller has NO results and
+    # must be told so. ``opensearch_search`` raises, and that error is allowed
+    # to propagate all the way to the router's 500 handler on purpose — an
+    # answer built on zero passages because the cluster was unreachable is the
+    # exact failure this branch exists to stop being silent.
     bm25_hits = await _bm25_search(query, intent, top_k=top_k * 2)
     knn_hits: list[dict[str, Any]] = []
 
     if embedding is not None:
-        knn_hits = await _knn_search(embedding, top_k=top_k * 2)
+        # The kNN arm IS allowed to degrade, and this is the opt-in described
+        # in shared/opensearch.opensearch_search. A vector-index or knn-plugin
+        # failure leaves a complete BM25 result set standing; failing the whole
+        # request there would be a strictly worse answer than the hybrid
+        # pipeline's own documented BM25-only fallback. Logged at ERROR, and
+        # ``total_knn_hits: 0`` in the response records that it happened.
+        try:
+            knn_hits = await _knn_search(embedding, top_k=top_k * 2)
+        except httpx.HTTPError:
+            logger.error(
+                "kNN arm failed on index %s — degrading to BM25-only for this query",
+                _VECTOR_INDEX,
+                exc_info=True,
+            )
 
     # Fuse with RRF
     fused = _rrf_fuse(bm25_hits, knn_hits)

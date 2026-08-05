@@ -27,6 +27,12 @@ _CASE_TEXT_MAX_CHARS = 30_000
 # Max codal candidates to retrieve from OpenSearch
 _MAX_CODAL_CANDIDATES = 20
 
+# The BM25 alias the API actually maintains (see apps/api .../index-mappings.ts
+# KEYWORD_INDEX). This module queried a bare "legal_documents" index that has
+# never existed, so every codal candidate search 404'd and silently returned [].
+# The mapping calls the body field `plain_text`, not `content`.
+_CODAL_INDEX = "legal_documents_keyword"
+
 
 async def suggest_case_codal_links(
     request: CaseCodalSuggestionRequest,
@@ -169,7 +175,7 @@ async def _search_codal_candidates(case_excerpt: str) -> list[dict[str, Any]]:
                     {
                         "multi_match": {
                             "query": case_excerpt,
-                            "fields": ["title^2", "citation_text^2", "content"],
+                            "fields": ["title^2", "citation_text^2", "plain_text"],
                             "type": "best_fields",
                         }
                     }
@@ -191,23 +197,28 @@ async def _search_codal_candidates(case_excerpt: str) -> list[dict[str, Any]]:
                 ],
             }
         },
-        "_source": ["document_id", "title", "citation_text", "content"],
+        "_source": ["document_id", "title", "citation_text", "plain_text"],
     }
 
     try:
-        result = await opensearch_search("legal_documents", query)
+        result = await opensearch_search(_CODAL_INDEX, query)
         hits = result.get("hits", {}).get("hits", [])
         return [
             {
                 "id": hit["_source"].get("document_id", hit["_id"]),
                 "title": hit["_source"].get("title", ""),
                 "citation": hit["_source"].get("citation_text", ""),
-                "snippet": (hit["_source"].get("content", "") or "")[:500],
+                "snippet": (hit["_source"].get("plain_text", "") or "")[:500],
                 "score": hit.get("_score", 0),
             }
             for hit in hits
         ]
     except Exception:
+        # Deliberate soft failure: codal candidates only enrich the LLM prompt
+        # with extra context, and the suggestion pass still produces output
+        # from the case text alone. This is the opt-in described in
+        # shared/opensearch.opensearch_search — degrading here is a decision,
+        # not a default.
         logger.warning("OpenSearch codal candidate search failed", exc_info=True)
         return []
 

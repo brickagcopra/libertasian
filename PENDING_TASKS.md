@@ -1,6 +1,8 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-08-03 (**new, top of the list:** three PRs are open and CI-green and none is merged — **#353** digest-tab visibility, **#354** the case-digest search corpus, **#355** the mobile pill nav. #354 does nothing for users until an **index-rebuild job runs on prod after deploy**; #355 is JS-only and rides the next EAS build or OTA. See the section directly below.)
+> Last updated: 2026-08-04 (**new, top of the list:** `fix/rag-opensearch-tls-auth` — the RAG service's OpenSearch client had neither credentials nor a TLS setting while prod serves https + self-signed + basic auth, and the client turned every failure into an empty hit set. Fixed locally; **the prod confirmation is an op, and it is the only thing that proves any of it.** See the section directly below.)
+>
+> Previously: 2026-08-03 (**was top of the list:** three PRs are open and CI-green and none is merged — **#353** digest-tab visibility, **#354** the case-digest search corpus, **#355** the mobile pill nav. #354 does nothing for users until an **index-rebuild job runs on prod after deploy**; #355 is JS-only and rides the next EAS build or OTA. See the section directly below.)
 >
 > Previously: 2026-08-01 (**new, top of the list:** the store-compliance epic — 4 PRs standing between a submitted-but-unreviewed app and a pass. **PR 1 (#343) is up:** self-serve account deletion, which Apple 5.1.1(v) and Play both require and which did not exist. PRs 2–4 (in-app delete UI, removing Apple 3.1.1 purchase entry points, Android 15 edge-to-edge + ASC screenshot sizes) follow in order. **No EAS build is cut by any of them.**)
 >
@@ -16,7 +18,19 @@ Verification rules used for this prune: every PR reference checked with `gh pr v
 
 ---
 
-## Three open PRs from 2026-08-03 — merge order matters (do this first)
+## RAG ↔ OpenSearch connectivity (`fix/rag-opensearch-tls-auth`, 2026-08-04) — do this first
+
+Details in COMPLETED_TASKS.md under 2026-08-04. Nothing is deployed.
+
+- [x] **Confirmed on prod 2026-08-05 (brick).** Traceback from inside the container: `httpx.ConnectError [SSL: CERTIFICATE_VERIFY_FAILED]`, swallowed into an empty hit set. Both arms tested: `verify=False` alone → **401**; `verify=False` + basic auth → **200, 10k+ hits**. Both are required.
+- [ ] **Deploy rag-service and read the startup line.** `OpenSearch connected: opensearch <version> at https://opensearch:9200 (verify_ssl=False, auth=yes)` is the pass condition. `OPENSEARCH UNREACHABLE` names the env vars to check. **`auth=no` is the failure mode to watch for** — it means neither credential pair resolved, and the fix is inert (the service will get a 401 instead of a TLS error). No compose or `.env` change is needed for this deploy; the container already carries `OPENSEARCH_USERNAME`/`OPENSEARCH_PASSWORD`.
+- [ ] **Then re-run one query per surface** (`/answer`, a memo, flashcards) and check the passage counts are non-zero. Every one of those has been returning zero passages, and a green deploy alone does not prove otherwise — that is precisely the mistake the Kokoro `/health` episode already cost us once.
+- [ ] **Retrieval failures are now 500s, not empty answers.** That is the point of the change, but it is a visible behaviour change for the API gateway: a NestJS call that used to receive a confident abstention will now receive an error. Check `apps/api`'s RAG client handles a 5xx from the Python hop with a sensible user-facing message before this reaches users.
+- [ ] **Nothing measures how long this was broken.** `docker compose logs rag | grep -c "OpenSearch search failed"` over retained logs is the closest available signal, and every hit is a query answered with no sources. Worth one look — it sizes the blast radius on real user traffic and tells us whether any published artifact was generated priors-only.
+- [ ] **`RAG_OPENSEARCH_VERIFY_SSL=false` is a deliberate hole with a real cost.** It is defensible on a container network with a self-signed cert, and it is still an unauthenticated-peer connection carrying admin credentials. Issue a real cert for the cluster and flip the flag; the setting exists so that day is a config change, not a code change.
+- [ ] **`tests/test_routers.py`'s 40 errors are pre-existing and nobody is watching.** The `client` fixture needs `@pytest_asyncio.fixture`. Trivial — but it means 40 router tests have not run for some time, and **`ci.yml` runs no Python tests at all**, so nothing would have said so. The bigger item is wiring the four Python services into CI.
+
+## Three open PRs from 2026-08-03 — merge order matters (do this second)
 
 All three are branched from `main` and CI-green (17/17 each). Nothing is merged and nothing is deployed. Details in COMPLETED_TASKS.md under 2026-08-03.
 
