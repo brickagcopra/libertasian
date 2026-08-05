@@ -1,6 +1,8 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-08-05 (#356 MERGED `ae473ad`. Follow-on: `feat/bar-exam-answer-confidence` — every bar exam answer on prod carries a NULL confidence and `bar_exam_alac.v1`, i.e. the grounded path had **never executed in production** because retrieval returned nothing. v2 makes citations checkable, filters fabricated ids before the write, and scores on two terms that actually vary. **No pilot numbers exist yet — the pilot runs on prod after this merges, and no figure here is estimated.**)
+> Last updated: 2026-08-05 (#360 OPEN `fix/merchant-kyc-public-site` — the Xendit merchant rejection was a **website KYC audit**, and the site failed it on three counts: the registered entity published in two wrong spellings with no address, three published mailboxes that reject at SMTP (including the DPO contact on the Privacy Policy), and public links that dead-end at /login. /about, /contact and /refund-policy now exist. **The refund windows are proposed defaults awaiting sign-off**, and the "4.9★ App store" stat is still live for a listing that does not exist. Sibling PR #359 makes the gateway itself swappable.)
+>
+> Previously: 2026-08-05 (#356 MERGED `ae473ad`. Follow-on: `feat/bar-exam-answer-confidence` — every bar exam answer on prod carries a NULL confidence and `bar_exam_alac.v1`, i.e. the grounded path had **never executed in production** because retrieval returned nothing. v2 makes citations checkable, filters fabricated ids before the write, and scores on two terms that actually vary. **No pilot numbers exist yet — the pilot runs on prod after this merges, and no figure here is estimated.**)
 >
 > Previously: 2026-08-04 (`fix/rag-opensearch-tls-auth`, rag-service: the Python OpenSearch client was built with **no credentials and no TLS setting** while prod serves `https://opensearch:9200` with a self-signed cert behind basic auth — and `opensearch_search` converted every failure into an empty hit set, so a connectivity outage and a genuine no-match query were the same response. Auth + verify wired from settings, failures now raise, a startup ping says so out loud, and the codal-suggestion path was querying an index name that has never existed. **Nothing is deployed; the prod confirmation is an outstanding op.**)
 >
@@ -13,6 +15,21 @@
 > Previously: 2026-07-27 (#322 MERGED `5addc51`: the auto-publish citation gate was unreachable and had stranded 76% of the corpus out of search since 2026-05-30. Dry run over prod confirms 11,561 of 13,093 drafts publish under the corrected rules. #321 opened for the resolver underneath it, #323 for the 1,531 rows still short a `court`.)
 
 ---
+
+## 2026-08-05 — `fix/merchant-kyc-public-site` (#360): the gateway rejection was a website audit, and the site failed it
+
+**The trigger.** Xendit rejected merchant activation with "some details in your business proof (website/apps) are invalid or do not meet the requirements". That is not a payments problem — it is a KYC review of the public site, and every PH gateway runs the same checklist, so reapplying to PayMongo/Maya/Dragonpay without fixing this reproduces the rejection.
+
+**What the audit would have found.** The certificate reads `LIBERTASIAN INC.`; the site published `LIBERTASIAN Inc.` in four places and `LIBERTASIAN, Inc.` in the footer, and **no registered address or phone anywhere**. Three published mailboxes — `dpo@`, `legal@`, `info@libertasian.com` — reject at SMTP, and `dpo@` was the Data Protection Officer contact on the Privacy Policy, so the Data Privacy Act contact route was a dead end. The footer advertised "iOS App" and "Android App" for listings that do not exist (bundleId lookup returns 0, Play returns 404). The homepage claimed "100+ Law schools" against a database with no schools table and 25 users across 21 orgs.
+
+**Links that dead-ended at the login wall.** Footer and header nav both pointed at `/bar-exams`, a dashboard route that 307s anonymous visitors. Worse, `study-picker.tsx` renders `sectionLinkHref` **five times** (section link + 4 subject cards), so the landing page carried five more of the same dead link — outside the brief, fixed anyway, because leaving it defeats the purpose of the PR. `/icon.svg` also 307'd, meaning every anonymous page load silently failed to fetch our own favicon.
+
+**What shipped.** An exported `businessInfo` const as the single source of truth, imported by all six offending files plus `/restore-account` (which was carrying `dpo@` and was not on the original list). Three new public pages: `/about`, `/contact`, `/refund-policy` — the last replacing the flat "no refunds for partial billing periods" bullet in Terms §5 with a real policy. `/pricing` now states currency, billing cycle, VAT, cancellation and refunds on-page, inside `PricingShell` so it also renders in the pricing-unavailable state. First `robots.ts` and `sitemap.ts` the repo has ever had.
+
+**Verification is empirical, not a grep of the source.** A production build was served locally and crawled anonymously: 17 internal links across `/`, `/pricing` and the four policy pages, **all 200, zero /login redirects**. The three dead mailboxes and both wrong entity spellings return **0 hits in `.next/server`, `.next/static`, in source, and in every rendered page**. 189 test files / 1661 tests pass. `business-info.test.ts` turns the audit into a standing regression guard — it drives every footer link through the **real middleware** rather than asserting on a string.
+
+**Two things are NOT resolved.** The homepage stats are deep-merged from the `/site-content/homepage` API at runtime, so if that row overrides `stats`, the deleted law-schools tile returns in prod regardless of this PR. And `4.9★ App store` is still on the homepage — brick scoped the deletion to the law-schools stat, so it stands, but it is a star rating for a listing brick verified does not exist.
+
 
 ## 2026-08-05 — `feat/bar-exam-answer-confidence`: bar exam answers had no confidence signal at all, and the grounded path had never run
 

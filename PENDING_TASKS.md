@@ -155,6 +155,11 @@ The re-score that led here is **closed — not worth running** (below). What it 
 ## Owner / billing (genuinely open)
 
 - [x] **Deploy api with #301** — DONE: api deployed + couponed checkout verified in prod 2026-07-15
+- [ ] **#360: confirm or change the refund windows before merge.** 7 days for a first paid period, 7 days for an unintended renewal, decision within 3 business days, funds returned in 7–14 banking days. These are proposed defaults, NOT values brick supplied — they are a binding commercial commitment published at `/refund-policy`.
+- [ ] **#360: check the `site_content` row for a `stats` override.** `getHomepageContent()` deep-merges the `/site-content/homepage` API response over the defaults, so if that row carries a `stats` array containing "100+ Law schools", the tile returns in prod even though the default was deleted.
+- [ ] **#360: decide on the "4.9★ App store" homepage stat.** Left in place because the brief scoped the deletion to the law-schools tile — but it is a star rating for an app-store listing brick verified does not exist (0 results / 404), on the same strip as the stat deleted for being unsubstantiated.
+- [ ] **#360: `/about` has no founding year.** Omitted rather than invented; one-line addition once brick supplies a date.
+- [ ] **Merchant application rejected** — the gateway is not approved anywhere yet. #360 fixes the website proof; #359 makes the gateway swappable. The actual choice (reapply to Xendit vs PayMongo / Maya / Dragonpay) is still open and blocks everything below.
 - [ ] **Xendit go-live key swap** — deactivate the TEST plan FIRST, then swap env to live keys
 - [ ] **2026-08-10: verify the first anchor-date recurring charge** collects correctly (first cycle after the anchor-date fix)
 - [ ] **Annual interval check** — run one YEAR-interval checkout in sandbox; Xendit sessions doc lists interval DAY|WEEK|MONTH — if `YEAR` 400s, switch annual to `MONTH` × `interval_count: 12`
