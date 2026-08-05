@@ -157,7 +157,9 @@ describe('Billing (E2E)', () => {
 
   // ── Webhook Security ───────────────────────────────────────
 
-  describe('POST /api/v1/billing/webhooks/xendit', () => {
+  describe('POST /api/v1/billing/webhooks/:provider', () => {
+    // The dashboard-configured URL. The route is parameterised now, so this
+    // path must keep resolving to the Xendit adapter unchanged.
     it('should reject webhook without callback token', async () => {
       const res = await request(app.getHttpServer())
         .post('/api/v1/billing/webhooks/xendit')
@@ -165,6 +167,15 @@ describe('Billing (E2E)', () => {
 
       // Controller throws BadRequestException for missing/invalid callback token
       expect([400, 401, 403]).toContain(res.status);
+    });
+
+    it('should not process a webhook for an unconfigured provider', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/billing/webhooks/paymongo')
+        .set('x-callback-token', 'anything')
+        .send({ event: 'payment.completed' });
+
+      expect([400, 401, 403, 404]).toContain(res.status);
     });
   });
 });

@@ -155,10 +155,12 @@ The re-score that led here is **closed — not worth running** (below). What it 
 ## Owner / billing (genuinely open)
 
 - [x] **Deploy api with #301** — DONE: api deployed + couponed checkout verified in prod 2026-07-15
-- [ ] **#360: confirm or change the refund windows before merge.** 7 days for a first paid period, 7 days for an unintended renewal, decision within 3 business days, funds returned in 7–14 banking days. These are proposed defaults, NOT values brick supplied — they are a binding commercial commitment published at `/refund-policy`.
-- [ ] **#360: check the `site_content` row for a `stats` override.** `getHomepageContent()` deep-merges the `/site-content/homepage` API response over the defaults, so if that row carries a `stats` array containing "100+ Law schools", the tile returns in prod even though the default was deleted.
-- [ ] **#360: decide on the "4.9★ App store" homepage stat.** Left in place because the brief scoped the deletion to the law-schools tile — but it is a star rating for an app-store listing brick verified does not exist (0 results / 404), on the same strip as the stat deleted for being unsubstantiated.
-- [ ] **#360: `/about` has no founding year.** Omitted rather than invented; one-line addition once brick supplies a date.
+- [x] **#360: refund windows CONFIRMED by brick as written** — 7 days first paid period, 7 days unintended renewal, 3 business days to decide, 7–14 banking days to refund. Published at `/refund-policy`; Terms §5 re-checked and does not contradict them.
+- [x] **#360: no runtime override can resurrect the deleted stat tiles** — `site_contents` has 0 rows in production, so `getHomepageContent()` always falls back to `DEFAULT_HOMEPAGE_CONTENT`.
+- [x] **#360: "4.9★ App store" deleted** — same defect as the law-schools tile: a third-party rating for a listing that does not exist (0 App Store results, Play 404). Replaced alongside it by two prod-counted figures, 97 bar sittings and 68,000+ sections indexed.
+- [x] **#360: `/about` founding year added** — 2026.
+- [x] **#359: migration verified against the real production schema and data** — executed in a transaction and rolled back, NOT from this machine (Docker was down). All four `xendit_*` columns covered, all three `ALTER INDEX` names matched real index names, no dependent views, the three `repl_...` subscription ids survived the rename, `provider='xendit'` backfilled correctly. Cleared to merge as-is.
+- [ ] **#359 follow-up (needs its own data migration):** the vendor name still appears in persisted strings that PR would not touch — audit / `Payment.metadata` keys `xenditSessionId`, `xenditSubscriptionId`, `xenditCancelled`; `subscription_history.reason` text; and the admin API response field `xenditInvoiceId`. Neutralising them changes DB writes and an API response, so it was not part of a no-behaviour-change refactor.
 - [ ] **Merchant application rejected** — the gateway is not approved anywhere yet. #360 fixes the website proof; #359 makes the gateway swappable. The actual choice (reapply to Xendit vs PayMongo / Maya / Dragonpay) is still open and blocks everything below.
 - [ ] **Xendit go-live key swap** — deactivate the TEST plan FIRST, then swap env to live keys
 - [ ] **2026-08-10: verify the first anchor-date recurring charge** collects correctly (first cycle after the anchor-date fix)

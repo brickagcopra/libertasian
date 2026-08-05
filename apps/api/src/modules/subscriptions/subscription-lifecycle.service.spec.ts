@@ -27,7 +27,7 @@ describe('SubscriptionLifecycleService', () => {
     currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days from now
     seats: 1,
     entitlementsJson: {},
-    xenditSubscriptionId: null,
+    providerSubscriptionId: null,
     cancelAtPeriodEnd: false,
     canceledAt: null,
     trialStart: null,

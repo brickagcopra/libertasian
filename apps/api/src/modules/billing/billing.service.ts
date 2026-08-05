@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 
 import {
   BadRequestException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
@@ -25,21 +26,23 @@ import {
   formatPhpAmount,
 } from '../notifications/notification-format.util';
 import {
-  XenditApiError,
-  XenditService,
-  type XenditRefundData,
-  type XenditRecurringData,
-} from './xendit.service';
+  PAYMENT_PROVIDER,
+  PaymentProviderError,
+  type PaymentEventData,
+  type PaymentProvider,
+  type RefundEventData,
+  type SubscriptionEventData,
+} from './payment-provider.interface';
 import type { CreateCheckoutDto, PreviewCheckoutDto } from './dto';
 
 /** Renewal reminders go out 3 days before the scheduled charge (T-3d). */
 const RENEWAL_REMINDER_LEAD_MS = 3 * 24 * 60 * 60 * 1000;
 
 /**
- * Canonical UUID shape (8-4-4-4-12 hex). Xendit "Test webhook" payloads (and
+ * Canonical UUID shape (8-4-4-4-12 hex). Gateway "test webhook" payloads (and
  * malformed events) carry a non-UUID reference_id (e.g. "test-reference-id");
  * passing one to findUnique on the UUID `id` column throws P2023, the handler
- * 500s, and Xendit retries the event forever.
+ * 500s, and the gateway retries the event forever.
  */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -49,7 +52,8 @@ export class BillingService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly xenditService: XenditService,
+    @Inject(PAYMENT_PROVIDER)
+    private readonly paymentProvider: PaymentProvider,
     private readonly subscriptionsService: SubscriptionsService,
     private readonly auditService: AuditService,
     private readonly pricingEngine: PricingEngineService,
@@ -166,13 +170,14 @@ export class BillingService {
     const periodLabel = dto.billingPeriod === 'annual' ? 'Annual' : 'Monthly';
     const description = `LIBERTASIAN ${breakdown.planName} Plan — ${periodLabel}`;
 
-    // 3. Resolve (or create) the org's Xendit Customer. Reuse the customer id
-    //    from any prior subscription so re-subscriptions map to one customer.
-    const xenditCustomerId = await this.resolveXenditCustomer(organizationId, userId);
+    // 3. Resolve (or create) the gateway Customer for the org. Reuse the
+    //    customer id from any prior subscription so re-subscriptions map to one
+    //    customer.
+    const providerCustomerId = await this.resolveProviderCustomer(organizationId, userId);
 
-    // 4. Create the local Subscription up-front in `provisioning`. The Xendit
-    //    plan's reference_id is this row's id, so the `plan.activated` webhook
-    //    can link back deterministically.
+    // 4. Create the local Subscription up-front in `provisioning`. The gateway
+    //    plan's reference_id is this row's id, so the `subscription.activated`
+    //    webhook can link back deterministically.
     const provisioningEntitlements =
       this.subscriptionsService.getDefaultEntitlements(dto.planCode);
     const subscription = await this.prisma.subscription.create({
@@ -183,21 +188,22 @@ export class BillingService {
         status: SubscriptionState.PROVISIONING,
         billingPeriod: dto.billingPeriod,
         seats: this.getSeatsForPlan(dto.planCode),
-        xenditCustomerId,
+        provider: this.paymentProvider.slug,
+        providerCustomerId,
         entitlementsJson: provisioningEntitlements as unknown as Prisma.InputJsonValue,
       },
     });
 
-    // 5. Create the Xendit SUBSCRIPTION-mode Payment Session (auto-debit).
-    //    Xendit owns scheduling, retries and dunning thereafter. The `repl_`
-    //    recurring-plan id is NOT known yet — it arrives on plan.activated and
-    //    is linked back via reference_id (this subscription's id). Amount is
-    //    whole PHP (centavos / 100).
+    // 5. Create the gateway's SUBSCRIPTION-mode payment session (auto-debit).
+    //    The gateway owns scheduling, retries and dunning thereafter. Its
+    //    recurring-plan id is NOT known yet — it arrives on
+    //    `subscription.activated` and is linked back via reference_id (this
+    //    subscription's id). Amount is whole PHP (centavos / 100).
     let session;
     try {
-      session = await this.xenditService.createSubscriptionSession({
+      session = await this.paymentProvider.createSubscriptionSession({
         referenceId: subscription.id,
-        customerId: xenditCustomerId,
+        customerId: providerCustomerId,
         amount: Math.round(breakdown.finalAmount / 100),
         currency: breakdown.currency,
         interval: dto.billingPeriod === 'annual' ? 'YEAR' : 'MONTH',
@@ -217,8 +223,8 @@ export class BillingService {
         },
       });
     } catch (err) {
-      // Roll back the provisioning row so a failed Xendit call doesn't leave an
-      // orphaned subscription behind.
+      // Roll back the provisioning row so a failed gateway call doesn't leave
+      // an orphaned subscription behind.
       await this.prisma.subscription.delete({ where: { id: subscription.id } }).catch(() => undefined);
       throw err;
     }
@@ -236,43 +242,44 @@ export class BillingService {
         finalAmount: breakdown.finalAmount,
         couponCode: breakdown.couponCode,
         promotionId: breakdown.promotionId,
-        xenditSessionId: session.payment_session_id,
+        // Audit metadata key retained verbatim so historical rows stay queryable.
+        xenditSessionId: session.sessionId,
       },
     });
 
     return {
-      checkoutUrl: XenditService.hostedUrl(session),
-      checkoutSessionId: session.payment_session_id,
+      checkoutUrl: session.checkoutUrl,
+      checkoutSessionId: session.sessionId,
       subscriptionId: subscription.id,
     };
   }
 
   /**
-   * Return the org's Xendit Customer id, creating one if none exists yet.
+   * Return the org's gateway Customer id, creating one if none exists yet.
    * The id is stored on every Subscription row, so we read it back from the
    * most recent row that has one.
    *
    * The local pointer can be lost — e.g. a failed checkout rolls back the only
-   * provisioning row holding xenditCustomerId — while the Xendit customer
-   * still exists. reference_id is unique at Xendit, so a blind re-POST 409s
-   * with DUPLICATE_ERROR. Resolution is therefore idempotent: local DB →
+   * provisioning row holding providerCustomerId — while the remote customer
+   * still exists. reference_id is unique at the gateway, so a blind re-POST
+   * 409s with DUPLICATE_ERROR. Resolution is therefore idempotent: local DB →
    * remote lookup by reference_id → create, with a 409 on create falling back
    * to the remote lookup (a concurrent checkout may win the create race).
    */
-  private async resolveXenditCustomer(
+  private async resolveProviderCustomer(
     organizationId: string,
     userId: string,
   ): Promise<string> {
     const existing = await this.prisma.subscription.findFirst({
-      where: { organizationId, xenditCustomerId: { not: null } },
+      where: { organizationId, providerCustomerId: { not: null } },
       orderBy: { createdAt: 'desc' },
-      select: { xenditCustomerId: true },
+      select: { providerCustomerId: true },
     });
-    if (existing?.xenditCustomerId) {
-      return existing.xenditCustomerId;
+    if (existing?.providerCustomerId) {
+      return existing.providerCustomerId;
     }
 
-    const remote = await this.xenditService.getCustomerByReferenceId(organizationId);
+    const remote = await this.paymentProvider.getCustomerByReferenceId(organizationId);
     if (remote) {
       return remote.id;
     }
@@ -282,7 +289,7 @@ export class BillingService {
       select: { email: true, fullName: true },
     });
     try {
-      const customer = await this.xenditService.createCustomer({
+      const customer = await this.paymentProvider.createCustomer({
         referenceId: organizationId,
         email: user?.email,
         givenNames: user?.fullName ?? undefined,
@@ -290,10 +297,10 @@ export class BillingService {
       return customer.id;
     } catch (err) {
       if (this.isDuplicateCustomerError(err)) {
-        const raced = await this.xenditService.getCustomerByReferenceId(organizationId);
+        const raced = await this.paymentProvider.getCustomerByReferenceId(organizationId);
         if (raced) {
           this.logger.warn(
-            `Xendit customer for org ${organizationId} already existed (DUPLICATE_ERROR) — reusing ${raced.id}`,
+            `Gateway customer for org ${organizationId} already existed (DUPLICATE_ERROR) — reusing ${raced.id}`,
           );
           return raced.id;
         }
@@ -302,27 +309,27 @@ export class BillingService {
     }
   }
 
-  /** A `POST /customers` rejection because the reference_id is already used. */
+  /** A `createCustomer` rejection because the reference_id is already used. */
   private isDuplicateCustomerError(err: unknown): boolean {
     return (
-      err instanceof XenditApiError &&
+      err instanceof PaymentProviderError &&
       (err.errorCode === 'DUPLICATE_ERROR' || err.status === 409)
     );
   }
 
   // ---- Webhook Handlers ----
 
-  async handlePaymentSuccess(xenditData: Record<string, unknown>) {
-    const xenditInvoiceId = xenditData['id'] as string;
+  async handlePaymentSuccess(event: PaymentEventData) {
+    const providerInvoiceId = event.id;
 
     // Find the corresponding payment record
     const payment = await this.prisma.payment.findUnique({
-      where: { xenditInvoiceId },
+      where: { providerInvoiceId },
     });
 
     if (!payment) {
       this.logger.warn(
-        `Payment not found for Xendit invoice: ${xenditInvoiceId}`,
+        `Payment not found for gateway invoice: ${providerInvoiceId}`,
       );
       return;
     }
@@ -542,16 +549,16 @@ export class BillingService {
     }
   }
 
-  async handlePaymentFailed(xenditData: Record<string, unknown>) {
-    const xenditInvoiceId = xenditData['id'] as string;
+  async handlePaymentFailed(event: PaymentEventData) {
+    const providerInvoiceId = event.id;
 
     const payment = await this.prisma.payment.findUnique({
-      where: { xenditInvoiceId },
+      where: { providerInvoiceId },
     });
 
     if (!payment) {
       this.logger.warn(
-        `Payment not found for failed Xendit invoice: ${xenditInvoiceId}`,
+        `Payment not found for failed gateway invoice: ${providerInvoiceId}`,
       );
       return;
     }
@@ -572,8 +579,7 @@ export class BillingService {
       data: {
         status: 'failed',
         failedAt: new Date(),
-        failureReason:
-          (xenditData['failure_reason'] as string) ?? 'Payment failed',
+        failureReason: event.failureReason ?? 'Payment failed',
       },
     });
 
@@ -639,22 +645,22 @@ export class BillingService {
   }
 
   /**
-   * Handle a Xendit `refund.succeeded` webhook.
+   * Handle a `refund.succeeded` webhook.
    *
-   * Refunds are initiated manually from the Xendit dashboard — we only REACT
+   * Refunds are initiated manually from the gateway dashboard — we only REACT
    * here. This method is deliberately tolerant: it never throws for
    * unactionable payloads (unknown invoice, already-processed) because a thrown
-   * error makes Xendit retry the webhook indefinitely.
+   * error makes the gateway retry the webhook indefinitely.
    */
-  async handleRefundSucceeded(data: XenditRefundData) {
+  async handleRefundSucceeded(data: RefundEventData) {
     const refundId = data.id;
 
-    // LINKAGE: invoice-originated refunds carry the (deprecated-but-present)
-    // invoice_id, which maps to Payment.xenditInvoiceId.
-    // TODO(recurring): after the Xendit-native recurring migration, refunds
-    //   will instead carry data.payment_request_id — also match Payment on that
+    // LINKAGE: invoice-originated refunds carry the invoice id, which maps to
+    // Payment.providerInvoiceId.
+    // TODO(recurring): after the gateway-native recurring migration, refunds
+    //   will instead carry paymentRequestId — also match Payment on that
     //   field (Payment will gain a payment-request linkage column then).
-    const invoiceId = data.invoice_id;
+    const invoiceId = data.invoiceId;
     if (!invoiceId) {
       this.logger.warn(
         `Refund ${refundId}: no invoice_id on payload — cannot link to a Payment, skipping`,
@@ -663,11 +669,11 @@ export class BillingService {
     }
 
     const payment = await this.prisma.payment.findUnique({
-      where: { xenditInvoiceId: invoiceId },
+      where: { providerInvoiceId: invoiceId },
     });
 
     if (!payment) {
-      // Do NOT throw — that triggers infinite Xendit retries for a refund we
+      // Do NOT throw — that triggers infinite gateway retries for a refund we
       // can't act on (e.g. an invoice that predates this system).
       this.logger.warn(
         `Refund ${refundId}: no Payment found for invoice ${invoiceId}, skipping`,
@@ -681,8 +687,8 @@ export class BillingService {
       return;
     }
 
-    // UNIT GOTCHA: the original invoice amount was sent to Xendit in WHOLE PHP
-    // (createCheckout divides centavos by 100). The refund webhook `amount` is
+    // UNIT GOTCHA: the original invoice amount was sent to the gateway in WHOLE
+    // PHP (createCheckout divides centavos by 100). The refund webhook `amount` is
     // likewise whole PHP → multiply by 100 to store centavos matching
     // Payment.amount.
     const refundedAmount = Math.round(Number(data.amount) * 100);
@@ -771,10 +777,10 @@ export class BillingService {
   // ---- Recurring subscription webhook handlers ----
 
   /**
-   * `recurring.plan.activated` — the customer authorised the plan and the first
+   * `subscription.activated` — the customer authorised the plan and the first
    * charge cleared. Move the provisioning Subscription → active.
    */
-  async handleSubscriptionActivated(data: XenditRecurringData) {
+  async handleSubscriptionActivated(data: SubscriptionEventData) {
     const sub = await this.findSubscriptionForPlan(data);
     if (!sub) {
       this.logger.warn(`plan.activated: no Subscription for plan ${data.id}, skipping`);
@@ -787,16 +793,16 @@ export class BillingService {
     }
 
     const now = new Date();
-    const planId = data.recurring_plan_id ?? data.plan_id ?? data.id;
+    const planId = data.planId ?? data.id;
 
     await this.prisma.subscription.update({
       where: { id: sub.id },
       data: {
-        // Capture the repl_ recurring-plan id now (not known at checkout time).
-        xenditSubscriptionId: sub.xenditSubscriptionId ?? planId,
+        // Capture the gateway's recurring-plan id now (not known at checkout time).
+        providerSubscriptionId: sub.providerSubscriptionId ?? planId,
         // Open the first period at activation but DO NOT set currentPeriodEnd
-        // here. `recurring.cycle.succeeded` is the sole owner of
-        // currentPeriodEnd: Xendit emits cycle.succeeded for the immediate
+        // here. `subscription.cycle.succeeded` is the sole owner of
+        // currentPeriodEnd: the gateway emits it for the immediate
         // (activation) charge too, and handleCycleSucceeded's anchor falls back
         // to `now` when currentPeriodEnd is null — so the first cycle correctly
         // sets now + 1 period. Setting it here as well would net TWO periods for
@@ -810,11 +816,13 @@ export class BillingService {
       subscriptionId: sub.id,
       action: SubscriptionAction.ACTIVATE,
       actorType: 'system',
+      // Persisted verbatim into subscription_history — unchanged by this refactor.
       reason: 'Xendit recurring plan activated',
+      // Audit metadata key retained verbatim so historical rows stay queryable.
       metadata: { xenditSubscriptionId: data.id },
     });
 
-    // Persist the saved instrument if Xendit supplied one.
+    // Persist the saved instrument if the gateway supplied one.
     await this.persistPaymentMethod(sub.organizationId, data);
 
     // Schedule the T-3d renewal reminder. currentPeriodEnd is not known yet
@@ -833,30 +841,30 @@ export class BillingService {
       metadata: { xenditSubscriptionId: data.id, planCode: sub.planCode },
     });
 
-    this.logger.log(`Subscription ${sub.id} activated via Xendit plan ${data.id}`);
+    this.logger.log(`Subscription ${sub.id} activated via gateway plan ${data.id}`);
   }
 
   /**
-   * `recurring.cycle.succeeded` / `payment.succeeded` — a billing cycle was
-   * charged. Idempotently record the Payment, advance the period by exactly one
-   * cycle, reset usage quotas, and recover the sub from past_due if needed.
+   * `subscription.cycle.succeeded` — a billing cycle was charged. Idempotently
+   * record the Payment, advance the period by exactly one cycle, reset usage
+   * quotas, and recover the sub from past_due if needed.
    *
    * Idempotency is anchored on the cycle id (stored as the Payment's external
    * id): a replayed webhook finds the existing Payment and returns BEFORE
    * advancing the period — this is the guard against double-advance / double
    * charge.
    */
-  async handleCycleSucceeded(data: XenditRecurringData) {
+  async handleCycleSucceeded(data: SubscriptionEventData) {
     const sub = await this.findSubscriptionForPlan(data);
     if (!sub) {
-      this.logger.warn(`cycle.succeeded: no Subscription for plan ${data.plan_id ?? data.recurring_plan_id ?? data.id}, skipping`);
+      this.logger.warn(`cycle.succeeded: no Subscription for plan ${data.planId ?? data.id}, skipping`);
       return;
     }
 
     // IDEMPOTENCY: the cycle/charge id is unique per cycle.
     const cycleChargeId = data.id;
     const existing = await this.prisma.payment.findUnique({
-      where: { xenditInvoiceId: cycleChargeId },
+      where: { providerInvoiceId: cycleChargeId },
     });
     if (existing) {
       this.logger.log(`cycle.succeeded: payment ${cycleChargeId} already recorded — skipping period advance`);
@@ -877,15 +885,18 @@ export class BillingService {
         data: {
           organizationId: sub.organizationId,
           subscriptionId: sub.id,
-          xenditInvoiceId: cycleChargeId,
+          provider: sub.provider,
+          providerInvoiceId: cycleChargeId,
           amount: amountCentavos,
           currency: data.currency ?? 'PHP',
           status: 'succeeded',
           paymentType: 'subscription',
           description: `Recurring cycle — ${sub.planCode}`,
           paidAt: new Date(),
+          // Payment.metadata keys retained verbatim — this JSON is read back by
+          // reporting, so the refactor must not reshape it.
           metadata: {
-            xenditSubscriptionId: sub.xenditSubscriptionId,
+            xenditSubscriptionId: sub.providerSubscriptionId,
             cycleId: cycleChargeId,
           },
         },
@@ -944,6 +955,7 @@ export class BillingService {
           subscriptionId: sub.id,
           action: SubscriptionAction.RENEW,
           actorType: 'system',
+          // Persisted verbatim into subscription_history — unchanged by this refactor.
           reason: 'Xendit cycle succeeded — recovered from past_due',
           metadata: { cycleId: cycleChargeId },
         });
@@ -966,7 +978,7 @@ export class BillingService {
     );
 
     // Fire-and-forget recurring receipt — a mail failure must never fail the
-    // webhook (Xendit would retry, and the idempotency guard above would then
+    // webhook (the gateway would retry, and the idempotency guard above would then
     // skip the period advance but the charge is already recorded).
     try {
       const org = await this.prisma.organization.findUnique({
@@ -997,14 +1009,14 @@ export class BillingService {
   }
 
   /**
-   * `recurring.cycle.failed` — Xendit's auto-debit (and its own retries) failed.
-   * Move to past_due; the existing grace_period / suspend lifecycle events take
-   * over dunning fallback from there.
+   * `subscription.cycle.failed` — the gateway's auto-debit (and its own
+   * retries) failed. Move to past_due; the existing grace_period / suspend
+   * lifecycle events take over dunning fallback from there.
    */
-  async handleCycleFailed(data: XenditRecurringData) {
+  async handleCycleFailed(data: SubscriptionEventData) {
     const sub = await this.findSubscriptionForPlan(data);
     if (!sub) {
-      this.logger.warn(`cycle.failed: no Subscription for plan ${data.plan_id ?? data.id}, skipping`);
+      this.logger.warn(`cycle.failed: no Subscription for plan ${data.planId ?? data.id}, skipping`);
       return;
     }
 
@@ -1018,6 +1030,7 @@ export class BillingService {
         subscriptionId: sub.id,
         action: SubscriptionAction.PAYMENT_FAILED,
         actorType: 'system',
+        // Persisted verbatim into subscription_history — unchanged by this refactor.
         reason: 'Xendit recurring cycle failed',
         metadata: { cycleId: data.id },
       });
@@ -1064,10 +1077,10 @@ export class BillingService {
   }
 
   /**
-   * `recurring.plan.inactivated` — the plan was deactivated at Xendit (e.g.
+   * `subscription.deactivated` — the plan was deactivated at the gateway (e.g.
    * exhausted dunning, or our own cancel call). Cancel + downgrade to free.
    */
-  async handlePlanDeactivated(data: XenditRecurringData) {
+  async handlePlanDeactivated(data: SubscriptionEventData) {
     const sub = await this.findSubscriptionForPlan(data);
     if (!sub) {
       this.logger.warn(`plan.inactivated: no Subscription for plan ${data.id}, skipping`);
@@ -1087,6 +1100,7 @@ export class BillingService {
         subscriptionId: sub.id,
         action: SubscriptionAction.CANCEL_IMMEDIATELY,
         actorType: 'system',
+        // Persisted verbatim into subscription_history — unchanged by this refactor.
         reason: 'Xendit recurring plan deactivated',
         metadata: { xenditSubscriptionId: data.id },
       });
@@ -1109,42 +1123,41 @@ export class BillingService {
     });
   }
 
-  /** Link a recurring webhook back to a local Subscription row. */
-  private async findSubscriptionForPlan(data: XenditRecurringData) {
-    const planId = data.plan_id ?? data.recurring_plan_id ?? data.id;
+  /** Link a subscription webhook back to a local Subscription row. */
+  private async findSubscriptionForPlan(data: SubscriptionEventData) {
+    const planId = data.planId ?? data.id;
     // Prefer the plan id; fall back to our reference_id (the local sub id).
     const bySubId = await this.prisma.subscription.findFirst({
-      where: { xenditSubscriptionId: planId },
+      where: { providerSubscriptionId: planId },
     });
     if (bySubId) return bySubId;
-    if (data.reference_id) {
-      if (UUID_RE.test(data.reference_id)) {
-        return this.prisma.subscription.findUnique({ where: { id: data.reference_id } });
+    if (data.referenceId) {
+      if (UUID_RE.test(data.referenceId)) {
+        return this.prisma.subscription.findUnique({ where: { id: data.referenceId } });
       }
-      // Non-UUID reference_id (Xendit test webhook or malformed event): treat
-      // as "no matching subscription" so the handler returns 200 and Xendit
-      // stops retrying, instead of P2023 → 500 → infinite retries.
+      // Non-UUID reference_id (gateway test webhook or malformed event): treat
+      // as "no matching subscription" so the handler returns 200 and the
+      // gateway stops retrying, instead of P2023 → 500 → infinite retries.
       this.logger.warn(
-        `Recurring webhook carried non-UUID reference_id (event object ${planId ?? 'unknown'}); dropping — likely a Xendit test event`,
+        `Recurring webhook carried non-UUID reference_id (event object ${planId ?? 'unknown'}); dropping — likely a gateway test event`,
       );
     }
     return null;
   }
 
   /** Persist the saved card / e-wallet instrument from an activation payload. */
-  private async persistPaymentMethod(organizationId: string, data: XenditRecurringData) {
-    const pmId =
-      (data['payment_method_id'] as string | undefined) ??
-      (data['payment_token_id'] as string | undefined);
+  private async persistPaymentMethod(organizationId: string, data: SubscriptionEventData) {
+    const pmId = data.paymentMethodId;
     if (!pmId) return;
 
-    const type = ((data['payment_method_type'] as string) ?? 'card').toLowerCase();
+    const type = (data.paymentMethodType ?? 'card').toLowerCase();
     try {
       await this.prisma.paymentMethod.upsert({
-        where: { xenditPaymentMethodId: pmId },
+        where: { providerPaymentMethodId: pmId },
         create: {
           organizationId,
-          xenditPaymentMethodId: pmId,
+          provider: this.paymentProvider.slug,
+          providerPaymentMethodId: pmId,
           type: type.includes('ewallet') ? 'gcash' : 'card',
           isDefault: true,
           isActive: true,
@@ -1185,7 +1198,7 @@ export class BillingService {
   }
 
   /**
-   * (Re-)schedule the T-3d renewal reminder for a Xendit-backed subscription.
+   * (Re-)schedule the T-3d renewal reminder for a gateway-backed subscription.
    * Cancels any pending reminder first, so exactly one reminder is pending per
    * subscription (idempotent per billing period — the period end is stamped
    * into the event metadata and checked again at send time by the processor).
@@ -1254,10 +1267,10 @@ export class BillingService {
    */
   private async resolveCycleAmountCentavos(
     sub: { id: string },
-    data: XenditRecurringData,
+    data: SubscriptionEventData,
   ): Promise<number | null> {
     if (data.amount != null && Number.isFinite(Number(data.amount))) {
-      // Xendit recurring payloads carry whole PHP.
+      // Recurring payloads carry whole PHP.
       return Math.round(Number(data.amount) * 100);
     }
     const lastPayment = await this.prisma.payment.findFirst({
@@ -1299,7 +1312,7 @@ export class BillingService {
 
     // Idempotent no-op: the caller asked to cancel at period end and the row is
     // ALREADY scheduled to do exactly that. CANCELLING has no REQUEST_CANCEL
-    // edge, so falling through would issue a redundant Xendit deactivate and
+    // edge, so falling through would issue a redundant gateway deactivate and
     // then 400 out of the state machine. A repeated cancel is a normal
     // double-submit, not an error.
     // Only the cancelAtPeriodEnd branch returns early — CANCELLING ->
@@ -1316,18 +1329,18 @@ export class BillingService {
       ? SubscriptionAction.REQUEST_CANCEL
       : SubscriptionAction.CANCEL_IMMEDIATELY;
 
-    // Deactivate the Xendit recurring plan so NO further auto-debit occurs, in
-    // both modes. The cancelAtPeriodEnd vs immediate distinction is about OUR
+    // Deactivate the gateway's recurring plan so NO further auto-debit occurs,
+    // in both modes. The cancelAtPeriodEnd vs immediate distinction is about OUR
     // entitlement state (REQUEST_CANCEL keeps access until currentPeriodEnd;
-    // CANCEL_IMMEDIATELY revokes now), not about Xendit continuing to charge.
-    if (sub.xenditSubscriptionId) {
+    // CANCEL_IMMEDIATELY revokes now), not about the gateway continuing to charge.
+    if (sub.providerSubscriptionId) {
       try {
-        await this.xenditService.cancelSubscription(sub.xenditSubscriptionId);
+        await this.paymentProvider.cancelSubscription(sub.providerSubscriptionId);
       } catch (err) {
-        // Don't block our own cancellation if Xendit is unreachable; the plan
-        // can be reconciled later and the internal state is the source of truth.
+        // Don't block our own cancellation if the gateway is unreachable; the
+        // plan can be reconciled later and internal state is the source of truth.
         this.logger.error(
-          `Failed to deactivate Xendit plan ${sub.xenditSubscriptionId} for subscription ${sub.id}`,
+          `Failed to deactivate gateway plan ${sub.providerSubscriptionId} for subscription ${sub.id}`,
           err,
         );
       }

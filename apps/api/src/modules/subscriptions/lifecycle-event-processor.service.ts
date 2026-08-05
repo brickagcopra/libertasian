@@ -51,7 +51,7 @@ interface DueLifecycleEvent {
     status: string;
     organizationId: string;
     planCode: string;
-    xenditSubscriptionId: string | null;
+    providerSubscriptionId: string | null;
   };
 }
 
@@ -89,7 +89,7 @@ export class LifecycleEventProcessorService {
             status: true,
             organizationId: true,
             planCode: true,
-            xenditSubscriptionId: true,
+            providerSubscriptionId: true,
           },
         },
       },
@@ -144,15 +144,15 @@ export class LifecycleEventProcessorService {
       return;
     }
 
-    // DOUBLE-RENEWAL GUARD: Xendit-native subscriptions are renewed by Xendit's
+    // DOUBLE-RENEWAL GUARD: gateway-native subscriptions are renewed by the gateway's
     // own billing cycle (driven through the cycle.succeeded webhook, which
     // advances currentPeriodEnd). The internal `renewal` event must NEVER also
     // fire RENEW for these subs — that would double-advance the period (and the
     // RENEW path here charges no one anyway). Treat it as a completed no-op.
-    if (event.eventType === 'renewal' && event.subscription.xenditSubscriptionId) {
+    if (event.eventType === 'renewal' && event.subscription.providerSubscriptionId) {
       this.logger.log(
-        `Skipping internal renewal for Xendit-backed subscription ${event.subscription.id} ` +
-          `(event ${event.id}) — Xendit drives the billing cycle`,
+        `Skipping internal renewal for gateway-backed subscription ${event.subscription.id} ` +
+          `(event ${event.id}) — the gateway drives the billing cycle`,
       );
       await this.markCompleted(event.id);
       return;
@@ -205,7 +205,7 @@ export class LifecycleEventProcessorService {
    *
    * Guards (all no-op complete, never send):
    * - subscription must still be ACTIVE
-   * - subscription must be Xendit-backed (Xendit drives the upcoming charge)
+   * - subscription must be gateway-backed (the gateway drives the upcoming charge)
    * - subscription must NOT be cancelAtPeriodEnd (no charge will occur)
    * - the reminder for this billing period must not have been sent already
    *   (idempotent per period via the periodEnd stamped in event metadata)
@@ -228,7 +228,7 @@ export class LifecycleEventProcessorService {
           billingPeriod: true,
           currentPeriodEnd: true,
           cancelAtPeriodEnd: true,
-          xenditSubscriptionId: true,
+          providerSubscriptionId: true,
         },
       });
 
@@ -236,7 +236,7 @@ export class LifecycleEventProcessorService {
       if (
         !sub ||
         sub.status !== SubscriptionState.ACTIVE ||
-        !sub.xenditSubscriptionId ||
+        !sub.providerSubscriptionId ||
         sub.cancelAtPeriodEnd ||
         !sub.currentPeriodEnd ||
         sub.currentPeriodEnd <= now
