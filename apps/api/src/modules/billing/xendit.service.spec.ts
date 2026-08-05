@@ -59,7 +59,9 @@ describe('XenditService', () => {
       });
 
       expect(result.id).toBe('inv_test_123');
-      expect(result.invoice_url).toBe('https://checkout.xendit.co/inv_test_123');
+      // Neutral DTO: snake_case wire fields are mapped inside the adapter.
+      expect(result.invoiceUrl).toBe('https://checkout.xendit.co/inv_test_123');
+      expect(result.externalId).toBe('ext-uuid-123');
       expect(global.fetch).toHaveBeenCalledWith(
         'https://api.xendit.co/v2/invoices',
         expect.objectContaining({
@@ -267,7 +269,7 @@ describe('XenditService', () => {
 
       const result = await service.getCustomerByReferenceId('org-1');
 
-      expect(result).toEqual({ id: 'cust-1', reference_id: 'org-1' });
+      expect(result).toEqual({ id: 'cust-1', referenceId: 'org-1' });
       expect(global.fetch).toHaveBeenCalledWith(
         'https://api.xendit.co/customers?reference_id=org-1',
         expect.objectContaining({ method: 'GET' }),
@@ -298,45 +300,127 @@ describe('XenditService', () => {
     });
   });
 
-  // ---- verifyWebhookToken ----
+  // ---- verifyWebhookSignature ----
 
-  describe('verifyWebhookToken', () => {
+  describe('verifyWebhookSignature', () => {
     it('should verify valid callback token', () => {
-      const result = service.verifyWebhookToken(mockCallbackToken);
-      expect(result).toBe(true);
+      expect(
+        service.verifyWebhookSignature('{}', { 'x-callback-token': mockCallbackToken }),
+      ).toBe('valid');
     });
 
     it('should reject invalid callback token', () => {
-      const result = service.verifyWebhookToken('wrong_token');
-      expect(result).toBe(false);
+      expect(service.verifyWebhookSignature('{}', { 'x-callback-token': 'wrong_token' })).toBe(
+        'invalid',
+      );
     });
 
-    it('should return false for empty callback token', () => {
-      const result = service.verifyWebhookToken('');
-      expect(result).toBe(false);
+    it('should report a missing callback token distinctly from a wrong one', () => {
+      expect(service.verifyWebhookSignature('{}', {})).toBe('missing');
+      expect(service.verifyWebhookSignature('{}', { 'x-callback-token': '' })).toBe('missing');
     });
   });
 
   // ---- parseWebhookEvent ----
 
   describe('parseWebhookEvent', () => {
-    it('should parse webhook event from raw body', () => {
-      const event = {
-        id: 'inv_test_123',
-        external_id: 'ext-uuid-123',
-        status: 'PAID',
-        paid_amount: 999,
-        amount: 999,
-        currency: 'PHP',
-        description: 'LIBERTASIAN Pro Plan — Monthly',
-      };
+    it('normalizes a flat PAID invoice into payment.succeeded', () => {
+      const result = service.parseWebhookEvent(
+        JSON.stringify({
+          id: 'inv_test_123',
+          external_id: 'ext-uuid-123',
+          status: 'PAID',
+          paid_amount: 999,
+          amount: 999,
+          currency: 'PHP',
+          description: 'LIBERTASIAN Pro Plan — Monthly',
+        }),
+      );
 
-      const rawBody = JSON.stringify(event);
-      const result = service.parseWebhookEvent(rawBody);
+      expect(result.type).toBe('payment.succeeded');
+      expect(result.entityId).toBe('inv_test_123');
+      expect(result.data).toEqual(
+        expect.objectContaining({ id: 'inv_test_123', status: 'PAID' }),
+      );
+      // Redis key + audit action inputs must be unchanged by the abstraction.
+      expect(result.idempotencyScope).toBe('invoice');
+      expect(result.auditSuffix).toBe('paid');
+      expect(result.provider).toBe('xendit');
+    });
 
-      expect(result.id).toBe('inv_test_123');
-      expect(result.status).toBe('PAID');
-      expect(result.paid_amount).toBe(999);
+    it('normalizes an EXPIRED invoice into payment.expired and carries the failure reason', () => {
+      const result = service.parseWebhookEvent(
+        JSON.stringify({ id: 'inv_x', status: 'EXPIRED', failure_reason: 'card declined' }),
+      );
+
+      expect(result.type).toBe('payment.expired');
+      expect(result.auditSuffix).toBe('expired');
+      expect(result.data).toEqual(
+        expect.objectContaining({ failureReason: 'card declined' }),
+      );
+    });
+
+    it('normalizes the refund envelope into refund.* with camelCase linkage', () => {
+      const result = service.parseWebhookEvent(
+        JSON.stringify({
+          event: 'refund.succeeded',
+          data: { id: 'ref_1', invoice_id: 'inv_1', amount: 999, currency: 'PHP', status: 'SUCCEEDED' },
+        }),
+      );
+
+      expect(result.type).toBe('refund.succeeded');
+      expect(result.idempotencyScope).toBe('refund');
+      expect(result.auditSuffix).toBe('refund_succeeded');
+      expect(result.data).toEqual(
+        expect.objectContaining({ id: 'ref_1', invoiceId: 'inv_1', amount: 999 }),
+      );
+    });
+
+    it.each([
+      ['recurring.plan.activated', 'subscription.activated'],
+      ['recurring.plan.inactivated', 'subscription.deactivated'],
+      ['recurring.cycle.created', 'subscription.cycle.created'],
+      ['recurring.cycle.succeeded', 'subscription.cycle.succeeded'],
+      ['recurring.cycle.failed', 'subscription.cycle.failed'],
+      // The lower-level capture event stays distinct from the authoritative
+      // cycle event — conflating them would double-advance the period.
+      ['payment.succeeded', 'payment.captured'],
+    ])('maps %s to %s', (xenditEvent, internalType) => {
+      const result = service.parseWebhookEvent(
+        JSON.stringify({
+          event: xenditEvent,
+          data: { id: 'obj_1', recurring_plan_id: 'repl_1', reference_id: 'sub-1' },
+        }),
+      );
+
+      expect(result.type).toBe(internalType);
+      expect(result.idempotencyScope).toBe(xenditEvent);
+      expect(result.auditSuffix).toBe(xenditEvent.replace(/\./g, '_'));
+      expect(result.data).toEqual(
+        expect.objectContaining({ id: 'obj_1', planId: 'repl_1', referenceId: 'sub-1' }),
+      );
+    });
+
+    it('falls back to `unknown` for an unrecognised recurring event', () => {
+      const result = service.parseWebhookEvent(
+        JSON.stringify({ event: 'recurring.cycle.retrying', data: { id: 'obj_2' } }),
+      );
+
+      expect(result.type).toBe('unknown');
+      expect(result.auditSuffix).toBe('recurring_cycle_retrying');
+    });
+
+    it('lifts the saved instrument out of an activation payload', () => {
+      const result = service.parseWebhookEvent(
+        JSON.stringify({
+          event: 'recurring.plan.activated',
+          data: { id: 'repl_1', payment_token_id: 'pm_1', payment_method_type: 'EWALLET' },
+        }),
+      );
+
+      expect(result.data).toEqual(
+        expect.objectContaining({ paymentMethodId: 'pm_1', paymentMethodType: 'EWALLET' }),
+      );
     });
   });
 

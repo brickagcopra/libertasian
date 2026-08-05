@@ -2,6 +2,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import {
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
@@ -15,7 +16,10 @@ import { createHash, randomBytes, randomUUID } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AuthService } from '../auth/auth.service';
-import { XenditService } from '../billing/xendit.service';
+import {
+  PAYMENT_PROVIDER,
+  type PaymentProvider,
+} from '../billing/payment-provider.interface';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
   ACCOUNT_PURGE_QUEUE,
@@ -62,7 +66,8 @@ export class AccountDeletionService {
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
     private readonly authService: AuthService,
-    private readonly xenditService: XenditService,
+    @Inject(PAYMENT_PROVIDER)
+    private readonly paymentProvider: PaymentProvider,
     private readonly notificationsService: NotificationsService,
     @InjectQueue(ACCOUNT_PURGE_QUEUE) private readonly purgeQueue: Queue,
   ) {}
@@ -131,7 +136,7 @@ export class AccountDeletionService {
       await this.authService.revokeAllSessions(userId);
     });
 
-    // Outside the transaction: cancelling a subscription can call Xendit, and a
+    // Outside the transaction: cancelling a subscription can call the gateway, and a
     // slow third-party call must never hold a DB transaction open.
     await this.cancelSubscriptionsForOrganizations(soloOrganizationIds, userId);
 
@@ -583,9 +588,9 @@ export class AccountDeletionService {
   /**
    * Cancel any live subscription on the orgs being deleted.
    *
-   * The local row is always the source of truth. Xendit is called ONLY when
-   * `xenditSubscriptionId` is non-null: complimentary and comp-Pro grants carry
-   * no Xendit plan at all, and calling out for them would throw on a NULL id.
+   * The local row is always the source of truth. The gateway is called ONLY
+   * when `providerSubscriptionId` is non-null: complimentary and comp-Pro grants
+   * carry no gateway plan at all, and calling out would throw on a NULL id.
    */
   private async cancelSubscriptionsForOrganizations(
     organizationIds: string[],
@@ -606,19 +611,19 @@ export class AccountDeletionService {
         id: true,
         planCode: true,
         organizationId: true,
-        xenditSubscriptionId: true,
+        providerSubscriptionId: true,
       },
     });
 
     for (const sub of live) {
-      if (sub.xenditSubscriptionId) {
+      if (sub.providerSubscriptionId) {
         try {
-          await this.xenditService.cancelSubscription(sub.xenditSubscriptionId);
+          await this.paymentProvider.cancelSubscription(sub.providerSubscriptionId);
         } catch (err) {
           // Never block the user's deletion on a third party. The local row is
           // authoritative and the plan can be reconciled later.
           this.logger.error(
-            `Failed to cancel Xendit plan ${sub.xenditSubscriptionId} for subscription ${sub.id}`,
+            `Failed to cancel gateway plan ${sub.providerSubscriptionId} for subscription ${sub.id}`,
             err,
           );
         }
@@ -643,7 +648,8 @@ export class AccountDeletionService {
         metadata: {
           reason: 'account_deletion',
           planCode: sub.planCode,
-          xenditCancelled: sub.xenditSubscriptionId !== null,
+          // Audit metadata key retained verbatim so historical rows stay queryable.
+          xenditCancelled: sub.providerSubscriptionId !== null,
         },
       });
     }

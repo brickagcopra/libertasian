@@ -5,6 +5,8 @@ import { BillingService } from './billing.service';
 import { WebhookController } from './webhook.controller';
 import { XenditService } from './xendit.service';
 
+const CALLBACK_TOKEN = 'tok';
+
 /**
  * End-to-end regression guard for the double period-advance bug.
  *
@@ -29,7 +31,8 @@ interface SubRow {
   planCode: string;
   billingPeriod: string;
   status: string;
-  xenditSubscriptionId: string | null;
+  provider: string;
+  providerSubscriptionId: string | null;
   currentPeriodStart: Date | null;
   currentPeriodEnd: Date | null;
 }
@@ -38,7 +41,7 @@ interface PaymentRow {
   id: string;
   organizationId: string;
   subscriptionId: string;
-  xenditInvoiceId: string;
+  providerInvoiceId: string;
   amount: number;
   currency: string;
   status: string;
@@ -52,8 +55,8 @@ class FakePrisma {
   private paySeq = 0;
 
   payment = {
-    findUnique: async ({ where }: { where: { xenditInvoiceId: string } }) =>
-      this.payments.find((p) => p.xenditInvoiceId === where.xenditInvoiceId) ?? null,
+    findUnique: async ({ where }: { where: { providerInvoiceId: string } }) =>
+      this.payments.find((p) => p.providerInvoiceId === where.providerInvoiceId) ?? null,
     create: async ({ data }: { data: Record<string, unknown> }) => {
       const row = { id: `pay-${++this.paySeq}`, ...data } as PaymentRow;
       this.payments.push(row);
@@ -64,10 +67,10 @@ class FakePrisma {
 
   subscription = {
     findFirst: async ({ where }: { where: Record<string, unknown> }) => {
-      const wanted = where['xenditSubscriptionId'];
+      const wanted = where['providerSubscriptionId'];
       if (wanted === undefined) return null;
       for (const s of this.subs.values()) {
-        if (s.xenditSubscriptionId === wanted) return s;
+        if (s.providerSubscriptionId === wanted) return s;
       }
       return null;
     },
@@ -134,13 +137,21 @@ const noopUsageQuota = { resetQuotasForBillingCycle: jest.fn().mockResolvedValue
 
 /** Build a fake RawBodyRequest carrying the given JSON body. */
 function reqWith(body: unknown): RawBodyRequest<Request> {
-  return { rawBody: Buffer.from(JSON.stringify(body)) } as RawBodyRequest<Request>;
+  return {
+    rawBody: Buffer.from(JSON.stringify(body)),
+    headers: { 'x-callback-token': CALLBACK_TOKEN },
+  } as unknown as RawBodyRequest<Request>;
 }
 
-const xenditStub = {
-  verifyWebhookToken: jest.fn().mockReturnValue(true),
-  parseWebhookEvent: jest.fn((raw: string) => JSON.parse(raw)),
-} as unknown as XenditService;
+/**
+ * The REAL adapter, so the raw Xendit payload shapes above are translated by
+ * production code. Stubbing normalization here would hide exactly the kind of
+ * routing mistake this regression guard exists to catch.
+ */
+const xenditAdapter = new XenditService({
+  get: (key: string, fallback?: string) =>
+    key === 'XENDIT_WEBHOOK_CALLBACK_TOKEN' ? CALLBACK_TOKEN : (fallback ?? ''),
+} as never);
 
 function buildStack() {
   const prisma = new FakePrisma();
@@ -154,14 +165,15 @@ function buildStack() {
     planCode: 'pro',
     billingPeriod: 'monthly',
     status: 'provisioning',
-    xenditSubscriptionId: null,
+    provider: 'xendit',
+    providerSubscriptionId: null,
     currentPeriodStart: null,
     currentPeriodEnd: null,
   });
 
   const billing = new BillingService(
     prisma as never, // prisma
-    xenditStub, // xenditService
+    xenditAdapter, // paymentProvider (port)
     {} as never, // subscriptionsService (unused on this path)
     noopAudit as never, // auditService
     {} as never, // pricingEngine
@@ -174,7 +186,7 @@ function buildStack() {
   );
 
   const controller = new WebhookController(
-    xenditStub,
+    xenditAdapter,
     billing,
     noopAudit as never,
     redis as never,
@@ -203,20 +215,20 @@ describe('recurring billing — double period-advance regression (controller ⇄
   it('activation + first cycle + payment.succeeded (same charge) → ONE Payment, ONE period', async () => {
     const { prisma, controller } = buildStack();
 
-    await controller.handleXenditWebhook(activated, 'tok');
+    await controller.handleWebhook('xendit', activated);
     // Activation opens the period but must NOT set the end.
     const afterActivation = prisma.subs.get(SUB_ID)!;
     expect(afterActivation.currentPeriodStart).toBeInstanceOf(Date);
     expect(afterActivation.currentPeriodEnd).toBeNull();
     expect(prisma.payments).toHaveLength(0);
 
-    await controller.handleXenditWebhook(cycle1, 'tok');
-    await controller.handleXenditWebhook(paymentSucceeded, 'tok');
+    await controller.handleWebhook('xendit', cycle1);
+    await controller.handleWebhook('xendit', paymentSucceeded);
 
     const sub = prisma.subs.get(SUB_ID)!;
     // Exactly ONE subscription Payment for the charge (payment.succeeded did not add a second).
     expect(prisma.payments).toHaveLength(1);
-    expect(prisma.payments[0]!.xenditInvoiceId).toBe('cycle_1');
+    expect(prisma.payments[0]!.providerInvoiceId).toBe('cycle_1');
     expect(prisma.payments[0]!.amount).toBe(99900); // 999 PHP → centavos
     // currentPeriodEnd advanced by EXACTLY one month from its start — not two.
     expect(sub.currentPeriodEnd).toBeInstanceOf(Date);
@@ -226,21 +238,21 @@ describe('recurring billing — double period-advance regression (controller ⇄
   it('a second, distinct cycle advances exactly one more period and records one more Payment', async () => {
     const { prisma, controller } = buildStack();
 
-    await controller.handleXenditWebhook(activated, 'tok');
-    await controller.handleXenditWebhook(cycle1, 'tok');
+    await controller.handleWebhook('xendit', activated);
+    await controller.handleWebhook('xendit', cycle1);
     const endAfterFirst = prisma.subs.get(SUB_ID)!.currentPeriodEnd!;
 
-    await controller.handleXenditWebhook(
+    await controller.handleWebhook(
+      'xendit',
       reqWith({
         event: 'recurring.cycle.succeeded',
         data: { id: 'cycle_2', recurring_plan_id: 'repl_1', amount: 999, currency: 'PHP' },
       }),
-      'tok',
     );
 
     const sub = prisma.subs.get(SUB_ID)!;
     expect(prisma.payments).toHaveLength(2);
-    expect(prisma.payments[1]!.xenditInvoiceId).toBe('cycle_2');
+    expect(prisma.payments[1]!.providerInvoiceId).toBe('cycle_2');
     // The second cycle anchors on the prior end, so it advances exactly one more
     // month with no drift.
     const expected = new Date(endAfterFirst);
@@ -251,16 +263,16 @@ describe('recurring billing — double period-advance regression (controller ⇄
   it('replaying each event (via controller idempotency) never advances again or duplicates a Payment', async () => {
     const { prisma, controller } = buildStack();
 
-    await controller.handleXenditWebhook(activated, 'tok');
-    await controller.handleXenditWebhook(cycle1, 'tok');
-    await controller.handleXenditWebhook(paymentSucceeded, 'tok');
+    await controller.handleWebhook('xendit', activated);
+    await controller.handleWebhook('xendit', cycle1);
+    await controller.handleWebhook('xendit', paymentSucceeded);
 
     const endBefore = prisma.subs.get(SUB_ID)!.currentPeriodEnd!.getTime();
 
     // Replay all three verbatim.
-    await controller.handleXenditWebhook(activated, 'tok');
-    await controller.handleXenditWebhook(cycle1, 'tok');
-    await controller.handleXenditWebhook(paymentSucceeded, 'tok');
+    await controller.handleWebhook('xendit', activated);
+    await controller.handleWebhook('xendit', cycle1);
+    await controller.handleWebhook('xendit', paymentSucceeded);
 
     const sub = prisma.subs.get(SUB_ID)!;
     expect(prisma.payments).toHaveLength(1);
@@ -270,13 +282,13 @@ describe('recurring billing — double period-advance regression (controller ⇄
   it('cycle.succeeded replay is idempotent even if the controller key is evicted (service-level guard)', async () => {
     const { prisma, redis, controller } = buildStack();
 
-    await controller.handleXenditWebhook(activated, 'tok');
-    await controller.handleXenditWebhook(cycle1, 'tok');
+    await controller.handleWebhook('xendit', activated);
+    await controller.handleWebhook('xendit', cycle1);
     const endBefore = prisma.subs.get(SUB_ID)!.currentPeriodEnd!.getTime();
 
     // Simulate the 7-day idempotency key expiring, then a Xendit re-delivery.
     redis.store.delete('billing:webhook:recurring.cycle.succeeded:cycle_1');
-    await controller.handleXenditWebhook(cycle1, 'tok');
+    await controller.handleWebhook('xendit', cycle1);
 
     const sub = prisma.subs.get(SUB_ID)!;
     // The Payment row keyed on cycle id is the second-layer guard: still one
@@ -288,10 +300,10 @@ describe('recurring billing — double period-advance regression (controller ⇄
   it('payment.succeeded on its own never advances the period or records a Payment', async () => {
     const { prisma, controller } = buildStack();
 
-    await controller.handleXenditWebhook(activated, 'tok');
+    await controller.handleWebhook('xendit', activated);
     const endAfterActivation = prisma.subs.get(SUB_ID)!.currentPeriodEnd; // null
 
-    await controller.handleXenditWebhook(paymentSucceeded, 'tok');
+    await controller.handleWebhook('xendit', paymentSucceeded);
 
     const sub = prisma.subs.get(SUB_ID)!;
     expect(prisma.payments).toHaveLength(0);

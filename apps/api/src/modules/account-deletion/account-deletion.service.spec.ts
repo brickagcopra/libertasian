@@ -11,7 +11,7 @@ import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AuthService } from '../auth/auth.service';
-import { XenditService } from '../billing/xendit.service';
+import { PAYMENT_PROVIDER } from '../billing/payment-provider.interface';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AccountDeletionService } from './account-deletion.service';
 import {
@@ -64,7 +64,7 @@ describe('AccountDeletionService', () => {
 
   const audit = { log: jest.fn() };
   const auth = { revokeAllSessions: jest.fn() };
-  const xendit = { cancelSubscription: jest.fn() };
+  const paymentProvider = { slug: 'xendit', cancelSubscription: jest.fn() };
   const notifications = { sendAccountRestoreEmail: jest.fn() };
   const queue = { add: jest.fn() };
 
@@ -78,7 +78,7 @@ describe('AccountDeletionService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: AuditService, useValue: audit },
         { provide: AuthService, useValue: auth },
-        { provide: XenditService, useValue: xendit },
+        { provide: PAYMENT_PROVIDER, useValue: paymentProvider },
         { provide: NotificationsService, useValue: notifications },
         { provide: getQueueToken(ACCOUNT_PURGE_QUEUE), useValue: queue },
       ],
@@ -335,21 +335,21 @@ describe('AccountDeletionService', () => {
       ]);
     });
 
-    it('cancels a comp plan locally WITHOUT calling Xendit when the id is null', async () => {
+    it('cancels a comp plan locally WITHOUT calling the gateway when the id is null', async () => {
       // The reviewer account's comp Pro subscription has a NULL
-      // xendit_subscription_id; calling out for it would throw.
+      // provider_subscription_id; calling out for it would throw.
       prisma.subscription.findMany.mockResolvedValue([
         {
           id: 'sub-comp',
           planCode: 'pro',
           organizationId: 'org-solo',
-          xenditSubscriptionId: null,
+          providerSubscriptionId: null,
         },
       ]);
 
       await service.requestDeletion('user-1', dtoWithPassword(), {});
 
-      expect(xendit.cancelSubscription).not.toHaveBeenCalled();
+      expect(paymentProvider.cancelSubscription).not.toHaveBeenCalled();
       expect(prisma.subscription.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: 'sub-comp' },
@@ -358,31 +358,31 @@ describe('AccountDeletionService', () => {
       );
     });
 
-    it('calls Xendit when the subscription carries a plan id', async () => {
+    it('calls the gateway when the subscription carries a plan id', async () => {
       prisma.subscription.findMany.mockResolvedValue([
         {
           id: 'sub-paid',
           planCode: 'pro',
           organizationId: 'org-solo',
-          xenditSubscriptionId: 'xnd-plan-1',
+          providerSubscriptionId: 'xnd-plan-1',
         },
       ]);
 
       await service.requestDeletion('user-1', dtoWithPassword(), {});
 
-      expect(xendit.cancelSubscription).toHaveBeenCalledWith('xnd-plan-1');
+      expect(paymentProvider.cancelSubscription).toHaveBeenCalledWith('xnd-plan-1');
     });
 
-    it('still cancels locally when Xendit is unreachable', async () => {
+    it('still cancels locally when the gateway is unreachable', async () => {
       prisma.subscription.findMany.mockResolvedValue([
         {
           id: 'sub-paid',
           planCode: 'pro',
           organizationId: 'org-solo',
-          xenditSubscriptionId: 'xnd-plan-1',
+          providerSubscriptionId: 'xnd-plan-1',
         },
       ]);
-      xendit.cancelSubscription.mockRejectedValue(new Error('502 Bad Gateway'));
+      paymentProvider.cancelSubscription.mockRejectedValue(new Error('502 Bad Gateway'));
 
       await expect(
         service.requestDeletion('user-1', dtoWithPassword(), {}),

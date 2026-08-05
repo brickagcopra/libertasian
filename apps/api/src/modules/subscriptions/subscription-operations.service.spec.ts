@@ -32,7 +32,7 @@ describe('SubscriptionOperationsService', () => {
     currentPeriodEnd: new Date('2026-03-31'),
     seats: 1,
     entitlementsJson: {},
-    xenditSubscriptionId: null,
+    providerSubscriptionId: null,
     cancelAtPeriodEnd: false,
     canceledAt: null,
     trialStart: null,
