@@ -82,7 +82,8 @@ export default function RefundPolicyPage() {
           </ul>
           <p>
             You can also reach us by phone on{' '}
-            <a href={`tel:${businessInfo.phone}`}>{businessInfo.phone}</a> during the support hours
+            <a href={`tel:${businessInfo.phone}`}>{businessInfo.phoneDisplay}</a> during the support
+            hours
             listed on the <Link href="/contact">Contact page</Link>, but please follow up by email
             so there is a written record of the request.
           </p>
@@ -126,7 +127,7 @@ export default function RefundPolicyPage() {
             <br />
             Email: <a href={`mailto:${businessInfo.email}`}>{businessInfo.email}</a>
             <br />
-            Phone: <a href={`tel:${businessInfo.phone}`}>{businessInfo.phone}</a>
+            Phone: <a href={`tel:${businessInfo.phone}`}>{businessInfo.phoneDisplay}</a>
           </p>
         </Section>
       </div>

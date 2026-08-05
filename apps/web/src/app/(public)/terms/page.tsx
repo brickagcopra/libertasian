@@ -279,7 +279,7 @@ export default function TermsPage() {
             <br />
             Email: {businessInfo.email}
             <br />
-            Phone: {businessInfo.phone}
+            Phone: {businessInfo.phoneDisplay}
             <br />
             Website: libertasian.com
           </p>

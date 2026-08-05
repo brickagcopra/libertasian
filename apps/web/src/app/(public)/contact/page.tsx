@@ -38,7 +38,7 @@ export default function ContactPage() {
             <a href={`mailto:${businessInfo.email}`}>{businessInfo.email}</a>
             <br />
             <strong>Phone:</strong>{' '}
-            <a href={`tel:${businessInfo.phone}`}>{businessInfo.phone}</a>
+            <a href={`tel:${businessInfo.phone}`}>{businessInfo.phoneDisplay}</a>
           </p>
           <p>
             <strong>Support hours:</strong> Monday to Friday, 9:00&nbsp;AM to 6:00&nbsp;PM

@@ -372,7 +372,7 @@ export default function PrivacyPage() {
             <br />
             General inquiries: {businessInfo.email}
             <br />
-            Phone: {businessInfo.phone}
+            Phone: {businessInfo.phoneDisplay}
           </p>
           <p>
             You may also file a complaint with the{' '}

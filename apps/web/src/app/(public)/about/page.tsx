@@ -15,8 +15,8 @@ export default function AboutPage() {
       <p className="mt-2 text-sm text-gray-500">Last updated: August 5, 2026</p>
       <p className="mt-4 text-sm text-gray-600">
         {businessInfo.tradeName} is a Philippine legal research platform operated by{' '}
-        <strong>{businessInfo.legalName}</strong>, a company organized under the laws of the
-        Republic of the Philippines.
+        <strong>{businessInfo.legalName}</strong>, a company founded in {businessInfo.foundedYear}{' '}
+        and organized under the laws of the Republic of the Philippines.
       </p>
 
       <div className="prose prose-gray mt-10 max-w-none text-sm leading-relaxed text-gray-700">

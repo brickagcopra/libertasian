@@ -69,9 +69,17 @@ describe('businessInfo — registered identity', () => {
   it('carries a full registered address, a phone and a named DPO', () => {
     expect(businessInfo.address.full).toContain('Cagayan de Oro City');
     expect(businessInfo.address.full).toContain('Philippines');
-    expect(businessInfo.phone).toMatch(/^\+63\d+$/);
     expect(businessInfo.dpo.name).not.toHaveLength(0);
     expect(businessInfo.dpo.email).toContain('@');
+    expect(businessInfo.foundedYear).toBe(2026);
+  });
+
+  it('keeps the tel:-safe phone unspaced and the display phone grouped', () => {
+    // The two must never be swapped: spaces in a tel: href are unreliable on
+    // some dialers, and the unspaced form is the one humans misread.
+    expect(businessInfo.phone).toMatch(/^\+63\d+$/);
+    expect(businessInfo.phoneDisplay).toBe('+63 956 365 9471');
+    expect(businessInfo.phoneDisplay.replace(/\s/g, '')).toBe(businessInfo.phone);
   });
 });
 
@@ -128,10 +136,31 @@ describe('footer links — KYC reachability', () => {
 });
 
 describe('homepage stats — substantiation', () => {
+  const items = DEFAULT_HOMEPAGE_CONTENT.stats?.items ?? [];
+  const labels = items.map((s) => s.label);
+
   it('no longer claims a law-school count', () => {
     // There is no schools/universities table, and prod holds 25 users across
     // 21 orgs and 3 email domains. Nothing substantiated "100+ Law schools".
-    const labels = (DEFAULT_HOMEPAGE_CONTENT.stats?.items ?? []).map((s) => s.label);
     expect(labels).not.toContain('Law schools');
+  });
+
+  it('no longer claims an app-store rating', () => {
+    // A third-party rating for a listing that does not exist: App Store search
+    // and a bundleId lookup for com.libertasian.app both return 0 results, and
+    // Play returns 404.
+    expect(labels).not.toContain('App store');
+    expect(items.map((s) => s.value)).not.toContain('4.9★');
+  });
+
+  it('states the replacement figures at or below the measured counts', () => {
+    // Measured on prod 2026-08-05: 97 bar sittings, 68,849 sections indexed.
+    // A claim may under-state what we can show; it may never over-state it.
+    expect(items).toContainEqual({ value: '97', label: 'Bar sittings, 1953–2024' });
+    expect(items).toContainEqual({ value: '68,000+', label: 'Sections indexed' });
+  });
+
+  it('keeps the strip at four tiles', () => {
+    expect(items).toHaveLength(4);
   });
 });

@@ -22,6 +22,7 @@ export const businessInfo = {
   legalName: 'LIBERTASIAN INC.',
   /** Consumer-facing product name. Not the legal entity. */
   tradeName: 'LIBERTASIAN',
+  foundedYear: 2026,
   address: {
     street: '25X Sunbird Street, Southview Homes Subdivision',
     city: 'Cagayan de Oro City',
@@ -35,7 +36,14 @@ export const businessInfo = {
   },
   /** Monitored daily. */
   email: 'support@libertasian.com',
+  /**
+   * Two forms, deliberately. `phone` is the unspaced E.164 value that belongs
+   * in a `tel:` href — spaces there make the link unreliable on some dialers.
+   * `phoneDisplay` is the grouped form humans read. Render `phoneDisplay`,
+   * link `phone`; never swap them.
+   */
   phone: '+639563659471',
+  phoneDisplay: '+63 956 365 9471',
   /**
    * Data Protection Officer under RA 10173. The DPO is contactable at a
    * personal-domain mailbox because the dpo@ alias on our own domain does not
@@ -201,14 +209,22 @@ export const DEFAULT_HOMEPAGE_CONTENT: HomepageContent = {
     },
   },
   stats: {
-    // "100+ Law schools" was removed 2026-08-05: there is no schools or
-    // universities table in the database, and prod holds 25 users across 21
-    // orgs and 3 distinct email domains. Nothing substantiated it, and an
-    // unsupportable claim is exactly what a gateway KYC audit flags.
+    // Two tiles were removed 2026-08-05, both for asserting something no
+    // source supports — exactly what a gateway KYC audit flags:
+    //   "100+ Law schools" — there is no schools or universities table, and
+    //     prod holds 25 users across 21 orgs and 3 distinct email domains.
+    //   "4.9★ App store"   — a third-party rating for a listing that does not
+    //     exist. App Store search and a bundleId lookup for com.libertasian.app
+    //     both return 0 results; Play returns 404.
+    //
+    // Their replacements are counted from the production database (2026-08-05):
+    // 97 bar sittings and 68,849 indexed sections. Both are stated at or below
+    // the measured figure — never round a claim UP past what you can show.
     items: [
       { value: '90,000+', label: 'Cases targeted' },
       { value: '1,500+', label: 'Bar exam Qs' },
-      { value: '4.9★', label: 'App store' },
+      { value: '97', label: 'Bar sittings, 1953–2024' },
+      { value: '68,000+', label: 'Sections indexed' },
     ],
   },
   studyPicker: {
