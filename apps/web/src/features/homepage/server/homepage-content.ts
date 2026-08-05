@@ -1,3 +1,52 @@
+// ---- Registered Business Identity ----
+
+/**
+ * The single source of truth for who operates this service.
+ *
+ * Payment gateways (Xendit, PayMongo, Maya, Dragonpay) run a KYC audit of the
+ * public website during merchant activation, and they compare what is published
+ * here against the SEC/DTI certificate. Before this const existed the entity
+ * name was hardcoded in six places in three different spellings, and the
+ * published contact addresses included three mailboxes that reject at SMTP.
+ *
+ * RULES for editing this block:
+ *  - `legalName` must match the certificate EXACTLY — casing and punctuation
+ *    included. It is not a display string; do not restyle it.
+ *  - Every address here must be a mailbox that actually receives mail. A
+ *    published address that bounces is worse than no address at all: it reads
+ *    as an abandoned or fictitious business.
+ *  - Nothing may reference an app store listing that does not exist.
+ */
+export const businessInfo = {
+  /** Exact registered name as it appears on the certificate. */
+  legalName: 'LIBERTASIAN INC.',
+  /** Consumer-facing product name. Not the legal entity. */
+  tradeName: 'LIBERTASIAN',
+  address: {
+    street: '25X Sunbird Street, Southview Homes Subdivision',
+    city: 'Cagayan de Oro City',
+    province: 'Misamis Oriental',
+    postalCode: '9000',
+    country: 'Philippines',
+    /** Single-line form for inline prose. */
+    full:
+      '25X Sunbird Street, Southview Homes Subdivision, Cagayan de Oro City, ' +
+      'Misamis Oriental 9000, Philippines',
+  },
+  /** Monitored daily. */
+  email: 'support@libertasian.com',
+  phone: '+639563659471',
+  /**
+   * Data Protection Officer under RA 10173. The DPO is contactable at a
+   * personal-domain mailbox because the dpo@ alias on our own domain does not
+   * exist — publishing it made the Data Privacy Act contact route a dead end.
+   */
+  dpo: {
+    name: 'Jecar John Esling',
+    email: 'libertasianphilippines@gmail.com',
+  },
+} as const;
+
 // ---- Homepage Content Types ----
 
 export interface HomepageContent {
@@ -152,17 +201,26 @@ export const DEFAULT_HOMEPAGE_CONTENT: HomepageContent = {
     },
   },
   stats: {
+    // "100+ Law schools" was removed 2026-08-05: there is no schools or
+    // universities table in the database, and prod holds 25 users across 21
+    // orgs and 3 distinct email domains. Nothing substantiated it, and an
+    // unsupportable claim is exactly what a gateway KYC audit flags.
     items: [
       { value: '90,000+', label: 'Cases targeted' },
       { value: '1,500+', label: 'Bar exam Qs' },
-      { value: '100+', label: 'Law schools' },
       { value: '4.9★', label: 'App store' },
     ],
   },
   studyPicker: {
     sectionTitle: 'What are you studying?',
     sectionLinkText: 'See all 8 bar subjects →',
-    sectionLinkHref: '/bar-exams',
+    // study-picker.tsx renders this href FIVE times — once for the section link
+    // and once per subject card. It pointed at /bar-exams, a dashboard route
+    // that 307s an anonymous visitor to /login, so five of the landing page's
+    // most clickable links dead-ended at a login wall for anyone evaluating the
+    // site. Same remedy as the footer's "Bar Exams" entry: send marketing
+    // traffic to the features section and leave the dashboard route private.
+    sectionLinkHref: '/#features',
     items: [
       { label: 'Political Law', count: 'Constitution + Admin', tone: 'accent', glyph: 'gavel' },
       { label: 'Civil Law', count: 'Persons · Property · Obligations', tone: 'cream', glyph: 'scales' },
@@ -259,23 +317,31 @@ export const DEFAULT_HOMEPAGE_CONTENT: HomepageContent = {
     'LIBERTASIAN provides AI-powered legal research tools for informational purposes only. AI outputs are not legal advice and do not create an attorney-client relationship. Always consult a qualified Philippine lawyer for legal matters. The practice of law in the Philippines is reserved for members of the Philippine Bar.',
   footer: {
     brandDescription: 'Philippine Legal AI Platform. Democratizing access to legal knowledge.',
-    contactEmail: 'support@libertasian.com',
+    contactEmail: businessInfo.email,
     productLinks: [
-      { label: 'Bar Exams', href: '/bar-exams' },
+      // "Bar Exams" pointed at /bar-exams, which lives under app/(dashboard)/
+      // and 307s an anonymous visitor to /login — a dead link for anyone
+      // auditing the site. The dashboard route stays private; the marketing
+      // link goes to the features section like its three siblings.
+      { label: 'Bar Exams', href: '/#features' },
       { label: 'Case Digests', href: '/#features' },
       { label: 'Codal Reader', href: '/#features' },
       { label: 'AI Study Assistant', href: '/#features' },
-      { label: 'iOS App', href: '/#features' },
-      { label: 'Android App', href: '/#features' },
+      // "iOS App" and "Android App" were removed 2026-08-05: neither store
+      // listing exists (App Store bundleId lookup for com.libertasian.app
+      // returns 0 results, Play returns 404). Linking them to /#features
+      // misrepresented availability.
     ],
     legalLinks: [
       { label: 'Terms of Service', href: '/terms' },
       { label: 'Privacy Policy', href: '/privacy' },
+      { label: 'Refund Policy', href: '/refund-policy' },
+      { label: 'Contact', href: '/contact' },
     ],
     companyLinks: [
       { label: 'Blog', href: '/blog' },
       { label: 'Pricing', href: '/pricing' },
-      { label: 'About', href: '/blog' },
+      { label: 'About', href: '/about' },
     ],
     tagline: 'A friendly Philippine legal research library. Not legal advice — but a great place to start.',
   },

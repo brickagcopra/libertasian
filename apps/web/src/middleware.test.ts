@@ -39,6 +39,14 @@ describe('middleware — public-path allowlist', () => {
       '/billing/mobile/success',
       '/billing/mobile/cancel',
       '/email/logo.png',
+      // Business-identity pages. A payment gateway's KYC audit fetches these
+      // unauthenticated during merchant activation; a /login redirect reads as
+      // "the business proof does not exist".
+      '/about',
+      '/contact',
+      '/refund-policy',
+      // The favicon is fetched cookie-less on every public page load.
+      '/icon.svg',
       // Store-required deletion surfaces. The restore link is emailed to an
       // account that CANNOT sign in, so a redirect here would make the
       // published 30-day window unreachable — the same bug /account-deletion

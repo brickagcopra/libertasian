@@ -18,8 +18,12 @@ import { HeaderGlow } from '@/components/layout/header-glow';
 import { useLogout } from '@/features/auth/hooks/use-auth';
 import { useAuthStore } from '@/stores/auth-store';
 
+// /bar-exams lives under app/(dashboard)/ and 307s an anonymous visitor to
+// /login. A public nav link must never dead-end at a login wall, so the
+// marketing entry points at the features section instead; the dashboard route
+// itself stays private.
 const NAV_LINKS: Array<{ label: string; href: string }> = [
-  { label: 'Bar Exams', href: '/bar-exams' },
+  { label: 'Bar Exams', href: '/#features' },
   { label: 'Features', href: '/#features' },
   { label: 'Blog', href: '/blog' },
   { label: 'Pricing', href: '/pricing' },

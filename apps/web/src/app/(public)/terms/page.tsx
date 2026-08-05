@@ -1,3 +1,7 @@
+import Link from 'next/link';
+
+import { businessInfo } from '@/features/homepage/server/homepage-content';
+
 export const metadata = {
   title: 'Terms',
   description: 'Terms of Service for LIBERTASIAN Philippine Legal AI Platform.',
@@ -17,7 +21,7 @@ export default function TermsPage() {
             (&quot;Terms&quot;). If you do not agree to these Terms, you may not use the Service.
           </p>
           <p>
-            LIBERTASIAN is operated by LIBERTASIAN Inc. (&quot;we,&quot; &quot;us,&quot; or
+            LIBERTASIAN is operated by {businessInfo.legalName} (&quot;we,&quot; &quot;us,&quot; or
             &quot;our&quot;), a company organized under the laws of the Republic of the
             Philippines.
           </p>
@@ -96,8 +100,16 @@ export default function TermsPage() {
             </li>
             <li>
               <strong>Cancellation:</strong> You may cancel your subscription at any time.
-              Cancellation takes effect at the end of the current billing period. No refunds are
-              provided for partial billing periods.
+              Cancellation takes effect at the end of the current billing period, and you keep
+              access until then.
+            </li>
+            <li>
+              <strong>Refunds:</strong> Refund eligibility, how to request a refund, and
+              processing times are set out in our{' '}
+              <Link href="/refund-policy">Refund Policy</Link>, which forms part of these Terms.
+              In summary: a full refund may be requested within 7 calendar days of your first
+              paid billing period or of an unintended renewal; duplicate and erroneous charges
+              are refunded in full at any time; and elapsed billing periods are not refundable.
             </li>
             <li>
               <strong>Usage limits:</strong> Free and Edu plans have usage quotas (AI credits,
@@ -261,9 +273,13 @@ export default function TermsPage() {
             For questions about these Terms, contact us at:
           </p>
           <p>
-            <strong>LIBERTASIAN Inc.</strong>
+            <strong>{businessInfo.legalName}</strong>
             <br />
-            Email: legal@libertasian.com
+            {businessInfo.address.full}
+            <br />
+            Email: {businessInfo.email}
+            <br />
+            Phone: {businessInfo.phone}
             <br />
             Website: libertasian.com
           </p>
