@@ -1,3 +1,5 @@
+import { businessInfo } from '@/features/homepage/server/homepage-content';
+
 export const metadata = {
   title: 'Account & Data Deletion',
   description:
@@ -11,7 +13,7 @@ export default function AccountDeletionPage() {
       <p className="mt-2 text-sm text-gray-500">Last updated: August 1, 2026</p>
       <p className="mt-4 text-sm text-gray-600">
         This page explains how to request deletion of your <strong>LIBERTASIAN</strong> account
-        (developer: LIBERTASIAN Inc.) and the personal data associated with it, what data is
+        (developer: {businessInfo.legalName}) and the personal data associated with it, what data is
         removed, and what we are required to retain. It applies to the LIBERTASIAN mobile app and
         the web application at libertasian.com.
       </p>
@@ -45,7 +47,7 @@ export default function AccountDeletionPage() {
           <p>
             If you cannot reach the in-app option &mdash; for example you have lost access to the
             device &mdash; email our Data Protection Officer at{' '}
-            <strong>dpo@libertasian.com</strong> from the address on the account, with the subject
+            <strong>{businessInfo.dpo.email}</strong> from the address on the account, with the subject
             line <em>&quot;Account deletion request.&quot;</em> We verify ownership and process it
             the same way.
           </p>
@@ -106,7 +108,7 @@ export default function AccountDeletionPage() {
         <Section title="Questions">
           <p>
             For any question about deleting your account or data, contact us at{' '}
-            <strong>dpo@libertasian.com</strong>. We respond within 30 days. See our{' '}
+            <strong>{businessInfo.dpo.email}</strong>. We respond within 30 days. See our{' '}
             <a href="/privacy" className="text-amber-700 underline">
               Privacy Policy
             </a>{' '}

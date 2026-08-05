@@ -59,7 +59,10 @@ describe('PublicHeader', () => {
   it('renders the 4 public nav links: Features, Bar Exams, Blog, Pricing', () => {
     render(<PublicHeader />);
     expect(screen.getByRole('link', { name: 'Features' })).toHaveAttribute('href', '/#features');
-    expect(screen.getByRole('link', { name: 'Bar Exams' })).toHaveAttribute('href', '/bar-exams');
+    // NOT /bar-exams: that route lives under app/(dashboard)/ and 307s an
+    // anonymous visitor to /login. No public nav link may dead-end at the
+    // login wall — see middleware.ts PUBLIC_PATHS.
+    expect(screen.getByRole('link', { name: 'Bar Exams' })).toHaveAttribute('href', '/#features');
     expect(screen.getByRole('link', { name: 'Blog' })).toHaveAttribute('href', '/blog');
     expect(screen.getByRole('link', { name: 'Pricing' })).toHaveAttribute('href', '/pricing');
   });

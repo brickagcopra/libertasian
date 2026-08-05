@@ -4,6 +4,7 @@ import { Fragment, useState, useMemo } from 'react';
 import Link from 'next/link';
 import { TagIcon, ClockIcon } from 'lucide-react';
 
+import { businessInfo } from '@/features/homepage/server/homepage-content';
 import { usePlans, useActivePromotions } from '@/features/billing/hooks/use-plans';
 import { useSubscription } from '@/features/billing/hooks/use-subscription';
 import { useAuthStore } from '@/stores/auth-store';
@@ -278,10 +279,10 @@ export function PricingPageClient({
             <p className="mt-2 text-sm text-warm-ink-mid">
               Please contact{' '}
               <a
-                href="mailto:support@libertasian.com"
+                href={`mailto:${businessInfo.email}`}
                 className="underline hover:text-warm-accent-deep"
               >
-                support@libertasian.com
+                {businessInfo.email}
               </a>{' '}
               for plan information.
             </p>
@@ -407,7 +408,100 @@ function PricingShell({
       </div>
 
       {children}
+
+      <BillingTerms />
     </div>
+  );
+}
+
+/**
+ * The commercial terms a payment gateway's KYC audit looks for on the pricing
+ * page itself: what currency, how often you are charged, whether tax is
+ * included, how to stop, and how to get money back. Previously none of this was
+ * stated here — it was scattered across the Terms page or simply absent.
+ *
+ * Prices are NOT rendered here; they come from the /plans API above and are
+ * untouched by this block.
+ */
+function BillingTerms() {
+  return (
+    <section
+      className="mt-16 rounded-2xl border p-8"
+      style={{ background: 'var(--warm-cream-2)', borderColor: 'var(--warm-line)' }}
+    >
+      <h2 className="text-lg font-semibold text-warm-ink">Billing terms</h2>
+
+      <dl className="mt-5 grid gap-5 text-sm text-warm-ink-mid sm:grid-cols-2">
+        <div>
+          <dt className="font-medium text-warm-ink">Currency</dt>
+          <dd className="mt-1">
+            All prices are in Philippine Pesos (PHP) and are charged in PHP. Your bank or card
+            issuer may apply its own conversion if your account is in another currency.
+          </dd>
+        </div>
+
+        <div>
+          <dt className="font-medium text-warm-ink">Billing cycle</dt>
+          <dd className="mt-1">
+            Paid plans are billed in advance, either monthly or annually depending on the cycle
+            you choose above. Subscriptions renew automatically at the end of each period until
+            you cancel.
+          </dd>
+        </div>
+
+        <div>
+          <dt className="font-medium text-warm-ink">VAT</dt>
+          <dd className="mt-1">
+            Prices shown are inclusive of Philippine value-added tax (VAT) where it applies. No
+            additional tax is added at checkout, and your invoice shows the total actually
+            charged.
+          </dd>
+        </div>
+
+        <div>
+          <dt className="font-medium text-warm-ink">Cancellation</dt>
+          <dd className="mt-1">
+            Cancel at any time from Settings → Billing. Cancellation takes effect at the end of
+            the current billing period and you keep access until then. There is no cancellation
+            fee and no minimum term.
+          </dd>
+        </div>
+
+        <div>
+          <dt className="font-medium text-warm-ink">Refunds</dt>
+          <dd className="mt-1">
+            A full refund may be requested within 7 calendar days of your first paid period or of
+            an unintended renewal. See the{' '}
+            <Link href="/refund-policy" className="underline hover:text-warm-accent-deep">
+              Refund Policy
+            </Link>{' '}
+            for eligibility, how to request one, and processing times.
+          </dd>
+        </div>
+
+        <div>
+          <dt className="font-medium text-warm-ink">Questions about billing</dt>
+          <dd className="mt-1">
+            Email{' '}
+            <a
+              href={`mailto:${businessInfo.email}`}
+              className="underline hover:text-warm-accent-deep"
+            >
+              {businessInfo.email}
+            </a>
+            , or see the{' '}
+            <Link href="/contact" className="underline hover:text-warm-accent-deep">
+              Contact page
+            </Link>{' '}
+            for our registered address and support hours.
+          </dd>
+        </div>
+      </dl>
+
+      <p className="mt-6 text-xs text-warm-ink-faint">
+        Subscriptions are provided by {businessInfo.legalName}, {businessInfo.address.full}.
+      </p>
+    </section>
   );
 }
 

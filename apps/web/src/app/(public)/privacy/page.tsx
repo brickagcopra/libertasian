@@ -1,3 +1,5 @@
+import { businessInfo } from '@/features/homepage/server/homepage-content';
+
 export const metadata = {
   title: 'Privacy',
   description:
@@ -10,7 +12,7 @@ export default function PrivacyPage() {
       <h1 className="text-3xl font-bold text-gray-900">Privacy Policy</h1>
       <p className="mt-2 text-sm text-gray-500">Last updated: March 21, 2026</p>
       <p className="mt-4 text-sm text-gray-600">
-        This Privacy Policy describes how LIBERTASIAN Inc. (&quot;we,&quot; &quot;us,&quot; or
+        This Privacy Policy describes how {businessInfo.legalName} (&quot;we,&quot; &quot;us,&quot; or
         &quot;our&quot;) collects, uses, stores, and protects your personal information in
         compliance with the Philippine Data Privacy Act of 2012 (Republic Act No. 10173) and
         its Implementing Rules and Regulations.
@@ -19,7 +21,7 @@ export default function PrivacyPage() {
       <div className="prose prose-gray mt-10 max-w-none text-sm leading-relaxed text-gray-700">
         <Section title="1. Data Controller">
           <p>
-            LIBERTASIAN Inc. is the personal information controller for all data processed
+            {businessInfo.legalName} is the personal information controller for all data processed
             through the LIBERTASIAN platform. We are registered with the National Privacy
             Commission (NPC) as required by the Data Privacy Act for automated data processing
             systems involving AI-driven analysis.
@@ -27,7 +29,11 @@ export default function PrivacyPage() {
           <p>
             <strong>Data Protection Officer:</strong>
             <br />
-            Email: dpo@libertasian.com
+            {businessInfo.dpo.name}
+            <br />
+            Email: {businessInfo.dpo.email}
+            <br />
+            Postal: {businessInfo.address.full}
           </p>
         </Section>
 
@@ -304,7 +310,8 @@ export default function PrivacyPage() {
             </li>
           </ul>
           <p>
-            To exercise these rights, contact our Data Protection Officer at dpo@libertasian.com.
+            To exercise these rights, contact our Data Protection Officer at{' '}
+            {businessInfo.dpo.email}.
             We will respond within 30 days.
           </p>
         </Section>
@@ -333,7 +340,8 @@ export default function PrivacyPage() {
           <p>
             The Service is not directed to individuals under 18 years of age. We do not knowingly
             collect personal information from minors. If you believe we have inadvertently
-            collected data from a minor, please contact us immediately at dpo@libertasian.com.
+            collected data from a minor, please contact us immediately at{' '}
+            {businessInfo.dpo.email}.
           </p>
         </Section>
 
@@ -356,11 +364,15 @@ export default function PrivacyPage() {
         <Section title="14. Contact Us">
           <p>For privacy-related inquiries:</p>
           <p>
-            <strong>LIBERTASIAN Inc.</strong>
+            <strong>{businessInfo.legalName}</strong>
             <br />
-            Data Protection Officer: dpo@libertasian.com
+            {businessInfo.address.full}
             <br />
-            General inquiries: support@libertasian.com
+            Data Protection Officer: {businessInfo.dpo.name} — {businessInfo.dpo.email}
+            <br />
+            General inquiries: {businessInfo.email}
+            <br />
+            Phone: {businessInfo.phoneDisplay}
           </p>
           <p>
             You may also file a complaint with the{' '}

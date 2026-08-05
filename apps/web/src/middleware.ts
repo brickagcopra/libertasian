@@ -21,6 +21,12 @@ const PUBLIC_PATHS = [
   '/pricing',
   '/terms',
   '/privacy',
+  // Business-identity pages. Payment gateways audit these during merchant
+  // activation and fetch them unauthenticated — a redirect to /login here
+  // reads as "the business proof does not exist".
+  '/about',
+  '/contact',
+  '/refund-policy',
   '/account-deletion',
   // The restore link is emailed to an account that CANNOT sign in — a redirect
   // to /login here would make the published 30-day window unreachable.
@@ -32,6 +38,11 @@ const PUBLIC_PATHS = [
   '/verify-email',
   '/auth/callback',
   '/onboarding',
+  // app/icon.svg is served at /icon.svg. Browsers request the favicon with no
+  // session cookie on every public page, so without this the site's own icon
+  // 307s to /login for every anonymous visitor — including a payment gateway's
+  // KYC reviewer, whose browser silently fails to load our branding.
+  '/icon.svg',
 ];
 
 /** Path prefixes that should be accessible without authentication. */

@@ -1,6 +1,9 @@
 import Link from 'next/link';
 
-import { getHomepageContent } from '@/features/homepage/server/homepage-content';
+import {
+  businessInfo,
+  getHomepageContent,
+} from '@/features/homepage/server/homepage-content';
 
 export async function PublicFooter() {
   const content = await getHomepageContent();
@@ -65,7 +68,10 @@ export async function PublicFooter() {
           className="mx-auto mt-10 flex max-w-[1320px] flex-col gap-2 border-t pt-6 text-xs opacity-60 sm:flex-row sm:justify-between"
           style={{ borderColor: 'rgba(246,241,232,0.15)', color: 'var(--warm-cream)' }}
         >
-          <span>&copy; {new Date().getFullYear()} LIBERTASIAN, Inc.</span>
+          <span>
+            &copy; {new Date().getFullYear()} {businessInfo.legalName} &middot;{' '}
+            {businessInfo.address.city}, {businessInfo.address.country}
+          </span>
           <span>Made with respect for your time, in the Philippines.</span>
         </div>
       </footer>

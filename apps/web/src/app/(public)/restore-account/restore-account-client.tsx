@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 
+import { businessInfo } from '@/features/homepage/server/homepage-content';
 import { useRestoreAccount } from '@/features/settings/hooks/use-settings';
 import { ApiClientError } from '@/lib/api-client';
 
@@ -80,7 +81,7 @@ export function RestoreAccountClient() {
         <p>{message}</p>
         <p className="mt-4 text-gray-600">
           If this keeps happening, email{' '}
-          <strong>dpo@libertasian.com</strong> from your account address before
+          <strong>{businessInfo.dpo.email}</strong> from your account address before
           the 30-day window closes.
         </p>
       </Panel>
@@ -98,7 +99,7 @@ export function RestoreAccountClient() {
         Restore links can be used once and expire 30 days after the deletion
         request. If your account has already been permanently deleted it cannot
         be recovered. For anything else, email{' '}
-        <strong>dpo@libertasian.com</strong>.
+        <strong>{businessInfo.dpo.email}</strong>.
       </p>
       <p className="mt-4">
         <Link href="/account-deletion" className="text-amber-700 underline">

@@ -1,6 +1,8 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-08-05 (#359 OPEN `refactor/payment-provider-port` — the Xendit merchant application was REJECTED, so gateway-swap cost is now a live business risk and Xendit was hardcoded through billing, the subscription lifecycle and the schema. A `PaymentProvider` port + provider-neutral columns land with **zero behaviour change**; Xendit stays the only implementation. **The migration has not touched a database** — no Postgres was reachable locally.)
+> Last updated: 2026-08-05 (#360 `fix/merchant-kyc-public-site` — the Xendit merchant rejection was a **website KYC audit**, and the site failed it on three counts: the registered entity published in two wrong spellings with no address, three published mailboxes that reject at SMTP (including the DPO contact on the Privacy Policy), and public links that dead-end at /login. /about, /contact and /refund-policy now exist, the phone is published, and the last two unevidenced stat tiles are gone. Refund windows confirmed by brick; `site_contents` has 0 rows in prod, so no runtime override can resurrect either deleted tile.)
+>
+> Previously: 2026-08-05 (#359 MERGED `953b268` — the Xendit merchant application was REJECTED, so gateway-swap cost is now a live business risk and Xendit was hardcoded through billing, the subscription lifecycle and the schema. A `PaymentProvider` port + provider-neutral columns land with **zero behaviour change**; Xendit stays the only implementation. The migration was later verified against the real production schema and data — executed in a transaction and rolled back — before merge.)
 >
 > Previously: 2026-08-05 (#356 MERGED `ae473ad`. Follow-on: `feat/bar-exam-answer-confidence` — every bar exam answer on prod carries a NULL confidence and `bar_exam_alac.v1`, i.e. the grounded path had **never executed in production** because retrieval returned nothing. v2 makes citations checkable, filters fabricated ids before the write, and scores on two terms that actually vary. **No pilot numbers exist yet — the pilot runs on prod after this merges, and no figure here is estimated.**)
 >
@@ -16,6 +18,20 @@
 
 ---
 
+## 2026-08-05 — `fix/merchant-kyc-public-site` (#360): the gateway rejection was a website audit, and the site failed it
+
+**The trigger.** Xendit rejected merchant activation with "some details in your business proof (website/apps) are invalid or do not meet the requirements". That is not a payments problem — it is a KYC review of the public site, and every PH gateway runs the same checklist, so reapplying to PayMongo/Maya/Dragonpay without fixing this reproduces the rejection.
+
+**What the audit would have found.** The certificate reads `LIBERTASIAN INC.`; the site published `LIBERTASIAN Inc.` in four places and `LIBERTASIAN, Inc.` in the footer, and **no registered address or phone anywhere**. Three published mailboxes — `dpo@`, `legal@`, `info@libertasian.com` — reject at SMTP, and `dpo@` was the Data Protection Officer contact on the Privacy Policy, so the Data Privacy Act contact route was a dead end. The footer advertised "iOS App" and "Android App" for listings that do not exist (bundleId lookup returns 0, Play returns 404). The homepage claimed "100+ Law schools" against a database with no schools table and 25 users across 21 orgs.
+
+**Links that dead-ended at the login wall.** Footer and header nav both pointed at `/bar-exams`, a dashboard route that 307s anonymous visitors. Worse, `study-picker.tsx` renders `sectionLinkHref` **five times** (section link + 4 subject cards), so the landing page carried five more of the same dead link — outside the brief, fixed anyway, because leaving it defeats the purpose of the PR. `/icon.svg` also 307'd, meaning every anonymous page load silently failed to fetch our own favicon.
+
+**What shipped.** An exported `businessInfo` const as the single source of truth, imported by all six offending files plus `/restore-account` (which was carrying `dpo@` and was not on the original list). Three new public pages: `/about`, `/contact`, `/refund-policy` — the last replacing the flat "no refunds for partial billing periods" bullet in Terms §5 with a real policy. `/pricing` now states currency, billing cycle, VAT, cancellation and refunds on-page, inside `PricingShell` so it also renders in the pricing-unavailable state. First `robots.ts` and `sitemap.ts` the repo has ever had.
+
+**Verification is empirical, not a grep of the source.** A production build was served locally and crawled anonymously: 17 internal links across `/`, `/pricing` and the four policy pages, **all 200, zero /login redirects**. The three dead mailboxes and both wrong entity spellings return **0 hits in `.next/server`, `.next/static`, in source, and in every rendered page**. 189 test files / 1665 tests pass. `business-info.test.ts` turns the audit into a standing regression guard — it drives every footer link through the **real middleware** rather than asserting on a string.
+
+**Both open questions closed in a follow-up commit.** `4.9★ App store` is gone too — same defect as the law-schools tile, a third-party rating for a listing that does not exist — and the strip is back to four with two figures counted off prod: 97 bar sittings (97 actual) and 68,000+ sections indexed (68,849 actual), each stated at or below what was measured. The phone is published in two forms (unspaced for `tel:`, grouped for reading), /about states the 2026 founding year, and the refund windows are confirmed as written. `site_contents` has 0 rows in production, so no runtime override can resurrect either deleted tile.
+
 ## 2026-08-05 — `refactor/payment-provider-port` (#359): the gateway we cannot get approved was wired into 27 files
 
 **The trigger.** The Xendit merchant application was rejected on business-proof grounds (see the parallel site-compliance work). Whatever gateway we reapply to, we may not end up on Xendit — and Xendit was not an implementation detail, it was a vocabulary. `webhook.controller.ts` switched on Xendit's own `'PAID'` / `'EXPIRED'` strings and its `recurring.*` event names; four Prisma columns carried the vendor's name; `billing.service.ts` and `account-deletion.service.ts` injected the concrete class.
@@ -28,7 +44,7 @@
 
 **The proof the abstraction is real** is `billing-provider-agnostic.spec.ts`: it drives `BillingService` against a `FakeGateway` with **zero imports from `xendit.service.ts`**. If a gateway-specific field leaks back into the service, that file stops compiling. `webhook.controller.spec.ts` and the double-advance integration spec now wire the REAL adapter, so they still cross the payload-translation boundary rather than stubbing it.
 
-**Verification.** 194 suites / 4201 tests pass (baseline on `main`: 193 / 4182); lint, build and `prisma generate` clean. **The migration was never applied** — Docker was not running and no local Postgres answered, so it is hand-reviewed SQL only. It needs one `migrate deploy` against a throwaway DB before merge.
+**Verification.** 194 suites / 4201 tests pass (baseline on `main`: 193 / 4182); lint, build and `prisma generate` clean. The migration was **not** applied from this machine — Docker was down and no local Postgres answered — so it shipped as hand-reviewed SQL. It was subsequently verified against the real production schema and data: executed inside a transaction and rolled back. All four `xendit_*` columns exist and are covered, all three `ALTER INDEX` names matched real index names, there are no dependent views, the three `repl_...` subscription ids survived the rename, and `provider='xendit'` backfilled correctly.
 
 
 ## 2026-08-05 — `feat/bar-exam-answer-confidence`: bar exam answers had no confidence signal at all, and the grounded path had never run
