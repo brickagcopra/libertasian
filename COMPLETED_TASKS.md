@@ -1,6 +1,8 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-08-05 (#356 MERGED `ae473ad`. Follow-on: `feat/bar-exam-answer-confidence` — every bar exam answer on prod carries a NULL confidence and `bar_exam_alac.v1`, i.e. the grounded path had **never executed in production** because retrieval returned nothing. v2 makes citations checkable, filters fabricated ids before the write, and scores on two terms that actually vary. **No pilot numbers exist yet — the pilot runs on prod after this merges, and no figure here is estimated.**)
+> Last updated: 2026-08-05 (#359 OPEN `refactor/payment-provider-port` — the Xendit merchant application was REJECTED, so gateway-swap cost is now a live business risk and Xendit was hardcoded through billing, the subscription lifecycle and the schema. A `PaymentProvider` port + provider-neutral columns land with **zero behaviour change**; Xendit stays the only implementation. **The migration has not touched a database** — no Postgres was reachable locally.)
+>
+> Previously: 2026-08-05 (#356 MERGED `ae473ad`. Follow-on: `feat/bar-exam-answer-confidence` — every bar exam answer on prod carries a NULL confidence and `bar_exam_alac.v1`, i.e. the grounded path had **never executed in production** because retrieval returned nothing. v2 makes citations checkable, filters fabricated ids before the write, and scores on two terms that actually vary. **No pilot numbers exist yet — the pilot runs on prod after this merges, and no figure here is estimated.**)
 >
 > Previously: 2026-08-04 (`fix/rag-opensearch-tls-auth`, rag-service: the Python OpenSearch client was built with **no credentials and no TLS setting** while prod serves `https://opensearch:9200` with a self-signed cert behind basic auth — and `opensearch_search` converted every failure into an empty hit set, so a connectivity outage and a genuine no-match query were the same response. Auth + verify wired from settings, failures now raise, a startup ping says so out loud, and the codal-suggestion path was querying an index name that has never existed. **Nothing is deployed; the prod confirmation is an outstanding op.**)
 >
@@ -13,6 +15,21 @@
 > Previously: 2026-07-27 (#322 MERGED `5addc51`: the auto-publish citation gate was unreachable and had stranded 76% of the corpus out of search since 2026-05-30. Dry run over prod confirms 11,561 of 13,093 drafts publish under the corrected rules. #321 opened for the resolver underneath it, #323 for the 1,531 rows still short a `court`.)
 
 ---
+
+## 2026-08-05 — `refactor/payment-provider-port` (#359): the gateway we cannot get approved was wired into 27 files
+
+**The trigger.** The Xendit merchant application was rejected on business-proof grounds (see the parallel site-compliance work). Whatever gateway we reapply to, we may not end up on Xendit — and Xendit was not an implementation detail, it was a vocabulary. `webhook.controller.ts` switched on Xendit's own `'PAID'` / `'EXPIRED'` strings and its `recurring.*` event names; four Prisma columns carried the vendor's name; `billing.service.ts` and `account-deletion.service.ts` injected the concrete class.
+
+**What shipped.** A `PaymentProvider` port with neutral DTOs, bound through a `PAYMENT_PROVIDER` DI token that `BillingModule` resolves from config. `XenditService` implements it and its snake_case wire types are now private to that file. `parseWebhookEvent` normalizes raw payloads into an internal event union, and the adapter also supplies the audit suffix and idempotency scope — so the Redis keys and audit rows written downstream are byte-identical to before. Webhooks route as `POST /billing/webhooks/:provider`; the URL already configured in the Xendit dashboard is unchanged.
+
+**Schema.** `xenditCustomerId` / `xenditSubscriptionId` / `xenditPaymentMethodId` / `xenditInvoiceId` → `provider*`, plus a `provider` discriminator on `Subscription`, `PaymentMethod` and `Payment`. The migration is hand-authored `ALTER TABLE ... RENAME COLUMN`, never DROP/ADD, and renames the unique indexes alongside their columns so Prisma's expected `<table>_<column>_key` names keep matching. Safe because prod holds 3 subscriptions with a non-null plan id, 3 payments and 0 payment_methods — all test-mode.
+
+**What was deliberately NOT renamed**, because the constraint was no behaviour change and these are persisted or on the wire: audit / `Payment.metadata` keys (`xenditSessionId`, `xenditSubscriptionId`, `xenditCancelled`), `subscription_history.reason` text, and the admin API's `xenditInvoiceId` response field (now sourced from `providerInvoiceId`). Each site carries a comment saying so. Renaming them is a follow-up with its own data migration.
+
+**The proof the abstraction is real** is `billing-provider-agnostic.spec.ts`: it drives `BillingService` against a `FakeGateway` with **zero imports from `xendit.service.ts`**. If a gateway-specific field leaks back into the service, that file stops compiling. `webhook.controller.spec.ts` and the double-advance integration spec now wire the REAL adapter, so they still cross the payload-translation boundary rather than stubbing it.
+
+**Verification.** 194 suites / 4201 tests pass (baseline on `main`: 193 / 4182); lint, build and `prisma generate` clean. **The migration was never applied** — Docker was not running and no local Postgres answered, so it is hand-reviewed SQL only. It needs one `migrate deploy` against a throwaway DB before merge.
+
 
 ## 2026-08-05 — `feat/bar-exam-answer-confidence`: bar exam answers had no confidence signal at all, and the grounded path had never run
 

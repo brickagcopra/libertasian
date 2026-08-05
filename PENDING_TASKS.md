@@ -155,6 +155,9 @@ The re-score that led here is **closed — not worth running** (below). What it 
 ## Owner / billing (genuinely open)
 
 - [x] **Deploy api with #301** — DONE: api deployed + couponed checkout verified in prod 2026-07-15
+- [ ] **#359 `refactor/payment-provider-port`: run the migration against a throwaway DB with `migrate deploy` before merge.** It was never applied — Docker was down locally, so `20260805120000_provider_neutral_billing_columns` is hand-reviewed SQL only. Confirm the three `ALTER INDEX ... RENAME` statements land (Prisma expects `subscriptions_provider_subscription_id_key`, `payment_methods_provider_payment_method_id_key`, `payments_provider_invoice_id_key`) and that the 3 test-mode subscription rows keep their plan ids.
+- [ ] **#359 follow-up (needs its own data migration):** the vendor name still appears in persisted strings that this PR would not touch — audit / `Payment.metadata` keys `xenditSessionId`, `xenditSubscriptionId`, `xenditCancelled`; `subscription_history.reason` text; and the admin API response field `xenditInvoiceId`. Neutralising them changes DB writes and an API response, so it is not part of a no-behaviour-change refactor.
+- [ ] **Merchant application rejected** — the gateway is not approved anywhere yet. #359 makes the swap cheap; the actual choice (PayMongo / Maya / Dragonpay) is still open and blocks every item below it.
 - [ ] **Xendit go-live key swap** — deactivate the TEST plan FIRST, then swap env to live keys
 - [ ] **2026-08-10: verify the first anchor-date recurring charge** collects correctly (first cycle after the anchor-date fix)
 - [ ] **Annual interval check** — run one YEAR-interval checkout in sandbox; Xendit sessions doc lists interval DAY|WEEK|MONTH — if `YEAR` 400s, switch annual to `MONTH` × `interval_count: 12`
