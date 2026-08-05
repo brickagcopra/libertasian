@@ -33,11 +33,27 @@ from ..clients import rag_client
 from ..prompts.bar_exam_alac_v1 import (
     BAR_EXAM_ALAC_SYSTEM_PROMPT,
     PROMPT_TEMPLATE_VERSION,
-    PROMPT_TEMPLATE_VERSION_V2,
     build_user_prompt,
     parse_alac_response,
     render_answer_markdown,
 )
+from ..prompts.bar_exam_alac_v2 import (
+    BAR_EXAM_ALAC_V2_SYSTEM_PROMPT,
+    filter_cited_section_ids,
+)
+from ..prompts.bar_exam_alac_v2 import (
+    PROMPT_TEMPLATE_VERSION as PROMPT_TEMPLATE_VERSION_V2,
+)
+from ..prompts.bar_exam_alac_v2 import (
+    build_user_prompt as build_user_prompt_v2,
+)
+from ..prompts.bar_exam_alac_v2 import (
+    parse_alac_response as parse_alac_response_v2,
+)
+from ..prompts.bar_exam_alac_v2 import (
+    render_answer_markdown as render_answer_markdown_v2,
+)
+from ..scoring_bar_exam import BREADTH_TARGET, score_from_passages
 
 logger = logging.getLogger(__name__)
 
@@ -209,11 +225,23 @@ def _generate_one(
                     question_id,
                 )
 
-        prompt_version = (
-            PROMPT_TEMPLATE_VERSION_V2 if used_rag else PROMPT_TEMPLATE_VERSION
-        )
+        # v2 is the grounded path: it prints a closed list of citable section
+        # ids and demands citedSectionIds back. It is selected only when
+        # retrieval actually returned something, because with no passages the
+        # closed list is empty and the whole contract is vacuous — a
+        # priors-only answer is still a v1 answer, and the stored
+        # prompt_template_version stays an honest record of which one ran.
+        use_v2 = used_rag
 
-        user_prompt = build_user_prompt(
+        prompt_version = (
+            PROMPT_TEMPLATE_VERSION_V2 if use_v2 else PROMPT_TEMPLATE_VERSION
+        )
+        system_prompt = (
+            BAR_EXAM_ALAC_V2_SYSTEM_PROMPT if use_v2 else BAR_EXAM_ALAC_SYSTEM_PROMPT
+        )
+        build_prompt = build_user_prompt_v2 if use_v2 else build_user_prompt
+
+        user_prompt = build_prompt(
             question_text=question["question_text"],
             subject_code=question.get("subject_study_code"),
             sitting_year=int(question["sitting_year"]),
@@ -222,7 +250,7 @@ def _generate_one(
 
         start = time.monotonic()
         llm_response = rag_client.generate_completion(
-            system_prompt=BAR_EXAM_ALAC_SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             user_prompt=user_prompt,
             temperature=0.2,
         )
@@ -271,7 +299,8 @@ def _generate_one(
                 "reason": reason,
             }
 
-        structured = parse_alac_response(content)
+        parse = parse_alac_response_v2 if use_v2 else parse_alac_response
+        structured = parse(content)
         if structured is None:
             logger.warning(
                 "bar_exam_answer: LLM output missing required ALAC fields "
@@ -283,15 +312,97 @@ def _generate_one(
                 "status": "llm_malformed",
             }
 
-        answer_text = render_answer_markdown(structured)
+        # Filter cited ids BEFORE anything reads them — scoring, the stored
+        # structured answer and the rendered markdown all run off `structured`.
+        # An id survives only if it was in the retrieved set AND resolves to a
+        # real legal_document_sections row; the two checks answer different
+        # questions ("was the model shown this?" and "does it exist?") and a
+        # stale index makes them disagree.
+        emitted_ids: list[str] = []
+        confidence = None
+        dropped_ids = 0
+        if use_v2:
+            emitted_ids = list(structured.get("citedSectionIds") or [])
+            retrieved_ids = {
+                str(p["section_id"])
+                for p in (source_passages or [])
+                if p.get("section_id")
+            }
+            resolved = db.resolve_section_ids(retrieved_ids & set(emitted_ids))
+            structured, _kept, dropped_ids = filter_cited_section_ids(
+                structured,
+                set(resolved),
+            )
+            if dropped_ids:
+                logger.warning(
+                    "bar_exam_answer: dropped %d unresolvable citedSectionIds "
+                    "(kept %d) for question %s",
+                    dropped_ids,
+                    _kept,
+                    question_id,
+                )
 
+            scored = score_from_passages(
+                emitted_section_ids=emitted_ids,
+                valid_section_ids=list(structured.get("citedSectionIds") or []),
+                passages=source_passages or [],
+            )
+            confidence = scored.score
+
+            # Persist the COUNTS behind the score. Without them the breadth
+            # denominator is unrecoverable after the fact — the retrieved
+            # passage set is not stored anywhere — and a report that
+            # reconstructs it from surviving citations can only ever produce a
+            # LOWER bound, which would misclassify rows downward and hide the
+            # very effect the denominator breakout exists to show (0.70 asks
+            # for two clean authorities at denominator 3 but only one at
+            # denominator 2).
+            #
+            # Counts only: no BM25 scores, no document ids, no passage text.
+            # `structured_answer_json` is served verbatim to the public
+            # endpoint (bar-exam-answers.public.controller.ts:126), so
+            # everything added here is something a reader may see. Six
+            # integers describing how well-sourced the answer is are fair for
+            # a reader to see; the retrieval internals that produced them are
+            # not, and are not here.
+            structured["grounding"] = {
+                "emittedIds": scored.emitted_id_count,
+                "validIds": scored.valid_id_count,
+                "fabricatedIds": scored.fabricated_id_count,
+                "citedDocuments": scored.cited_document_count,
+                "availableDocuments": scored.available_document_count,
+                "breadthDenominator": min(
+                    BREADTH_TARGET, scored.available_document_count
+                ),
+            }
+            logger.info(
+                "bar_exam_answer: question %s scored %.4f "
+                "(resolution=%.4f breadth=%.4f valid=%d/%d docs=%d/%d)",
+                question_id,
+                scored.score,
+                scored.citation_resolution,
+                scored.authority_breadth,
+                scored.valid_id_count,
+                scored.emitted_id_count,
+                scored.cited_document_count,
+                scored.available_document_count,
+            )
+
+        render = render_answer_markdown_v2 if use_v2 else render_answer_markdown
+        answer_text = render(structured)
+
+        # A priors-only (v1) row stores confidence NULL rather than 0.0. The
+        # two are different claims: NULL means "this row was never scored on
+        # the grounded terms", 0.0 means "it was scored and grounded nothing".
+        # PR 3's auto-approve must never treat an unscored row as a low-scoring
+        # one, so the distinction is kept at the column level.
         model_run_id = db.create_model_run(
             run_type="bar_exam_answer_generation",
             model_name=model_name,
             prompt_template_version=prompt_version,
             input_ref=f"bar_exam_question:{question_id}",
             output_ref=None,
-            confidence=None,
+            confidence=confidence,
             tokens_in=tokens_in,
             tokens_out=tokens_out,
             latency_ms=latency_ms,
@@ -303,6 +414,7 @@ def _generate_one(
             structured_answer=structured,
             answer_type="ai_generated",
             model_run_id=model_run_id,
+            confidence=confidence,
             review_status="pending",
             visibility="private",
         )
@@ -312,6 +424,9 @@ def _generate_one(
             "status": "generated",
             "answer_id": answer_id,
             "model_run_id": model_run_id,
+            "confidence": confidence,
+            "cited_section_ids": list(structured.get("citedSectionIds") or []),
+            "dropped_section_ids": dropped_ids,
         }
 
     except Exception as exc:  # noqa: BLE001 — keep batch alive on per-question errors

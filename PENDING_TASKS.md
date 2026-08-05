@@ -18,9 +18,21 @@ Verification rules used for this prune: every PR reference checked with `gh pr v
 
 ---
 
-## RAG ↔ OpenSearch connectivity (`fix/rag-opensearch-tls-auth`, 2026-08-04) — do this first
+## Bar exam answer confidence (`feat/bar-exam-answer-confidence`, 2026-08-05) — the pilot is the gate
 
-Details in COMPLETED_TASKS.md under 2026-08-04. Nothing is deployed.
+Details in COMPLETED_TASKS.md under 2026-08-05. PR 3 (bulk generation + auto-approve) is **blocked** until the pilot numbers exist and have been read.
+
+- [ ] **Run the 50-question pilot on prod after this deploys — this is the deliverable's whole point.** `force_regenerate` exists in `bar_exam_answer_tasks.py`, so the 5 pending rows are re-runnable if the first pass is bad. Then: `uv run python -m src.scripts.score_bar_exam_answers_dryrun --pilot` (read-only, safe against prod).
+- [ ] **Read "retrieval succeeded" off the prompt version, not the score.** A v2 row that scores 0.0 retrieved eight passages and cited none of them; a v1 row written after the deploy is a genuine retrieval miss. Collapsing those two into one number hides which half is broken.
+- [ ] **Read the BY DENOMINATOR block before the aggregate.** The bar is adaptive: validated on prod over 64 questions, the denominator is 3 for 66% of questions, 2 for 31%, 1 for 3%. At denominator 2 **one clean citation scores 0.75 and passes**; the same answer at denominator 3 scores 0.667 and fails. The aggregate pass rate is the number most likely to be quoted and the least likely to mean what it appears to — it mixes answer quality with retrieval breadth, and breadth varies by subject (legal_ethics 2.9 distinct documents, criminal_law 5.0).
+- [ ] **If nothing clears 0.70, that is a finding about the scorer.** CLAUDE.md: prefer fixing what the terms measure over moving the threshold. The per-term min/median/max in the report is the diagnostic — a term whose min equals its max is the thing to replace.
+- [ ] **The 58 existing rows will rescore to 0.000 and that is correct.** They are priors-only with no `citedSectionIds` at all. Note that 53 of them are already **approved and public**, published with no measured grounding — deciding what to do about that is an editorial call, not a scoring one.
+- [ ] **Retrieval-side diagnostics (BM25 spread, relevance-floor counts) are not available from stored rows.** The retrieved passage set is not persisted anywhere, and the obvious home — `structured_answer_json` — is served verbatim to the public endpoint (`bar-exam-answers.public.controller.ts:126`), while `model_runs` has no metadata column. Getting them is a schema decision. The generation task logs the per-answer term breakdown in the meantime.
+- [ ] **`services/worker-service/tests/test_parsers.py` does not compile** (a string literal, `* 10`, then an adjacent literal ≈ line 83). The **entire worker-service suite fails collection** because of it — 1,002 tests unrunnable without `--ignore`. Pre-existing since `5c5596b` and untouched by this PR, but combined with `ci.yml` running no Python tests at all, it means the Python quality signal has been off. One-character fix; worth its own PR alongside wiring the Python suites into CI.
+
+## RAG ↔ OpenSearch connectivity (`fix/rag-opensearch-tls-auth`, 2026-08-04) — MERGED `ae473ad`, deploy is server-side
+
+Details in COMPLETED_TASKS.md under 2026-08-04. Merged 2026-08-05; prod deploy is handled on the server, not from here.
 
 - [x] **Confirmed on prod 2026-08-05 (brick).** Traceback from inside the container: `httpx.ConnectError [SSL: CERTIFICATE_VERIFY_FAILED]`, swallowed into an empty hit set. Both arms tested: `verify=False` alone → **401**; `verify=False` + basic auth → **200, 10k+ hits**. Both are required.
 - [ ] **Deploy rag-service and read the startup line.** `OpenSearch connected: opensearch <version> at https://opensearch:9200 (verify_ssl=False, auth=yes)` is the pass condition. `OPENSEARCH UNREACHABLE` names the env vars to check. **`auth=no` is the failure mode to watch for** — it means neither credential pair resolved, and the fix is inert (the service will get a 401 instead of a TLS error). No compose or `.env` change is needed for this deploy; the container already carries `OPENSEARCH_USERNAME`/`OPENSEARCH_PASSWORD`.

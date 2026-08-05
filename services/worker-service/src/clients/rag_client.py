@@ -114,10 +114,31 @@ def retrieve_passages(
 ) -> list[dict[str, Any]]:
     """Retrieve BM25 passages from rag-service for prompt grounding.
 
-    Returns a list of ``{id, title, text}`` dicts suitable for the bar exam
-    ALAC prompt builder. ``Passage.title`` can be empty for sections, so we
-    fall back to ``citation_text`` and then a generic ``"Source"`` label so
-    the prompt always has something to attribute each passage to.
+    Returns a list of ``{id, section_id, document_id, title, text, score}``
+    dicts suitable for the bar exam ALAC prompt builder. ``Passage.title`` can
+    be empty for sections, so we fall back to ``citation_text`` and then a
+    generic ``"Source"`` label so the prompt always has something to attribute
+    each passage to.
+
+    ``section_id``, ``document_id`` and ``score`` are preserved rather than
+    flattened away, and each carries its weight:
+
+    * ``section_id`` is the only id a generated citation can be checked
+      against — it is what ``legal_document_sections.id`` holds. Discarding it
+      (as this function did until 2026-08-05) left ``id``, the OpenSearch hit
+      id, as the sole identifier in the prompt, so a model that cited
+      faithfully still produced ids that could not be resolved against the
+      corpus. Note it is nullable: measured on prod 2026-08-05, 71-85% of
+      retrieved passages carry one, and a passage without one is simply not
+      citable.
+    * ``document_id`` is what distinct-authority breadth is measured over —
+      three sections of one statute is a narrower answer than three
+      authorities, and only this field can tell them apart.
+    * ``score`` is raw, uncalibrated BM25. It is deliberately NOT part of the
+      confidence score (see ``scoring.compute_bar_exam_answer_confidence``);
+      it is carried so the dry-run script can report its spread and a future
+      relevance-floor term can be evaluated against real numbers instead of
+      assumed into existence.
 
     Any HTTP / network failure is swallowed and logged at WARNING; callers
     treat ``[]`` as a soft retrieval failure and fall back to priors-only
@@ -147,11 +168,15 @@ def retrieve_passages(
         if not isinstance(p, dict):
             continue
         title = p.get("title") or p.get("citation_text") or "Source"
+        section_id = p.get("section_id")
         flattened.append(
             {
                 "id": p.get("id", ""),
+                "section_id": str(section_id) if section_id else None,
+                "document_id": p.get("document_id", "") or "",
                 "title": title,
                 "text": p.get("text", ""),
+                "score": float(p.get("score", 0.0) or 0.0),
             }
         )
     return flattened

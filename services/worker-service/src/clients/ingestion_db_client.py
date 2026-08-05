@@ -10,6 +10,7 @@ schema migrations. All table/column names use snake_case via Prisma @@map/@map.
 
 import json
 import logging
+import uuid
 from typing import Any
 
 import psycopg2.extras
@@ -414,6 +415,46 @@ def get_document_sections_for_validation(doc_id: str) -> list[dict[str, Any]]:
             (doc_id,),
         )
         return [dict(row) for row in cur.fetchall()]
+
+
+def resolve_section_ids(section_ids: set[str]) -> dict[str, str]:
+    """Map each id that exists in ``legal_document_sections`` to its document.
+
+    Returns ``{section_id: legal_document_id}`` containing ONLY ids that
+    resolve; an id absent from the result resolved to nothing. Ids that are
+    not well-formed UUIDs are dropped before the query rather than handed to
+    PostgreSQL, because a single malformed value would abort the statement and
+    take the whole batch's citations down with it — and "the model returned
+    garbage" must degrade to "that citation does not count", not to an error.
+
+    This is the resolution half of the citation check CLAUDE.md requires: a
+    citation counts only when the section id resolves to a real row. The
+    retrieved-set half is enforced separately, in the prompt module's filter.
+    """
+    candidates = {sid for sid in section_ids if _looks_like_uuid(sid)}
+    if not candidates:
+        return {}
+
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """SELECT id, legal_document_id
+               FROM legal_document_sections
+               WHERE id = ANY(%s::uuid[])""",
+            (list(candidates),),
+        )
+        return {str(row["id"]): str(row["legal_document_id"]) for row in cur.fetchall()}
+
+
+def _looks_like_uuid(value: object) -> bool:
+    """True when ``value`` parses as a UUID, without raising on junk."""
+    if not isinstance(value, str):
+        return False
+    try:
+        uuid.UUID(value)
+    except (ValueError, AttributeError, TypeError):
+        return False
+    return True
 
 
 def get_legal_document_sections_with_text(
