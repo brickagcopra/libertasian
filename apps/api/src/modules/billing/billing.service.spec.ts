@@ -16,12 +16,16 @@ import {
   SubscriptionState,
 } from '../subscriptions/subscription-state-machine';
 import { BillingService } from './billing.service';
-import { XenditApiError, XenditService } from './xendit.service';
+import {
+  PAYMENT_PROVIDER,
+  PaymentProviderError,
+  type PaymentProvider,
+} from './payment-provider.interface';
 
 describe('BillingService', () => {
   let service: BillingService;
   let prisma: jest.Mocked<PrismaService>;
-  let xenditService: jest.Mocked<XenditService>;
+  let paymentProvider: jest.Mocked<PaymentProvider>;
   let subscriptionsService: jest.Mocked<SubscriptionsService>;
   let auditService: jest.Mocked<AuditService>;
   let pricingEngine: jest.Mocked<PricingEngineService>;
@@ -47,13 +51,13 @@ describe('BillingService', () => {
   const mockPayment = {
     id: 'pay-1',
     organizationId: 'org-1',
-    xenditInvoiceId: 'inv_test_123',
+    providerInvoiceId: 'inv_test_123',
     amount: 99900,
     currency: 'PHP',
     status: 'pending',
     paymentType: 'subscription',
     description: 'LIBERTASIAN Pro Plan — Monthly',
-    metadata: { planCode: 'pro', billingPeriod: 'monthly', xenditInvoiceId: 'inv_test_123' },
+    metadata: { planCode: 'pro', billingPeriod: 'monthly', providerInvoiceId: 'inv_test_123' },
     createdAt: new Date(),
     updatedAt: new Date(),
     paidAt: null,
@@ -152,18 +156,24 @@ describe('BillingService', () => {
           },
         },
         {
-          provide: XenditService,
+          // BillingService depends on the PORT, never on XenditService. The mock
+          // below speaks only the neutral DTOs.
+          provide: PAYMENT_PROVIDER,
           useValue: {
+            slug: 'xendit',
             createInvoice: jest.fn(),
-            createCustomer: jest.fn().mockResolvedValue({ id: 'cust-1', reference_id: 'org-1' }),
+            retrieveInvoice: jest.fn(),
+            createCustomer: jest.fn().mockResolvedValue({ id: 'cust-1', referenceId: 'org-1' }),
             getCustomerByReferenceId: jest.fn().mockResolvedValue(null),
             createSubscriptionSession: jest.fn().mockResolvedValue({
-              payment_session_id: 'ps-1',
-              payment_link_url: 'https://checkout.xendit.co/sessions/ps-1',
-              reference_id: 'sub-prov',
+              sessionId: 'ps-1',
+              checkoutUrl: 'https://checkout.xendit.co/sessions/ps-1',
+              referenceId: 'sub-prov',
             }),
             retrieveSubscription: jest.fn(),
             cancelSubscription: jest.fn().mockResolvedValue({ id: 'repl_1', status: 'INACTIVE' }),
+            verifyWebhookSignature: jest.fn(),
+            parseWebhookEvent: jest.fn(),
           },
         },
         {
@@ -231,7 +241,7 @@ describe('BillingService', () => {
 
     service = module.get<BillingService>(BillingService);
     prisma = module.get(PrismaService);
-    xenditService = module.get(XenditService);
+    paymentProvider = module.get(PAYMENT_PROVIDER);
     subscriptionsService = module.get(SubscriptionsService);
     auditService = module.get(AuditService);
     pricingEngine = module.get(PricingEngineService);
@@ -286,12 +296,12 @@ describe('BillingService', () => {
           data: expect.objectContaining({
             planCode: 'pro',
             status: 'provisioning',
-            xenditCustomerId: 'cust-1',
+            providerCustomerId: 'cust-1',
           }),
         }),
       );
       // recurring session created (amount in WHOLE PHP), not a one-time invoice
-      expect(xenditService.createSubscriptionSession).toHaveBeenCalledWith(
+      expect(paymentProvider.createSubscriptionSession).toHaveBeenCalledWith(
         expect.objectContaining({
           amount: 999,
           currency: 'PHP',
@@ -299,7 +309,7 @@ describe('BillingService', () => {
           intervalCount: 1,
         }),
       );
-      expect(xenditService.createInvoice).not.toHaveBeenCalled();
+      expect(paymentProvider.createInvoice).not.toHaveBeenCalled();
       expect(auditService.log).toHaveBeenCalledWith(
         expect.objectContaining({
           action: 'billing.checkout_created',
@@ -321,7 +331,7 @@ describe('BillingService', () => {
 
       await service.createCheckout('org-1', { ...dto, billingPeriod: 'annual' }, 'user-1');
 
-      expect(xenditService.createSubscriptionSession).toHaveBeenCalledWith(
+      expect(paymentProvider.createSubscriptionSession).toHaveBeenCalledWith(
         expect.objectContaining({ amount: 9990, interval: 'YEAR' }),
       );
     });
@@ -329,12 +339,12 @@ describe('BillingService', () => {
     it('should reuse an existing org Xendit customer instead of creating a new one', async () => {
       subscriptionsService.getActiveSubscription.mockResolvedValue(null as never);
       subscriptionsService.getDefaultEntitlements.mockReturnValue({} as never);
-      (prisma.subscription.findFirst as jest.Mock).mockResolvedValue({ xenditCustomerId: 'cust-existing' });
+      (prisma.subscription.findFirst as jest.Mock).mockResolvedValue({ providerCustomerId: 'cust-existing' });
 
       await service.createCheckout('org-1', dto, 'user-1');
 
-      expect(xenditService.createCustomer).not.toHaveBeenCalled();
-      expect(xenditService.createSubscriptionSession).toHaveBeenCalledWith(
+      expect(paymentProvider.createCustomer).not.toHaveBeenCalled();
+      expect(paymentProvider.createSubscriptionSession).toHaveBeenCalledWith(
         expect.objectContaining({ customerId: 'cust-existing' }),
       );
     });
@@ -342,27 +352,27 @@ describe('BillingService', () => {
     it('should roll back the provisioning subscription if the Xendit session fails', async () => {
       subscriptionsService.getActiveSubscription.mockResolvedValue(null as never);
       subscriptionsService.getDefaultEntitlements.mockReturnValue({} as never);
-      xenditService.createSubscriptionSession.mockRejectedValueOnce(new Error('xendit down'));
+      paymentProvider.createSubscriptionSession.mockRejectedValueOnce(new Error('xendit down'));
 
       await expect(service.createCheckout('org-1', dto, 'user-1')).rejects.toThrow('xendit down');
       expect(prisma.subscription.delete).toHaveBeenCalledWith({ where: { id: 'sub-prov' } });
     });
 
     it('should reuse an existing remote Xendit customer when the local pointer is lost', async () => {
-      // Local DB miss (e.g. rollback deleted the row holding xenditCustomerId)
+      // Local DB miss (e.g. rollback deleted the row holding providerCustomerId)
       // but the customer still exists at Xendit under reference_id = org id.
       subscriptionsService.getActiveSubscription.mockResolvedValue(null as never);
       subscriptionsService.getDefaultEntitlements.mockReturnValue({} as never);
-      (xenditService.getCustomerByReferenceId as jest.Mock).mockResolvedValue({
+      (paymentProvider.getCustomerByReferenceId as jest.Mock).mockResolvedValue({
         id: 'cust-remote',
-        reference_id: 'org-1',
+        referenceId: 'org-1',
       });
 
       await service.createCheckout('org-1', dto, 'user-1');
 
-      expect(xenditService.getCustomerByReferenceId).toHaveBeenCalledWith('org-1');
-      expect(xenditService.createCustomer).not.toHaveBeenCalled();
-      expect(xenditService.createSubscriptionSession).toHaveBeenCalledWith(
+      expect(paymentProvider.getCustomerByReferenceId).toHaveBeenCalledWith('org-1');
+      expect(paymentProvider.createCustomer).not.toHaveBeenCalled();
+      expect(paymentProvider.createSubscriptionSession).toHaveBeenCalledWith(
         expect.objectContaining({ customerId: 'cust-remote' }),
       );
     });
@@ -372,17 +382,17 @@ describe('BillingService', () => {
       // before our POST landed.
       subscriptionsService.getActiveSubscription.mockResolvedValue(null as never);
       subscriptionsService.getDefaultEntitlements.mockReturnValue({} as never);
-      (xenditService.getCustomerByReferenceId as jest.Mock)
+      (paymentProvider.getCustomerByReferenceId as jest.Mock)
         .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce({ id: 'cust-dup', reference_id: 'org-1' });
-      (xenditService.createCustomer as jest.Mock).mockRejectedValue(
-        new XenditApiError(409, 'DUPLICATE_ERROR'),
+        .mockResolvedValueOnce({ id: 'cust-dup', referenceId: 'org-1' });
+      (paymentProvider.createCustomer as jest.Mock).mockRejectedValue(
+        new PaymentProviderError('xendit', 409, 'DUPLICATE_ERROR'),
       );
 
       await service.createCheckout('org-1', dto, 'user-1');
 
-      expect(xenditService.getCustomerByReferenceId).toHaveBeenCalledTimes(2);
-      expect(xenditService.createSubscriptionSession).toHaveBeenCalledWith(
+      expect(paymentProvider.getCustomerByReferenceId).toHaveBeenCalledTimes(2);
+      expect(paymentProvider.createSubscriptionSession).toHaveBeenCalledWith(
         expect.objectContaining({ customerId: 'cust-dup' }),
       );
     });
@@ -393,11 +403,11 @@ describe('BillingService', () => {
 
       await service.createCheckout('org-1', dto, 'user-1');
 
-      expect(xenditService.getCustomerByReferenceId).toHaveBeenCalledTimes(1);
-      expect(xenditService.createCustomer).toHaveBeenCalledWith(
+      expect(paymentProvider.getCustomerByReferenceId).toHaveBeenCalledTimes(1);
+      expect(paymentProvider.createCustomer).toHaveBeenCalledWith(
         expect.objectContaining({ referenceId: 'org-1' }),
       );
-      expect(xenditService.createSubscriptionSession).toHaveBeenCalledWith(
+      expect(paymentProvider.createSubscriptionSession).toHaveBeenCalledWith(
         expect.objectContaining({ customerId: 'cust-1' }),
       );
     });
@@ -446,15 +456,15 @@ describe('BillingService', () => {
     it('should bubble non-duplicate customer create errors', async () => {
       subscriptionsService.getActiveSubscription.mockResolvedValue(null as never);
       subscriptionsService.getDefaultEntitlements.mockReturnValue({} as never);
-      (xenditService.createCustomer as jest.Mock).mockRejectedValue(
-        new XenditApiError(500, 'SERVER_ERROR'),
+      (paymentProvider.createCustomer as jest.Mock).mockRejectedValue(
+        new PaymentProviderError('xendit', 500, 'SERVER_ERROR'),
       );
 
       await expect(service.createCheckout('org-1', dto, 'user-1')).rejects.toThrow(
-        'Xendit API error: 500',
+        'xendit API error: 500',
       );
       // No fallback GET for non-duplicate failures.
-      expect(xenditService.getCustomerByReferenceId).toHaveBeenCalledTimes(1);
+      expect(paymentProvider.getCustomerByReferenceId).toHaveBeenCalledTimes(1);
     });
 
     it('should throw BadRequestException for invalid plan code', async () => {
@@ -491,10 +501,10 @@ describe('BillingService', () => {
         ...mockSubscription,
         planCode: 'edu',
       } as never);
-      xenditService.createInvoice.mockResolvedValue({
+      paymentProvider.createInvoice.mockResolvedValue({
         id: 'inv_upgrade',
-        external_id: 'ext-upgrade',
-        invoice_url: 'https://checkout.xendit.co/inv_upgrade',
+        externalId: 'ext-upgrade',
+        invoiceUrl: 'https://checkout.xendit.co/inv_upgrade',
         status: 'PENDING',
         amount: 999,
         currency: 'PHP',
@@ -549,10 +559,10 @@ describe('BillingService', () => {
       pricingEngine.calculatePriceBreakdown.mockResolvedValue(breakdownWithDiscounts as never);
       couponService.reserveCoupon.mockResolvedValue({ id: 'redemption-1' } as never);
       subscriptionsService.getActiveSubscription.mockResolvedValue(null as never);
-      xenditService.createInvoice.mockResolvedValue({
+      paymentProvider.createInvoice.mockResolvedValue({
         id: 'inv_discounted',
-        external_id: 'ext-discounted',
-        invoice_url: 'https://checkout.xendit.co/inv_discounted',
+        externalId: 'ext-discounted',
+        invoiceUrl: 'https://checkout.xendit.co/inv_discounted',
         status: 'PENDING',
         amount: 699,
         currency: 'PHP',
@@ -613,7 +623,7 @@ describe('BillingService', () => {
       );
       // discounted amount in WHOLE PHP (79920 centavos → 799), coupon redemption
       // carried in the session metadata
-      expect(xenditService.createSubscriptionSession).toHaveBeenCalledWith(
+      expect(paymentProvider.createSubscriptionSession).toHaveBeenCalledWith(
         expect.objectContaining({
           amount: 799,
           metadata: expect.objectContaining({
@@ -628,10 +638,10 @@ describe('BillingService', () => {
       // (couponCode is null in breakdown), no reservation should occur
       pricingEngine.calculatePriceBreakdown.mockResolvedValue({ ...mockBreakdown } as never);
       subscriptionsService.getActiveSubscription.mockResolvedValue(null as never);
-      xenditService.createInvoice.mockResolvedValue({
+      paymentProvider.createInvoice.mockResolvedValue({
         id: 'inv_no_coupon',
-        external_id: 'ext-no-coupon',
-        invoice_url: 'https://checkout.xendit.co/inv_no_coupon',
+        externalId: 'ext-no-coupon',
+        invoiceUrl: 'https://checkout.xendit.co/inv_no_coupon',
         status: 'PENDING',
         amount: 999,
         currency: 'PHP',
@@ -653,7 +663,7 @@ describe('BillingService', () => {
 
       await service.createCheckout('org-1', dto, 'user-1');
 
-      expect(xenditService.createSubscriptionSession).toHaveBeenCalledWith(
+      expect(paymentProvider.createSubscriptionSession).toHaveBeenCalledWith(
         expect.objectContaining({
           metadata: expect.objectContaining({
             couponRedemptionId: 'redemption-2',
@@ -697,7 +707,7 @@ describe('BillingService', () => {
         metadata: {
           planCode: 'pro',
           billingPeriod: 'monthly',
-          xenditInvoiceId: 'inv_test_123',
+          providerInvoiceId: 'inv_test_123',
           couponRedemptionId: 'redemption-1',
         },
       };
@@ -774,7 +784,7 @@ describe('BillingService', () => {
 
       await service.handlePaymentFailed({
         id: 'inv_test_123',
-        failure_reason: 'Card declined',
+        failureReason: 'Card declined',
       });
 
       expect(prisma.payment.update).toHaveBeenCalledWith(
@@ -798,7 +808,7 @@ describe('BillingService', () => {
         metadata: {
           planCode: 'pro',
           billingPeriod: 'monthly',
-          xenditInvoiceId: 'inv_test_123',
+          providerInvoiceId: 'inv_test_123',
           couponRedemptionId: 'redemption-1',
         },
       };
@@ -808,7 +818,7 @@ describe('BillingService', () => {
 
       await service.handlePaymentFailed({
         id: 'inv_test_123',
-        failure_reason: 'Card declined',
+        failureReason: 'Card declined',
       });
 
       expect(couponService.rollbackCoupon).toHaveBeenCalledWith('redemption-1');
@@ -820,7 +830,7 @@ describe('BillingService', () => {
 
       await service.handlePaymentFailed({
         id: 'inv_test_123',
-        failure_reason: 'Card declined',
+        failureReason: 'Card declined',
       });
 
       expect(couponService.rollbackCoupon).not.toHaveBeenCalled();
@@ -1061,7 +1071,7 @@ describe('BillingService', () => {
       // Ensure no payment or snapshot was created
       expect(prisma.payment.create).not.toHaveBeenCalled();
       expect(prisma.checkoutPriceSnapshot.create).not.toHaveBeenCalled();
-      expect(xenditService.createInvoice).not.toHaveBeenCalled();
+      expect(paymentProvider.createInvoice).not.toHaveBeenCalled();
     });
 
     it('should detect upgrade from edu to pro', async () => {
@@ -1302,7 +1312,7 @@ describe('BillingService', () => {
         metadata: {
           planCode: 'pro',
           billingPeriod: 'monthly',
-          xenditInvoiceId: 'inv_test_123',
+          providerInvoiceId: 'inv_test_123',
           userId: 'user-1',
           promotionId: 'promo-1',
         },
@@ -1361,7 +1371,7 @@ describe('BillingService', () => {
         metadata: {
           planCode: 'pro',
           billingPeriod: 'monthly',
-          xenditInvoiceId: 'inv_test_123',
+          providerInvoiceId: 'inv_test_123',
           userId: 'user-1',
           promotionId: 'promo-1',
         },
@@ -1406,7 +1416,7 @@ describe('BillingService', () => {
 
       await service.createCheckout('org-1', dto, 'user-1');
 
-      expect(xenditService.createSubscriptionSession).toHaveBeenCalledWith(
+      expect(paymentProvider.createSubscriptionSession).toHaveBeenCalledWith(
         expect.objectContaining({
           metadata: expect.objectContaining({ userId: 'user-1' }),
         }),
@@ -1438,7 +1448,7 @@ describe('BillingService', () => {
 
       await service.createCheckout('org-1', dto, 'user-1');
 
-      expect(xenditService.createSubscriptionSession).toHaveBeenCalledWith(
+      expect(paymentProvider.createSubscriptionSession).toHaveBeenCalledWith(
         expect.objectContaining({ amount: 899 }),
       );
     });
@@ -1455,7 +1465,7 @@ describe('BillingService', () => {
 
       await service.createCheckout('org-1', dto, 'user-1');
 
-      expect(xenditService.createSubscriptionSession).toHaveBeenCalledWith(
+      expect(paymentProvider.createSubscriptionSession).toHaveBeenCalledWith(
         expect.objectContaining({
           metadata: expect.objectContaining({ planId: 'plan-db-1' }),
         }),
@@ -1469,8 +1479,8 @@ describe('BillingService', () => {
 
       await service.createCheckout('org-1', dto, 'user-1');
 
-      expect(xenditService.createInvoice).not.toHaveBeenCalled();
-      expect(xenditService.createSubscriptionSession).toHaveBeenCalledWith(
+      expect(paymentProvider.createInvoice).not.toHaveBeenCalled();
+      expect(paymentProvider.createSubscriptionSession).toHaveBeenCalledWith(
         expect.objectContaining({ amount: 999 }),
       );
     });
@@ -1489,14 +1499,14 @@ describe('BillingService', () => {
       planCode: 'pro',
       billingPeriod: 'monthly',
       status: 'provisioning',
-      xenditSubscriptionId: null,
+      providerSubscriptionId: null,
       currentPeriodEnd: null,
     };
 
     const activeSub = {
       ...provisioningSub,
       status: 'active',
-      xenditSubscriptionId: 'repl_1',
+      providerSubscriptionId: 'repl_1',
       currentPeriodEnd: new Date('2026-07-01T00:00:00Z'),
     };
 
@@ -1515,21 +1525,21 @@ describe('BillingService', () => {
 
     describe('handleSubscriptionActivated', () => {
       it('links by reference_id, sets the repl_ id + period, and ACTIVATEs', async () => {
-        // not found by xenditSubscriptionId, found by reference_id
+        // not found by providerSubscriptionId, found by reference_id
         (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(null);
         (prisma.subscription.findUnique as jest.Mock).mockResolvedValue(provisioningSub);
 
         await service.handleSubscriptionActivated({
           id: 'repl_1',
-          recurring_plan_id: 'repl_1',
-          reference_id: SUB_ID,
+          planId: 'repl_1',
+          referenceId: SUB_ID,
           status: 'ACTIVE',
         });
 
         expect(prisma.subscription.update).toHaveBeenCalledWith(
           expect.objectContaining({
             where: { id: SUB_ID },
-            data: expect.objectContaining({ xenditSubscriptionId: 'repl_1' }),
+            data: expect.objectContaining({ providerSubscriptionId: 'repl_1' }),
           }),
         );
         expect(lifecycleService.executeTransition).toHaveBeenCalledWith(
@@ -1544,8 +1554,8 @@ describe('BillingService', () => {
 
         await service.handleSubscriptionActivated({
           id: 'repl_1',
-          recurring_plan_id: 'repl_1',
-          reference_id: SUB_ID,
+          planId: 'repl_1',
+          referenceId: SUB_ID,
           status: 'ACTIVE',
         });
 
@@ -1559,13 +1569,13 @@ describe('BillingService', () => {
       it('is idempotent when the subscription is already active', async () => {
         (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(activeSub);
 
-        await service.handleSubscriptionActivated({ id: 'repl_1', reference_id: SUB_ID });
+        await service.handleSubscriptionActivated({ id: 'repl_1', referenceId: SUB_ID });
 
         expect(lifecycleService.executeTransition).not.toHaveBeenCalled();
       });
 
       it('drops a non-UUID reference_id (Xendit test webhook) without querying the UUID id column', async () => {
-        // Xendit "Test webhook" payloads carry e.g. reference_id: "test-reference-id".
+        // Xendit "Test webhook" payloads carry e.g. referenceId: "test-reference-id".
         // findUnique on the UUID `id` column with that value throws P2023 → 500 →
         // infinite Xendit retries. The guard must short-circuit to null instead.
         (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(null);
@@ -1573,7 +1583,7 @@ describe('BillingService', () => {
         await expect(
           service.handleSubscriptionActivated({
             id: 'repl_test',
-            reference_id: 'test-reference-id',
+            referenceId: 'test-reference-id',
             status: 'ACTIVE',
           }),
         ).resolves.toBeUndefined();
@@ -1589,8 +1599,8 @@ describe('BillingService', () => {
 
         await service.handleSubscriptionActivated({
           id: 'repl_1',
-          recurring_plan_id: 'repl_1',
-          reference_id: SUB_ID,
+          planId: 'repl_1',
+          referenceId: SUB_ID,
           status: 'ACTIVE',
         });
 
@@ -1605,7 +1615,7 @@ describe('BillingService', () => {
         (prisma.subscription.findUnique as jest.Mock).mockResolvedValue(provisioningSub);
 
         const upper = SUB_ID.toUpperCase();
-        await service.handleSubscriptionActivated({ id: 'repl_1', reference_id: upper });
+        await service.handleSubscriptionActivated({ id: 'repl_1', referenceId: upper });
 
         expect(prisma.subscription.findUnique).toHaveBeenCalledWith({ where: { id: upper } });
       });
@@ -1618,7 +1628,7 @@ describe('BillingService', () => {
 
         await service.handleCycleSucceeded({
           id: 'cycle_1',
-          recurring_plan_id: 'repl_1',
+          planId: 'repl_1',
           amount: 999,
           currency: 'PHP',
         });
@@ -1626,7 +1636,7 @@ describe('BillingService', () => {
         // payment recorded with centavos amount (999 PHP → 99900)
         expect(mockTransactionClient.payment.create).toHaveBeenCalledWith(
           expect.objectContaining({
-            data: expect.objectContaining({ xenditInvoiceId: 'cycle_1', amount: 99900, status: 'succeeded' }),
+            data: expect.objectContaining({ providerInvoiceId: 'cycle_1', amount: 99900, status: 'succeeded' }),
           }),
         );
         // period advanced exactly one month from the prior end (anchor),
@@ -1651,7 +1661,7 @@ describe('BillingService', () => {
         const before = new Date();
         await service.handleCycleSucceeded({
           id: 'cycle_first',
-          recurring_plan_id: 'repl_1',
+          planId: 'repl_1',
           amount: 999,
           currency: 'PHP',
         });
@@ -1676,7 +1686,7 @@ describe('BillingService', () => {
         (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(activeSub);
         (prisma.payment.findUnique as jest.Mock).mockResolvedValue({ id: 'pay-existing' });
 
-        await service.handleCycleSucceeded({ id: 'cycle_1', recurring_plan_id: 'repl_1', amount: 999 });
+        await service.handleCycleSucceeded({ id: 'cycle_1', planId: 'repl_1', amount: 999 });
 
         expect(prisma.$transaction).not.toHaveBeenCalled();
         expect(usageQuotaService.resetQuotasForBillingCycle).not.toHaveBeenCalled();
@@ -1689,7 +1699,7 @@ describe('BillingService', () => {
         });
         (prisma.payment.findUnique as jest.Mock).mockResolvedValue(null);
 
-        await service.handleCycleSucceeded({ id: 'cycle_2', recurring_plan_id: 'repl_1', amount: 999 });
+        await service.handleCycleSucceeded({ id: 'cycle_2', planId: 'repl_1', amount: 999 });
 
         expect(lifecycleService.executeTransition).toHaveBeenCalledWith(
           expect.objectContaining({ subscriptionId: SUB_ID, action: SubscriptionAction.RENEW }),
@@ -1701,7 +1711,7 @@ describe('BillingService', () => {
       it('moves an active subscription to past_due via PAYMENT_FAILED', async () => {
         (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(activeSub);
 
-        await service.handleCycleFailed({ id: 'cycle_3', recurring_plan_id: 'repl_1' });
+        await service.handleCycleFailed({ id: 'cycle_3', planId: 'repl_1' });
 
         expect(lifecycleService.executeTransition).toHaveBeenCalledWith(
           expect.objectContaining({ subscriptionId: SUB_ID, action: SubscriptionAction.PAYMENT_FAILED }),
@@ -1715,7 +1725,7 @@ describe('BillingService', () => {
           billingOwner: { email: 'owner@example.com', fullName: 'Owner' },
         });
 
-        await service.handleCycleFailed({ id: 'cycle_3', recurring_plan_id: 'repl_1', amount: 999 });
+        await service.handleCycleFailed({ id: 'cycle_3', planId: 'repl_1', amount: 999 });
 
         expect(notificationsService.sendPaymentFailed).toHaveBeenCalledWith(
           expect.objectContaining({
@@ -1736,7 +1746,7 @@ describe('BillingService', () => {
         notificationsService.sendPaymentFailed.mockRejectedValue(new Error('smtp down'));
 
         await expect(
-          service.handleCycleFailed({ id: 'cycle_3', recurring_plan_id: 'repl_1', amount: 999 }),
+          service.handleCycleFailed({ id: 'cycle_3', planId: 'repl_1', amount: 999 }),
         ).resolves.toBeUndefined();
       });
     });
@@ -1761,7 +1771,7 @@ describe('BillingService', () => {
       it('creates a paid Invoice row covering the new period', async () => {
         await service.handleCycleSucceeded({
           id: 'cycle_1',
-          recurring_plan_id: 'repl_1',
+          planId: 'repl_1',
           amount: 999,
           currency: 'PHP',
         });
@@ -1786,7 +1796,7 @@ describe('BillingService', () => {
       it('enqueues the receipt with period covered, next billing date and instrument', async () => {
         await service.handleCycleSucceeded({
           id: 'cycle_1',
-          recurring_plan_id: 'repl_1',
+          planId: 'repl_1',
           amount: 999,
           currency: 'PHP',
         });
@@ -1809,7 +1819,7 @@ describe('BillingService', () => {
         notificationsService.sendPaymentReceipt.mockRejectedValue(new Error('smtp down'));
 
         await expect(
-          service.handleCycleSucceeded({ id: 'cycle_1', recurring_plan_id: 'repl_1', amount: 999 }),
+          service.handleCycleSucceeded({ id: 'cycle_1', planId: 'repl_1', amount: 999 }),
         ).resolves.toBeUndefined();
 
         // The money-critical work still happened.
@@ -1827,8 +1837,8 @@ describe('BillingService', () => {
         const before = new Date();
         await service.handleSubscriptionActivated({
           id: 'repl_1',
-          recurring_plan_id: 'repl_1',
-          reference_id: SUB_ID,
+          planId: 'repl_1',
+          referenceId: SUB_ID,
           status: 'ACTIVE',
         });
 
@@ -1856,7 +1866,7 @@ describe('BillingService', () => {
 
         await service.handleCycleSucceeded({
           id: 'cycle_1',
-          recurring_plan_id: 'repl_1',
+          planId: 'repl_1',
           amount: 999,
           currency: 'PHP',
         });
@@ -1889,7 +1899,7 @@ describe('BillingService', () => {
         });
         (prisma.payment.findUnique as jest.Mock).mockResolvedValue(null);
 
-        await service.handleCycleSucceeded({ id: 'cycle_1', recurring_plan_id: 'repl_1', amount: 999 });
+        await service.handleCycleSucceeded({ id: 'cycle_1', planId: 'repl_1', amount: 999 });
 
         expect(prisma.subscriptionLifecycleEvent.create).not.toHaveBeenCalled();
       });
@@ -1963,7 +1973,7 @@ describe('BillingService', () => {
         expect.objectContaining({ id: SUB_ID, status: SubscriptionState.CANCELLING }),
       );
       // No redundant call into a live money system, and no invalid transition.
-      expect(xenditService.cancelSubscription).not.toHaveBeenCalled();
+      expect(paymentProvider.cancelSubscription).not.toHaveBeenCalled();
       expect(lifecycleService.executeTransition).not.toHaveBeenCalled();
     });
 
@@ -1988,7 +1998,7 @@ describe('BillingService', () => {
 
       await service.cancelSubscription('org-1', 'user-1', false);
 
-      expect(xenditService.cancelSubscription).toHaveBeenCalledWith('repl_1');
+      expect(paymentProvider.cancelSubscription).toHaveBeenCalledWith('repl_1');
       expect(lifecycleService.executeTransition).toHaveBeenCalledWith(
         expect.objectContaining({ action: SubscriptionAction.CANCEL_IMMEDIATELY }),
       );
@@ -2014,7 +2024,7 @@ describe('BillingService', () => {
     /** refund.succeeded payload `data` — amount is WHOLE PHP (999.00). */
     const fullRefundData = {
       id: 'refund_abc',
-      invoice_id: 'inv_test_123',
+      invoiceId: 'inv_test_123',
       amount: 999,
       currency: 'PHP',
       status: 'SUCCEEDED',
@@ -2108,7 +2118,7 @@ describe('BillingService', () => {
       (prisma.payment.findUnique as jest.Mock).mockResolvedValue(null);
 
       await expect(
-        service.handleRefundSucceeded({ ...fullRefundData, invoice_id: 'inv_unknown' }),
+        service.handleRefundSucceeded({ ...fullRefundData, invoiceId: 'inv_unknown' }),
       ).resolves.toBeUndefined();
 
       expect(prisma.$transaction).not.toHaveBeenCalled();

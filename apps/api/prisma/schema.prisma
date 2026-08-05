@@ -327,9 +327,11 @@ model Subscription {
   currentPeriodEnd     DateTime? @map("current_period_end") @db.Timestamptz
   seats                Int       @default(1)
   entitlementsJson     Json      @default("{}") @map("entitlements_json")
-  // Xendit Customer id (reusable across re-subscriptions for the same org).
-  xenditCustomerId     String?   @map("xendit_customer_id") @db.VarChar(255)
-  xenditSubscriptionId String?   @unique @map("xendit_subscription_id") @db.VarChar(255)
+  // Which payment gateway backs this row (see PAYMENT_PROVIDERS).
+  provider             String    @default("xendit") @db.VarChar(20)
+  // Gateway Customer id (reusable across re-subscriptions for the same org).
+  providerCustomerId     String? @map("provider_customer_id") @db.VarChar(255)
+  providerSubscriptionId String? @unique @map("provider_subscription_id") @db.VarChar(255)
   cancelAtPeriodEnd    Boolean   @default(false) @map("cancel_at_period_end")
   canceledAt           DateTime? @map("canceled_at") @db.Timestamptz
   trialStart           DateTime? @map("trial_start") @db.Timestamptz
@@ -363,9 +365,11 @@ model Subscription {
 }
 
 model PaymentMethod {
-  id                    String   @id @default(uuid()) @db.Uuid
-  organizationId        String   @map("organization_id") @db.Uuid
-  xenditPaymentMethodId String   @unique @map("xendit_payment_method_id") @db.VarChar(255)
+  id                      String @id @default(uuid()) @db.Uuid
+  organizationId          String @map("organization_id") @db.Uuid
+  // Which payment gateway issued this instrument (see PAYMENT_PROVIDERS).
+  provider                String @default("xendit") @db.VarChar(20)
+  providerPaymentMethodId String @unique @map("provider_payment_method_id") @db.VarChar(255)
   type                  String   @db.VarChar(20)
   // type: card, gcash, maya
   brand                 String?  @db.VarChar(50)
@@ -391,7 +395,9 @@ model Payment {
   organizationId  String    @map("organization_id") @db.Uuid
   subscriptionId  String?   @map("subscription_id") @db.Uuid
   paymentMethodId String?   @map("payment_method_id") @db.Uuid
-  xenditInvoiceId String    @unique @map("xendit_invoice_id") @db.VarChar(255)
+  // Which payment gateway processed this charge (see PAYMENT_PROVIDERS).
+  provider          String  @default("xendit") @db.VarChar(20)
+  providerInvoiceId String  @unique @map("provider_invoice_id") @db.VarChar(255)
   amount          Int
   // amount in centavos (PHP smallest unit)
   currency        String    @default("PHP") @db.VarChar(3)

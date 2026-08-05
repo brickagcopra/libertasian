@@ -37,11 +37,11 @@ describe('LifecycleEventProcessorService', () => {
       status: 'cancelling',
       organizationId: 'org-1',
       planCode: 'pro',
-      xenditSubscriptionId: 'repl_1',
+      providerSubscriptionId: 'repl_1',
     },
   });
 
-  const renewalEvent = (xenditSubscriptionId: string | null) => ({
+  const renewalEvent = (providerSubscriptionId: string | null) => ({
     id: 'evt-1',
     eventType: 'renewal',
     attempts: 0,
@@ -51,7 +51,7 @@ describe('LifecycleEventProcessorService', () => {
       status: 'active',
       organizationId: 'org-1',
       planCode: 'pro',
-      xenditSubscriptionId,
+      providerSubscriptionId,
     },
   });
 
@@ -70,7 +70,7 @@ describe('LifecycleEventProcessorService', () => {
       status: 'active',
       organizationId: 'org-1',
       planCode: 'pro',
-      xenditSubscriptionId: 'repl_1',
+      providerSubscriptionId: 'repl_1',
     },
   });
 
@@ -84,7 +84,7 @@ describe('LifecycleEventProcessorService', () => {
     billingPeriod: 'monthly',
     currentPeriodEnd: periodEnd,
     cancelAtPeriodEnd: false,
-    xenditSubscriptionId: 'repl_1',
+    providerSubscriptionId: 'repl_1',
   };
 
   beforeEach(async () => {
@@ -184,12 +184,12 @@ describe('LifecycleEventProcessorService', () => {
   });
 
   // DOUBLE-RENEWAL GUARD: the critical money-safety test.
-  it('NO-OPs an internal renewal event for a Xendit-backed subscription (no double-advance)', async () => {
+  it('NO-OPs an internal renewal event for a gateway-backed subscription (no double-advance)', async () => {
     prisma.subscriptionLifecycleEvent.findMany.mockResolvedValue([renewalEvent('repl_1')]);
 
     await service.processDueEvents();
 
-    // The renewal must NOT fire RENEW — Xendit drives the cycle.
+    // The renewal must NOT fire RENEW — the gateway drives the cycle.
     expect(lifecycleService.executeTransition).not.toHaveBeenCalled();
     // The event is closed out as completed (no-op), not left pending.
     expect(prisma.subscriptionLifecycleEvent.update).toHaveBeenCalledWith(
@@ -200,7 +200,7 @@ describe('LifecycleEventProcessorService', () => {
     );
   });
 
-  it('still processes an internal renewal for a NON-Xendit subscription', async () => {
+  it('still processes an internal renewal for a non-gateway subscription', async () => {
     prisma.subscriptionLifecycleEvent.findMany.mockResolvedValue([renewalEvent(null)]);
 
     await service.processDueEvents();
@@ -227,7 +227,7 @@ describe('LifecycleEventProcessorService', () => {
       prisma.subscriptionLifecycleEvent.findMany.mockResolvedValue([reminderEvent()]);
     });
 
-    it('sends the reminder for an active, Xendit-backed, non-cancelling subscription and completes the event', async () => {
+    it('sends the reminder for an active, gateway-backed, non-cancelling subscription and completes the event', async () => {
       prisma.subscription.findUnique.mockResolvedValue(eligibleSub);
 
       await service.processDueEvents();
@@ -279,8 +279,8 @@ describe('LifecycleEventProcessorService', () => {
       expectCompletedNoSend();
     });
 
-    it('skips (no-op complete) when the subscription is not Xendit-backed', async () => {
-      prisma.subscription.findUnique.mockResolvedValue({ ...eligibleSub, xenditSubscriptionId: null });
+    it('skips (no-op complete) when the subscription is not gateway-backed', async () => {
+      prisma.subscription.findUnique.mockResolvedValue({ ...eligibleSub, providerSubscriptionId: null });
 
       await service.processDueEvents();
 

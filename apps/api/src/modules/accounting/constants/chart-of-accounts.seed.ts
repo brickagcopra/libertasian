@@ -28,7 +28,7 @@ export const CHART_OF_ACCOUNTS: AccountSeed[] = [
 
   // Current Assets
   { code: '1000', name: 'Current Assets', accountType: 'ASSET', subType: 'current_asset', parentCode: null, normalBalance: 'DEBIT', description: 'Short-term assets', displayOrder: 100 },
-  { code: '1010', name: 'Xendit Settlement Account', accountType: 'ASSET', subType: 'current_asset', parentCode: '1000', normalBalance: 'DEBIT', description: 'Funds received via Xendit payment gateway', displayOrder: 110 },
+  { code: '1010', name: 'Payment Gateway Settlement Account', accountType: 'ASSET', subType: 'current_asset', parentCode: '1000', normalBalance: 'DEBIT', description: 'Funds received via the payment gateway', displayOrder: 110 },
   { code: '1020', name: 'Bank Account - Operating', accountType: 'ASSET', subType: 'current_asset', parentCode: '1000', normalBalance: 'DEBIT', description: 'Primary operating bank account', displayOrder: 120 },
   { code: '1030', name: 'Bank Account - Savings', accountType: 'ASSET', subType: 'current_asset', parentCode: '1000', normalBalance: 'DEBIT', description: 'Savings / reserve account', displayOrder: 130 },
   { code: '1040', name: 'Petty Cash', accountType: 'ASSET', subType: 'current_asset', parentCode: '1000', normalBalance: 'DEBIT', description: 'Petty cash fund', displayOrder: 140 },
@@ -96,7 +96,7 @@ export const CHART_OF_ACCOUNTS: AccountSeed[] = [
   { code: '5020', name: 'AI/ML Compute Costs', accountType: 'EXPENSE', subType: 'cogs', parentCode: '5000', normalBalance: 'DEBIT', description: 'vLLM inference, embedding generation, OCR processing', displayOrder: 720 },
   { code: '5030', name: 'Third-Party API Costs', accountType: 'EXPENSE', subType: 'cogs', parentCode: '5000', normalBalance: 'DEBIT', description: 'Anthropic API, OpenAI, other ML API costs', displayOrder: 730 },
   { code: '5040', name: 'Data Licensing Costs', accountType: 'EXPENSE', subType: 'cogs', parentCode: '5000', normalBalance: 'DEBIT', description: 'Legal corpus data licensing fees', displayOrder: 740 },
-  { code: '5050', name: 'Payment Processing Fees', accountType: 'EXPENSE', subType: 'cogs', parentCode: '5000', normalBalance: 'DEBIT', description: 'Xendit transaction fees', displayOrder: 750 },
+  { code: '5050', name: 'Payment Processing Fees', accountType: 'EXPENSE', subType: 'cogs', parentCode: '5000', normalBalance: 'DEBIT', description: 'Payment gateway transaction fees', displayOrder: 750 },
   { code: '5060', name: 'CDN & Bandwidth', accountType: 'EXPENSE', subType: 'cogs', parentCode: '5000', normalBalance: 'DEBIT', description: 'Content delivery and bandwidth costs', displayOrder: 760 },
 
   // Operating Expenses (5500-5999)

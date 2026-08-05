@@ -28,7 +28,7 @@ export const PLAN_ACCOUNT_MAP: Record<string, PlanAccountMapping> = {
   },
 };
 
-/** Xendit settlement account — where payments land */
+/** Payment gateway settlement account — where payments land */
 export const XENDIT_SETTLEMENT_ACCOUNT = '1010';
 
 /** Payment processing fee expense account */

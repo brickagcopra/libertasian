@@ -17,8 +17,9 @@ import { AccountPurgeProcessor } from './account-purge.processor';
  * reusing `AuthService.revokeAllSessions` from inside UsersModule would create
  * a cycle. This module sits downstream of both instead.
  *
- * PrismaService and AuditService come from their @Global modules; XenditService
- * from BillingModule (only ever called for a non-null xenditSubscriptionId);
+ * PrismaService and AuditService come from their @Global modules; the
+ * PAYMENT_PROVIDER adapter from BillingModule (only ever called for a non-null
+ * providerSubscriptionId);
  * S3Service from UploadsModule for the object purge.
  */
 @Module({

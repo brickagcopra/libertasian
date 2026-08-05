@@ -200,7 +200,7 @@ describe('SubscriptionsService', () => {
           organizationId: '0ead67bb-d7a0-45a6-9d0c-723cfe98f839',
           planCode: 'pro',
           status: SubscriptionState.ACTIVE,
-          xenditSubscriptionId: null,
+          providerSubscriptionId: null,
           currentPeriodEnd: new Date('2030-01-01'),
         },
         { ...mockSubscription, id: 'sub-free-old-1', planCode: 'free', status: SubscriptionState.ACTIVE },

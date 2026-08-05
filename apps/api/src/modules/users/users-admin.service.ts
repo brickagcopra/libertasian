@@ -319,7 +319,7 @@ export class UsersAdminService {
             status: string;
             paymentType: string;
             paidAt: Date | null;
-            xenditInvoiceId: string;
+            providerInvoiceId: string;
           }>)
         : this.prisma.payment.findMany({
             where: { organizationId: { in: orgIds } },
@@ -333,7 +333,7 @@ export class UsersAdminService {
               status: true,
               paymentType: true,
               paidAt: true,
-              xenditInvoiceId: true,
+              providerInvoiceId: true,
             },
           }),
       this.prisma.couponRedemption.findMany({
@@ -475,7 +475,8 @@ export class UsersAdminService {
         status: p.status,
         paymentType: p.paymentType,
         paidAt: p.paidAt,
-        xenditInvoiceId: p.xenditInvoiceId,
+        // Response key unchanged — admin clients read `xenditInvoiceId`.
+        xenditInvoiceId: p.providerInvoiceId,
       })),
       couponRedemptions: couponRedemptions.map((c) => ({
         id: c.id,

@@ -135,6 +135,8 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
         SMTP_USER: Joi.string().optional().allow(''),
         SMTP_PASS: Joi.string().optional().allow(''),
         SMTP_FROM: Joi.string().default('LIBERTASIAN <noreply@libertasian.com>'),
+        // Billing — which gateway adapter BillingModule binds to PAYMENT_PROVIDER.
+        PAYMENT_PROVIDER: Joi.string().valid('xendit').default('xendit'),
         // Billing (Xendit)
         XENDIT_SECRET_KEY: Joi.string().default('xnd_development_change_me'),
         XENDIT_WEBHOOK_CALLBACK_TOKEN: Joi.string().default('callback_token_change_me'),
