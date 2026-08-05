@@ -1,6 +1,8 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-08-04 (`fix/rag-opensearch-tls-auth`, rag-service: the Python OpenSearch client was built with **no credentials and no TLS setting** while prod serves `https://opensearch:9200` with a self-signed cert behind basic auth — and `opensearch_search` converted every failure into an empty hit set, so a connectivity outage and a genuine no-match query were the same response. Auth + verify wired from settings, failures now raise, a startup ping says so out loud, and the codal-suggestion path was querying an index name that has never existed. **Nothing is deployed; the prod confirmation is an outstanding op.**)
+> Last updated: 2026-08-05 (#356 MERGED `ae473ad`. Follow-on: `feat/bar-exam-answer-confidence` — every bar exam answer on prod carries a NULL confidence and `bar_exam_alac.v1`, i.e. the grounded path had **never executed in production** because retrieval returned nothing. v2 makes citations checkable, filters fabricated ids before the write, and scores on two terms that actually vary. **No pilot numbers exist yet — the pilot runs on prod after this merges, and no figure here is estimated.**)
+>
+> Previously: 2026-08-04 (`fix/rag-opensearch-tls-auth`, rag-service: the Python OpenSearch client was built with **no credentials and no TLS setting** while prod serves `https://opensearch:9200` with a self-signed cert behind basic auth — and `opensearch_search` converted every failure into an empty hit set, so a connectivity outage and a genuine no-match query were the same response. Auth + verify wired from settings, failures now raise, a startup ping says so out loud, and the codal-suggestion path was querying an index name that has never existed. **Nothing is deployed; the prod confirmation is an outstanding op.**)
 >
 > Previously: 2026-08-03 (three sequenced PRs, all open and all CI-green: **#353** unhid 3,521 digests the search Digests tab was filtering out by `review_status`, **#354** gave the 16,995-row `digests` table its first search index — until now no query could match digest text at all — and **#355** stopped the floating pill nav from vanishing on five of eight tabs. #354 needs an index-rebuild job on prod after deploy.)
 >
@@ -11,6 +13,37 @@
 > Previously: 2026-07-27 (#322 MERGED `5addc51`: the auto-publish citation gate was unreachable and had stranded 76% of the corpus out of search since 2026-05-30. Dry run over prod confirms 11,561 of 13,093 drafts publish under the corrected rules. #321 opened for the resolver underneath it, #323 for the 1,531 rows still short a `court`.)
 
 ---
+
+## 2026-08-05 — `feat/bar-exam-answer-confidence`: bar exam answers had no confidence signal at all, and the grounded path had never run
+
+**The finding (prod, 2026-08-05).** 1,536 questions; 58 answers exist, 53 of them approved and public. **All 58 carry `confidence = NULL` and `prompt_template_version = 'bar_exam_alac.v1'`** — priors-only. The v2 grounded path had never executed in production, because retrieval returned nothing until #356. So every public bar exam answer was published on an editorial judgement with no measured grounding behind it, and there was no number to auto-approve on even if anyone wanted to.
+
+### What shipped
+
+1. [x] **`rag_client.retrieve_passages` stops discarding the fields grounding is measured with.** It flattened every passage to `{id, title, text}`; `id` is the **OpenSearch hit id**, so a model citing faithfully still produced ids that resolve against nothing. `section_id` (the only checkable id), `document_id` (the only field that separates three sections of one statute from three authorities) and `score` are now preserved.
+2. [x] **New `bar_exam_alac_v2` prompt module.** Same ALAC fields plus a required `citedSectionIds` drawn from a **closed list** printed in the prompt. Passages without a `section_id` are shown as context but labelled `[uncitable]` and kept off the list — a model cannot be blamed for citing an id it was handed if that id does not exist. The prompt states explicitly that an **empty array is a valid answer**, which is the essay lesson: `essay_prompt` demanded ≥1 id per section without constraining it to a real one, and 59.2% of 67,515 refs resolved to nothing.
+3. [x] **Two independent checks before the write, in order.** An id survives only if it was **in the retrieved set** (the model was actually shown it) AND **resolves to a real `legal_document_sections` row** (`db.resolve_section_ids`). They answer different questions and a stale index makes them disagree. An answer left with nothing valid keeps an **empty list** — never back-filled.
+4. [x] **`bar_exam_alac.v2` repointed to the module that owns it.** The constant previously sat in `bar_exam_alac_v1.py` meaning "the v1 prompt with passages appended" — a version string describing the retrieval state rather than the template. No prod row carries it, so repointing costs no history.
+5. [x] **Confidence persisted to `bar_exam_answers.confidence` and `model_runs.confidence`.** Both columns already existed; no migration. A priors-only row stores **NULL, not 0.0** — NULL means "never scored on the grounded terms", 0.0 means "scored and grounded nothing", and PR 3's auto-approve must not confuse them.
+6. [x] **Read-only dry-run script** (`src/scripts/score_bar_exam_answers_dryrun.py`): no `--apply`, no `UPDATE/INSERT/DELETE/commit`, grep-enforced by a test. Reports rows, retrieval-succeeded, ≥0.70 count and percent, min/median/max, per-subject breakdown, fabricated-id counts, and the **per-term min/median/max** — because a term whose min equals its max discriminates nothing and that has to be visible.
+
+### The formula, and what was deliberately rejected
+
+Measured on prod 2026-08-05 (48 questions, 6 per subject, all 8 subjects, live `retrieve_by_query`): **48/48 returned the full 8 passages, zero misses**; top BM25 161–682 by subject; 71–85% of passages carried a `section_id`. That measurement killed two candidate terms before either was written:
+
+7. [x] **Rejected `min(1, passages_retrieved / top_k)`** — a constant 1.0 on every row. It is the `ocr_quality` flat-term failure CLAUDE.md documents.
+8. [x] **Rejected "share of the 8 retrieved passages that were cited"** — `top_k` is pinned at 8 and always fills, so the denominator is constant, scores quantize to eighths, and an answer citing 2 sources caps at 0.25. That is the #313 denominator bug, and an unreachable bar is an outage.
+9. [x] **Shipped: `citation_resolution` (0.5)** — of the ids the model emitted, the share that survive both checks. Denominator is what the model claimed, which varies per answer. This is the term CLAUDE.md endorses and the one that punishes fabrication.
+10. [x] **Shipped: `authority_breadth` (0.5)** — distinct **documents** covered by surviving ids over `min(3, documents available in the retrieved set)`. The denominator is capped by what retrieval actually offered, so citing everything available is always full credit and the term can never make the bar unreachable.
+11. [x] **Left out: raw BM25.** Real spread, but uncalibrated and correlated with query length; normalizing it needs data that does not exist. **Left out: relevance-floor passage counts** — possibly useful, entirely unmeasured. Neither is a term until numbers say it earns one.
+12. [x] **What 0.70 means here, stated plainly:** roughly *"cite at least two distinct grounded authorities and fabricate nothing."* 2 clean ids across 2 documents → 0.833 (passes); 1 clean id → 0.667 (fails); 2 valid of 4 emitted → 0.583 (fails); priors-only → 0.000. **The weights were not tuned to any pass rate** — no pilot had run when they were written.
+
+### Acceptance evidence
+
+13. [x] **105 new/updated tests across 5 files**, including anti-regression tests that assert the two rejected terms cannot return: the score is **independent of how many passages were retrieved**, and citing 2 of 8 is **not** capped at 0.25. Plus reachability tests over every available-document count from 1 to 8.
+14. [x] **worker-service suite: 997 passed, 5 failed, 2 skipped.** All 5 failures are **pre-existing** (`test_chain_post_ingestion_per_doc_derivatives.py` needs a live Celery broker) — verified identical on a clean tree.
+15. [ ] **`tests/test_parsers.py` does not compile and has not for some time.** A string literal followed by `* 10` and then an adjacent literal (line ~83) is a `SyntaxError`, so **the whole worker-service suite fails collection** unless that file is excluded. Pre-existing (last touched in `5c5596b`), untouched here, and it means the only Python quality signal this repo has was silently unavailable — `ci.yml` runs no Python tests either.
+16. [ ] **No pilot numbers exist.** The 50-question pilot runs on prod after this merges and deploys. Nothing in this section is an estimate, and no figure in it was produced by anything other than a test or a prod measurement handed over by brick.
 
 ## 2026-08-04 — `fix/rag-opensearch-tls-auth`: the RAG service could not talk to prod OpenSearch at all, and the client turned that into "no results"
 

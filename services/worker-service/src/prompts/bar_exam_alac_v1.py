@@ -11,7 +11,13 @@ approves the row.
 from __future__ import annotations
 
 PROMPT_TEMPLATE_VERSION = "bar_exam_alac.v1"
-PROMPT_TEMPLATE_VERSION_V2 = "bar_exam_alac.v2"
+
+# ``bar_exam_alac.v2`` now lives in ``bar_exam_alac_v2.PROMPT_TEMPLATE_VERSION``
+# with the prompt it names. It was declared here first, when "v2" meant
+# nothing more than "the same v1 prompt, with passages appended" — a version
+# string that identified the retrieval state rather than the template. No row
+# on prod carries it (all 58 bar exam answers are v1, because retrieval was
+# returning nothing until #356), so repointing it costs no history.
 
 BAR_EXAM_ALAC_SYSTEM_PROMPT = """You are a Philippine bar review tutor answering a past bar exam question.
 

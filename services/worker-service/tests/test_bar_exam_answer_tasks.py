@@ -274,16 +274,31 @@ class TestGenerateAnswersForQuestions:
         }
 
 
+# Section ids are what v2 asks the model to cite and what the filter checks
+# against, so the fixture carries the shape rag_client actually returns now:
+# section_id and document_id preserved, not flattened away.
+SEC_1 = "aaaaaaaa-0000-4000-8000-000000000001"
+SEC_2 = "bbbbbbbb-0000-4000-8000-000000000001"
+DOC_1 = "11111111-1111-4111-8111-111111111111"
+DOC_2 = "22222222-2222-4222-8222-222222222222"
+FABRICATED_SECTION = "00000000-dead-4000-8000-000000000bad"
+
 SAMPLE_PASSAGES = [
     {
         "id": "p-1",
+        "section_id": SEC_1,
+        "document_id": DOC_1,
         "title": "Rule on Notarial Practice",
         "text": "Personal appearance is required for valid notarization.",
+        "score": 412.0,
     },
     {
         "id": "p-2",
+        "section_id": SEC_2,
+        "document_id": DOC_2,
         "title": "Civil Code, Art. 1316",
         "text": "Sale requires consent of contracting parties.",
+        "score": 288.5,
     },
 ]
 
@@ -337,12 +352,15 @@ class TestRagRetrieval:
         assert retr_kwargs["question_id"] == "q-1"
         assert retr_kwargs["query"] == FAKE_QUESTION["question_text"]
 
-        # Prompt body must carry the retrieved passage IDs through to the LLM.
+        # The prompt must label passages with the SECTION id, not the
+        # OpenSearch hit id: the hit id is what v1 printed, and a model citing
+        # it faithfully produced an id that resolves against nothing.
         comp_kwargs = mock_rag.generate_completion.call_args.kwargs
         user_prompt = comp_kwargs["user_prompt"]
-        assert "[p-1]" in user_prompt
-        assert "[p-2]" in user_prompt
+        assert f"[{SEC_1}]" in user_prompt
+        assert f"[{SEC_2}]" in user_prompt
         assert "SOURCE PASSAGES" in user_prompt
+        assert "CITABLE SECTION IDS" in user_prompt
 
         run_kwargs = mock_db.create_model_run.call_args.kwargs
         assert run_kwargs["prompt_template_version"] == "bar_exam_alac.v2"
@@ -373,6 +391,144 @@ class TestRagRetrieval:
         # User prompt must NOT include SOURCE PASSAGES when retrieval failed.
         comp_kwargs = mock_rag.generate_completion.call_args.kwargs
         assert "SOURCE PASSAGES" not in comp_kwargs["user_prompt"]
+
+
+class TestCitationFilteringAndScoring:
+    """The grounded path: filter before the write, then score what survived.
+
+    ``db.resolve_section_ids`` is the corpus check — it returns
+    ``{section_id: document_id}`` for ids that exist. Mocking it lets these
+    tests state exactly which ids the corpus backs.
+    """
+
+    def _setup(self, mock_db: MagicMock, mock_rag: MagicMock, cited, resolved):
+        mock_db.bar_exam_answer_exists.return_value = False
+        mock_db.get_bar_exam_question_with_context.return_value = FAKE_QUESTION
+        mock_db.create_model_run.return_value = "run-1"
+        mock_db.create_bar_exam_answer.return_value = "ans-1"
+        mock_db.resolve_section_ids.return_value = resolved
+        mock_rag.retrieve_passages.return_value = SAMPLE_PASSAGES
+        mock_rag.generate_completion.return_value = _llm_response(
+            {**VALID_LLM_CONTENT, "citedSectionIds": cited}
+        )
+
+    @patch("src.tasks.bar_exam_answer_tasks.rag_client")
+    @patch("src.tasks.bar_exam_answer_tasks.db")
+    def test_fabricated_id_never_reaches_the_write(
+        self, mock_db: MagicMock, mock_rag: MagicMock, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(bar_exam_answer_tasks, "BAR_EXAM_RAG_ENABLED", True)
+        self._setup(
+            mock_db,
+            mock_rag,
+            cited=[SEC_1, FABRICATED_SECTION],
+            resolved={SEC_1: DOC_1},
+        )
+
+        result = generate_answers_for_questions.run(["q-1"])
+
+        assert result["generated"] == 1
+        written = mock_db.create_bar_exam_answer.call_args.kwargs
+        assert written["structured_answer"]["citedSectionIds"] == [SEC_1]
+        assert result["results"][0]["dropped_section_ids"] == 1
+
+    @patch("src.tasks.bar_exam_answer_tasks.rag_client")
+    @patch("src.tasks.bar_exam_answer_tasks.db")
+    def test_id_not_in_the_retrieved_set_is_never_even_resolved(
+        self, mock_db: MagicMock, mock_rag: MagicMock, monkeypatch
+    ) -> None:
+        """Two checks, and the retrieved-set one runs first.
+
+        An id the model was never shown is dropped without asking the
+        database about it — it cannot be a legitimate citation regardless of
+        whether some row somewhere happens to carry that UUID.
+        """
+        monkeypatch.setattr(bar_exam_answer_tasks, "BAR_EXAM_RAG_ENABLED", True)
+        outsider = "99999999-9999-4999-8999-999999999999"
+        self._setup(mock_db, mock_rag, cited=[outsider], resolved={})
+
+        generate_answers_for_questions.run(["q-1"])
+
+        asked = mock_db.resolve_section_ids.call_args.args[0]
+        assert outsider not in asked
+        written = mock_db.create_bar_exam_answer.call_args.kwargs
+        assert written["structured_answer"]["citedSectionIds"] == []
+
+    @patch("src.tasks.bar_exam_answer_tasks.rag_client")
+    @patch("src.tasks.bar_exam_answer_tasks.db")
+    def test_confidence_is_persisted_to_both_tables(
+        self, mock_db: MagicMock, mock_rag: MagicMock, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(bar_exam_answer_tasks, "BAR_EXAM_RAG_ENABLED", True)
+        self._setup(
+            mock_db,
+            mock_rag,
+            cited=[SEC_1, SEC_2],
+            resolved={SEC_1: DOC_1, SEC_2: DOC_2},
+        )
+
+        generate_answers_for_questions.run(["q-1"])
+
+        run_confidence = mock_db.create_model_run.call_args.kwargs["confidence"]
+        answer_confidence = mock_db.create_bar_exam_answer.call_args.kwargs["confidence"]
+        # 2 valid of 2 emitted across 2 of 2 available documents.
+        assert run_confidence == 1.0
+        assert answer_confidence == run_confidence
+
+    @patch("src.tasks.bar_exam_answer_tasks.rag_client")
+    @patch("src.tasks.bar_exam_answer_tasks.db")
+    def test_answer_citing_nothing_valid_scores_zero_and_still_writes(
+        self, mock_db: MagicMock, mock_rag: MagicMock, monkeypatch
+    ) -> None:
+        """A worthless citation list is a low score, not a dropped answer."""
+        monkeypatch.setattr(bar_exam_answer_tasks, "BAR_EXAM_RAG_ENABLED", True)
+        self._setup(mock_db, mock_rag, cited=[FABRICATED_SECTION], resolved={})
+
+        result = generate_answers_for_questions.run(["q-1"])
+
+        assert result["generated"] == 1
+        assert mock_db.create_bar_exam_answer.call_args.kwargs["confidence"] == 0.0
+
+    @patch("src.tasks.bar_exam_answer_tasks.rag_client")
+    @patch("src.tasks.bar_exam_answer_tasks.db")
+    def test_priors_only_row_stores_null_confidence_not_zero(
+        self, mock_db: MagicMock, mock_rag: MagicMock, monkeypatch
+    ) -> None:
+        """NULL means 'never scored'; 0.0 means 'scored and grounded nothing'.
+
+        PR 3's auto-approve must be able to tell those apart, so the
+        distinction lives in the column rather than in a convention.
+        """
+        monkeypatch.setattr(bar_exam_answer_tasks, "BAR_EXAM_RAG_ENABLED", False)
+        mock_db.bar_exam_answer_exists.return_value = False
+        mock_db.get_bar_exam_question_with_context.return_value = FAKE_QUESTION
+        mock_db.create_model_run.return_value = "run-1"
+        mock_db.create_bar_exam_answer.return_value = "ans-1"
+        mock_rag.generate_completion.return_value = _llm_response()
+
+        generate_answers_for_questions.run(["q-1"])
+
+        assert mock_db.create_model_run.call_args.kwargs["confidence"] is None
+        assert mock_db.create_bar_exam_answer.call_args.kwargs["confidence"] is None
+
+    @patch("src.tasks.bar_exam_answer_tasks.rag_client")
+    @patch("src.tasks.bar_exam_answer_tasks.db")
+    def test_a_v2_answer_that_cites_nothing_is_not_a_v1_answer(
+        self, mock_db: MagicMock, mock_rag: MagicMock, monkeypatch
+    ) -> None:
+        """Retrieval succeeded, so the row records v2 and a real 0.0 score.
+
+        The pilot report reads 'retrieval succeeded' off the prompt version,
+        so this row must not disguise itself as a retrieval miss.
+        """
+        monkeypatch.setattr(bar_exam_answer_tasks, "BAR_EXAM_RAG_ENABLED", True)
+        self._setup(mock_db, mock_rag, cited=[], resolved={})
+
+        generate_answers_for_questions.run(["q-1"])
+
+        run_kwargs = mock_db.create_model_run.call_args.kwargs
+        assert run_kwargs["prompt_template_version"] == "bar_exam_alac.v2"
+        assert run_kwargs["confidence"] == 0.0
 
 
 class TestForceRegenerate:
