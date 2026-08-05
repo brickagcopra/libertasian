@@ -477,6 +477,75 @@ class TestCitationFilteringAndScoring:
 
     @patch("src.tasks.bar_exam_answer_tasks.rag_client")
     @patch("src.tasks.bar_exam_answer_tasks.db")
+    def test_grounding_counts_are_persisted_for_the_denominator_breakout(
+        self, mock_db: MagicMock, mock_rag: MagicMock, monkeypatch
+    ) -> None:
+        """Without these counts the denominator is unrecoverable after the fact.
+
+        Reconstructing it from surviving citations yields a LOWER bound, which
+        would sort rows into the wrong bucket and hide the adaptive-bar effect
+        the breakout exists to show.
+        """
+        monkeypatch.setattr(bar_exam_answer_tasks, "BAR_EXAM_RAG_ENABLED", True)
+        self._setup(
+            mock_db,
+            mock_rag,
+            cited=[SEC_1, FABRICATED_SECTION],
+            resolved={SEC_1: DOC_1},
+        )
+
+        generate_answers_for_questions.run(["q-1"])
+
+        written = mock_db.create_bar_exam_answer.call_args.kwargs
+        grounding = written["structured_answer"]["grounding"]
+        assert grounding["emittedIds"] == 2
+        assert grounding["validIds"] == 1
+        assert grounding["fabricatedIds"] == 1
+        assert grounding["citedDocuments"] == 1
+        # SAMPLE_PASSAGES spans two documents, so the denominator is 2 — the
+        # answer is scored against what retrieval offered, not against 3.
+        assert grounding["availableDocuments"] == 2
+        assert grounding["breadthDenominator"] == 2
+
+    @patch("src.tasks.bar_exam_answer_tasks.rag_client")
+    @patch("src.tasks.bar_exam_answer_tasks.db")
+    def test_grounding_block_carries_counts_only_never_retrieval_internals(
+        self, mock_db: MagicMock, mock_rag: MagicMock, monkeypatch
+    ) -> None:
+        """It is served verbatim to the public endpoint — keep it to integers."""
+        monkeypatch.setattr(bar_exam_answer_tasks, "BAR_EXAM_RAG_ENABLED", True)
+        self._setup(mock_db, mock_rag, cited=[SEC_1], resolved={SEC_1: DOC_1})
+
+        generate_answers_for_questions.run(["q-1"])
+
+        grounding = mock_db.create_bar_exam_answer.call_args.kwargs[
+            "structured_answer"
+        ]["grounding"]
+        assert all(isinstance(v, int) for v in grounding.values())
+        serialized = str(grounding)
+        assert DOC_1 not in serialized
+        assert "412" not in serialized  # no BM25 scores
+
+    @patch("src.tasks.bar_exam_answer_tasks.rag_client")
+    @patch("src.tasks.bar_exam_answer_tasks.db")
+    def test_priors_only_row_gets_no_grounding_block(
+        self, mock_db: MagicMock, mock_rag: MagicMock, monkeypatch
+    ) -> None:
+        """No denominator existed, so none is claimed."""
+        monkeypatch.setattr(bar_exam_answer_tasks, "BAR_EXAM_RAG_ENABLED", False)
+        mock_db.bar_exam_answer_exists.return_value = False
+        mock_db.get_bar_exam_question_with_context.return_value = FAKE_QUESTION
+        mock_db.create_model_run.return_value = "run-1"
+        mock_db.create_bar_exam_answer.return_value = "ans-1"
+        mock_rag.generate_completion.return_value = _llm_response()
+
+        generate_answers_for_questions.run(["q-1"])
+
+        written = mock_db.create_bar_exam_answer.call_args.kwargs
+        assert "grounding" not in written["structured_answer"]
+
+    @patch("src.tasks.bar_exam_answer_tasks.rag_client")
+    @patch("src.tasks.bar_exam_answer_tasks.db")
     def test_answer_citing_nothing_valid_scores_zero_and_still_writes(
         self, mock_db: MagicMock, mock_rag: MagicMock, monkeypatch
     ) -> None:

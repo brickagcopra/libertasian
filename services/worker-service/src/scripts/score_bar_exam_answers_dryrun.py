@@ -26,6 +26,21 @@ priors-only, and carry no ``citedSectionIds`` at all. That is the formula
 working — an answer that grounded nothing scores the floor — not a defect to
 tune away.
 
+## Why the report breaks out by denominator
+
+The bar is **adaptive**, and a single blended pass rate would hide that.
+Validated on prod 2026-08-05 over 64 questions (8 per subject, all 8
+subjects): the breadth denominator ``min(3, distinct docs available)`` is 3
+for 66% of questions, 2 for 31%, and 1 for 3%. At denominator 3, 0.70 means
+"two distinct clean authorities"; at denominator 2, ONE clean citation scores
+0.75 and passes; at denominator 1, one citation scores 1.0.
+
+So an aggregate pass rate mixes answer quality with retrieval breadth, and
+retrieval breadth varies by subject (legal_ethics averages 2.9 distinct
+documents, criminal_law 5.0). Read the by-denominator block before the
+aggregate; the aggregate is the number most likely to be quoted and the least
+likely to mean what it appears to.
+
 ## How "retrieval succeeded" is read
 
 Off the **prompt version**, not off the score. ``bar_exam_alac.v2`` is
@@ -37,26 +52,35 @@ failure from a retrieval miss, and the two must not collapse into one number.
 
 ## What this script CANNOT show, and why
 
-The retrieved passage set is **not persisted anywhere**. That has two
-consequences worth stating rather than papering over:
+The retrieved passage set itself is **not persisted**. What IS persisted, as
+of this PR, is the ``grounding`` counts block the generation task writes into
+``structured_answer_json`` — emitted / valid / fabricated ids, cited and
+available document counts, and the breadth denominator. Counts only: no BM25
+scores, no document ids, no passage text, because that block is served
+verbatim to the public endpoint (``bar-exam-answers.public.controller.ts:126``).
+
+That block is what makes the by-denominator breakout exact. Without it the
+denominator would have to be reconstructed from surviving citations, which can
+only ever yield a **lower bound** — every row would be classified at or below
+its true denominator, systematically misclassifying rows downward and hiding
+the exact effect the breakout exists to show.
+
+Two consequences remain:
 
 * For a v2 row the authoritative score is the one written at generation time,
   from the live passage set — this script reads it. The recomputed-from-
   storage score is printed alongside as a cross-check; a divergence means the
   corpus moved under the row (a cited section was deleted), which is worth
   knowing but is not a scoring bug.
-* For a v1 row there is nothing to read, so breadth is reconstructed from the
-  documents its surviving citations belong to, which makes it a **lower
-  bound**. Labelled as such in the output.
+* For a **pre-#357 row** there is no ``grounding`` block, so its denominator
+  is unknown and it is reported under ``denominator=?`` rather than guessed
+  into a bucket. Every one of the 58 legacy rows lands there, which is
+  correct: they are priors-only and had no denominator.
 
 Retrieval-side diagnostics — BM25 spread, "passages above a relevance floor" —
-are therefore **not available here at all**. Getting them means persisting the
-retrieved set, and the obvious home for it, ``structured_answer_json``, is
-served verbatim to the public bar exam answer endpoint
-(``bar-exam-answers.public.controller.ts:126``), while ``model_runs`` has no
-metadata column. That is a schema decision, not a scoring one, and it is not
-in this PR. The generation task logs the per-answer term breakdown, which is
-where those numbers live until then.
+are still **not available here**, and deliberately so: they would mean putting
+retrieval internals in a public payload. The generation task logs the
+per-answer term breakdown, which is where those numbers live.
 """
 
 from __future__ import annotations
@@ -94,6 +118,7 @@ class Row:
         review_status: str,
         stored_confidence: float | None,
         recomputed: BarExamConfidence,
+        grounding: dict[str, Any] | None = None,
     ) -> None:
         self.answer_id = answer_id
         self.question_id = question_id
@@ -102,6 +127,20 @@ class Row:
         self.review_status = review_status
         self.stored_confidence = stored_confidence
         self.recomputed = recomputed
+        self.grounding = grounding or {}
+
+    @property
+    def denominator(self) -> int | None:
+        """The breadth denominator this answer was actually scored against.
+
+        ``None`` for a row written before the ``grounding`` block existed.
+        Those are reported in their own bucket rather than guessed into one —
+        reconstructing a denominator from surviving citations yields a lower
+        bound, and a lower bound silently sorted into the wrong bucket is
+        worse than an honest unknown.
+        """
+        value = self.grounding.get("breadthDenominator")
+        return int(value) if isinstance(value, int) else None
 
     @property
     def grounded(self) -> bool:
@@ -191,9 +230,12 @@ def score_row(row: dict[str, Any], resolved: dict[str, str]) -> Row:
     path batches it: one query per answer over 1,536 answers is a self-inflicted
     load problem.
     """
+    structured = _as_dict(row.get("structured_answer_json"))
     emitted = _stored_cited_ids(row.get("structured_answer_json"))
     valid = [i for i in emitted if i in resolved]
     cited_documents = {resolved[i] for i in valid}
+    grounding = structured.get("grounding")
+    grounding = grounding if isinstance(grounding, dict) else {}
 
     recomputed = compute_bar_exam_answer_confidence(
         emitted_id_count=len(emitted),
@@ -212,19 +254,24 @@ def score_row(row: dict[str, Any], resolved: dict[str, str]) -> Row:
         review_status=str(row.get("review_status") or "unknown"),
         stored_confidence=row.get("stored_confidence"),
         recomputed=recomputed,
+        grounding=grounding,
     )
 
 
-def _stored_cited_ids(structured: Any) -> list[str]:
-    """Pull ``citedSectionIds`` out of a stored structured answer."""
+def _as_dict(structured: Any) -> dict[str, Any]:
+    """Coerce a stored structured answer to a dict, whatever shape it is in."""
     if isinstance(structured, str):
         try:
             structured = json.loads(structured)
         except json.JSONDecodeError:
-            return []
-    if not isinstance(structured, dict):
-        return []
-    raw = structured.get("citedSectionIds") or []
+            return {}
+    return structured if isinstance(structured, dict) else {}
+
+
+def _stored_cited_ids(structured: Any) -> list[str]:
+    """Pull ``citedSectionIds`` out of a stored structured answer."""
+    parsed = _as_dict(structured)
+    raw = parsed.get("citedSectionIds") or []
     if not isinstance(raw, list):
         return []
     out: list[str] = []
@@ -275,8 +322,40 @@ def summarize(rows: list[Row], label: str) -> str:
             "   (a cited section has since been deleted — investigate, do not rescore)"
         )
 
+    lines.extend(
+        [
+            "",
+            "  BY BREADTH DENOMINATOR — read this before the aggregate above.",
+            "  The bar is adaptive: at denominator 3 it asks for two distinct",
+            "  clean authorities, at 2 one clean citation scores 0.75 and passes,",
+            "  at 1 one citation scores 1.0. A blended pass rate mixes answer",
+            "  quality with retrieval breadth.",
+        ]
+    )
+
+    by_denominator: dict[int | None, list[Row]] = {}
+    for row in rows:
+        by_denominator.setdefault(row.denominator, []).append(row)
+
+    for denominator in sorted(by_denominator, key=lambda d: (d is None, d or 0)):
+        bucket = by_denominator[denominator]
+        label = "?" if denominator is None else str(denominator)
+        bucket_scores = sorted(r.score for r in bucket)
+        bucket_pass = sum(1 for r in bucket if r.passes)
+        note = ""
+        if denominator is None:
+            note = "   (no grounding block — pre-#357 row, denominator unknown)"
+        lines.append(
+            f"    denominator {label}   {bucket_pass}/{len(bucket)}"
+            f"  ({_pct(bucket_pass, len(bucket))})"
+            f"   median {statistics.median(bucket_scores):.3f}"
+            f"   share {_pct(len(bucket), len(rows))}{note}"
+        )
+
     lines.append("")
-    lines.append("  per-subject >= bar:")
+    lines.append("  per-subject >= bar (retrieval breadth varies by subject —")
+    lines.append("  legal_ethics averages 2.9 distinct documents, criminal_law 5.0,")
+    lines.append("  so a subject's pass rate carries its retrieval profile inside it):")
     by_subject: dict[str, list[Row]] = {}
     for row in rows:
         by_subject.setdefault(row.subject, []).append(row)
@@ -284,10 +363,28 @@ def summarize(rows: list[Row], label: str) -> str:
         subject_rows = by_subject[subject]
         subject_pass = sum(1 for r in subject_rows if r.passes)
         subject_scores = sorted(r.score for r in subject_rows)
+        known = [r.denominator for r in subject_rows if r.denominator is not None]
+        breadth = f"{statistics.mean(known):.1f}" if known else "?"
         lines.append(
             f"    {subject:<20} {subject_pass}/{len(subject_rows)}"
             f"   median {statistics.median(subject_scores):.3f}"
+            f"   mean denominator {breadth}"
         )
+
+    lines.append("")
+    lines.append("  per-subject x denominator (where a subject's rate comes from):")
+    for subject in sorted(by_subject):
+        cells: list[str] = []
+        for denominator in (1, 2, 3, None):
+            cell_rows = [
+                r for r in by_subject[subject] if r.denominator == denominator
+            ]
+            if not cell_rows:
+                continue
+            label = "?" if denominator is None else str(denominator)
+            passed = sum(1 for r in cell_rows if r.passes)
+            cells.append(f"d{label} {passed}/{len(cell_rows)}")
+        lines.append(f"    {subject:<20} " + "  ".join(cells))
 
     resolutions = [r.recomputed.citation_resolution for r in rows]
     breadths = [r.recomputed.authority_breadth for r in rows]
@@ -324,6 +421,8 @@ def _row_json(row: Row) -> dict[str, Any]:
         "prompt_template_version": row.prompt_version,
         "review_status": row.review_status,
         "stored_confidence": row.stored_confidence,
+        "breadth_denominator": row.denominator,
+        "grounding": row.grounding or None,
         "reported_score": row.score,
         "recomputed_score": row.recomputed.score,
         "citation_resolution": row.recomputed.citation_resolution,

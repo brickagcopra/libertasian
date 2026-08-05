@@ -34,19 +34,33 @@ def _row(
     stored: float | None = None,
     subject: str = "criminal_law",
     review_status: str = "pending",
+    denominator: int | None = None,
+    available_documents: int | None = None,
 ) -> dict[str, Any]:
+    structured: dict[str, Any] = {
+        "answer": "A",
+        "law": "L",
+        "analysis": "AN",
+        "conclusion": "C",
+        "citedSectionIds": cited if cited is not None else [],
+    }
+    if denominator is not None:
+        structured["grounding"] = {
+            "emittedIds": len(cited or []),
+            "validIds": len(cited or []),
+            "fabricatedIds": 0,
+            "citedDocuments": len(cited or []),
+            "availableDocuments": (
+                available_documents if available_documents is not None else denominator
+            ),
+            "breadthDenominator": denominator,
+        }
     return {
         "id": answer_id,
         "bar_exam_question_id": f"q-{answer_id}",
         "stored_confidence": stored,
         "review_status": review_status,
-        "structured_answer_json": {
-            "answer": "A",
-            "law": "L",
-            "analysis": "AN",
-            "conclusion": "C",
-            "citedSectionIds": cited if cited is not None else [],
-        },
+        "structured_answer_json": structured,
         "prompt_template_version": version,
         "subject_study_code": subject,
     }
@@ -166,6 +180,102 @@ class TestSummarize:
     def test_unscored_rows_are_counted_separately(self):
         rows = [dry.score_row(_row(cited=[], version="bar_exam_alac.v1"), RESOLVED)]
         assert "unscored (NULL):      1" in dry.summarize(rows, "LABEL")
+
+
+class TestDenominatorBreakout:
+    """The adaptive bar has to be visible, not blended away.
+
+    Validated on prod 2026-08-05 over 64 questions: denominator 3 for 66% of
+    them, 2 for 31%, 1 for 3%. At denominator 2 a single clean citation scores
+    0.75 and passes; at denominator 3 the same answer scores 0.667 and fails.
+    A single aggregate rate would hide that entirely.
+    """
+
+    def test_denominator_is_read_from_the_grounding_block(self):
+        row = dry.score_row(_row(cited=[SEC_A], denominator=2), RESOLVED)
+        assert row.denominator == 2
+
+    def test_row_without_a_grounding_block_has_an_unknown_denominator(self):
+        """Pre-#357 rows are not guessed into a bucket."""
+        row = dry.score_row(_row(cited=[SEC_A]), RESOLVED)
+        assert row.denominator is None
+
+    def test_malformed_grounding_block_degrades_to_unknown(self):
+        raw = _row(cited=[SEC_A])
+        raw["structured_answer_json"]["grounding"] = "not a dict"
+        assert dry.score_row(raw, RESOLVED).denominator is None
+
+    def test_report_breaks_the_distribution_out_by_denominator(self):
+        rows = [
+            dry.score_row(_row("a", cited=[SEC_A], stored=0.75, denominator=2), RESOLVED),
+            dry.score_row(
+                _row("b", cited=[SEC_A], stored=0.667, denominator=3), RESOLVED
+            ),
+        ]
+        out = dry.summarize(rows, "LABEL")
+        assert "BY BREADTH DENOMINATOR" in out
+        assert "denominator 2   1/1" in out
+        assert "denominator 3   0/1" in out
+
+    def test_identical_answers_land_in_different_buckets(self):
+        """One clean citation: passes at denominator 2, fails at 3."""
+        at_two = dry.score_row(
+            _row("a", cited=[SEC_A], stored=0.75, denominator=2), RESOLVED
+        )
+        at_three = dry.score_row(
+            _row("b", cited=[SEC_A], stored=0.667, denominator=3), RESOLVED
+        )
+        assert at_two.passes is True
+        assert at_three.passes is False
+
+    def test_unknown_denominator_bucket_is_labelled_not_silently_dropped(self):
+        rows = [dry.score_row(_row(cited=[], version="bar_exam_alac.v1"), RESOLVED)]
+        out = dry.summarize(rows, "LABEL")
+        assert "denominator ?" in out
+        assert "pre-#357" in out
+
+    def test_every_row_appears_in_exactly_one_denominator_bucket(self):
+        rows = [
+            dry.score_row(_row("a", cited=[SEC_A], denominator=1), RESOLVED),
+            dry.score_row(_row("b", cited=[SEC_A], denominator=2), RESOLVED),
+            dry.score_row(_row("c", cited=[SEC_A], denominator=3), RESOLVED),
+            dry.score_row(_row("d", cited=[SEC_A]), RESOLVED),
+        ]
+        out = dry.summarize(rows, "LABEL")
+        for bucket in ("denominator 1", "denominator 2", "denominator 3", "denominator ?"):
+            assert f"{bucket}   " in out
+
+    def test_per_subject_reports_mean_denominator(self):
+        """Retrieval breadth varies by subject and the report must say so."""
+        rows = [
+            dry.score_row(
+                _row("a", cited=[SEC_A], denominator=3, subject="criminal_law"),
+                RESOLVED,
+            ),
+            dry.score_row(
+                _row("b", cited=[SEC_A], denominator=2, subject="legal_ethics"),
+                RESOLVED,
+            ),
+        ]
+        out = dry.summarize(rows, "LABEL")
+        assert "mean denominator 3.0" in out
+        assert "mean denominator 2.0" in out
+
+    def test_per_subject_by_denominator_cross_tab_is_present(self):
+        rows = [
+            dry.score_row(
+                _row("a", cited=[SEC_A], stored=1.0, denominator=3, subject="civil_law"),
+                RESOLVED,
+            ),
+            dry.score_row(
+                _row("b", cited=[SEC_A], stored=0.5, denominator=2, subject="civil_law"),
+                RESOLVED,
+            ),
+        ]
+        out = dry.summarize(rows, "LABEL")
+        assert "per-subject x denominator" in out
+        assert "d2 0/1" in out
+        assert "d3 1/1" in out
 
 
 class TestStoredCitedIds:

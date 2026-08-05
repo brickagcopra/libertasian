@@ -51,6 +51,48 @@ variance actually is. Two terms, equally weighted:
     that cites every authority it was given scores 1.0 even when it was given
     one.
 
+THE STANDARD IS ADAPTIVE, NOT UNIFORM — SAY SO OUT LOUD
+=======================================================
+
+The breadth denominator was validated independently on prod 2026-08-05, after
+#356 was deployed, over 64 real bar exam questions (8 per subject, all 8
+subjects) through the live ``retrieve_by_query`` path:
+
+    denominator min(3, distinct docs available):
+        = 3   in 42 of 64  (66%)
+        = 2   in 20 of 64  (31%)
+        = 1   in  2 of 64   (3%)
+        = 0   in  0        <- breadth is NEVER undefined
+    distinct documents per retrieved set: min 1, median 3, max 8
+    citable passages (carrying a section_id): min 5, median 6, of 8
+
+The ``section_id`` gap does not inflate the denominator: 42 questions reach
+denominator 3 counting all documents versus 40 counting only citable ones, so
+capping on availability is measuring what it claims to.
+
+**What that means for the bar, stated plainly rather than sold as uniform.**
+0.70 does not ask the same thing of every question:
+
+    denominator 3 (66% of questions)  0.70 means TWO distinct clean authorities
+    denominator 2 (31% of questions)  ONE clean citation scores 0.75 and PASSES
+    denominator 1 (3% of questions)   ONE clean citation scores 1.0
+
+This is defensible on its own terms — an answer cannot cite what retrieval
+never offered, and a fixed denominator would fail well-grounded answers for
+the corpus's gaps rather than their own. But the consequence is real and must
+not be glossed: **any aggregate pass rate partly reflects retrieval breadth,
+not answer quality alone.** Two answers of identical quality can land on
+opposite sides of the bar because one question surfaced three authorities and
+the other surfaced two.
+
+Retrieval breadth also varies systematically by subject — legal_ethics
+averages 2.9 distinct documents against criminal_law's 5.0 — so a per-subject
+pass rate carries that subject's retrieval profile inside it. This is why
+``score_bar_exam_answers_dryrun`` breaks the distribution out **by
+denominator** as well as by subject: a single blended number would hide the
+effect entirely, and reading one would be reading retrieval and answer quality
+summed together without knowing the mix.
+
 WHAT IS DELIBERATELY NOT IN THE FORMULA
 =======================================
 

@@ -53,7 +53,7 @@ from ..prompts.bar_exam_alac_v2 import (
 from ..prompts.bar_exam_alac_v2 import (
     render_answer_markdown as render_answer_markdown_v2,
 )
-from ..scoring_bar_exam import score_from_passages
+from ..scoring_bar_exam import BREADTH_TARGET, score_from_passages
 
 logger = logging.getLogger(__name__)
 
@@ -348,6 +348,33 @@ def _generate_one(
                 passages=source_passages or [],
             )
             confidence = scored.score
+
+            # Persist the COUNTS behind the score. Without them the breadth
+            # denominator is unrecoverable after the fact — the retrieved
+            # passage set is not stored anywhere — and a report that
+            # reconstructs it from surviving citations can only ever produce a
+            # LOWER bound, which would misclassify rows downward and hide the
+            # very effect the denominator breakout exists to show (0.70 asks
+            # for two clean authorities at denominator 3 but only one at
+            # denominator 2).
+            #
+            # Counts only: no BM25 scores, no document ids, no passage text.
+            # `structured_answer_json` is served verbatim to the public
+            # endpoint (bar-exam-answers.public.controller.ts:126), so
+            # everything added here is something a reader may see. Six
+            # integers describing how well-sourced the answer is are fair for
+            # a reader to see; the retrieval internals that produced them are
+            # not, and are not here.
+            structured["grounding"] = {
+                "emittedIds": scored.emitted_id_count,
+                "validIds": scored.valid_id_count,
+                "fabricatedIds": scored.fabricated_id_count,
+                "citedDocuments": scored.cited_document_count,
+                "availableDocuments": scored.available_document_count,
+                "breadthDenominator": min(
+                    BREADTH_TARGET, scored.available_document_count
+                ),
+            }
             logger.info(
                 "bar_exam_answer: question %s scored %.4f "
                 "(resolution=%.4f breadth=%.4f valid=%d/%d docs=%d/%d)",
