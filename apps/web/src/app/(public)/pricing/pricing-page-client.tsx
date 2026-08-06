@@ -431,6 +431,23 @@ function BillingTerms() {
     >
       <h2 className="text-lg font-semibold text-warm-ink">Billing terms</h2>
 
+      {/*
+        One scannable line carrying the four facts a payment-gateway reviewer
+        looks for — currency, tax treatment, renewal behaviour, and where to
+        cancel. The definition list below expands each of them.
+
+        On tax: LIBERTASIAN INC. is registered with the BIR under quarterly
+        percentage tax (Form 2551Q), not VAT. So this says "applicable
+        Philippine taxes" rather than asserting a VAT registration we do not
+        hold. Do not harden this to a flat "VAT-inclusive" claim without
+        re-checking the BIR Form 2303 first.
+      */}
+      <p className="mt-3 text-sm text-warm-ink-mid">
+        All amounts are in Philippine Pesos (PHP), inclusive of applicable Philippine taxes.
+        Paid plans recur automatically until cancelled, and you can cancel at any time from
+        Settings → Billing.
+      </p>
+
       <dl className="mt-5 grid gap-5 text-sm text-warm-ink-mid sm:grid-cols-2">
         <div>
           <dt className="font-medium text-warm-ink">Currency</dt>
@@ -455,6 +472,26 @@ function BillingTerms() {
             Prices shown are inclusive of Philippine value-added tax (VAT) where it applies. No
             additional tax is added at checkout, and your invoice shows the total actually
             charged.
+          </dd>
+        </div>
+
+        <div>
+          <dt className="font-medium text-warm-ink">Accepted payment methods</dt>
+          <dd className="mt-1">
+            {/* Text, not logos — our CSP blocks images from a card-network CDN. */}
+            We accept {businessInfo.paymentMethods.slice(0, -1).join(', ')} and{' '}
+            {businessInfo.paymentMethods[businessInfo.paymentMethods.length - 1]}. Card details
+            are entered on our payment provider&apos;s hosted checkout and are never stored on
+            our servers.
+          </dd>
+        </div>
+
+        <div>
+          <dt className="font-medium text-warm-ink">Service delivery</dt>
+          <dd className="mt-1">
+            {businessInfo.tradeName} is a digital subscription. There is no physical shipment.
+            Access to your paid plan is granted {businessInfo.fulfillment.accessGrantedAt} and
+            the service is delivered through {businessInfo.fulfillment.channels.join(' and ')}.
           </dd>
         </div>
 

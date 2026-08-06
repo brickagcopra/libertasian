@@ -54,9 +54,34 @@ export async function PublicFooter() {
             >
               {tagline}
             </p>
-            <p className="mt-4 text-sm opacity-70" style={{ color: 'var(--warm-cream)' }}>
-              {content.footer.contactEmail}
-            </p>
+            {/*
+              Registered address and phone belong on every public page, not only
+              on /contact. A gateway KYC reviewer checks the footer first, and an
+              operator who publishes no reachable address anywhere in the chrome
+              reads as an unverifiable business.
+            */}
+            <address className="mt-4 text-sm not-italic leading-relaxed opacity-70" style={{ color: 'var(--warm-cream)' }}>
+              <span className="block">{businessInfo.legalName}</span>
+              <span className="block">{businessInfo.address.street}</span>
+              <span className="block">
+                {businessInfo.address.city}, {businessInfo.address.province}{' '}
+                {businessInfo.address.postalCode}, {businessInfo.address.country}
+              </span>
+              <a
+                href={`tel:${businessInfo.phone}`}
+                className="mt-2 block transition-opacity hover:opacity-100"
+                style={{ color: 'var(--warm-cream)' }}
+              >
+                {businessInfo.phoneDisplay}
+              </a>
+              <a
+                href={`mailto:${content.footer.contactEmail}`}
+                className="block transition-opacity hover:opacity-100"
+                style={{ color: 'var(--warm-cream)' }}
+              >
+                {content.footer.contactEmail}
+              </a>
+            </address>
           </div>
 
           <FooterColumn heading="Product" items={content.footer.productLinks} />
@@ -64,8 +89,27 @@ export async function PublicFooter() {
           <FooterColumn heading="Legal" items={content.footer.legalLinks} />
         </div>
 
+        {/*
+          Accepted payment methods, in text. See businessInfo.paymentMethods for
+          why these are not logos.
+        */}
         <div
-          className="mx-auto mt-10 flex max-w-[1320px] flex-col gap-2 border-t pt-6 text-xs opacity-60 sm:flex-row sm:justify-between"
+          className="mx-auto mt-10 max-w-[1320px] border-t pt-6 text-xs opacity-70"
+          style={{ borderColor: 'rgba(246,241,232,0.15)', color: 'var(--warm-cream)' }}
+        >
+          <p>
+            <span className="opacity-70">We accept:</span>{' '}
+            {businessInfo.paymentMethods.join(' · ')}
+          </p>
+          <p className="mt-1.5 opacity-70">
+            Digital subscription — access is granted{' '}
+            {businessInfo.fulfillment.accessGrantedAt}. Nothing is shipped. All amounts in
+            Philippine Pesos (PHP).
+          </p>
+        </div>
+
+        <div
+          className="mx-auto mt-6 flex max-w-[1320px] flex-col gap-2 border-t pt-6 text-xs opacity-60 sm:flex-row sm:justify-between"
           style={{ borderColor: 'rgba(246,241,232,0.15)', color: 'var(--warm-cream)' }}
         >
           <span>
