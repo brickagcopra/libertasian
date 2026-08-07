@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { describe, it, expect } from 'vitest';
 
 import { middleware } from '@/middleware';
@@ -83,6 +86,36 @@ describe('businessInfo — registered identity', () => {
   });
 });
 
+describe('businessInfo — payment and fulfilment disclosures', () => {
+  it('names every payment method a customer can check out with', () => {
+    // A gateway reviewer compares the methods advertised here against the
+    // methods enabled on the merchant account. Dropping one silently makes the
+    // site under-state what we accept; the names are the disclosure.
+    for (const method of ['Visa', 'Mastercard', 'GCash', 'Maya', 'QR Ph']) {
+      expect(businessInfo.paymentMethods).toContain(method);
+    }
+  });
+
+  it('keeps the payment methods as text, never as image URLs', () => {
+    // CSP pins img-src to 'self' data: blob:, so a card-network logo from a
+    // remote CDN renders broken — which reads as a checkout that does not work.
+    for (const method of businessInfo.paymentMethods) {
+      expect(method).not.toMatch(/https?:|\.svg|\.png|<img/i);
+    }
+  });
+
+  it('states that the product is digital, with no shipment', () => {
+    expect(businessInfo.fulfillment.isDigital).toBe(true);
+    expect(businessInfo.fulfillment.accessGrantedAt).toContain('immediately');
+  });
+
+  it('names both delivery channels', () => {
+    const channels = businessInfo.fulfillment.channels.join(' ');
+    expect(channels).toContain('libertasian.com');
+    expect(channels).toContain('mobile app');
+  });
+});
+
 describe('footer links — KYC reachability', () => {
   const { footer } = DEFAULT_HOMEPAGE_CONTENT;
   const allLinks = [
@@ -132,6 +165,79 @@ describe('footer links — KYC reachability', () => {
 
   it('shows the contact email from the single source of truth', () => {
     expect(footer.contactEmail).toBe(businessInfo.email);
+  });
+});
+
+/**
+ * The disclosures above are only worth anything if a page actually renders
+ * them. The footer is an async server component and the pricing block is a
+ * client component fed by the /plans API, so neither renders cheaply under
+ * RTL — instead these assert the wiring: that each page pulls the value from
+ * `businessInfo` rather than hardcoding it, and that the block still exists.
+ *
+ * This catches the realistic regression, which is not a typo in the const —
+ * it is someone deleting the footer address block during a redesign and
+ * leaving the const untouched, so every unit test still passes.
+ *
+ * The rendered-HTML check is the curl pass over a served production build,
+ * recorded on the PR.
+ */
+const SRC = join(__dirname, '..', '..', '..');
+const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8');
+
+describe('public pages — disclosures are wired to the source of truth', () => {
+  const footer = read('components/layout/public-footer.tsx');
+  const pricing = read('app/(public)/pricing/pricing-page-client.tsx');
+  const terms = read('app/(public)/terms/page.tsx');
+  const refunds = read('app/(public)/refund-policy/page.tsx');
+
+  it('renders the registered address in the footer, not only on /contact', () => {
+    expect(footer).toContain('businessInfo.address.street');
+    expect(footer).toContain('businessInfo.address.city');
+    expect(footer).toContain('businessInfo.address.postalCode');
+    expect(footer).toContain('businessInfo.address.country');
+  });
+
+  it('renders the phone in the footer behind a tel: href', () => {
+    expect(footer).toContain('tel:${businessInfo.phone}');
+    // Display the grouped form, link the unspaced one. Never the reverse.
+    expect(footer).toContain('businessInfo.phoneDisplay');
+  });
+
+  it('names the payment methods in the footer and on /pricing', () => {
+    expect(footer).toContain('businessInfo.paymentMethods');
+    expect(pricing).toContain('businessInfo.paymentMethods');
+  });
+
+  it('embeds no remote image host in the payment-method markup', () => {
+    // CSP img-src is 'self' data: blob:. A logo from a card-network CDN is a
+    // broken image on the live site.
+    for (const src of [footer, pricing]) {
+      expect(src).not.toMatch(/<img[^>]+src=["'{]?https?:/i);
+    }
+  });
+
+  it('carries a Service delivery section on /terms and /refund-policy', () => {
+    expect(terms).toContain('Service Delivery');
+    expect(refunds).toContain('Service delivery');
+    for (const src of [terms, refunds]) {
+      expect(src).toContain('businessInfo.fulfillment.accessGrantedAt');
+      expect(src).toContain('businessInfo.fulfillment.channels');
+    }
+  });
+
+  it('states currency, renewal and where to cancel on /pricing', () => {
+    expect(pricing).toContain('Philippine Pesos (PHP)');
+    expect(pricing).toMatch(/recur automatically until cancelled/);
+    expect(pricing).toContain('Settings → Billing');
+  });
+
+  it('does not assert a VAT registration the BIR 2303 does not show', () => {
+    // LIBERTASIAN INC. is registered under quarterly percentage tax (2551Q),
+    // not VAT. The summary line says "applicable Philippine taxes"; a flat
+    // "VAT-inclusive" claim here would be a false tax representation.
+    expect(pricing).toContain('inclusive of applicable Philippine taxes');
+    expect(pricing).not.toMatch(/prices are VAT-inclusive/i);
   });
 });
 

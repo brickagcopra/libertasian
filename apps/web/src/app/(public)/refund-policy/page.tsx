@@ -20,7 +20,37 @@ export default function RefundPolicyPage() {
       </p>
 
       <div className="prose prose-gray mt-10 max-w-none text-sm leading-relaxed text-gray-700">
-        <Section title="1. Free trial before you pay">
+        {/*
+          Delivery comes first because it defines what a refund is a refund OF.
+          Sections below were renumbered when this was inserted; the internal
+          cross-reference in "What is not refundable" moved 2 → 3 with them.
+        */}
+        <Section title="1. Service delivery">
+          <p>
+            {businessInfo.tradeName} is a <strong>digital subscription</strong>. There is no
+            physical product and nothing is ever shipped to you — no courier, no tracking
+            number, no delivery address required.
+          </p>
+          <ul>
+            <li>
+              <strong>When access starts.</strong> Your paid plan is activated{' '}
+              {businessInfo.fulfillment.accessGrantedAt}. There is no waiting period and no
+              manual provisioning step.
+            </li>
+            <li>
+              <strong>How the service is delivered.</strong> Through{' '}
+              {businessInfo.fulfillment.channels.join(' and ')}, using the same account you
+              paid with. Sign in and the features included in your plan are available
+              immediately.
+            </li>
+            <li>
+              <strong>How long access lasts.</strong> For the billing period you paid for, and
+              for each period after it, until you cancel.
+            </li>
+          </ul>
+        </Section>
+
+        <Section title="2. Free trial before you pay">
           <p>
             Every plan has a free tier with no time limit and no card required. We ask you to use
             it before subscribing, because it is the most reliable way to know whether the
@@ -28,7 +58,7 @@ export default function RefundPolicyPage() {
           </p>
         </Section>
 
-        <Section title="2. Refund eligibility">
+        <Section title="3. Refund eligibility">
           <ul>
             <li>
               <strong>First paid period — 7 days.</strong> If you are dissatisfied with your first
@@ -54,7 +84,7 @@ export default function RefundPolicyPage() {
           </ul>
         </Section>
 
-        <Section title="3. What is not refundable">
+        <Section title="4. What is not refundable">
           <ul>
             <li>
               Billing periods that have already elapsed. Cancelling takes effect at the end of the
@@ -62,7 +92,7 @@ export default function RefundPolicyPage() {
             </li>
             <li>
               Requests made after the 7-day windows above, except for the duplicate-charge and
-              service-failure cases in section 2, which have no window.
+              service-failure cases in section 3, which have no window.
             </li>
             <li>
               Free-tier usage, which involves no charge and therefore nothing to refund.
@@ -70,7 +100,7 @@ export default function RefundPolicyPage() {
           </ul>
         </Section>
 
-        <Section title="4. How to request a refund">
+        <Section title="5. How to request a refund">
           <p>
             Email <a href={`mailto:${businessInfo.email}`}>{businessInfo.email}</a> from the email
             address on the account, with the subject line <strong>Refund request</strong>. Include:
@@ -89,7 +119,7 @@ export default function RefundPolicyPage() {
           </p>
         </Section>
 
-        <Section title="5. Processing time">
+        <Section title="6. Processing time">
           <ul>
             <li>
               <strong>Acknowledgement:</strong> within 1 business day of receiving your request.
@@ -111,7 +141,7 @@ export default function RefundPolicyPage() {
           </p>
         </Section>
 
-        <Section title="6. Effect on your access">
+        <Section title="7. Effect on your access">
           <p>
             A full refund ends the subscription it covers, and the account returns to the free
             tier immediately. A partial refund does not change your plan or access. Cancelling
@@ -119,7 +149,7 @@ export default function RefundPolicyPage() {
           </p>
         </Section>
 
-        <Section title="7. Questions">
+        <Section title="8. Questions">
           <p>
             <strong>{businessInfo.legalName}</strong>
             <br />

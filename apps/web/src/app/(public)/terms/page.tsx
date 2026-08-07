@@ -122,7 +122,34 @@ export default function TermsPage() {
           </ul>
         </Section>
 
-        <Section title="6. Acceptable Use">
+        <Section title="6. Service Delivery">
+          <p>
+            The Service is a digital subscription delivered online. There is no physical
+            product, and nothing is shipped to you.
+          </p>
+          <ul>
+            <li>
+              <strong>What is delivered:</strong> access to the features included in your plan,
+              through {businessInfo.fulfillment.channels.join(' and ')}, using the account you
+              subscribed with.
+            </li>
+            <li>
+              <strong>When it is delivered:</strong> your plan is activated{' '}
+              {businessInfo.fulfillment.accessGrantedAt}. There is no waiting period, delivery
+              window, or manual provisioning step.
+            </li>
+            <li>
+              <strong>No shipment:</strong> we do not ship goods, we do not require a delivery
+              address, and no courier or tracking is involved at any point.
+            </li>
+            <li>
+              <strong>Duration:</strong> access continues for the billing period you paid for
+              and renews with each subsequent period until you cancel, as set out in section 5.
+            </li>
+          </ul>
+        </Section>
+
+        <Section title="7. Acceptable Use">
           <p>You agree not to use the Service to:</p>
           <ul>
             <li>Violate any applicable law, regulation, or court order</li>
@@ -138,7 +165,7 @@ export default function TermsPage() {
           </ul>
         </Section>
 
-        <Section title="7. Intellectual Property">
+        <Section title="8. Intellectual Property">
           <h4>7.1 Official Legal Documents</h4>
           <p>
             Official government publications — including laws, court decisions, executive
@@ -175,7 +202,7 @@ export default function TermsPage() {
           </p>
         </Section>
 
-        <Section title="8. Privacy and Data">
+        <Section title="9. Privacy and Data">
           <p>
             Your use of the Service is subject to our{' '}
             <a href="/privacy" className="text-gray-900 underline">
@@ -186,7 +213,7 @@ export default function TermsPage() {
           </p>
         </Section>
 
-        <Section title="9. Service Availability and Modifications">
+        <Section title="10. Service Availability and Modifications">
           <p>
             We strive to maintain continuous availability of the Service but do not guarantee
             uninterrupted access. We may:
@@ -202,7 +229,7 @@ export default function TermsPage() {
           </p>
         </Section>
 
-        <Section title="10. Limitation of Liability">
+        <Section title="11. Limitation of Liability">
           <p>
             To the maximum extent permitted by Philippine law:
           </p>
@@ -226,7 +253,7 @@ export default function TermsPage() {
           </ul>
         </Section>
 
-        <Section title="11. Indemnification">
+        <Section title="12. Indemnification">
           <p>
             You agree to indemnify and hold harmless LIBERTASIAN, its officers, directors,
             employees, and agents from any claims, damages, or expenses arising from:
@@ -239,7 +266,7 @@ export default function TermsPage() {
           </ul>
         </Section>
 
-        <Section title="12. Governing Law and Dispute Resolution">
+        <Section title="13. Governing Law and Dispute Resolution">
           <p>
             These Terms are governed by and construed in accordance with the laws of the Republic
             of the Philippines. Any disputes arising from these Terms or the Service shall be
@@ -259,7 +286,7 @@ export default function TermsPage() {
           </ol>
         </Section>
 
-        <Section title="13. Changes to Terms">
+        <Section title="14. Changes to Terms">
           <p>
             We may update these Terms from time to time. We will notify you of material changes
             via email or in-app notification at least 30 days before the changes take effect.
@@ -268,7 +295,7 @@ export default function TermsPage() {
           </p>
         </Section>
 
-        <Section title="14. Contact">
+        <Section title="15. Contact">
           <p>
             For questions about these Terms, contact us at:
           </p>

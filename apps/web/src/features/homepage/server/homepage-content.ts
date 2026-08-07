@@ -53,6 +53,36 @@ export const businessInfo = {
     name: 'Jecar John Esling',
     email: 'libertasianphilippines@gmail.com',
   },
+  /**
+   * Payment methods named in text on /pricing and in the footer.
+   *
+   * Text only, deliberately. Card-network and wallet brand marks are served
+   * from their owners' CDNs, and our CSP pins `img-src 'self' data: blob:` —
+   * a remote logo renders as a broken image, which reads to a KYC reviewer as
+   * a checkout that does not work. If these ever become images they must be
+   * self-hosted SVG under /public.
+   *
+   * Keep this list aligned with the methods actually enabled on the merchant
+   * account. Advertising a method the gateway has not approved is the kind of
+   * mismatch a website audit is looking for.
+   */
+  paymentMethods: ['Visa', 'Mastercard', 'GCash', 'Maya', 'QR Ph'],
+  /**
+   * How the product reaches the buyer.
+   *
+   * A gateway reviewer works through a fulfilment checklist written for
+   * physical goods, and silence on the question is scored as an unanswered
+   * item, not as "not applicable". Saying plainly that there is no shipment
+   * and that access opens on payment closes it.
+   */
+  fulfillment: {
+    /** No physical shipment. Nothing is ever posted to a customer. */
+    isDigital: true,
+    /** Elapsed time between a successful charge and usable access. */
+    accessGrantedAt: 'immediately on successful payment',
+    /** Where the thing purchased is actually consumed. */
+    channels: ['libertasian.com', 'the LIBERTASIAN mobile app'],
+  },
 } as const;
 
 // ---- Homepage Content Types ----
