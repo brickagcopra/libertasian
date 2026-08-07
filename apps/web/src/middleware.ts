@@ -53,6 +53,9 @@ const PUBLIC_PATHS = [
 // /email/ hosts static assets referenced by outgoing transactional emails
 // (logo etc.) — email clients fetch with no session cookie and must get a
 // direct 200, never a redirect.
+// /team/ hosts the management-team headshots on the public About page. A
+// payment gateway's KYC reviewer loads /about unauthenticated; without this
+// the officer photos backing the business-identity proof 307 to /login.
 // /restore-account is listed as a prefix too, not only an exact path: the
 // emailed link always carries `?token=`, and any future sub-path must stay
 // reachable without a session for the same reason.
@@ -62,6 +65,7 @@ const PUBLIC_PREFIXES = [
   '/.well-known/',
   '/billing/mobile',
   '/email/',
+  '/team/',
   '/restore-account',
 ];
 
@@ -118,9 +122,10 @@ export const config = {
      * - favicon.ico, sitemap.xml, robots.txt
      * - .well-known (deep-link verification files — must return 200, no redirect)
      * - email (static assets referenced by transactional emails — must return 200, no redirect)
+     * - team (management-team headshots on the public About page)
      * - API routes (handled by NestJS)
      * - Public assets
      */
-    '/((?!_next/static|_next/image|favicon\\.ico|sitemap\\.xml|robots\\.txt|\\.well-known/|email/|api/|metrics).*)',
+    '/((?!_next/static|_next/image|favicon\\.ico|sitemap\\.xml|robots\\.txt|\\.well-known/|email/|team/|api/|metrics).*)',
   ],
 };
