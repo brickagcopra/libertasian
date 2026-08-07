@@ -17,6 +17,40 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Runs before the toolchain setup on purpose: it is pure grep, needs no
+      # node or pnpm, and fails in seconds instead of after a full install.
+      #
+      # Both #360 (web pages) and #364 (mobile store doc, API email template)
+      # found these by hand. The only prior guard,
+      # apps/web/src/features/homepage/server/business-info.test.ts, asserts
+      # over rendered web content only and saw neither #364 surface. That file
+      # is excluded below because it legitimately names both addresses in its
+      # DEAD_MAILBOXES exclusion list.
+      #
+      # These mailboxes reject at SMTP (450 — mailbox does not exist). Publishing
+      # them was a likely contributor to the Xendit KYC rejection. DELETE THIS STEP
+      # once dpo@/legal@ exist as real mailboxes in the Namecheap PrivateEmail panel
+      # AND a test send to each is confirmed delivered — at that point they are
+      # publishable again and this guard becomes wrong.
+      - name: Guard — no dead mailboxes published
+        run: |
+          if grep -rIn \
+            --exclude-dir=node_modules \
+            --exclude-dir=dist \
+            --exclude-dir=.next \
+            --exclude-dir=build \
+            --exclude-dir=coverage \
+            --exclude=business-info.test.ts \
+            -e 'dpo@libertasian\.com' \
+            -e 'legal@libertasian\.com' \
+            apps/ services/ packages/
+          then
+            echo
+            echo "::error::Dead mailbox published — dpo@ and legal@libertasian.com reject at SMTP (450, mailbox does not exist). Use libertasianphilippines@gmail.com (privacy/DPO of record) or support@libertasian.com (monitored daily)."
+            exit 1
+          fi
+          echo "OK — no published references to dpo@ or legal@libertasian.com."
+
       - uses: pnpm/action-setup@v4
 
       - uses: actions/setup-node@v4
