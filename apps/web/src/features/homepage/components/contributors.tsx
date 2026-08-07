@@ -39,7 +39,11 @@ export function Contributors({ contributors }: ContributorsProps) {
               fontFamily: 'var(--font-mono)',
               fontSize: 12,
               letterSpacing: '1px',
-              color: 'var(--warm-ink-faint)',
+              // --warm-ink-faint (#9a8f7c) on this section's --warm-cream
+              // ground is 2.83:1 and fails WCAG AA for text. --warm-ink-mid
+              // is 6.63:1 on the same ground. The /about page eyebrows use
+              // --warm-ink-mid on cream for this reason.
+              color: 'var(--warm-ink-mid)',
             }}
           >
             {contributors.eyebrow}
