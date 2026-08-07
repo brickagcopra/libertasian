@@ -75,7 +75,7 @@ Play Console → App content → Data safety. For each Play category, you declar
 |---|---|
 | Does your app collect or share any of the required user data types? | **Yes** |
 | Is all of the user data collected by your app encrypted in transit? | **Yes** (TLS 1.3 — Privacy Policy § 6.2) |
-| Do you provide a way for users to request that their data be deleted? | **Yes** — in-app account deletion + `dpo@libertasian.com` per Privacy Policy § 8–9 |
+| Do you provide a way for users to request that their data be deleted? | **Yes** — in-app account deletion + public deletion page `https://libertasian.com/account-deletion` (paste this into Play's *Data deletion URL* field). Privacy contact: `libertasianphilippines@gmail.com` (DPO of record) per Privacy Policy § 8–9 |
 
 ### Category mapping
 
