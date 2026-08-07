@@ -1,6 +1,36 @@
+import Image from 'next/image';
 import Link from 'next/link';
 
 import { businessInfo } from '@/features/homepage/server/homepage-content';
+
+type TeamMember = {
+  name: string;
+  title: string;
+  photo: string;
+};
+
+const managementTeam: TeamMember[] = [
+  {
+    name: 'Jecar John Esling',
+    title: 'Chief Executive Officer',
+    photo: '/team/jecar-esling.jpg',
+  },
+  {
+    name: 'Brick Demanuel Agcopra',
+    title: 'Chief Technology Officer',
+    photo: '/team/brick-agcopra.jpg',
+  },
+  {
+    name: 'Mitch Esling',
+    title: 'VP for Operations',
+    photo: '/team/mitch-esling.jpg',
+  },
+  {
+    name: 'Iris Kristine C. Agcopra',
+    title: 'VP for Finance',
+    photo: '/team/iris-agcopra.jpg',
+  },
+];
 
 export const metadata = {
   title: 'About',
@@ -61,6 +91,26 @@ export default function AboutPage() {
             <Link href="/privacy">Privacy Policy</Link> for the full detail, including your rights
             under the Data Privacy Act of 2012 (Republic Act No. 10173).
           </p>
+        </Section>
+
+        <Section title="Management team">
+          <ul className="not-prose mt-4 grid grid-cols-2 gap-6 sm:grid-cols-4">
+            {managementTeam.map((member) => (
+              <li key={member.name}>
+                <Image
+                  src={member.photo}
+                  alt={`${member.name}, ${member.title}, ${businessInfo.legalName}`}
+                  width={640}
+                  height={640}
+                  sizes="(min-width: 640px) 25vw, 50vw"
+                  className="aspect-square w-full rounded-lg object-cover"
+                />
+                <p className="mt-2 font-semibold text-gray-900">{member.name}</p>
+                <p className="text-sm text-gray-600">{member.title}</p>
+              </li>
+            ))}
+          </ul>
+          <p>Jecar John Esling also serves as our Data Protection Officer.</p>
         </Section>
 
         <Section title="Company details">
