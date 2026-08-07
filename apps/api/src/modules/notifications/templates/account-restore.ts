@@ -38,7 +38,7 @@ export function accountRestoreTemplate(data: {
   </p>
   <p style="color: #666; font-size: 14px;">
     If you did not request this, restore your account with the link above and
-    change your password, then contact us at dpo@libertasian.com.
+    change your password, then contact us at support@libertasian.com.
   </p>
   <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
   <p style="color: #999; font-size: 12px;">LIBERTASIAN — Philippine Legal AI Platform</p>
