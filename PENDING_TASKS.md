@@ -1,6 +1,8 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-08-04 (**new, top of the list:** `fix/rag-opensearch-tls-auth` — the RAG service's OpenSearch client had neither credentials nor a TLS setting while prod serves https + self-signed + basic auth, and the client turned every failure into an empty hit set. Fixed locally; **the prod confirmation is an op, and it is the only thing that proves any of it.** See the section directly below.)
+> Last updated: 2026-08-08 (**new, top of the list:** the iOS 1.0 submission is assembled, validated and sitting one button from App Review with build 15 attached — **and it must not be submitted yet.** The uploaded screenshots are mockups, not app captures (Guideline 2.3.3), and replacing them needs `xcrun simctl`, i.e. a Mac. That is the only outstanding item. See the section directly below and `apps/mobile/store/IOS_SCREENSHOT_CAPTURE.md`.)
+>
+> Previously: 2026-08-04 (`fix/rag-opensearch-tls-auth` — the RAG service's OpenSearch client had neither credentials nor a TLS setting while prod serves https + self-signed + basic auth, and the client turned every failure into an empty hit set. Fixed locally; **the prod confirmation is an op, and it is the only thing that proves any of it.** See the section directly below.)
 >
 > Previously: 2026-08-03 (**was top of the list:** three PRs are open and CI-green and none is merged — **#353** digest-tab visibility, **#354** the case-digest search corpus, **#355** the mobile pill nav. #354 does nothing for users until an **index-rebuild job runs on prod after deploy**; #355 is JS-only and rides the next EAS build or OTA. See the section directly below.)
 >
@@ -15,6 +17,29 @@
 > Previously: 2026-07-26 (search Phases A–C3 all merged: #306 #307 #308 #310 #311 #312; C3 squashed to `025e538`, deployed and live-verified on prod. Remaining search work is a client UI for `scope` and C4 fusion behind the reranker — but see the reachability note first: only 13,017 of 99,994 derivatives match any visibility branch. Also new: #313 fixed the confidence scorer, #315 gated the re-score script, and the re-score itself is CLOSED as not worth running — 7 rows of 29,471 move. What replaces it is a product decision about what the 0.70 editorial bar should mean; see the top section.)
 
 Verification rules used for this prune: every PR reference checked with `gh pr view <n> --json state,mergedAt`; every branch reference checked against `git branch -r --no-merged origin/main` after `git fetch --prune`. Items that could not be verified were MOVED to "Needs verification", not deleted.
+
+---
+
+## iOS 1.0 submission — blocked on real screenshots, and nothing else (2026-08-08)
+
+Full capture instructions: **`apps/mobile/store/IOS_SCREENSHOT_CAPTURE.md`**. Full context of what was done: COMPLETED_TASKS.md under 2026-08-08.
+
+State: version 1.0 is **Ready for Review**, build **15** attached, draft submission holds one item, **Submit for Review NOT pressed**. Listing, App Privacy (published), age rating (18+), content rights, price (Free), availability (Philippines only), review info and release settings are all set and were individually re-verified after the build swap.
+
+- [ ] **Capture the six screens on a Mac — this is the whole remaining task.** The uploaded set are mockups: the documented `raw/` → `framed/` pipeline never ran (both dirs empty), they came from an undocumented `marketing/` dir, `02-case-digests` shows grey skeleton bars instead of body text, every frame carries the 9:41 marketing status bar with no carrier or battery, and `01-past-bar-exams` has text colliding with its chevrons. Guideline 2.3.3, and the likeliest rejection on this submission.
+- [ ] **Two capture passes, not one.** `frame-screenshots.mjs` maps *all four* Apple platforms from the same `raw/<slug>.ios.png`. One iPhone pass would letterbox a phone screenshot into the iPad canvas — a fresh 2.3.3 problem, since iPad shots must show iPad UI. Capture on iPhone → frame `iphone-*` → **copy the raws aside** → capture on iPad → frame `ipad-*`.
+- [ ] **Upload one file at a time, in filename order.** Uploading six at once orders them by upload-completion. That happened on 2026-08-07, the set came out scrambled, and it had to be deleted and redone. Only the first 3 appear on install sheets.
+- [ ] **Re-verify everything after the upload — swapping assets is where settings silently reset.** The checklist is in §7 of the handoff doc. "Add for Review" re-runs Apple's server-side validation and is reversible; it is the cheapest way to surface a gap, and it is what caught the missing price tier on 2026-08-07 (invisible from every ASC page).
+- [ ] **Do not cut a new build.** Build 15 is what is being submitted.
+- [ ] **Do not sign in as, or delete, `brickagcopra5871+test@gmail.com`** — comp Pro subscription row `6741e44f` that reviewers depend on.
+
+Deferred, deliberate, revisit later:
+
+- [ ] **DSA trader declaration is unset**, so EU storefronts are excluded. Needs a publicly published verified business address/phone. Revisit before any EU launch. Note "make available in all future App Store countries or regions" was left **unchecked** so distribution cannot silently expand into the EU.
+- [ ] **The ad system is dead code and must stay that way until the declarations change.** `src/features/ads/` is complete (modal, slide-in, floating bar, sticky footer, inline banner, impression + click tracking) but nothing outside that directory imports it. That is precisely what makes the age-rating "Advertising = No" and the App Privacy "no Advertising Data" answers true for build 15. Wiring it in makes both false; update them in the same release. No `expo-updates`, so it cannot be enabled without a new review.
+- [ ] **Phased release does nothing for 1.0.** It governs updates to users with auto-update on; a first release has no install base. On Release the app goes live to the whole PH storefront at once. It starts mattering at 1.1.
+- [ ] **The "CI JSON-validity check" in `store.config.json`'s header does not exist.** `grep -rn "store.config" .github/` returns nothing and no package script references the file. Add it so a malformed config fails a PR instead of a release. Flagged in #366.
+- [ ] **Play still has the same screenshot provenance problem** — `marketing/android-*` came from the same undocumented source. Do not reuse them.
 
 ---
 
