@@ -1,6 +1,8 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-08-05 (#360 `fix/merchant-kyc-public-site` — the Xendit merchant rejection was a **website KYC audit**, and the site failed it on three counts: the registered entity published in two wrong spellings with no address, three published mailboxes that reject at SMTP (including the DPO contact on the Privacy Policy), and public links that dead-end at /login. /about, /contact and /refund-policy now exist, the phone is published, and the last two unevidenced stat tiles are gone. Refund windows confirmed by brick; `site_contents` has 0 rows in prod, so no runtime override can resurrect either deleted tile.)
+> Last updated: 2026-08-08 (the iOS 1.0 submission was taken from an **empty listing** to "Ready for Review" with build 15 attached. The `store.config.json` in the repo could never have been pushed — four separate schema/API faults, one of them silent. Build 14 was swapped for 15 because it predated #355. A pre-submission audit then found the uploaded screenshots are **mockups, not app captures** — Guideline 2.3.3 — and that is the one thing still open; it needs a Mac. **Submit for Review has NOT been pressed.** See `apps/mobile/store/IOS_SCREENSHOT_CAPTURE.md`.)
+>
+> Previously: 2026-08-05 (#360 `fix/merchant-kyc-public-site` — the Xendit merchant rejection was a **website KYC audit**, and the site failed it on three counts: the registered entity published in two wrong spellings with no address, three published mailboxes that reject at SMTP (including the DPO contact on the Privacy Policy), and public links that dead-end at /login. /about, /contact and /refund-policy now exist, the phone is published, and the last two unevidenced stat tiles are gone. Refund windows confirmed by brick; `site_contents` has 0 rows in prod, so no runtime override can resurrect either deleted tile.)
 >
 > Previously: 2026-08-05 (#359 MERGED `953b268` — the Xendit merchant application was REJECTED, so gateway-swap cost is now a live business risk and Xendit was hardcoded through billing, the subscription lifecycle and the schema. A `PaymentProvider` port + provider-neutral columns land with **zero behaviour change**; Xendit stays the only implementation. The migration was later verified against the real production schema and data — executed in a transaction and rolled back — before merge.)
 >
@@ -15,6 +17,39 @@
 > Previously: 2026-07-29 (#336 OPEN: a flat 300 s synthesis timeout made a 2,238-char digest — near the corpus average — permanently unsynthesizable, and retrying it identically three times burned 15 min of 8-core CPU. Budget is now length-proportional, failures are classified, and the reason is persisted. A separate CUDA image and bearer auth on the TTS hop open the rented-GPU route for the tier-1 backfill; both are no-ops for prod.)
 >
 > Previously: 2026-07-27 (#322 MERGED `5addc51`: the auto-publish citation gate was unreachable and had stranded 76% of the corpus out of search since 2026-05-30. Dry run over prod confirms 11,561 of 13,093 drafts publish under the corrected rules. #321 opened for the resolver underneath it, #323 for the 1,531 rows still short a `court`.)
+
+---
+
+## 2026-08-08 — iOS 1.0 taken to "Ready for Review" (build 15), and the screenshot audit that stopped it short
+
+**Starting state.** Build 14 had been uploaded and accepted by ASC on 2026-08-02 and nobody had pressed anything since. The 1.0 listing was **completely empty** — no description, keywords, promo text, URLs, copyright or screenshots. App Privacy was never started, Age Ratings never answered, App Review Information blank, no price tier, no availability. Build 14 was not even attached to the version.
+
+**`store.config.json` could never have been pushed.** `eas metadata:push` rejected it on four counts, and the worst one was silent:
+
+1. **`apple.version` was missing.** Without it eas-cli issues the version PATCH with no `versionString`; ASC replies *"missing a required attribute … 'versionString'"*, the version step fails, and **every version-scoped field rides on that step** — description, keywords, promo text, release notes, support/marketing URL, copyright. The first push printed `√ Updated localized info for en-US`, exited 0, and wrote none of it.
+2. `keywords` was a comma-delimited string; the schema requires an array.
+3. The keyword list was **104 characters against Apple's 100 cap**. Dropped `legal research` — the subtitle is already "Philippine legal research" and Apple indexes the subtitle, so those tokens were spending keyword budget twice. 89 chars now.
+4. The `advisory` block used the **legacy age-rating format**. Not rewritten to guess at the new schema — commented out with the reason, and the rating answered in the ASC questionnaire instead, which now asks about capabilities the legacy block never modelled (user-generated content, messaging, advertising, age assurance).
+
+Shipped as **#366**, with the `supportUrl` fix (below) as a second commit.
+
+**Build 14 → 15.** Build 14 predated **#355** (`a0e6592`), which fixed the floating pill nav vanishing on Study, Feed, Workspace and Library — and, more importantly, the fact that *reachable destinations depended on which screen you stood on*, because the onPress switch was copy-pasted across five screens with different subsets. That matters for review: the App Review notes point Apple's reviewer at **Settings → Delete account** for Guideline 5.1.1(v). Build 15 (`main` @ `bd8d669`) also picks up **#354**'s mobile search changes. Smoke-tested on device, then swapped into the draft submission and every setting re-verified individually afterwards — none had reset.
+
+**Validation caught a real blocker.** "Add for Review" refused with *"You must choose a price tier in Pricing."* No price and no availability had ever been set, and neither surfaces as a warning anywhere on the version page. Set to **Free** ($0.00 across 175 storefronts) and **Philippines only** (1 of 175). "Make available in all future App Store countries or regions" was deliberately left **unchecked** — it would silently expand into EU storefronts and collide with the DSA trader declaration we are not making.
+
+**The pre-submission audit.** Checked in the code, not the forms:
+
+- **3.1.1 (external purchases) — clean.** `settings/plans.tsx` is deliberately read-only: no prices, no upgrade CTA, no coupon field, no outbound link, with a comment naming the guideline. The upsell sheet routes there, not to Xendit.
+- **2.5.4 (background audio) — justified.** `UIBackgroundModes: ["audio"]` is backed by a real read-aloud feature; `audio-session.ts` sets `staysActiveInBackground: true`.
+- **4.8 (Sign in with Apple) — present**, required because Google login is offered.
+- **5.1.1(v) (account deletion) — present** at `settings/index.tsx:141` → `/settings/delete-account`, matching the review notes. Public page returns 200.
+- **Advertising declared "No" — true for build 15 only.** `src/features/ads/` is a complete overlay-ad system (modal, slide-in, floating bar, sticky footer, inline banner) with impression/click tracking, but **nothing outside that directory imports it**, and there is no `expo-updates`, so it cannot be switched on without a new review. The moment it is wired in, the age-rating "Advertising" answer and the App Privacy "no Advertising Data" declaration both become false and must change in the same release.
+- **Support URL was the marketing homepage.** Guideline 1.5 expects a route to help. Repointed at `/contact`, which is in the web middleware's `PUBLIC_PATHS` and returns 200 clean — `/support` and `/help` do not exist and **307 to `/login`**, so being under `app/(public)/` is not what makes a route public.
+- **Age rating.** Content answers calculated 13+, but `DATA_SAFETY.md` and the Privacy Policy declare an 18+ audience and Play is declared 18+. Overridden to **18+** so the stores stop disagreeing publicly.
+
+**What stopped it.** The screenshots uploaded to ASC are **designed mockups, not captures of the running app**: the documented `raw/` → `framed/` pipeline was never run (both directories empty), the images came from an undocumented `marketing/` directory, `02-case-digests` renders body text as grey skeleton bars, every frame shows the 9:41 marketing status bar with no carrier or battery, and `01-past-bar-exams` has text colliding with its chevrons. That is Guideline 2.3.3 and the likeliest rejection on this submission. Capture needs `xcrun simctl` — macOS-only — so it is handed off in `apps/mobile/store/IOS_SCREENSHOT_CAPTURE.md`. Android capture *would* have worked on the Windows box and was deliberately not used: Android frames in Apple slots is the same misrepresentation, with extra steps.
+
+**Submit for Review has not been pressed.** The draft submission holds build 15 and is one button from App Review.
 
 ---
 
