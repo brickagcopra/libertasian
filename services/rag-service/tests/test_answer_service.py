@@ -619,7 +619,7 @@ class TestDocumentScopedRetrieval:
         assert self.mock_retrieve.call_args.args[0] == "And what about the exceptions?"
 
     @pytest.mark.asyncio
-    async def test_history_is_rendered_into_the_prompt(self) -> None:
+    async def test_history_renders_into_the_prompt(self) -> None:
         request = AnswerRequest(
             query="And the exceptions?",
             history=[
