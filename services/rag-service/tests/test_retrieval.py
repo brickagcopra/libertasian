@@ -853,3 +853,183 @@ class TestAuthorityBoost:
             > _AUTHORITY_BOOST["editorial"]
             > _AUTHORITY_BOOST["private"]
         )
+
+
+# ---------------------------------------------------------------------------
+# Document-scoped retrieval (filter_terms)
+# ---------------------------------------------------------------------------
+
+
+class TestFilterClauses:
+    """The shared filter_terms -> OpenSearch clause expansion."""
+
+    def test_none_and_empty_produce_no_clauses(self) -> None:
+        from src.core.retrieval import _filter_clauses
+
+        assert _filter_clauses(None) == []
+        assert _filter_clauses({}) == []
+
+    def test_scalar_becomes_term_clause(self) -> None:
+        from src.core.retrieval import _filter_clauses
+
+        assert _filter_clauses({"document_id": "doc-1"}) == [
+            {"term": {"document_id": "doc-1"}}
+        ]
+
+    def test_list_becomes_terms_clause(self) -> None:
+        from src.core.retrieval import _filter_clauses
+
+        assert _filter_clauses({"document_id": ["doc-1", "doc-2"]}) == [
+            {"terms": {"document_id": ["doc-1", "doc-2"]}}
+        ]
+
+
+class TestBm25DocumentScope:
+    """filter_terms must reach the BM25 query body in `filter` context."""
+
+    @staticmethod
+    def _capturer(captured: dict[str, Any]):
+        async def _capture_search(index: str, body: dict[str, Any]) -> dict[str, Any]:
+            captured.update(body)
+            return {"hits": {"hits": []}}
+
+        return _capture_search
+
+    @pytest.mark.asyncio
+    async def test_filter_terms_added_to_plain_multi_match(self) -> None:
+        from src.core.retrieval import _bm25_search
+
+        captured: dict[str, Any] = {}
+        with patch(
+            "src.core.retrieval.opensearch_search",
+            side_effect=self._capturer(captured),
+        ):
+            await _bm25_search(
+                "due process",
+                QueryIntent.LEGAL_QUESTION,
+                filter_terms={"document_id": "doc-42"},
+            )
+
+        query = captured["query"]
+        assert "bool" in query
+        assert query["bool"]["filter"] == [{"term": {"document_id": "doc-42"}}]
+        # The original multi_match survives as the scoring clause.
+        assert "multi_match" in query["bool"]["must"][0]
+
+    @pytest.mark.asyncio
+    async def test_filter_terms_added_to_codal_bool_query(self) -> None:
+        """Scoping must compose with the CODAL_REFERENCE boost, not replace it."""
+        from src.core.retrieval import _bm25_search
+
+        captured: dict[str, Any] = {}
+        with patch(
+            "src.core.retrieval.opensearch_search",
+            side_effect=self._capturer(captured),
+        ):
+            await _bm25_search(
+                "Article III",
+                QueryIntent.CODAL_REFERENCE,
+                filter_terms={"document_id": "doc-42"},
+            )
+
+        query = captured["query"]
+        assert query["bool"]["filter"] == [{"term": {"document_id": "doc-42"}}]
+        assert len(query["bool"]["should"]) == 3
+
+    @pytest.mark.asyncio
+    async def test_no_filter_terms_leaves_body_unchanged(self) -> None:
+        """Absent filter_terms, the body must be byte-identical to before."""
+        from src.core.retrieval import _bm25_search
+
+        captured: dict[str, Any] = {}
+        with patch(
+            "src.core.retrieval.opensearch_search",
+            side_effect=self._capturer(captured),
+        ):
+            await _bm25_search("due process", QueryIntent.LEGAL_QUESTION)
+
+        assert "multi_match" in captured["query"]
+        assert "bool" not in captured["query"]
+
+
+class TestKnnDocumentScope:
+    """The kNN arm must be scoped too, or RRF reintroduces excluded passages."""
+
+    @pytest.mark.asyncio
+    async def test_filter_terms_added_to_knn_query(self) -> None:
+        from src.core.retrieval import _knn_search
+
+        captured: dict[str, Any] = {}
+
+        async def _capture_search(index: str, body: dict[str, Any]) -> dict[str, Any]:
+            captured.update(body)
+            return {"hits": {"hits": []}}
+
+        with patch("src.core.retrieval.opensearch_search", side_effect=_capture_search):
+            await _knn_search([0.1, 0.2, 0.3], filter_terms={"document_id": "doc-42"})
+
+        knn = captured["query"]["knn"]["embedding"]
+        assert knn["filter"] == {"bool": {"filter": [{"term": {"document_id": "doc-42"}}]}}
+        assert knn["vector"] == [0.1, 0.2, 0.3]
+
+    @pytest.mark.asyncio
+    async def test_no_filter_terms_leaves_knn_unchanged(self) -> None:
+        from src.core.retrieval import _knn_search
+
+        captured: dict[str, Any] = {}
+
+        async def _capture_search(index: str, body: dict[str, Any]) -> dict[str, Any]:
+            captured.update(body)
+            return {"hits": {"hits": []}}
+
+        with patch("src.core.retrieval.opensearch_search", side_effect=_capture_search):
+            await _knn_search([0.1, 0.2, 0.3])
+
+        assert "filter" not in captured["query"]["knn"]["embedding"]
+
+
+class TestHybridRetrieveDocumentScope:
+    """hybrid_retrieve threads filter_terms into BOTH arms."""
+
+    @pytest.mark.asyncio
+    async def test_filter_terms_reach_both_arms(self) -> None:
+        from src.core.retrieval import hybrid_retrieve
+
+        with (
+            patch(
+                "src.core.retrieval._bm25_search", new_callable=AsyncMock
+            ) as mock_bm25,
+            patch("src.core.retrieval._knn_search", new_callable=AsyncMock) as mock_knn,
+        ):
+            mock_bm25.return_value = []
+            mock_knn.return_value = []
+
+            await hybrid_retrieve(
+                "due process",
+                QueryIntent.LEGAL_QUESTION,
+                embedding=[0.1, 0.2],
+                filter_terms={"document_id": "doc-42"},
+            )
+
+        assert mock_bm25.call_args.kwargs["filter_terms"] == {"document_id": "doc-42"}
+        assert mock_knn.call_args.kwargs["filter_terms"] == {"document_id": "doc-42"}
+
+    @pytest.mark.asyncio
+    async def test_filter_terms_default_to_none(self) -> None:
+        from src.core.retrieval import hybrid_retrieve
+
+        with (
+            patch(
+                "src.core.retrieval._bm25_search", new_callable=AsyncMock
+            ) as mock_bm25,
+            patch("src.core.retrieval._knn_search", new_callable=AsyncMock) as mock_knn,
+        ):
+            mock_bm25.return_value = []
+            mock_knn.return_value = []
+
+            await hybrid_retrieve(
+                "due process", QueryIntent.LEGAL_QUESTION, embedding=[0.1, 0.2]
+            )
+
+        assert mock_bm25.call_args.kwargs["filter_terms"] is None
+        assert mock_knn.call_args.kwargs["filter_terms"] is None

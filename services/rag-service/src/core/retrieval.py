@@ -35,11 +35,32 @@ _KEYWORD_INDEX = "legal_documents_keyword"
 _VECTOR_INDEX = "legal_documents_vector"
 
 
+def _filter_clauses(filter_terms: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Expand a ``{field: value}`` map into OpenSearch term/terms clauses.
+
+    A list value becomes a ``terms`` clause, a scalar becomes ``term``. Shared by
+    ``retrieve_by_query`` (which places the result in ``must``) and the two
+    ``hybrid_retrieve`` arms (which place it in ``filter``) so the two paths
+    cannot drift in how they interpret a filter map.
+    """
+    if not filter_terms:
+        return []
+
+    clauses: list[dict[str, Any]] = []
+    for field, value in filter_terms.items():
+        if isinstance(value, list):
+            clauses.append({"terms": {field: value}})
+        else:
+            clauses.append({"term": {field: value}})
+    return clauses
+
+
 async def hybrid_retrieve(
     query: str,
     intent: QueryIntent,
     top_k: int = 30,
     embedding: list[float] | None = None,
+    filter_terms: dict[str, Any] | None = None,
 ) -> SearchResult:
     """Execute hybrid BM25 + kNN retrieval and fuse results with RRF.
 
@@ -48,6 +69,10 @@ async def hybrid_retrieve(
         intent: Classified query intent (drives field boosting).
         top_k: Number of passages to return after fusion.
         embedding: Pre-computed query embedding vector. If None, only BM25 is used.
+        filter_terms: Optional ``{field: value}`` restriction applied to BOTH
+            arms. Applying it to only one would not narrow the result set: RRF
+            fuses the two arms, so an unfiltered kNN arm would reintroduce
+            passages the BM25 filter had just excluded.
 
     Returns:
         SearchResult with fused and authority-boosted passages.
@@ -57,7 +82,7 @@ async def hybrid_retrieve(
     # to propagate all the way to the router's 500 handler on purpose — an
     # answer built on zero passages because the cluster was unreachable is the
     # exact failure this branch exists to stop being silent.
-    bm25_hits = await _bm25_search(query, intent, top_k=top_k * 2)
+    bm25_hits = await _bm25_search(query, intent, top_k=top_k * 2, filter_terms=filter_terms)
     knn_hits: list[dict[str, Any]] = []
 
     if embedding is not None:
@@ -68,7 +93,7 @@ async def hybrid_retrieve(
         # pipeline's own documented BM25-only fallback. Logged at ERROR, and
         # ``total_knn_hits: 0`` in the response records that it happened.
         try:
-            knn_hits = await _knn_search(embedding, top_k=top_k * 2)
+            knn_hits = await _knn_search(embedding, top_k=top_k * 2, filter_terms=filter_terms)
         except httpx.HTTPError:
             logger.error(
                 "kNN arm failed on index %s — degrading to BM25-only for this query",
@@ -103,6 +128,7 @@ async def _bm25_search(
     query: str,
     intent: QueryIntent,
     top_k: int = 60,
+    filter_terms: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Execute BM25 keyword search on OpenSearch."""
     # Adjust field boosts based on intent
@@ -143,6 +169,20 @@ async def _bm25_search(
             },
         }
 
+    # Scoping goes in `filter` context, not `must`. A filter is a hard yes/no
+    # that contributes nothing to _score, so passage scores inside a scoped
+    # query stay on the same scale as an unscoped one — which matters because
+    # check_abstention compares the top score against a fixed threshold.
+    # (retrieve_by_query puts its filter_terms in `must` instead; that path
+    # feeds callers who do not run the abstention check.)
+    clauses = _filter_clauses(filter_terms)
+    if clauses:
+        inner = body["query"]
+        if "bool" in inner:
+            inner["bool"]["filter"] = clauses
+        else:
+            body["query"] = {"bool": {"must": [inner], "filter": clauses}}
+
     data = await opensearch_search(_KEYWORD_INDEX, body)
     hits = data.get("hits", {}).get("hits", [])
 
@@ -172,16 +212,26 @@ async def _bm25_search(
 async def _knn_search(
     embedding: list[float],
     top_k: int = 60,
+    filter_terms: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Execute kNN vector search on OpenSearch."""
+    knn_clause: dict[str, Any] = {
+        "vector": embedding,
+        "k": top_k,
+    }
+
+    # OpenSearch applies a kNN `filter` during graph traversal rather than after
+    # it, so the k nearest neighbours are drawn from the matching subset instead
+    # of being found first and then discarded.
+    clauses = _filter_clauses(filter_terms)
+    if clauses:
+        knn_clause["filter"] = {"bool": {"filter": clauses}}
+
     body: dict[str, Any] = {
         "size": top_k,
         "query": {
             "knn": {
-                "embedding": {
-                    "vector": embedding,
-                    "k": top_k,
-                },
+                "embedding": knn_clause,
             },
         },
         "_source": [
@@ -360,12 +410,7 @@ async def retrieve_by_query(
         },
     ]
 
-    if filter_terms:
-        for field, value in filter_terms.items():
-            if isinstance(value, list):
-                must_clauses.append({"terms": {field: value}})
-            else:
-                must_clauses.append({"term": {field: value}})
+    must_clauses.extend(_filter_clauses(filter_terms))
 
     body: dict[str, Any] = {
         "size": top_k,
