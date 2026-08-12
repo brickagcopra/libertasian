@@ -1,9 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 
 import { AiAnswersController } from './ai-answers.controller';
 import { AiAnswersService, type AiAnswerResponse } from './ai-answers.service';
 import { AuditService } from '../audit/audit.service';
+import { DocumentsService } from '../documents/documents.service';
+import { PaywallException } from '../../common/exceptions/paywall.exception';
+import { EntitlementService } from '../subscriptions/entitlement.service';
 import { UsageQuotaService } from '../subscriptions/usage-quota.service';
 import type { JwtPayload } from '@libertasian/types';
 
@@ -16,6 +19,10 @@ describe('AiAnswersController', () => {
   let aiAnswersService: jest.Mocked<AiAnswersService>;
   let auditService: jest.Mocked<AuditService>;
   let usageQuota: jest.Mocked<UsageQuotaService>;
+  let documents: jest.Mocked<DocumentsService>;
+  let entitlements: jest.Mocked<EntitlementService>;
+
+  const DOC_ID = '11111111-1111-4111-8111-111111111111';
 
   const mockUser: JwtPayload = {
     sub: 'user-1',
@@ -84,6 +91,18 @@ describe('AiAnswersController', () => {
             checkAndIncrement: jest.fn(),
           },
         },
+        {
+          provide: DocumentsService,
+          useValue: {
+            findById: jest.fn(),
+          },
+        },
+        {
+          provide: EntitlementService,
+          useValue: {
+            resolveEffectiveEntitlements: jest.fn(),
+          },
+        },
       ],
     }).compile();
 
@@ -91,6 +110,14 @@ describe('AiAnswersController', () => {
     aiAnswersService = module.get(AiAnswersService);
     auditService = module.get(AuditService);
     usageQuota = module.get(UsageQuotaService);
+    documents = module.get(DocumentsService);
+    entitlements = module.get(EntitlementService);
+
+    // Default: a paying org, and the document read gate lets the caller through.
+    entitlements.resolveEffectiveEntitlements.mockResolvedValue({
+      previewOnly: false,
+    } as never);
+    documents.findById.mockResolvedValue({ id: DOC_ID } as never);
   });
 
   // ---- generateAnswer (POST /ai-answers) ----
@@ -414,6 +441,159 @@ describe('AiAnswersController', () => {
         'aiAnswers',
         { isPlatformAdmin: false },
       );
+    });
+  });
+
+  // ---- documentId authorization ----
+
+  describe('documentId authorization', () => {
+    /**
+     * documentId arrives in the request body, so it is attacker-controlled.
+     * These specs pin the gate: the caller's right to READ the document is
+     * checked before it is ever forwarded as a retrieval scope.
+     */
+
+    function createRes() {
+      return {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn().mockReturnThis(),
+        setHeader: jest.fn(),
+        flushHeaders: jest.fn(),
+        write: jest.fn(),
+        end: jest.fn(),
+      } as never;
+    }
+
+    it('authorizes the document via the documents read gate before answering', async () => {
+      usageQuota.checkAndIncrement.mockResolvedValueOnce(mockQuotaAllowed);
+      aiAnswersService.generateAnswer.mockResolvedValueOnce(mockAnswerResult);
+
+      await controller.generateAnswer(
+        { query: 'What does this say about bail?', documentId: DOC_ID },
+        mockUser,
+      );
+
+      expect(documents.findById).toHaveBeenCalledWith(DOC_ID, false);
+    });
+
+    it('does not touch the documents gate when no documentId is supplied', async () => {
+      usageQuota.checkAndIncrement.mockResolvedValueOnce(mockQuotaAllowed);
+      aiAnswersService.generateAnswer.mockResolvedValueOnce(mockAnswerResult);
+
+      await controller.generateAnswer({ query: 'What is res judicata?' }, mockUser);
+
+      expect(documents.findById).not.toHaveBeenCalled();
+    });
+
+    it('propagates 404 for a document that does not exist', async () => {
+      documents.findById.mockRejectedValueOnce(
+        new NotFoundException('Legal document not found'),
+      );
+
+      await expect(
+        controller.generateAnswer({ query: 'anything', documentId: DOC_ID }, mockUser),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('propagates 402 for a document outside a preview-only caller’s allowance', async () => {
+      entitlements.resolveEffectiveEntitlements.mockResolvedValue({
+        previewOnly: true,
+      } as never);
+      documents.findById.mockRejectedValueOnce(
+        new PaywallException({ corpus: 'documents' }),
+      );
+
+      await expect(
+        controller.generateAnswer({ query: 'anything', documentId: DOC_ID }, mockUser),
+      ).rejects.toThrow(PaywallException);
+
+      expect(documents.findById).toHaveBeenCalledWith(DOC_ID, true);
+    });
+
+    it('never reaches the RAG service when authorization fails', async () => {
+      documents.findById.mockRejectedValueOnce(new NotFoundException());
+
+      await expect(
+        controller.generateAnswer({ query: 'anything', documentId: DOC_ID }, mockUser),
+      ).rejects.toThrow();
+
+      expect(aiAnswersService.generateAnswer).not.toHaveBeenCalled();
+    });
+
+    it('does not consume quota when authorization fails', async () => {
+      // checkAndIncrement is a consuming call, so an unauthorized request must
+      // not reach it — otherwise probing for documents burns the caller's quota.
+      documents.findById.mockRejectedValueOnce(new NotFoundException());
+
+      await expect(
+        controller.generateAnswer({ query: 'anything', documentId: DOC_ID }, mockUser),
+      ).rejects.toThrow();
+
+      expect(usageQuota.checkAndIncrement).not.toHaveBeenCalled();
+    });
+
+    it('resolves preview-only from entitlements for a normal member', async () => {
+      entitlements.resolveEffectiveEntitlements.mockResolvedValue({
+        previewOnly: true,
+      } as never);
+      usageQuota.checkAndIncrement.mockResolvedValueOnce(mockQuotaAllowed);
+      aiAnswersService.generateAnswer.mockResolvedValueOnce(mockAnswerResult);
+
+      await controller.generateAnswer({ query: 'q', documentId: DOC_ID }, mockUser);
+
+      expect(entitlements.resolveEffectiveEntitlements).toHaveBeenCalledWith('org-1');
+      expect(documents.findById).toHaveBeenCalledWith(DOC_ID, true);
+    });
+
+    it('treats a platform admin as never preview-only', async () => {
+      usageQuota.checkAndIncrement.mockResolvedValueOnce(mockQuotaAllowed);
+      aiAnswersService.generateAnswer.mockResolvedValueOnce(mockAnswerResult);
+
+      await controller.generateAnswer(
+        { query: 'q', documentId: DOC_ID },
+        { ...mockUser, isPlatformAdmin: true } as JwtPayload,
+      );
+
+      expect(entitlements.resolveEffectiveEntitlements).not.toHaveBeenCalled();
+      expect(documents.findById).toHaveBeenCalledWith(DOC_ID, false);
+    });
+
+    // ---- streaming path ----
+
+    it('authorizes the document on the streaming path too', async () => {
+      usageQuota.checkAndIncrement.mockResolvedValueOnce(mockQuotaAllowed);
+      aiAnswersService.getStreamFetchArgs.mockReturnValueOnce({
+        url: 'http://rag/answer/stream',
+        init: {},
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        body: { getReader: () => ({ read: jest.fn().mockResolvedValue({ done: true }) }) },
+      });
+
+      const res = createRes();
+      await controller.streamAnswer(
+        { query: 'q', documentId: DOC_ID },
+        mockUser,
+        res,
+      );
+
+      expect(documents.findById).toHaveBeenCalledWith(DOC_ID, false);
+    });
+
+    it('rejects the stream before any SSE header is written', async () => {
+      // The throw must land before flushHeaders(), so the client gets a normal
+      // JSON error rather than an error frame inside an already-open stream.
+      documents.findById.mockRejectedValueOnce(new NotFoundException());
+
+      const res = createRes();
+      await expect(
+        controller.streamAnswer({ query: 'q', documentId: DOC_ID }, mockUser, res),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(res.setHeader).not.toHaveBeenCalled();
+      expect(res.flushHeaders).not.toHaveBeenCalled();
+      expect(usageQuota.checkAndIncrement).not.toHaveBeenCalled();
     });
   });
 });

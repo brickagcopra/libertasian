@@ -15,6 +15,8 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { TrackEvent } from '../analytics';
 import { AuditService } from '../audit/audit.service';
+import { DocumentsService } from '../documents/documents.service';
+import { EntitlementService } from '../subscriptions/entitlement.service';
 import { UsageQuotaService } from '../subscriptions/usage-quota.service';
 import { AiAnswersService } from './ai-answers.service';
 import { AiAnswerQueryDto } from './dto';
@@ -30,7 +32,53 @@ export class AiAnswersController {
     private readonly aiAnswersService: AiAnswersService,
     private readonly auditService: AuditService,
     private readonly usageQuota: UsageQuotaService,
+    private readonly documents: DocumentsService,
+    private readonly entitlements: EntitlementService,
   ) {}
+
+  /**
+   * The caller's preview-only status, resolved exactly as
+   * `DocumentsController.resolvePreviewOnly` and `AudioController.isPreviewOnly`
+   * do: a platform admin is never preview-only, everyone else takes it from
+   * their organization's effective entitlements.
+   */
+  private async isPreviewOnly(user: JwtPayload): Promise<boolean> {
+    if (user.isPlatformAdmin === true) return false;
+    const ent = await this.entitlements.resolveEffectiveEntitlements(
+      user.organizationId,
+    );
+    return ent.previewOnly === true;
+  }
+
+  /**
+   * Verify the caller may read `documentId` before it is forwarded as a
+   * retrieval scope.
+   *
+   * `documentId` arrives in the request body, so it is attacker-controlled.
+   * Forwarding it unchecked would let anyone aim the RAG pipeline at any
+   * document in the corpus and read it back as generated prose with quoted
+   * source passages — a read gate bypass dressed up as an answer.
+   *
+   * The gate itself is NOT restated here. It delegates to
+   * `DocumentsService.findById` (`documents.service.ts:73`), the same call that
+   * backs `GET /documents/:id`, mirroring how
+   * `AudioController.assertAccessAndPaywall` (`audio.controller.ts:217`) reuses
+   * the owning module's rule. So scoping an answer to a document is allowed
+   * exactly where reading that document is, and a future change to who may read
+   * what moves this with it.
+   *
+   * Note on the failure mode: `LegalDocument` has no `organizationId` — it is a
+   * global corpus deliberately excluded from `PrismaService.forTenant`'s model
+   * list — so there is no cross-tenant dimension to enforce and no 403 to
+   * raise. The real exposure is the free-plan preview cap and unpublished
+   * documents, which surface as 402 (`PaywallException`) and 404 respectively.
+   */
+  private async assertDocumentReadable(
+    documentId: string,
+    user: JwtPayload,
+  ): Promise<void> {
+    await this.documents.findById(documentId, await this.isPreviewOnly(user));
+  }
 
   @Post()
   @ApiOperation({ summary: 'Generate an AI answer for a legal query' })
@@ -42,6 +90,13 @@ export class AiAnswersController {
     @Body() dto: AiAnswerQueryDto,
     @CurrentUser() user: JwtPayload,
   ) {
+    // Before the quota check on purpose: checkAndIncrement consumes a unit even
+    // when the request goes on to fail, so authorizing first stops a caller
+    // burning their own quota on documents they were never allowed to scope to.
+    if (dto.documentId) {
+      await this.assertDocumentReadable(dto.documentId, user);
+    }
+
     const quota = await this.usageQuota.checkAndIncrement(
       user.organizationId,
       user.sub,
@@ -92,6 +147,13 @@ export class AiAnswersController {
     @CurrentUser() user: JwtPayload,
     @Res() res: Response,
   ) {
+    // Runs before the quota check for the same reason as the non-streaming
+    // path, and before flushHeaders() so a thrown NotFound/Paywall is still a
+    // normal JSON error response rather than an error frame mid-stream.
+    if (dto.documentId) {
+      await this.assertDocumentReadable(dto.documentId, user);
+    }
+
     const quota = await this.usageQuota.checkAndIncrement(
       user.organizationId,
       user.sub,

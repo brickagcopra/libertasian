@@ -45,6 +45,26 @@ export class AiAnswersService {
   }
 
   /**
+   * Build the RAG service request body shared by the streaming and
+   * non-streaming paths.
+   *
+   * `document_id` and `history` are spread in only when present, so a request
+   * that uses neither serialises byte-for-byte as it did before they existed.
+   *
+   * This does NOT authorize `documentId`. The controller must have verified the
+   * caller may read that document before calling either path — see
+   * `AiAnswersController.assertDocumentReadable`.
+   */
+  private buildRequestBody(dto: AiAnswerQueryDto): string {
+    return JSON.stringify({
+      query: dto.query,
+      max_passages: dto.maxPassages ?? 8,
+      ...(dto.documentId ? { document_id: dto.documentId } : {}),
+      ...(dto.history?.length ? { history: dto.history } : {}),
+    });
+  }
+
+  /**
    * Generate an AI answer by calling the RAG service.
    * Records a model_runs entry per CLAUDE.md for auditing and rollback.
    */
@@ -61,10 +81,7 @@ export class AiAnswersService {
         'Content-Type': 'application/json',
         ...(this.internalApiKey && { 'X-Internal-Api-Key': this.internalApiKey }),
       },
-      body: JSON.stringify({
-        query: dto.query,
-        max_passages: dto.maxPassages ?? 8,
-      }),
+      body: this.buildRequestBody(dto),
     });
 
     if (!response.ok) {
@@ -112,10 +129,7 @@ export class AiAnswersService {
           'Content-Type': 'application/json',
           ...(this.internalApiKey && { 'X-Internal-Api-Key': this.internalApiKey }),
         },
-        body: JSON.stringify({
-          query: dto.query,
-          max_passages: dto.maxPassages ?? 8,
-        }),
+        body: this.buildRequestBody(dto),
       },
     };
   }
