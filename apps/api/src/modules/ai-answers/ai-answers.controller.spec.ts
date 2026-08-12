@@ -453,6 +453,13 @@ describe('AiAnswersController', () => {
      * checked before it is ever forwarded as a retrieval scope.
      */
 
+    /**
+     * Deliberately NOT cast here. Returning `as never` would erase the
+     * jest.Mock members, and the assertions below read them
+     * (`expect(res.setHeader).not.toHaveBeenCalled()`). The cast belongs at the
+     * `streamAnswer` call sites, where only Express's `Response` shape is
+     * needed.
+     */
     function createRes() {
       return {
         status: jest.fn().mockReturnThis(),
@@ -461,7 +468,7 @@ describe('AiAnswersController', () => {
         flushHeaders: jest.fn(),
         write: jest.fn(),
         end: jest.fn(),
-      } as never;
+      };
     }
 
     it('authorizes the document via the documents read gate before answering', async () => {
@@ -575,7 +582,7 @@ describe('AiAnswersController', () => {
       await controller.streamAnswer(
         { query: 'q', documentId: DOC_ID },
         mockUser,
-        res,
+        res as never,
       );
 
       expect(documents.findById).toHaveBeenCalledWith(DOC_ID, false);
@@ -588,7 +595,7 @@ describe('AiAnswersController', () => {
 
       const res = createRes();
       await expect(
-        controller.streamAnswer({ query: 'q', documentId: DOC_ID }, mockUser, res),
+        controller.streamAnswer({ query: 'q', documentId: DOC_ID }, mockUser, res as never),
       ).rejects.toThrow(NotFoundException);
 
       expect(res.setHeader).not.toHaveBeenCalled();
