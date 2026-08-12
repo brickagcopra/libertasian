@@ -11,11 +11,17 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
 
-# Copy dependency files first for caching
-COPY services/rag-service/pyproject.toml ./
+# Lockfile first so the layer caches on source-only changes.
+COPY services/rag-service/pyproject.toml services/rag-service/uv.lock ./
 
-# Install production dependencies
-RUN uv pip install --system --no-cache-dir -r pyproject.toml
+# --frozen fails the build if the lock and pyproject.toml have drifted.
+#
+# This previously ran `uv pip install -r pyproject.toml`, which ignored uv.lock
+# and re-resolved from PyPI on every rebuild. Because the constraints here are
+# lower bounds only (fastapi>=0.115.0), each rebuild could land a different
+# version than the one that was tested: a rebuild resolved fastapi 0.141 against
+# a lock pinning 0.135.1 and every route 500'd for ~50 minutes.
+RUN uv sync --frozen --no-dev --no-install-project
 
 # Stage 2: Production
 FROM python:3.12-slim AS runner
@@ -26,9 +32,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Copy installed Python packages from deps stage
-COPY --from=deps /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
-COPY --from=deps /usr/local/bin /usr/local/bin
+# The locked dependency set lives in the venv built by `uv sync`, not in the
+# interpreter's site-packages. PATH puts its bin dir first so the CMD below
+# resolves the locked uvicorn rather than a system one.
+COPY --from=deps /app/.venv /app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Copy application source
 COPY services/rag-service/src ./src
