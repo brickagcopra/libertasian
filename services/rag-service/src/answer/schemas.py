@@ -2,10 +2,34 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..core.schemas import CitationRef
 from ..core.types import AbstentionReason, ConfidenceLevel, QueryIntent
+
+# Bounds on `AnswerRequest.history`. The transcript is replayed into the
+# generation prompt, so an unbounded one is a token-budget and cost hole as much
+# as a correctness one — it would crowd out the SOURCE PASSAGES the answer is
+# supposed to be grounded in.
+MAX_HISTORY_TURNS = 20
+MAX_HISTORY_CONTENT_CHARS = 4000
+
+
+class ConversationTurn(BaseModel):
+    """One prior turn in a multi-turn conversation."""
+
+    model_config = ConfigDict(strict=True)
+
+    role: Literal["user", "assistant"] = Field(
+        description="Who produced this turn.",
+    )
+    content: str = Field(
+        min_length=1,
+        max_length=MAX_HISTORY_CONTENT_CHARS,
+        description="Turn text. Untrusted input, echoed into the prompt only.",
+    )
 
 
 class AnswerRequest(BaseModel):
@@ -35,6 +59,22 @@ class AnswerRequest(BaseModel):
     include_sources: bool = Field(
         default=True,
         description="Whether to include source passage details in response.",
+    )
+    document_id: str | None = Field(
+        default=None,
+        description=(
+            "Restrict retrieval to a single legal document. The caller's right to "
+            "read it is verified by the NestJS gateway, not here."
+        ),
+    )
+    history: list[ConversationTurn] | None = Field(
+        default=None,
+        max_length=MAX_HISTORY_TURNS,
+        description=(
+            "Prior conversation turns, oldest first. Used ONLY to give the "
+            "generation prompt continuity — never as a retrieval signal and "
+            "never as a citable source."
+        ),
     )
 
 

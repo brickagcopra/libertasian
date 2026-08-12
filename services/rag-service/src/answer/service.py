@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
+from typing import Any
 
 from ..config import settings
 from ..core.abstention import check_abstention, generate_abstention_response
@@ -32,10 +33,37 @@ from .prompts import (
     STREAMING_SYSTEM_PROMPT,
     SYSTEM_PROMPT,
     USER_PROMPT_TEMPLATE,
+    USER_PROMPT_TEMPLATE_WITH_HISTORY,
+    format_history,
 )
 from .schemas import AnswerChunk, AnswerRequest, AnswerResponse, AnswerSource
 
 logger = logging.getLogger(__name__)
+
+
+def _retrieval_filters(request: AnswerRequest) -> dict[str, Any] | None:
+    """Translate the request's document scope into retrieval filter terms.
+
+    ``history`` is deliberately absent here. Conversation context changes how an
+    answer is written, never which passages are eligible to ground it — folding
+    earlier turns into the retrieval query would let a long conversation drift
+    the evidence set away from the question actually being asked.
+    """
+    if request.document_id is None:
+        return None
+    return {"document_id": request.document_id}
+
+
+def _build_user_prompt(request: AnswerRequest, context: str, query: str) -> str:
+    """Render the user prompt, including prior turns only when there are any."""
+    history_block = format_history(request.history)
+    if not history_block:
+        return USER_PROMPT_TEMPLATE.format(context=context, query=query)
+    return USER_PROMPT_TEMPLATE_WITH_HISTORY.format(
+        history=history_block,
+        context=context,
+        query=query,
+    )
 
 
 async def generate_answer(request: AnswerRequest) -> AnswerResponse:
@@ -50,8 +78,13 @@ async def generate_answer(request: AnswerRequest) -> AnswerResponse:
     intent = classify_intent(query)
     logger.info("Query intent: %s, query_length: %d", intent.value, len(query))
 
-    # 2. Hybrid retrieval
-    search_result = await hybrid_retrieve(query, intent, top_k=30)
+    # 2. Hybrid retrieval, narrowed to one document when the caller asked for it
+    search_result = await hybrid_retrieve(
+        query,
+        intent,
+        top_k=30,
+        filter_terms=_retrieval_filters(request),
+    )
 
     # 3. Reranking
     reranked = await rerank_passages(
@@ -82,10 +115,7 @@ async def generate_answer(request: AnswerRequest) -> AnswerResponse:
     context_bundle = pack_context(reranked, token_budget=settings.answer_context_tokens)
 
     # 6. LLM generation
-    user_prompt = USER_PROMPT_TEMPLATE.format(
-        context=context_bundle.formatted_context,
-        query=query,
-    )
+    user_prompt = _build_user_prompt(request, context_bundle.formatted_context, query)
     generated_text = await generate_completion(
         system_prompt=SYSTEM_PROMPT,
         user_prompt=user_prompt,
@@ -150,7 +180,12 @@ async def stream_answer(request: AnswerRequest) -> AsyncIterator[AnswerChunk]:
     try:
         # 1-4: Same as non-streaming
         intent = classify_intent(query)
-        search_result = await hybrid_retrieve(query, intent, top_k=30)
+        search_result = await hybrid_retrieve(
+            query,
+            intent,
+            top_k=30,
+            filter_terms=_retrieval_filters(request),
+        )
         reranked = await rerank_passages(
             query,
             search_result.passages,
@@ -189,10 +224,7 @@ async def stream_answer(request: AnswerRequest) -> AsyncIterator[AnswerChunk]:
         )
 
         # 5. Stream generation
-        user_prompt = USER_PROMPT_TEMPLATE.format(
-            context=context_bundle.formatted_context,
-            query=query,
-        )
+        user_prompt = _build_user_prompt(request, context_bundle.formatted_context, query)
 
         full_text = ""
         async for chunk in stream_completion(
