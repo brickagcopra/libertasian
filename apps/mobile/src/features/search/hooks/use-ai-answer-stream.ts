@@ -1,37 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import Constants from 'expo-constants';
-import { authStorage } from '../../../storage/auth-storage';
-import type { AiAnswerChunk, AiAnswerSource } from '../types';
 
-function resolveApiBaseUrl(): string {
-  const override = process.env['EXPO_PUBLIC_API_URL'];
-  if (override) {
-    return override;
-  }
-  return (
-    (Constants.expoConfig?.extra?.['apiUrl'] as string | undefined) ??
-    'http://localhost:3001/api/v1'
-  );
-}
+import { streamAiAnswer } from '../../ai-answers/stream-ai-answer';
+import type { AiAnswerSource } from '../types';
 
-const API_BASE_URL = resolveApiBaseUrl();
-
-const MAX_RETRIES = 3;
-const BASE_RETRY_DELAY_MS = 1000;
-
-const NON_RETRYABLE_STATUSES = new Set([400, 401, 403, 404, 422]);
-
-function isTransientError(err: unknown): boolean {
-  if (err instanceof TypeError) return true;
-  const msg = (err as Error).message ?? '';
-  return /network|timeout|econnreset|econnrefused|socket hang up|failed to fetch/i.test(msg);
-}
-
-function retryDelay(attempt: number): number {
-  const base = BASE_RETRY_DELAY_MS * Math.pow(2, attempt);
-  const jitter = Math.random() * 500;
-  return base + jitter;
-}
+/**
+ * One-shot AI answer for the search screen, driven by a query string.
+ *
+ * The SSE transport itself now lives in `features/ai-answers/stream-ai-answer`
+ * and is shared with the reader's document chat, so there is a single streaming
+ * client rather than one per surface. This hook's public API is unchanged.
+ */
 
 interface StreamState {
   text: string;
@@ -45,34 +23,26 @@ interface StreamState {
   retryCount: number;
 }
 
+const INITIAL_STATE: StreamState = {
+  text: '',
+  sources: [],
+  isStreaming: false,
+  isDone: false,
+  error: null,
+  confidence: null,
+  abstained: false,
+  abstentionReason: null,
+  retryCount: 0,
+};
+
 export function useAiAnswerStream(query: string | null, enabled: boolean) {
-  const [state, setState] = useState<StreamState>({
-    text: '',
-    sources: [],
-    isStreaming: false,
-    isDone: false,
-    error: null,
-    confidence: null,
-    abstained: false,
-    abstentionReason: null,
-    retryCount: 0,
-  });
+  const [state, setState] = useState<StreamState>(INITIAL_STATE);
 
   const abortRef = useRef<AbortController | null>(null);
   const lastQueryRef = useRef<string | null>(null);
 
   const reset = useCallback(() => {
-    setState({
-      text: '',
-      sources: [],
-      isStreaming: false,
-      isDone: false,
-      error: null,
-      confidence: null,
-      abstained: false,
-      abstentionReason: null,
-      retryCount: 0,
-    });
+    setState(INITIAL_STATE);
   }, []);
 
   useEffect(() => {
@@ -90,155 +60,45 @@ export function useAiAnswerStream(query: string | null, enabled: boolean) {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    const startStream = async (attempt = 0) => {
-      setState({
-        text: '',
-        sources: [],
-        isStreaming: true,
-        isDone: false,
-        error: null,
-        confidence: null,
-        abstained: false,
-        abstentionReason: null,
-        retryCount: attempt,
-      });
-
-      try {
-        const token = await authStorage.getAccessToken();
-        const headers: Record<string, string> = {
-          'Content-Type': 'application/json',
-        };
-        if (token) {
-          headers['Authorization'] = `Bearer ${token}`;
-        }
-
-        const response = await fetch(`${API_BASE_URL}/ai-answers/stream`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ query }),
-          signal: controller.signal,
-        });
-
-        if (response.status === 401) {
+    void streamAiAnswer(
+      { query },
+      {
+        onAttempt: (attempt) => {
+          setState({ ...INITIAL_STATE, isStreaming: true, retryCount: attempt });
+        },
+        onText: (delta) => {
+          setState((prev) => ({ ...prev, text: prev.text + delta }));
+        },
+        onMetadata: (meta) => {
+          setState((prev) => ({
+            ...prev,
+            sources: meta.sources ?? prev.sources,
+            confidence: meta.confidence ?? prev.confidence,
+            abstained: meta.abstained ?? prev.abstained,
+            abstentionReason: meta.abstentionReason ?? prev.abstentionReason,
+          }));
+        },
+        onDone: (meta) => {
           setState((prev) => ({
             ...prev,
             isStreaming: false,
-            error: 'Session expired. Please log in again.',
+            isDone: true,
+            sources: meta.sources ?? prev.sources,
+            confidence: meta.confidence ?? prev.confidence,
+            abstained: meta.abstained ?? prev.abstained,
+            abstentionReason: meta.abstentionReason ?? prev.abstentionReason,
           }));
-          return;
-        }
-
-        if (response.status === 403) {
-          const errorBody = await response.json().catch(() => ({})) as Record<string, unknown>;
-          setState((prev) => ({
-            ...prev,
-            isStreaming: false,
-            error: (errorBody['message'] as string) ?? 'AI answer quota exceeded',
-          }));
-          return;
-        }
-
-        if (!response.ok || !response.body) {
-          if (!NON_RETRYABLE_STATUSES.has(response.status) && attempt < MAX_RETRIES) {
-            const delay = retryDelay(attempt);
-            await new Promise((resolve) => setTimeout(resolve, delay));
-            if (!controller.signal.aborted) {
-              return startStream(attempt + 1);
-            }
-            return;
-          }
-          setState((prev) => ({
-            ...prev,
-            isStreaming: false,
-            error: `Request failed with status ${response.status}`,
-          }));
-          return;
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-
-          const lines = buffer.split('\n');
-          buffer = lines.pop() ?? '';
-
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue;
-            const jsonStr = line.slice(6).trim();
-            if (!jsonStr) continue;
-
-            try {
-              const chunk = JSON.parse(jsonStr) as AiAnswerChunk;
-
-              if (chunk.type === 'text' && chunk.content) {
-                setState((prev) => ({
-                  ...prev,
-                  text: prev.text + chunk.content,
-                }));
-              } else if (chunk.type === 'metadata') {
-                setState((prev) => ({
-                  ...prev,
-                  sources: chunk.sources ?? prev.sources,
-                  confidence: chunk.confidence ?? prev.confidence,
-                  abstained: chunk.abstained ?? prev.abstained,
-                  abstentionReason: chunk.abstention_reason ?? prev.abstentionReason,
-                }));
-              } else if (chunk.type === 'done') {
-                setState((prev) => ({
-                  ...prev,
-                  isStreaming: false,
-                  isDone: true,
-                  sources: chunk.sources ?? prev.sources,
-                  confidence: chunk.confidence ?? prev.confidence,
-                  abstained: chunk.abstained ?? prev.abstained,
-                  abstentionReason: chunk.abstention_reason ?? prev.abstentionReason,
-                }));
-              } else if (chunk.type === 'error') {
-                setState((prev) => ({
-                  ...prev,
-                  isStreaming: false,
-                  error: chunk.message ?? 'Stream error',
-                }));
-              }
-            } catch {
-              // Skip unparseable chunks
-            }
-          }
-        }
-
-        setState((prev) => {
-          if (prev.isStreaming) {
-            return { ...prev, isStreaming: false, isDone: true };
-          }
-          return prev;
-        });
-      } catch (err) {
-        if ((err as Error).name === 'AbortError') return;
-
-        if (isTransientError(err) && attempt < MAX_RETRIES && !controller.signal.aborted) {
-          const delay = retryDelay(attempt);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-          if (!controller.signal.aborted) {
-            return startStream(attempt + 1);
-          }
-          return;
-        }
-
-        setState((prev) => ({
-          ...prev,
-          isStreaming: false,
-          error: (err as Error).message ?? 'Stream failed',
-        }));
-      }
-    };
-
-    startStream();
+        },
+        onError: (err) => {
+          setState((prev) => ({ ...prev, isStreaming: false, error: err.message }));
+        },
+      },
+      controller.signal,
+    ).then(() => {
+      // A stream that closes without a `done` frame still has to settle.
+      if (controller.signal.aborted) return;
+      setState((prev) => (prev.isStreaming ? { ...prev, isStreaming: false, isDone: true } : prev));
+    });
 
     return () => {
       controller.abort();
