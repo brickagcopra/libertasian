@@ -325,4 +325,90 @@ describe('AiAnswersService', () => {
       expect(body.max_passages).toBe(8);
     });
   });
+
+  // ---- documentId / history passthrough ----
+
+  describe('documentId and history passthrough', () => {
+    const DOC_ID = '11111111-1111-4111-8111-111111111111';
+    const HISTORY = [
+      { role: 'user' as const, content: 'Explain Article III Section 13.' },
+      { role: 'assistant' as const, content: 'It governs the right to bail.' },
+    ];
+
+    function bodyOf(callIndex = 0) {
+      return JSON.parse(
+        (mockFetch.mock.calls[callIndex][1] as RequestInit).body as string,
+      );
+    }
+
+    it('forwards documentId as document_id', async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => mockRagResponse });
+
+      await service.generateAnswer(
+        { query: 'What does this say about bail?', documentId: DOC_ID },
+        'user-1',
+        'org-1',
+      );
+
+      expect(bodyOf().document_id).toBe(DOC_ID);
+    });
+
+    it('forwards history verbatim', async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => mockRagResponse });
+
+      await service.generateAnswer(
+        { query: 'And the exceptions?', history: HISTORY },
+        'user-1',
+        'org-1',
+      );
+
+      expect(bodyOf().history).toEqual(HISTORY);
+    });
+
+    it('omits both keys entirely when neither is supplied', async () => {
+      // Not merely undefined — absent. A request that uses neither field must
+      // serialise exactly as it did before they existed.
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => mockRagResponse });
+
+      await service.generateAnswer({ query: 'plain query' }, 'user-1', 'org-1');
+
+      const raw = (mockFetch.mock.calls[0][1] as RequestInit).body as string;
+      expect(raw).toBe(
+        JSON.stringify({ query: 'plain query', max_passages: 8 }),
+      );
+    });
+
+    it('omits history when it is an empty array', async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => mockRagResponse });
+
+      await service.generateAnswer(
+        { query: 'plain query', history: [] },
+        'user-1',
+        'org-1',
+      );
+
+      expect(bodyOf()).not.toHaveProperty('history');
+    });
+
+    it('forwards both fields on the streaming path', async () => {
+      const { init } = service.getStreamFetchArgs({
+        query: 'And the exceptions?',
+        documentId: DOC_ID,
+        history: HISTORY,
+      });
+
+      const body = JSON.parse(init.body as string);
+      expect(body.document_id).toBe(DOC_ID);
+      expect(body.history).toEqual(HISTORY);
+      expect(body.query).toBe('And the exceptions?');
+    });
+
+    it('leaves the streaming body unchanged when neither is supplied', async () => {
+      const { init } = service.getStreamFetchArgs({ query: 'plain query' });
+
+      expect(init.body).toBe(
+        JSON.stringify({ query: 'plain query', max_passages: 8 }),
+      );
+    });
+  });
 });
