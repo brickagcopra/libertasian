@@ -54,6 +54,18 @@ def _retrieval_filters(request: AnswerRequest) -> dict[str, Any] | None:
     return {"document_id": request.document_id}
 
 
+def _min_passages(request: AnswerRequest) -> int:
+    """The passage-count floor appropriate to this request's retrieval scope.
+
+    Scoped retrieval draws from one document, so the count reflects that
+    document's length rather than how well corroborated the answer is. The
+    corpus-wide floor of 3 silently hard-abstains on every short document.
+    """
+    if request.document_id is None:
+        return settings.abstention_min_passages
+    return settings.abstention_min_passages_scoped
+
+
 def _build_user_prompt(request: AnswerRequest, context: str, query: str) -> str:
     """Render the user prompt, including prior turns only when there are any."""
     history_block = format_history(request.history)
@@ -94,9 +106,10 @@ async def generate_answer(request: AnswerRequest) -> AnswerResponse:
     )
 
     # 4. Abstention check
-    abstention_reason = check_abstention(reranked)
+    scoped = request.document_id is not None
+    abstention_reason = check_abstention(reranked, min_passages=_min_passages(request))
     if abstention_reason is not None:
-        abstention_text = generate_abstention_response(abstention_reason, query)
+        abstention_text = generate_abstention_response(abstention_reason, query, scoped=scoped)
         return AnswerResponse(
             answer=abstention_text,
             query=query,
@@ -132,6 +145,34 @@ async def generate_answer(request: AnswerRequest) -> AnswerResponse:
             "Citation validation issues: %d invalid, %d unsupported claims",
             len(validation.invalid_citations),
             len(validation.unsupported_claims),
+        )
+
+    # Scoped answers must be grounded in the document, not merely produced from
+    # it. Lowering the count floor above removed the check that a short document
+    # could not answer at all; this replaces it with a check on whether the
+    # answer actually cited the document. Zero valid citations from a
+    # single-document pool means the model wrote unsupported prose, which is
+    # precisely what a reader asking "what does THIS say" must never receive.
+    #
+    # Scoped-only on purpose: corpus-wide search keeps returning a low-confidence
+    # answer with zero valid citations, as it does today. Widening this would
+    # change behaviour well outside the surface being fixed.
+    if scoped and validation.valid_count == 0:
+        logger.info("Abstaining: scoped answer produced no valid citations")
+        return AnswerResponse(
+            answer=generate_abstention_response(
+                AbstentionReason.VALIDATION_FAILED, query, scoped=True
+            ),
+            query=query,
+            intent=intent,
+            confidence=0.0,
+            confidence_level=ConfidenceLevel.LOW,
+            abstained=True,
+            abstention_reason=AbstentionReason.VALIDATION_FAILED,
+            model_name=model_info["model_name"],
+            prompt_template_version=PROMPT_VERSION,
+            passages_used=context_bundle.passages_included,
+            passages_available=context_bundle.passages_total,
         )
 
     # 8. Confidence scoring
@@ -193,9 +234,12 @@ async def stream_answer(request: AnswerRequest) -> AsyncIterator[AnswerChunk]:
         )
 
         # Abstention check
-        abstention_reason = check_abstention(reranked)
+        scoped = request.document_id is not None
+        abstention_reason = check_abstention(reranked, min_passages=_min_passages(request))
         if abstention_reason is not None:
-            abstention_text = generate_abstention_response(abstention_reason, query)
+            abstention_text = generate_abstention_response(
+                abstention_reason, query, scoped=scoped
+            )
             yield AnswerChunk(
                 type="metadata",
                 metadata={
@@ -242,6 +286,33 @@ async def stream_answer(request: AnswerRequest) -> AsyncIterator[AnswerChunk]:
             source_passages=reranked,
             valid_citation_count=validation.valid_count,
         )
+
+        # Same scoped grounding check as the non-streaming path. It can only run
+        # after generation, by which point the text has already been streamed to
+        # the client — so the abstention is signalled on the TERMINAL chunk and
+        # the client is expected to discard the text it has, exactly as it would
+        # for a pre-generation abstention. No further `text` chunk is emitted:
+        # text chunks append, so one here would leave the reader holding the
+        # unsupported answer with a disclaimer stapled to the end of it.
+        if scoped and validation.valid_count == 0:
+            logger.info("Abstaining: scoped stream produced no valid citations")
+            yield AnswerChunk(
+                type="done",
+                metadata={
+                    "abstained": True,
+                    "abstention_reason": AbstentionReason.VALIDATION_FAILED.value,
+                    "abstention_text": generate_abstention_response(
+                        AbstentionReason.VALIDATION_FAILED, query, scoped=True
+                    ),
+                    "confidence": 0.0,
+                    "confidence_level": ConfidenceLevel.LOW.value,
+                    "valid_citations": 0,
+                    "total_citations": validation.total_count,
+                    "model_name": model_info["model_name"],
+                    "prompt_template_version": PROMPT_VERSION,
+                },
+            )
+            return
 
         yield AnswerChunk(
             type="done",

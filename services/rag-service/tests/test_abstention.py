@@ -91,3 +91,81 @@ class TestGenerateAbstentionResponse:
         # At least some should be distinct
         unique_messages = set(messages.values())
         assert len(unique_messages) >= 3
+
+
+# ---------------------------------------------------------------------------
+# Scope-dependent passage floor + scoped wording
+# ---------------------------------------------------------------------------
+
+
+class TestMinPassagesOverride:
+    """check_abstention takes a caller-supplied floor for scoped retrieval."""
+
+    def test_default_floor_comes_from_settings(self, make_passage) -> None:
+        passages = [make_passage(score=0.9)]
+        assert check_abstention(passages) == AbstentionReason.INSUFFICIENT_PASSAGES
+
+    def test_scoped_floor_of_one_admits_a_single_passage(self, make_passage) -> None:
+        passages = [make_passage(score=0.9)]
+        assert check_abstention(passages, min_passages=1) is None
+
+    def test_override_does_not_bypass_the_empty_check(self) -> None:
+        """A floor of 1 must still reject an empty pool, not divide by scope."""
+        assert check_abstention([], min_passages=1) == AbstentionReason.NO_RESULTS
+
+    def test_override_of_zero_is_honoured_and_still_rejects_empty(self) -> None:
+        assert check_abstention([], min_passages=0) == AbstentionReason.NO_RESULTS
+
+    def test_explicit_override_beats_the_settings_value(self, make_passage) -> None:
+        passages = [make_passage(score=0.9), make_passage(score=0.8)]
+        assert check_abstention(passages, min_passages=5) == (
+            AbstentionReason.INSUFFICIENT_PASSAGES
+        )
+
+
+class TestScopedAbstentionWording:
+    """Scoped copy must not send the reader back to the search box."""
+
+    SEARCH_ADVICE = ("more specific query", "rephrasing", "search terms", "refining")
+
+    def test_scoped_insufficient_passages_gives_no_search_advice(self) -> None:
+        msg = generate_abstention_response(
+            AbstentionReason.INSUFFICIENT_PASSAGES, "q", scoped=True
+        )
+        for phrase in self.SEARCH_ADVICE:
+            assert phrase not in msg.lower()
+
+    def test_scoped_no_results_gives_no_search_advice(self) -> None:
+        msg = generate_abstention_response(AbstentionReason.NO_RESULTS, "q", scoped=True)
+        for phrase in self.SEARCH_ADVICE:
+            assert phrase not in msg.lower()
+
+    def test_scoped_validation_failed_gives_no_search_advice(self) -> None:
+        msg = generate_abstention_response(
+            AbstentionReason.VALIDATION_FAILED, "q", scoped=True
+        )
+        for phrase in self.SEARCH_ADVICE:
+            assert phrase not in msg.lower()
+
+    def test_scoped_copy_names_the_document(self) -> None:
+        msg = generate_abstention_response(
+            AbstentionReason.INSUFFICIENT_PASSAGES, "q", scoped=True
+        )
+        assert "this document" in msg.lower()
+
+    def test_scoped_copy_does_not_cite_the_three_passage_rule(self) -> None:
+        """The corpus-wide copy promises 3 sources; that floor does not apply."""
+        msg = generate_abstention_response(
+            AbstentionReason.INSUFFICIENT_PASSAGES, "q", scoped=True
+        )
+        assert "3 relevant source passages" not in msg
+
+    def test_unscoped_wording_is_unchanged(self) -> None:
+        msg = generate_abstention_response(AbstentionReason.INSUFFICIENT_PASSAGES, "q")
+        assert "more specific query" in msg
+
+    def test_scoped_and_unscoped_differ_for_every_reason(self) -> None:
+        for reason in AbstentionReason:
+            assert generate_abstention_response(reason, "q", scoped=True) != (
+                generate_abstention_response(reason, "q")
+            )

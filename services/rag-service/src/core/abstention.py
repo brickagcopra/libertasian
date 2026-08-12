@@ -18,24 +18,31 @@ logger = logging.getLogger(__name__)
 
 def check_abstention(
     passages: list[Passage],
+    min_passages: int | None = None,
 ) -> AbstentionReason | None:
     """Check whether the pipeline should abstain from answering.
 
     Args:
         passages: Reranked passages (post-reranking, pre-context-packing).
+        min_passages: Override the passage-count floor. Callers retrieving from
+            a single document pass the lower scoped floor, because the count
+            there measures how long the document is rather than how well
+            corroborated the answer is. Defaults to the corpus-wide setting.
 
     Returns:
         An AbstentionReason if the pipeline should abstain, or None if OK to proceed.
     """
+    floor = min_passages if min_passages is not None else settings.abstention_min_passages
+
     if not passages:
         return AbstentionReason.NO_RESULTS
 
     # Check minimum passage count
-    if len(passages) < settings.abstention_min_passages:
+    if len(passages) < floor:
         logger.info(
             "Abstaining: only %d passages (need %d)",
             len(passages),
-            settings.abstention_min_passages,
+            floor,
         )
         return AbstentionReason.INSUFFICIENT_PASSAGES
 
@@ -52,16 +59,50 @@ def check_abstention(
     return None
 
 
-def generate_abstention_response(reason: AbstentionReason, query: str) -> str:
+def generate_abstention_response(
+    reason: AbstentionReason,
+    query: str,
+    scoped: bool = False,
+) -> str:
     """Generate a user-friendly abstention message.
 
     Args:
         reason: Why the pipeline is abstaining.
         query: The original user query (for context in the message).
+        scoped: True when retrieval was restricted to a single document. The
+            corpus-wide copy tells the reader to try a more specific query or
+            search different terms, which is unactionable advice when the search
+            pool is the one document already open in front of them — the answer
+            is not elsewhere in the corpus, it is simply not in this document.
 
     Returns:
         A polite, informative message explaining why no answer was generated.
     """
+    if scoped:
+        scoped_messages: dict[AbstentionReason, str] = {
+            AbstentionReason.NO_RESULTS: (
+                "This document does not appear to cover that. Nothing in its text "
+                "matched your question closely enough to answer from."
+            ),
+            AbstentionReason.INSUFFICIENT_PASSAGES: (
+                "This document does not appear to cover that. Nothing in its text "
+                "matched your question closely enough to answer from."
+            ),
+            AbstentionReason.VALIDATION_FAILED: (
+                "I could not ground an answer to that in this document. Rather than "
+                "give you something this document does not actually support, I am "
+                "not answering."
+            ),
+            AbstentionReason.LOW_RELEVANCE: (
+                "The parts of this document that matched your question do not look "
+                "relevant enough to answer from."
+            ),
+        }
+        return scoped_messages.get(
+            reason,
+            "I am unable to answer that from this document.",
+        )
+
     messages: dict[AbstentionReason, str] = {
         AbstentionReason.NO_RESULTS: (
             "I was unable to find any relevant legal documents matching your query. "

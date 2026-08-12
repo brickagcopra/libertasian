@@ -106,7 +106,25 @@ class Settings(BaseSettings):
     reranker_timeout: int = 10
 
     # Abstention thresholds
+    #
+    # The count floor was written for corpus-wide search, where three passages
+    # meant three independent documents corroborating each other. Scoped to a
+    # single document it measures document LENGTH instead: the keyword index
+    # holds sections+1 chunks per document, so a short document can never clear
+    # it no matter how well it answers the question. Measured on prod
+    # 2026-08-12: 505 documents (2.9%) hold only 2 chunks and hard-abstain on
+    # every question; a further 4,974 (29%) hold exactly 3 and abstain unless
+    # all three match. Hence a separate, lower floor for the scoped case.
     abstention_min_passages: int = 3
+    abstention_min_passages_scoped: int = 1
+    # SUPERSEDED — this gate is inert and tuning the number will not revive it.
+    # Prod sets no RERANKER_URL, so rerank_score is None and check_abstention
+    # compares a raw RRF score. RRF encodes RANK, not relevance: top-1 is
+    # structurally ~0.0164, above 0.01 for every query that returns anything at
+    # all. Raising the number would start rejecting on rank position rather than
+    # on whether the passage answers the question. The real fix is deploying the
+    # reranker so rerank_score is populated — tracked as search-epic C4. Until
+    # then the count floor above is the only abstention that actually fires.
     abstention_score_threshold: float = 0.01
 
     # Embedding service (empty string = kNN disabled, BM25 only)

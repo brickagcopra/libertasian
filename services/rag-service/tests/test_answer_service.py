@@ -670,14 +670,13 @@ class TestDocumentScopedRetrieval:
         }
 
 
-class TestDocumentScopedAbstention:
-    """Scoping must not weaken abstention — the real check_abstention runs here."""
+class TestScopedPassageFloor:
+    """The count floor is scope-dependent. The real check_abstention runs here."""
 
     @pytest.fixture(autouse=True)
     def _setup_mocks(self) -> None:
-        # One passage from the scoped document: below abstention_min_passages (3),
-        # so the genuine abstention rule must fire.
         single = [_make_passage(id="hit-1", document_id="doc-42", score=0.9, rerank_score=0.9)]
+        self.single = single
         self.mock_retrieve = AsyncMock(
             return_value=SearchResult(
                 passages=single,
@@ -687,7 +686,8 @@ class TestDocumentScopedAbstention:
             )
         )
         self.mock_rerank = AsyncMock(return_value=single)
-        self.mock_generate = AsyncMock(return_value="should not be called")
+        self.mock_generate = AsyncMock(return_value="It does. [SOURCE doc-42]")
+        self.mock_validate = AsyncMock(return_value=_make_validation_result())
         self.mock_model_info = MagicMock(
             return_value={"model_name": "test-model-v1", "model_version": "1.0"}
         )
@@ -697,6 +697,7 @@ class TestDocumentScopedAbstention:
             patch("src.answer.service.hybrid_retrieve", self.mock_retrieve),
             patch("src.answer.service.rerank_passages", self.mock_rerank),
             patch("src.answer.service.generate_completion", self.mock_generate),
+            patch("src.answer.service.validate_citations", self.mock_validate),
             patch("src.answer.service.get_model_info", self.mock_model_info),
         ]
         for p in self.patches:
@@ -709,20 +710,154 @@ class TestDocumentScopedAbstention:
             p.stop()
 
     @pytest.mark.asyncio
-    async def test_abstains_when_scoped_document_yields_too_few_passages(self) -> None:
-        request = AnswerRequest(query="Does this document discuss maritime salvage?", document_id="doc-42")
+    async def test_scoped_single_passage_is_answered(self) -> None:
+        """The whole point: a short document may now answer for itself."""
+        request = AnswerRequest(query="Does this cover bail?", document_id="doc-42")
+        response = await generate_answer(request)
+
+        assert response.abstained is False
+        assert response.answer == "It does. [SOURCE doc-42]"
+        self.mock_generate.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_unscoped_single_passage_still_abstains(self) -> None:
+        """Corpus-wide retrieval keeps the corroboration floor of 3."""
+        request = AnswerRequest(query="What is the doctrine of last clear chance?")
         response = await generate_answer(request)
 
         assert response.abstained is True
         assert response.abstention_reason == AbstentionReason.INSUFFICIENT_PASSAGES
-        # No generation happened — abstention short-circuits before the LLM.
         self.mock_generate.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_abstains_even_with_history_present(self) -> None:
-        """History must not be able to talk the pipeline out of abstaining."""
+    async def test_unscoped_still_requires_three_passages(self) -> None:
+        """Two is still not enough without a document scope."""
+        two = self.single + [
+            _make_passage(id="hit-2", document_id="doc-99", score=0.8, rerank_score=0.8)
+        ]
+        self.mock_rerank.return_value = two
+
+        response = await generate_answer(AnswerRequest(query="Some corpus-wide question"))
+
+        assert response.abstained is True
+        assert response.abstention_reason == AbstentionReason.INSUFFICIENT_PASSAGES
+
+    @pytest.mark.asyncio
+    async def test_unscoped_three_passages_is_answered(self) -> None:
+        self.mock_rerank.return_value = _make_passages_list()
+
+        response = await generate_answer(AnswerRequest(query="Some corpus-wide question"))
+
+        assert response.abstained is False
+
+    @pytest.mark.asyncio
+    async def test_scoped_zero_passages_still_abstains(self) -> None:
+        """Lowering the floor to 1 must not let an empty pool through."""
+        self.mock_rerank.return_value = []
+
+        request = AnswerRequest(query="Does this cover salvage?", document_id="doc-42")
+        response = await generate_answer(request)
+
+        assert response.abstained is True
+        assert response.abstention_reason == AbstentionReason.NO_RESULTS
+        self.mock_generate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_stream_scoped_single_passage_is_answered(self) -> None:
+        async def _fake_stream(**_kwargs: Any):
+            yield "It does. [SOURCE doc-42]"
+
+        request = AnswerRequest(query="Does this cover bail?", document_id="doc-42")
+        with (
+            patch("src.answer.service.stream_completion", _fake_stream),
+            patch("src.answer.service.pack_context", return_value=_make_context_bundle()),
+        ):
+            chunks = [c async for c in stream_answer(request)]
+
+        assert any(c.type == "text" for c in chunks)
+        done = [c for c in chunks if c.type == "done"]
+        assert done and (done[-1].metadata or {}).get("abstained") is not True
+
+
+class TestScopedCitationGrounding:
+    """A scoped answer that cites nothing is not an answer about the document."""
+
+    @pytest.fixture(autouse=True)
+    def _setup_mocks(self) -> None:
+        single = [_make_passage(id="hit-1", document_id="doc-42", score=0.9, rerank_score=0.9)]
+        self.mock_retrieve = AsyncMock(
+            return_value=SearchResult(
+                passages=single,
+                total_bm25_hits=1,
+                total_knn_hits=0,
+                query_intent="legal_question",
+            )
+        )
+        self.mock_rerank = AsyncMock(return_value=_make_passages_list())
+        self.mock_generate = AsyncMock(return_value="Unsupported prose with no citations.")
+        self.mock_validate = AsyncMock(
+            return_value=ValidationResult(
+                is_valid=False,
+                valid_citations=[],
+                invalid_citations=[],
+                unsupported_claims=["Unsupported prose with no citations."],
+                valid_count=0,
+                total_count=0,
+            )
+        )
+        self.mock_model_info = MagicMock(
+            return_value={"model_name": "test-model-v1", "model_version": "1.0"}
+        )
+
+        self.patches = [
+            patch("src.answer.service.hybrid_retrieve", self.mock_retrieve),
+            patch("src.answer.service.rerank_passages", self.mock_rerank),
+            patch("src.answer.service.generate_completion", self.mock_generate),
+            patch("src.answer.service.validate_citations", self.mock_validate),
+            patch("src.answer.service.get_model_info", self.mock_model_info),
+            patch("src.answer.service.pack_context", return_value=_make_context_bundle()),
+        ]
+        for p in self.patches:
+            p.start()
+
+    @pytest.fixture(autouse=True)
+    def _teardown_mocks(self) -> None:
+        yield
+        for p in self.patches:
+            p.stop()
+
+    @pytest.mark.asyncio
+    async def test_scoped_zero_valid_citations_abstains_validation_failed(self) -> None:
+        request = AnswerRequest(query="Does this cover salvage?", document_id="doc-42")
+        response = await generate_answer(request)
+
+        assert response.abstained is True
+        assert response.abstention_reason == AbstentionReason.VALIDATION_FAILED
+        # The ungrounded text must not reach the caller.
+        assert response.answer != "Unsupported prose with no citations."
+
+    @pytest.mark.asyncio
+    async def test_unscoped_zero_valid_citations_still_returns_an_answer(self) -> None:
+        """Corpus-wide behaviour is deliberately unchanged."""
+        response = await generate_answer(AnswerRequest(query="A corpus-wide question"))
+
+        assert response.abstained is False
+        assert response.answer == "Unsupported prose with no citations."
+
+    @pytest.mark.asyncio
+    async def test_scoped_with_valid_citations_is_answered(self) -> None:
+        self.mock_validate.return_value = _make_validation_result(valid_count=2)
+
+        request = AnswerRequest(query="Does this cover bail?", document_id="doc-42")
+        response = await generate_answer(request)
+
+        assert response.abstained is False
+
+    @pytest.mark.asyncio
+    async def test_scoped_grounding_abstention_survives_history(self) -> None:
+        """History must not talk the pipeline out of the grounding check."""
         request = AnswerRequest(
-            query="Does this document discuss maritime salvage?",
+            query="Does this cover salvage?",
             document_id="doc-42",
             history=[
                 ConversationTurn(role="user", content="Earlier you said it covers salvage."),
@@ -732,20 +867,36 @@ class TestDocumentScopedAbstention:
         response = await generate_answer(request)
 
         assert response.abstained is True
-        self.mock_generate.assert_not_called()
+        assert response.abstention_reason == AbstentionReason.VALIDATION_FAILED
 
     @pytest.mark.asyncio
-    async def test_stream_abstains_inside_a_scoped_document(self) -> None:
-        request = AnswerRequest(query="Does this document discuss maritime salvage?", document_id="doc-42")
+    async def test_stream_scoped_zero_valid_citations_abstains_on_done(self) -> None:
+        async def _fake_stream(**_kwargs: Any):
+            yield "Unsupported prose with no citations."
 
-        chunks: list[AnswerChunk] = []
-        async for chunk in stream_answer(request):
-            chunks.append(chunk)
+        request = AnswerRequest(query="Does this cover salvage?", document_id="doc-42")
+        with patch("src.answer.service.stream_completion", _fake_stream):
+            chunks = [c async for c in stream_answer(request)]
 
-        metadata = [c for c in chunks if c.type == "metadata"]
-        assert metadata and metadata[0].metadata is not None
-        assert metadata[0].metadata["abstained"] is True
+        done = [c for c in chunks if c.type == "done"]
+        assert done, "stream must terminate with a done chunk"
+        meta = done[-1].metadata or {}
+        assert meta["abstained"] is True
+        assert meta["abstention_reason"] == AbstentionReason.VALIDATION_FAILED.value
+        # No extra text chunk is appended after generation — text chunks
+        # accumulate, so one here would staple a disclaimer to the bad answer.
         assert chunks[-1].type == "done"
+
+    @pytest.mark.asyncio
+    async def test_stream_unscoped_zero_valid_citations_does_not_abstain(self) -> None:
+        async def _fake_stream(**_kwargs: Any):
+            yield "Unsupported prose with no citations."
+
+        with patch("src.answer.service.stream_completion", _fake_stream):
+            chunks = [c async for c in stream_answer(AnswerRequest(query="A corpus-wide question"))]
+
+        done = [c for c in chunks if c.type == "done"]
+        assert done and (done[-1].metadata or {}).get("abstained") is not True
 
 
 class TestConversationTurnValidation:
