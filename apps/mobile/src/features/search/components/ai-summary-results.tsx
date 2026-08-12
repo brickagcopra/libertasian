@@ -1,6 +1,7 @@
 import { View, Text, ScrollView, StyleSheet, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
+import { SourceCard } from '../../ai-answers/components/source-card';
 import { useAiAnswerStream } from '../hooks/use-ai-answer-stream';
 import type { AiAnswerSource } from '../types';
 
@@ -27,32 +28,6 @@ function ConfidenceBadge({ confidence }: { confidence: number }) {
   return (
     <View style={[styles.badge, styles.badgeRed]}>
       <Text style={styles.badgeRedText}>Low confidence ({pct}%)</Text>
-    </View>
-  );
-}
-
-function SourceCard({ source, index }: { source: AiAnswerSource; index: number }) {
-  return (
-    <View style={styles.sourceCard} key={source.section_id ?? source.document_id + index}>
-      <Text style={styles.sourceTitle} numberOfLines={2}>
-        {source.title}
-      </Text>
-      <View style={styles.sourceMeta}>
-        {source.citation_text ? (
-          <Text style={styles.sourceMetaText}>{source.citation_text}</Text>
-        ) : null}
-        {source.gr_no ? (
-          <Text style={styles.sourceMetaText}>{source.gr_no}</Text>
-        ) : null}
-        {source.court ? (
-          <Text style={styles.sourceMetaText}>{source.court.replace(/_/g, ' ')}</Text>
-        ) : null}
-      </View>
-      {source.passage_text ? (
-        <Text style={styles.sourcePassage} numberOfLines={3}>
-          {source.passage_text}
-        </Text>
-      ) : null}
     </View>
   );
 }
@@ -215,14 +190,4 @@ const styles = StyleSheet.create({
   },
   sourcesSectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   sourcesSectionTitle: { fontSize: 14, fontWeight: '600', color: '#374151' },
-  sourceCard: {
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 8,
-    padding: 10,
-  },
-  sourceTitle: { fontSize: 13, fontWeight: '600', color: '#1a56db' },
-  sourceMeta: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 },
-  sourceMetaText: { fontSize: 11, color: '#6b7280' },
-  sourcePassage: { fontSize: 12, color: '#6b7280', marginTop: 6, lineHeight: 18 },
 });

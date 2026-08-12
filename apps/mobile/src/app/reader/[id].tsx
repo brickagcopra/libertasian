@@ -44,6 +44,7 @@ import {
 } from '@/features/annotations/colors';
 import type { Annotation, AnnotationColor } from '@/features/annotations/types';
 import { useCanUseBookmarksAnnotations } from '@/features/billing/hooks/use-can-use-bookmarks-annotations';
+import { DocumentChatSheet } from '@/features/ai-answers/components/document-chat-sheet';
 import { useCanUseOffline } from '@/features/billing/hooks/use-can-use-offline';
 import { PlanUpsellSheet } from '@/features/billing/components/plan-upsell-sheet';
 import { AudioPlayerBar } from '@/features/audio/components/AudioPlayerBar';
@@ -272,6 +273,7 @@ export default function ReaderRoute() {
   const [upsellFeature, setUpsellFeature] = useState<
     'bookmarks' | 'offline' | null
   >(null);
+  const [chatOpen, setChatOpen] = useState(false);
 
   // Annotations — whole-paragraph highlights (see buildParagraphs).
   const { data: annotations } = useAnnotations(documentId);
@@ -567,6 +569,13 @@ export default function ReaderRoute() {
   ) : null;
 
   const extraTopActions: DocumentReaderTopAction[] = [
+    {
+      // Opens the document-scoped assistant. A top action rather than a FAB
+      // because the FAB slot is already taken by digest generation on case law.
+      icon: 'sparkles-outline',
+      accessibilityLabel: 'Ask this document',
+      onPress: () => setChatOpen(true),
+    },
     {
       icon: documentIsOffline ? 'cloud-done' : 'cloud-download-outline',
       accessibilityLabel: documentIsOffline ? 'Saved offline' : 'Save offline',
@@ -977,6 +986,22 @@ export default function ReaderRoute() {
         }
         onClose={() => setUpsellFeature(null)}
       />
+
+      {/* Document-scoped AI assistant. Distinct from the rule-based FAQ widget
+          at /help, which is unchanged. Each turn consumes an aiAnswers unit, so
+          it only ever fires from an explicit send inside this sheet.
+
+          Mounted only while open, not merely hidden: the sheet reads the quota,
+          so leaving it mounted would fire a /quotas/usage request on every
+          document open for a panel the reader never touched. */}
+      {chatOpen ? (
+        <DocumentChatSheet
+          visible
+          onClose={() => setChatOpen(false)}
+          documentId={documentId}
+          documentTitle={doc.title}
+        />
+      ) : null}
     </>
   );
 }
