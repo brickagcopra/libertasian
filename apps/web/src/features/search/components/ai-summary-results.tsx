@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 
 import { useAiAnswerStream } from '../hooks/use-ai-answer-stream';
+import { abstentionCopy } from './abstention-copy';
 
 interface AiSummaryResultsProps {
   query: string | null;
@@ -75,10 +76,7 @@ export function AiSummaryResults({ query }: AiSummaryResultsProps) {
     return (
       <Alert>
         <ShieldAlertIcon className="size-4" />
-        <AlertDescription>
-          {abstentionReason ??
-            'The retrieved sources do not sufficiently address this question. Try rephrasing your query or broadening your search terms.'}
-        </AlertDescription>
+        <AlertDescription>{abstentionCopy(abstentionReason)}</AlertDescription>
       </Alert>
     );
   }

@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { SourceCard } from '../../ai-answers/components/source-card';
 import { useAiAnswerStream } from '../hooks/use-ai-answer-stream';
 import type { AiAnswerSource } from '../types';
+import { abstentionCopy } from './abstention-copy';
 
 interface AiSummaryResultsProps {
   query: string | null;
@@ -76,10 +77,7 @@ export function AiSummaryResults({ query }: AiSummaryResultsProps) {
     return (
       <View style={styles.abstentionContainer}>
         <Ionicons name="shield-outline" size={20} color="#d97706" />
-        <Text style={styles.abstentionText}>
-          {abstentionReason ??
-            'The retrieved sources do not sufficiently address this question. Try rephrasing your query.'}
-        </Text>
+        <Text style={styles.abstentionText}>{abstentionCopy(abstentionReason)}</Text>
       </View>
     );
   }
