@@ -11118,3 +11118,45 @@ Each test states what the old denominator produced, so reintroducing it fails th
 ### Verification
 
 13. [x] `pnpm --filter api test`: **189 suites / 3,964 tests passed**, 0 failed. `pnpm --filter api lint` (`tsc --noEmit`): clean. `docker compose -f docker-compose.prod.yml config`: valid. nginx config still parses (`nginx -t` reaches cert loading).
+
+---
+
+## Session 194 — iOS App Store screenshots: real simulator captures (partial)
+
+Branch `chore/ios-real-screenshots`. Replaces the synthetic marketing composites
+flagged under App Store Review Guideline 2.3.3. **4 of 6 iPhone screens done.**
+
+1. [x] **Toolchain + capture rig.** node 22.13.0 (fnm) / pnpm 10.30.3 (corepack);
+   `@libertasian/types` built (gitignored `dist/`, `main` points into it). Captured
+   from the existing local Release build on the iPhone 16 Pro Max simulator
+   (1320×2868) — `main.jsbundle` embedded, built from current `main`, so it carries
+   #355 and #354. **No new build cut.** Signed in as brick's own account; the
+   reviewer account was not touched.
+2. [x] **Recovered a stashed `frame-screenshots.mjs` fix** and committed it: SVG
+   `<text>` does not wrap, so every caption previously ran off both edges
+   (measured 1346–1826px against 1200px usable); and `sharp` applies `flatten` to
+   the *input* before `composite`, so the RGBA overlay put the alpha channel back —
+   **ASC rejects alpha**. Now wraps into tspans and composites/flattens in two passes.
+3. [x] **Captured + framed `01-past-bar-exams`, `02-case-digests`,
+   `03-codal-reader`, `05-camera-scan`** at exactly 1320×2868, `hasAlpha: no`,
+   verified per file. Real content throughout, no skeletons.
+4. [x] **Documented four corrections to `IOS_SCREENSHOT_CAPTURE.md`**, including a
+   new one: `xcrun simctl io booted` is ambiguous with two simulators booted and
+   silently captured the iPad into the iPhone canvas — the exact 2.3.3 failure the
+   two-pass rule guards against. Boot one device at a time.
+5. [x] **Recorded the CGEvent driving rig**: `CGEventKeyboardSetUnicodeString` is
+   ignored by the Simulator (every char arrives as the keycode's default), and RN's
+   controlled `TextInput` drops/reorders characters below ~120ms/char.
+
+### Found, not fixed (see PENDING_TASKS.md)
+
+6. [x] **AI answers fail on iOS against prod** — `Request failed with status 201`,
+   reproducible. `stream-ai-answer.ts:152` guards on `!response.ok || !response.body`;
+   201 passes `.ok`, so it trips on `response.body` being undefined — RN `fetch` has
+   no readable stream body, so the SSE reader never attaches. Same code path backs
+   the reader assistant from #371. Blocks screen 04 and any reviewer who tries the feature.
+7. [x] **Digest detail hero is a labelled placeholder** (`DigestDetailScreen.tsx:182`
+   renders `<Photo label="hero · digest" />`; `Photo.tsx` says "Replace with real
+   images later"). It is `position:absolute/zIndex:0`, so it never scrolls — the label
+   shows at every offset and body text renders illegibly across it. Screen 02 was
+   substituted with the digests list.

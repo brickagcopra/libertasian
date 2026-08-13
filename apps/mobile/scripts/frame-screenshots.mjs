@@ -60,11 +60,73 @@ function parseArgs(argv) {
  * watermark (small), footer accent strip. The raw screenshot is composited
  * over this SVG by sharp after rasterization.
  */
+// SVG <text> does not wrap — a single long caption silently runs off both
+// edges of the canvas. Every caption in screenshots.config.json is wide enough
+// to do that (measured 1346-1826px against 1200px of usable width on
+// iphone-6-9), so captions are wrapped into tspans here instead.
+//
+// Ratio is the mean advance width per character, as a fraction of font-size,
+// measured by rasterising each real caption in Georgia bold and trimming:
+// observed 0.497-0.532, so 0.54 is a deliberately pessimistic round-up. Erring
+// high wraps a borderline caption one word early; erring low clips it.
+const CAPTION_CHAR_WIDTH_RATIO = 0.54;
+const CAPTION_MAX_LINES = 2;
+
+function estimateTextWidth(text, fontSize) {
+  return text.length * fontSize * CAPTION_CHAR_WIDTH_RATIO;
+}
+
+/** Greedy word wrap against an estimated pixel width. */
+function wrapCaption(text, fontSize, maxWidth) {
+  const lines = [];
+  let current = '';
+  for (const word of text.split(/\s+/)) {
+    const candidate = current ? `${current} ${word}` : word;
+    // `!current` keeps a single over-long word on its own line rather than
+    // looping forever trying to fit it.
+    if (!current || estimateTextWidth(candidate, fontSize) <= maxWidth) {
+      current = candidate;
+    } else {
+      lines.push(current);
+      current = word;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
+/**
+ * Wrap to at most CAPTION_MAX_LINES, shrinking the font a step at a time if
+ * the caption still will not fit. Returns the size actually used.
+ */
+function fitCaption(text, fontSize, maxWidth) {
+  let size = fontSize;
+  while (size > 12) {
+    const lines = wrapCaption(text, size, maxWidth);
+    const fits = lines.length <= CAPTION_MAX_LINES
+      && lines.every((l) => estimateTextWidth(l, size) <= maxWidth);
+    if (fits) return { size, lines };
+    size -= 2;
+  }
+  return { size, lines: wrapCaption(text, size, maxWidth) };
+}
+
 function buildFrameSvg({ width, height, padding, captionFontSize, caption }) {
   // Escape caption for safe embedding in XML.
   const safeCaption = caption.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  // Caption baseline: vertically centred in the top padding band.
-  const captionY = Math.round(padding.top / 2 + captionFontSize / 3);
+  // Keep the caption inside the same side margin the screenshot below it uses.
+  const maxWidth = width - padding.left - padding.right;
+  const { size, lines } = fitCaption(safeCaption, captionFontSize, maxWidth);
+
+  // Centre the wrapped block vertically in the top band. `size * 0.36` shifts
+  // from block-centre to the first line's baseline (cap height, not em box).
+  const lineHeight = Math.round(size * 1.2);
+  const blockTop = padding.top / 2 - (lineHeight * lines.length) / 2;
+  const firstBaseline = Math.round(blockTop + size * 0.36 + lineHeight / 2);
+  const tspans = lines
+    .map((line, i) => `<tspan x="${width / 2}" y="${firstBaseline + i * lineHeight}">${line}</tspan>`)
+    .join('\n    ');
+
   // Footer amber strip height — matches feature graphic proportion.
   const footerH = Math.max(10, Math.round(height * 0.006));
 
@@ -73,14 +135,14 @@ function buildFrameSvg({ width, height, padding, captionFontSize, caption }) {
   <rect x="0" y="0" width="${width}" height="${height}" fill="${BRAND_CREAM}" />
   <rect x="0" y="${height - footerH}" width="${width}" height="${footerH}" fill="${BRAND_AMBER}" />
   <text
-    x="${width / 2}"
-    y="${captionY}"
     text-anchor="middle"
     font-family="Georgia, 'Times New Roman', 'DejaVu Serif', serif"
     font-weight="700"
-    font-size="${captionFontSize}"
+    font-size="${size}"
     fill="${BRAND_INK}"
-  >${safeCaption}</text>
+  >
+    ${tspans}
+  </text>
 </svg>`);
 }
 
@@ -111,9 +173,20 @@ async function frameOne({ rawPath, outPath, platform, screen }) {
   const left = Math.round(framePadding.left + (areaW - raw.width) / 2);
   const top = Math.round(framePadding.top + (areaH - raw.height) / 2);
 
-  await sharp(frameSvg)
+  // Two passes, deliberately. sharp applies `flatten` to the *input* image
+  // before `composite` runs, regardless of chaining order — so flattening here
+  // only touches the SVG base, and the RGBA overlay (simctl and adb both emit
+  // RGBA) puts the alpha channel straight back. Compositing to a buffer and
+  // then flattening + dropping alpha in a second pass is what actually lands a
+  // 3-channel PNG, which is what the assertion below (and ASC) requires.
+  const composited = await sharp(frameSvg)
     .composite([{ input: raw.buf, left, top }])
+    .png()
+    .toBuffer();
+
+  await sharp(composited)
     .flatten({ background: BRAND_CREAM })
+    .removeAlpha()
     .png({ compressionLevel: 9 })
     .toFile(outPath);
 

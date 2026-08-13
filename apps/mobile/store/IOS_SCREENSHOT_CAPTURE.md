@@ -265,6 +265,127 @@ price tier on 2026-08-07 that was invisible from every ASC page.
 
 ---
 
+## 8a. What actually happened on the Mac (2026-08-12/13)
+
+Session ran on macOS 25.5.0, Xcode 26 / iOS 26.3 runtime. **4 of 6 iPhone
+screens captured and framed. Nothing uploaded to ASC. Submit for Review still
+unpressed.** Two screens are blocked by product defects, not by tooling.
+
+### Corrections to this document
+
+1. **`pnpm filter=mobile screenshots:capture` is not valid pnpm** and fails.
+   Correct form, from `apps/mobile`:
+   `pnpm screenshots:capture -- --platform ios [--only <slug>]`
+   (same for `screenshots:frame -- --platform iphone-6-9`). Every command block
+   in §4 and the `screenshots/README.md` is wrong the same way.
+2. **§4 says sign in as the demo reviewer account; §8 says never do that. §8
+   wins.** Captured signed in as brick's own account
+   (`programmingfiles5871@gmail.com`). The reviewer account was never touched.
+3. **§5's "real status bar, not 9:41-with-nothing" misreads the 2.3.3 problem.**
+   The violation was fake *content*, not the time. 9:41 is fine as long as the
+   bar is complete. Run before each pass, and again after any boot:
+   `xcrun simctl status_bar booted override --time 9:41 --cellularBars 4 --wifiBars 3 --batteryState charged --batteryLevel 100`
+4. **NEW — `booted` is ambiguous with two simulators up.** `capture-screenshots.mjs`
+   hardcodes `xcrun simctl io booted screenshot`. With both the iPhone and the
+   iPad booted, simctl picks one arbitrarily; a smoke run captured the *iPad*
+   and framed it into the iPhone canvas — a fresh 2.3.3 violation of exactly the
+   kind the two-pass rule exists to prevent. **Boot one device at a time.**
+
+### Setup notes
+
+- node 22.13.0 via `fnm`, pnpm 10.30.3 via `corepack` (system default was
+  node 25 / pnpm 9.15.4 and does not match `packageManager`).
+- `pnpm --filter @libertasian/types build` is required — confirmed, `dist/` is
+  gitignored and `main` points into it.
+- The simulator already had a local Release build (`CFBundleVersion 14`,
+  `main.jsbundle` embedded, no Metro needed) built from current `main`, so it
+  contains #355 and #354 — the two fixes that separate build 15 from build 14.
+  The number differs only because `app.json` pins `buildNumber: 14` and EAS
+  autoincrements. No new build was cut.
+- `app.json` `extra.apiUrl` already points at `https://libertasian.com/api/v1`,
+  so no `EXPO_PUBLIC_API_URL` override was needed. Prod `/health` was 200.
+
+### Driving the app
+
+Deep links (`xcrun simctl openurl booted libertasian://<route>`) reach tab and
+list screens but **cannot do everything**: they can't type, can't scroll, and
+`study/codals` silently no-ops when the Study tab is already focused. Detail
+routes need IDs that aren't knowable up front.
+
+Taps/scrolls/typing were driven with CGEvents (`pyobjc-framework-Quartz`) after
+granting **Terminal** Accessibility. Two traps worth recording:
+
+- `CGEventKeyboardSetUnicodeString` **does not work against the Simulator** — it
+  honours the virtual keycode and ignores the unicode string, so every character
+  arrives as the keycode's default (`aaaaaa…`). Type with real US-layout keycodes.
+- RN's controlled `TextInput` round-trips each keystroke through the JS bridge.
+  At 30 ms/char, "constitution" arrived as "cnstitutiono". 120 ms/char is clean.
+
+The device-screen rect is readable from the Simulator's AX tree (the `AXGroup`
+child of window 1), which maps device pixels to screen points exactly.
+
+### Per-screen outcome
+
+| # | slug | status | note |
+|---|---|---|---|
+| 1 | `01-past-bar-exams` | **captured** | Real year browser, 2022→2008 with subject/question counts. The chevron collision from §1 is gone. |
+| 2 | `02-case-digests` | **captured, substituted** | Shot the digests **list**, not the detail screen — see "Blockers" below. |
+| 3 | `03-codal-reader` | **captured, with a defect** | 1987 Constitution, official-source banner, Article I. Reached via Search → "constitution", not the Codals tab. Carries a visible button-wrap collision — see below. |
+| 4 | `04-ai-assistant` | **BLOCKED** | Feature errors against prod. |
+| 5 | `05-camera-scan` | **captured, substituted** | Scan landing screen (Start Scan + real Recent Scans) instead of a viewfinder — the simulator has no camera, and faking one would itself be 2.3.3. |
+| 6 | `06-offline-sync` | **BLOCKED** | The screen the navHint describes does not exist. |
+
+### Blockers found (all pre-existing; none introduced here)
+
+1. **AI answers are broken on iOS against prod.** The AI Summary tab renders
+   `Request failed with status 201`, reproducibly, on every query. Root cause is
+   `src/features/ai-answers/stream-ai-answer.ts:152` — the guard is
+   `!response.ok || !response.body`. A 201 passes `.ok`, so the branch is taken
+   because **`response.body` is undefined**: React Native's `fetch` does not
+   expose a readable stream body, so the SSE reader can never attach. The error
+   message then misattributes the failure to the status code. This affects the
+   search AI summary and, on the same code path, the document-scoped reader
+   assistant from #371. **A reviewer following the listing will hit this.**
+2. **The digest detail screen renders a placeholder hero with a visible
+   placeholder label.** `DigestDetailScreen.tsx:182` draws
+   `<Photo … label="hero · digest" />`, and `components/ui/Photo.tsx` is an
+   explicit placeholder ("Replace with real images later"). The hero is
+   `position:absolute, top:0, height:320, zIndex:0`, so it never scrolls: the
+   label is visible at every offset, and scrolled body text renders illegibly
+   across the gradient. There is no clean frame on that screen — hence the
+   substitution for screen 02.
+3. **The codal reader wraps its "Listen" pill into `Liste`/`n` across long
+   section headings** (visible on `ARTICLE II DECLARATION OF PRINCIPLES…`). It
+   is in the captured `03` frame and is a genuine layout collision against §5.
+4. **Codal section segmentation is off by one.** Every `Section N.` heading is
+   paired with `Section N+1.`'s body text, and many sentences are duplicated
+   verbatim. Clearly visible anywhere in Articles II–IV.
+5. **`study/codals/[subject]` shows "Nothing here yet"** for Political law while
+   the Codal Reader index claims 229 documents for the same subject.
+6. **No sync/offline settings screen exists.** The settings list is Digests,
+   Study, Feed, Workspace, Subscription, Your plan, Usage & quotas, API keys,
+   Security, Notifications, Help & FAQ, Sign out, Delete account. Offline lives
+   on codal cards and the reader's download control instead. Screen 06's navHint
+   and caption describe a screen that was never built.
+7. **`libertasian://settings` lands on the Me tab, which renders the account
+   holder's full name and email.** Any screenshot of that screen ships PII.
+8. Minor: the Study screen prints a literal `·` escape instead of `·`
+   ("0% readiness · 0/289 topics").
+
+### Not done
+
+- **iPad pass not run.** No `ipad-13` frames exist. `supportsTablet: true` means
+  ASC will require at least one iPad screenshot, so this is mandatory before
+  submission. The app is already installed on the iPad Pro 13" (M4) simulator
+  (2064×2752, genuine iPad UI confirmed, not a letterboxed phone layout).
+- **Nothing uploaded to App Store Connect.** This session had no browser
+  automation available and no ASC API key / fastlane on the machine.
+- **The 6.9" dimension was not confirmed against ASC.** Apple's help page and
+  current third-party references disagree (1260×2736 vs 1320×2868). We capture
+  1320×2868 natively. **Read the accepted sizes off the 6.9" upload slot before
+  uploading**; if it rejects 1320×2868, change `screenshots.config.json` to
+  1290×2796 and re-run the framing step.
+
 ## 9. Related open PRs
 
 - **#366** `fix/store-config-eas-metadata-push` — 2 commits. `store.config.json`
