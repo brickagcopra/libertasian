@@ -72,7 +72,7 @@ describe('useAiAnswerStream', () => {
     const stream = createSSEStream([
       'data: {"type":"text","content":"Hello "}\n\n',
       'data: {"type":"text","content":"world"}\n\n',
-      'data: {"type":"done","confidence":0.9,"sources":[]}\n\n',
+      'data: {"type":"done","content":"","metadata":{"confidence":0.9,"confidence_level":"high","valid_citations":2,"total_citations":2}}\n\n',
     ]);
 
     global.fetch = vi.fn().mockResolvedValueOnce({
@@ -104,7 +104,7 @@ describe('useAiAnswerStream', () => {
 
     const stream = createSSEStream([
       'data: {"type":"text","content":"Answer text"}\n\n',
-      `data: {"type":"metadata","sources":${JSON.stringify(sources)},"confidence":0.85}\n\n`,
+      `data: {"type":"metadata","content":"","metadata":{"intent":"case_lookup","passages_used":8,"passages_available":8,"sources":${JSON.stringify(sources)},"confidence":0.85}}\n\n`,
       'data: {"type":"done"}\n\n',
     ]);
 
@@ -126,7 +126,7 @@ describe('useAiAnswerStream', () => {
 
   it('handles abstention response', async () => {
     const stream = createSSEStream([
-      'data: {"type":"done","abstained":true,"abstention_reason":"Insufficient sources","confidence":0.15,"sources":[]}\n\n',
+      'data: {"type":"done","content":"","metadata":{"abstained":true,"abstention_reason":"Insufficient sources","confidence":0.15,"sources":[]}}\n\n',
     ]);
 
     global.fetch = vi.fn().mockResolvedValueOnce({
@@ -144,6 +144,81 @@ describe('useAiAnswerStream', () => {
     expect(result.current.abstained).toBe(true);
     expect(result.current.abstentionReason).toBe('Insufficient sources');
     expect(result.current.confidence).toBe(0.15);
+  });
+
+  it('reads sources and confidence from a nested metadata frame', async () => {
+    // The real wire shape, dumped from prod: the rag-service nests every frame
+    // payload under `metadata` and the NestJS gateway pipes it through verbatim.
+    const sources = [
+      {
+        document_id: 'doc-1',
+        title: 'People v. Dela Cruz',
+        relevance_score: 0.91,
+        passage_text: 'Bail is a matter of right...',
+      },
+    ];
+
+    const stream = createSSEStream([
+      `data: {"type":"metadata","content":"","metadata":{"intent":"case_lookup","passages_used":8,"passages_available":8,"sources":${JSON.stringify(sources)}}}\n\n`,
+      'data: {"type":"text","content":"Bail is a right."}\n\n',
+      'data: {"type":"done","content":"","metadata":{"confidence":0.77,"confidence_level":"medium","valid_citations":1,"total_citations":1}}\n\n',
+    ]);
+
+    global.fetch = vi.fn().mockResolvedValueOnce({ ok: true, status: 200, body: stream });
+
+    const { result } = renderHook(() => useAiAnswerStream('bail', true));
+
+    await waitFor(() => {
+      expect(result.current.isDone).toBe(true);
+    });
+
+    expect(result.current.sources).toEqual(sources);
+    expect(result.current.confidence).toBe(0.77);
+    expect(result.current.text).toBe('Bail is a right.');
+  });
+
+  it('replaces the streamed text when the terminal frame abstains', async () => {
+    // Post-generation abstention (PR #372): the scoped answer produced no valid
+    // citation, so the text already streamed is unsupported and the server's
+    // replacement copy takes its place rather than being appended to it.
+    const stream = createSSEStream([
+      'data: {"type":"text","content":"The Code plainly allows this."}\n\n',
+      'data: {"type":"done","content":"","metadata":{"abstained":true,"abstention_reason":"validation_failed","abstention_text":"This document does not address that question.","confidence":0.0,"confidence_level":"low","valid_citations":0,"total_citations":3}}\n\n',
+    ]);
+
+    global.fetch = vi.fn().mockResolvedValueOnce({ ok: true, status: 200, body: stream });
+
+    const { result } = renderHook(() => useAiAnswerStream('salvage', true));
+
+    await waitFor(() => {
+      expect(result.current.isDone).toBe(true);
+    });
+
+    expect(result.current.abstained).toBe(true);
+    expect(result.current.abstentionReason).toBe('validation_failed');
+    expect(result.current.text).toBe('This document does not address that question.');
+    // The ungrounded answer must not survive anywhere in the rendered state.
+    expect(result.current.text).not.toContain('plainly allows');
+  });
+
+  it('still parses a legacy flat frame through the fallback', async () => {
+    // The non-streaming POST /ai-answers shape. Kept working so old fixtures and
+    // any unmigrated producer still populate the panel.
+    const stream = createSSEStream([
+      'data: {"type":"metadata","sources":[{"document_id":"doc-9","title":"Art. III","relevance_score":0.5,"passage_text":"..."}]}\n\n',
+      'data: {"type":"done","confidence":0.42,"abstained":false}\n\n',
+    ]);
+
+    global.fetch = vi.fn().mockResolvedValueOnce({ ok: true, status: 200, body: stream });
+
+    const { result } = renderHook(() => useAiAnswerStream('flat', true));
+
+    await waitFor(() => {
+      expect(result.current.isDone).toBe(true);
+    });
+
+    expect(result.current.sources[0]?.title).toBe('Art. III');
+    expect(result.current.confidence).toBe(0.42);
   });
 
   it('handles error chunk from server', async () => {
@@ -239,7 +314,7 @@ describe('useAiAnswerStream', () => {
   it('resets state via reset function', async () => {
     const stream = createSSEStream([
       'data: {"type":"text","content":"Some text"}\n\n',
-      'data: {"type":"done","confidence":0.8}\n\n',
+      'data: {"type":"done","content":"","metadata":{"confidence":0.8}}\n\n',
     ]);
 
     global.fetch = vi.fn().mockResolvedValueOnce({
@@ -311,7 +386,7 @@ describe('useAiAnswerStream', () => {
   it('retries on network error and succeeds', async () => {
     const stream = createSSEStream([
       'data: {"type":"text","content":"Recovered"}\n\n',
-      'data: {"type":"done","confidence":0.9}\n\n',
+      'data: {"type":"done","content":"","metadata":{"confidence":0.9}}\n\n',
     ]);
 
     const fetchSpy = vi

@@ -121,7 +121,7 @@ describe('useDocumentChat', () => {
     const sources = [{ document_id: DOC_ID, title: 'Art. III', relevance_score: 0.9 }];
     mockFetch.mockResolvedValueOnce(
       okStream([
-        `data: {"type":"metadata","sources":${JSON.stringify(sources)}}\n\n`,
+        `data: {"type":"metadata","content":"","metadata":{"intent":"doc_scoped","passages_used":4,"passages_available":4,"sources":${JSON.stringify(sources)}}}\n\n`,
         'data: {"type":"text","content":"Yes."}\n\n',
         'data: {"type":"done"}\n\n',
       ]),
@@ -141,7 +141,7 @@ describe('useDocumentChat', () => {
   it('surfaces abstention as its own state', async () => {
     mockFetch.mockResolvedValueOnce(
       okStream([
-        'data: {"type":"metadata","abstained":true,"abstention_reason":"insufficient_passages"}\n\n',
+        'data: {"type":"metadata","content":"","metadata":{"intent":"doc_scoped","abstained":true,"abstention_reason":"insufficient_passages"}}\n\n',
         'data: {"type":"text","content":"I cannot answer."}\n\n',
         'data: {"type":"done"}\n\n',
       ]),
@@ -197,7 +197,7 @@ describe('useDocumentChat', () => {
     mockFetch
       .mockResolvedValueOnce(
         okStream([
-          'data: {"type":"metadata","abstained":true}\n\n',
+          'data: {"type":"metadata","content":"","metadata":{"abstained":true,"abstention_reason":"insufficient_passages"}}\n\n',
           'data: {"type":"text","content":"No grounding."}\n\n',
           'data: {"type":"done"}\n\n',
         ]),
@@ -296,6 +296,87 @@ describe('useDocumentChat', () => {
 
     expect(mockFetch).not.toHaveBeenCalled();
     expect(result.current.turns).toEqual([]);
+  });
+
+  it('reads sources and confidence from a nested metadata frame', async () => {
+    // The real wire shape, dumped from prod: the rag-service nests every frame
+    // payload under `metadata` and the gateway pipes it through verbatim.
+    const sources = [
+      { document_id: DOC_ID, title: 'Art. III, Sec. 13', relevance_score: 0.94, passage_text: '…' },
+    ];
+
+    mockFetch.mockResolvedValueOnce(
+      okStream([
+        `data: {"type":"metadata","content":"","metadata":{"intent":"doc_scoped","passages_used":6,"passages_available":6,"sources":${JSON.stringify(sources)}}}\n\n`,
+        'data: {"type":"text","content":"Bail is a right."}\n\n',
+        'data: {"type":"done","content":"","metadata":{"confidence":0.81,"confidence_level":"high","valid_citations":2,"total_citations":2}}\n\n',
+      ]),
+    );
+
+    const { result } = renderHook(() => useDocumentChat(DOC_ID));
+    await act(async () => {
+      await result.current.send('Explain bail.');
+    });
+
+    await waitFor(() => expect(result.current.turns[1]?.status).toBe('complete'));
+    expect(result.current.turns[1]?.sources).toHaveLength(1);
+    expect(result.current.turns[1]?.sources[0]?.title).toBe('Art. III, Sec. 13');
+    expect(result.current.turns[1]?.text).toBe('Bail is a right.');
+  });
+
+  it('replaces the streamed text when the terminal frame abstains', async () => {
+    // Post-generation abstention (PR #372): a scoped answer with no valid
+    // citation. The text already streamed is unsupported, so the server's
+    // replacement copy takes its place — and the turn is marked abstained, which
+    // is what keeps it out of the next request's history.
+    mockFetch
+      .mockResolvedValueOnce(
+        okStream([
+          'data: {"type":"text","content":"The document plainly says yes."}\n\n',
+          'data: {"type":"done","content":"","metadata":{"abstained":true,"abstention_reason":"validation_failed","abstention_text":"This document does not address that question.","confidence":0.0,"valid_citations":0,"total_citations":4}}\n\n',
+        ]),
+      )
+      .mockResolvedValueOnce(okStream(['data: {"type":"done","content":"","metadata":{}}\n\n']));
+
+    const { result } = renderHook(() => useDocumentChat(DOC_ID));
+    await act(async () => {
+      await result.current.send('Does this cover maritime salvage?');
+    });
+
+    await waitFor(() => expect(result.current.turns[1]?.abstained).toBe(true));
+    expect(result.current.turns[1]?.text).toBe('This document does not address that question.');
+    expect(result.current.turns[1]?.text).not.toContain('plainly says yes');
+
+    await act(async () => {
+      await result.current.send('Follow up.');
+    });
+
+    // The discarded answer must not come back as context on the next turn.
+    expect(lastBody().history).toEqual([
+      { role: 'user', content: 'Does this cover maritime salvage?' },
+    ]);
+  });
+
+  it('still parses a legacy flat frame through the fallback', async () => {
+    // The non-streaming POST /ai-answers shape. Kept working so old fixtures and
+    // any unmigrated producer still populate the turn.
+    mockFetch.mockResolvedValueOnce(
+      okStream([
+        'data: {"type":"metadata","sources":[{"document_id":"doc-9","title":"Art. III","relevance_score":0.5,"passage_text":"..."}]}\n\n',
+        'data: {"type":"text","content":"Flat still works."}\n\n',
+        'data: {"type":"done","confidence":0.42,"abstained":false}\n\n',
+      ]),
+    );
+
+    const { result } = renderHook(() => useDocumentChat(DOC_ID));
+    await act(async () => {
+      await result.current.send('q');
+    });
+
+    await waitFor(() => expect(result.current.turns[1]?.status).toBe('complete'));
+    expect(result.current.turns[1]?.sources[0]?.title).toBe('Art. III');
+    expect(result.current.turns[1]?.text).toBe('Flat still works.');
+    expect(result.current.turns[1]?.abstained).toBe(false);
   });
 
   it('falls back to a buffered read when the response has no stream body', async () => {

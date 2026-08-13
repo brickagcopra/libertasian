@@ -139,7 +139,16 @@ export function useDocumentChat(documentId: string) {
             patch((t) => ({
               ...t,
               status: 'complete',
+              // A terminal abstention arrives AFTER the answer has streamed: the
+              // scoped answer turned out to have no valid citation, so the text
+              // in this turn is unsupported and is replaced, never appended to.
+              // With no replacement copy the abstention came before generation
+              // and the streamed text already IS the abstention response.
+              text: meta.abstained && meta.abstentionText ? meta.abstentionText : t.text,
               sources: meta.sources ?? t.sources,
+              // Also keeps the turn out of `history` — the filter at the top of
+              // `send` drops abstained turns so the model is never handed its
+              // own non-answer as established context.
               abstained: meta.abstained ?? t.abstained,
             })),
           onError: (err) => {
