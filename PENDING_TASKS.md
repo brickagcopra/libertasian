@@ -292,3 +292,45 @@ Deferred PRD decisions (Section 16): bilingual/Taglish queries (P2), on-device O
 - React 18/19 type conflict (mobile 18 / web 19): `typescript.ignoreBuildErrors` in next.config.ts; tsc runs separately in CI
 - OneDrive path casing on Windows: `force-dynamic` root layout workaround; cosmetic webpack warnings remain
 - Local gradle debug builds: expo-av CMake fails on arm64 (`build.ninja still dirty`); use `-PreactNativeArchitectures=x86_64` for emulator builds
+
+## Session 194 — iOS screenshots: remaining work + defects found
+
+**Submission is still blocked. Submit for Review remains unpressed.**
+
+### Blocking the 1.0 submission
+
+- [ ] **Fix AI answer streaming on iOS.** `stream-ai-answer.ts:152` — RN `fetch`
+      exposes no `response.body`, so every AI answer fails with the misleading
+      `Request failed with status 201`. Use `expo/fetch` (SDK 52 ships streaming)
+      or an XHR/EventSource fallback, and stop reporting the status code for a
+      body-missing failure. Affects search AI summary + reader assistant (#371).
+      **A reviewer testing the listing's headline feature will hit this.**
+- [ ] **Screen 04 `04-ai-assistant` cannot be captured** until the above is fixed.
+- [ ] **Screen 06 `06-offline-sync` describes a screen that does not exist.**
+      No sync/offline entry in settings; offline lives on codal cards + the reader
+      download control. Either build the screen, or re-point the slug/caption in
+      `screenshots.config.json` at something real.
+- [ ] **iPad pass not run.** No `ipad-13` frames. `supportsTablet: true` means ASC
+      requires at least one iPad screenshot. App is already installed on the
+      iPad Pro 13" (M4) sim; genuine iPad UI confirmed.
+- [ ] **Upload to ASC + walk the §7 re-verification checklist.** Nothing uploaded;
+      the old mockup set is still live in both slots.
+- [ ] **Confirm the 6.9" accepted dimensions at the ASC upload slot.** Apple's help
+      page and third-party refs disagree (1260×2736 vs 1320×2868). We ship
+      1320×2868; fallback is 1290×2796 via `screenshots.config.json` + re-frame.
+
+### Defects found while capturing (not blocking, but visible to users)
+
+- [ ] **Codal reader "Listen" pill wraps to `Liste`/`n`** across long section
+      headings and collides with the heading. Present in the shipped `03` frame.
+- [ ] **Codal section segmentation is off by one** — every `Section N.` heading is
+      paired with `Section N+1.`'s body, with sentences duplicated verbatim.
+      Visible throughout Articles II–IV of the 1987 Constitution.
+- [ ] **`study/codals/[subject]` shows "Nothing here yet"** for Political law while
+      the Codal Reader index reports 229 documents for that subject.
+- [ ] **`libertasian://settings` lands on the Me tab, rendering the account holder's
+      full name and email** — any capture of that screen ships PII.
+- [ ] **Study screen prints a literal `·` escape** instead of `·`
+      ("0% readiness · 0/289 topics").
+- [ ] **Digest detail hero placeholder** — replace `<Photo label="hero · digest" />`
+      with a real asset, or drop the label and make it a deliberate colour field.
