@@ -1,4 +1,5 @@
 import Constants from 'expo-constants';
+import { fetch as expoFetch } from 'expo/fetch';
 
 import { authStorage } from '../../storage/auth-storage';
 import type { AiAnswerChunk, AiAnswerSource } from '../search/types';
@@ -15,6 +16,15 @@ import type { AiAnswerChunk, AiAnswerSource } from '../search/types';
  * Deliberately framework-free: no React, no state. Callers own their own state
  * shape, which is what lets a one-shot summary and a multi-turn transcript sit
  * on the same wire code.
+ *
+ * The transport is `expo/fetch`, NOT the React Native global. RN's `fetch` is
+ * whatwg-fetch over XMLHttpRequest, so `response.body` is ALWAYS undefined and
+ * there is no incremental read to be had — every request fell into the
+ * `!response.body` branch and surfaced as "Request failed with status 201", so
+ * AI answers never once worked on device. `expo/fetch` is WinterCG-compliant,
+ * returns a real `ReadableStream<Uint8Array>`, honours `signal`, and ships
+ * inside the `expo` package (no native rebuild). `TextDecoder` comes from the
+ * same winter runtime and accepts the Uint8Array chunks directly.
  */
 
 function resolveApiBaseUrl(): string {
@@ -33,7 +43,16 @@ const API_BASE_URL = resolveApiBaseUrl();
 const MAX_RETRIES = 3;
 const BASE_RETRY_DELAY_MS = 1000;
 
-const NON_RETRYABLE_STATUSES = new Set([400, 401, 403, 404, 422]);
+/**
+ * Allow-list, deliberately — not a deny-list of "known bad" statuses.
+ *
+ * The stream endpoint calls `UsageQuotaService.checkAndIncrement` before it
+ * writes a byte, so every attempt costs the user a quota unit whether or not it
+ * produces an answer. Under the old deny-list any status not explicitly named
+ * (including a plain 201) retried 3× with backoff: four calls, four units burnt
+ * on one failed answer. Only statuses that a retry can actually fix belong here.
+ */
+const RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 function isTransientError(err: unknown): boolean {
   if (err instanceof TypeError) return true;
@@ -102,6 +121,36 @@ function toMetadata(chunk: AiAnswerChunk): StreamMetadata {
 }
 
 /**
+ * Parse one SSE line and drive the matching handler.
+ *
+ * Shared by the streaming reader loop and the buffered fallback so a
+ * non-progressive answer is framed by exactly the same rules as a streamed one.
+ * Non-`data:` lines (comments, blank separators) and unparseable payloads are
+ * skipped silently, as SSE requires.
+ */
+function dispatchLine(line: string, handlers: StreamAiAnswerHandlers): void {
+  if (!line.startsWith('data: ')) return;
+  const jsonStr = line.slice(6).trim();
+  if (!jsonStr) return;
+
+  try {
+    const chunk = JSON.parse(jsonStr) as AiAnswerChunk;
+
+    if (chunk.type === 'text' && chunk.content) {
+      handlers.onText?.(chunk.content);
+    } else if (chunk.type === 'metadata') {
+      handlers.onMetadata?.(toMetadata(chunk));
+    } else if (chunk.type === 'done') {
+      handlers.onDone?.(toMetadata(chunk));
+    } else if (chunk.type === 'error') {
+      handlers.onError?.({ kind: 'stream', message: chunk.message ?? 'Stream error' });
+    }
+  } catch {
+    // Skip unparseable chunks
+  }
+}
+
+/**
  * POST to /ai-answers/stream and drive `handlers` from the SSE frames.
  *
  * Resolves when the stream ends, is aborted, or fails terminally. Never
@@ -123,7 +172,7 @@ export async function streamAiAnswer(
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const response = await fetch(`${API_BASE_URL}/ai-answers/stream`, {
+    const response = await expoFetch(`${API_BASE_URL}/ai-answers/stream`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -149,8 +198,12 @@ export async function streamAiAnswer(
       return;
     }
 
-    if (!response.ok || !response.body) {
-      if (!NON_RETRYABLE_STATUSES.has(response.status) && attempt < MAX_RETRIES) {
+    // A bad status and a missing body are different failures and must not share
+    // a branch: the first is the server refusing, the second is a transport that
+    // could not give us an incremental reader. Collapsing them is what made a
+    // successful 201 read as "Request failed with status 201".
+    if (!response.ok) {
+      if (RETRYABLE_STATUSES.has(response.status) && attempt < MAX_RETRIES) {
         await new Promise((resolve) => setTimeout(resolve, retryDelay(attempt)));
         if (signal.aborted) return;
         return streamAiAnswer(request, handlers, signal, attempt + 1);
@@ -159,6 +212,18 @@ export async function streamAiAnswer(
         kind: 'stream',
         message: `Request failed with status ${response.status}`,
       });
+      return;
+    }
+
+    // Non-streaming fallback. The response is good, we just cannot read it
+    // progressively — buffer the whole payload and run it through the same
+    // frame parser. An answer that arrives all at once beats an error.
+    if (!response.body) {
+      const text = await response.text();
+      for (const line of text.split('\n')) {
+        dispatchLine(line, handlers);
+        if (signal.aborted) return;
+      }
       return;
     }
 
@@ -176,29 +241,19 @@ export async function streamAiAnswer(
       buffer = lines.pop() ?? '';
 
       for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const jsonStr = line.slice(6).trim();
-        if (!jsonStr) continue;
-
-        try {
-          const chunk = JSON.parse(jsonStr) as AiAnswerChunk;
-
-          if (chunk.type === 'text' && chunk.content) {
-            handlers.onText?.(chunk.content);
-          } else if (chunk.type === 'metadata') {
-            handlers.onMetadata?.(toMetadata(chunk));
-          } else if (chunk.type === 'done') {
-            handlers.onDone?.(toMetadata(chunk));
-          } else if (chunk.type === 'error') {
-            handlers.onError?.({ kind: 'stream', message: chunk.message ?? 'Stream error' });
-          }
-        } catch {
-          // Skip unparseable chunks
-        }
+        dispatchLine(line, handlers);
       }
     }
+
+    // Flush a trailing frame the server did not terminate with a newline.
+    if (buffer) dispatchLine(buffer, handlers);
   } catch (err) {
-    if ((err as Error).name === 'AbortError') return;
+    // expo/fetch does not reliably raise a DOMException named 'AbortError' — an
+    // aborted native stream can surface as a plain Error with a native message.
+    // The signal itself is the authority, so check it first: aborting on query
+    // change or navigation must never show an error or spend another quota unit
+    // on a retry.
+    if (signal.aborted || (err as Error).name === 'AbortError') return;
 
     if (isTransientError(err) && attempt < MAX_RETRIES && !signal.aborted) {
       await new Promise((resolve) => setTimeout(resolve, retryDelay(attempt)));

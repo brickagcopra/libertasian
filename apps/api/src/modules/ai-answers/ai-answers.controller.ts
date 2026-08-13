@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   ForbiddenException,
+  HttpCode,
   Logger,
   Post,
   Res,
@@ -141,6 +142,12 @@ export class AiAnswersController {
   }
 
   @Post('stream')
+  // An SSE stream is 200, not 201 — nothing is created here. Nest's
+  // RouterExecutionContext calls setStatus(res, 201) for a @Post before the
+  // handler runs, even on an @Res() route, so `res.flushHeaders()` below
+  // committed a 201 to the wire. Clients that (correctly) treat a non-200 as a
+  // failed stream saw "status 201" instead of an answer.
+  @HttpCode(200)
   @ApiOperation({ summary: 'Stream an AI answer via SSE' })
   async streamAnswer(
     @Body() dto: AiAnswerQueryDto,

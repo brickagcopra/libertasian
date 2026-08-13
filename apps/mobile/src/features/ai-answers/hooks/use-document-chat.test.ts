@@ -9,7 +9,16 @@ jest.mock('../../billing/hooks/use-quotas', () => ({
   useQuotaUsage: () => mockUseQuotaUsage(),
 }));
 
+// The transport is expo/fetch, not the RN global. Stubbing `global.fetch` here
+// used to make every case pass against code that could never stream on a real
+// device — RN's fetch is whatwg-fetch over XHR and has no `response.body` at all.
+jest.mock('expo/fetch', () => ({ fetch: jest.fn() }));
+
+import { fetch as expoFetch } from 'expo/fetch';
+
 import { useDocumentChat } from './use-document-chat';
+
+const mockFetch = expoFetch as unknown as jest.Mock;
 
 const DOC_ID = 'doc-42';
 
@@ -19,7 +28,7 @@ function sseStream(chunks: string[]) {
   return new ReadableStream({
     pull(controller) {
       if (i < chunks.length) {
-        controller.enqueue(encoder.encode(chunks[i]));
+        controller.enqueue(encoder.encode(chunks[i]!));
         i++;
       } else {
         controller.close();
@@ -28,18 +37,16 @@ function sseStream(chunks: string[]) {
   });
 }
 
-function okStream(chunks: string[]) {
-  return { ok: true, status: 200, body: sseStream(chunks) };
+function okStream(chunks: string[], status = 200) {
+  return { ok: true, status, body: sseStream(chunks) };
 }
 
 function lastBody() {
-  const call = (global.fetch as jest.Mock).mock.calls.at(-1);
+  const call = mockFetch.mock.calls.at(-1);
   return JSON.parse((call?.[1] as RequestInit).body as string);
 }
 
 describe('useDocumentChat', () => {
-  const originalFetch = global.fetch;
-
   beforeEach(() => {
     mockUseQuotaUsage.mockReturnValue({
       data: {
@@ -58,27 +65,23 @@ describe('useDocumentChat', () => {
   });
 
   afterEach(() => {
-    global.fetch = originalFetch;
+    mockFetch.mockReset();
     jest.restoreAllMocks();
   });
 
   it('starts with an empty transcript and does not call the API on mount', () => {
-    global.fetch = jest.fn() as unknown as typeof fetch;
-
     const { result } = renderHook(() => useDocumentChat(DOC_ID));
 
     expect(result.current.turns).toEqual([]);
     expect(result.current.isStreaming).toBe(false);
     // Each turn costs a quota unit, so nothing may fire without explicit intent.
-    expect(global.fetch).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it('scopes the request to the document', async () => {
-    global.fetch = jest
-      .fn()
-      .mockResolvedValueOnce(
-        okStream(['data: {"type":"text","content":"Yes."}\n\n', 'data: {"type":"done"}\n\n']),
-      ) as unknown as typeof fetch;
+    mockFetch.mockResolvedValueOnce(
+      okStream(['data: {"type":"text","content":"Yes."}\n\n', 'data: {"type":"done"}\n\n']),
+    );
 
     const { result } = renderHook(() => useDocumentChat(DOC_ID));
     await act(async () => {
@@ -90,13 +93,13 @@ describe('useDocumentChat', () => {
   });
 
   it('accumulates a streamed answer into an assistant turn', async () => {
-    global.fetch = jest.fn().mockResolvedValueOnce(
+    mockFetch.mockResolvedValueOnce(
       okStream([
         'data: {"type":"text","content":"Bail is "}\n\n',
         'data: {"type":"text","content":"a right."}\n\n',
         'data: {"type":"done"}\n\n',
       ]),
-    ) as unknown as typeof fetch;
+    );
 
     const { result } = renderHook(() => useDocumentChat(DOC_ID));
     await act(async () => {
@@ -116,13 +119,13 @@ describe('useDocumentChat', () => {
 
   it('attaches per-turn source cards from the metadata frame', async () => {
     const sources = [{ document_id: DOC_ID, title: 'Art. III', relevance_score: 0.9 }];
-    global.fetch = jest.fn().mockResolvedValueOnce(
+    mockFetch.mockResolvedValueOnce(
       okStream([
         `data: {"type":"metadata","sources":${JSON.stringify(sources)}}\n\n`,
         'data: {"type":"text","content":"Yes."}\n\n',
         'data: {"type":"done"}\n\n',
       ]),
-    ) as unknown as typeof fetch;
+    );
 
     const { result } = renderHook(() => useDocumentChat(DOC_ID));
     await act(async () => {
@@ -136,13 +139,13 @@ describe('useDocumentChat', () => {
   });
 
   it('surfaces abstention as its own state', async () => {
-    global.fetch = jest.fn().mockResolvedValueOnce(
+    mockFetch.mockResolvedValueOnce(
       okStream([
         'data: {"type":"metadata","abstained":true,"abstention_reason":"insufficient_passages"}\n\n',
         'data: {"type":"text","content":"I cannot answer."}\n\n',
         'data: {"type":"done"}\n\n',
       ]),
-    ) as unknown as typeof fetch;
+    );
 
     const { result } = renderHook(() => useDocumentChat(DOC_ID));
     await act(async () => {
@@ -155,14 +158,13 @@ describe('useDocumentChat', () => {
   });
 
   it('sends prior completed turns as history on the second question', async () => {
-    global.fetch = jest
-      .fn()
+    mockFetch
       .mockResolvedValueOnce(
         okStream(['data: {"type":"text","content":"It is a right."}\n\n', 'data: {"type":"done"}\n\n']),
       )
       .mockResolvedValueOnce(
         okStream(['data: {"type":"text","content":"Except capital offences."}\n\n', 'data: {"type":"done"}\n\n']),
-      ) as unknown as typeof fetch;
+      );
 
     const { result } = renderHook(() => useDocumentChat(DOC_ID));
     await act(async () => {
@@ -181,9 +183,7 @@ describe('useDocumentChat', () => {
   });
 
   it('omits history on the first question', async () => {
-    global.fetch = jest
-      .fn()
-      .mockResolvedValueOnce(okStream(['data: {"type":"done"}\n\n'])) as unknown as typeof fetch;
+    mockFetch.mockResolvedValueOnce(okStream(['data: {"type":"done"}\n\n']));
 
     const { result } = renderHook(() => useDocumentChat(DOC_ID));
     await act(async () => {
@@ -194,8 +194,7 @@ describe('useDocumentChat', () => {
   });
 
   it('does not replay an abstained turn as history', async () => {
-    global.fetch = jest
-      .fn()
+    mockFetch
       .mockResolvedValueOnce(
         okStream([
           'data: {"type":"metadata","abstained":true}\n\n',
@@ -203,7 +202,7 @@ describe('useDocumentChat', () => {
           'data: {"type":"done"}\n\n',
         ]),
       )
-      .mockResolvedValueOnce(okStream(['data: {"type":"done"}\n\n'])) as unknown as typeof fetch;
+      .mockResolvedValueOnce(okStream(['data: {"type":"done"}\n\n']));
 
     const { result } = renderHook(() => useDocumentChat(DOC_ID));
     await act(async () => {
@@ -221,14 +220,14 @@ describe('useDocumentChat', () => {
   });
 
   it('marks the turn at-limit on a 403 without surfacing the server message', async () => {
-    global.fetch = jest.fn().mockResolvedValueOnce({
+    mockFetch.mockResolvedValueOnce({
       ok: false,
       status: 403,
       json: async () => ({
         message: 'Upgrade to the Pro plan for more AI answers',
         quota: { used: 100, limit: 100 },
       }),
-    }) as unknown as typeof fetch;
+    });
 
     const { result } = renderHook(() => useDocumentChat(DOC_ID));
     await act(async () => {
@@ -251,7 +250,6 @@ describe('useDocumentChat', () => {
       },
       refetch: jest.fn(),
     });
-    global.fetch = jest.fn() as unknown as typeof fetch;
 
     const { result } = renderHook(() => useDocumentChat(DOC_ID));
 
@@ -267,7 +265,6 @@ describe('useDocumentChat', () => {
       },
       refetch: jest.fn(),
     });
-    global.fetch = jest.fn() as unknown as typeof fetch;
 
     const { result } = renderHook(() => useDocumentChat(DOC_ID));
 
@@ -276,9 +273,7 @@ describe('useDocumentChat', () => {
   });
 
   it('ignores a send while a turn is already streaming', async () => {
-    global.fetch = jest
-      .fn()
-      .mockResolvedValueOnce(okStream(['data: {"type":"done"}\n\n'])) as unknown as typeof fetch;
+    mockFetch.mockResolvedValueOnce(okStream(['data: {"type":"done"}\n\n']));
 
     const { result } = renderHook(() => useDocumentChat(DOC_ID));
     // Both calls come from the SAME render snapshot, so a state-based guard
@@ -289,19 +284,99 @@ describe('useDocumentChat', () => {
       await Promise.all([first, second]);
     });
 
-    expect((global.fetch as jest.Mock).mock.calls).toHaveLength(1);
+    expect(mockFetch.mock.calls).toHaveLength(1);
     expect(result.current.turns.filter((t) => t.role === 'user')).toHaveLength(1);
   });
 
   it('ignores an empty or whitespace-only question', async () => {
-    global.fetch = jest.fn() as unknown as typeof fetch;
-
     const { result } = renderHook(() => useDocumentChat(DOC_ID));
     await act(async () => {
       await result.current.send('   ');
     });
 
-    expect(global.fetch).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
     expect(result.current.turns).toEqual([]);
+  });
+
+  it('falls back to a buffered read when the response has no stream body', async () => {
+    // A complete-but-unreadable response still carries a whole answer. Rendering
+    // it non-progressively beats the error the user used to get.
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      body: null,
+      text: async () =>
+        'data: {"type":"text","content":"Bail is a right."}\n\n' + 'data: {"type":"done"}\n\n',
+    });
+
+    const { result } = renderHook(() => useDocumentChat(DOC_ID));
+    await act(async () => {
+      await result.current.send('Explain bail.');
+    });
+
+    await waitFor(() => expect(result.current.turns[1]?.status).toBe('complete'));
+    expect(result.current.turns[1]?.text).toBe('Bail is a right.');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('streams a 201 response without retrying', async () => {
+    // The gateway used to emit 201 for the SSE route. Under the old deny-list an
+    // unrecognised status retried 3×, and every call charges a quota unit.
+    mockFetch.mockResolvedValue(
+      okStream(
+        ['data: {"type":"text","content":"Created but fine."}\n\n', 'data: {"type":"done"}\n\n'],
+        201,
+      ),
+    );
+
+    const { result } = renderHook(() => useDocumentChat(DOC_ID));
+    await act(async () => {
+      await result.current.send('Explain bail.');
+    });
+
+    await waitFor(() => expect(result.current.turns[1]?.status).toBe('complete'));
+    expect(result.current.turns[1]?.text).toBe('Created but fine.');
+    expect(result.current.turns[1]?.errorKind).toBeUndefined();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('stays silent when the stream is aborted mid-flight', async () => {
+    const encoder = new TextEncoder();
+    mockFetch.mockImplementation((_url: string, init: { signal: AbortSignal }) => {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode('data: {"type":"text","content":"Partial"}\n\n'));
+          // expo/fetch does not reliably raise a DOMException named 'AbortError'
+          // — an aborted native stream errors with a plain native message.
+          init.signal.addEventListener('abort', () => {
+            controller.error(new Error('Cancelled by the native fetch module'));
+          });
+        },
+      });
+      return Promise.resolve({ ok: true, status: 200, body: stream });
+    });
+
+    const { result, unmount } = renderHook(() => useDocumentChat(DOC_ID));
+
+    let pending: Promise<void>;
+    act(() => {
+      pending = result.current.send('Explain bail.');
+    });
+
+    await waitFor(() => expect(result.current.turns[1]?.text).toBe('Partial'));
+
+    // Unmounting (navigating out of the reader) aborts the in-flight controller.
+    unmount();
+
+    // Long enough to clear the first retry delay (1000ms + up to 500ms jitter),
+    // so a second call here would be a real retry rather than a race.
+    await act(async () => {
+      await pending!;
+      await new Promise((resolve) => setTimeout(resolve, 1700));
+    });
+
+    expect(result.current.turns[1]?.status).toBe('streaming');
+    expect(result.current.turns[1]?.errorKind).toBeUndefined();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 });

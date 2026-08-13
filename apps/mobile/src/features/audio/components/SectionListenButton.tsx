@@ -48,7 +48,10 @@ export function SectionListenButton({
         size={13}
         color={isActive ? theme.accent : theme.inkSoft}
       />
-      <Text style={[styles.label, { color: isActive ? theme.accent : theme.inkSoft }]}>
+      <Text
+        numberOfLines={1}
+        style={[styles.label, { color: isActive ? theme.accent : theme.inkSoft }]}
+      >
         Listen
       </Text>
     </Pressable>
@@ -59,6 +62,9 @@ const styles = StyleSheet.create({
   button: {
     flexDirection: 'row',
     alignItems: 'center',
+    // Never give up width to a long section heading — the pill is already at its
+    // intrinsic size, and shrinking it wraps the label mid-word.
+    flexShrink: 0,
     gap: 4,
     paddingHorizontal: 10,
     paddingVertical: 4,
