@@ -174,14 +174,18 @@ platform's exact pixel size.
 From `assets/store/screenshots.config.json`. **Only the first 3 appear on App
 Store install sheets**, so the order is not cosmetic.
 
+Corrected 2026-08-13 to match what the build actually renders. Three navHints
+described screens that do not exist or were not what got shot; `06` described a
+screen that was never built and has been replaced outright.
+
 | # | slug | navHint |
 |---|---|---|
 | 1 | `01-past-bar-exams` | Bar Exams tab → year/subject browser |
-| 2 | `02-case-digests` | Open a case digest → scroll to facts |
-| 3 | `03-codal-reader` | Codals tab → 1987 Constitution, Article III |
-| 4 | `04-ai-assistant` | AI chat → send a query, wait for the cited answer |
-| 5 | `05-camera-scan` | Camera scanner → frame a sample printout |
-| 6 | `06-offline-sync` | Settings → Sync (last-synced + offline toggle) |
+| 2 | `02-case-digests` | The digests **list** screen. **Not** the detail — its hero is a `<Photo label="hero · digest" />` placeholder with pinned text rendering illegibly across it |
+| 3 | `03-codal-reader` | Search → "constitution" → 1987 Constitution, Article I. The Codals-tab route does not work |
+| 4 | `04-ai-assistant` | AI Summary → send a query that **answers** rather than abstains; confirm the Sources panel is in frame before capturing |
+| 5 | `05-camera-scan` | The Scan **landing** screen (Start Scan + real Recent Scans). Not a viewfinder — the simulator has no camera and staging one is itself a 2.3.3 violation |
+| 6 | `06-search` | Search tab → a broad legal term (e.g. "estafa") → results showing mixed result types |
 
 ---
 
@@ -385,6 +389,155 @@ child of window 1), which maps device pixels to screen points exactly.
   1320×2868 natively. **Read the accepted sizes off the 6.9" upload slot before
   uploading**; if it rejects 1320×2868, change `screenshots.config.json` to
   1290×2796 and re-run the framing step.
+
+### Session 2 — 2026-08-13 (after #374–#377 landed)
+
+**6 of 6 iPhone screens captured, 5 framed. iPad pass blocked on sign-in.
+Nothing uploaded to ASC. Submit for Review still unpressed.**
+
+#### Refreshing the JS bundle without a native rebuild
+
+The installed app is a **Release** build with Hermes bytecode embedded at
+`LIBERTASIAN.app/main.jsbundle`. It does not talk to Metro, so "restart Metro
+and reload" cannot deliver new JS to it. What does work, and takes ~2 minutes:
+
+```bash
+eval "$(fnm env --shell bash)" && fnm use 22.13.0
+pnpm --filter @libertasian/types build          # dist/ is gitignored (§8a)
+cd apps/mobile
+npx expo export:embed --platform ios --dev false \
+  --entry-file node_modules/expo-router/entry.js \
+  --bundle-output /tmp/b/main.jsbundle --assets-dest /tmp/b/assets
+# export:embed emits PLAIN JS; the app is Hermes. Compile it:
+node_modules/.../react-native/sdks/hermesc/osx-bin/hermesc \
+  -emit-binary -O -out /tmp/b/main.hbc /tmp/b/main.jsbundle
+APP=$(xcrun simctl get_app_container <UDID> com.libertasian.app)
+cp /tmp/b/main.hbc "$APP/main.jsbundle"
+codesign --force --sign - "$APP"                 # resources are sealed
+xcrun simctl terminate <UDID> com.libertasian.app && xcrun simctl launch <UDID> com.libertasian.app
+```
+
+`ExpoFetchModule` is already compiled into the binary (`strings` finds it), so
+#375's switch to `expo/fetch` needs **no** native rebuild — confirmed working.
+Both the iPhone 16 Pro Max and the iPad Pro 13" (M4) simulators now carry a
+bundle built from `fadaf7f`. Their original bundles are not backed up in-repo;
+reinstalling the app restores them.
+
+#### Bundle gate — PASSED
+
+AI Summary on a live prod query returned streamed text, a **Sources (8)** panel
+and a **High confidence (100%)** badge. No "Request failed with status 201", no
+bare `validation_failed`. #375, #376 and #377 are all confirmed on device.
+
+#### Further corrections to this document
+
+5. **`capture-screenshots.mjs` is interactive** (prompts, waits for Enter) and
+   hardcodes `xcrun simctl io booted screenshot`. Under an automated session it
+   is easier to drive the app directly and write
+   `assets/store/screenshots/raw/<slug>.ios.png` with an explicit `-UDID`,
+   which also sidesteps the `booted` ambiguity of §8a note 4.
+6. **System Events `click at` fails against the Simulator** with `-25204`
+   (`kAXErrorCannotComplete`). Use CGEvent mouse events, as §8a did. The
+   Accessibility grant on **Terminal** is inherited by child processes, so
+   `AXIsProcessTrusted()` is already true from a venv python — no new TCC prompt.
+   §8a's 120ms/char typing rate is still required; the recent-searches list
+   still carries `cnstitutiono` from the 30ms attempt.
+
+#### Per-screen outcome
+
+| # | slug | status | note |
+|---|---|---|---|
+| 1 | `01-past-bar-exams` | **reused** | Last session's frame is clean; nothing to fix. |
+| 2 | `02-case-digests` | **reused** | Digests list. Detail screen still blocked by the `hero · digest` placeholder. |
+| 3 | `03-codal-reader` | **RESHOT** | 1987 Constitution, Article I. **The "Liste/n" pill collision is gone** — verified against the two-line `ARTICLE II DECLARATION OF PRINCIPLES AND STATE POLICIES` heading. |
+| 4 | `04-ai-assistant` | **captured, NOT cleared for store** | Raw committed as evidence; deliberately **not** framed. See below. |
+| 5 | `05-camera-scan` | **reused** | Scan landing. |
+| 6 | `06-search` | **NEW** | Query `constitution` — four distinct result types in frame (Constitution, Decision, Executive Order, Bar Exam Questions). `estafa` was tried first and returned almost entirely Bar Q&A. |
+
+#### New blocker — 04 is still not shippable, for a different reason
+
+The streaming bug is fixed, but every substantive answer now renders **raw
+citation markers**:
+
+> …encompassing terrestrial, fluvial, and aerial domains, as well as internal
+> waters **[SOURCE 2e2bad34-d194-4ddb-9e70-c9d0cd2ff388§f767e1bc-4578-4a85-a99b-6f9886af62d7]**.
+
+`services/rag-service/src/answer/prompts.py:21,37` instructs the model to emit
+`[SOURCE document_id]` / `[SOURCE document_id§section_id]` inline, and **neither
+client strips nor renders them** — `grep` for the marker across `apps/web/src`
+and `apps/mobile/src` returns nothing. So this is live on both platforms, and it
+is not scroll-position-dependent: the only answers without markers are
+abstentions. Unrendered `**markdown**` bold appears for the same reason.
+
+A store frame whose hero text is a bare UUID reads as debug output, so `04` is
+held out of `framed/`. Two smaller issues on the same screen: the Sources panel
+lists the same document 8× (no dedupe by document), and once scrolled the answer
+runs under the status bar with no opaque background, so text collides with the
+clock.
+
+**Fix the markers before capturing 04.** Everything else about the screen is
+ready.
+
+#### iPad — blocked on sign-in, not on tooling
+
+The iPad Pro 13" (M4) simulator (2064×2752, genuine iPad UI) is **signed out**,
+and this session had no account password. Its bundle is refreshed and the status
+bar is overridden, so the next session only needs to sign in and capture. It is
+the device currently left booted.
+
+#### Still not resolved
+
+- **Nothing uploaded to ASC.** No browser automation, no ASC API key, no
+  fastlane on this machine — same as §8a. §7's checklist is therefore 0/10
+  confirmed, again.
+- **The 6.9" dimension is still unread off the ASC upload slot**, for the same
+  reason. We continue to capture 1320×2868 natively.
+
+### Session 3 — 2026-08-13, rebased onto #379
+
+**All 6 iPhone screens now framed.** This branch was cut from `aade14d`, before
+#379 (`b7b3be5`, "render inline citations instead of raw SOURCE markers")
+landed, and has been rebased onto it.
+
+#### Why two screens were re-shot
+
+- **`04-ai-assistant`** — the blocker recorded in Session 2 is fixed. The
+  simulator bundle was rebuilt from `b7b3be5` with the recipe above and the
+  answer now reads as prose with inline `[1]`, `[2]`, `[4]`, `[5]`, `[6]`
+  citations pointing at numbered rows in the Sources panel. No raw UUID, no
+  `SOURCE`, no literal `**asterisks**`. It is framed for the first time.
+- **`06-search`** — #379 also added the status-bar scrim to
+  `SearchScreen.tsx`, so the previous capture was stale. Re-shot; the status
+  bar area is opaque and nothing collides with the clock.
+
+`01`, `02`, `03` and `05` are untouched by #379 and were deliberately NOT
+re-shot — their raws and framed PNGs are byte-identical to Session 2.
+
+#### The query matters more than expected
+
+`constitution` produced a genuinely cited answer (High confidence 100%, 8
+sources). **Most substantive legal queries currently do not.** They come back
+with "The provided source passages do not contain specific information
+regarding…" and zero valid citations — a known retrieval gap, not a client bug,
+and unrelated to this branch. A polite non-answer looks almost identical at a
+glance and is a bad frame for a legal research app, so **read the answer before
+capturing**, don't just check that text appeared.
+
+#### Still open on the Sources panel
+
+Eight rows all read "1987 Constitution of the Philippines / Const. (1987)".
+They are eight *distinct sections* — deduplication is on exact
+`(document_id, section_id)` pairs, so nothing is being collapsed wrongly — but
+the server's `AnswerSource` (`services/rag-service/src/answer/schemas.py:81-93`)
+carries no section heading, only a `section_id` uuid. The `1.`–`8.` numbering
+added in #379 is what disambiguates the rows today. Surfacing a real heading
+needs a new field on that schema.
+
+#### iPad — still not captured
+
+Unchanged from Session 2: the iPad Pro 13" simulator is signed out and no
+session so far has had an account password. Its bundle is still the `fadaf7f`
+build, so it needs the rebuild recipe re-run from `b7b3be5` after sign-in.
 
 ## 9. Related open PRs
 
