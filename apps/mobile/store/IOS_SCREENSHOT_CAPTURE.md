@@ -539,6 +539,60 @@ Unchanged from Session 2: the iPad Pro 13" simulator is signed out and no
 session so far has had an account password. Its bundle is still the `fadaf7f`
 build, so it needs the rebuild recipe re-run from `b7b3be5` after sign-in.
 
+### Session 4 — 2026-08-13, iPad pass
+
+**All 6 iPad screens captured and framed.** Both device classes are now
+complete; nothing has been uploaded to ASC.
+
+#### The iPad was already signed in
+
+Session 2 recorded it as signed out and blocked on a password. It was not — the
+login screen seen then was a cold-start frame taken before auth rehydration
+finished. On this run the app came up as `Hi, Brick.` with no sign-in needed, so
+the handover never happened. **Screenshot the app a good 10s after launch
+before concluding anything about auth state.**
+
+#### Bundle
+
+Rebuilt from `43187a6` (contains #379) with the §8a recipe. Verified before
+capture: the exported JS contains the `formatAnswerText` / `splitCompleteText`
+symbols, and the rendered answer showed `[1]`–`[8]` inline with no raw UUID and
+no literal `**`.
+
+#### Deviations from §4, all pre-decided
+
+`02` = digests list, `03` = Search → "constitution" → reader, `05` = Scan
+landing, `06` = Search → "estafa".
+
+`06` differs from the iPhone set, which used "constitution". On the iPad's
+taller viewport "estafa" surfaces three types including a **CODAL** (Revised
+Penal Code, Act 3815), which matches the caption "Cases, codals and digests in
+one search" better than the phone capture did. Left as-is, but the two device
+sets do show different queries for the same slug — worth a glance before upload.
+
+#### Capture mechanics
+
+`capture-screenshots.mjs` was again bypassed for the reasons in §8a corrections
+1 and 5 (invalid pnpm invocation, interactive prompts, hardcoded `booted`).
+Screens were driven with the CGEvent rig and written with an explicit `-UDID`.
+`sim.py` now reads `SIM_UDID` from the environment so one rig serves both
+devices.
+
+**Guard against clobbering the iPhone set.** `frame-screenshots.mjs` derives all
+four Apple sizes from the same `raw/<slug>.ios.png`, so the iPad raws have to
+occupy those paths while framing runs. Afterwards they were moved to
+`assets/store/screenshots/raw/ipad-13/` and the flat raws restored with
+`git checkout --`. Verified by md5 against a pre-capture copy: all six iPhone
+raws byte-identical, and `git status` clean under `framed/iphone-6-9/`.
+
+#### Still not done
+
+- **Nothing uploaded to ASC**, and the 6.9" slot dimension is still unread — no
+  browser automation, ASC API key or fastlane on this machine. Four sessions
+  running. This is now the only thing standing between the assets and the
+  submission.
+- **Submit for Review not pressed.**
+
 ## 9. Related open PRs
 
 - **#366** `fix/store-config-eas-metadata-push` — 2 commits. `store.config.json`
