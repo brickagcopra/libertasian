@@ -73,7 +73,7 @@ describe('useAiAnswerStream (mobile)', () => {
       okStream([
         'data: {"type":"text","content":"Hello "}\n\n',
         'data: {"type":"text","content":"world"}\n\n',
-        'data: {"type":"done","confidence":0.9,"sources":[]}\n\n',
+        'data: {"type":"done","content":"","metadata":{"confidence":0.9,"confidence_level":"high","valid_citations":2,"total_citations":2}}\n\n',
       ]),
     );
 
@@ -104,7 +104,7 @@ describe('useAiAnswerStream (mobile)', () => {
   it('handles abstention response', async () => {
     mockFetch.mockResolvedValueOnce(
       okStream([
-        'data: {"type":"done","abstained":true,"abstention_reason":"Not enough sources","confidence":0.1,"sources":[]}\n\n',
+        'data: {"type":"done","content":"","metadata":{"abstained":true,"abstention_reason":"Not enough sources","confidence":0.1,"sources":[]}}\n\n',
       ]),
     );
 
@@ -137,6 +137,82 @@ describe('useAiAnswerStream (mobile)', () => {
     expect(result.current.isDone).toBe(false);
   });
 
+  it('reads sources and confidence from a nested metadata frame', async () => {
+    // The real wire shape, dumped from prod: the rag-service nests every frame
+    // payload under `metadata` and the gateway pipes it through verbatim.
+    const sources = [
+      {
+        document_id: 'doc-1',
+        title: 'People v. Dela Cruz',
+        relevance_score: 0.91,
+        passage_text: 'Bail is a matter of right...',
+      },
+    ];
+
+    mockFetch.mockResolvedValueOnce(
+      okStream([
+        `data: {"type":"metadata","content":"","metadata":{"intent":"case_lookup","passages_used":8,"passages_available":8,"sources":${JSON.stringify(sources)}}}\n\n`,
+        'data: {"type":"text","content":"Bail is a right."}\n\n',
+        'data: {"type":"done","content":"","metadata":{"confidence":0.77,"confidence_level":"medium","valid_citations":1,"total_citations":1}}\n\n',
+      ]),
+    );
+
+    const { result } = renderHook(() => useAiAnswerStream('bail', true));
+
+    await waitFor(() => {
+      expect(result.current.isDone).toBe(true);
+    });
+
+    expect(result.current.sources).toHaveLength(1);
+    expect(result.current.sources[0]?.title).toBe('People v. Dela Cruz');
+    expect(result.current.confidence).toBe(0.77);
+    expect(result.current.text).toBe('Bail is a right.');
+  });
+
+  it('replaces the streamed text when the terminal frame abstains', async () => {
+    // Post-generation abstention (PR #372): the scoped answer produced no valid
+    // citation, so the text already streamed is unsupported and the server's
+    // replacement copy takes its place rather than being appended to it.
+    mockFetch.mockResolvedValueOnce(
+      okStream([
+        'data: {"type":"text","content":"The Code plainly allows this."}\n\n',
+        'data: {"type":"done","content":"","metadata":{"abstained":true,"abstention_reason":"validation_failed","abstention_text":"This document does not address that question.","confidence":0.0,"confidence_level":"low","valid_citations":0,"total_citations":3}}\n\n',
+      ]),
+    );
+
+    const { result } = renderHook(() => useAiAnswerStream('salvage', true));
+
+    await waitFor(() => {
+      expect(result.current.isDone).toBe(true);
+    });
+
+    expect(result.current.abstained).toBe(true);
+    expect(result.current.abstentionReason).toBe('validation_failed');
+    expect(result.current.text).toBe('This document does not address that question.');
+    // The ungrounded answer must not survive anywhere in the rendered state.
+    expect(result.current.text).not.toContain('plainly allows');
+  });
+
+  it('still parses a legacy flat frame through the fallback', async () => {
+    // The non-streaming POST /ai-answers shape. Kept working so old fixtures and
+    // any unmigrated producer still populate the panel.
+    mockFetch.mockResolvedValueOnce(
+      okStream([
+        'data: {"type":"metadata","sources":[{"document_id":"doc-9","title":"Art. III","relevance_score":0.5,"passage_text":"..."}]}\n\n',
+        'data: {"type":"done","confidence":0.42,"abstained":false}\n\n',
+      ]),
+    );
+
+    const { result } = renderHook(() => useAiAnswerStream('flat', true));
+
+    await waitFor(() => {
+      expect(result.current.isDone).toBe(true);
+    });
+
+    expect(result.current.sources[0]?.title).toBe('Art. III');
+    expect(result.current.confidence).toBe(0.42);
+  });
+
   it('falls back to a buffered read when the response has no stream body', async () => {
     // Some transports hand back a complete-but-unreadable response. An answer
     // that arrives all at once beats the error the user used to see.
@@ -146,7 +222,7 @@ describe('useAiAnswerStream (mobile)', () => {
       body: null,
       text: async () =>
         'data: {"type":"text","content":"Buffered answer."}\n\n' +
-        'data: {"type":"done","confidence":0.8,"sources":[]}\n\n',
+        'data: {"type":"done","content":"","metadata":{"confidence":0.8,"sources":[]}}\n\n',
     });
 
     const { result } = renderHook(() => useAiAnswerStream('test', true));

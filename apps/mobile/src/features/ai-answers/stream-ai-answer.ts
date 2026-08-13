@@ -84,6 +84,12 @@ export interface StreamMetadata {
   confidence?: number;
   abstained?: boolean;
   abstentionReason?: string;
+  /**
+   * Server-written replacement copy on a terminal abstention. Present only when
+   * the answer was already streamed and then found ungrounded — the caller must
+   * swap it in for the accumulated text, never append it.
+   */
+  abstentionText?: string;
 }
 
 /**
@@ -111,12 +117,31 @@ export interface StreamAiAnswerHandlers {
   onError?: (err: StreamError) => void;
 }
 
+/**
+ * Flatten one frame's payload.
+ *
+ * The stream nests everything under `metadata`; the non-streaming
+ * `POST /ai-answers` response carries the same values at the top level. Nested
+ * is read first with the flat field as fallback, so both shapes parse. Reading
+ * only the flat fields — as this did — meant sources, confidence and the whole
+ * abstention signal were undefined on every streamed answer, so no answer ever
+ * showed a citation and PR #372's post-generation abstention never fired.
+ */
 function toMetadata(chunk: AiAnswerChunk): StreamMetadata {
+  const nested = chunk.metadata;
   const meta: StreamMetadata = {};
-  if (chunk.sources !== undefined) meta.sources = chunk.sources;
-  if (chunk.confidence !== undefined) meta.confidence = chunk.confidence;
-  if (chunk.abstained !== undefined) meta.abstained = chunk.abstained;
-  if (chunk.abstention_reason !== undefined) meta.abstentionReason = chunk.abstention_reason;
+
+  const sources = nested?.sources ?? chunk.sources;
+  const confidence = nested?.confidence ?? chunk.confidence;
+  const abstained = nested?.abstained ?? chunk.abstained;
+  const abstentionReason = nested?.abstention_reason ?? chunk.abstention_reason;
+
+  if (sources !== undefined) meta.sources = sources;
+  if (confidence !== undefined) meta.confidence = confidence;
+  if (abstained !== undefined) meta.abstained = abstained;
+  if (abstentionReason !== undefined) meta.abstentionReason = abstentionReason;
+  if (nested?.abstention_text !== undefined) meta.abstentionText = nested.abstention_text;
+
   return meta;
 }
 

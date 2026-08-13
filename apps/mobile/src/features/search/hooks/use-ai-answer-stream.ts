@@ -83,6 +83,11 @@ export function useAiAnswerStream(query: string | null, enabled: boolean) {
             ...prev,
             isStreaming: false,
             isDone: true,
+            // A terminal abstention means the text already on screen was found
+            // ungrounded after the fact, so it is REPLACED, never appended to.
+            // When the server sends no replacement copy the abstention came
+            // before generation, and the text we hold IS its abstention text.
+            text: meta.abstained && meta.abstentionText ? meta.abstentionText : prev.text,
             sources: meta.sources ?? prev.sources,
             confidence: meta.confidence ?? prev.confidence,
             abstained: meta.abstained ?? prev.abstained,

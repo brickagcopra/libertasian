@@ -26,6 +26,40 @@ function retryDelay(attempt: number): number {
   return base + jitter;
 }
 
+interface FrameMetadata {
+  sources?: AiAnswerSource[];
+  confidence?: number;
+  abstained?: boolean;
+  abstentionReason?: string;
+  /**
+   * Server-written replacement copy on a terminal abstention. Present only when
+   * the answer was already streamed and then found ungrounded.
+   */
+  abstentionText?: string;
+}
+
+/**
+ * Flatten one frame's payload.
+ *
+ * The stream nests everything under `metadata`; the non-streaming
+ * `POST /ai-answers` response carries the same values at the top level. Nested
+ * is read first with the flat field as fallback, so both shapes parse. Reading
+ * only the flat fields — as this did — meant sources, confidence and the whole
+ * abstention signal were undefined on every streamed answer, so the Sources
+ * panel and the confidence badge never rendered and PR #372's post-generation
+ * abstention never fired.
+ */
+function readFrameMetadata(chunk: AiAnswerChunk): FrameMetadata {
+  const nested = chunk.metadata;
+  return {
+    sources: nested?.sources ?? chunk.sources,
+    confidence: nested?.confidence ?? chunk.confidence,
+    abstained: nested?.abstained ?? chunk.abstained,
+    abstentionReason: nested?.abstention_reason ?? chunk.abstention_reason,
+    abstentionText: nested?.abstention_text,
+  };
+}
+
 interface StreamState {
   text: string;
   sources: AiAnswerSource[];
@@ -179,22 +213,30 @@ export function useAiAnswerStream(query: string | null, enabled: boolean) {
                   text: prev.text + chunk.content,
                 }));
               } else if (chunk.type === 'metadata') {
+                const meta = readFrameMetadata(chunk);
                 setState((prev) => ({
                   ...prev,
-                  sources: chunk.sources ?? prev.sources,
-                  confidence: chunk.confidence ?? prev.confidence,
-                  abstained: chunk.abstained ?? prev.abstained,
-                  abstentionReason: chunk.abstention_reason ?? prev.abstentionReason,
+                  sources: meta.sources ?? prev.sources,
+                  confidence: meta.confidence ?? prev.confidence,
+                  abstained: meta.abstained ?? prev.abstained,
+                  abstentionReason: meta.abstentionReason ?? prev.abstentionReason,
                 }));
               } else if (chunk.type === 'done') {
+                const meta = readFrameMetadata(chunk);
                 setState((prev) => ({
                   ...prev,
                   isStreaming: false,
                   isDone: true,
-                  sources: chunk.sources ?? prev.sources,
-                  confidence: chunk.confidence ?? prev.confidence,
-                  abstained: chunk.abstained ?? prev.abstained,
-                  abstentionReason: chunk.abstention_reason ?? prev.abstentionReason,
+                  // A terminal abstention means the text already on screen was
+                  // found ungrounded after the fact, so it is REPLACED, never
+                  // appended to. With no replacement copy the abstention came
+                  // before generation and the text we hold IS its abstention
+                  // text.
+                  text: meta.abstained && meta.abstentionText ? meta.abstentionText : prev.text,
+                  sources: meta.sources ?? prev.sources,
+                  confidence: meta.confidence ?? prev.confidence,
+                  abstained: meta.abstained ?? prev.abstained,
+                  abstentionReason: meta.abstentionReason ?? prev.abstentionReason,
                 }));
               } else if (chunk.type === 'error') {
                 setState((prev) => ({

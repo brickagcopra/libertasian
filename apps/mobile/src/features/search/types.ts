@@ -80,9 +80,42 @@ export interface AiAnswerSource {
   passage_text: string;
 }
 
+/**
+ * Payload the rag-service nests under `metadata` on `metadata` and `done`
+ * frames (`services/rag-service/src/answer/service.py:240-320`). The NestJS
+ * gateway pipes those bytes through verbatim.
+ */
+export interface AiAnswerChunkMetadata {
+  intent?: string;
+  passages_used?: number;
+  passages_available?: number;
+  sources?: AiAnswerSource[];
+  confidence?: number;
+  confidence_level?: string;
+  abstained?: boolean;
+  abstention_reason?: string;
+  /**
+   * Only on a TERMINAL abstention (post-generation, scoped answers with no
+   * valid citation). The text already streamed is unsupported and must be
+   * replaced by this, not appended to — see `service.py:295-310`.
+   */
+  abstention_text?: string;
+  valid_citations?: number;
+  total_citations?: number;
+}
+
+/**
+ * One SSE frame.
+ *
+ * The flat fields are the shape of the NON-streaming `POST /ai-answers`
+ * response and are kept as a fallback: the stream nests the same values under
+ * `metadata`. Reading only the flat ones left sources, confidence and
+ * abstention permanently undefined on every streamed answer.
+ */
 export interface AiAnswerChunk {
   type: 'text' | 'metadata' | 'done' | 'error';
   content?: string;
+  metadata?: AiAnswerChunkMetadata;
   sources?: AiAnswerSource[];
   confidence?: number;
   abstained?: boolean;
