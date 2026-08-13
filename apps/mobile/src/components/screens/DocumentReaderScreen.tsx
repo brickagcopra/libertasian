@@ -370,6 +370,9 @@ export function DocumentReaderScreen({
               <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
                 <Text
                   style={{
+                    // Without flex the heading takes its full intrinsic width and
+                    // squeezes the action wrapper until "Listen" wraps to "Liste/n".
+                    flex: 1,
                     fontFamily: theme.serif,
                     fontSize: 19,
                     letterSpacing: -0.3,
@@ -391,7 +394,7 @@ export function DocumentReaderScreen({
                   </Text>
                 ) : null}
                 {sectionAction ? (
-                  <View style={{ flex: 1, alignItems: 'flex-end' }}>{sectionAction}</View>
+                  <View style={{ flexShrink: 0, marginLeft: 'auto' }}>{sectionAction}</View>
                 ) : null}
               </View>
               {section.paragraphs.map((p, i) => {

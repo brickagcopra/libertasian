@@ -55,6 +55,13 @@ jest.mock('expo-av', () => {
   };
 });
 
+// Mock expo/fetch — the transport behind the AI-answer stream client. Importing
+// it binds to the native ExpoFetchModule, which is undefined under jest, so any
+// suite that transitively reaches `features/ai-answers/stream-ai-answer` would
+// fail to load. Suites that actually exercise streaming re-declare this mock
+// locally and drive the response themselves.
+jest.mock('expo/fetch', () => ({ fetch: jest.fn() }));
+
 // Mock expo-notifications — importing the real package pulls the `expo`
 // entrypoint whose expo-asset PlatformUtils needs the native Expo global
 // (undefined under jsdom, same issue as @expo/vector-icons below).
