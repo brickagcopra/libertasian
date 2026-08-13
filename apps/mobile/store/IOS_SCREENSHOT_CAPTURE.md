@@ -493,6 +493,52 @@ the device currently left booted.
 - **The 6.9" dimension is still unread off the ASC upload slot**, for the same
   reason. We continue to capture 1320×2868 natively.
 
+### Session 3 — 2026-08-13, rebased onto #379
+
+**All 6 iPhone screens now framed.** This branch was cut from `aade14d`, before
+#379 (`b7b3be5`, "render inline citations instead of raw SOURCE markers")
+landed, and has been rebased onto it.
+
+#### Why two screens were re-shot
+
+- **`04-ai-assistant`** — the blocker recorded in Session 2 is fixed. The
+  simulator bundle was rebuilt from `b7b3be5` with the recipe above and the
+  answer now reads as prose with inline `[1]`, `[2]`, `[4]`, `[5]`, `[6]`
+  citations pointing at numbered rows in the Sources panel. No raw UUID, no
+  `SOURCE`, no literal `**asterisks**`. It is framed for the first time.
+- **`06-search`** — #379 also added the status-bar scrim to
+  `SearchScreen.tsx`, so the previous capture was stale. Re-shot; the status
+  bar area is opaque and nothing collides with the clock.
+
+`01`, `02`, `03` and `05` are untouched by #379 and were deliberately NOT
+re-shot — their raws and framed PNGs are byte-identical to Session 2.
+
+#### The query matters more than expected
+
+`constitution` produced a genuinely cited answer (High confidence 100%, 8
+sources). **Most substantive legal queries currently do not.** They come back
+with "The provided source passages do not contain specific information
+regarding…" and zero valid citations — a known retrieval gap, not a client bug,
+and unrelated to this branch. A polite non-answer looks almost identical at a
+glance and is a bad frame for a legal research app, so **read the answer before
+capturing**, don't just check that text appeared.
+
+#### Still open on the Sources panel
+
+Eight rows all read "1987 Constitution of the Philippines / Const. (1987)".
+They are eight *distinct sections* — deduplication is on exact
+`(document_id, section_id)` pairs, so nothing is being collapsed wrongly — but
+the server's `AnswerSource` (`services/rag-service/src/answer/schemas.py:81-93`)
+carries no section heading, only a `section_id` uuid. The `1.`–`8.` numbering
+added in #379 is what disambiguates the rows today. Surfacing a real heading
+needs a new field on that schema.
+
+#### iPad — still not captured
+
+Unchanged from Session 2: the iPad Pro 13" simulator is signed out and no
+session so far has had an account password. Its bundle is still the `fadaf7f`
+build, so it needs the rebuild recipe re-run from `b7b3be5` after sign-in.
+
 ## 9. Related open PRs
 
 - **#366** `fix/store-config-eas-metadata-push` — 2 commits. `store.config.json`
