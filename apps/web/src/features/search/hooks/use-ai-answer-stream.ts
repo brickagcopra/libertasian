@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useAuthStore } from '@/stores/auth-store';
+import { splitCompleteText } from '../lib/format-answer-text';
 import type { AiAnswerChunk, AiAnswerSource } from '../types';
 
 const API_BASE_URL = process.env['NEXT_PUBLIC_API_URL'] || 'http://localhost:3001/api/v1';
@@ -188,6 +189,23 @@ export function useAiAnswerStream(query: string | null, enabled: boolean) {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
+        // A `[SOURCE …]` marker is split across SSE deltas, so appending each
+        // delta the instant it lands renders `[SOURCE 0daf4c` for a frame
+        // before the rest arrives. Withhold a trailing fragment that could
+        // still be growing into a marker; release it on `done`/`error` or when
+        // the stream ends.
+        let held = '';
+        const emitText = (delta: string) => {
+          const { emit, hold } = splitCompleteText(held + delta);
+          held = hold;
+          if (emit) setState((prev) => ({ ...prev, text: prev.text + emit }));
+        };
+        const flushText = () => {
+          if (!held) return;
+          const rest = held;
+          held = '';
+          setState((prev) => ({ ...prev, text: prev.text + rest }));
+        };
 
         while (true) {
           const { done, value } = await reader.read();
@@ -208,10 +226,7 @@ export function useAiAnswerStream(query: string | null, enabled: boolean) {
               const chunk = JSON.parse(jsonStr) as AiAnswerChunk;
 
               if (chunk.type === 'text' && chunk.content) {
-                setState((prev) => ({
-                  ...prev,
-                  text: prev.text + chunk.content,
-                }));
+                emitText(chunk.content);
               } else if (chunk.type === 'metadata') {
                 const meta = readFrameMetadata(chunk);
                 setState((prev) => ({
@@ -223,6 +238,10 @@ export function useAiAnswerStream(query: string | null, enabled: boolean) {
                 }));
               } else if (chunk.type === 'done') {
                 const meta = readFrameMetadata(chunk);
+                // Before the terminal state update, so a held fragment lands
+                // while the answer is still streaming rather than after it is
+                // marked done.
+                flushText();
                 setState((prev) => ({
                   ...prev,
                   isStreaming: false,
@@ -239,6 +258,7 @@ export function useAiAnswerStream(query: string | null, enabled: boolean) {
                   abstentionReason: meta.abstentionReason ?? prev.abstentionReason,
                 }));
               } else if (chunk.type === 'error') {
+                flushText();
                 setState((prev) => ({
                   ...prev,
                   isStreaming: false,
@@ -250,6 +270,10 @@ export function useAiAnswerStream(query: string | null, enabled: boolean) {
             }
           }
         }
+
+        // A stream that ended without a `done` frame still owes the reader
+        // whatever the gate was holding.
+        flushText();
 
         // If stream ends without a 'done' chunk, mark as done
         setState((prev) => {

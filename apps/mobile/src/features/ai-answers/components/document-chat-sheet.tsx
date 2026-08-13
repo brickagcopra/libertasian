@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/Input';
 import { useTheme } from '@/providers/theme-provider';
 import { ChatMessage } from '../../chat/components/ChatMessage';
 import { useDocumentChat, type ChatTurn } from '../hooks/use-document-chat';
+import { dedupeSources, formatAnswerText } from '../format-answer-text';
 import { SourceCard } from './source-card';
 
 interface DocumentChatSheetProps {
@@ -214,6 +215,11 @@ function TurnView({ turn, isStreaming }: { turn: ChatTurn; isStreaming: boolean 
 
   const waiting = turn.status === 'streaming' && turn.text.length === 0;
 
+  // Deduped once and shared: `formatAnswerText` numbers `[n]` against this
+  // exact list, so the inline markers and the source rows cannot drift apart.
+  const citedSources = dedupeSources(turn.sources);
+  const answerText = formatAnswerText(turn.text, turn.sources);
+
   return (
     <View style={styles.answer}>
       {waiting ? (
@@ -224,17 +230,17 @@ function TurnView({ turn, isStreaming }: { turn: ChatTurn; isStreaming: boolean 
           </Text>
         </View>
       ) : (
-        <ChatMessage message={{ id: turn.id, role: 'bot', text: turn.text }} />
+        <ChatMessage message={{ id: turn.id, role: 'bot', text: answerText }} />
       )}
 
-      {turn.sources.length > 0 ? (
+      {citedSources.length > 0 ? (
         <View style={styles.sources}>
           <Text style={[styles.sourcesTitle, { color: theme.inkSoft }]}>
-            Sources ({turn.sources.length})
+            Sources ({citedSources.length})
           </Text>
-          {turn.sources.map((source, i) => (
+          {citedSources.map((source, i) => (
             <SourceCard
-              key={source.section_id ?? source.document_id + i}
+              key={`${source.document_id}:${source.section_id ?? i}`}
               source={source}
               index={i}
             />

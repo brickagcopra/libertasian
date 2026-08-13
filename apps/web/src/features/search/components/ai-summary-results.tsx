@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 
 import { useAiAnswerStream } from '../hooks/use-ai-answer-stream';
+import { dedupeSources, formatAnswerText } from '../lib/format-answer-text';
 import { abstentionCopy } from './abstention-copy';
 
 interface AiSummaryResultsProps {
@@ -32,6 +33,11 @@ export function AiSummaryResults({ query }: AiSummaryResultsProps) {
     abstained,
     abstentionReason,
   } = useAiAnswerStream(query, !!query);
+
+  // Deduped once and shared: `formatAnswerText` numbers `[n]` against this
+  // exact list, so the inline markers and the panel rows cannot drift apart.
+  const citedSources = dedupeSources(sources);
+  const answerText = formatAnswerText(text, sources);
 
   // Idle state — no query yet
   if (!query) {
@@ -92,7 +98,7 @@ export function AiSummaryResults({ query }: AiSummaryResultsProps) {
       <Card>
         <CardContent className="p-4">
           <div className="prose prose-sm max-w-none dark:prose-invert">
-            <p className="whitespace-pre-wrap">{text}</p>
+            <p className="whitespace-pre-wrap">{answerText}</p>
             {isStreaming && (
               <span className="inline-block h-4 w-1 animate-pulse bg-foreground" />
             )}
@@ -106,27 +112,34 @@ export function AiSummaryResults({ query }: AiSummaryResultsProps) {
       </Card>
 
       {/* Sources */}
-      {sources.length > 0 && (
+      {citedSources.length > 0 && (
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-sm font-medium">
               <FileTextIcon className="size-4" />
-              Sources ({sources.length})
+              Sources ({citedSources.length})
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 pt-0">
-            {sources.map((source, i) => (
+            {citedSources.map((source, i) => (
               <div
-                key={source.section_id ?? source.document_id + i}
+                key={`${source.document_id}:${source.section_id ?? i}`}
                 className="rounded-md border p-3"
               >
-                <Link
-                  href={ROUTES.READER(source.document_id)}
-                  className="text-sm font-medium hover:underline"
-                >
-                  {source.title}
-                </Link>
-                <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                {/* The number is the whole point of the row: it is what the
+                    `[n]` markers in the answer above point at. */}
+                <div className="flex gap-2">
+                  <span className="shrink-0 text-sm font-medium tabular-nums text-muted-foreground">
+                    {i + 1}.
+                  </span>
+                  <Link
+                    href={ROUTES.READER(source.document_id)}
+                    className="text-sm font-medium hover:underline"
+                  >
+                    {source.title}
+                  </Link>
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-1.5 pl-6">
                   {source.citation_text && (
                     <span className="text-xs text-muted-foreground">
                       {source.citation_text}
@@ -144,7 +157,7 @@ export function AiSummaryResults({ query }: AiSummaryResultsProps) {
                   )}
                 </div>
                 {source.passage_text && (
-                  <p className="mt-2 line-clamp-3 text-xs text-muted-foreground">
+                  <p className="mt-2 line-clamp-3 pl-6 text-xs text-muted-foreground">
                     {source.passage_text}
                   </p>
                 )}

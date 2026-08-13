@@ -3,6 +3,7 @@ import { fetch as expoFetch } from 'expo/fetch';
 
 import { authStorage } from '../../storage/auth-storage';
 import type { AiAnswerChunk, AiAnswerSource } from '../search/types';
+import { splitCompleteText } from './format-answer-text';
 
 /**
  * The single AI-answer streaming client.
@@ -146,6 +147,33 @@ function toMetadata(chunk: AiAnswerChunk): StreamMetadata {
 }
 
 /**
+ * Gate between the wire and `onText`.
+ *
+ * A `[SOURCE …]` marker is split across SSE deltas, so forwarding each delta
+ * the instant it lands renders `[SOURCE 0daf4c` on screen for a frame before
+ * the rest arrives. The gate withholds a trailing fragment that could still be
+ * growing into a marker and releases it once the marker completes — or on
+ * `flush()`, when the stream ends and no more text is coming.
+ *
+ * Callers see no difference: they still receive deltas to append.
+ */
+function createTextGate(handlers: StreamAiAnswerHandlers) {
+  let held = '';
+  return {
+    push(delta: string) {
+      const { emit, hold } = splitCompleteText(held + delta);
+      held = hold;
+      if (emit) handlers.onText?.(emit);
+    },
+    flush() {
+      if (!held) return;
+      handlers.onText?.(held);
+      held = '';
+    },
+  };
+}
+
+/**
  * Parse one SSE line and drive the matching handler.
  *
  * Shared by the streaming reader loop and the buffered fallback so a
@@ -153,7 +181,11 @@ function toMetadata(chunk: AiAnswerChunk): StreamMetadata {
  * Non-`data:` lines (comments, blank separators) and unparseable payloads are
  * skipped silently, as SSE requires.
  */
-function dispatchLine(line: string, handlers: StreamAiAnswerHandlers): void {
+function dispatchLine(
+  line: string,
+  handlers: StreamAiAnswerHandlers,
+  gate: ReturnType<typeof createTextGate>,
+): void {
   if (!line.startsWith('data: ')) return;
   const jsonStr = line.slice(6).trim();
   if (!jsonStr) return;
@@ -162,12 +194,16 @@ function dispatchLine(line: string, handlers: StreamAiAnswerHandlers): void {
     const chunk = JSON.parse(jsonStr) as AiAnswerChunk;
 
     if (chunk.type === 'text' && chunk.content) {
-      handlers.onText?.(chunk.content);
+      gate.push(chunk.content);
     } else if (chunk.type === 'metadata') {
       handlers.onMetadata?.(toMetadata(chunk));
     } else if (chunk.type === 'done') {
+      // Before the terminal frame, so a held fragment reaches the caller while
+      // the turn is still streaming rather than after it is marked complete.
+      gate.flush();
       handlers.onDone?.(toMetadata(chunk));
     } else if (chunk.type === 'error') {
+      gate.flush();
       handlers.onError?.({ kind: 'stream', message: chunk.message ?? 'Stream error' });
     }
   } catch {
@@ -245,15 +281,18 @@ export async function streamAiAnswer(
     // frame parser. An answer that arrives all at once beats an error.
     if (!response.body) {
       const text = await response.text();
+      const gate = createTextGate(handlers);
       for (const line of text.split('\n')) {
-        dispatchLine(line, handlers);
+        dispatchLine(line, handlers, gate);
         if (signal.aborted) return;
       }
+      gate.flush();
       return;
     }
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
+    const gate = createTextGate(handlers);
     let buffer = '';
 
     while (true) {
@@ -266,12 +305,16 @@ export async function streamAiAnswer(
       buffer = lines.pop() ?? '';
 
       for (const line of lines) {
-        dispatchLine(line, handlers);
+        dispatchLine(line, handlers, gate);
       }
     }
 
     // Flush a trailing frame the server did not terminate with a newline.
-    if (buffer) dispatchLine(buffer, handlers);
+    if (buffer) dispatchLine(buffer, handlers, gate);
+
+    // A stream that ended without a `done` frame still owes the caller
+    // whatever the gate was holding.
+    gate.flush();
   } catch (err) {
     // expo/fetch does not reliably raise a DOMException named 'AbortError' — an
     // aborted native stream can surface as a plain Error with a native message.

@@ -221,6 +221,49 @@ describe('useAiAnswerStream', () => {
     expect(result.current.confidence).toBe(0.42);
   });
 
+  it('never surfaces a partial SOURCE marker split across deltas', async () => {
+    // The marker arrives in three pieces. Without the hold-back the reader
+    // sees "[SOU" and then "[SOURCE 2e2bad34-…" appear mid-sentence.
+    const stream = createSSEStream([
+      'data: {"type":"text","content":"Sovereignty resides in the people [SOU"}\n\n',
+      'data: {"type":"text","content":"RCE 2e2bad34-d194-4ddb-9e70-c9d0"}\n\n',
+      'data: {"type":"text","content":"cd2ff388]. That is the rule."}\n\n',
+      'data: {"type":"done","content":"","metadata":{"confidence":0.9}}\n\n',
+    ]);
+
+    global.fetch = vi.fn().mockResolvedValueOnce({ ok: true, status: 200, body: stream });
+
+    const { result } = renderHook(() => useAiAnswerStream('sovereignty', true));
+
+    await waitFor(() => {
+      expect(result.current.isDone).toBe(true);
+    });
+
+    // The hook accumulates raw deltas; the marker is rewritten at render time.
+    // What matters here is that it was never appended half-formed.
+    expect(result.current.text).toBe(
+      'Sovereignty resides in the people [SOURCE 2e2bad34-d194-4ddb-9e70-c9d0cd2ff388]. That is the rule.',
+    );
+  });
+
+  it('flushes a held marker fragment when the stream ends without closing it', async () => {
+    const stream = createSSEStream([
+      'data: {"type":"text","content":"Trailing text [SOURCE unclo"}\n\n',
+      'data: {"type":"done"}\n\n',
+    ]);
+
+    global.fetch = vi.fn().mockResolvedValueOnce({ ok: true, status: 200, body: stream });
+
+    const { result } = renderHook(() => useAiAnswerStream('q', true));
+
+    await waitFor(() => {
+      expect(result.current.isDone).toBe(true);
+    });
+
+    // Held back while it might still complete, but never dropped.
+    expect(result.current.text).toBe('Trailing text [SOURCE unclo');
+  });
+
   it('handles error chunk from server', async () => {
     const stream = createSSEStream([
       'data: {"type":"error","message":"RAG service error"}\n\n',
