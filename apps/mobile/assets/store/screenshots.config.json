@@ -22,13 +22,13 @@
       "slug": "02-case-digests",
       "title": "Case Digests",
       "caption": "Supreme Court digests with provenance to the source.",
-      "navHint": "Open a case digest from the library and scroll to the facts section."
+      "navHint": "Open the digests LIST screen. Do NOT shoot the digest detail — its hero is a <Photo label=\"hero · digest\" /> placeholder and pinned text renders illegibly across it."
     },
     {
       "slug": "03-codal-reader",
       "title": "Codal Reader",
       "caption": "1987 Constitution, Rules of Court, Republic Acts.",
-      "navHint": "Open the Codals tab and pick the 1987 Constitution, Article III."
+      "navHint": "Search → \"constitution\" → 1987 Constitution, Article I. The Codals-tab route does not work."
     },
     {
       "slug": "04-ai-assistant",
@@ -40,13 +40,13 @@
       "slug": "05-camera-scan",
       "title": "Camera Scan-to-Digest",
       "caption": "Scan a printout. Get a structured digest.",
-      "navHint": "Open the camera scanner and frame a sample case printout."
+      "navHint": "Open the Scan LANDING screen (Start Scan + real Recent Scans). Not a viewfinder — the simulator has no camera and staging one is itself a 2.3.3 violation."
     },
     {
-      "slug": "06-offline-sync",
-      "title": "Offline + Sync",
-      "caption": "Offline codal cache. Syncs with libertasian.com on web.",
-      "navHint": "Open Settings → Sync to show the last-synced timestamp and offline toggle."
+      "slug": "06-search",
+      "title": "Search the Corpus",
+      "caption": "Cases, codals and digests in one search.",
+      "navHint": "Search tab → a broad legal term (e.g. \"estafa\") → results showing mixed result types."
     }
   ],
   "platforms": {
