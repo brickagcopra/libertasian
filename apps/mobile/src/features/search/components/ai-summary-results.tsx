@@ -2,6 +2,7 @@ import { View, Text, ScrollView, StyleSheet, ActivityIndicator } from 'react-nat
 import { Ionicons } from '@expo/vector-icons';
 
 import { SourceCard } from '../../ai-answers/components/source-card';
+import { dedupeSources, formatAnswerText } from '../../ai-answers/format-answer-text';
 import { useAiAnswerStream } from '../hooks/use-ai-answer-stream';
 import type { AiAnswerSource } from '../types';
 import { abstentionCopy } from './abstention-copy';
@@ -44,6 +45,11 @@ export function AiSummaryResults({ query }: AiSummaryResultsProps) {
     abstained,
     abstentionReason,
   } = useAiAnswerStream(query, !!query);
+
+  // Deduped once and shared: `formatAnswerText` numbers `[n]` against this
+  // exact list, so the inline markers and the panel rows cannot drift apart.
+  const citedSources = dedupeSources(sources);
+  const answerText = formatAnswerText(text, sources);
 
   if (!query) {
     return (
@@ -90,7 +96,7 @@ export function AiSummaryResults({ query }: AiSummaryResultsProps) {
     <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
       {/* Answer */}
       <View style={styles.answerCard}>
-        <Text style={styles.answerText}>{text}</Text>
+        <Text style={styles.answerText}>{answerText}</Text>
         {isStreaming ? (
           <View style={styles.cursor} />
         ) : null}
@@ -102,16 +108,20 @@ export function AiSummaryResults({ query }: AiSummaryResultsProps) {
       </View>
 
       {/* Sources */}
-      {sources.length > 0 ? (
+      {citedSources.length > 0 ? (
         <View style={styles.sourcesSection}>
           <View style={styles.sourcesSectionHeader}>
             <Ionicons name="document-text-outline" size={16} color="#374151" />
             <Text style={styles.sourcesSectionTitle}>
-              Sources ({sources.length})
+              Sources ({citedSources.length})
             </Text>
           </View>
-          {sources.map((source, i) => (
-            <SourceCard key={source.section_id ?? source.document_id + i} source={source} index={i} />
+          {citedSources.map((source, i) => (
+            <SourceCard
+              key={`${source.document_id}:${source.section_id ?? i}`}
+              source={source}
+              index={i}
+            />
           ))}
         </View>
       ) : null}

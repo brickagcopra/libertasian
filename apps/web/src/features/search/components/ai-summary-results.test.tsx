@@ -9,6 +9,34 @@ vi.mock('../hooks/use-ai-answer-stream', () => ({
 import { AiSummaryResults } from './ai-summary-results';
 import { ABSTENTION_FALLBACK } from './abstention-copy';
 
+const DOC = '2e2bad34-d194-4ddb-9e70-c9d0cd2ff388';
+const SEC = 'f767e1bc-4578-4a85-a99b-6f9886af62d7';
+
+/** A finished, cited answer exactly as the wire delivers it. */
+function citedAnswer() {
+  mockUseAiAnswerStream.mockReturnValue({
+    text: `Sovereignty resides in the people [SOURCE ${DOC}§${SEC}]. It is **fundamental**.`,
+    sources: [
+      {
+        document_id: DOC,
+        section_id: SEC,
+        title: '1987 Constitution',
+        citation_text: 'Const. (1987)',
+        relevance_score: 0.9,
+        passage_text: 'Sovereignty resides in the people…',
+      },
+    ],
+    isStreaming: false,
+    isDone: true,
+    error: null,
+    confidence: 0.9,
+    abstained: false,
+    abstentionReason: null,
+    retryCount: 0,
+    reset: vi.fn(),
+  });
+}
+
 /** An abstained, finished stream carrying `reason` straight off the wire. */
 function abstainedWith(reason: string | undefined) {
   mockUseAiAnswerStream.mockReturnValue({
@@ -60,5 +88,35 @@ describe('AiSummaryResults abstention copy', () => {
     render(<AiSummaryResults query="maritime salvage" />);
 
     expect(screen.getByText(ABSTENTION_FALLBACK)).toBeInTheDocument();
+  });
+});
+
+describe('AiSummaryResults citations', () => {
+  afterEach(() => {
+    mockUseAiAnswerStream.mockReset();
+  });
+
+  it('renders an inline [1] citation and never a raw SOURCE marker', () => {
+    citedAnswer();
+
+    render(<AiSummaryResults query="sovereignty" />);
+    const rendered = document.body.textContent ?? '';
+
+    expect(rendered).toContain('Sovereignty resides in the people [1].');
+    // The wire identifiers must not reach the reader anywhere on the page.
+    expect(rendered).not.toContain('SOURCE');
+    expect(rendered).not.toContain(DOC);
+    expect(rendered).not.toContain(SEC);
+    // Markdown with no renderer is stripped, not shown literally.
+    expect(rendered).not.toContain('**fundamental**');
+  });
+
+  it('numbers the source rows so [n] has something to point at', () => {
+    citedAnswer();
+
+    render(<AiSummaryResults query="sovereignty" />);
+
+    expect(screen.getByText('1.')).toBeInTheDocument();
+    expect(screen.getByText('1987 Constitution')).toBeInTheDocument();
   });
 });

@@ -106,6 +106,26 @@ export function SearchScreen({
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
       <HeaderAmbient />
+      {/*
+       * Opaque status-bar scrim. The results region scrolls the full bleed of
+       * the screen, so without this the AI answer's body text passes under the
+       * clock and battery and collides with them — visible in the App Store
+       * capture of the AI Summary tab. Same job as the reader's top gradient
+       * (`DocumentReaderScreen.tsx:167`), sized to the inset instead of 100pt
+       * because the search field lives INSIDE this ScrollView and a taller
+       * scrim would cover it at rest.
+       */}
+      <View
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          height: insets.top,
+          backgroundColor: theme.bg,
+          zIndex: 5,
+        }}
+      />
       <ScrollView
         contentContainerStyle={{
           paddingTop: topInsetPadding(insets, 54),
