@@ -135,10 +135,13 @@ describe('dedupeSources', () => {
 });
 
 describe('splitCompleteText — streaming hold-back', () => {
-  it('holds back a partial marker', () => {
-    expect(splitCompleteText('The territory [SOURCE 0daf4c')).toEqual({
+  it('holds back a partial marker carrying a real document uuid', () => {
+    // Real 36-char uuids, not a truncated stand-in: the length of an actual
+    // marker is the whole point of the ceiling this exercises.
+    const partial = `[SOURCE ${DOC}§${SEC_A.slice(0, 12)}`;
+    expect(splitCompleteText(`The territory ${partial}`)).toEqual({
       emit: 'The territory ',
-      hold: '[SOURCE 0daf4c',
+      hold: partial,
     });
   });
 
@@ -151,6 +154,44 @@ describe('splitCompleteText — streaming hold-back', () => {
     expect(splitCompleteText(buffer)).toEqual({ emit: buffer, hold: '' });
   });
 
+  it('releases a section-qualified marker once it closes', () => {
+    const buffer = `text [SOURCE ${DOC}§${SEC_A}]`;
+    expect(splitCompleteText(buffer)).toEqual({ emit: buffer, hold: '' });
+  });
+
+  it('never shows any part of a section-qualified marker fed one char at a time', () => {
+    // The regression this pins: a full `[SOURCE <36>§<36>]` is 82 characters,
+    // so an 80-char ceiling tripped one character BEFORE the closing bracket
+    // arrived and flushed the partial marker to the screen — the exact flash
+    // the gate exists to prevent, on the default marker shape. Only a real
+    // 36+36 uuid pair delivered one character at a time reaches that boundary.
+    const marker = `[SOURCE ${DOC}§${SEC_A}]`;
+    expect(marker).toHaveLength(82);
+
+    const answer = `Sovereignty resides in the people ${marker}. Next sentence.`;
+    const sources = [source({ section_id: SEC_A })];
+
+    let held = '';
+    let emitted = '';
+
+    for (const ch of answer) {
+      const { emit, hold } = splitCompleteText(held + ch);
+      held = hold;
+      emitted += emit;
+
+      // What the reader would see at this instant. A complete marker is
+      // rewritten to `[1]`; a partial one has nothing to match and would
+      // survive as raw text — which is what this asserts can never happen.
+      const onScreen = formatAnswerText(emitted, sources);
+      expect(onScreen).not.toContain('SOURCE');
+      expect(onScreen).not.toContain(DOC);
+      expect(onScreen).not.toContain(SEC_A);
+    }
+
+    // And nothing is lost along the way.
+    expect(emitted + held).toBe(answer);
+  });
+
   it('does not hold text that cannot become a marker', () => {
     expect(splitCompleteText('see [Rule 3 of the')).toEqual({
       emit: 'see [Rule 3 of the',
@@ -158,8 +199,10 @@ describe('splitCompleteText — streaming hold-back', () => {
     });
   });
 
-  it('gives up rather than swallow the answer after an unclosed bracket', () => {
-    const long = `text [SOURCE ${'x'.repeat(120)}`;
+  it('releases an unclosed bracket followed by 130 characters of prose', () => {
+    // The ceiling still has to do its real job: an unclosed `[` in ordinary
+    // prose must not swallow the rest of the answer.
+    const long = `text [SOURCE ${'x'.repeat(130)}`;
     expect(splitCompleteText(long)).toEqual({ emit: long, hold: '' });
   });
 
