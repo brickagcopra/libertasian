@@ -93,14 +93,22 @@ _VECTOR_INDEX_FIELDS = frozenset(
 )
 
 # `_source` lists. The body field is the one real difference between the two
-# indices — `plain_text` on keyword, `text_snippet` on vector — so they cannot
-# share one list.
+# indices — `plain_text` or `section_text` on keyword, `text_snippet` on vector —
+# so they cannot share one list.
+#
+# The keyword index stores TWO row shapes (see
+# `apps/api/src/modules/search/index-rebuild.service.ts`): one document-level row
+# per document carrying `plain_text` (every section joined), plus one row per
+# section carrying `section_text` and NO `plain_text`. Section rows are the bulk
+# of the index — 68,842 of 85,977 on prod 2026-08-14 — so both fields must be
+# requested and the body read from whichever is present.
 _KEYWORD_SOURCE_FIELDS = [
     "document_id",
     "section_id",
     "title",
     "citation_text",
     "plain_text",
+    "section_text",
     "court",
     "decision_date",
     "document_type",
@@ -188,6 +196,24 @@ def _opensearch_reason(exc: httpx.HTTPError) -> str:
         if error.get("reason"):
             return f"HTTP {response.status_code}: {error['reason']}"
     return f"HTTP {response.status_code}: {str(payload)[:300]}"
+
+
+def _keyword_body(source: dict[str, Any]) -> str:
+    """Read a passage body out of a keyword-index ``_source``.
+
+    `plain_text` first, then `section_text` — the keyword index holds both row
+    shapes and a section row has no `plain_text` at all. Reading only
+    `plain_text` returned an empty body for 68,842 of the 85,977 rows on prod
+    (2026-08-14); on a live "theft" query 27 of 30 retrieved candidates came
+    back with `text == ""`, and empty passages score a constant in the
+    cross-encoder (0.755) that beat real content into all 8 kept slots, so the
+    answer generator abstained with the corpus sitting right there.
+
+    A document-level row carries only `plain_text` and a section row only
+    `section_text`, so the order matters only for a hypothetical row with both;
+    `plain_text` wins there because it is the whole document.
+    """
+    return str(source.get("plain_text") or source.get("section_text") or "")
 
 
 def _filter_clauses(filter_terms: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -314,6 +340,25 @@ async def hybrid_retrieve(
     # Fuse with RRF
     fused = _rrf_fuse(bm25_hits, knn_hits)
 
+    # Defence in depth against a bodyless hit, dropped BEFORE the top_k slice so
+    # it cannot consume a candidate slot and, downstream, a context-budget slot.
+    # A passage with no text cannot support an answer, but it is not inert: the
+    # cross-encoder scores empty text as a constant (0.755 for "theft") which
+    # outranks genuinely weaker-but-real passages, so an empty row is actively
+    # worse than an absent one. The `plain_text`/`section_text` fallback above
+    # is what fixes the 80%-of-the-index case; this catches whatever is left —
+    # a section indexed from an empty body, a future third row shape.
+    non_empty = [p for p in fused if (p.get("text") or "").strip()]
+    dropped = len(fused) - len(non_empty)
+    if dropped:
+        logger.debug(
+            "Dropped %d/%d retrieved passage(s) with a blank body before top-k (intent=%s)",
+            dropped,
+            len(fused),
+            intent.value,
+        )
+    fused = non_empty
+
     # Apply authority boost
     for passage_data in fused:
         authority = passage_data.get("source_authority_level", "editorial")
@@ -398,7 +443,10 @@ async def _bm25_search(
                 "section_id": source.get("section_id"),
                 "title": source.get("title", ""),
                 "citation_text": source.get("citation_text", ""),
-                "text": (source.get("plain_text", "") or "")[:2000],
+                # `plain_text` OR `section_text`: the keyword index stores a
+                # document-level row with the former and one row per section
+                # with the latter, and section rows are ~80% of it.
+                "text": _keyword_body(source)[:2000],
                 "court": source.get("court", ""),
                 "decision_date": source.get("decision_date", ""),
                 "document_type": source.get("document_type", ""),
@@ -545,6 +593,7 @@ _DOC_SOURCE_FIELDS = [
     "title",
     "citation_text",
     "plain_text",
+    "section_text",
     "court",
     "decision_date",
     "document_type",
@@ -657,7 +706,9 @@ def _hit_to_passage(
         section_id=source.get("section_id"),
         title=source.get("title", ""),
         citation_text=source.get("citation_text", ""),
-        text=(source.get("plain_text", "") or "")[:text_truncate],
+        # `plain_text` OR `section_text` — a per-section row has no
+        # `plain_text`, and this path retrieves sections by design.
+        text=_keyword_body(source)[:text_truncate],
         court=source.get("court", ""),
         decision_date=source.get("decision_date", ""),
         document_type=source.get("document_type", ""),

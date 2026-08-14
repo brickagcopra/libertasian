@@ -913,6 +913,211 @@ class TestOpensearchReason:
 # ===========================================================================
 
 
+class TestSectionRowsCarryTheirText:
+    """The keyword index stores two row shapes; only one of them has plain_text.
+
+    `index-rebuild.service.ts` writes one document-level row per document
+    (`plain_text` = every section joined) AND one row per section (`section_text`,
+    no `plain_text`). On prod 2026-08-14 that was 17,135 doc rows against 68,842
+    section rows, so reading `plain_text` alone left 80% of the index returning
+    `text == ""`. Measured on a live "theft" query: 27 of 30 retrieved candidates
+    had an empty body; with the fallback it is 0 of 30. Empty text scores a
+    constant in the cross-encoder (0.755 for theft — it took all 8 kept slots),
+    so the empties outranked real content and the generator abstained.
+    """
+
+    @pytest.mark.asyncio
+    async def test_bm25_section_row_yields_text(self) -> None:
+        """A section row — `section_text`, no `plain_text` — must not come back blank."""
+        from src.core.retrieval import _bm25_search
+
+        section_hit = {
+            "_id": "sec-1",
+            "_score": 6.0,
+            "_source": {
+                "document_id": "d1",
+                "section_id": "s1",
+                "section_text": "Theft is committed by any person who...",
+            },
+        }
+
+        with patch("src.core.retrieval.opensearch_search", new_callable=AsyncMock) as mock_search:
+            mock_search.return_value = {"hits": {"hits": [section_hit]}}
+            results = await _bm25_search("theft", QueryIntent.GENERAL)
+
+        assert results[0]["text"] == "Theft is committed by any person who..."
+
+    @pytest.mark.asyncio
+    async def test_bm25_prefers_plain_text_when_both_present(self) -> None:
+        from src.core.retrieval import _bm25_search
+
+        both_hit = {
+            "_id": "h1",
+            "_score": 6.0,
+            "_source": {
+                "document_id": "d1",
+                "plain_text": "whole document",
+                "section_text": "one section",
+            },
+        }
+
+        with patch("src.core.retrieval.opensearch_search", new_callable=AsyncMock) as mock_search:
+            mock_search.return_value = {"hits": {"hits": [both_hit]}}
+            results = await _bm25_search("theft", QueryIntent.GENERAL)
+
+        assert results[0]["text"] == "whole document"
+
+    @pytest.mark.asyncio
+    async def test_bm25_requests_both_body_fields(self) -> None:
+        """A field absent from `_source` is silently absent from the response."""
+        from src.core.retrieval import _bm25_search
+
+        captured: dict[str, Any] = {}
+
+        async def _capture(index: str, body: dict[str, Any]) -> dict[str, Any]:
+            captured.update(body)
+            return {"hits": {"hits": []}}
+
+        with patch("src.core.retrieval.opensearch_search", side_effect=_capture):
+            await _bm25_search("theft", QueryIntent.GENERAL)
+
+        assert "plain_text" in captured["_source"]
+        assert "section_text" in captured["_source"]
+
+    @pytest.mark.asyncio
+    async def test_section_text_is_truncated_like_plain_text(self) -> None:
+        from src.core.retrieval import _bm25_search
+
+        hit = {
+            "_id": "sec-1",
+            "_score": 6.0,
+            "_source": {"document_id": "d1", "section_text": "x" * 5000},
+        }
+
+        with patch("src.core.retrieval.opensearch_search", new_callable=AsyncMock) as mock_search:
+            mock_search.return_value = {"hits": {"hits": [hit]}}
+            results = await _bm25_search("theft", QueryIntent.GENERAL)
+
+        assert len(results[0]["text"]) == 2000
+
+    def test_hit_to_passage_reads_section_text(self) -> None:
+        """The memo/flashcard/pleading path retrieves sections by design."""
+        hit = _make_os_hit("os-sec", source={"section_text": "Section body"})
+        assert _hit_to_passage(hit).text == "Section body"
+
+    def test_hit_to_passage_prefers_plain_text(self) -> None:
+        hit = _make_os_hit(
+            "os-both",
+            source={"plain_text": "whole document", "section_text": "one section"},
+        )
+        assert _hit_to_passage(hit).text == "whole document"
+
+    @pytest.mark.asyncio
+    async def test_retrieve_by_query_requests_both_body_fields(self) -> None:
+        captured: dict[str, Any] = {}
+
+        async def _capture(index: str, body: dict[str, Any]) -> dict[str, Any]:
+            captured.update(body)
+            return {"hits": {"hits": []}}
+
+        with patch("src.core.retrieval.opensearch_search", side_effect=_capture):
+            await retrieve_by_query("theft")
+
+        assert "plain_text" in captured["_source"]
+        assert "section_text" in captured["_source"]
+
+
+class TestBlankPassagesAreDropped:
+    """Defence in depth: a bodyless row must not consume a candidate slot.
+
+    An empty passage is worse than an absent one — the cross-encoder scores empty
+    text as a constant that outranks weaker-but-real content, so it takes a kept
+    slot and then supports nothing. Dropped before the top_k slice so it cannot
+    displace a real passage.
+    """
+
+    @staticmethod
+    def _hit(hit_id: str, score: float, body: str | None) -> dict[str, Any]:
+        source: dict[str, Any] = {"document_id": f"doc-{hit_id}"}
+        if body is not None:
+            source["plain_text"] = body
+        return {"_id": hit_id, "_score": score, "_source": source}
+
+    @pytest.mark.asyncio
+    async def test_blank_passages_excluded(self) -> None:
+        hits = [
+            self._hit("empty", 9.0, None),
+            self._hit("whitespace", 8.0, "   \n  "),
+            self._hit("real", 1.0, "Theft is committed by..."),
+        ]
+
+        with patch("src.core.retrieval.opensearch_search", new_callable=AsyncMock) as mock_search:
+            mock_search.return_value = {"hits": {"hits": hits}}
+            result = await hybrid_retrieve("theft", QueryIntent.GENERAL, top_k=10)
+
+        assert [p.id for p in result.passages] == ["real"]
+
+    @pytest.mark.asyncio
+    async def test_blank_passages_do_not_consume_top_k(self) -> None:
+        """The point of dropping before the slice, not after."""
+        hits = [
+            self._hit("empty-1", 9.0, None),
+            self._hit("empty-2", 8.0, ""),
+            self._hit("real-1", 7.0, "first real passage"),
+            self._hit("real-2", 6.0, "second real passage"),
+        ]
+
+        with patch("src.core.retrieval.opensearch_search", new_callable=AsyncMock) as mock_search:
+            mock_search.return_value = {"hits": {"hits": hits}}
+            result = await hybrid_retrieve("theft", QueryIntent.GENERAL, top_k=2)
+
+        assert [p.id for p in result.passages] == ["real-1", "real-2"]
+
+    @pytest.mark.asyncio
+    async def test_drop_is_logged_at_debug(self, caplog: Any) -> None:
+        hits = [self._hit("empty", 9.0, None), self._hit("real", 1.0, "body")]
+
+        with (
+            patch("src.core.retrieval.opensearch_search", new_callable=AsyncMock) as mock_search,
+            caplog.at_level("DEBUG"),
+        ):
+            mock_search.return_value = {"hits": {"hits": hits}}
+            await hybrid_retrieve("theft", QueryIntent.GENERAL, top_k=10)
+
+        debug = "\n".join(r.getMessage() for r in caplog.records if r.levelname == "DEBUG")
+        assert "blank body" in debug
+
+    @pytest.mark.asyncio
+    async def test_no_log_when_nothing_dropped(self, caplog: Any) -> None:
+        """A quiet path stays quiet — this runs on every query."""
+        hits = [self._hit("real", 5.0, "body")]
+
+        with (
+            patch("src.core.retrieval.opensearch_search", new_callable=AsyncMock) as mock_search,
+            caplog.at_level("DEBUG"),
+        ):
+            mock_search.return_value = {"hits": {"hits": hits}}
+            await hybrid_retrieve("theft", QueryIntent.GENERAL, top_k=10)
+
+        assert "blank body" not in "\n".join(r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_section_rows_survive_the_filter(self) -> None:
+        """The two halves of the fix together: a section row is kept, not dropped."""
+        section_hit = {
+            "_id": "sec-1",
+            "_score": 5.0,
+            "_source": {"document_id": "d1", "section_id": "s1", "section_text": "Section body"},
+        }
+
+        with patch("src.core.retrieval.opensearch_search", new_callable=AsyncMock) as mock_search:
+            mock_search.return_value = {"hits": {"hits": [section_hit]}}
+            result = await hybrid_retrieve("theft", QueryIntent.GENERAL, top_k=10)
+
+        assert len(result.passages) == 1
+        assert result.passages[0].text == "Section body"
+
+
 class TestBm25Search:
     """Test BM25 search OpenSearch query construction."""
 
