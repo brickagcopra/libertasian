@@ -103,7 +103,36 @@ class Settings(BaseSettings):
 
     # Reranker (empty string = disabled, uses RRF fallback)
     reranker_url: str = ""
-    reranker_timeout: int = 10
+
+    # 20s, and raising it makes /answer FASTER — which is counterintuitive
+    # enough to be worth the paragraph.
+    #
+    # The 10s budget was set in #386 against a candidate set that was ~90% empty
+    # strings: retrieval read `plain_text` only, so every per-section row scored
+    # as "". Empty text is nearly free to score. #387 fixed that, and the
+    # cross-encoder now does the work it was always supposed to do. Measured on
+    # prod today, deployed container, real passages (avg 1403 chars, truncated
+    # to 1000 by core/reranking.py), n=30 candidates:
+    #
+    #   p50 8.14s   p90 8.79s   p99 11.97s
+    #
+    # Against a 10s timeout that is 10 of 12 live queries falling back to RRF.
+    #
+    # Why the higher timeout is the faster setting: the fallback is not an early
+    # exit. `_rerank` waits the FULL timeout, then throws away the cross-encoder
+    # result and returns RRF ordering — so a timing-out query pays the whole 10s
+    # AND loses the ranking. Same 12 queries, end to end:
+    #
+    #   reranker completes   8.2-19.2s    7/12 answered
+    #   reranker times out  11.6-19.4s    6/12 answered
+    #
+    # Slower and worse. The timeout's job is to stop a hung reranker from
+    # hanging /answer, and 20s still does that; it was never meant to be a
+    # latency target. If p95 becomes a complaint, the lever is the candidate
+    # count (top_k * 2 = 30), not this — but that one costs recall, and since
+    # #387 drops blank-bodied passages all 30 candidates are real content for
+    # the first time.
+    reranker_timeout: int = 20
 
     # Abstention thresholds
     #

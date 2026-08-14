@@ -43,15 +43,26 @@ class Settings(BaseSettings):
     # The theory was that bge-reranker-base's 512-token window costs ~4x what a
     # 256-token one does, attention being O(n^2). The flaw: `max_length`
     # TRUNCATES, it does not pad. Sequences are padded to the longest item in
-    # the batch, not to the window. rag-service already truncates passages to
-    # 1000 characters (~250 tokens of English legal prose) before sending, so
-    # real batches were never near 512 and this cap almost never binds.
-    # Benchmarked at 30 passages, it changes p50 by nothing measurable; the
-    # latency win in this service came from thread pinning and lifespan warm-up.
+    # the batch, not to the window — so the cap only ever bites if real items
+    # are actually long.
     #
-    # Kept because it costs nothing and bounds the worst case: if a caller ever
-    # sends an oversized passage, this is what stops one request from monopolising
-    # the CPU budget.
+    # CORRECTED 2026-08-14. This comment used to claim real batches "were never
+    # near 512 and this cap almost never binds", benchmarked at no measurable
+    # p50 change. That was measured through rag-service while ~90% of its
+    # candidates were empty strings (it read `plain_text` only, so every
+    # per-section row scored as ""), and an empty item pads the batch to
+    # nothing. Since #387 passages carry real body text: rag truncates to 1000
+    # characters, which is ~250 tokens of English legal prose before the query
+    # and the separators are concatenated on, so the pair sequence clears 256
+    # and this cap now binds on essentially every item in every batch.
+    #
+    # It is therefore load-bearing rather than free, and the trade is real:
+    # 256 tokens is roughly the first 1000 characters of a passage, and anything
+    # past that is not scored. Kept at 256 — that prefix is where a legal
+    # passage's topical signal sits, and the alternative is a ~4x latency
+    # increase on a service whose caller is already close to its timeout. Raise
+    # it only together with a measurement of end-to-end /answer latency, not on
+    # the theory that more context must score better.
     max_length: int = 256
 
     # How many rerank requests may hold the model at once.
