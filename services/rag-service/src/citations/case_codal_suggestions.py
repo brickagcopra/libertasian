@@ -197,7 +197,13 @@ async def _search_codal_candidates(case_excerpt: str) -> list[dict[str, Any]]:
                 ],
             }
         },
-        "_source": ["document_id", "title", "citation_text", "plain_text"],
+        # `section_text` as well as `plain_text`: the keyword index stores a
+        # document-level row carrying `plain_text` plus one row per section
+        # carrying `section_text` and no `plain_text` at all, and the section
+        # rows are the bulk of it. Requesting only `plain_text` gave most
+        # candidates an empty snippet, i.e. a codal citation handed to the LLM
+        # with none of the provision's actual words attached.
+        "_source": ["document_id", "title", "citation_text", "plain_text", "section_text"],
     }
 
     try:
@@ -208,7 +214,11 @@ async def _search_codal_candidates(case_excerpt: str) -> list[dict[str, Any]]:
                 "id": hit["_source"].get("document_id", hit["_id"]),
                 "title": hit["_source"].get("title", ""),
                 "citation": hit["_source"].get("citation_text", ""),
-                "snippet": (hit["_source"].get("plain_text", "") or "")[:500],
+                "snippet": (
+                    hit["_source"].get("plain_text")
+                    or hit["_source"].get("section_text")
+                    or ""
+                )[:500],
                 "score": hit.get("_score", 0),
             }
             for hit in hits
