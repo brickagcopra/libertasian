@@ -233,7 +233,7 @@ class TestGenerateAnswer:
         assert response.abstained is False
         assert response.abstention_reason is None
         assert response.model_name == "test-model-v1"
-        assert response.prompt_template_version == "answer-v1.2"
+        assert response.prompt_template_version == "answer-v1.3"
 
     @pytest.mark.asyncio
     async def test_answer_includes_sources_when_requested(self) -> None:
@@ -1009,11 +1009,16 @@ class TestInsufficientSentinelNonStreaming:
             p.stop()
 
     @pytest.mark.asyncio
-    async def test_sentinel_abstains_with_no_results(self) -> None:
+    async def test_sentinel_abstains_as_low_relevance(self) -> None:
+        """NOT no_results: retrieval DID return passages, the model judged them
+        irrelevant. The no_results copy ("unable to find any relevant legal
+        documents matching your query") would be a false statement about what
+        the pipeline did."""
         response = await generate_answer(AnswerRequest(query="What is estafa?"))
 
         assert response.abstained is True
-        assert response.abstention_reason == AbstentionReason.NO_RESULTS
+        assert response.abstention_reason == AbstentionReason.LOW_RELEVANCE
+        assert response.abstention_reason != AbstentionReason.NO_RESULTS
         assert response.confidence == 0.0
         assert response.confidence_level == ConfidenceLevel.LOW
 
@@ -1036,7 +1041,7 @@ class TestInsufficientSentinelNonStreaming:
         response = await generate_answer(request)
 
         assert response.answer == generate_abstention_response(
-            AbstentionReason.NO_RESULTS, "Does this cover estafa?", scoped=True
+            AbstentionReason.LOW_RELEVANCE, "Does this cover estafa?", scoped=True
         )
 
 
@@ -1092,7 +1097,7 @@ class TestInsufficientSentinelStreaming:
         assert chunks[-1].type == "done"
         meta = chunks[-1].metadata or {}
         assert meta["abstained"] is True
-        assert meta["abstention_reason"] == AbstentionReason.NO_RESULTS.value
+        assert meta["abstention_reason"] == AbstentionReason.LOW_RELEVANCE.value
         assert meta["confidence"] == 0.0
 
     @pytest.mark.asyncio
@@ -1115,7 +1120,7 @@ class TestInsufficientSentinelStreaming:
 
         meta = chunks[-1].metadata or {}
         assert meta["abstention_text"] == generate_abstention_response(
-            AbstentionReason.NO_RESULTS, "What is estafa?", scoped=False
+            AbstentionReason.LOW_RELEVANCE, "What is estafa?", scoped=False
         )
 
     @pytest.mark.asyncio

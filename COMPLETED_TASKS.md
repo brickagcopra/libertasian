@@ -1,6 +1,8 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-08-13 (`fix/answer-abstention-and-placeholders` — **7 of 9 realistic queries on prod returned a non-answer rendered AS an answer.** Two of them carried zero citations at `confidence 0.3` with `abstained: false`; one carried a confidence badge reading **"high" (1.0)** on top of the sentence "The provided source passages do not contain specific information regarding the Bill of Rights." The grounding abstention was scoped-only, the prompt asked the model to refuse in prose that nothing could detect, and the confidence scorer's coverage term counted *documents* while its docstring promised *passages*. Plus two mobile placeholder surfaces. **Retrieval quality is untouched and still unfixed — that is the unshipped reranker, search-epic C4.**)
+> Last updated: 2026-08-14 (`fix/knn-field-name` — `_knn_search` asked OpenSearch for a field called `embedding`; the vector index's knn_vector field is **`embedding_vector`**. Proved on the live cluster: that query is an HTTP 400 on every call. Two sibling mismatches came with it, and one of them — `source_authority_level` where both indices map **`source_trust_level`** — is on the BM25 leg that *is* live, which means the authority boost CLAUDE.md requires has been multiplying every passage by 1.0 and **reordering nothing**. Also: **fixing the field name does not by itself revive kNN.** Nothing in rag-service computes a query embedding, so `hybrid_retrieve` is called without one and the kNN leg has never executed in production at all. That is now reported as a degraded leg instead of passing silently, and a new CI guard fails the build if any query field drifts from `index-mappings.ts`.)
+>
+> Previously: 2026-08-13 (`fix/answer-abstention-and-placeholders` — **7 of 9 realistic queries on prod returned a non-answer rendered AS an answer.** Two of them carried zero citations at `confidence 0.3` with `abstained: false`; one carried a confidence badge reading **"high" (1.0)** on top of the sentence "The provided source passages do not contain specific information regarding the Bill of Rights." The grounding abstention was scoped-only, the prompt asked the model to refuse in prose that nothing could detect, and the confidence scorer's coverage term counted *documents* while its docstring promised *passages*. Plus two mobile placeholder surfaces. **Retrieval quality is untouched and still unfixed — that is the unshipped reranker, search-epic C4.**)
 >
 > Previously: 2026-08-08 (the iOS 1.0 submission was taken from an **empty listing** to "Ready for Review" with build 15 attached. The `store.config.json` in the repo could never have been pushed — four separate schema/API faults, one of them silent. Build 14 was swapped for 15 because it predated #355. A pre-submission audit then found the uploaded screenshots are **mockups, not app captures** — Guideline 2.3.3 — and that is the one thing still open; it needs a Mac. **Submit for Review has NOT been pressed.** See `apps/mobile/store/IOS_SCREENSHOT_CAPTURE.md`.)
 >
@@ -19,6 +21,52 @@
 > Previously: 2026-07-29 (#336 OPEN: a flat 300 s synthesis timeout made a 2,238-char digest — near the corpus average — permanently unsynthesizable, and retrying it identically three times burned 15 min of 8-core CPU. Budget is now length-proportional, failures are classified, and the reason is persisted. A separate CUDA image and bearer auth on the TTS hop open the rented-GPU route for the tier-1 backfill; both are no-ops for prod.)
 >
 > Previously: 2026-07-27 (#322 MERGED `5addc51`: the auto-publish citation gate was unreachable and had stranded 76% of the corpus out of search since 2026-05-30. Dry run over prod confirms 11,561 of 13,093 drafts publish under the corrected rules. #321 opened for the resolver underneath it, #323 for the 1,531 rows still short a `court`.)
+
+---
+
+## 2026-08-14 — the kNN leg was querying a field that does not exist, and could not have run anyway
+
+Branch `fix/knn-field-name`. Root cause proved on prod against the live OpenSearch on 2026-08-14 by pulling a stored vector back out of `legal_documents_vector` and querying it both ways:
+
+```
+knn: {embedding: ...}         -> HTTP 400, "all shards failed"
+knn: {embedding_vector: ...}  -> 200, correct neighbours
+```
+
+The index is healthy — 12,207 docs, `knn: true`, 384-dim lucene/hnsw/cosinesimil. Nothing was reindexed and no mapping was touched.
+
+**Three field names were wrong, not one.** `apps/api/src/modules/search/index-mappings.ts` is what production builds its indices from, and this service disagreed with it in three places:
+
+| where | asked for | index maps | consequence |
+|---|---|---|---|
+| `_knn_search` query | `embedding` | `embedding_vector` | HTTP 400 on every kNN call |
+| `_knn_search` `_source` | `plain_text` | `text_snippet` (vector index has no `plain_text`) | kNN passages would return with **empty text** even once the query worked |
+| `_knn_search` + `_bm25_search` + `_DOC_SOURCE_FIELDS` `_source` | `source_authority_level` | `source_trust_level` | every hit fell back to the `"editorial"` default |
+
+**The third one is the live-traffic bug.** `source_authority_level` is the name of a field on our own `Passage` model; it is not, and never was, a field in either index. Because `_bm25_search` asked for it, every BM25 hit — i.e. every passage the AI answer pipeline has ever used — came back without a trust level and defaulted to `editorial`, boost 1.0. The `official > semi_official > editorial > private` ranking in CLAUDE.md has therefore never reordered a single result. `_DOC_SOURCE_FIELDS` carried the same bug, which puts it in memos, flashcards, pleadings, comparisons, contradictions, timelines, hearing prep and research workspaces too.
+
+**Fixing the field name does NOT revive kNN, and this is the more important finding.** `hybrid_retrieve(query, intent, top_k, embedding=None, ...)` runs the kNN leg only `if embedding is not None`. Its two call sites — both in `answer/service.py` — pass no embedding, and there is no code in rag-service that computes one: `embedding_service_url` is declared in `config.py` and read nowhere in `src/`. So `_knn_search` has never executed in production. The 400 is what it *would* return; the reason nobody saw the 400 is that the function was never called. Both faults have to be fixed for hybrid retrieval to be hybrid; this branch fixes the field names and makes the missing embedding **visible**, and the embedding client is its own piece of work (PENDING_TASKS.md).
+
+**Why nothing caught any of it.** The mappings are `dynamic: 'strict'`, so a bad WRITE fails loudly — a bad READ does not. An unmapped field in `_source` is silently omitted from the response; there is no error, no warning, no missing-field signal. And the unit test that existed asserted `query["knn"]["embedding"]` — it encoded the bug and passed happily for as long as the bug lived.
+
+**What now catches it: `tests/test_index_field_contract.py`, wired into CI.** It parses `index-mappings.ts`, and asserts that (a) the Python field sets match the TS mappings field-for-field, (b) the kNN query's field name is the mapping's knn_vector field, (c) every `_source` entry of every query — kNN, BM25 across all six intents, and both document-retrieval paths — exists in the target index, and (d) the `multi_match` boosted fields exist too. Verified adversarially: reintroducing the three original bugs fails 15 of its 31 tests. It runs as a new `Guard — OpenSearch field names match the mapping` job in `ci.yml` — **the only CI check that runs any Python test.** Scoped to the contract suite on purpose: `tests/test_routers.py` has 40 pre-existing pytest-asyncio fixture errors that are their own job.
+
+**A leg that never contributes no longer looks healthy.** `SearchResult` gains `degraded` / `degraded_legs`, carried on every response. `total_knn_hits: 0` was the only prior trace, and it is indistinguishable from a healthy leg with no vector matches.
+
+The two cases are logged differently on purpose, which was a review catch worth recording:
+
+- **A leg that FAILS at runtime** (exception or non-200 from OpenSearch) logs at **ERROR**, with the leg name and the **OpenSearch reason pulled out of the response body** (`error.root_cause[].reason`). Without that reason httpx reports only "Client error '400 Bad Request'", which reads identically for a wrong field name, a malformed filter and a missing knn plugin — the reason line is what turns a degradation into a diagnosis.
+- **A leg that was never wired up** (`knn:not_configured`) logs **WARNING, once per process**. The first draft of this branch logged it at ERROR per request. That condition is true of 100% of requests and stays true until the embedding client lands, so with `SENTRY_DSN` set in prod it would have emitted one alert per query indefinitely and buried the runtime failures the ERROR path exists for — replacing a silent failure with a useless alarm. The one-shot latch is lazy rather than emitted at import, so a process that never serves a query stays quiet and a future embedding client silences it without touching the module.
+
+**Two corrections to #381, both spec errors in that PR.**
+
+*The sentinel over-fired.* v1.2's instruction 3 framed the choice as "enough information / not enough", which is a cheap binary exit and the model took it whenever coverage was less than complete — A/B tested in-memory against prod, v1.2 answered **0 of 5** realistic queries. v1.3 makes a partial cited answer the expected output and reserves `INSUFFICIENT_SOURCES` for passages with *nothing* relevant in them: "constitution" now answers at confidence 0.89 while estafa, amparo and bill-of-rights still correctly abstain. Instruction 3 is now a single shared constant spliced into both system prompts, so the streaming and non-streaming paths cannot drift on the one instruction that decides whether a query gets answered. `PROMPT_VERSION` `answer-v1.2` → `answer-v1.3`.
+
+*The sentinel mapped to the wrong reason.* It returned `AbstentionReason.NO_RESULTS`, whose copy reads "I was unable to find any relevant legal documents matching your query" — false: retrieval found 8 passages, cleared the count floor and packed them into the prompt. It is `LOW_RELEVANCE` now ("The documents I found do not appear to be sufficiently relevant…"), on both paths. `NO_RESULTS` keeps the case it actually describes. Both clients already map `low_relevance` to copy, so no client change was needed.
+
+**Tests.** 52 added, 755 passing. `mypy --strict` clean on every file touched; `ruff` clean on every file touched. `pnpm lint`, `pnpm type-check`, `pnpm test` clean.
+
+**Not done, deliberately.** No mapping change, no reindex, no reranker (C4 is not the root cause of this). `compute_confidence` untouched — measure it after this lands, not before. `abstention_score_threshold` untouched. No EAS build.
 
 ---
 

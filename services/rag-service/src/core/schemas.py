@@ -38,6 +38,23 @@ class SearchResult(BaseModel):
     total_bm25_hits: int = Field(default=0)
     total_knn_hits: int = Field(default=0)
     query_intent: str = Field(default="general")
+    degraded: bool = Field(
+        default=False,
+        description=(
+            "True when hybrid retrieval ran on fewer than both legs. A kNN "
+            "field-name bug returned HTTP 400 on 100% of queries for months "
+            "and the pipeline looked healthy throughout, because a hit count "
+            "of zero is indistinguishable from a leg that never worked."
+        ),
+    )
+    degraded_legs: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Names of the retrieval legs that did not contribute, each with why "
+            "— e.g. 'knn:http_error', 'knn:not_configured'. Empty iff "
+            "``degraded`` is False."
+        ),
+    )
 
 
 class CitationRef(BaseModel):
