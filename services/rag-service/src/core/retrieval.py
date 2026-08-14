@@ -123,6 +123,37 @@ _LEG_BM25 = "bm25"
 _LEG_KNN = "knn"
 
 
+# One-shot latch for the "kNN was never wired up" warning. Deliberately lazy
+# rather than emitted at import: it fires only if retrieval actually runs
+# without an embedding, so a process that never serves a query stays quiet and a
+# future embedding client silences it without touching this module.
+_knn_unconfigured_warned = False
+
+
+def _warn_knn_unconfigured() -> None:
+    """Warn once per process that hybrid retrieval is running on one leg.
+
+    WARNING, once — not ERROR per request. The kNN leg is unconfigured by
+    design until a query-embedding client exists, so the condition holds for
+    every request indefinitely. Alerting on it per request (SENTRY_DSN is set in
+    production) would emit a continuous stream of identical events and drown the
+    runtime failures this module's ERROR logging is actually for. The
+    ``degraded_legs`` field on every ``SearchResult`` remains the per-request
+    signal for anything that wants to measure it.
+    """
+    global _knn_unconfigured_warned  # noqa: PLW0603
+    if _knn_unconfigured_warned:
+        return
+    _knn_unconfigured_warned = True
+    logger.warning(
+        "kNN retrieval leg is NOT configured — no query embedding is supplied to "
+        "hybrid_retrieve, so retrieval is BM25-only. Every SearchResult will "
+        "carry degraded_legs=['%s:not_configured'] until an embedding client is "
+        "wired. This is logged once per process.",
+        _LEG_KNN,
+    )
+
+
 def _opensearch_reason(exc: httpx.HTTPError) -> str:
     """Pull the human-readable reason out of an OpenSearch error response.
 
@@ -225,14 +256,24 @@ async def hybrid_retrieve(
 
     knn_hits: list[dict[str, Any]] = []
 
+    # Legs that FAILED at runtime, as opposed to legs that were never wired up.
+    # Only these are worth an ERROR per request; see `_warn_knn_unconfigured`.
+    failed_legs: list[str] = []
+
     if embedding is None:
-        # NOT a healthy state, and it is the current production state: nothing
+        # Not a healthy state, and it is the current production state: nothing
         # in this service computes a query embedding, so this branch is taken on
-        # every request and the "hybrid" pipeline is BM25-only. Recorded rather
-        # than passed over in silence — a leg that never runs is exactly as
-        # invisible as a leg that fails on every query, which is how the
-        # `embedding` field-name bug survived.
+        # every request and the "hybrid" pipeline is BM25-only.
+        #
+        # Recorded on the result, but deliberately NOT logged per request. This
+        # is a standing configuration gap, not a runtime failure — it is true of
+        # 100% of requests and stays true until the embedding client is wired,
+        # so an ERROR here would emit one Sentry event per query forever and
+        # bury the failures that do need attention. It warns once per process
+        # instead, and `degraded_legs` carries it on every response for anything
+        # that wants to count it.
         degraded_legs.append(f"{_LEG_KNN}:not_configured")
+        _warn_knn_unconfigured()
     else:
         # The kNN arm IS allowed to degrade, and this is the opt-in described
         # in shared/opensearch.opensearch_search. A vector-index or knn-plugin
@@ -253,11 +294,15 @@ async def hybrid_retrieve(
                 exc_info=True,
             )
             degraded_legs.append(f"{_LEG_KNN}:http_error")
+            failed_legs.append(f"{_LEG_KNN}:http_error")
 
-    if degraded_legs:
+    # ERROR only for legs that genuinely broke — an exception or a non-200 from
+    # OpenSearch. A leg that was never configured is reported on the result and
+    # warned about once, not alarmed on per request.
+    if failed_legs:
         logger.error(
-            "Hybrid retrieval DEGRADED — legs unavailable: %s (intent=%s)",
-            ", ".join(degraded_legs),
+            "Hybrid retrieval DEGRADED — legs failed at runtime: %s (intent=%s)",
+            ", ".join(failed_legs),
             intent.value,
         )
 

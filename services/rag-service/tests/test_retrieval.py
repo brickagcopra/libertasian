@@ -602,8 +602,8 @@ class TestDegradedLegReporting:
     async def test_missing_embedding_marks_degraded(self) -> None:
         """Today's production state: no embedding is computed, so kNN never runs.
 
-        A leg that is never invoked is exactly as invisible as one that fails on
-        every query. It is reported the same way.
+        Still reported on the result — that is the per-request signal — but see
+        the logging tests below for why it is NOT an ERROR.
         """
         os_response = {"hits": {"hits": [_make_os_hit("a", 5.0)]}}
 
@@ -613,21 +613,6 @@ class TestDegradedLegReporting:
 
         assert result.degraded is True
         assert "knn:not_configured" in result.degraded_legs
-
-    @pytest.mark.asyncio
-    async def test_missing_embedding_logs_error(self, caplog: Any) -> None:
-        os_response = {"hits": {"hits": [_make_os_hit("a", 5.0)]}}
-
-        with (
-            patch("src.core.retrieval.opensearch_search", new_callable=AsyncMock) as mock_search,
-            caplog.at_level("ERROR"),
-        ):
-            mock_search.return_value = os_response
-            await hybrid_retrieve("test", QueryIntent.GENERAL, top_k=10)
-
-        errors = "\n".join(r.getMessage() for r in caplog.records if r.levelname == "ERROR")
-        assert "DEGRADED" in errors
-        assert "knn:not_configured" in errors
 
     @pytest.mark.asyncio
     async def test_bm25_failure_logs_leg_and_raises(self, caplog: Any) -> None:
@@ -644,6 +629,97 @@ class TestDegradedLegReporting:
         errors = "\n".join(r.getMessage() for r in caplog.records if r.levelname == "ERROR")
         assert "bm25" in errors
         assert "no such index" in errors
+
+
+class TestUnconfiguredLegIsNotAnAlarm:
+    """An unwired leg is a standing config gap, not a runtime failure.
+
+    It holds for 100% of requests until the embedding client is wired, so an
+    ERROR per request would emit one Sentry event per query indefinitely
+    (SENTRY_DSN is set in prod) and bury the failures the ERROR path exists for.
+    WARNING, once per process. The `degraded_legs` field stays per-request.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _reset_latch(self) -> Any:
+        """The one-shot latch is module state and leaks across tests."""
+        import src.core.retrieval as retrieval_module
+
+        retrieval_module._knn_unconfigured_warned = False
+        yield
+        retrieval_module._knn_unconfigured_warned = False
+
+    @staticmethod
+    async def _retrieve_without_embedding() -> Any:
+        os_response = {"hits": {"hits": [_make_os_hit("a", 5.0)]}}
+        with patch("src.core.retrieval.opensearch_search", new_callable=AsyncMock) as mock_search:
+            mock_search.return_value = os_response
+            return await hybrid_retrieve("test", QueryIntent.GENERAL, top_k=10)
+
+    @pytest.mark.asyncio
+    async def test_no_error_logged_per_request(self, caplog: Any) -> None:
+        """The regression this class exists for: no ERROR, no Sentry event."""
+        with caplog.at_level("DEBUG"):
+            await self._retrieve_without_embedding()
+
+        assert [r for r in caplog.records if r.levelname == "ERROR"] == []
+
+    @pytest.mark.asyncio
+    async def test_warns_at_warning_level(self, caplog: Any) -> None:
+        with caplog.at_level("WARNING"):
+            await self._retrieve_without_embedding()
+
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert "NOT configured" in warnings[0].getMessage()
+
+    @pytest.mark.asyncio
+    async def test_warns_only_once_per_process(self, caplog: Any) -> None:
+        """Five requests, one log line."""
+        with caplog.at_level("WARNING"):
+            for _ in range(5):
+                await self._retrieve_without_embedding()
+
+        assert len([r for r in caplog.records if r.levelname == "WARNING"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_flag_persists_after_the_warning(self, caplog: Any) -> None:
+        """Silencing the log must not silence the per-request signal."""
+        with caplog.at_level("WARNING"):
+            await self._retrieve_without_embedding()
+            later = await self._retrieve_without_embedding()
+
+        assert len([r for r in caplog.records if r.levelname == "WARNING"]) == 1
+        assert later.degraded is True
+        assert "knn:not_configured" in later.degraded_legs
+
+    @pytest.mark.asyncio
+    async def test_runtime_failure_still_errors(self, caplog: Any) -> None:
+        """The distinction under test: a real failure keeps its ERROR."""
+        os_response = {"hits": {"hits": [_make_os_hit("a", 5.0)]}}
+        request = httpx.Request("POST", "http://opensearch:9200/x/_search")
+        response = httpx.Response(
+            400,
+            request=request,
+            json={"error": {"root_cause": [{"reason": "field [embedding] not found"}]}},
+        )
+
+        async def _knn_400(index: str, body: dict[str, Any]) -> dict[str, Any]:
+            if index == "legal_documents_vector":
+                raise httpx.HTTPStatusError("400", request=request, response=response)
+            return os_response
+
+        with (
+            patch("src.core.retrieval.opensearch_search", side_effect=_knn_400),
+            caplog.at_level("ERROR"),
+        ):
+            await hybrid_retrieve(
+                "test", QueryIntent.GENERAL, top_k=10, embedding=[0.1] * 384
+            )
+
+        errors = [r for r in caplog.records if r.levelname == "ERROR"]
+        assert errors, "a leg that actually failed must still raise an alarm"
+        assert "DEGRADED" in "\n".join(r.getMessage() for r in errors)
 
 
 class TestOpensearchReason:
