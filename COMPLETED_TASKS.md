@@ -1,6 +1,8 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-08-08 (the iOS 1.0 submission was taken from an **empty listing** to "Ready for Review" with build 15 attached. The `store.config.json` in the repo could never have been pushed — four separate schema/API faults, one of them silent. Build 14 was swapped for 15 because it predated #355. A pre-submission audit then found the uploaded screenshots are **mockups, not app captures** — Guideline 2.3.3 — and that is the one thing still open; it needs a Mac. **Submit for Review has NOT been pressed.** See `apps/mobile/store/IOS_SCREENSHOT_CAPTURE.md`.)
+> Last updated: 2026-08-13 (`fix/answer-abstention-and-placeholders` — **7 of 9 realistic queries on prod returned a non-answer rendered AS an answer.** Two of them carried zero citations at `confidence 0.3` with `abstained: false`; one carried a confidence badge reading **"high" (1.0)** on top of the sentence "The provided source passages do not contain specific information regarding the Bill of Rights." The grounding abstention was scoped-only, the prompt asked the model to refuse in prose that nothing could detect, and the confidence scorer's coverage term counted *documents* while its docstring promised *passages*. Plus two mobile placeholder surfaces. **Retrieval quality is untouched and still unfixed — that is the unshipped reranker, search-epic C4.**)
+>
+> Previously: 2026-08-08 (the iOS 1.0 submission was taken from an **empty listing** to "Ready for Review" with build 15 attached. The `store.config.json` in the repo could never have been pushed — four separate schema/API faults, one of them silent. Build 14 was swapped for 15 because it predated #355. A pre-submission audit then found the uploaded screenshots are **mockups, not app captures** — Guideline 2.3.3 — and that is the one thing still open; it needs a Mac. **Submit for Review has NOT been pressed.** See `apps/mobile/store/IOS_SCREENSHOT_CAPTURE.md`.)
 >
 > Previously: 2026-08-05 (#360 `fix/merchant-kyc-public-site` — the Xendit merchant rejection was a **website KYC audit**, and the site failed it on three counts: the registered entity published in two wrong spellings with no address, three published mailboxes that reject at SMTP (including the DPO contact on the Privacy Policy), and public links that dead-end at /login. /about, /contact and /refund-policy now exist, the phone is published, and the last two unevidenced stat tiles are gone. Refund windows confirmed by brick; `site_contents` has 0 rows in prod, so no runtime override can resurrect either deleted tile.)
 >
@@ -17,6 +19,43 @@
 > Previously: 2026-07-29 (#336 OPEN: a flat 300 s synthesis timeout made a 2,238-char digest — near the corpus average — permanently unsynthesizable, and retrying it identically three times burned 15 min of 8-core CPU. Budget is now length-proportional, failures are classified, and the reason is persisted. A separate CUDA image and bearer auth on the TTS hop open the rented-GPU route for the tier-1 backfill; both are no-ops for prod.)
 >
 > Previously: 2026-07-27 (#322 MERGED `5addc51`: the auto-publish citation gate was unreachable and had stranded 76% of the corpus out of search since 2026-05-30. Dry run over prod confirms 11,561 of 13,093 drafts publish under the corrected rules. #321 opened for the resolver underneath it, #323 for the 1,531 rows still short a `court`.)
+
+---
+
+## 2026-08-13 — the AI assistant was shipping non-answers as confident answers
+
+Branch `fix/answer-abstention-and-placeholders`. Verified live on prod 2026-08-14 with a reviewer account against `POST /api/v1/ai-answers`, 9 realistic queries. **7 came back as a non-answer rendered as an answer.** The AI assistant is the headline feature in App Store screenshot 04, so this is Apple 2.1/4.2 exposure as much as it is a correctness bug.
+
+```
+"What is estafa under Philippine law?" → citations: [], confidence 0.3, abstained: FALSE
+"What is a writ of amparo?"            → citations: [], confidence 0.3, abstained: FALSE
+"bill of rights"                       → 1 VALID citation, confidence 1.0 "high",
+    answer text: "The provided source passages do not contain specific information
+    regarding the Bill of Rights... They primarily discuss a property dispute between
+    the spouses Hing and Choachuy [SOURCE b1a431ad-...]."
+```
+
+Four independent faults, none of them retrieval:
+
+**1. The grounding abstention was scoped-only, and corpus-wide is where it matters.** `answer/service.py` abstained on `valid_count == 0` only when `document_id` was set. The comment said corpus-wide was excluded "on purpose … widening this would change behaviour well outside the surface being fixed" — written when the scoped check was introduced, before anyone measured corpus-wide traffic. It is now `if validation.valid_count == 0:` on both the sync and streaming paths, with `scoped=scoped` threaded into `generate_abstention_response` so a corpus-wide refusal stops telling the reader "this document does not cover that."
+
+**2. "Say so explicitly" produces prose, and prose is not a signal.** Instruction 3 in both system prompts asked the model to say when it could not answer. It complied — that is exactly what the Bill of Rights response is — and the pipeline had no way to tell that sentence apart from an answer, so it scored it, badged it and shipped it. Both prompts now demand a single bare line, `INSUFFICIENT_SOURCES`, and the service matches on it. `PROMPT_VERSION` `answer-v1.1` → `answer-v1.2`, because CLAUDE.md requires `prompt_template_version` be recorded per inference and two different prompts under one version make `model_runs` unauditable.
+
+The streaming path holds back the first line (or 40 characters, whichever lands first) before emitting any `text` frame, so the sentinel is caught **before** a byte of it reaches the client. Streaming it and retracting it would flash a raw protocol token at the reader. Past the probe window every chunk passes straight through, so perceived latency is one short chunk.
+
+**3. The coverage term counted documents while its docstring promised passages.** `shared/scoring.py` built `passage_doc_ids = {p.document_id for p in source_passages}` — a set of DOCUMENTS. Prod returns 8 passages from **1** document on a corpus-wide query, so a single citation scored coverage `1/1 = 1.0`. The term was a constant dressed as a measurement, and it is 0.3 of the confidence score. Coverage is now the fraction of `source_passages` whose `(document_id, section_id)` a citation names, falling back to `document_id` where either side has no section.
+
+**Scope of that change is one caller, not nine.** `compute_confidence` in `shared/scoring.py` is imported by exactly one module — `answer/service.py`, at two call sites. Digests, flashcards, memos, timelines, comparisons, contradictions, hearing prep, pleadings and research workspaces each define their own private `_compute_confidence` in their own service module and were **not** touched. The persisted digest score (`worker-service/src/scoring.py`) is a different file again and was not touched.
+
+**The honest limit on fix 3.** The document-level fallback means a bare `[SOURCE doc]` citation still credits every passage from that document — so the exact prod shape above (8 passages, 1 document, 1 document-level citation) still scores coverage 1.0. The fix bites when passages span several documents, or when the model cites `§section` anchors, which the context packer does emit. The Bill of Rights case is fixed by faults 1 and 2 regardless of what its confidence number would have been.
+
+**4 and 5. Two mobile placeholder surfaces (Apple 2.1, placeholder content).** `DigestDetailScreen` passed `label="hero · digest"` to `Photo`, which renders `label` as visible uppercase text over the hero — legible on a live digest screen. Dropped at that one call site; `Photo.tsx` is unchanged and `OnboardingScreen` still uses the prop legitimately. And `app/dev/screens.tsx` / `app/dev/primitives.tsx` are real expo-router routes with no production exclusion — a placeholder component gallery inside a shipping app. Nothing links to them, but unreachable is not absent; both now return `null` outside `__DEV__`.
+
+**Client verification — no client change was needed, and that was checked, not assumed.** Corpus-wide abstentions had never fired before, so this is the first traffic through that path on both clients. Both hooks already replace (never append) the accumulated text on a terminal abstention frame carrying `abstention_text`, and both `AiSummaryResults` components already render `abstentionCopy(reason)` and never the enum. The genuinely new wire shape — a terminal abstention with **no prior `text` frame at all**, which the sentinel path produces — is now covered by a test on each client, plus `no_results` copy-rendering tests. Mobile streaming is `expo/fetch`, confirmed still the transport.
+
+**Tests.** 19 added: rag-service covers `valid_count == 0` abstaining corpus-wide on both paths, sentinel matching (bare, newline-terminated, punctuated, emphasised, mid-sentence false positive), the streaming probe buffer including the bare-20-character case a newline-only buffer would miss, and coverage computed over passages that all share one `document_id`; mobile asserts `DigestDetailScreen` renders no `hero · digest`. Four existing tests were inverted or repointed because they asserted the old corpus-wide behaviour. rag-service: 706 pass, `mypy --strict` clean on every file touched. `pnpm lint`, `pnpm type-check` clean.
+
+**Not done, deliberately.** Retrieval, the reranker and `abstention_score_threshold` (0.01, inert under RRF) are untouched — that is search-epic C4 and it is still the actual reason these queries retrieve a property dispute for "bill of rights". No EAS build, no ASC submission, no screenshot changes.
 
 ---
 

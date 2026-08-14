@@ -179,7 +179,9 @@ export function DigestDetailScreen({
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
       {/* Hero */}
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 320, zIndex: 0 }}>
-        <Photo height={320} radius={0} tone={heroTone} label="hero · digest" />
+        {/* No `label` — it renders as visible uppercase text over the hero, and
+            this screen ships. The gradient hero itself stays. */}
+        <Photo height={320} radius={0} tone={heroTone} />
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
           <LinearGradient
             colors={['transparent', theme.bg]}

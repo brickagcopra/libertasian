@@ -78,6 +78,21 @@ describe('AiSummaryResults abstention copy', () => {
     expect(screen.queryByText(/validation_failed/)).toBeNull();
   });
 
+  it('renders the no_results copy for a corpus-wide non-answer', () => {
+    // Newly reachable: the model now answers INSUFFICIENT_SOURCES and the
+    // pipeline abstains with `no_results` on a corpus-wide query instead of
+    // rendering the refusal prose as an answer with a confidence badge.
+    abstainedWith('no_results');
+
+    render(<AiSummaryResults query="What is estafa under Philippine law?" />);
+
+    expect(
+      screen.getByText('No sources matched this question. Try different terms.'),
+    ).toBeTruthy();
+    expect(screen.queryByText(/no_results/)).toBeNull();
+    expect(screen.queryByText(/INSUFFICIENT_SOURCES/)).toBeNull();
+  });
+
   it('falls back to the generic copy for an unrecognised reason', () => {
     // A reason added server-side must degrade, not leak an identifier.
     abstainedWith('some_future_reason');

@@ -79,3 +79,116 @@ class TestComputeConfidence:
         # source_coverage = 1.0, validity = 1.0, passage_factor = 1/5 = 0.2
         # = 0.3*1.0 + 0.4*1.0 + 0.3*0.2 = 0.3 + 0.4 + 0.06 = 0.76
         assert 0.7 <= result <= 0.85
+
+
+class TestCoverageIsOverPassagesNotDocuments:
+    """The coverage term counts passages, as its docstring always claimed.
+
+    It compared sets of document ids, so retrieval returning several passages
+    from one document — the ordinary shape on this corpus, 8 passages from 1
+    document on a prod corpus-wide query — collapsed the denominator to 1 and
+    scored one citation as total coverage.
+    """
+
+    def test_one_section_cited_out_of_eight_passages_in_one_document(
+        self, make_citation_ref, make_passage
+    ):
+        """The prod shape. Under document-set coverage this scored 1.0."""
+        passages = [
+            make_passage(document_id="doc-0", section_id=f"sec-{i}") for i in range(8)
+        ]
+        citations = [make_citation_ref(source_id="doc-0", section_id="sec-0")]
+        result = compute_confidence(citations, passages, valid_citation_count=1)
+
+        # coverage = 1/8 = 0.125 → 0.3*0.125 + 0.4*1.0 + 0.3*1.0 = 0.7375
+        assert result == 0.74
+
+    def test_coverage_rises_with_each_additional_section_cited(
+        self, make_citation_ref, make_passage
+    ):
+        """Coverage must discriminate within a document, not saturate at one cite."""
+        passages = [
+            make_passage(document_id="doc-0", section_id=f"sec-{i}") for i in range(8)
+        ]
+        one = compute_confidence(
+            [make_citation_ref(source_id="doc-0", section_id="sec-0")],
+            passages,
+            valid_citation_count=1,
+        )
+        four = compute_confidence(
+            [
+                make_citation_ref(source_id="doc-0", section_id=f"sec-{i}")
+                for i in range(4)
+            ],
+            passages,
+            valid_citation_count=4,
+        )
+        assert four > one
+
+    # See test_prompts.py: a `test_` name with exactly 35 trailing characters
+    # trips TruffleHog's Lob detector and fails the Secret Detection job.
+    def test_citing_every_section_is_full_coverage(self, make_citation_ref, make_passage):
+        passages = [
+            make_passage(document_id="doc-0", section_id=f"sec-{i}") for i in range(8)
+        ]
+        citations = [
+            make_citation_ref(source_id="doc-0", section_id=f"sec-{i}") for i in range(8)
+        ]
+        result = compute_confidence(citations, passages, valid_citation_count=8)
+        assert result == 1.0
+
+    def test_wrong_section_of_the_right_document_is_not_covered(
+        self, make_citation_ref, make_passage
+    ):
+        passages = [make_passage(document_id="doc-0", section_id="sec-0")]
+        citations = [make_citation_ref(source_id="doc-0", section_id="sec-99")]
+        # Falls through both the pair match and the doc-level fallback (the ref
+        # names a section), so nothing is covered.
+        # 0.3*0.0 + 0.4*1.0 + 0.3*0.2 = 0.46
+        assert compute_confidence(citations, passages, valid_citation_count=1) == 0.46
+
+    def test_unsectioned_passages_match_on_document_id(
+        self, make_citation_ref, make_passage
+    ):
+        """Data without section ids must not score 0 coverage."""
+        passages = [make_passage(document_id="doc-0", section_id=None) for _ in range(3)]
+        citations = [make_citation_ref(source_id="doc-0", section_id=None)]
+        # 0.3*1.0 + 0.4*1.0 + 0.3*(3/5) = 0.88
+        assert compute_confidence(citations, passages, valid_citation_count=1) == 0.88
+
+    def test_document_level_citation_covers_that_documents_passages(
+        self, make_citation_ref, make_passage
+    ):
+        """`[SOURCE doc]` without a section is a form the prompt allows.
+
+        Deliberate: a document-level citation is not evidence that the model
+        used one particular section, so it credits every passage from that
+        document. What it must NOT do is credit passages from other documents.
+        """
+        passages = [
+            make_passage(document_id="doc-0", section_id="sec-0"),
+            make_passage(document_id="doc-0", section_id="sec-1"),
+            make_passage(document_id="doc-1", section_id="sec-2"),
+            make_passage(document_id="doc-1", section_id="sec-3"),
+        ]
+        citations = [make_citation_ref(source_id="doc-0", section_id=None)]
+        # coverage = 2/4 = 0.5 → 0.3*0.5 + 0.4*1.0 + 0.3*(4/5) = 0.79
+        assert compute_confidence(citations, passages, valid_citation_count=1) == 0.79
+
+    def test_citation_to_an_absent_document_covers_nothing(
+        self, make_citation_ref, make_passage
+    ):
+        passages = [
+            make_passage(document_id="doc-0", section_id=f"sec-{i}") for i in range(4)
+        ]
+        citations = [make_citation_ref(source_id="doc-other", section_id="sec-0")]
+        # 0.3*0.0 + 0.4*1.0 + 0.3*(4/5) = 0.64
+        assert compute_confidence(citations, passages, valid_citation_count=1) == 0.64
+
+    def test_no_passages_is_zero_coverage_not_a_crash(
+        self, make_citation_ref, make_passage
+    ):
+        citations = [make_citation_ref(source_id="doc-0", section_id="sec-0")]
+        result = compute_confidence(citations, [], valid_citation_count=1)
+        # coverage and passage_factor both 0 → 0.4 from validity alone
+        assert result == 0.4

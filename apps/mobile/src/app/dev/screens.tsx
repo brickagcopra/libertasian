@@ -38,9 +38,19 @@ const SCREEN_OPTIONS: { id: ScreenId; label: string }[] = [
   { id: 'profile', label: 'Profile' },
 ];
 
+/**
+ * Component gallery — development only.
+ *
+ * `app/dev/*` are real expo-router routes with no production exclusion, so this
+ * placeholder gallery was reachable inside shipping builds (App Store guideline
+ * 2.1). Nothing links to it, but "unreachable" is not "absent". Rendering null
+ * outside `__DEV__` leaves the route registered and empty in release builds.
+ */
 export default function ScreensGallery() {
   const { theme, themeKey, setTheme } = useTheme();
   const [active, setActive] = useState<ScreenId>('onboarding');
+
+  if (!__DEV__) return null;
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
