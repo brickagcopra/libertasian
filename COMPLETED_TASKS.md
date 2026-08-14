@@ -1,6 +1,8 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-08-14 (`feat/reranker-service` — **search-epic C4.** A new cross-encoder service (BAAI/bge-reranker-base, CPU, model baked into the image) scores the fused BM25+kNN candidate set by relevance instead of by RRF rank position. Measured on 12 answerable + 2 unanswerable queries: **the correct document ranks top-1 in 12/12**, including "constitution", which the kNN leg had regressed. Two traps handled: rag-service's reranker client sent **no auth header at all** while the new service enforces one — a 403 that the client swallows into an RRF fallback looks exactly like "no reranker deployed"; and `abstention_score_threshold` goes live the moment this deploys, so it was **re-derived from measured scores** (0.01 → **0.0004**) rather than carried over — the old value would have abstained on a query measured as answerable.)
+> Last updated: 2026-08-14 (`fix/reranker-cpu-latency` — the reranker was deployed, correct, and **stopped**, because it could not score 30 passages inside rag-service's 10s timeout. Root cause was not the model: **torch sizes its thread pool from the host core count and ignores the cgroup quota**, so a 2-CPU container ran one thread per host core and thrashed. Pinning threads took p50 from **18.0s to 8.7s** at 2 CPUs; warming the model in the lifespan removed a **27s** cold-start spike. Two of the four prescribed fixes did not survive measurement and are reported as such: `max_length=256` changes nothing measurable (inputs are already ~250 tokens, and max_length caps rather than pads), and **int8 quantization is broken** on the test platform — it now validates itself with a real forward pass and defaults OFF. Deployed config (4 CPUs) meets budget at **p95 5.81s**; 2 CPUs does **not** at p95 9.63s.)
+>
+> Previously: 2026-08-14 (`feat/reranker-service` — **search-epic C4.** A new cross-encoder service (BAAI/bge-reranker-base, CPU, model baked into the image) scores the fused BM25+kNN candidate set by relevance instead of by RRF rank position. Measured on 12 answerable + 2 unanswerable queries: **the correct document ranks top-1 in 12/12**, including "constitution", which the kNN leg had regressed. Two traps handled: rag-service's reranker client sent **no auth header at all** while the new service enforces one — a 403 that the client swallows into an RRF fallback looks exactly like "no reranker deployed"; and `abstention_score_threshold` goes live the moment this deploys, so it was **re-derived from measured scores** (0.01 → **0.0004**) rather than carried over — the old value would have abstained on a query measured as answerable.)
 >
 > Previously: 2026-08-14 (`fix/rag-embedding-client` — **the kNN leg now actually runs.** rag-service never computed a query embedding, so `hybrid_retrieve`'s kNN arm was gated off on every request and retrieval had always been BM25-only — which is why "What **IS** estafa" matched "Jesus **IS** Lord Christian School Foundation". An async embedding client, `RAG_EMBEDDING_SERVICE_URL` in compose, and both `answer/service.py` call sites wired. The honest claim is that **relevant passages now enter the candidate set** — under RRF the BM25 hit still ranks top-1 in 3 of 4 sampled queries, so reranking (C4) is what reorders them, and it only becomes meaningful now. Also found and fixed while verifying: a *failed* embedding was being reported as `knn:not_configured`, which would send someone hunting for an env var that is already set.)
 >
@@ -25,6 +27,51 @@
 > Previously: 2026-07-29 (#336 OPEN: a flat 300 s synthesis timeout made a 2,238-char digest — near the corpus average — permanently unsynthesizable, and retrying it identically three times burned 15 min of 8-core CPU. Budget is now length-proportional, failures are classified, and the reason is persisted. A separate CUDA image and bearer auth on the TTS hop open the rented-GPU route for the tier-1 backfill; both are no-ops for prod.)
 >
 > Previously: 2026-07-27 (#322 MERGED `5addc51`: the auto-publish citation gate was unreachable and had stranded 76% of the corpus out of search since 2026-05-30. Dry run over prod confirms 11,561 of 13,093 drafts publish under the corrected rules. #321 opened for the resolver underneath it, #323 for the 1,531 rows still short a `court`.)
+
+---
+
+## 2026-08-14 — the reranker fits its CPU budget (and two of the four fixes did not work)
+
+Branch `fix/reranker-cpu-latency`. The reranker shipped functionally correct — health, bidirectional auth, single-sigmoid scoring all verified on prod — and was stopped, because scoring 30 passages took 11.2-11.5s against rag-service's 10s `reranker_timeout`. Every call fell back to RRF while every health check stayed green. **Latency is a correctness property for this service.**
+
+**What actually caused it.** Torch sizes its intra-op thread pool from the host core count read out of `/proc`; it has no idea a cgroup CPU quota exists. On a 12-core host inside a `cpus: "2"` container that is 12 threads contending for two cores' worth of quota — context-switch thrash, not parallelism. Measured, 30 passages at 2 CPUs:
+
+| | p50 | p95 |
+|---|---|---|
+| before | 18.04s | 27.22s |
+| thread pinning alone | 8.67s | — |
+| + warm-up (final) | 9.04s | 9.63s |
+
+**Results against the acceptance budget** (30 passages, 5+ runs, arm64 under Docker Desktop):
+
+| CPUs | p50 | p95 | budget | |
+|---|---|---|---|---|
+| 4 | **5.41s** | **5.81s** | < 6s | **PASS** |
+| 2 | 9.04s | 9.63s | < 9s | **MISS** |
+
+4 CPUs is what `docker-compose.prod.yml` now allocates (up from 2), and it clears the budget with ~4s of headroom against the 10s caller timeout. The 2-CPU number is reported as a miss rather than rounded: at 9.63s p95 there is no margin left, so **this service must not be run at 2 CPUs**.
+
+**Two of the four prescribed fixes did not survive measurement, and are reported rather than shipped as if they worked.**
+
+*`max_length=256` contributes nothing measurable.* The reasoning behind it was sound — attention is O(n²), so halving a 512-token window should be ~4x — but `max_length` **caps**, it does not pad, and rag-service already truncates passages to 1000 characters ≈ 250 tokens. The sequences were never near 512, so the cap almost never binds. It is kept as a cheap bound on the worst case, not as a win.
+
+*int8 quantization is broken and now defaults OFF.* It initially failed silently — `RuntimeError: unknown architecure` — while `/health` reported `quantized: true`, because it reported the *setting*. Fixing the engine selection (torch defaults to `x86`/fbgemm, which is x86-only; `qnnpack` is the ARM backend) made it *construct* successfully and then **500 on every inference** with `KeyError: 'ne'`. Neither `onednn` nor `qnnpack` survives a forward pass on aarch64 with torch 2.13, which is itself deprecating this eager-mode API in favour of torchao. So:
+
+- the code path is kept and hardened — it tries each supported backend, **proves it with a real forward pass**, and reverts to fp32 if that fails;
+- `/health` reports whether int8 is **actually running**, not what was requested;
+- the default is `false`, because the latency targets are met without it and enabling an unvalidated optimisation buys risk for a gain nobody has observed.
+
+**Concurrency is bounded too, for the same reason.** `asyncio.to_thread` hands work to the default executor, which also sizes itself from `os.cpu_count()` — the host's cores, not the quota — so N concurrent requests became N scoring threads each asking torch for `torch_threads` threads of its own: the identical oversubscription, re-entered through concurrency rather than configuration. A semaphore (default **1**) now gates the model. Serialising is right because torch already spreads one batch across every core in the quota, so a second concurrent request has no idle CPU to use and can only take cycles from the first — and thrash makes BOTH requests miss the 10s timeout where queueing lets the first finish. A wait over 1s logs a WARNING, which is the signal to add replicas; `/health` reports the ceiling.
+
+**What did work.** Thread pinning (`torch.set_num_threads` plus `OMP_NUM_THREADS`/`MKL_NUM_THREADS`, all tied to the container's `cpus`), and loading + warming the model in the FastAPI lifespan so no request pays cold start — that alone removed the 27.2s (2 CPU) and 15.0s (4 CPU) first-request spikes that guaranteed a timeout after every deploy.
+
+**Ranking is unchanged.** Score spread measured **3900.9x** (min 3.73e-05, median 4.86e-05, max 0.1455) against the pre-fix 3900.4x — the optimisations bought latency without flattening the distribution the ranking depends on.
+
+**`scripts/bench_reranker.py`** is committed, not a throwaway: it POSTs the exact fan-out rag-service produces (30 candidates × 1000 chars), reports p50/p95 and the full score distribution, and exits non-zero on `--max-p95` so it can gate a deploy. The unit tests mock the model and cannot catch any of this.
+
+**One thing found and not fixed.** The image installs `torch 2.13.0+cu130` — a **CUDA** build, in a CPU-only service. It is most of the ~7GB image size. Switching to the CPU wheel index is a separate change; logged in PENDING_TASKS.md.
+
+**Tests.** 49 passing (up from 37). New: `torch.get_num_threads()` equals the configured value after init and on the load path; a non-default value is honoured; the interop RuntimeError is survivable; `max_length` reaches `CrossEncoder`; the quantize flag is respected; and the quantization-safety set — a backend that converts but fails inference reverts to fp32, a working one is kept, a construction failure is survivable, and `/health` reports actual rather than requested state.
 
 ---
 

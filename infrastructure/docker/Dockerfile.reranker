@@ -84,6 +84,18 @@ USER appuser
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+
+# CPU budget. OpenMP and MKL each size their own pools from the HOST core count
+# — neither reads the cgroup quota — so without these a `cpus: "2"` container
+# spawns one thread per host core and thrashes. They must agree with
+# RERANKER_TORCH_THREADS; compose sets both from the same value.
+#
+# TOKENIZERS_PARALLELISM=false silences the HuggingFace fast-tokenizer fork
+# warning and stops it spawning its own pool on top of torch's, which on a
+# 2-core quota is pure contention.
+ENV OMP_NUM_THREADS=2
+ENV MKL_NUM_THREADS=2
+ENV TOKENIZERS_PARALLELISM=false
 # Point HuggingFace at the baked cache. HF_HUB_OFFLINE makes a cache miss fail
 # loudly at startup instead of silently reaching for the network on the request
 # path — if the bake and the configured model name ever disagree, that is a
