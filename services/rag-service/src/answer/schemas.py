@@ -91,6 +91,17 @@ class AnswerSource(BaseModel):
     decision_date: str = ""
     document_type: str = ""
     relevance_score: float = 0.0
+    rerank_score: float | None = Field(
+        default=None,
+        description=(
+            "Cross-encoder score for this passage, or None when the reranker "
+            "did not run (see ``AnswerResponse.degraded_legs``). This is the "
+            "value `abstention_score_threshold` is compared against — "
+            "`relevance_score` is the RRF fused score and lives on a different "
+            "scale entirely (~0.016 vs. 0.98–0.0007), so the threshold cannot "
+            "be re-fit from live traffic without this field."
+        ),
+    )
 
 
 class AnswerResponse(BaseModel):
@@ -124,6 +135,21 @@ class AnswerResponse(BaseModel):
     passages_used: int = Field(default=0, description="Number of passages packed into context.")
     passages_available: int = Field(
         default=0, description="Total passages retrieved before packing."
+    )
+    degraded: bool = Field(
+        default=False,
+        description=(
+            "True when any retrieval or reranking leg did not contribute to "
+            "this answer. Empty iff ``degraded_legs`` is empty."
+        ),
+    )
+    degraded_legs: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Which legs did not contribute, and why — e.g. 'knn:http_error', "
+            "'reranker:unreachable'. A degraded answer is still an answer, but "
+            "its scores are not comparable to a healthy one's."
+        ),
     )
 
 
