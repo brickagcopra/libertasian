@@ -46,6 +46,18 @@ logger = logging.getLogger(__name__)
 # reads as a refusal rather than as an answer.
 _SENTINEL_DECORATION = ".!?…\"'*`_ \t"
 
+# What the sentinel means, in AbstentionReason terms.
+#
+# NOT ``NO_RESULTS``: that copy reads "I was unable to find any relevant legal
+# documents matching your query", which is simply false here — retrieval found
+# passages (8 of them on the prod queries that triggered this), cleared the
+# count floor, and was packed into the prompt. The model then judged those
+# passages irrelevant to the question. ``LOW_RELEVANCE`` says exactly that
+# ("The documents I found do not appear to be sufficiently relevant..."), and
+# its scoped variant is equally accurate. ``NO_RESULTS`` stays for the case it
+# describes: retrieval genuinely returning nothing.
+_SENTINEL_ABSTENTION_REASON = AbstentionReason.LOW_RELEVANCE
+
 # How much of the stream to hold back before the first `text` chunk is emitted.
 # The sentinel is 20 characters, so a window wider than it — bounded by the
 # first newline — is enough to recognise it in full while costing at most one
@@ -169,14 +181,14 @@ async def generate_answer(request: AnswerRequest) -> AnswerResponse:
         logger.info("Abstaining: model emitted the INSUFFICIENT_SOURCES sentinel")
         return AnswerResponse(
             answer=generate_abstention_response(
-                AbstentionReason.NO_RESULTS, query, scoped=scoped
+                _SENTINEL_ABSTENTION_REASON, query, scoped=scoped
             ),
             query=query,
             intent=intent,
             confidence=0.0,
             confidence_level=ConfidenceLevel.LOW,
             abstained=True,
-            abstention_reason=AbstentionReason.NO_RESULTS,
+            abstention_reason=_SENTINEL_ABSTENTION_REASON,
             model_name=model_info["model_name"],
             prompt_template_version=PROMPT_VERSION,
             passages_used=context_bundle.passages_included,
@@ -365,9 +377,9 @@ async def stream_answer(request: AnswerRequest) -> AsyncIterator[AnswerChunk]:
                 type="done",
                 metadata={
                     "abstained": True,
-                    "abstention_reason": AbstentionReason.NO_RESULTS.value,
+                    "abstention_reason": _SENTINEL_ABSTENTION_REASON.value,
                     "abstention_text": generate_abstention_response(
-                        AbstentionReason.NO_RESULTS, query, scoped=scoped
+                        _SENTINEL_ABSTENTION_REASON, query, scoped=scoped
                     ),
                     "confidence": 0.0,
                     "confidence_level": ConfidenceLevel.LOW.value,

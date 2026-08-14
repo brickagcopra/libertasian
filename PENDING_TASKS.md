@@ -1,6 +1,8 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-08-13 (**new, top of the list:** `fix/answer-abstention-and-placeholders` stops the AI assistant presenting non-answers as confident answers — but it does **not** make the answers good. Retrieval still returns a property dispute for "bill of rights"; what changed is that the app now says so instead of badging it "high confidence". The reranker (search-epic C4) is the actual fix and is still unshipped. See the section directly below.)
+> Last updated: 2026-08-14 (**new, top of the list:** `fix/knn-field-name` corrects three OpenSearch field-name mismatches — but **the kNN leg still will not run.** Nothing in rag-service computes a query embedding, so `hybrid_retrieve` is called without one and `_knn_search` is unreachable. The field name was necessary and not sufficient. Wiring the embedding client is the next piece of work, and it is what actually makes retrieval hybrid. See the section directly below.)
+>
+> Previously: 2026-08-13 (**was top of the list:** `fix/answer-abstention-and-placeholders` stops the AI assistant presenting non-answers as confident answers — but it does **not** make the answers good. Retrieval still returns a property dispute for "bill of rights"; what changed is that the app now says so instead of badging it "high confidence". The reranker (search-epic C4) is the actual fix and is still unshipped. See the section directly below.)
 >
 > Previously: 2026-08-08 (**was top of the list:** the iOS 1.0 submission is assembled, validated and sitting one button from App Review with build 15 attached — **and it must not be submitted yet.** The uploaded screenshots are mockups, not app captures (Guideline 2.3.3), and replacing them needs `xcrun simctl`, i.e. a Mac. That is the only outstanding item. See the section directly below and `apps/mobile/store/IOS_SCREENSHOT_CAPTURE.md`.)
 >
@@ -19,6 +21,19 @@
 > Previously: 2026-07-26 (search Phases A–C3 all merged: #306 #307 #308 #310 #311 #312; C3 squashed to `025e538`, deployed and live-verified on prod. Remaining search work is a client UI for `scope` and C4 fusion behind the reranker — but see the reachability note first: only 13,017 of 99,994 derivatives match any visibility branch. Also new: #313 fixed the confidence scorer, #315 gated the re-score script, and the re-score itself is CLOSED as not worth running — 7 rows of 29,471 move. What replaces it is a product decision about what the 0.70 editorial bar should mean; see the top section.)
 
 Verification rules used for this prune: every PR reference checked with `gh pr view <n> --json state,mergedAt`; every branch reference checked against `git branch -r --no-merged origin/main` after `git fetch --prune`. Items that could not be verified were MOVED to "Needs verification", not deleted.
+
+---
+
+## kNN retrieval — the field name is fixed, the leg still does not run (2026-08-14)
+
+Full context: COMPLETED_TASKS.md under 2026-08-14. `fix/knn-field-name` makes `_knn_search` correct. It does not make it *reachable*.
+
+- [ ] **Wire a query-embedding client — this is the whole remaining task.** `hybrid_retrieve` runs the kNN leg only `if embedding is not None`; both call sites in `answer/service.py` pass nothing, and `embedding_service_url` is declared in `config.py` and read nowhere in `src/`. Until an embedding is computed and passed, retrieval is BM25-only no matter how correct the kNN query body is. `EMBEDDING_SERVICE_URL` must also be set in the prod environment, and the service reachable from rag-service.
+- [ ] **Watch for `knn:not_configured` after deploy — it should appear on every query today, and disappear the moment the embedding client lands.** `SearchResult.degraded_legs` and the `Hybrid retrieval DEGRADED` ERROR line are the signal. If it does *not* appear, something else is wrong.
+- [ ] **Re-measure the authority boost.** `source_authority_level` → `source_trust_level` is live on the BM25 leg, which means `official > semi_official > editorial > private` starts actually reordering results for the first time. Ranking will change on every query in the app. Sample before/after on real queries rather than assuming it is strictly an improvement.
+- [ ] **`compute_confidence` is deliberately untouched.** Its coverage term was changed in #381 and never measured against live rows, and retrieval is about to change underneath it. Measure after both land, not before, or the two changes cannot be told apart.
+- [ ] **Audit the remaining OpenSearch readers against the mapping.** The new CI guard covers `core/retrieval.py` only. `citations/case_codal_suggestions.py` builds its own queries and is not under contract; so is anything in `apps/api` that reads `_source` directly. Same defect class, unverified.
+- [ ] **Widen the CI guard to the full rag-service suite once `test_routers.py` is repaired.** 40 pre-existing pytest-asyncio fixture errors are why it is scoped to one file. Until then, `pytest tests/` runs nowhere in CI and only the field contract is protected.
 
 ---
 

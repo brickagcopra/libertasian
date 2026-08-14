@@ -69,6 +69,52 @@ jobs:
       - name: Type check
         run: pnpm type-check
 
+  # ====================
+  # OpenSearch field contract (rag-service <-> index-mappings.ts)
+  # ====================
+  #
+  # The ONLY CI check that runs any Python test. It exists because a read-side
+  # field-name mismatch is invisible everywhere else in the stack:
+  #
+  #   `_knn_search` queried `knn: {"embedding": ...}` while the vector index
+  #   maps `embedding_vector`. Every kNN query returned HTTP 400 "all shards
+  #   failed", hybrid_retrieve caught it as an acceptable degradation, and the
+  #   AI answer pipeline ran BM25-only on 100% of queries for months. Two
+  #   sibling mismatches (`source_authority_level` for `source_trust_level`,
+  #   `plain_text` for `text_snippet`) rode along, silently disabling the
+  #   authority boost.
+  #
+  # The mappings are `dynamic: 'strict'`, so a bad WRITE fails loudly — but a
+  # bad READ does not: an unmapped `_source` field is simply omitted from the
+  # response. Nothing typed the two sides together, and the pre-existing unit
+  # test asserted the buggy field name, so it passed throughout.
+  #
+  # Scoped deliberately to the contract suite rather than the whole rag-service
+  # suite: `tests/test_routers.py` has 40 pre-existing pytest-asyncio fixture
+  # errors that are their own piece of work (see PENDING_TASKS.md). Widening
+  # this to `pytest tests/` is the right follow-up once those are fixed.
+  opensearch-field-contract:
+    name: Guard — OpenSearch field names match the mapping
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install rag-service dependencies
+        working-directory: services/rag-service
+        run: uv sync --all-extras
+
+      - name: Assert query fields exist in the index mappings
+        working-directory: services/rag-service
+        run: uv run pytest tests/test_index_field_contract.py -q
+
   build:
     name: Build
     runs-on: ubuntu-latest

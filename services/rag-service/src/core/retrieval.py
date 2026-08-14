@@ -34,6 +34,131 @@ _AUTHORITY_BOOST: dict[str, float] = {
 _KEYWORD_INDEX = "legal_documents_keyword"
 _VECTOR_INDEX = "legal_documents_vector"
 
+# ---------------------------------------------------------------------------
+# Index field contracts
+#
+# These mirror `apps/api/src/modules/search/index-mappings.ts`, which is the
+# single source of truth for both mappings, and `test_index_field_contract.py`
+# asserts they still agree with it. That cross-check exists because this module
+# disagreeing with that mapping is not a hypothetical failure mode — three
+# fields were wrong at once:
+#
+#   * `_knn_search` queried `knn: {"embedding": ...}`. The vector index has no
+#     `embedding` field; its knn_vector field is `embedding_vector`. Confirmed
+#     against the live prod cluster on 2026-08-14 by pulling a stored vector out
+#     of the index and querying it both ways: `embedding` returns HTTP 400 "all
+#     shards failed", `embedding_vector` returns correct neighbours.
+#   * Both search functions requested `source_authority_level` in `_source`.
+#     Neither index maps that name — it is `source_trust_level`. Every hit fell
+#     back to the "editorial" default, so the authority boost that CLAUDE.md
+#     requires (official > semi_official > editorial > private) multiplied every
+#     passage by 1.0 and reordered nothing. This one affected BM25, i.e. the leg
+#     that IS live.
+#   * `_knn_search` requested `plain_text`, which only the KEYWORD index maps.
+#     The vector index stores its body as `text_snippet`, so kNN passages would
+#     have come back with empty text even once the query itself worked.
+#
+# Under `dynamic: 'strict'` a bad WRITE fails loudly; a bad READ does not. A
+# `_source` naming a field that does not exist is simply absent from the
+# response, and a `knn` clause naming one is a 400 the caller may swallow.
+# Nothing else in the stack can catch that, so it is caught here.
+# ---------------------------------------------------------------------------
+
+# The knn_vector field on `legal_documents_vector` (384-dim, lucene/hnsw/cosinesimil).
+_VECTOR_EMBEDDING_FIELD = "embedding_vector"
+
+# Every field mapped by buildKeywordIndexMapping().
+_KEYWORD_INDEX_FIELDS = frozenset(
+    {
+        "title", "short_title", "plain_text", "section_text",
+        "citation_text", "gr_no", "gr_no_digits", "docket_no", "ponente",
+        "document_id", "section_id", "document_type", "court", "court_key",
+        "jurisdiction", "language", "status", "source_id", "source_trust_level",
+        "section_type", "bar_subjects", "topics",
+        "is_official", "is_published", "decision_date", "promulgation_date",
+        "publication_date", "created_at",
+    }
+)
+
+# Every field mapped by buildVectorIndexMapping(). Note what is ABSENT:
+# no `plain_text`, no `section_text`, no `section_type`.
+_VECTOR_INDEX_FIELDS = frozenset(
+    {
+        _VECTOR_EMBEDDING_FIELD,
+        "document_id", "section_id", "document_type", "court", "court_key",
+        "source_trust_level", "is_official", "is_published", "decision_date",
+        "text_snippet", "title", "citation_text",
+    }
+)
+
+# `_source` lists. The body field is the one real difference between the two
+# indices — `plain_text` on keyword, `text_snippet` on vector — so they cannot
+# share one list.
+_KEYWORD_SOURCE_FIELDS = [
+    "document_id",
+    "section_id",
+    "title",
+    "citation_text",
+    "plain_text",
+    "court",
+    "decision_date",
+    "document_type",
+    "source_trust_level",
+]
+
+_VECTOR_SOURCE_FIELDS = [
+    "document_id",
+    "section_id",
+    "title",
+    "citation_text",
+    "text_snippet",
+    "court",
+    "decision_date",
+    "document_type",
+    "source_trust_level",
+]
+
+# Retrieval legs, named so a degraded result says WHICH half of the hybrid died.
+_LEG_BM25 = "bm25"
+_LEG_KNN = "knn"
+
+
+def _opensearch_reason(exc: httpx.HTTPError) -> str:
+    """Pull the human-readable reason out of an OpenSearch error response.
+
+    ``httpx``'s own message for a rejected query is "Client error '400 Bad
+    Request'", which is true of a wrong field name, a malformed filter and a
+    missing knn plugin alike. OpenSearch puts the distinguishing detail in the
+    body — ``error.root_cause[].reason``, e.g. "field 'embedding' not found" —
+    and that is the line that turns a silent degradation into a diagnosis.
+
+    Best-effort by construction: a transport error has no response at all and a
+    proxy may return HTML. Never raises; the caller is already handling a
+    failure and must not be handed a second one.
+    """
+    response = getattr(exc, "response", None)
+    if response is None:
+        return f"{type(exc).__name__}: {exc}"
+
+    try:
+        payload = response.json()
+    except Exception:  # noqa: BLE001 - body may be HTML, empty, or truncated
+        body = (response.text or "").strip()
+        if not body:
+            return f"HTTP {response.status_code}"
+        return f"HTTP {response.status_code}: {body[:300]}"
+
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if isinstance(error, dict):
+        root = error.get("root_cause")
+        if isinstance(root, list) and root:
+            first = root[0]
+            if isinstance(first, dict) and first.get("reason"):
+                return f"HTTP {response.status_code}: {first['reason']}"
+        if error.get("reason"):
+            return f"HTTP {response.status_code}: {error['reason']}"
+    return f"HTTP {response.status_code}: {str(payload)[:300]}"
+
 
 def _filter_clauses(filter_terms: dict[str, Any] | None) -> list[dict[str, Any]]:
     """Expand a ``{field: value}`` map into OpenSearch term/terms clauses.
@@ -77,29 +202,64 @@ async def hybrid_retrieve(
     Returns:
         SearchResult with fused and authority-boosted passages.
     """
+    degraded_legs: list[str] = []
+
     # BM25 is the load-bearing arm: if it fails, the caller has NO results and
     # must be told so. ``opensearch_search`` raises, and that error is allowed
     # to propagate all the way to the router's 500 handler on purpose — an
     # answer built on zero passages because the cluster was unreachable is the
-    # exact failure this branch exists to stop being silent.
-    bm25_hits = await _bm25_search(query, intent, top_k=top_k * 2, filter_terms=filter_terms)
+    # exact failure this branch exists to stop being silent. It is still
+    # recorded as a failed leg on the way past, so the two legs report failure
+    # through one mechanism and a log search for a dead leg finds both.
+    try:
+        bm25_hits = await _bm25_search(query, intent, top_k=top_k * 2, filter_terms=filter_terms)
+    except httpx.HTTPError as exc:
+        logger.error(
+            "Retrieval leg %r failed on index %s: %s",
+            _LEG_BM25,
+            _KEYWORD_INDEX,
+            _opensearch_reason(exc),
+            exc_info=True,
+        )
+        raise
+
     knn_hits: list[dict[str, Any]] = []
 
-    if embedding is not None:
+    if embedding is None:
+        # NOT a healthy state, and it is the current production state: nothing
+        # in this service computes a query embedding, so this branch is taken on
+        # every request and the "hybrid" pipeline is BM25-only. Recorded rather
+        # than passed over in silence — a leg that never runs is exactly as
+        # invisible as a leg that fails on every query, which is how the
+        # `embedding` field-name bug survived.
+        degraded_legs.append(f"{_LEG_KNN}:not_configured")
+    else:
         # The kNN arm IS allowed to degrade, and this is the opt-in described
         # in shared/opensearch.opensearch_search. A vector-index or knn-plugin
         # failure leaves a complete BM25 result set standing; failing the whole
         # request there would be a strictly worse answer than the hybrid
-        # pipeline's own documented BM25-only fallback. Logged at ERROR, and
-        # ``total_knn_hits: 0`` in the response records that it happened.
+        # pipeline's own documented BM25-only fallback.
         try:
             knn_hits = await _knn_search(embedding, top_k=top_k * 2, filter_terms=filter_terms)
-        except httpx.HTTPError:
+        except httpx.HTTPError as exc:
+            # The OpenSearch reason is logged explicitly. Without it the 400 for
+            # a wrong field name reads identically to a cluster outage, and
+            # `exc_info` alone shows only "Client error '400 Bad Request'".
             logger.error(
-                "kNN arm failed on index %s — degrading to BM25-only for this query",
+                "Retrieval leg %r failed on index %s: %s — degrading to BM25-only",
+                _LEG_KNN,
                 _VECTOR_INDEX,
+                _opensearch_reason(exc),
                 exc_info=True,
             )
+            degraded_legs.append(f"{_LEG_KNN}:http_error")
+
+    if degraded_legs:
+        logger.error(
+            "Hybrid retrieval DEGRADED — legs unavailable: %s (intent=%s)",
+            ", ".join(degraded_legs),
+            intent.value,
+        )
 
     # Fuse with RRF
     fused = _rrf_fuse(bm25_hits, knn_hits)
@@ -121,6 +281,8 @@ async def hybrid_retrieve(
         total_bm25_hits=len(bm25_hits),
         total_knn_hits=len(knn_hits),
         query_intent=intent.value,
+        degraded=bool(degraded_legs),
+        degraded_legs=degraded_legs,
     )
 
 
@@ -143,17 +305,7 @@ async def _bm25_search(
                 "type": "best_fields",
             },
         },
-        "_source": [
-            "document_id",
-            "section_id",
-            "title",
-            "citation_text",
-            "plain_text",
-            "court",
-            "decision_date",
-            "document_type",
-            "source_authority_level",
-        ],
+        "_source": _KEYWORD_SOURCE_FIELDS,
     }
 
     # Add document type filter for codal queries
@@ -200,7 +352,7 @@ async def _bm25_search(
                 "court": source.get("court", ""),
                 "decision_date": source.get("decision_date", ""),
                 "document_type": source.get("document_type", ""),
-                "source_authority_level": source.get("source_authority_level", "editorial"),
+                "source_authority_level": source.get("source_trust_level", "editorial"),
                 "bm25_score": hit.get("_score", 0.0),
                 "bm25_rank": rank,
             }
@@ -231,20 +383,10 @@ async def _knn_search(
         "size": top_k,
         "query": {
             "knn": {
-                "embedding": knn_clause,
+                _VECTOR_EMBEDDING_FIELD: knn_clause,
             },
         },
-        "_source": [
-            "document_id",
-            "section_id",
-            "title",
-            "citation_text",
-            "plain_text",
-            "court",
-            "decision_date",
-            "document_type",
-            "source_authority_level",
-        ],
+        "_source": _VECTOR_SOURCE_FIELDS,
     }
 
     data = await opensearch_search(_VECTOR_INDEX, body)
@@ -260,11 +402,13 @@ async def _knn_search(
                 "section_id": source.get("section_id"),
                 "title": source.get("title", ""),
                 "citation_text": source.get("citation_text", ""),
-                "text": (source.get("plain_text", "") or "")[:2000],
+                # `text_snippet`, not `plain_text` — the vector index does not
+                # map the latter, so reading it yields an empty passage body.
+                "text": (source.get("text_snippet", "") or "")[:2000],
                 "court": source.get("court", ""),
                 "decision_date": source.get("decision_date", ""),
                 "document_type": source.get("document_type", ""),
-                "source_authority_level": source.get("source_authority_level", "editorial"),
+                "source_authority_level": source.get("source_trust_level", "editorial"),
                 "knn_score": hit.get("_score", 0.0),
                 "knn_rank": rank,
             }
@@ -342,6 +486,9 @@ def _to_passage(data: dict[str, Any]) -> Passage:
 # hearing_prep, research_workspaces)
 # ---------------------------------------------------------------------------
 
+# Keyword-index fields. `source_trust_level` for the same reason as
+# `_KEYWORD_SOURCE_FIELDS`: `source_authority_level` is the name of the field on
+# our Passage model, never the name of a field in either index.
 _DOC_SOURCE_FIELDS = [
     "document_id",
     "section_id",
@@ -352,7 +499,7 @@ _DOC_SOURCE_FIELDS = [
     "decision_date",
     "document_type",
     "section_type",
-    "source_authority_level",
+    "source_trust_level",
 ]
 
 
@@ -464,7 +611,7 @@ def _hit_to_passage(
         court=source.get("court", ""),
         decision_date=source.get("decision_date", ""),
         document_type=source.get("document_type", ""),
-        source_authority_level=source.get("source_authority_level", "editorial"),
+        source_authority_level=source.get("source_trust_level", "editorial"),
         score=hit.get("_score", 0.0),
         bm25_score=hit.get("_score", 0.0),
         knn_score=0.0,
