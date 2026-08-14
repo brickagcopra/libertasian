@@ -147,7 +147,23 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Pinned to a release tag, not @main. This scanner gates every PR, so an
+      # unpinned action means the version that decides whether a PR merges can
+      # change under us with no commit here — it had already moved to 3.96.0 by
+      # the time anyone looked.
+      #
+      # `--exclude-detectors=lob`: Lob's key pattern is
+      # `(test|live)_[A-Za-z0-9_]{35}`, so ANY Python test function whose name
+      # after `test_` is exactly 35 word-characters is a literal match. There
+      # are ~53 such names on main already, and `test_blank_passages_do_not_
+      # consume_top_k` (PR #387) tripped it. `--only-verified` does not filter
+      # these out: the Lob verifier's API call succeeds, so the finding is
+      # reported as VERIFIED. We have no Lob integration anywhere — `grep -ri
+      # lob` over package.json / pyproject.toml / requirements*.txt returns
+      # nothing — so the detector can only ever fire on a function name here.
+      # Excluding it costs no real coverage and stops a scanner that fails
+      # unpredictably on a rename from teaching everyone to ignore it.
       - name: TruffleHog secret scan
-        uses: trufflesecurity/trufflehog@main
+        uses: trufflesecurity/trufflehog@v3.96.0
         with:
-          extra_args: --only-verified
+          extra_args: --only-verified --exclude-detectors=lob
