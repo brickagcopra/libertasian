@@ -624,6 +624,14 @@ services:
           # coin-flip. Score spread was 3900.9x at all three quotas, so this is
           # purely a latency decision — CPU count does not touch the math.
           #
+          # The headroom arithmetic above is superseded, the choice of 8 is not.
+          # Those figures came from scripts/bench_reranker.py, which pads
+          # synthetic passages to 1000 chars; the live path through rag-service
+          # with real corpus text measures p50 8.14s / p99 11.97s at 8 CPUs, so
+          # the "2.9s of headroom" never existed end to end. `reranker_timeout`
+          # moved 10s -> 20s to cover it. 8 CPUs remains the right quota — it is
+          # still the fastest of the three, and nothing here argues for fewer.
+          #
           # Keep RERANKER_TORCH_THREADS (and OMP/MKL) equal to this number.
           cpus: "8"
           # Higher than embedding-service's 2G: bge-reranker-base is ~278M
