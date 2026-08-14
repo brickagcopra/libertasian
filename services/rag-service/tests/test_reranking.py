@@ -156,7 +156,9 @@ class TestCallReranker:
         mock_response.json.return_value = {"results": [{"id": "p1", "score": 0.9}]}
         mock_response.raise_for_status = lambda: None
 
-        async def _capture_post(url: str, json: dict[str, Any]) -> AsyncMock:
+        async def _capture_post(
+            url: str, json: dict[str, Any], headers: dict[str, str] | None = None
+        ) -> AsyncMock:
             captured_payload.update(json)
             return mock_response
 
@@ -222,8 +224,8 @@ class TestRerankPassages:
 
     @pytest.mark.asyncio
     async def test_empty_passages_returns_empty(self) -> None:
-        result = await rerank_passages("query", [], top_k=8)
-        assert result == []
+        outcome = await rerank_passages("query", [], top_k=8)
+        assert outcome.passages == []
 
     @pytest.mark.asyncio
     async def test_no_reranker_url_uses_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -232,11 +234,11 @@ class TestRerankPassages:
         monkeypatch.setattr(settings, "reranker_url", "")
 
         passages = [_passage("a", 0.3), _passage("b", 0.9), _passage("c", 0.6)]
-        result = await rerank_passages("query", passages, top_k=2)
+        outcome = await rerank_passages("query", passages, top_k=2)
 
-        assert len(result) == 2
-        assert result[0].id == "b"  # Highest RRF score
-        assert result[1].id == "c"
+        assert len(outcome.passages) == 2
+        assert outcome.passages[0].id == "b"  # Highest RRF score
+        assert outcome.passages[1].id == "c"
 
     @pytest.mark.asyncio
     async def test_reranker_success_sorts_by_rerank_score(
@@ -254,11 +256,11 @@ class TestRerankPassages:
             ]
 
         with patch("src.core.reranking._call_reranker", side_effect=_mock_call):
-            result = await rerank_passages("query", passages, top_k=2)
+            outcome = await rerank_passages("query", passages, top_k=2)
 
         # b has higher rerank_score (0.95) despite lower RRF score
-        assert result[0].id == "b"
-        assert result[0].rerank_score == 0.95
+        assert outcome.passages[0].id == "b"
+        assert outcome.passages[0].rerank_score == 0.95
 
     @pytest.mark.asyncio
     async def test_reranker_error_falls_back_to_rrf(
@@ -271,11 +273,11 @@ class TestRerankPassages:
         passages = [_passage("a", 0.3), _passage("b", 0.9)]
 
         with patch("src.core.reranking._call_reranker", side_effect=Exception("Connection refused")):
-            result = await rerank_passages("query", passages, top_k=2)
+            outcome = await rerank_passages("query", passages, top_k=2)
 
         # Should fall back to RRF scores
-        assert result[0].id == "b"
-        assert result[0].score == 0.9
+        assert outcome.passages[0].id == "b"
+        assert outcome.passages[0].score == 0.9
 
     @pytest.mark.asyncio
     async def test_top_k_applied_after_reranking(
@@ -290,9 +292,9 @@ class TestRerankPassages:
             return [p.model_copy(update={"rerank_score": p.score}) for p in passages]
 
         with patch("src.core.reranking._call_reranker", side_effect=_mock_call):
-            result = await rerank_passages("query", passages, top_k=3)
+            outcome = await rerank_passages("query", passages, top_k=3)
 
-        assert len(result) == 3
+        assert len(outcome.passages) == 3
 
     @pytest.mark.asyncio
     async def test_single_passage(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -301,7 +303,195 @@ class TestRerankPassages:
         monkeypatch.setattr(settings, "reranker_url", "")
 
         passages = [_passage("solo", 0.75)]
-        result = await rerank_passages("query", passages, top_k=8)
+        outcome = await rerank_passages("query", passages, top_k=8)
 
-        assert len(result) == 1
-        assert result[0].id == "solo"
+        assert len(outcome.passages) == 1
+        assert outcome.passages[0].id == "solo"
+
+
+class TestInternalAuthHeader:
+    """The trap: enforce auth server-side, forget it client-side, get RRF.
+
+    reranker-service enforces X-Internal-Api-Key exactly as embedding-service
+    does. This client sent no headers at all, so the first production call would
+    have been a 403 that `rerank_passages` swallows into an RRF fallback —
+    indistinguishable from "no reranker deployed".
+    """
+
+    @pytest.mark.asyncio
+    async def test_header_is_sent(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "internal_api_key", "secret-key")
+        captured: dict[str, Any] = {}
+
+        response = MagicMock()
+        response.json.return_value = {"results": []}
+        response.raise_for_status = lambda: None
+
+        async def _post(
+        url: str, json: dict[str, Any], headers: dict[str, str] | None = None
+    ) -> Any:
+            captured["headers"] = headers
+            return response
+
+        with patch("src.core.reranking.httpx.AsyncClient") as mock_client:
+            instance = MagicMock()
+            instance.post = _post
+            instance.__aenter__ = _aret(instance)
+            instance.__aexit__ = _aret(False)
+            mock_client.return_value = instance
+            await _call_reranker("http://reranker:8002", "q", [_passage("p1")])
+
+        assert captured["headers"] == {"X-Internal-Api-Key": "secret-key"}
+
+    def test_header_name_matches_worker(self) -> None:
+        """One spelling across the fleet — worker-service set the precedent."""
+        from src.core.reranking import _internal_headers
+
+        assert list(_internal_headers()) == ["X-Internal-Api-Key"]
+
+
+class TestDegradedMarkers:
+    """A reranker that did not run must say so, and say WHY."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_latch(self) -> Any:
+        import src.core.reranking as module
+
+        module._reranker_unconfigured_warned = False
+        yield
+        module._reranker_unconfigured_warned = False
+
+    @pytest.mark.asyncio
+    async def test_success_is_not_degraded(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "reranker_url", "http://reranker:8002")
+        passages = [_passage("a", 0.3)]
+
+        async def _ok(url: str, query: str, ps: list[Passage]) -> list[Passage]:
+            return [p.model_copy(update={"rerank_score": 0.9}) for p in ps]
+
+        with patch("src.core.reranking._call_reranker", side_effect=_ok):
+            outcome = await rerank_passages("q", passages, top_k=1)
+
+        assert outcome.degraded is False
+        assert outcome.degraded_legs == []
+
+    @pytest.mark.asyncio
+    async def test_unconfigured_marker(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "reranker_url", "")
+        outcome = await rerank_passages("q", [_passage("a", 0.3)], top_k=1)
+
+        assert outcome.degraded is True
+        assert outcome.degraded_legs == ["reranker:not_configured"]
+
+    @pytest.mark.asyncio
+    async def test_unconfigured_warns_once(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: Any
+    ) -> None:
+        """Standing config choice: never ERROR, never per request."""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "reranker_url", "")
+        with caplog.at_level("DEBUG"):
+            for _ in range(4):
+                await rerank_passages("q", [_passage("a", 0.3)], top_k=1)
+
+        assert [r for r in caplog.records if r.levelname == "ERROR"] == []
+        assert len([r for r in caplog.records if r.levelname == "WARNING"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_timeout_marker(self, monkeypatch: pytest.MonkeyPatch, caplog: Any) -> None:
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "reranker_url", "http://reranker:8002")
+
+        with (
+            patch("src.core.reranking._call_reranker", side_effect=httpx.ReadTimeout("slow")),
+            caplog.at_level("ERROR"),
+        ):
+            outcome = await rerank_passages("q", [_passage("a", 0.3)], top_k=1)
+
+        assert outcome.degraded_legs == ["reranker:unreachable"]
+        assert any(r.levelname == "ERROR" for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_unreachable_marker(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "reranker_url", "http://reranker:8002")
+
+        with patch("src.core.reranking._call_reranker", side_effect=httpx.ConnectError("no")):
+            outcome = await rerank_passages("q", [_passage("a", 0.3)], top_k=1)
+
+        assert outcome.degraded_legs == ["reranker:unreachable"]
+
+    @pytest.mark.asyncio
+    async def test_forbidden_marks_failed(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: Any
+    ) -> None:
+        """The 403 case specifically: a missing internal key must be LOUD."""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "reranker_url", "http://reranker:8002")
+        request = httpx.Request("POST", "http://reranker:8002/rerank")
+        forbidden = httpx.HTTPStatusError(
+            "403", request=request, response=httpx.Response(403, request=request)
+        )
+
+        with (
+            patch("src.core.reranking._call_reranker", side_effect=forbidden),
+            caplog.at_level("ERROR"),
+        ):
+            outcome = await rerank_passages("q", [_passage("a", 0.3)], top_k=1)
+
+        assert outcome.degraded_legs == ["reranker:failed"]
+        assert any(r.levelname == "ERROR" for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_malformed_body_marks_failed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "reranker_url", "http://reranker:8002")
+
+        with patch("src.core.reranking._call_reranker", side_effect=KeyError("score")):
+            outcome = await rerank_passages("q", [_passage("a", 0.3)], top_k=1)
+
+        assert outcome.degraded_legs == ["reranker:failed"]
+
+    @pytest.mark.asyncio
+    async def test_failure_still_returns_passages(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Ordering degrades; the answer does not disappear."""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "reranker_url", "http://reranker:8002")
+        passages = [_passage("a", 0.3), _passage("b", 0.9)]
+
+        with patch("src.core.reranking._call_reranker", side_effect=httpx.ConnectError("no")):
+            outcome = await rerank_passages("q", passages, top_k=2)
+
+        assert [p.id for p in outcome.passages] == ["b", "a"]
+
+    @pytest.mark.asyncio
+    async def test_failure_does_not_raise(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "reranker_url", "http://reranker:8002")
+
+        with patch("src.core.reranking._call_reranker", side_effect=RuntimeError("boom")):
+            await rerank_passages("q", [_passage("a", 0.3)], top_k=1)
+
+
+def _aret(value: Any) -> Any:
+    async def _inner(*_a: Any, **_k: Any) -> Any:
+        return value
+
+    return _inner

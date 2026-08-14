@@ -117,15 +117,38 @@ class Settings(BaseSettings):
     # all three match. Hence a separate, lower floor for the scoped case.
     abstention_min_passages: int = 3
     abstention_min_passages_scoped: int = 1
-    # SUPERSEDED — this gate is inert and tuning the number will not revive it.
-    # Prod sets no RERANKER_URL, so rerank_score is None and check_abstention
-    # compares a raw RRF score. RRF encodes RANK, not relevance: top-1 is
-    # structurally ~0.0164, above 0.01 for every query that returns anything at
-    # all. Raising the number would start rejecting on rank position rather than
-    # on whether the passage answers the question. The real fix is deploying the
-    # reranker so rerank_score is populated — tracked as search-epic C4. Until
-    # then the count floor above is the only abstention that actually fires.
-    abstention_score_threshold: float = 0.01
+
+    # LIVE as of the reranker deployment (search-epic C4). This gate was inert
+    # for as long as no reranker existed — with rerank_score None,
+    # check_abstention fell back to a raw RRF score, which encodes rank position
+    # (~0.0164 at top-1) rather than relevance. It now compares real
+    # cross-encoder probabilities, so the old 0.01 had to be re-derived rather
+    # than carried over.
+    #
+    # MEASURED, not guessed. BAAI/bge-reranker-base scored 12 answerable legal
+    # queries and 2 deliberately unanswerable ones against candidate sets built
+    # from the documents prod retrieval actually returns (including the BM25
+    # stopword distractors that motivated this epic). Sigmoid applied to the raw
+    # logit, so scores are 0-1:
+    #
+    #   answerable   top-1: 0.0044 .. 0.9993   (median 0.83, correct doc top-1 in 12/12)
+    #   unanswerable top-1: 3.74e-05           (both — the model's saturated "no")
+    #
+    # The two populations are separated by ~117x, but the boundary sits far
+    # below the intuitive midpoint: a "relevant" passage frequently scores under
+    # 0.5, and the lowest genuinely-answerable query scored 0.0044. The old 0.01
+    # would therefore have ABSTAINED on a query the corpus can answer. 0.0004 is
+    # the geometric midpoint of the measured gap — ~11x above the model's floor
+    # and ~11x below the lowest answerable top-1, i.e. maximum ratio margin on
+    # both sides.
+    #
+    # What this gate does and does not do: it rejects queries with NOTHING
+    # relevant retrieved. It is not a quality bar — answerable top-1 scores span
+    # 200x, so no single threshold separates "well answered" from "barely
+    # answered". The citation-grounding abstention (#381) remains the effective
+    # quality gate. Re-derive this from prod scores once real traffic has run
+    # through the reranker.
+    abstention_score_threshold: float = 0.0004
 
     # Embedding service — the kNN retrieval leg's input.
     #

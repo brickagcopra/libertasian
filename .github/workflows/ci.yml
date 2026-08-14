@@ -94,7 +94,7 @@ jobs:
   # errors that are their own piece of work (see PENDING_TASKS.md). Widening
   # this to `pytest tests/` is the right follow-up once those are fixed.
   opensearch-field-contract:
-    name: Guard — OpenSearch field names match the mapping
+    name: Guard — service contracts (OpenSearch fields, reranker API)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -114,6 +114,34 @@ jobs:
       - name: Assert query fields exist in the index mappings
         working-directory: services/rag-service
         run: uv run pytest tests/test_index_field_contract.py -q
+
+      # The rag-service <-> reranker-service API contract. Same reasoning as
+      # the OpenSearch one: `core/reranking.py` builds and parses plain dicts,
+      # reranker-service declares Pydantic models in a different package, and
+      # nothing types the two together. A drift on either side is caught by
+      # `rerank_passages` and turned into an RRF fallback — an answer still
+      # comes back, just ordered by rank position instead of relevance. Runs in
+      # rag-service's venv and loads the service's schema module by file path,
+      # because both packages are named `src`.
+      - name: Assert the reranker API contract holds
+        working-directory: services/rag-service
+        run: uv run pytest tests/test_rerank_contract.py tests/test_reranking.py -q
+
+      - name: Install reranker-service dependencies
+        working-directory: services/reranker-service
+        run: uv sync --all-extras
+
+      # The reranker's own suite is small, has no external dependencies (the
+      # model is mocked) and covers the sigmoid contract that
+      # `abstention_score_threshold` now depends on. Unlike rag-service's full
+      # suite it is green, so it runs whole.
+      - name: Run reranker-service tests
+        working-directory: services/reranker-service
+        run: uv run pytest tests/ -q
+
+      - name: Type-check reranker-service
+        working-directory: services/reranker-service
+        run: uv run mypy --strict src/
 
   build:
     name: Build
