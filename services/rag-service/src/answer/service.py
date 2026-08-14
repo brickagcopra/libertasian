@@ -29,6 +29,7 @@ from ..core.types import AbstentionReason, ConfidenceLevel
 from ..core.validation import validate_citations
 from ..shared.scoring import compute_confidence
 from .prompts import (
+    INSUFFICIENT_SOURCES_SENTINEL,
     PROMPT_VERSION,
     STREAMING_SYSTEM_PROMPT,
     SYSTEM_PROMPT,
@@ -39,6 +40,18 @@ from .prompts import (
 from .schemas import AnswerChunk, AnswerRequest, AnswerResponse, AnswerSource
 
 logger = logging.getLogger(__name__)
+
+# Characters a model may wrap or terminate the sentinel line with. Stripped
+# before comparison so `**INSUFFICIENT_SOURCES**` or a trailing full stop still
+# reads as a refusal rather than as an answer.
+_SENTINEL_DECORATION = ".!?…\"'*`_ \t"
+
+# How much of the stream to hold back before the first `text` chunk is emitted.
+# The sentinel is 20 characters, so a window wider than it — bounded by the
+# first newline — is enough to recognise it in full while costing at most one
+# short chunk of perceived latency. The alternative, streaming the sentinel and
+# retracting it, shows the reader a raw token.
+_SENTINEL_PROBE_CHARS = 40
 
 
 def _retrieval_filters(request: AnswerRequest) -> dict[str, Any] | None:
@@ -64,6 +77,20 @@ def _min_passages(request: AnswerRequest) -> int:
     if request.document_id is None:
         return settings.abstention_min_passages
     return settings.abstention_min_passages_scoped
+
+
+def _is_insufficient_sentinel(text: str) -> bool:
+    """True when the model answered with the INSUFFICIENT_SOURCES marker.
+
+    Matched against the FIRST LINE rather than the whole response, so a model
+    that disobeys "and nothing else" and staples an explanation underneath the
+    marker still abstains — the marker is the signal, the prose after it is the
+    behaviour we removed. Comparison is case-insensitive with surrounding
+    punctuation and emphasis stripped, because a stray full stop or a pair of
+    asterisks must not turn a refusal back into a confident-looking answer.
+    """
+    first_line = text.strip().split("\n", 1)[0]
+    return first_line.strip(_SENTINEL_DECORATION).upper() == INSUFFICIENT_SOURCES_SENTINEL
 
 
 def _build_user_prompt(request: AnswerRequest, context: str, query: str) -> str:
@@ -135,7 +162,28 @@ async def generate_answer(request: AnswerRequest) -> AnswerResponse:
         max_tokens=settings.answer_max_tokens,
     )
 
-    # 7. Citation validation (NON-OPTIONAL)
+    # 7. Explicit non-answer check, before validation — a sentinel response has
+    # nothing to validate, and scoring it would produce a confidence number for
+    # a refusal.
+    if _is_insufficient_sentinel(generated_text):
+        logger.info("Abstaining: model emitted the INSUFFICIENT_SOURCES sentinel")
+        return AnswerResponse(
+            answer=generate_abstention_response(
+                AbstentionReason.NO_RESULTS, query, scoped=scoped
+            ),
+            query=query,
+            intent=intent,
+            confidence=0.0,
+            confidence_level=ConfidenceLevel.LOW,
+            abstained=True,
+            abstention_reason=AbstentionReason.NO_RESULTS,
+            model_name=model_info["model_name"],
+            prompt_template_version=PROMPT_VERSION,
+            passages_used=context_bundle.passages_included,
+            passages_available=context_bundle.passages_total,
+        )
+
+    # 8. Citation validation (NON-OPTIONAL)
     validation = await validate_citations(generated_text, reranked)
 
     # If validation finds invalid citations, log but still return
@@ -147,21 +195,20 @@ async def generate_answer(request: AnswerRequest) -> AnswerResponse:
             len(validation.unsupported_claims),
         )
 
-    # Scoped answers must be grounded in the document, not merely produced from
-    # it. Lowering the count floor above removed the check that a short document
-    # could not answer at all; this replaces it with a check on whether the
-    # answer actually cited the document. Zero valid citations from a
-    # single-document pool means the model wrote unsupported prose, which is
-    # precisely what a reader asking "what does THIS say" must never receive.
-    #
-    # Scoped-only on purpose: corpus-wide search keeps returning a low-confidence
-    # answer with zero valid citations, as it does today. Widening this would
-    # change behaviour well outside the surface being fixed.
-    if scoped and validation.valid_count == 0:
-        logger.info("Abstaining: scoped answer produced no valid citations")
+    # An answer must be grounded in the passages, not merely produced from them.
+    # Zero valid citations means the model wrote prose no source backs — for a
+    # scoped reader asking "what does THIS say", and equally for a corpus-wide
+    # question, where prod returned exactly that with `abstained: false` and a
+    # confidence badge on it. The check was scoped-only when it was introduced
+    # to contain the blast radius; measurement on live traffic showed the
+    # corpus-wide case is where it matters most, so it now applies to both.
+    if validation.valid_count == 0:
+        logger.info(
+            "Abstaining: answer produced no valid citations (scoped=%s)", scoped
+        )
         return AnswerResponse(
             answer=generate_abstention_response(
-                AbstentionReason.VALIDATION_FAILED, query, scoped=True
+                AbstentionReason.VALIDATION_FAILED, query, scoped=scoped
             ),
             query=query,
             intent=intent,
@@ -175,7 +222,7 @@ async def generate_answer(request: AnswerRequest) -> AnswerResponse:
             passages_available=context_bundle.passages_total,
         )
 
-    # 8. Confidence scoring
+    # 9. Confidence scoring
     confidence = compute_confidence(
         cited_refs=validation.valid_citations,
         source_passages=reranked,
@@ -270,14 +317,67 @@ async def stream_answer(request: AnswerRequest) -> AsyncIterator[AnswerChunk]:
         # 5. Stream generation
         user_prompt = _build_user_prompt(request, context_bundle.formatted_context, query)
 
+        # The first `_SENTINEL_PROBE_CHARS` (or the first line, whichever comes
+        # first) are withheld so an INSUFFICIENT_SOURCES response is recognised
+        # before any of it reaches the client. Text chunks append on both
+        # clients, so streaming the sentinel and retracting it would flash a raw
+        # token at the reader; holding one short chunk back costs nothing
+        # visible. Once the gate opens every subsequent chunk passes straight
+        # through, so streaming behaviour past the first line is unchanged.
         full_text = ""
+        pending = ""
+        gate_open = False
+        sentinel_seen = False
+
         async for chunk in stream_completion(
             system_prompt=STREAMING_SYSTEM_PROMPT,
             user_prompt=user_prompt,
             max_tokens=settings.answer_max_tokens,
         ):
             full_text += chunk
-            yield AnswerChunk(type="text", content=chunk)
+            if gate_open:
+                yield AnswerChunk(type="text", content=chunk)
+                continue
+
+            pending += chunk
+            if "\n" not in pending and len(pending) < _SENTINEL_PROBE_CHARS:
+                continue
+
+            if _is_insufficient_sentinel(pending):
+                sentinel_seen = True
+                break
+
+            gate_open = True
+            yield AnswerChunk(type="text", content=pending)
+            pending = ""
+
+        # A response shorter than the probe window never opened the gate — which
+        # is exactly the shape of a bare sentinel (20 characters, no newline).
+        if not sentinel_seen and not gate_open:
+            if _is_insufficient_sentinel(pending):
+                sentinel_seen = True
+            elif pending:
+                yield AnswerChunk(type="text", content=pending)
+
+        if sentinel_seen:
+            logger.info("Abstaining: stream emitted the INSUFFICIENT_SOURCES sentinel")
+            yield AnswerChunk(
+                type="done",
+                metadata={
+                    "abstained": True,
+                    "abstention_reason": AbstentionReason.NO_RESULTS.value,
+                    "abstention_text": generate_abstention_response(
+                        AbstentionReason.NO_RESULTS, query, scoped=scoped
+                    ),
+                    "confidence": 0.0,
+                    "confidence_level": ConfidenceLevel.LOW.value,
+                    "valid_citations": 0,
+                    "total_citations": 0,
+                    "model_name": model_info["model_name"],
+                    "prompt_template_version": PROMPT_VERSION,
+                },
+            )
+            return
 
         # 6. Post-generation validation
         validation = await validate_citations(full_text, reranked)
@@ -287,22 +387,25 @@ async def stream_answer(request: AnswerRequest) -> AsyncIterator[AnswerChunk]:
             valid_citation_count=validation.valid_count,
         )
 
-        # Same scoped grounding check as the non-streaming path. It can only run
-        # after generation, by which point the text has already been streamed to
-        # the client — so the abstention is signalled on the TERMINAL chunk and
-        # the client is expected to discard the text it has, exactly as it would
-        # for a pre-generation abstention. No further `text` chunk is emitted:
-        # text chunks append, so one here would leave the reader holding the
-        # unsupported answer with a disclaimer stapled to the end of it.
-        if scoped and validation.valid_count == 0:
-            logger.info("Abstaining: scoped stream produced no valid citations")
+        # Same grounding check as the non-streaming path, and like it, no longer
+        # scoped-only. It can only run after generation, by which point the text
+        # has already been streamed to the client — so the abstention is
+        # signalled on the TERMINAL chunk and the client is expected to discard
+        # the text it has, exactly as it would for a pre-generation abstention.
+        # No further `text` chunk is emitted: text chunks append, so one here
+        # would leave the reader holding the unsupported answer with a
+        # disclaimer stapled to the end of it.
+        if validation.valid_count == 0:
+            logger.info(
+                "Abstaining: stream produced no valid citations (scoped=%s)", scoped
+            )
             yield AnswerChunk(
                 type="done",
                 metadata={
                     "abstained": True,
                     "abstention_reason": AbstentionReason.VALIDATION_FAILED.value,
                     "abstention_text": generate_abstention_response(
-                        AbstentionReason.VALIDATION_FAILED, query, scoped=True
+                        AbstentionReason.VALIDATION_FAILED, query, scoped=scoped
                     ),
                     "confidence": 0.0,
                     "confidence_level": ConfidenceLevel.LOW.value,

@@ -19,12 +19,15 @@ from src.answer.schemas import (
     AnswerSource,
     ConversationTurn,
 )
+from src.answer.prompts import INSUFFICIENT_SOURCES_SENTINEL
 from src.answer.service import (
     _confidence_to_level,
+    _is_insufficient_sentinel,
     _passage_to_source,
     generate_answer,
     stream_answer,
 )
+from src.core.abstention import generate_abstention_response
 from src.core.schemas import (
     CitationRef,
     ContextBundle,
@@ -230,7 +233,7 @@ class TestGenerateAnswer:
         assert response.abstained is False
         assert response.abstention_reason is None
         assert response.model_name == "test-model-v1"
-        assert response.prompt_template_version == "answer-v1.1"
+        assert response.prompt_template_version == "answer-v1.2"
 
     @pytest.mark.asyncio
     async def test_answer_includes_sources_when_requested(self) -> None:
@@ -255,16 +258,23 @@ class TestGenerateAnswer:
 
     @pytest.mark.asyncio
     async def test_answer_with_invalid_citations_reduces_confidence(self) -> None:
-        """When citation validation fails, confidence is computed with fewer valid cites."""
+        """Some citations invalid — the answer stands, at reduced confidence.
+
+        One valid citation is enough to clear the grounding check; the invalid
+        one only drags the validity term down. Zero valid citations is a
+        different case and now abstains (``TestCitationGrounding``).
+        """
         self.mock_validate.return_value = ValidationResult(
             is_valid=False,
-            valid_citations=[],
+            valid_citations=[
+                CitationRef(source_id="doc-0001", text="cited text", valid=True),
+            ],
             invalid_citations=[
                 CitationRef(source_id="doc-fake", text="fake", valid=False),
             ],
             unsupported_claims=["Some unsupported claim"],
-            valid_count=0,
-            total_count=1,
+            valid_count=1,
+            total_count=2,
         )
 
         request = AnswerRequest(query="Test query with bad citations")
@@ -273,6 +283,7 @@ class TestGenerateAnswer:
         # Should still return an answer, but confidence is lower
         assert response.abstained is False
         assert response.answer == "The court held... [SOURCE doc-0001]"
+        assert response.confidence < 1.0
 
     @pytest.mark.asyncio
     async def test_query_trimmed(self) -> None:
@@ -779,8 +790,8 @@ class TestScopedPassageFloor:
         assert done and (done[-1].metadata or {}).get("abstained") is not True
 
 
-class TestScopedCitationGrounding:
-    """A scoped answer that cites nothing is not an answer about the document."""
+class TestCitationGrounding:
+    """An answer that cites nothing is not an answer — scoped or corpus-wide."""
 
     @pytest.fixture(autouse=True)
     def _setup_mocks(self) -> None:
@@ -837,12 +848,33 @@ class TestScopedCitationGrounding:
         assert response.answer != "Unsupported prose with no citations."
 
     @pytest.mark.asyncio
-    async def test_unscoped_zero_valid_citations_still_returns_an_answer(self) -> None:
-        """Corpus-wide behaviour is deliberately unchanged."""
+    async def test_unscoped_zero_valid_citations_abstains(self) -> None:
+        """Corpus-wide, where prod shipped ungrounded prose as a real answer."""
         response = await generate_answer(AnswerRequest(query="A corpus-wide question"))
 
-        assert response.abstained is False
-        assert response.answer == "Unsupported prose with no citations."
+        assert response.abstained is True
+        assert response.abstention_reason == AbstentionReason.VALIDATION_FAILED
+        assert response.confidence == 0.0
+        assert response.answer != "Unsupported prose with no citations."
+
+    @pytest.mark.asyncio
+    async def test_unscoped_abstention_uses_corpus_wide_copy(self) -> None:
+        """The scoped copy ("this document") is nonsense for a corpus-wide query."""
+        response = await generate_answer(AnswerRequest(query="A corpus-wide question"))
+
+        assert "this document" not in response.answer.lower()
+        assert response.answer == generate_abstention_response(
+            AbstentionReason.VALIDATION_FAILED, "A corpus-wide question", scoped=False
+        )
+
+    @pytest.mark.asyncio
+    async def test_scoped_abstention_still_uses_scoped_copy(self) -> None:
+        request = AnswerRequest(query="Does this cover salvage?", document_id="doc-42")
+        response = await generate_answer(request)
+
+        assert response.answer == generate_abstention_response(
+            AbstentionReason.VALIDATION_FAILED, "Does this cover salvage?", scoped=True
+        )
 
     @pytest.mark.asyncio
     async def test_scoped_with_valid_citations_is_answered(self) -> None:
@@ -888,7 +920,7 @@ class TestScopedCitationGrounding:
         assert chunks[-1].type == "done"
 
     @pytest.mark.asyncio
-    async def test_stream_unscoped_zero_valid_citations_does_not_abstain(self) -> None:
+    async def test_stream_unscoped_zero_valid_citations_abstains_on_done(self) -> None:
         async def _fake_stream(**_kwargs: Any):
             yield "Unsupported prose with no citations."
 
@@ -896,7 +928,225 @@ class TestScopedCitationGrounding:
             chunks = [c async for c in stream_answer(AnswerRequest(query="A corpus-wide question"))]
 
         done = [c for c in chunks if c.type == "done"]
-        assert done and (done[-1].metadata or {}).get("abstained") is not True
+        assert done, "stream must terminate with a done chunk"
+        meta = done[-1].metadata or {}
+        assert meta["abstained"] is True
+        assert meta["abstention_reason"] == AbstentionReason.VALIDATION_FAILED.value
+        assert meta["confidence"] == 0.0
+        # Replacement copy for the text the client already holds, in the
+        # corpus-wide wording — the client swaps it in rather than appending.
+        assert meta["abstention_text"] == generate_abstention_response(
+            AbstentionReason.VALIDATION_FAILED, "A corpus-wide question", scoped=False
+        )
+        # No trailing `text` chunk: text chunks append on both clients.
+        assert chunks[-1].type == "done"
+
+
+class TestInsufficientSentinelMatching:
+    """_is_insufficient_sentinel — what counts as the machine-readable refusal."""
+
+    def test_exact_sentinel(self) -> None:
+        assert _is_insufficient_sentinel(INSUFFICIENT_SOURCES_SENTINEL) is True
+
+    def test_surrounding_whitespace(self) -> None:
+        assert _is_insufficient_sentinel("\n  INSUFFICIENT_SOURCES  \n") is True
+
+    def test_trailing_punctuation(self) -> None:
+        assert _is_insufficient_sentinel("INSUFFICIENT_SOURCES.") is True
+
+    def test_markdown_emphasis(self) -> None:
+        assert _is_insufficient_sentinel("**INSUFFICIENT_SOURCES**") is True
+
+    def test_case_insensitive(self) -> None:
+        assert _is_insufficient_sentinel("insufficient_sources") is True
+
+    def test_sentinel_followed_by_disobedient_prose(self) -> None:
+        """"and nothing else" is an instruction, not a guarantee."""
+        assert _is_insufficient_sentinel(
+            "INSUFFICIENT_SOURCES\nThe passages discuss a property dispute instead."
+        ) is True
+
+    def test_real_answer_is_not_the_sentinel(self) -> None:
+        assert _is_insufficient_sentinel("The court held... [SOURCE doc-0001]") is False
+
+    def test_sentinel_mentioned_mid_sentence_is_not_a_refusal(self) -> None:
+        assert _is_insufficient_sentinel(
+            "The record is INSUFFICIENT_SOURCES notwithstanding [SOURCE doc-0001]"
+        ) is False
+
+    def test_empty_text(self) -> None:
+        assert _is_insufficient_sentinel("") is False
+
+
+class TestInsufficientSentinelNonStreaming:
+    """A sentinel response abstains instead of being scored as an answer."""
+
+    @pytest.fixture(autouse=True)
+    def _setup_mocks(self) -> None:
+        self.mock_retrieve = AsyncMock(return_value=_make_search_result())
+        self.mock_rerank = AsyncMock(return_value=_make_passages_list())
+        self.mock_generate = AsyncMock(return_value=INSUFFICIENT_SOURCES_SENTINEL)
+        self.mock_validate = AsyncMock(return_value=_make_validation_result())
+        self.mock_model_info = MagicMock(
+            return_value={"model_name": "test-model-v1", "model_version": "1.0"}
+        )
+
+        self.patches = [
+            patch("src.answer.service.hybrid_retrieve", self.mock_retrieve),
+            patch("src.answer.service.rerank_passages", self.mock_rerank),
+            patch("src.answer.service.generate_completion", self.mock_generate),
+            patch("src.answer.service.validate_citations", self.mock_validate),
+            patch("src.answer.service.get_model_info", self.mock_model_info),
+            patch("src.answer.service.pack_context", return_value=_make_context_bundle()),
+        ]
+        for p in self.patches:
+            p.start()
+
+    @pytest.fixture(autouse=True)
+    def _teardown_mocks(self) -> None:
+        yield
+        for p in self.patches:
+            p.stop()
+
+    @pytest.mark.asyncio
+    async def test_sentinel_abstains_with_no_results(self) -> None:
+        response = await generate_answer(AnswerRequest(query="What is estafa?"))
+
+        assert response.abstained is True
+        assert response.abstention_reason == AbstentionReason.NO_RESULTS
+        assert response.confidence == 0.0
+        assert response.confidence_level == ConfidenceLevel.LOW
+
+    @pytest.mark.asyncio
+    async def test_sentinel_never_reaches_the_caller(self) -> None:
+        response = await generate_answer(AnswerRequest(query="What is estafa?"))
+
+        assert INSUFFICIENT_SOURCES_SENTINEL not in response.answer
+
+    @pytest.mark.asyncio
+    async def test_sentinel_skips_validation(self) -> None:
+        """There is nothing to validate in a refusal, and nothing to score."""
+        await generate_answer(AnswerRequest(query="What is estafa?"))
+
+        self.mock_validate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_scoped_sentinel_uses_scoped_copy(self) -> None:
+        request = AnswerRequest(query="Does this cover estafa?", document_id="doc-42")
+        response = await generate_answer(request)
+
+        assert response.answer == generate_abstention_response(
+            AbstentionReason.NO_RESULTS, "Does this cover estafa?", scoped=True
+        )
+
+
+class TestInsufficientSentinelStreaming:
+    """The sentinel is caught inside the probe window, before any text is sent."""
+
+    @pytest.fixture(autouse=True)
+    def _setup_mocks(self) -> None:
+        self.mock_retrieve = AsyncMock(return_value=_make_search_result())
+        self.mock_rerank = AsyncMock(return_value=_make_passages_list())
+        self.mock_validate = AsyncMock(return_value=_make_validation_result())
+        self.mock_model_info = MagicMock(
+            return_value={"model_name": "test-model-v1", "model_version": "1.0"}
+        )
+
+        self.patches = [
+            patch("src.answer.service.hybrid_retrieve", self.mock_retrieve),
+            patch("src.answer.service.rerank_passages", self.mock_rerank),
+            patch("src.answer.service.validate_citations", self.mock_validate),
+            patch("src.answer.service.get_model_info", self.mock_model_info),
+            patch("src.answer.service.check_abstention", return_value=None),
+            patch("src.answer.service.pack_context", return_value=_make_context_bundle()),
+        ]
+        for p in self.patches:
+            p.start()
+
+    @pytest.fixture(autouse=True)
+    def _teardown_mocks(self) -> None:
+        yield
+        for p in self.patches:
+            p.stop()
+
+    @staticmethod
+    def _stream_of(*deltas: str):
+        async def _fake_stream(**_kwargs: Any):
+            for delta in deltas:
+                yield delta
+
+        return _fake_stream
+
+    @pytest.mark.asyncio
+    async def test_bare_sentinel_emits_no_text_chunk(self) -> None:
+        """20 characters, no newline — the gate never opens, and must not.
+
+        This is the case a naive "flush on newline" buffer would miss entirely,
+        streaming the sentinel straight through to the reader.
+        """
+        stream = self._stream_of("INSUFFICIENT", "_SOURCES")
+        with patch("src.answer.service.stream_completion", stream):
+            chunks = [c async for c in stream_answer(AnswerRequest(query="What is estafa?"))]
+
+        assert not [c for c in chunks if c.type == "text"]
+        assert chunks[-1].type == "done"
+        meta = chunks[-1].metadata or {}
+        assert meta["abstained"] is True
+        assert meta["abstention_reason"] == AbstentionReason.NO_RESULTS.value
+        assert meta["confidence"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_sentinel_with_newline_emits_no_text_chunk(self) -> None:
+        with patch(
+            "src.answer.service.stream_completion",
+            self._stream_of("INSUFFICIENT_SOURCES\n", "Sorry about that."),
+        ):
+            chunks = [c async for c in stream_answer(AnswerRequest(query="What is estafa?"))]
+
+        assert not [c for c in chunks if c.type == "text"]
+        assert (chunks[-1].metadata or {})["abstained"] is True
+
+    @pytest.mark.asyncio
+    async def test_sentinel_abstention_text_is_present_for_the_client(self) -> None:
+        """The client holds no text yet, so the copy must ride on the done frame."""
+        stream = self._stream_of(INSUFFICIENT_SOURCES_SENTINEL)
+        with patch("src.answer.service.stream_completion", stream):
+            chunks = [c async for c in stream_answer(AnswerRequest(query="What is estafa?"))]
+
+        meta = chunks[-1].metadata or {}
+        assert meta["abstention_text"] == generate_abstention_response(
+            AbstentionReason.NO_RESULTS, "What is estafa?", scoped=False
+        )
+
+    @pytest.mark.asyncio
+    async def test_short_real_answer_still_streams(self) -> None:
+        """A response below the probe window is released, not swallowed."""
+        stream = self._stream_of("Yes. [SOURCE doc-0001]")
+        with patch("src.answer.service.stream_completion", stream):
+            chunks = [c async for c in stream_answer(AnswerRequest(query="Is bail available?"))]
+
+        text = "".join(c.content for c in chunks if c.type == "text")
+        assert text == "Yes. [SOURCE doc-0001]"
+
+    @pytest.mark.asyncio
+    async def test_long_answer_streams_in_full_and_in_order(self) -> None:
+        """Buffering the head must not drop or reorder anything past it."""
+        deltas = ["The court ", "ruled that the petition ", "is granted. [SOURCE doc-0001]"]
+        with patch("src.answer.service.stream_completion", self._stream_of(*deltas)):
+            chunks = [c async for c in stream_answer(AnswerRequest(query="What was held?"))]
+
+        text = "".join(c.content for c in chunks if c.type == "text")
+        assert text == "".join(deltas)
+        assert (chunks[-1].metadata or {}).get("abstained") is not True
+
+    @pytest.mark.asyncio
+    async def test_answer_merely_containing_the_word_still_streams(self) -> None:
+        body = "The record is INSUFFICIENT_SOURCES notwithstanding. [SOURCE doc-0001]"
+        with patch("src.answer.service.stream_completion", self._stream_of(body)):
+            chunks = [c async for c in stream_answer(AnswerRequest(query="What was held?"))]
+
+        text = "".join(c.content for c in chunks if c.type == "text")
+        assert text == body
 
 
 class TestConversationTurnValidation:

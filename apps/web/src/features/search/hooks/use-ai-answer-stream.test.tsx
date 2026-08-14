@@ -201,6 +201,33 @@ describe('useAiAnswerStream', () => {
     expect(result.current.text).not.toContain('plainly allows');
   });
 
+  it('adopts the abstention copy when the terminal frame abstains with no prior text', async () => {
+    // The sentinel path: the server recognises INSUFFICIENT_SOURCES inside its
+    // probe window, so metadata has already been sent but no `text` frame ever
+    // is. The replacement copy on `done` is all the reader gets — with no prior
+    // text to replace, the client must still adopt it rather than render empty.
+    const stream = createSSEStream([
+      'data: {"type":"metadata","metadata":{"intent":"legal_question","passages_used":8,"passages_available":8,"sources":[]}}\n\n',
+      'data: {"type":"done","content":"","metadata":{"abstained":true,"abstention_reason":"no_results","abstention_text":"I was unable to find any relevant legal documents matching your query.","confidence":0.0,"confidence_level":"low","valid_citations":0,"total_citations":0}}\n\n',
+    ]);
+
+    global.fetch = vi.fn().mockResolvedValueOnce({ ok: true, status: 200, body: stream });
+
+    const { result } = renderHook(() => useAiAnswerStream('what is estafa', true));
+
+    await waitFor(() => {
+      expect(result.current.isDone).toBe(true);
+    });
+
+    expect(result.current.abstained).toBe(true);
+    expect(result.current.abstentionReason).toBe('no_results');
+    expect(result.current.text).toBe(
+      'I was unable to find any relevant legal documents matching your query.',
+    );
+    // The sentinel is an internal protocol token and must never be streamed.
+    expect(result.current.text).not.toContain('INSUFFICIENT_SOURCES');
+  });
+
   it('still parses a legacy flat frame through the fallback', async () => {
     // The non-streaming POST /ai-answers shape. Kept working so old fixtures and
     // any unmigrated producer still populate the panel.

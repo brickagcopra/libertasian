@@ -1,6 +1,8 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-08-08 (**new, top of the list:** the iOS 1.0 submission is assembled, validated and sitting one button from App Review with build 15 attached — **and it must not be submitted yet.** The uploaded screenshots are mockups, not app captures (Guideline 2.3.3), and replacing them needs `xcrun simctl`, i.e. a Mac. That is the only outstanding item. See the section directly below and `apps/mobile/store/IOS_SCREENSHOT_CAPTURE.md`.)
+> Last updated: 2026-08-13 (**new, top of the list:** `fix/answer-abstention-and-placeholders` stops the AI assistant presenting non-answers as confident answers — but it does **not** make the answers good. Retrieval still returns a property dispute for "bill of rights"; what changed is that the app now says so instead of badging it "high confidence". The reranker (search-epic C4) is the actual fix and is still unshipped. See the section directly below.)
+>
+> Previously: 2026-08-08 (**was top of the list:** the iOS 1.0 submission is assembled, validated and sitting one button from App Review with build 15 attached — **and it must not be submitted yet.** The uploaded screenshots are mockups, not app captures (Guideline 2.3.3), and replacing them needs `xcrun simctl`, i.e. a Mac. That is the only outstanding item. See the section directly below and `apps/mobile/store/IOS_SCREENSHOT_CAPTURE.md`.)
 >
 > Previously: 2026-08-04 (`fix/rag-opensearch-tls-auth` — the RAG service's OpenSearch client had neither credentials nor a TLS setting while prod serves https + self-signed + basic auth, and the client turned every failure into an empty hit set. Fixed locally; **the prod confirmation is an op, and it is the only thing that proves any of it.** See the section directly below.)
 >
@@ -17,6 +19,19 @@
 > Previously: 2026-07-26 (search Phases A–C3 all merged: #306 #307 #308 #310 #311 #312; C3 squashed to `025e538`, deployed and live-verified on prod. Remaining search work is a client UI for `scope` and C4 fusion behind the reranker — but see the reachability note first: only 13,017 of 99,994 derivatives match any visibility branch. Also new: #313 fixed the confidence scorer, #315 gated the re-score script, and the re-score itself is CLOSED as not worth running — 7 rows of 29,471 move. What replaces it is a product decision about what the 0.70 editorial bar should mean; see the top section.)
 
 Verification rules used for this prune: every PR reference checked with `gh pr view <n> --json state,mergedAt`; every branch reference checked against `git branch -r --no-merged origin/main` after `git fetch --prune`. Items that could not be verified were MOVED to "Needs verification", not deleted.
+
+---
+
+## AI answers — the abstention is fixed, the retrieval is not (2026-08-13)
+
+`fix/answer-abstention-and-placeholders` changes what the app *says* when it cannot answer. It changes nothing about *why* it cannot. Full context: COMPLETED_TASKS.md under 2026-08-13.
+
+- [ ] **Measure the new abstention rate on prod before an EAS build goes out.** The grounding check now fires corpus-wide, and corpus-wide is most of the traffic. If a large share of real queries abstain, the honest reading is that retrieval is the product problem and the reranker moves up the queue — not that the abstention should be loosened back. Re-run the same 9 queries used on 2026-08-14, plus a wider sample, and record the abstain/answer split.
+- [ ] **Ship the reranker (search-epic C4).** This is the actual fix for "bill of rights" retrieving *Spouses Hing v. Choachuy*. Nothing in this branch touches retrieval.
+- [ ] **`abstention_score_threshold` is 0.01 and inert under RRF.** Left alone deliberately. It cannot do useful work until fusion scores are on a comparable scale, i.e. until C4. Revisit with the reranker, not before.
+- [ ] **Watch for the model ignoring `INSUFFICIENT_SOURCES`.** The sentinel is a prompt instruction, not a constraint. The detector tolerates trailing punctuation, emphasis and a disobedient explanation stapled underneath, but a model that paraphrases instead of emitting the token falls back to the citation-grounding check. Sample `model_runs` under `answer-v1.2` for responses that read as refusals but were not detected.
+- [ ] **The coverage fallback is generous by design, and may be too generous.** A bare `[SOURCE doc]` citation credits every retrieved passage from that document, so the observed prod shape (8 passages, 1 document, 1 document-level cite) still scores coverage 1.0. Tightening it to require `§section` anchors is a real option — but per CLAUDE.md, project it over live rows first and treat the per-caller distribution as the acceptance evidence. It affects `POST /ai-answers` only; the nine other generators have their own scorers.
+- [ ] **Nine private `_compute_confidence` implementations remain.** Digests, flashcards, memos, timelines, comparisons, contradictions, hearing prep, pleadings and research workspaces each carry their own copy in their own service module, none of which uses `shared/scoring.py`. Whether they share the document-vs-passage bug is unmeasured. Not in scope here; worth an audit.
 
 ---
 

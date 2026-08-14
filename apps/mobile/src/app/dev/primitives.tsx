@@ -11,9 +11,16 @@ import { Input } from '@/components/ui/Input';
 import { ListItem } from '@/components/ui/ListItem';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 
+/**
+ * Design-primitive showcase — development only. Same reasoning as
+ * `dev/screens.tsx`: a real route with no production exclusion, gated so the
+ * placeholder content cannot render in a release build.
+ */
 export default function PrimitivesShowcase() {
   const [filter, setFilter] = useState<'all' | 'active'>('all');
   const [text, setText] = useState('');
+
+  if (!__DEV__) return null;
 
   return (
     <View className="flex-1 bg-surface-canvas">
