@@ -631,6 +631,151 @@ class TestDegradedLegReporting:
         assert "no such index" in errors
 
 
+class TestEmbeddingReachesTheKnnLeg:
+    """The wiring the whole `fix/rag-embedding-client` branch exists for.
+
+    `hybrid_retrieve` gates kNN on `if embedding is not None`. Passing one must
+    actually query the vector index; passing None must not, and must not raise.
+    """
+
+    @staticmethod
+    def _index_capture() -> tuple[list[str], Any]:
+        seen: list[str] = []
+
+        async def _stub(index: str, body: dict[str, Any]) -> dict[str, Any]:
+            seen.append(index)
+            return {"hits": {"hits": [_make_os_hit(f"h-{len(seen)}", 5.0)]}}
+
+        return seen, _stub
+
+    @pytest.mark.asyncio
+    async def test_embedding_queries_vector_index(self) -> None:
+        seen, stub = self._index_capture()
+
+        with patch("src.core.retrieval.opensearch_search", side_effect=stub):
+            result = await hybrid_retrieve(
+                "estafa", QueryIntent.GENERAL, top_k=10, embedding=[0.1] * 384
+            )
+
+        assert "legal_documents_vector" in seen
+        assert "legal_documents_keyword" in seen
+        assert result.total_knn_hits > 0
+
+    @pytest.mark.asyncio
+    async def test_none_skips_the_vector_index(self) -> None:
+        """BM25-only must not send a kNN query at all — not even an empty one."""
+        seen, stub = self._index_capture()
+
+        with patch("src.core.retrieval.opensearch_search", side_effect=stub):
+            result = await hybrid_retrieve(
+                "estafa", QueryIntent.GENERAL, top_k=10, embedding=None
+            )
+
+        assert "legal_documents_vector" not in seen
+        assert result.total_knn_hits == 0
+
+    @pytest.mark.asyncio
+    async def test_none_does_not_raise(self) -> None:
+        """A failed embedding degrades retrieval; it never fails the request."""
+        _seen, stub = self._index_capture()
+
+        with patch("src.core.retrieval.opensearch_search", side_effect=stub):
+            result = await hybrid_retrieve(
+                "estafa", QueryIntent.GENERAL, top_k=10, embedding=None
+            )
+
+        assert result.passages
+        assert result.degraded is True
+
+    @pytest.mark.asyncio
+    async def test_supplied_embedding_is_not_degraded(self) -> None:
+        """The other half of #382's observability: it must tell the truth when
+        the leg IS healthy, or `degraded` means nothing."""
+        _seen, stub = self._index_capture()
+
+        with patch("src.core.retrieval.opensearch_search", side_effect=stub):
+            result = await hybrid_retrieve(
+                "estafa", QueryIntent.GENERAL, top_k=10, embedding=[0.1] * 384
+            )
+
+        assert result.degraded is False
+        assert result.degraded_legs == []
+
+    @pytest.mark.asyncio
+    async def test_vector_reaches_the_query_body(self) -> None:
+        """End to end through the field contract: the exact floats we pass in."""
+        captured: dict[str, Any] = {}
+
+        async def _stub(index: str, body: dict[str, Any]) -> dict[str, Any]:
+            if index == "legal_documents_vector":
+                captured.update(body)
+            return {"hits": {"hits": []}}
+
+        vector = [0.5] * 384
+        with patch("src.core.retrieval.opensearch_search", side_effect=_stub):
+            await hybrid_retrieve("estafa", QueryIntent.GENERAL, top_k=10, embedding=vector)
+
+        assert captured["query"]["knn"]["embedding_vector"]["vector"] == vector
+
+
+class TestEmbeddingFailureIsNotAConfigGap:
+    """A failed embedding and an unset URL are different problems.
+
+    Both leave `embedding=None`, but labelling a service outage
+    `knn:not_configured` sends whoever reads it hunting for an env var that is
+    already set — and silences it behind the once-per-process latch, so an
+    outage after the first request would log nothing at all.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _configured(self, monkeypatch: Any) -> Any:
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "embedding_service_url", "http://embedding-service:8001")
+        yield
+
+    @staticmethod
+    async def _retrieve() -> Any:
+        os_response = {"hits": {"hits": [_make_os_hit("a", 5.0)]}}
+        with patch("src.core.retrieval.opensearch_search", new_callable=AsyncMock) as mock_search:
+            mock_search.return_value = os_response
+            return await hybrid_retrieve("test", QueryIntent.GENERAL, top_k=10, embedding=None)
+
+    @pytest.mark.asyncio
+    async def test_labelled_as_a_failure(self) -> None:
+        result = await self._retrieve()
+
+        assert "knn:embedding_failed" in result.degraded_legs
+        assert "knn:not_configured" not in result.degraded_legs
+
+    @pytest.mark.asyncio
+    async def test_logs_error_per_request(self, caplog: Any) -> None:
+        """Unlike a config gap: a live outage should keep alarming."""
+        with caplog.at_level("ERROR"):
+            await self._retrieve()
+
+        errors = "\n".join(r.getMessage() for r in caplog.records if r.levelname == "ERROR")
+        assert "DEGRADED" in errors
+        assert "embedding_failed" in errors
+
+    @pytest.mark.asyncio
+    async def test_does_not_hit_the_warn_latch(self, caplog: Any) -> None:
+        """The once-per-process latch must not swallow a repeated outage."""
+        with caplog.at_level("ERROR"):
+            await self._retrieve()
+            await self._retrieve()
+
+        errors = [r for r in caplog.records if r.levelname == "ERROR"]
+        assert len(errors) == 2
+
+    @pytest.mark.asyncio
+    async def test_still_returns_bm25_results(self) -> None:
+        result = await self._retrieve()
+
+        assert result.passages
+        assert result.total_bm25_hits == 1
+
+
 class TestUnconfiguredLegIsNotAnAlarm:
     """An unwired leg is a standing config gap, not a runtime failure.
 

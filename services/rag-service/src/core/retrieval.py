@@ -13,6 +13,7 @@ from typing import Any
 
 import httpx
 
+from ..config import settings
 from ..shared.opensearch import opensearch_search
 from .schemas import Passage, SearchResult
 from .types import QueryIntent
@@ -125,31 +126,29 @@ _LEG_KNN = "knn"
 
 # One-shot latch for the "kNN was never wired up" warning. Deliberately lazy
 # rather than emitted at import: it fires only if retrieval actually runs
-# without an embedding, so a process that never serves a query stays quiet and a
-# future embedding client silences it without touching this module.
+# without an embedding, so a process that never serves a query stays quiet.
 _knn_unconfigured_warned = False
 
 
 def _warn_knn_unconfigured() -> None:
     """Warn once per process that hybrid retrieval is running on one leg.
 
-    WARNING, once — not ERROR per request. The kNN leg is unconfigured by
-    design until a query-embedding client exists, so the condition holds for
-    every request indefinitely. Alerting on it per request (SENTRY_DSN is set in
-    production) would emit a continuous stream of identical events and drown the
-    runtime failures this module's ERROR logging is actually for. The
-    ``degraded_legs`` field on every ``SearchResult`` remains the per-request
-    signal for anything that wants to measure it.
+    WARNING, once — not ERROR per request. An unset embedding URL is a standing
+    configuration choice, so the condition holds for every request indefinitely.
+    Alerting on it per request (SENTRY_DSN is set in production) would emit a
+    continuous stream of identical events and drown the runtime failures this
+    module's ERROR logging is actually for. The ``degraded_legs`` field on every
+    ``SearchResult`` remains the per-request signal for anything measuring it.
     """
     global _knn_unconfigured_warned  # noqa: PLW0603
     if _knn_unconfigured_warned:
         return
     _knn_unconfigured_warned = True
     logger.warning(
-        "kNN retrieval leg is NOT configured — no query embedding is supplied to "
-        "hybrid_retrieve, so retrieval is BM25-only. Every SearchResult will "
-        "carry degraded_legs=['%s:not_configured'] until an embedding client is "
-        "wired. This is logged once per process.",
+        "kNN retrieval leg is NOT configured — RAG_EMBEDDING_SERVICE_URL is unset, "
+        "so no query embedding is computed and retrieval is BM25-only. Every "
+        "SearchResult will carry degraded_legs=['%s:not_configured']. Logged once "
+        "per process.",
         _LEG_KNN,
     )
 
@@ -234,6 +233,9 @@ async def hybrid_retrieve(
         SearchResult with fused and authority-boosted passages.
     """
     degraded_legs: list[str] = []
+    # Legs that FAILED at runtime, as opposed to legs that were never wired up.
+    # Only these are worth an ERROR per request; see `_warn_knn_unconfigured`.
+    failed_legs: list[str] = []
 
     # BM25 is the load-bearing arm: if it fails, the caller has NO results and
     # must be told so. ``opensearch_search`` raises, and that error is allowed
@@ -256,24 +258,27 @@ async def hybrid_retrieve(
 
     knn_hits: list[dict[str, Any]] = []
 
-    # Legs that FAILED at runtime, as opposed to legs that were never wired up.
-    # Only these are worth an ERROR per request; see `_warn_knn_unconfigured`.
-    failed_legs: list[str] = []
-
     if embedding is None:
-        # Not a healthy state, and it is the current production state: nothing
-        # in this service computes a query embedding, so this branch is taken on
-        # every request and the "hybrid" pipeline is BM25-only.
+        # No embedding, so no kNN leg. WHY there is no embedding decides both the
+        # label and the log level, and conflating them would send someone hunting
+        # for an env var that is already set:
         #
-        # Recorded on the result, but deliberately NOT logged per request. This
-        # is a standing configuration gap, not a runtime failure — it is true of
-        # 100% of requests and stays true until the embedding client is wired,
-        # so an ERROR here would emit one Sentry event per query forever and
-        # bury the failures that do need attention. It warns once per process
-        # instead, and `degraded_legs` carries it on every response for anything
-        # that wants to count it.
-        degraded_legs.append(f"{_LEG_KNN}:not_configured")
-        _warn_knn_unconfigured()
+        #  * URL unset — a standing configuration choice. True of 100% of
+        #    requests for as long as it holds, so it warns ONCE per process and
+        #    never at ERROR. An alert per request would bury real failures
+        #    (SENTRY_DSN is set in prod).
+        #  * URL set but `embed_query` returned None — the service is down,
+        #    slow, or returned something unusable. A genuine runtime failure,
+        #    already logged at ERROR with the reason by the client itself.
+        #
+        # Either way `degraded_legs` carries it on the response, which is the
+        # per-request signal.
+        if settings.embedding_service_url:
+            degraded_legs.append(f"{_LEG_KNN}:embedding_failed")
+            failed_legs.append(f"{_LEG_KNN}:embedding_failed")
+        else:
+            degraded_legs.append(f"{_LEG_KNN}:not_configured")
+            _warn_knn_unconfigured()
     else:
         # The kNN arm IS allowed to degrade, and this is the opt-in described
         # in shared/opensearch.opensearch_search. A vector-index or knn-plugin

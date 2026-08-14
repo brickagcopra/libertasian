@@ -350,6 +350,16 @@ services:
       RAG_REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       RAG_DATABASE_URL: postgresql://${POSTGRES_USER:-libertasian}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-libertasian}
       RAG_INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      # The kNN retrieval leg's input. Without this the leg is skipped entirely
+      # and retrieval is BM25-only — which is what prod did until now, since
+      # nothing passed an embedding to hybrid_retrieve. Note the RAG_ prefix:
+      # rag-service's Settings uses env_prefix="RAG_", so a bare
+      # EMBEDDING_SERVICE_URL would be read by nothing.
+      #
+      # Both containers are on the `ai` network, so this name resolves. NOT a
+      # `depends_on`: embedding-service being down must degrade retrieval to
+      # BM25-only, never hold up or fail rag-service.
+      RAG_EMBEDDING_SERVICE_URL: http://embedding-service:8001
     depends_on:
       opensearch:
         condition: service_healthy

@@ -127,8 +127,28 @@ class Settings(BaseSettings):
     # then the count floor above is the only abstention that actually fires.
     abstention_score_threshold: float = 0.01
 
-    # Embedding service (empty string = kNN disabled, BM25 only)
+    # Embedding service — the kNN retrieval leg's input.
+    #
+    # Empty string still means "unconfigured": `embed_query` returns None,
+    # `hybrid_retrieve` runs BM25-only and records `knn:not_configured`. That
+    # degraded path is kept working on purpose, because it is what local dev and
+    # any environment without the service will use.
+    #
+    # ``env_prefix`` is ``RAG_``, so the variable is **RAG_EMBEDDING_SERVICE_URL**
+    # — the unprefixed EMBEDDING_SERVICE_URL is read by nothing here. Prod sets
+    # it in docker-compose.prod.yml; rag-service and embedding-service both sit
+    # on the `ai` network, so `http://embedding-service:8001` resolves.
     embedding_service_url: str = ""
+    embedding_request_timeout: int = 5
+
+    # Must equal the `dimension` on the knn_vector field of
+    # `legal_documents_vector` (apps/api/src/modules/search/index-mappings.ts,
+    # DEFAULT_EMBEDDING_DIM). BAAI/bge-small-en-v1.5 emits 384 and prod is
+    # confirmed at 384. A vector of any other length is rejected by OpenSearch
+    # as an opaque HTTP 400, so `embed_query` checks the length before the query
+    # is ever built. Change this only in lockstep with EMBEDDING_DIM and a
+    # reindex.
+    embedding_dim: int = 384
 
     # Internal API key for service-to-service authentication
     internal_api_key: str = ""

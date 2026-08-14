@@ -15,6 +15,7 @@ from .comparisons.router import router as comparisons_router
 from .completions.router import router as completions_router
 from .config import settings
 from .contradictions.router import router as contradictions_router
+from .core.clients import close_embedding_client
 from .digests.router import router as digests_router
 from .doctrines.router import router as doctrines_router
 from .flashcards.router import router as flashcards_router
@@ -67,9 +68,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001
             exc_info=True,
         )
 
+    if settings.embedding_service_url:
+        logger.info(
+            "Query embedding enabled at %s (dim=%d) — kNN retrieval leg is live.",
+            settings.embedding_service_url,
+            settings.embedding_dim,
+        )
+    else:
+        logger.warning(
+            "RAG_EMBEDDING_SERVICE_URL is unset — no query embedding will be "
+            "computed, so hybrid retrieval runs BM25-only and every SearchResult "
+            "will carry degraded_legs=['knn:not_configured'].",
+        )
+
     yield
 
     await close_opensearch()
+    await close_embedding_client()
 
 
 app = FastAPI(
