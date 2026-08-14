@@ -568,18 +568,31 @@ services:
       RERANKER_MODEL_NAME: ${RERANKER_MODEL_NAME:-BAAI/bge-reranker-base}
       RERANKER_DEVICE: ${RERANKER_DEVICE:-cpu}
       RERANKER_INTERNAL_API_KEY: ${INTERNAL_API_KEY}
-      # Must match the `cpus` limit below. Torch reads the host core count, not
-      # the cgroup quota, so leaving it unset means one thread per host core
-      # contending for a fraction of one — measured at 11.2-11.5s for 30
-      # passages, against rag-service's 10s timeout.
-      RERANKER_TORCH_THREADS: ${RERANKER_TORCH_THREADS:-4}
-      OMP_NUM_THREADS: ${RERANKER_TORCH_THREADS:-4}
-      MKL_NUM_THREADS: ${RERANKER_TORCH_THREADS:-4}
-      # 256 tokens covers the 1000-character passages rag-service actually
-      # sends; attention is O(n^2), so the full 512 window costs ~4x for text
-      # that is not there.
+      # All three MUST equal the `cpus` limit below, and each other. Torch,
+      # OpenMP and MKL each size their own pool from the host core count and
+      # none of them reads the cgroup quota, so an unset value means one thread
+      # per host core contending for a fraction of one — the thrash that made
+      # 30 passages take 11.2-11.5s against rag-service's 10s timeout before
+      # any of this was pinned.
+      RERANKER_TORCH_THREADS: ${RERANKER_TORCH_THREADS:-8}
+      OMP_NUM_THREADS: ${RERANKER_TORCH_THREADS:-8}
+      MKL_NUM_THREADS: ${RERANKER_TORCH_THREADS:-8}
+      # A guard, not an optimisation. `max_length` truncates, it does not pad
+      # — sequences pad to the longest item in the batch — and rag-service
+      # already truncates passages to 1000 characters (~250 tokens), so this
+      # cap almost never binds and benchmarks show no measurable effect. It
+      # stays because it bounds the worst case if a caller ever sends an
+      # oversized passage. See services/reranker-service/src/config.py.
       RERANKER_MAX_LENGTH: ${RERANKER_MAX_LENGTH:-256}
-      # Off until validated on the deployment platform — see config.py.
+      # Off, and now on prod evidence rather than pending it. Tried on the
+      # prod x86_64 host: ALL THREE backends reported unusable — fbgemm,
+      # onednn and qnnpack — each with empty exception args. The service
+      # validated each with a real forward pass, rejected all of them, fell
+      # back to fp32 and reported `quantized: false` on /health, which is
+      # exactly the designed behaviour. So this is NOT arm64-specific: int8
+      # dynamic quantization has failed on every platform tested so far.
+      # torch 2.13 is deprecating this eager-mode API in favour of torchao,
+      # which is where a retry should start.
       RERANKER_QUANTIZE: ${RERANKER_QUANTIZE:-false}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
@@ -590,11 +603,29 @@ services:
     deploy:
       resources:
         limits:
-          # 4, not 2. A cross-encoder scoring ~30 candidates is the heaviest
-          # per-request CPU work in the stack and it sits inside a 10s caller
-          # timeout. The host has 12 cores; 4 leaves ample headroom for the rest
-          # of the fleet. Keep RERANKER_TORCH_THREADS equal to this number.
-          cpus: "4"
+          # 8, sized from prod measurements rather than from a local box.
+          #
+          # Thread pinning (5651046) fixed the oversubscription but not the
+          # arithmetic: prod's AMD EPYC vCPUs are roughly 2.2x slower per core
+          # than the arm64 machine the original figures came from, so the same
+          # image needs more of them. Benched on prod, host idle, 30 passages,
+          # same image, against rag-service's 10s reranker_timeout:
+          #
+          #   cpus  p50      p95
+          #   4     11.91s   13.38s   <- misses the timeout on every call
+          #   6      7.86s    8.33s   <- fits, with 1.7s of headroom
+          #   8      6.92s    7.10s   <- fits, with 2.9s of headroom
+          #
+          # 6 is enough on an IDLE host. 8 is chosen for headroom on a loaded
+          # one: 1.7s is less than the run-to-run spread already visible in
+          # these numbers, so a busy box would push a 6-CPU container back over
+          # the timeout and silently return every query to RRF ordering. The
+          # extra two cores buy the margin that keeps that from being a
+          # coin-flip. Score spread was 3900.9x at all three quotas, so this is
+          # purely a latency decision — CPU count does not touch the math.
+          #
+          # Keep RERANKER_TORCH_THREADS (and OMP/MKL) equal to this number.
+          cpus: "8"
           # Higher than embedding-service's 2G: bge-reranker-base is ~278M
           # params (~1.1GB resident as fp32) against bge-small-en-v1.5's ~33M,
           # plus the torch runtime. The container runs ONE uvicorn worker for
