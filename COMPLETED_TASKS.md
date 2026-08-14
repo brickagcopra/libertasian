@@ -1,6 +1,8 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-08-14 (`fix/knn-field-name` — `_knn_search` asked OpenSearch for a field called `embedding`; the vector index's knn_vector field is **`embedding_vector`**. Proved on the live cluster: that query is an HTTP 400 on every call. Two sibling mismatches came with it, and one of them — `source_authority_level` where both indices map **`source_trust_level`** — is on the BM25 leg that *is* live, which means the authority boost CLAUDE.md requires has been multiplying every passage by 1.0 and **reordering nothing**. Also: **fixing the field name does not by itself revive kNN.** Nothing in rag-service computes a query embedding, so `hybrid_retrieve` is called without one and the kNN leg has never executed in production at all. That is now reported as a degraded leg instead of passing silently, and a new CI guard fails the build if any query field drifts from `index-mappings.ts`.)
+> Last updated: 2026-08-14 (`fix/rag-embedding-client` — **the kNN leg now actually runs.** rag-service never computed a query embedding, so `hybrid_retrieve`'s kNN arm was gated off on every request and retrieval had always been BM25-only — which is why "What **IS** estafa" matched "Jesus **IS** Lord Christian School Foundation". An async embedding client, `RAG_EMBEDDING_SERVICE_URL` in compose, and both `answer/service.py` call sites wired. The honest claim is that **relevant passages now enter the candidate set** — under RRF the BM25 hit still ranks top-1 in 3 of 4 sampled queries, so reranking (C4) is what reorders them, and it only becomes meaningful now. Also found and fixed while verifying: a *failed* embedding was being reported as `knn:not_configured`, which would send someone hunting for an env var that is already set.)
+>
+> Previously: 2026-08-14 (`fix/knn-field-name` — `_knn_search` asked OpenSearch for a field called `embedding`; the vector index's knn_vector field is **`embedding_vector`**. Proved on the live cluster: that query is an HTTP 400 on every call. Two sibling mismatches came with it, and one of them — `source_authority_level` where both indices map **`source_trust_level`** — is on the BM25 leg that *is* live, which means the authority boost CLAUDE.md requires has been multiplying every passage by 1.0 and **reordering nothing**. Also: **fixing the field name does not by itself revive kNN.** Nothing in rag-service computes a query embedding, so `hybrid_retrieve` is called without one and the kNN leg has never executed in production at all. That is now reported as a degraded leg instead of passing silently, and a new CI guard fails the build if any query field drifts from `index-mappings.ts`.)
 >
 > Previously: 2026-08-13 (`fix/answer-abstention-and-placeholders` — **7 of 9 realistic queries on prod returned a non-answer rendered AS an answer.** Two of them carried zero citations at `confidence 0.3` with `abstained: false`; one carried a confidence badge reading **"high" (1.0)** on top of the sentence "The provided source passages do not contain specific information regarding the Bill of Rights." The grounding abstention was scoped-only, the prompt asked the model to refuse in prose that nothing could detect, and the confidence scorer's coverage term counted *documents* while its docstring promised *passages*. Plus two mobile placeholder surfaces. **Retrieval quality is untouched and still unfixed — that is the unshipped reranker, search-epic C4.**)
 >
@@ -21,6 +23,49 @@
 > Previously: 2026-07-29 (#336 OPEN: a flat 300 s synthesis timeout made a 2,238-char digest — near the corpus average — permanently unsynthesizable, and retrying it identically three times burned 15 min of 8-core CPU. Budget is now length-proportional, failures are classified, and the reason is persisted. A separate CUDA image and bearer auth on the TTS hop open the rented-GPU route for the tier-1 backfill; both are no-ops for prod.)
 >
 > Previously: 2026-07-27 (#322 MERGED `5addc51`: the auto-publish citation gate was unreachable and had stranded 76% of the corpus out of search since 2026-05-30. Dry run over prod confirms 11,561 of 13,093 drafts publish under the corrected rules. #321 opened for the resolver underneath it, #323 for the 1,531 rows still short a `court`.)
+
+---
+
+## 2026-08-14 — the query embedding, and the kNN leg running for the first time
+
+Branch `fix/rag-embedding-client`. The last structural piece: `#382` made `_knn_search` correct, this makes it *reachable*.
+
+**What was wrong.** `hybrid_retrieve` gates its kNN arm on `if embedding is not None` (`retrieval.py:88`). Both call sites in `answer/service.py` omitted the argument, and nothing in rag-service computed one — `config.py:131` declared `embedding_service_url` and it was read nowhere in `src/`. Retrieval had therefore always been BM25-only, and BM25 on a question-shaped query matches on the question's own stopwords: **"What IS estafa" retrieved "Jesus IS Lord Christian School Foundation"**.
+
+Everything needed was already running. Verified live on prod 2026-08-14: the embedding-service container is up and healthy, rag-service already carries `RAG_INTERNAL_API_KEY`, and `POST http://embedding-service:8001/embed` with `X-Internal-Api-Key` returns 384 floats from `BAAI/bge-small-en-v1.5` — matching the `legal_documents_vector` mapping exactly. No reindex, no mapping change, no new infrastructure.
+
+**What landed.**
+
+- `src/core/clients/embedding_client.py` — async `embed_query(text) -> list[float] | None`, mirroring the worker's client with one difference that matters: the worker's is synchronous and raises; this one sits on the answer request path and **never raises**. Every failure — timeout, DNS, 500, 422, torn connection, non-JSON body — returns `None`, which is a supported value the caller hands straight to `hybrid_retrieve`. A dead embedding service must degrade retrieval to BM25-only, never turn a working keyword search into a failed answer. Shared `httpx.AsyncClient` for connection pooling, closed in the app lifespan.
+- **A dimension check before the query is built.** If the service returns a vector of the wrong length, OpenSearch rejects it with the same opaque HTTP 400 "all shards failed" that #382's wrong field name produced. Caught in the client, it is one ERROR naming both numbers instead of a degraded leg with an unreadable cause. `RAG_EMBEDDING_DIM` defaults to 384 and the field-contract test now asserts it equals `DEFAULT_EMBEDDING_DIM` in `index-mappings.ts`.
+- `RAG_EMBEDDING_SERVICE_URL: http://embedding-service:8001` in `docker-compose.prod.yml`. **Note the prefix** — rag-service's `Settings` uses `env_prefix="RAG_"`, so the unprefixed `EMBEDDING_SERVICE_URL` (which compose already passed to the worker) would have been read by nothing. Both containers are on the `ai` network, so the name resolves. Deliberately **not** a `depends_on`: embedding-service being down must degrade retrieval, never hold up rag-service.
+- Both call sites wired, embedding computed **once per request** rather than per leg.
+
+**A labelling bug found while verifying, which is the reason to verify.** With the client wired, a *failed* embedding also produces `embedding=None` — and #382's code labelled every `None` as `knn:not_configured` and routed it through the once-per-process warning. So an embedding-service outage would have been reported as a missing env var that is in fact set, and silenced after the first request. The two cases are now distinguished by whether the URL is configured at all:
+
+| state | `degraded_legs` | logging |
+|---|---|---|
+| healthy | `[]`, `degraded=False` | — |
+| service down / wrong dimension / bad body | `knn:embedding_failed` | ERROR per request, with the reason |
+| `RAG_EMBEDDING_SERVICE_URL` unset | `knn:not_configured` | WARNING once per process |
+
+That keeps #382's rule intact — ERROR-per-request for genuine runtime failures, never for a standing configuration choice — while making an outage visible rather than swallowed.
+
+**Expected effect, measured on prod by passing a real embedding into `hybrid_retrieve`:**
+
+```
+estafa         BM25: Jesus is Lord...        +kNN: + Rosita Sy vs. People
+writ of amparo BM25: Rules of Court 139-A    +kNN: + In the Matter of the Petition
+                                                    for the Writ of Amparo
+theft          BM25: Report on theft of...   +kNN: + Lozano vs. People
+stare decisis  BM25: Nancy Ty / PGBI / LRTA  +kNN: + De Castro vs. JBC
+```
+
+**The honest claim is "relevant passages are now in the candidate set", not "the answer rate jumps".** Under RRF the BM25 hit still ranks top-1 in 3 of those 4. Reranking (search-epic C4) is what reorders them, and it only becomes meaningful now that the right documents are present to reorder.
+
+**Tests.** 44 added, 800 passing. Client failure modes (timeout, non-200, 422, connect error, non-JSON body, unexpected exception), malformed bodies (missing key, wrong type, empty, non-numeric, wrong dimension, int-vs-float), the unconfigured path making no request and logging no ERROR, query trimming and truncation, client reuse and close; retrieval querying the vector index only when an embedding is supplied and not raising when it is not; both `answer/service.py` call sites passing the embedding, embedding once per request, and passing `None` through on failure. `mypy --strict` clean on every file touched (19 pre-existing errors elsewhere, unchanged). `pnpm lint`, `pnpm type-check` clean.
+
+**Not done, deliberately.** No reindex, no mapping change, no embedding-dimension change. No reranker — C4 is the follow-up, not this PR. `compute_confidence`, `abstention_score_threshold` and the prompts untouched: retrieval is changing underneath them and measuring them now would confound the two. No EAS build.
 
 ---
 

@@ -19,6 +19,7 @@ from typing import Any
 
 from ..config import settings
 from ..core.abstention import check_abstention, generate_abstention_response
+from ..core.clients import embed_query
 from ..core.context import pack_context
 from ..core.generation import generate_completion, get_model_info, stream_completion
 from ..core.intent import classify_intent
@@ -129,11 +130,15 @@ async def generate_answer(request: AnswerRequest) -> AnswerResponse:
     intent = classify_intent(query)
     logger.info("Query intent: %s, query_length: %d", intent.value, len(query))
 
-    # 2. Hybrid retrieval, narrowed to one document when the caller asked for it
+    # 2. Hybrid retrieval, narrowed to one document when the caller asked for it.
+    # The embedding is computed once per request and handed to both retrieval
+    # legs; `None` is a supported value that runs BM25-only.
+    embedding = await embed_query(query)
     search_result = await hybrid_retrieve(
         query,
         intent,
         top_k=30,
+        embedding=embedding,
         filter_terms=_retrieval_filters(request),
     )
 
@@ -280,10 +285,12 @@ async def stream_answer(request: AnswerRequest) -> AsyncIterator[AnswerChunk]:
     try:
         # 1-4: Same as non-streaming
         intent = classify_intent(query)
+        embedding = await embed_query(query)
         search_result = await hybrid_retrieve(
             query,
             intent,
             top_k=30,
+            embedding=embedding,
             filter_terms=_retrieval_filters(request),
         )
         reranked = await rerank_passages(

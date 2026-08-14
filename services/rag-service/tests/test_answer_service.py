@@ -942,6 +942,118 @@ class TestCitationGrounding:
         assert chunks[-1].type == "done"
 
 
+class TestQueryEmbeddingIsWired:
+    """Both call sites must compute an embedding and hand it to retrieval.
+
+    This is what made retrieval BM25-only: `hybrid_retrieve` accepts an
+    `embedding` kwarg, gates the kNN leg on it, and neither call site passed
+    one. A test that only checks `embed_query` works would not have caught it.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _setup_mocks(self) -> None:
+        self.mock_retrieve = AsyncMock(return_value=_make_search_result())
+        self.mock_rerank = AsyncMock(return_value=_make_passages_list())
+        self.mock_generate = AsyncMock(return_value="Held... [SOURCE doc-0001]")
+        self.mock_validate = AsyncMock(return_value=_make_validation_result())
+        self.mock_model_info = MagicMock(
+            return_value={"model_name": "test-model-v1", "model_version": "1.0"}
+        )
+        self.mock_embed = AsyncMock(return_value=[0.1] * 384)
+
+        self.patches = [
+            patch("src.answer.service.hybrid_retrieve", self.mock_retrieve),
+            patch("src.answer.service.rerank_passages", self.mock_rerank),
+            patch("src.answer.service.generate_completion", self.mock_generate),
+            patch("src.answer.service.validate_citations", self.mock_validate),
+            patch("src.answer.service.get_model_info", self.mock_model_info),
+            patch("src.answer.service.embed_query", self.mock_embed),
+            patch("src.answer.service.pack_context", return_value=_make_context_bundle()),
+        ]
+        for p in self.patches:
+            p.start()
+
+    @pytest.fixture(autouse=True)
+    def _teardown_mocks(self) -> None:
+        yield
+        for p in self.patches:
+            p.stop()
+
+    @pytest.mark.asyncio
+    async def test_sync_passes_the_embedding(self) -> None:
+        await generate_answer(AnswerRequest(query="What is estafa?"))
+
+        assert self.mock_retrieve.call_args.kwargs["embedding"] == [0.1] * 384
+
+    @pytest.mark.asyncio
+    async def test_sync_embeds_the_trimmed_query(self) -> None:
+        await generate_answer(AnswerRequest(query="  What is estafa?  "))
+
+        self.mock_embed.assert_awaited_once_with("What is estafa?")
+
+    @pytest.mark.asyncio
+    async def test_sync_embeds_once_per_request(self) -> None:
+        """Once per request, not once per retrieval leg."""
+        await generate_answer(AnswerRequest(query="What is estafa?"))
+
+        assert self.mock_embed.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_sync_passes_none_on_failure(self) -> None:
+        """A failed embedding is a supported value, not an error."""
+        self.mock_embed.return_value = None
+
+        response = await generate_answer(AnswerRequest(query="What is estafa?"))
+
+        assert self.mock_retrieve.call_args.kwargs["embedding"] is None
+        assert response.abstained is False
+
+    @pytest.mark.asyncio
+    async def test_stream_passes_the_embedding(self) -> None:
+        async def _fake_stream(**_kwargs: Any):
+            yield "Held... [SOURCE doc-0001]"
+
+        with patch("src.answer.service.stream_completion", _fake_stream):
+            async for _ in stream_answer(AnswerRequest(query="What is estafa?")):
+                pass
+
+        assert self.mock_retrieve.call_args.kwargs["embedding"] == [0.1] * 384
+
+    @pytest.mark.asyncio
+    async def test_stream_embeds_once_per_request(self) -> None:
+        async def _fake_stream(**_kwargs: Any):
+            yield "Held... [SOURCE doc-0001]"
+
+        with patch("src.answer.service.stream_completion", _fake_stream):
+            async for _ in stream_answer(AnswerRequest(query="What is estafa?")):
+                pass
+
+        assert self.mock_embed.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_stream_passes_none_on_failure(self) -> None:
+        self.mock_embed.return_value = None
+
+        async def _fake_stream(**_kwargs: Any):
+            yield "Held... [SOURCE doc-0001]"
+
+        with patch("src.answer.service.stream_completion", _fake_stream):
+            chunks = [c async for c in stream_answer(AnswerRequest(query="What is estafa?"))]
+
+        assert self.mock_retrieve.call_args.kwargs["embedding"] is None
+        assert chunks[-1].type == "done"
+
+    @pytest.mark.asyncio
+    async def test_scoped_request_still_embeds(self) -> None:
+        """Document-scoped retrieval narrows the pool; it still ranks within it."""
+        await generate_answer(
+            AnswerRequest(query="Does this cover bail?", document_id="doc-42")
+        )
+
+        assert self.mock_retrieve.call_args.kwargs["embedding"] == [0.1] * 384
+        assert self.mock_retrieve.call_args.kwargs["filter_terms"] == {"document_id": "doc-42"}
+
+
 class TestInsufficientSentinelMatching:
     """_is_insufficient_sentinel — what counts as the machine-readable refusal."""
 

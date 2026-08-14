@@ -155,6 +155,22 @@ class TestPythonMatchesTsMapping:
         assert "plain_text" not in vector
         assert "text_snippet" in vector
 
+    def test_embedding_dim_matches_mapping(self) -> None:
+        """The vector we send must be the length the knn_vector field declares.
+
+        `buildVectorIndexMapping(dimension)` takes it as a parameter, defaulting
+        to `DEFAULT_EMBEDDING_DIM`. A mismatch is rejected by OpenSearch as the
+        same opaque 400 a wrong field name produced, so `embed_query` checks the
+        length before building a query — against this number.
+        """
+        from src.config import settings
+
+        source = _strip_comments(_MAPPINGS_TS.read_text())
+        declared = re.search(r"DEFAULT_EMBEDDING_DIM\s*=\s*(\d+)", source)
+
+        assert declared, "DEFAULT_EMBEDDING_DIM not found in index-mappings.ts"
+        assert settings.embedding_dim == int(declared.group(1))
+
     def test_neither_index_maps_authority(self) -> None:
         """`source_authority_level` is our Passage field name, never an index field."""
         assert "source_authority_level" not in _mapped_fields("buildKeywordIndexMapping")
