@@ -191,6 +191,29 @@ class TestPassageToSource:
         assert source.court == ""
         assert source.decision_date == ""
 
+    def test_rerank_score_is_carried_over(self) -> None:
+        source = _passage_to_source(_make_passage(rerank_score=0.98123456))
+        assert source.rerank_score == 0.981235
+
+    def test_rerank_score_none_when_reranker_did_not_run(self) -> None:
+        source = _passage_to_source(_make_passage(rerank_score=None))
+        assert source.rerank_score is None
+
+    def test_small_rerank_score_survives_rounding(self) -> None:
+        """The bottom of the observed range (7e-4) must not round to zero.
+
+        `relevance_score`'s 4dp would flatten it; that is the whole reason
+        rerank_score is rounded to 6.
+        """
+        source = _passage_to_source(_make_passage(rerank_score=0.00071234))
+        assert source.rerank_score == 0.000712
+
+    def test_rerank_score_is_independent_of_relevance_score(self) -> None:
+        """The two live on different scales — RRF fused vs. cross-encoder."""
+        source = _passage_to_source(_make_passage(score=0.016, rerank_score=0.98))
+        assert source.relevance_score == 0.016
+        assert source.rerank_score == 0.98
+
 
 # ---------------------------------------------------------------------------
 # generate_answer — full pipeline (non-streaming)
@@ -383,6 +406,172 @@ class TestGenerateAnswerAbstention:
 
             mock_gen.assert_not_called()
             mock_val.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Degradation and rerank_score reporting on the response
+# ---------------------------------------------------------------------------
+
+
+class TestDegradedReporting:
+    """A degraded answer must say so, on every path that returns one.
+
+    Both retrieval and reranking already detect their own degradation; before
+    this the answer response dropped it, so a reranker that was down and a
+    reranker that ranked everything low were the same response on the wire.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _setup_mocks(self) -> None:
+        self.mock_retrieve = AsyncMock(return_value=_make_search_result())
+        self.mock_rerank = AsyncMock(return_value=_outcome(_make_passages_list()))
+        self.mock_generate = AsyncMock(
+            return_value="The court held... [SOURCE doc-0001]"
+        )
+        self.mock_validate = AsyncMock(return_value=_make_validation_result())
+        self.mock_model_info = MagicMock(
+            return_value={"model_name": "test-model-v1", "model_version": "1.0"}
+        )
+
+        async def _mock_stream(*args: Any, **kwargs: Any):
+            yield "The court ruled that the petition is granted."
+
+        self.patches = [
+            patch("src.answer.service.hybrid_retrieve", self.mock_retrieve),
+            patch("src.answer.service.rerank_passages", self.mock_rerank),
+            patch("src.answer.service.generate_completion", self.mock_generate),
+            patch("src.answer.service.validate_citations", self.mock_validate),
+            patch("src.answer.service.get_model_info", self.mock_model_info),
+            patch("src.answer.service.stream_completion", _mock_stream),
+        ]
+        for p in self.patches:
+            p.start()
+
+    @pytest.fixture(autouse=True)
+    def _teardown_mocks(self) -> None:
+        yield
+        for p in self.patches:
+            p.stop()
+
+    @pytest.mark.asyncio
+    async def test_healthy_pipeline_reports_no_degradation(self) -> None:
+        response = await generate_answer(AnswerRequest(query="A healthy query"))
+
+        assert response.degraded is False
+        assert response.degraded_legs == []
+
+    @pytest.mark.asyncio
+    async def test_reranker_fallback_populates_degraded_legs(self) -> None:
+        """The exact case that was invisible: RRF order sold as reranked order."""
+        self.mock_rerank.return_value = RerankOutcome(
+            passages=_make_passages_list(),
+            degraded=True,
+            degraded_legs=["reranker:unreachable"],
+        )
+
+        response = await generate_answer(AnswerRequest(query="Reranker is down"))
+
+        assert response.degraded is True
+        assert response.degraded_legs == ["reranker:unreachable"]
+
+    @pytest.mark.asyncio
+    async def test_retrieval_and_rerank_legs_are_merged(self) -> None:
+        self.mock_retrieve.return_value = SearchResult(
+            passages=_make_passages_list(),
+            total_bm25_hits=3,
+            total_knn_hits=0,
+            query_intent="legal_question",
+            degraded=True,
+            degraded_legs=["knn:http_error"],
+        )
+        self.mock_rerank.return_value = RerankOutcome(
+            passages=_make_passages_list(),
+            degraded=True,
+            degraded_legs=["reranker:not_configured"],
+        )
+
+        response = await generate_answer(AnswerRequest(query="Both legs are down"))
+
+        assert response.degraded is True
+        assert response.degraded_legs == ["knn:http_error", "reranker:not_configured"]
+
+    @pytest.mark.asyncio
+    async def test_abstention_response_still_reports_degradation(self) -> None:
+        """An abstention on a half-dead pipeline is not the same as a real one."""
+        self.mock_rerank.return_value = RerankOutcome(
+            passages=[],
+            degraded=True,
+            degraded_legs=["reranker:failed"],
+        )
+
+        response = await generate_answer(AnswerRequest(query="Nothing came back"))
+
+        assert response.abstained is True
+        assert response.degraded is True
+        assert response.degraded_legs == ["reranker:failed"]
+
+    @pytest.mark.asyncio
+    async def test_rerank_score_reaches_the_response_sources(self) -> None:
+        response = await generate_answer(
+            AnswerRequest(query="A healthy query", include_sources=True)
+        )
+
+        assert [s.rerank_score for s in response.sources] == [0.9, 0.85, 0.8]
+
+    @pytest.mark.asyncio
+    async def test_rerank_score_is_null_when_the_reranker_did_not_run(self) -> None:
+        """RRF fallback leaves rerank_score unset — the response must not invent one."""
+        self.mock_rerank.return_value = RerankOutcome(
+            passages=[_make_passage(id=f"hit-{i}", rerank_score=None) for i in range(3)],
+            degraded=True,
+            degraded_legs=["reranker:not_configured"],
+        )
+
+        response = await generate_answer(
+            AnswerRequest(query="Reranker unconfigured", include_sources=True)
+        )
+
+        assert all(s.rerank_score is None for s in response.sources)
+
+    @pytest.mark.asyncio
+    async def test_streaming_metadata_carries_degraded_legs(self) -> None:
+        self.mock_rerank.return_value = RerankOutcome(
+            passages=_make_passages_list(),
+            degraded=True,
+            degraded_legs=["reranker:unreachable"],
+        )
+
+        chunks = [c async for c in stream_answer(AnswerRequest(query="Streamed query"))]
+        metadata = next(c.metadata for c in chunks if c.type == "metadata")
+
+        assert metadata is not None
+        assert metadata["degraded"] is True
+        assert metadata["degraded_legs"] == ["reranker:unreachable"]
+
+    @pytest.mark.asyncio
+    async def test_streaming_metadata_sources_carry_rerank_score(self) -> None:
+        chunks = [c async for c in stream_answer(AnswerRequest(query="Streamed query"))]
+        metadata = next(c.metadata for c in chunks if c.type == "metadata")
+
+        assert metadata is not None
+        sources = metadata["sources"]
+        assert isinstance(sources, list)
+        assert [s["rerank_score"] for s in sources] == [0.9, 0.85, 0.8]
+
+    @pytest.mark.asyncio
+    async def test_streaming_abstention_metadata_carries_degraded_legs(self) -> None:
+        self.mock_rerank.return_value = RerankOutcome(
+            passages=[],
+            degraded=True,
+            degraded_legs=["reranker:failed"],
+        )
+
+        chunks = [c async for c in stream_answer(AnswerRequest(query="Streamed query"))]
+        metadata = next(c.metadata for c in chunks if c.type == "metadata")
+
+        assert metadata is not None
+        assert metadata["abstained"] is True
+        assert metadata["degraded_legs"] == ["reranker:failed"]
 
 
 # ---------------------------------------------------------------------------

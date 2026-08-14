@@ -13,6 +13,12 @@ export interface AiAnswerSource {
   section_id?: string;
   section_type?: string;
   relevance_score: number;
+  /**
+   * Cross-encoder score, or null/absent when the reranker did not run for this
+   * request. Not on the same scale as `relevance_score`, which is the RRF fused
+   * score — do not compare or substitute one for the other.
+   */
+  rerank_score?: number | null;
   passage_text: string;
 }
 
@@ -28,6 +34,10 @@ export interface AiAnswerResponse {
   tokens_in?: number;
   tokens_out?: number;
   latency_ms?: number;
+  /** True when a retrieval or reranking leg did not contribute to this answer. */
+  degraded?: boolean;
+  /** Which legs did not contribute, and why — e.g. `knn:http_error`. */
+  degraded_legs?: string[];
 }
 
 @Injectable()

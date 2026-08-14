@@ -25,7 +25,7 @@ from ..core.generation import generate_completion, get_model_info, stream_comple
 from ..core.intent import classify_intent
 from ..core.reranking import rerank_passages
 from ..core.retrieval import hybrid_retrieve
-from ..core.schemas import Passage
+from ..core.schemas import Passage, RerankOutcome, SearchResult
 from ..core.types import AbstentionReason, ConfidenceLevel
 from ..core.validation import validate_citations
 from ..shared.scoring import compute_confidence
@@ -150,6 +150,7 @@ async def generate_answer(request: AnswerRequest) -> AnswerResponse:
         top_k=request.max_passages,
     )
     reranked = rerank_outcome.passages
+    degraded_legs = _merge_degraded_legs(search_result, rerank_outcome)
 
     # 4. Abstention check
     scoped = request.document_id is not None
@@ -168,6 +169,8 @@ async def generate_answer(request: AnswerRequest) -> AnswerResponse:
             prompt_template_version=PROMPT_VERSION,
             passages_used=0,
             passages_available=len(search_result.passages),
+            degraded=bool(degraded_legs),
+            degraded_legs=degraded_legs,
         )
 
     # 5. Context packing
@@ -200,6 +203,8 @@ async def generate_answer(request: AnswerRequest) -> AnswerResponse:
             prompt_template_version=PROMPT_VERSION,
             passages_used=context_bundle.passages_included,
             passages_available=context_bundle.passages_total,
+            degraded=bool(degraded_legs),
+            degraded_legs=degraded_legs,
         )
 
     # 8. Citation validation (NON-OPTIONAL)
@@ -239,6 +244,8 @@ async def generate_answer(request: AnswerRequest) -> AnswerResponse:
             prompt_template_version=PROMPT_VERSION,
             passages_used=context_bundle.passages_included,
             passages_available=context_bundle.passages_total,
+            degraded=bool(degraded_legs),
+            degraded_legs=degraded_legs,
         )
 
     # 9. Confidence scoring
@@ -269,6 +276,8 @@ async def generate_answer(request: AnswerRequest) -> AnswerResponse:
         prompt_template_version=PROMPT_VERSION,
         passages_used=context_bundle.passages_included,
         passages_available=context_bundle.passages_total,
+        degraded=bool(degraded_legs),
+        degraded_legs=degraded_legs,
     )
 
 
@@ -301,6 +310,7 @@ async def stream_answer(request: AnswerRequest) -> AsyncIterator[AnswerChunk]:
             top_k=request.max_passages,
         )
         reranked = rerank_outcome.passages
+        degraded_legs = _merge_degraded_legs(search_result, rerank_outcome)
 
         # Abstention check
         scoped = request.document_id is not None
@@ -315,6 +325,8 @@ async def stream_answer(request: AnswerRequest) -> AsyncIterator[AnswerChunk]:
                     "intent": intent.value,
                     "abstained": True,
                     "abstention_reason": abstention_reason.value,
+                    "degraded": bool(degraded_legs),
+                    "degraded_legs": degraded_legs,
                 },
             )
             yield AnswerChunk(type="text", content=abstention_text)
@@ -333,6 +345,8 @@ async def stream_answer(request: AnswerRequest) -> AsyncIterator[AnswerChunk]:
                 "passages_used": context_bundle.passages_included,
                 "passages_available": context_bundle.passages_total,
                 "sources": sources,
+                "degraded": bool(degraded_legs),
+                "degraded_legs": degraded_legs,
             },
         )
 
@@ -468,6 +482,19 @@ def _confidence_to_level(confidence: float) -> ConfidenceLevel:
     return ConfidenceLevel.LOW
 
 
+def _merge_degraded_legs(
+    search_result: SearchResult, rerank_outcome: RerankOutcome
+) -> list[str]:
+    """Collect every leg that did not contribute, retrieval and reranking alike.
+
+    Both stages already report their own degradation; the answer response is the
+    first place a caller can see them together, which is the only place the
+    distinction between "no good passages exist" and "half the pipeline was
+    down" is actually actionable.
+    """
+    return [*search_result.degraded_legs, *rerank_outcome.degraded_legs]
+
+
 def _passage_to_source(passage: Passage) -> AnswerSource:
     """Convert a Passage to an AnswerSource for the response."""
     return AnswerSource(
@@ -479,4 +506,10 @@ def _passage_to_source(passage: Passage) -> AnswerSource:
         decision_date=passage.decision_date,
         document_type=passage.document_type,
         relevance_score=round(passage.score, 4),
+        # Real cross-encoder scores span 0.98 down to 7e-4, so `relevance_score`'s
+        # 4dp rounding would flatten the whole bottom of that range to 0.0 and
+        # make the threshold un-fittable from the very traffic it is fit against.
+        rerank_score=(
+            round(passage.rerank_score, 6) if passage.rerank_score is not None else None
+        ),
     )
