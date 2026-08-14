@@ -22,6 +22,7 @@ import asyncio
 import inspect
 import logging
 import math
+import time
 from typing import Any
 
 from ..config import settings
@@ -255,8 +256,42 @@ def _score_pairs_sync(query: str, texts: list[str]) -> list[float]:
     return [_sigmoid(float(x)) for x in logits]
 
 
+# How long a request may wait for the model before the wait itself is worth
+# reporting. The caller's timeout is 10s and a single scoring pass already costs
+# ~5s, so a second of queueing is most of the remaining budget.
+_QUEUE_WARN_SECONDS = 1.0
+
+# Guards the model. Created lazily because a Semaphore binds to the running
+# event loop on first use, and the module is imported long before uvicorn starts
+# one — building it at import time works on 3.10+ but ties the object to
+# whichever loop happens to be current, which breaks the tests that drive
+# `rerank` under `asyncio.run`.
+_model_semaphore: asyncio.Semaphore | None = None
+
+
+def _get_semaphore() -> asyncio.Semaphore:
+    """Return the concurrency gate, creating it on first use."""
+    global _model_semaphore  # noqa: PLW0603
+    if _model_semaphore is None:
+        _model_semaphore = asyncio.Semaphore(settings.max_concurrent_requests)
+    return _model_semaphore
+
+
 async def rerank(query: str, passages: list[tuple[str, str]]) -> list[tuple[str, float]]:
     """Score each (id, text) passage against the query.
+
+    Concurrency is bounded by `settings.max_concurrent_requests` (default 1).
+    `asyncio.to_thread` hands work to the default executor, which sizes itself
+    from ``os.cpu_count()`` — the HOST's core count, not the cgroup quota — so
+    without this gate N concurrent requests become N scoring threads, each
+    asking torch for `torch_threads` threads of its own. That is the same
+    oversubscription thrash this service was fixed for, re-entered through
+    concurrency.
+
+    Queueing beats thrashing: torch already spreads one batch across every core
+    in the quota, so a second concurrent request has no spare CPU to use and can
+    only steal cycles from the first. Thrash makes BOTH requests miss the
+    caller's 10s timeout; queueing lets the first finish on time.
 
     Args:
         query: The user's search query.
@@ -273,7 +308,21 @@ async def rerank(query: str, passages: list[tuple[str, str]]) -> list[tuple[str,
     ids = [p[0] for p in passages]
     texts = [p[1] for p in passages]
 
-    scores = await asyncio.to_thread(_score_pairs_sync, query, texts)
+    waited_from = time.perf_counter()
+    async with _get_semaphore():
+        waited = time.perf_counter() - waited_from
+        if waited > _QUEUE_WARN_SECONDS:
+            # Not an error — the gate is doing its job. It is the signal that
+            # one replica is no longer enough for the arrival rate, and it is
+            # the only place that shows up before requests start timing out.
+            logger.warning(
+                "Rerank waited %.2fs for the model (concurrency limit %d) — "
+                "sustained queueing at this level means adding replicas.",
+                waited,
+                settings.max_concurrent_requests,
+            )
+
+        scores = await asyncio.to_thread(_score_pairs_sync, query, texts)
 
     scored = list(zip(ids, scores, strict=True))
     scored.sort(key=lambda pair: pair[1], reverse=True)

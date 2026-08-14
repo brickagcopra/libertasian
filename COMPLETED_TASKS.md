@@ -61,6 +61,8 @@ Branch `fix/reranker-cpu-latency`. The reranker shipped functionally correct —
 - `/health` reports whether int8 is **actually running**, not what was requested;
 - the default is `false`, because the latency targets are met without it and enabling an unvalidated optimisation buys risk for a gain nobody has observed.
 
+**Concurrency is bounded too, for the same reason.** `asyncio.to_thread` hands work to the default executor, which also sizes itself from `os.cpu_count()` — the host's cores, not the quota — so N concurrent requests became N scoring threads each asking torch for `torch_threads` threads of its own: the identical oversubscription, re-entered through concurrency rather than configuration. A semaphore (default **1**) now gates the model. Serialising is right because torch already spreads one batch across every core in the quota, so a second concurrent request has no idle CPU to use and can only take cycles from the first — and thrash makes BOTH requests miss the 10s timeout where queueing lets the first finish. A wait over 1s logs a WARNING, which is the signal to add replicas; `/health` reports the ceiling.
+
 **What did work.** Thread pinning (`torch.set_num_threads` plus `OMP_NUM_THREADS`/`MKL_NUM_THREADS`, all tied to the container's `cpus`), and loading + warming the model in the FastAPI lifespan so no request pays cold start — that alone removed the 27.2s (2 CPU) and 15.0s (4 CPU) first-request spikes that guaranteed a timeout after every deploy.
 
 **Ranking is unchanged.** Score spread measured **3900.9x** (min 3.73e-05, median 4.86e-05, max 0.1455) against the pre-fix 3900.4x — the optimisations bought latency without flattening the distribution the ranking depends on.

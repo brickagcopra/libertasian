@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
+import time
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -399,3 +401,168 @@ class TestQuantizationSafety:
         monkeypatch.setattr(settings, "quantize", True)
 
         assert svc.is_quantized() is False
+
+
+class TestConcurrencyIsBounded:
+    """Two rerank calls must not hold the model at the same time.
+
+    `asyncio.to_thread` uses the default executor, which sizes itself from
+    `os.cpu_count()` — the HOST's cores, not the cgroup quota. Without a gate,
+    N concurrent requests become N scoring threads each asking torch for
+    `torch_threads` threads of its own: the same oversubscription this service
+    was fixed for, re-entered through concurrency.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _reset_semaphore(self) -> Any:
+        import src.rerank.service as svc
+
+        svc._model_semaphore = None
+        yield
+        svc._model_semaphore = None
+
+    @staticmethod
+    def _recording_scorer(intervals: list[tuple[float, float]]) -> Any:
+        """A scorer that records when it entered and left."""
+
+        def _scorer(query: str, texts: list[str]) -> list[float]:
+            entered = time.perf_counter()
+            time.sleep(0.15)
+            intervals.append((entered, time.perf_counter()))
+            return [0.5] * len(texts)
+
+        return _scorer
+
+    @staticmethod
+    def _overlaps(a: tuple[float, float], b: tuple[float, float]) -> bool:
+        return a[0] < b[1] and b[0] < a[1]
+
+    @pytest.mark.asyncio
+    async def test_two_calls_do_not_overlap(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import src.rerank.service as svc
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "max_concurrent_requests", 1)
+        intervals: list[tuple[float, float]] = []
+        monkeypatch.setattr(svc, "_score_pairs_sync", self._recording_scorer(intervals))
+
+        await asyncio.gather(
+            svc.rerank("q1", [("a", "text a")]),
+            svc.rerank("q2", [("b", "text b")]),
+        )
+
+        assert len(intervals) == 2
+        assert not self._overlaps(intervals[0], intervals[1]), (
+            f"scoring overlapped: {intervals}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_five_calls_serialise(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import src.rerank.service as svc
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "max_concurrent_requests", 1)
+        intervals: list[tuple[float, float]] = []
+        monkeypatch.setattr(svc, "_score_pairs_sync", self._recording_scorer(intervals))
+
+        await asyncio.gather(*(svc.rerank(f"q{i}", [("a", "t")]) for i in range(5)))
+
+        ordered = sorted(intervals)
+        for earlier, later in zip(ordered, ordered[1:], strict=False):
+            assert not self._overlaps(earlier, later), f"overlap: {earlier} {later}"
+
+    @pytest.mark.asyncio
+    async def test_all_results_still_returned(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Serialising must not drop or corrupt anyone's answer."""
+        import src.rerank.service as svc
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "max_concurrent_requests", 1)
+        intervals: list[tuple[float, float]] = []
+        monkeypatch.setattr(svc, "_score_pairs_sync", self._recording_scorer(intervals))
+
+        results = await asyncio.gather(
+            svc.rerank("q1", [("a", "t"), ("b", "t")]),
+            svc.rerank("q2", [("c", "t")]),
+        )
+
+        assert {pid for pid, _ in results[0]} == {"a", "b"}
+        assert {pid for pid, _ in results[1]} == {"c"}
+
+    @pytest.mark.asyncio
+    async def test_limit_above_one_allows_overlap(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guard the test itself: with the gate widened the calls DO overlap, so
+        a passing serialisation test cannot be an artifact of the harness."""
+        import src.rerank.service as svc
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "max_concurrent_requests", 2)
+        intervals: list[tuple[float, float]] = []
+        monkeypatch.setattr(svc, "_score_pairs_sync", self._recording_scorer(intervals))
+
+        await asyncio.gather(
+            svc.rerank("q1", [("a", "t")]),
+            svc.rerank("q2", [("b", "t")]),
+        )
+
+        assert self._overlaps(intervals[0], intervals[1])
+
+    @pytest.mark.asyncio
+    async def test_queue_wait_is_warned(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: Any
+    ) -> None:
+        """Sustained queueing is the signal to add replicas — it must be visible."""
+        import src.rerank.service as svc
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "max_concurrent_requests", 1)
+        monkeypatch.setattr(svc, "_QUEUE_WARN_SECONDS", 0.05)
+        intervals: list[tuple[float, float]] = []
+        monkeypatch.setattr(svc, "_score_pairs_sync", self._recording_scorer(intervals))
+
+        with caplog.at_level("WARNING"):
+            await asyncio.gather(
+                svc.rerank("q1", [("a", "t")]),
+                svc.rerank("q2", [("b", "t")]),
+            )
+
+        warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert any("waited" in m for m in warnings), warnings
+
+    @pytest.mark.asyncio
+    async def test_no_warning_when_uncontended(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: Any
+    ) -> None:
+        import src.rerank.service as svc
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "max_concurrent_requests", 1)
+        intervals: list[tuple[float, float]] = []
+        monkeypatch.setattr(svc, "_score_pairs_sync", self._recording_scorer(intervals))
+
+        with caplog.at_level("WARNING"):
+            await svc.rerank("q1", [("a", "t")])
+
+        assert [r for r in caplog.records if r.levelname == "WARNING"] == []
+
+    @pytest.mark.asyncio
+    async def test_semaphore_released_on_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A failed scoring pass must not wedge the service forever."""
+        import src.rerank.service as svc
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "max_concurrent_requests", 1)
+
+        def _boom(query: str, texts: list[str]) -> list[float]:
+            raise RuntimeError("scoring blew up")
+
+        monkeypatch.setattr(svc, "_score_pairs_sync", _boom)
+        with pytest.raises(RuntimeError):
+            await svc.rerank("q", [("a", "t")])
+
+        monkeypatch.setattr(svc, "_score_pairs_sync", lambda q, t: [0.5] * len(t))
+        assert await svc.rerank("q", [("a", "t")]) == [("a", 0.5)]

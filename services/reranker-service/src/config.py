@@ -37,13 +37,40 @@ class Settings(BaseSettings):
     # the quota the container actually has.
     torch_threads: int = 2
 
-    # bge-reranker-base has a 512-token window and `CrossEncoder` uses the full
-    # window unless told otherwise. Transformer attention is O(n^2) in sequence
-    # length, so halving the window is roughly a 4x cut in attention cost.
-    # rag-service truncates passages to 1000 characters before sending — call it
-    # ~250 tokens of English legal prose — so 256 tokens covers essentially the
-    # whole payload it actually sends. This is the single biggest win here.
+    # A GUARD, not a measured optimisation — the distinction matters, because
+    # the reasoning that motivated it does not survive contact with the data.
+    #
+    # The theory was that bge-reranker-base's 512-token window costs ~4x what a
+    # 256-token one does, attention being O(n^2). The flaw: `max_length`
+    # TRUNCATES, it does not pad. Sequences are padded to the longest item in
+    # the batch, not to the window. rag-service already truncates passages to
+    # 1000 characters (~250 tokens of English legal prose) before sending, so
+    # real batches were never near 512 and this cap almost never binds.
+    # Benchmarked at 30 passages, it changes p50 by nothing measurable; the
+    # latency win in this service came from thread pinning and lifespan warm-up.
+    #
+    # Kept because it costs nothing and bounds the worst case: if a caller ever
+    # sends an oversized passage, this is what stops one request from monopolising
+    # the CPU budget.
     max_length: int = 256
+
+    # How many rerank requests may hold the model at once.
+    #
+    # ONE, deliberately. `asyncio.to_thread` uses the default executor, which
+    # sizes itself from `os.cpu_count()` — the HOST's core count, not the
+    # container's quota — so N concurrent requests become N scoring threads,
+    # each of which then asks torch for `torch_threads` threads of its own. That
+    # is precisely the oversubscription this service was just fixed for, walked
+    # back in through concurrency instead of configuration.
+    #
+    # Serialising is the right trade because torch already parallelises a single
+    # batch across every core in the quota: a second concurrent request has no
+    # idle CPU to use, it can only take cycles from the first. Queueing beats
+    # thrashing because thrash makes BOTH requests miss the caller's 10s
+    # timeout, whereas queueing at least lets the first one finish on time.
+    #
+    # Scale with replicas, not with this number.
+    max_concurrent_requests: int = 1
 
     # Dynamic int8 quantization of the Linear layers — OFF by default, on
     # evidence rather than on principle.

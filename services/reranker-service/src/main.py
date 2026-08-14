@@ -67,6 +67,7 @@ class HealthResponse(BaseModel):
     torch_threads: int
     max_length: int
     quantized: bool
+    max_concurrent_requests: int
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -95,4 +96,7 @@ async def health_check() -> HealthResponse:
         # fails to quantize when the default backend does not match the
         # platform, and reporting the setting would hide exactly that.
         quantized=is_quantized(),
+        # The effective ceiling on parallel scoring. Sustained queueing shows up
+        # as a WARNING from `rerank`; this is how you confirm what the limit is.
+        max_concurrent_requests=settings.max_concurrent_requests,
     )
