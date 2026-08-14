@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import math
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.rerank.service import _identity_activation_kwarg, _sigmoid, rerank
+from src.rerank.service import (
+    _configure_torch_threads,
+    _identity_activation_kwarg,
+    _sigmoid,
+    rerank,
+)
 
 
 class TestSigmoid:
@@ -164,3 +169,233 @@ class TestRerank:
         assert by_id["a"] == pytest.approx(_sigmoid(-2.0))
         assert by_id["b"] == pytest.approx(0.5)
         assert by_id["c"] == pytest.approx(_sigmoid(3.0))
+
+
+class TestTorchThreadPinning:
+    """Torch sizes its pool from the HOST core count, ignoring the cgroup quota.
+
+    On a 12-core host inside a `cpus: "2"` container that is 12 threads
+    contending for 2 cores of quota. Measured cost: 11.2-11.5s to score 30
+    passages, against rag-service's 10s timeout — every call fell back to RRF.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _restore_threads(self) -> Any:
+        import torch
+
+        original = torch.get_num_threads()
+        yield
+        torch.set_num_threads(original)
+
+    def test_threads_match_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import torch
+
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "torch_threads", 2)
+        _configure_torch_threads()
+
+        assert torch.get_num_threads() == 2
+
+    def test_a_different_value_is_honoured(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Guard against a hardcoded number that happens to match the default."""
+        import torch
+
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "torch_threads", 3)
+        _configure_torch_threads()
+
+        assert torch.get_num_threads() == 3
+
+    def test_interop_error_is_survivable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """`set_num_interop_threads` raises once parallel work has begun. Losing
+        it is harmless; failing startup over it is not."""
+        import torch
+
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "torch_threads", 2)
+        monkeypatch.setattr(
+            torch,
+            "set_num_interop_threads",
+            lambda _n: (_ for _ in ()).throw(RuntimeError("already started")),
+        )
+
+        _configure_torch_threads()
+
+        assert torch.get_num_threads() == 2
+
+    def test_load_applies_pinning(
+        self, monkeypatch: pytest.MonkeyPatch, mock_model: Any
+    ) -> None:
+        """The pin must happen on the load path, not only when called directly."""
+        import sentence_transformers
+        import torch
+
+        import src.rerank.service as svc
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "torch_threads", 2)
+        monkeypatch.setattr(settings, "quantize", False)
+        monkeypatch.setattr(svc, "_model", None)
+        monkeypatch.setattr(sentence_transformers, "CrossEncoder", lambda *a, **k: mock_model)
+        torch.set_num_threads(8)
+
+        svc._get_model()
+
+        assert torch.get_num_threads() == 2
+
+
+class TestMaxLengthIsPassed:
+    """A 512-token window on ~250 tokens of text is ~4x the attention cost."""
+
+    def test_crossencoder_gets_max_length(
+        self, monkeypatch: pytest.MonkeyPatch, mock_model: Any
+    ) -> None:
+        import sentence_transformers
+
+        import src.rerank.service as svc
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "max_length", 256)
+        monkeypatch.setattr(settings, "quantize", False)
+        monkeypatch.setattr(svc, "_model", None)
+
+        captured: dict[str, Any] = {}
+
+        def _factory(name: str, **kwargs: Any) -> Any:
+            captured["name"] = name
+            captured.update(kwargs)
+            return mock_model
+
+        monkeypatch.setattr(sentence_transformers, "CrossEncoder", _factory)
+        svc._get_model()
+
+        assert captured["max_length"] == 256
+
+    def test_quantize_flag_is_respected(
+        self, monkeypatch: pytest.MonkeyPatch, mock_model: Any
+    ) -> None:
+        import sentence_transformers
+
+        import src.rerank.service as svc
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "quantize", False)
+        monkeypatch.setattr(svc, "_model", None)
+        monkeypatch.setattr(sentence_transformers, "CrossEncoder", lambda *a, **k: mock_model)
+
+        with patch.object(svc, "_quantize_dynamic") as quantizer:
+            svc._get_model()
+
+        quantizer.assert_not_called()
+
+
+class TestModelLoadedFlag:
+    def test_false_before_load(self) -> None:
+        from src.rerank.service import is_model_loaded
+
+        assert is_model_loaded() is False
+
+    def test_true_after_load(self, monkeypatch: pytest.MonkeyPatch, mock_model: Any) -> None:
+        import sentence_transformers
+
+        import src.rerank.service as svc
+        from src.config import settings
+        from src.rerank.service import is_model_loaded
+
+        monkeypatch.setattr(settings, "quantize", False)
+        monkeypatch.setattr(svc, "_model", None)
+        monkeypatch.setattr(sentence_transformers, "CrossEncoder", lambda *a, **k: mock_model)
+        svc._get_model()
+
+        assert is_model_loaded() is True
+
+
+class TestQuantizationSafety:
+    """Constructing a quantized module is not proof it can run one.
+
+    Measured on aarch64 with torch 2.13: `onednn` converts happily and then
+    every forward pass dies with `KeyError: 'ne'`. Without a validating
+    inference that shipped as a service which started, reported itself healthy
+    AND quantized, and returned 500 for every rerank.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _reset_flag(self) -> Any:
+        import src.rerank.service as svc
+
+        svc._quantized = False
+        yield
+        svc._quantized = False
+
+    def test_broken_backend_reverts_to_fp32(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Converts fine, then fails inference -> keep the original module."""
+        import torch
+
+        import src.rerank.service as svc
+
+        original = MagicMock(name="fp32-module")
+        model = MagicMock()
+        model.model = original
+        model.predict.side_effect = KeyError("ne")
+
+        monkeypatch.setattr(
+            torch.ao.quantization, "quantize_dynamic", lambda *a, **k: MagicMock(name="int8")
+        )
+
+        svc._quantize_dynamic(model)
+
+        assert model.model is original
+        assert svc.is_quantized() is False
+
+    def test_working_backend_is_kept(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import torch
+
+        import src.rerank.service as svc
+
+        quantized = MagicMock(name="int8-module")
+        model = MagicMock()
+        model.model = MagicMock(name="fp32-module")
+        model.predict.return_value = [0.5]
+
+        monkeypatch.setattr(
+            torch.ao.quantization, "quantize_dynamic", lambda *a, **k: quantized
+        )
+
+        svc._quantize_dynamic(model)
+
+        assert model.model is quantized
+        assert svc.is_quantized() is True
+
+    def test_construction_failure_is_survivable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """fbgemm on aarch64 raises 'unknown architecure' before converting."""
+        import torch
+
+        import src.rerank.service as svc
+
+        original = MagicMock(name="fp32-module")
+        model = MagicMock()
+        model.model = original
+
+        def _boom(*_a: Any, **_k: Any) -> Any:
+            raise RuntimeError("unknown architecure")
+
+        monkeypatch.setattr(torch.ao.quantization, "quantize_dynamic", _boom)
+
+        svc._quantize_dynamic(model)
+
+        assert model.model is original
+        assert svc.is_quantized() is False
+
+    # Name length is load-bearing: TruffleHog's Lob detector matches `test_`
+    # plus exactly 35 characters and flags it as a verified secret.
+    def test_health_reports_actual_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """`quantized: true` on /health must mean int8 is RUNNING."""
+        import src.rerank.service as svc
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "quantize", True)
+
+        assert svc.is_quantized() is False

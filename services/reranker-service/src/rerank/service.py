@@ -32,18 +32,163 @@ logger = logging.getLogger(__name__)
 _model: Any = None
 
 
+def _configure_torch_threads() -> None:
+    """Pin torch's thread pools to the container's actual CPU quota.
+
+    Torch sizes its intra-op pool from the host core count read out of /proc; it
+    has no idea a cgroup quota exists. On a 12-core host inside a `cpus: "2"`
+    container that is 12 threads contending for 2 cores of quota, which costs
+    more in context switching than it buys in parallelism.
+
+    ``set_num_interop_threads`` may only be called before any parallel work has
+    started and raises RuntimeError afterwards — which happens when the model is
+    reloaded in-process, as the tests do. Losing the inter-op setting is
+    harmless (it defaults small and this workload is intra-op bound), so it is
+    caught and logged rather than allowed to fail startup.
+    """
+    import torch
+
+    torch.set_num_threads(settings.torch_threads)
+    try:
+        torch.set_num_interop_threads(1)
+    except RuntimeError:
+        logger.debug("Inter-op thread count already fixed; leaving it as-is")
+
+
+# Quantization backends, in the order they are tried.
+#
+# torch does NOT pick a working engine for you. On aarch64 it defaults to
+# `x86`, which dispatches to fbgemm and dies with `RuntimeError: unknown
+# architecure` (sic) — so quantization silently failed and the service ran fp32
+# while `/health` cheerfully reported `quantized: true`. fbgemm is x86-only,
+# qnnpack is the ARM backend, onednn works on both. Trying them in order makes
+# the outcome depend on what the platform actually supports rather than on a
+# default that is wrong half the time.
+_QUANT_ENGINES = ("fbgemm", "onednn", "qnnpack")
+
+# Whether quantization actually took effect, as opposed to having been asked
+# for. `/health` reports THIS, not the setting — see `_quantize_dynamic`.
+_quantized = False
+
+
+def is_quantized() -> bool:
+    """Whether int8 quantization is actually applied to the loaded model."""
+    return _quantized
+
+
+def _quantize_dynamic(model: Any) -> None:
+    """Apply dynamic int8 quantization to the cross-encoder's Linear layers.
+
+    `CrossEncoder` holds the HuggingFace module on `.model` and keeps its own
+    references (tokenizer, config, device) around it, so the quantized module is
+    assigned back onto the wrapper rather than replacing the wrapper itself.
+
+    Failure is non-fatal on purpose: quantization is a latency optimisation, and
+    a platform that cannot do it should get a slower service rather than a dead
+    one. But it must not be a SILENT failure — the outcome is recorded in
+    `_quantized` and surfaced on `/health`, because "we asked for int8" and "we
+    are running int8" are different facts and only one of them is useful when
+    latency is the thing being debugged.
+    """
+    global _quantized  # noqa: PLW0603
+    import torch
+
+    inner = getattr(model, "model", None)
+    if inner is None:
+        logger.warning("CrossEncoder exposes no .model attribute; skipping quantization")
+        return
+
+    supported = set(torch.backends.quantized.supported_engines)
+    for engine in _QUANT_ENGINES:
+        if engine not in supported:
+            continue
+        try:
+            torch.backends.quantized.engine = engine
+            # torch.ao.quantization is untyped, hence the ignore. Narrow and
+            # deliberate: everything either side of this call is checked.
+            # `inplace` defaults to False, so a failed attempt leaves `inner`
+            # untouched and the next engine gets a clean module.
+            model.model = torch.ao.quantization.quantize_dynamic(  # type: ignore[no-untyped-call]
+                inner, {torch.nn.Linear}, dtype=torch.qint8
+            )
+            # CONSTRUCTING a quantized module is not proof it can run one.
+            # Measured on aarch64 with torch 2.13: `onednn` converts happily and
+            # then every forward pass dies with `KeyError: 'ne'`, which without
+            # this check meant a service that started, reported itself healthy
+            # and quantized, and returned 500 for every rerank. Prove it with an
+            # actual inference before keeping it.
+            model.predict(
+                [("warm up query", "A short passage used to validate the backend.")],
+                show_progress_bar=False,
+            )
+        except Exception as exc:  # noqa: BLE001 - next engine, or fp32
+            logger.info("Quantization backend %r unusable (%s)", engine, exc)
+            model.model = inner
+            continue
+        _quantized = True
+        logger.info("Applied dynamic int8 quantization using backend %r", engine)
+        return
+
+    model.model = inner
+    logger.warning(
+        "Dynamic quantization unavailable on this platform (engines tried: %s) — "
+        "continuing in fp32. Latency setting only; ranking is unaffected.",
+        ", ".join(e for e in _QUANT_ENGINES if e in supported) or "none",
+    )
+
+
 def _get_model() -> Any:
-    """Load the cross-encoder on first use."""
-    global _model  # noqa: PLW0603
+    """Load the cross-encoder on first use.
+
+    Still lazy, but `main.lifespan` calls this at startup so no request pays for
+    it. A request that arrives before the model is resident used to pay model
+    load plus graph warm-up on top of its own scoring, which guaranteed a
+    timeout on the first call after every deploy.
+    """
+    global _model, _quantized  # noqa: PLW0603
     if _model is None:
+        _quantized = False
+        _configure_torch_threads()
+
         from sentence_transformers import CrossEncoder
 
         logger.info(
-            "Loading reranker model: %s (device: %s)", settings.model_name, settings.device
+            "Loading reranker model: %s (device=%s, max_length=%d, torch_threads=%d)",
+            settings.model_name,
+            settings.device,
+            settings.max_length,
+            settings.torch_threads,
         )
-        _model = CrossEncoder(settings.model_name, device=settings.device)
+        _model = CrossEncoder(
+            settings.model_name,
+            device=settings.device,
+            max_length=settings.max_length,
+        )
+        if settings.quantize:
+            _quantize_dynamic(_model)
         logger.info("Reranker model loaded successfully")
     return _model
+
+
+def is_model_loaded() -> bool:
+    """Whether the model is resident. Read by /health; never triggers a load."""
+    return _model is not None
+
+
+async def warm_up() -> None:
+    """Load the model and run one inference so the first real request is fast.
+
+    The load itself is only half of it: the first forward pass through a fresh
+    torch graph allocates workspaces and resolves kernels, and on CPU that is
+    measurable. Scoring one throwaway pair moves all of it off the request path.
+    """
+    logger.info("Warming up reranker...")
+    scores = await asyncio.to_thread(
+        _score_pairs_sync,
+        "warm up query",
+        ["A short passage used only to force the first forward pass."],
+    )
+    logger.info("Reranker warm-up complete (produced %d score)", len(scores))
 
 
 def _identity_activation_kwarg(predict: Any) -> dict[str, Any]:

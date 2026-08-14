@@ -568,6 +568,19 @@ services:
       RERANKER_MODEL_NAME: ${RERANKER_MODEL_NAME:-BAAI/bge-reranker-base}
       RERANKER_DEVICE: ${RERANKER_DEVICE:-cpu}
       RERANKER_INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      # Must match the `cpus` limit below. Torch reads the host core count, not
+      # the cgroup quota, so leaving it unset means one thread per host core
+      # contending for a fraction of one — measured at 11.2-11.5s for 30
+      # passages, against rag-service's 10s timeout.
+      RERANKER_TORCH_THREADS: ${RERANKER_TORCH_THREADS:-4}
+      OMP_NUM_THREADS: ${RERANKER_TORCH_THREADS:-4}
+      MKL_NUM_THREADS: ${RERANKER_TORCH_THREADS:-4}
+      # 256 tokens covers the 1000-character passages rag-service actually
+      # sends; attention is O(n^2), so the full 512 window costs ~4x for text
+      # that is not there.
+      RERANKER_MAX_LENGTH: ${RERANKER_MAX_LENGTH:-256}
+      # Off until validated on the deployment platform — see config.py.
+      RERANKER_QUANTIZE: ${RERANKER_QUANTIZE:-false}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
       interval: 30s
@@ -577,7 +590,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "2"
+          # 4, not 2. A cross-encoder scoring ~30 candidates is the heaviest
+          # per-request CPU work in the stack and it sits inside a 10s caller
+          # timeout. The host has 12 cores; 4 leaves ample headroom for the rest
+          # of the fleet. Keep RERANKER_TORCH_THREADS equal to this number.
+          cpus: "4"
           # Higher than embedding-service's 2G: bge-reranker-base is ~278M
           # params (~1.1GB resident as fp32) against bge-small-en-v1.5's ~33M,
           # plus the torch runtime. The container runs ONE uvicorn worker for
