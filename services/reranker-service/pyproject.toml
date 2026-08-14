@@ -1,0 +1,46 @@
+[project]
+name = "libertasian-reranker-service"
+version = "0.1.0"
+description = "Cross-encoder reranker service for LIBERTASIAN Philippine legal AI platform"
+# 3.12, not >=3.11 like the older services. This service is built on
+# python:3.12-slim and its locked numpy ships stubs that use `type` statements,
+# which mypy cannot parse under a 3.11 target. Declaring a floor the toolchain
+# cannot actually check would be a lie the next contributor pays for.
+requires-python = ">=3.12"
+dependencies = [
+    # Upper bound is load-bearing, not caution. `prometheus-fastapi-instrumentator`
+    # 7.1.0 (the newest 7.x, and every service here pins `>=7,<8`) crashes on
+    # FastAPI >= 0.136 with `'_IncludedRouter' object has no attribute 'path'`
+    # — raised inside the instrumentation middleware, so it fails EVERY request,
+    # not just startup. A fresh resolve of this new service picked up 0.141.1
+    # and every router test 500'd; the older services are unaffected only
+    # because their committed locks predate the break. 0.135.x is what the rest
+    # of the fleet actually runs and is verified working with the instrumentator.
+    "fastapi>=0.115.0,<0.136",
+    "uvicorn[standard]>=0.34.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.7.0",
+    "httpx>=0.28.0",
+    "numpy>=1.26.0",
+    "sentence-transformers>=3.0.0",
+    "prometheus-fastapi-instrumentator>=7,<8",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.14.0",
+    "ruff>=0.8.0",
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "A", "SIM"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"

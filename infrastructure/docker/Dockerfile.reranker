@@ -1,0 +1,104 @@
+# ==========================================================================
+# LIBERTASIAN Reranker Service — Multi-stage production Dockerfile
+# Python 3.12 + FastAPI + sentence-transformers (CrossEncoder, CPU)
+# ==========================================================================
+
+# Stage 1: Dependencies
+FROM python:3.12-slim AS deps
+
+# Install uv for fast dependency management
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+WORKDIR /app
+
+# Lockfile first so the layer caches on source-only changes.
+COPY services/reranker-service/pyproject.toml services/reranker-service/uv.lock ./
+
+# --frozen fails the build if the lock and pyproject.toml have drifted, and
+# installs EXACTLY the locked versions. Four Python Dockerfiles here previously
+# ran `uv pip install -r pyproject.toml`, which ignores uv.lock and re-resolves
+# from PyPI on every rebuild — the constraints are lower bounds, so each rebuild
+# could land an untested version. That took rag-service down for ~50 minutes and
+# was fixed in #368/#373. Do not reintroduce it.
+#
+# It matters more than usual here: this service's lock pins fastapi <0.136
+# because prometheus-fastapi-instrumentator 7.1.0 crashes on every request
+# against 0.136+. An unfrozen resolve would silently reintroduce that.
+RUN uv sync --frozen --no-dev --no-install-project
+
+# ==========================================================================
+# Stage 2: Model bake
+#
+# The cross-encoder weights (~1.1GB) are downloaded ONCE at build time and
+# copied into the image, rather than fetched on first request. Runtime download
+# means the first query after every deploy or restart pays a multi-hundred-MB
+# download inside its request timeout, and a HuggingFace outage or a network
+# policy change turns into "reranker unreachable" -> silent RRF fallback.
+# Baking makes the image self-contained and the first request fast.
+#
+# embedding-service does NOT do this — it still downloads at runtime, which is
+# why its Dockerfile has to provision a writable HF cache for appuser. Worth
+# giving that the same treatment separately.
+# ==========================================================================
+FROM deps AS model
+
+# Must match `Settings.model_name` in services/reranker-service/src/config.py.
+# If they disagree, HF_HUB_OFFLINE in the runner turns the mismatch into a loud
+# startup failure rather than a silent runtime download.
+ARG RERANKER_MODEL_NAME=BAAI/bge-reranker-base
+
+ENV HF_HOME=/opt/models
+ENV PATH="/app/.venv/bin:$PATH"
+ENV MODEL_NAME=${RERANKER_MODEL_NAME}
+
+RUN mkdir -p /opt/models \
+    && python -c "import os; from sentence_transformers import CrossEncoder; \
+name = os.environ['MODEL_NAME']; print('Baking ' + name); \
+CrossEncoder(name, device='cpu'); print('Model cached')" \
+    && find /opt/models \( -name "*.h5" -o -name "*.ot" -o -name "*.msgpack" \) -delete
+
+# Stage 3: Production
+FROM python:3.12-slim AS runner
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# The locked dependency set lives in the venv built by `uv sync`, not in the
+# interpreter's site-packages. PATH puts its bin dir first so the CMD below
+# resolves the locked uvicorn rather than a system one.
+COPY --from=deps /app/.venv /app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
+
+# Copy application source
+COPY services/reranker-service/src ./src
+
+# Non-root user. The baked model is copied in owned by appuser and read at
+# runtime only — nothing writes to it, so no writable cache dir is needed.
+RUN groupadd -g 1001 appgroup && useradd -u 1001 -g appgroup -s /bin/sh appuser
+COPY --from=model --chown=appuser:appgroup /opt/models /opt/models
+RUN chown -R appuser:appgroup /app
+USER appuser
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+# Point HuggingFace at the baked cache. HF_HUB_OFFLINE makes a cache miss fail
+# loudly at startup instead of silently reaching for the network on the request
+# path — if the bake and the configured model name ever disagree, that is a
+# build bug and it should not degrade into a slow first request in production.
+ENV HF_HOME=/opt/models
+ENV HF_HUB_OFFLINE=1
+
+EXPOSE 8002
+
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD curl -f http://localhost:8002/health || exit 1
+
+# ONE worker, deliberately. Each worker loads its own ~1.1GB copy of the
+# cross-encoder, so two would roughly double resident memory while contending
+# for the same CPUs — torch already parallelises a batch across cores, and
+# scoring runs off the event loop via asyncio.to_thread. Scale with replicas,
+# not workers, and raise the compose memory limit in step.
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8002", "--workers", "1"]

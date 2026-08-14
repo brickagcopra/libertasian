@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: [rag-service, worker-service, ocr-service, embedding-service]
+        service: [rag-service, worker-service, ocr-service, embedding-service, reranker-service]
     steps:
       - uses: actions/checkout@v4
 
@@ -86,13 +86,17 @@ jobs:
             dockerfile: infrastructure/docker/Dockerfile.embedding
           - service: tts-service
             dockerfile: infrastructure/docker/Dockerfile.tts
+          - service: reranker-service
+            dockerfile: infrastructure/docker/Dockerfile.reranker
     steps:
       - uses: actions/checkout@v4
 
-      # embedding-service, worker-service and tts-service bundle large ML
-      # deps (torch, sentence-transformers) and the resulting image plus
-      # Trivy's layer export exceeds the default runner disk. Free up
-      # the pre-installed tooling we don't need before building.
+      # embedding-service, worker-service, tts-service and reranker-service
+      # bundle large ML deps (torch, sentence-transformers) and the resulting
+      # image plus Trivy's layer export exceeds the default runner disk. Free
+      # up the pre-installed tooling we don't need before building.
+      # reranker-service is the largest of them: it also bakes a ~1.1GB model
+      # into the image, measured at ~7GB total locally.
       - name: Free disk space on runner
         uses: jlumbroso/free-disk-space@main
         with:

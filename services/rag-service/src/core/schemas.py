@@ -57,6 +57,32 @@ class SearchResult(BaseModel):
     )
 
 
+class RerankOutcome(BaseModel):
+    """Result of a reranking pass, with whether it actually happened.
+
+    Reranking used to return a bare passage list, so a reranker that was down
+    was indistinguishable from one that was not deployed — both silently
+    returned RRF-ordered passages. That is the same silent-degradation shape as
+    the kNN leg's, and it is reported the same way.
+    """
+
+    model_config = ConfigDict(strict=True)
+
+    passages: list[Passage] = Field(default_factory=list)
+    degraded: bool = Field(
+        default=False,
+        description="True when the returned order is RRF fallback, not cross-encoder.",
+    )
+    degraded_legs: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Why reranking did not run — 'reranker:not_configured', "
+            "'reranker:unreachable', 'reranker:failed'. Empty iff ``degraded`` "
+            "is False."
+        ),
+    )
+
+
 class CitationRef(BaseModel):
     """A citation reference extracted from LLM output."""
 

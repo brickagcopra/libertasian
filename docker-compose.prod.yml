@@ -360,6 +360,12 @@ services:
       # `depends_on`: embedding-service being down must degrade retrieval to
       # BM25-only, never hold up or fail rag-service.
       RAG_EMBEDDING_SERVICE_URL: http://embedding-service:8001
+      # Cross-encoder reranking of the fused BM25+kNN candidate set. Without it
+      # passages keep their RRF order, which ranks by position rather than
+      # relevance. Same `ai` network, same RAG_ prefix caveat, and same
+      # deliberate absence of a `depends_on`: a reranker that is down must
+      # degrade ordering, never hold up or fail rag-service.
+      RAG_RERANKER_URL: http://reranker-service:8002
     depends_on:
       opensearch:
         condition: service_healthy
@@ -543,6 +549,40 @@ services:
         limits:
           cpus: "2"
           memory: 2G
+
+  # ====================
+  # Reranker Service (Python)
+  # ====================
+  # Cross-encoder that scores the fused BM25+kNN candidate set by relevance.
+  # Internal only: `expose`, never `ports`, and not referenced by nginx —
+  # rag-service is its sole client.
+  reranker-service:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.reranker
+    container_name: libertasian-reranker-service
+    restart: always
+    expose:
+      - "8002"
+    environment:
+      RERANKER_MODEL_NAME: ${RERANKER_MODEL_NAME:-BAAI/bge-reranker-base}
+      RERANKER_DEVICE: ${RERANKER_DEVICE:-cpu}
+      RERANKER_INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks: [ai]
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          # Higher than embedding-service's 2G: bge-reranker-base is ~278M
+          # params (~1.1GB resident as fp32) against bge-small-en-v1.5's ~33M,
+          # plus the torch runtime. The container runs ONE uvicorn worker for
+          # exactly this reason — see Dockerfile.reranker.
+          memory: 3G
 
 volumes:
   postgres_data:

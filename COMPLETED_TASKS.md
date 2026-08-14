@@ -1,6 +1,8 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-08-14 (`fix/rag-embedding-client` — **the kNN leg now actually runs.** rag-service never computed a query embedding, so `hybrid_retrieve`'s kNN arm was gated off on every request and retrieval had always been BM25-only — which is why "What **IS** estafa" matched "Jesus **IS** Lord Christian School Foundation". An async embedding client, `RAG_EMBEDDING_SERVICE_URL` in compose, and both `answer/service.py` call sites wired. The honest claim is that **relevant passages now enter the candidate set** — under RRF the BM25 hit still ranks top-1 in 3 of 4 sampled queries, so reranking (C4) is what reorders them, and it only becomes meaningful now. Also found and fixed while verifying: a *failed* embedding was being reported as `knn:not_configured`, which would send someone hunting for an env var that is already set.)
+> Last updated: 2026-08-14 (`feat/reranker-service` — **search-epic C4.** A new cross-encoder service (BAAI/bge-reranker-base, CPU, model baked into the image) scores the fused BM25+kNN candidate set by relevance instead of by RRF rank position. Measured on 12 answerable + 2 unanswerable queries: **the correct document ranks top-1 in 12/12**, including "constitution", which the kNN leg had regressed. Two traps handled: rag-service's reranker client sent **no auth header at all** while the new service enforces one — a 403 that the client swallows into an RRF fallback looks exactly like "no reranker deployed"; and `abstention_score_threshold` goes live the moment this deploys, so it was **re-derived from measured scores** (0.01 → **0.0004**) rather than carried over — the old value would have abstained on a query measured as answerable.)
+>
+> Previously: 2026-08-14 (`fix/rag-embedding-client` — **the kNN leg now actually runs.** rag-service never computed a query embedding, so `hybrid_retrieve`'s kNN arm was gated off on every request and retrieval had always been BM25-only — which is why "What **IS** estafa" matched "Jesus **IS** Lord Christian School Foundation". An async embedding client, `RAG_EMBEDDING_SERVICE_URL` in compose, and both `answer/service.py` call sites wired. The honest claim is that **relevant passages now enter the candidate set** — under RRF the BM25 hit still ranks top-1 in 3 of 4 sampled queries, so reranking (C4) is what reorders them, and it only becomes meaningful now. Also found and fixed while verifying: a *failed* embedding was being reported as `knn:not_configured`, which would send someone hunting for an env var that is already set.)
 >
 > Previously: 2026-08-14 (`fix/knn-field-name` — `_knn_search` asked OpenSearch for a field called `embedding`; the vector index's knn_vector field is **`embedding_vector`**. Proved on the live cluster: that query is an HTTP 400 on every call. Two sibling mismatches came with it, and one of them — `source_authority_level` where both indices map **`source_trust_level`** — is on the BM25 leg that *is* live, which means the authority boost CLAUDE.md requires has been multiplying every passage by 1.0 and **reordering nothing**. Also: **fixing the field name does not by itself revive kNN.** Nothing in rag-service computes a query embedding, so `hybrid_retrieve` is called without one and the kNN leg has never executed in production at all. That is now reported as a degraded leg instead of passing silently, and a new CI guard fails the build if any query field drifts from `index-mappings.ts`.)
 >
@@ -23,6 +25,46 @@
 > Previously: 2026-07-29 (#336 OPEN: a flat 300 s synthesis timeout made a 2,238-char digest — near the corpus average — permanently unsynthesizable, and retrying it identically three times burned 15 min of 8-core CPU. Budget is now length-proportional, failures are classified, and the reason is persisted. A separate CUDA image and bearer auth on the TTS hop open the rented-GPU route for the tier-1 backfill; both are no-ops for prod.)
 >
 > Previously: 2026-07-27 (#322 MERGED `5addc51`: the auto-publish citation gate was unreachable and had stranded 76% of the corpus out of search since 2026-05-30. Dry run over prod confirms 11,561 of 13,093 drafts publish under the corrected rules. #321 opened for the resolver underneath it, #323 for the 1,531 rows still short a `court`.)
+
+---
+
+## 2026-08-14 — search-epic C4: the cross-encoder reranker
+
+Branch `feat/reranker-service`. The third and last structural piece: #382 made the kNN query correct, #383 made it run, and this makes the fused set *ordered by relevance*.
+
+**Why RRF was not enough.** Reciprocal Rank Fusion combines BM25 and kNN by **rank position**, not relevance. Adding the kNN leg put the right documents into the candidate set — and regressed a query BM25 alone had answered perfectly:
+
+```
+"constitution"  BM25-only  -> all 8 passages from "1987 Constitution of the Philippines"
+                hybrid     -> Constitution + Cagas v COMELEC + Magallona v Ermita + Kida v Senate
+```
+
+**The service.** `services/reranker-service`, mirroring embedding-service's layout — `src/{config,main}.py`, `src/shared/auth.py`, `src/rerank/{router,schemas,service}.py`, `tests/`. FastAPI + sentence-transformers, `BAAI/bge-reranker-base` (the cross-encoder companion to the `bge-small-en-v1.5` embeddings already in use), CPU only, `uv.lock` committed and installed with `--frozen`. `infrastructure/docker/Dockerfile.reranker` **bakes the ~1.1GB model at build time** and sets `HF_HUB_OFFLINE=1`, so a cache/config mismatch fails loudly at startup instead of turning into a slow first request. One uvicorn worker, deliberately: each worker loads its own copy of the model, so two would double resident memory while contending for the same cores.
+
+**Trap 1 — auth, fixed on both sides.** embedding-service enforces `X-Internal-Api-Key`, and `core/reranking.py::_call_reranker` posted with **no headers whatsoever**. Copying embedding-service's auth as-is would have made the first production call a 403, which the broad `except` in `rerank_passages` swallows into an RRF fallback — indistinguishable from "no reranker configured", and identical in shape to the two bugs the previous PRs were about. The client now sends the header (mirroring `worker-service`'s `_internal_headers`), the service enforces it, and both halves are asserted by tests.
+
+**Trap 2 — `abstention_score_threshold` went live, so it was re-derived from data.** That gate had been inert: with `rerank_score` None, `check_abstention` fell back to a raw RRF score. The moment the reranker populates `rerank_score` it starts comparing real cross-encoder output. bge-reranker-base emits **unbounded logits** — routinely negative even for matches — so the service applies a **sigmoid**, making `score` the 0-1 value the documented contract already promised.
+
+That sigmoid is subtler than it looks: sentence-transformers defaults a 1-label head's activation to **Sigmoid already**, so `predict()` returns 0-1 out of the box and a naive extra sigmoid would squash every score into roughly [0.5, 0.73] — still "0-1", still monotonic, still passing a range check, with the useful spread destroyed. The service forces identity activation and applies sigmoid exactly once; the kwarg was renamed `activation_fct` → `activation_fn` in sentence-transformers v4, so it is resolved by introspection.
+
+**Measured, not guessed** (BAAI/bge-reranker-base, sigmoid applied, candidate sets built from the documents prod retrieval actually returns including the BM25 stopword distractors):
+
+| | top-1 score |
+|---|---|
+| 12 answerable queries | **0.0044 – 0.9993** (median 0.83) |
+| 2 unanswerable queries | **3.74e-05** (both — the model's saturated "no") |
+
+Correct document ranked top-1 in **12/12**. The two populations separate by ~117x, but far below the intuitive midpoint — a relevant passage frequently scores under 0.5, and the lowest answerable query scored 0.0044. **The old 0.01 would have abstained on a query the corpus can answer.** New default **0.0004**: the geometric midpoint of the measured gap, ~11x above the model's floor and ~11x below the lowest answerable top-1. The `SUPERSEDED` comment block at `config.py:120-127` is replaced with this derivation.
+
+Honest limit: this gate rejects queries with *nothing* relevant retrieved. It is **not** a quality bar — answerable top-1 spans 200x, so no single threshold separates "well answered" from "barely answered". The citation-grounding abstention (#381) remains the effective quality gate.
+
+**Observability.** `rerank_passages` used to swallow every failure into a WARNING and a silent RRF fallback. It now returns a `RerankOutcome` carrying `degraded` / `degraded_legs`, with the same alarm discipline as the retrieval legs: `reranker:not_configured` warns **once per process** (a standing configuration choice, true of 100% of requests), while `reranker:unreachable` and `reranker:failed` log **ERROR per request** (genuine runtime failures — and a missing internal key lands in `failed`, loudly).
+
+**A dependency break caught on the way.** A fresh resolve for the new service picked up FastAPI 0.141.1, on which `prometheus-fastapi-instrumentator` 7.1.0 raises `'_IncludedRouter' object has no attribute 'path'` **inside the instrumentation middleware — i.e. on every request**, not just at startup. Every router test 500'd. Pinned to `fastapi>=0.115.0,<0.136`, the version the rest of the fleet actually runs. The older services are unaffected only because their committed locks predate the break; **the next unpinned re-lock of any of them will hit the same wall.**
+
+**Tests.** 76 added (37 reranker-service, 12 cross-service contract, 27 rag-service reranking). The contract test drives the **real** client against the **real** service schemas — payload validates as `RerankRequest`, a `RerankResponse` parses back into scores, field names and the `results` key asserted — and is wired into the CI guard job alongside the OpenSearch field contract, so a drift on either side fails the build instead of degrading to RRF in production. reranker-service's own suite plus `mypy --strict` also run in CI. rag-service: 823 passing.
+
+**Not done, deliberately.** No RRF weight changes, no `abstention_min_passages` change, no prompt changes, no reindex or mapping change, no GPU (the pod was released; CPU is the target), no EAS build.
 
 ---
 

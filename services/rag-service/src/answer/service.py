@@ -142,12 +142,14 @@ async def generate_answer(request: AnswerRequest) -> AnswerResponse:
         filter_terms=_retrieval_filters(request),
     )
 
-    # 3. Reranking
-    reranked = await rerank_passages(
+    # 3. Reranking. `degraded_legs` says whether the cross-encoder actually
+    # ran; RRF order is a fallback, not an equivalent.
+    rerank_outcome = await rerank_passages(
         query,
         search_result.passages,
         top_k=request.max_passages,
     )
+    reranked = rerank_outcome.passages
 
     # 4. Abstention check
     scoped = request.document_id is not None
@@ -293,11 +295,12 @@ async def stream_answer(request: AnswerRequest) -> AsyncIterator[AnswerChunk]:
             embedding=embedding,
             filter_terms=_retrieval_filters(request),
         )
-        reranked = await rerank_passages(
+        rerank_outcome = await rerank_passages(
             query,
             search_result.passages,
             top_k=request.max_passages,
         )
+        reranked = rerank_outcome.passages
 
         # Abstention check
         scoped = request.document_id is not None

@@ -32,6 +32,7 @@ from src.core.schemas import (
     CitationRef,
     ContextBundle,
     Passage,
+    RerankOutcome,
     SearchResult,
     ValidationResult,
 )
@@ -83,6 +84,11 @@ def _make_passages_list() -> list[Passage]:
             score=0.75, rerank_score=0.80,
         ),
     ]
+
+
+def _outcome(passages: list[Passage]) -> RerankOutcome:
+    """Wrap passages the way `rerank_passages` now returns them."""
+    return RerankOutcome(passages=passages)
 
 
 def _make_search_result(passages: list[Passage] | None = None) -> SearchResult:
@@ -198,7 +204,7 @@ class TestGenerateAnswer:
     def _setup_mocks(self) -> None:
         """Patch all external dependencies."""
         self.mock_retrieve = AsyncMock(return_value=_make_search_result())
-        self.mock_rerank = AsyncMock(return_value=_make_passages_list())
+        self.mock_rerank = AsyncMock(return_value=_outcome(_make_passages_list()))
         self.mock_generate = AsyncMock(
             return_value="The court held... [SOURCE doc-0001]"
         )
@@ -333,7 +339,7 @@ class TestGenerateAnswerAbstention:
                 query_intent="general",
             )
         )
-        self.mock_rerank = AsyncMock(return_value=[])
+        self.mock_rerank = AsyncMock(return_value=_outcome([]))
         self.mock_model_info = MagicMock(
             return_value={"model_name": "test-model-v1", "model_version": "1.0"}
         )
@@ -390,7 +396,7 @@ class TestStreamAnswer:
     @pytest.fixture(autouse=True)
     def _setup_mocks(self) -> None:
         self.mock_retrieve = AsyncMock(return_value=_make_search_result())
-        self.mock_rerank = AsyncMock(return_value=[_make_passage()])
+        self.mock_rerank = AsyncMock(return_value=_outcome([_make_passage()]))
         self.mock_validate = AsyncMock(return_value=_make_validation_result())
         self.mock_model_info = MagicMock(
             return_value={"model_name": "test-model-v1", "model_version": "1.0"}
@@ -473,7 +479,7 @@ class TestStreamAnswerAbstention:
         self.mock_retrieve = AsyncMock(
             return_value=SearchResult(passages=[], total_bm25_hits=0, total_knn_hits=0)
         )
-        self.mock_rerank = AsyncMock(return_value=[])
+        self.mock_rerank = AsyncMock(return_value=_outcome([]))
         self.mock_model_info = MagicMock(
             return_value={"model_name": "test-model-v1", "model_version": "1.0"}
         )
@@ -563,7 +569,7 @@ class TestDocumentScopedRetrieval:
     @pytest.fixture(autouse=True)
     def _setup_mocks(self) -> None:
         self.mock_retrieve = AsyncMock(return_value=_make_search_result())
-        self.mock_rerank = AsyncMock(return_value=_make_passages_list())
+        self.mock_rerank = AsyncMock(return_value=_outcome(_make_passages_list()))
         self.mock_generate = AsyncMock(return_value="Held... [SOURCE doc-0001]")
         self.mock_validate = AsyncMock(return_value=_make_validation_result())
         self.mock_model_info = MagicMock(
@@ -696,7 +702,7 @@ class TestScopedPassageFloor:
                 query_intent="legal_question",
             )
         )
-        self.mock_rerank = AsyncMock(return_value=single)
+        self.mock_rerank = AsyncMock(return_value=_outcome(single))
         self.mock_generate = AsyncMock(return_value="It does. [SOURCE doc-42]")
         self.mock_validate = AsyncMock(return_value=_make_validation_result())
         self.mock_model_info = MagicMock(
@@ -746,7 +752,7 @@ class TestScopedPassageFloor:
         two = self.single + [
             _make_passage(id="hit-2", document_id="doc-99", score=0.8, rerank_score=0.8)
         ]
-        self.mock_rerank.return_value = two
+        self.mock_rerank.return_value = _outcome(two)
 
         response = await generate_answer(AnswerRequest(query="Some corpus-wide question"))
 
@@ -755,7 +761,7 @@ class TestScopedPassageFloor:
 
     @pytest.mark.asyncio
     async def test_unscoped_three_passages_is_answered(self) -> None:
-        self.mock_rerank.return_value = _make_passages_list()
+        self.mock_rerank.return_value = _outcome(_make_passages_list())
 
         response = await generate_answer(AnswerRequest(query="Some corpus-wide question"))
 
@@ -764,7 +770,7 @@ class TestScopedPassageFloor:
     @pytest.mark.asyncio
     async def test_scoped_zero_passages_still_abstains(self) -> None:
         """Lowering the floor to 1 must not let an empty pool through."""
-        self.mock_rerank.return_value = []
+        self.mock_rerank.return_value = _outcome([])
 
         request = AnswerRequest(query="Does this cover salvage?", document_id="doc-42")
         response = await generate_answer(request)
@@ -804,7 +810,7 @@ class TestCitationGrounding:
                 query_intent="legal_question",
             )
         )
-        self.mock_rerank = AsyncMock(return_value=_make_passages_list())
+        self.mock_rerank = AsyncMock(return_value=_outcome(_make_passages_list()))
         self.mock_generate = AsyncMock(return_value="Unsupported prose with no citations.")
         self.mock_validate = AsyncMock(
             return_value=ValidationResult(
@@ -953,7 +959,7 @@ class TestQueryEmbeddingIsWired:
     @pytest.fixture(autouse=True)
     def _setup_mocks(self) -> None:
         self.mock_retrieve = AsyncMock(return_value=_make_search_result())
-        self.mock_rerank = AsyncMock(return_value=_make_passages_list())
+        self.mock_rerank = AsyncMock(return_value=_outcome(_make_passages_list()))
         self.mock_generate = AsyncMock(return_value="Held... [SOURCE doc-0001]")
         self.mock_validate = AsyncMock(return_value=_make_validation_result())
         self.mock_model_info = MagicMock(
@@ -1096,7 +1102,7 @@ class TestInsufficientSentinelNonStreaming:
     @pytest.fixture(autouse=True)
     def _setup_mocks(self) -> None:
         self.mock_retrieve = AsyncMock(return_value=_make_search_result())
-        self.mock_rerank = AsyncMock(return_value=_make_passages_list())
+        self.mock_rerank = AsyncMock(return_value=_outcome(_make_passages_list()))
         self.mock_generate = AsyncMock(return_value=INSUFFICIENT_SOURCES_SENTINEL)
         self.mock_validate = AsyncMock(return_value=_make_validation_result())
         self.mock_model_info = MagicMock(
@@ -1163,7 +1169,7 @@ class TestInsufficientSentinelStreaming:
     @pytest.fixture(autouse=True)
     def _setup_mocks(self) -> None:
         self.mock_retrieve = AsyncMock(return_value=_make_search_result())
-        self.mock_rerank = AsyncMock(return_value=_make_passages_list())
+        self.mock_rerank = AsyncMock(return_value=_outcome(_make_passages_list()))
         self.mock_validate = AsyncMock(return_value=_make_validation_result())
         self.mock_model_info = MagicMock(
             return_value={"model_name": "test-model-v1", "model_version": "1.0"}
