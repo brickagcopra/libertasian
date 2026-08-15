@@ -29,7 +29,7 @@ shot on a physical device.
 ## (a) App Review Information → Notes
 
 Paste into **App Store Connect → App Review Information → Notes**, replacing the existing text.
-Limit 4000 characters; this text is **3,923**. Everything between the fences, nothing else.
+Limit 4000 characters; this text is **3,942**. Everything between the fences, nothing else.
 It is **already live on ASC** — pushed via `PATCH /v1/appStoreReviewDetails/48204d2a-…`. Re-paste
 only if you edit it here.
 
@@ -46,10 +46,10 @@ only if you edit it here.
 ```
 1) DEMONSTRATION VIDEO
 A screen recording is attached to our Resolution Center reply: one continuous take on a physical iPhone, from cold launch to in-app account deletion.
-Moderation in this build: any user can report another user's post, and delete their own posts. User-level blocking is not in build 16; it is implemented and ships in the next build, hiding blocked authors from the feed, post detail and comments, with an unblock list in Settings. We can submit that build now if you want to see blocking first.
+Moderation in the attached build: any user can report another user's post, block its author, or delete their own posts. Blocking is symmetric and hides the blocked author from the feed, post detail and comments; blocked users are listed under Settings > Blocked users, where the block can be lifted. The recording shows the report and block flows end to end.
 
 2) DEVICES AND OS VERSIONS TESTED
-Physical device: iPhone 16 Pro on iOS 18.5. Simulators: iPhone 16 Pro Max and iPad Pro 13-inch (M4) on iOS 18.x.
+Physical device: iPhone 17 Pro Max on iOS 26.6. Simulators: iPhone 16 Pro Max and iPad Pro 13-inch (M4) on iOS 18.x.
 
 3) CORE FUNCTIONALITY AND INTENDED AUDIENCE
 LIBERTASIAN is a Philippine legal research library for law students, bar reviewees, and practitioners.
@@ -96,11 +96,11 @@ screen recording from section (c) to the same message.
 ```
 Hello, and thank you for the review.
 
-We have answered all seven items in full in the App Review Information Notes field, which we have just updated, and attached a screen recording of the app running on a physical iPhone 16 Pro (iOS 18.5). The recording is a single continuous take from cold launch and covers registration, sign-in, the codal reader, a case digest, Search, the AI assistant returning a cited answer, the camera and notification permission prompts, the community feed with the Report Post flow, Settings, and in-app account deletion.
+We have answered all seven items in full in the App Review Information Notes field, which we have just updated, and attached a screen recording of the app running on a physical iPhone 17 Pro Max (iOS 26.6). The recording is a single continuous take from cold launch and covers registration, sign-in, the codal reader, a case digest, Search, the AI assistant returning a cited answer, the camera and notification permission prompts, the community feed with the Report Post flow, Settings, and in-app account deletion.
 
 Three points we want to state plainly rather than leave you to infer:
 
-1. Moderation. Build 16 lets any user report another user's post, and delete their own posts. User-level blocking is not in build 16. It is already implemented on our side and will ship in the next build, where blocked authors are removed from the feed, post detail and comments, with an unblock list under Settings. If you would prefer to review blocking before approving, tell us and we will upload that build immediately.
+1. Moderation. The attached build lets any user report another user's post, block its author, or delete their own posts. Blocking is symmetric: once a user is blocked, neither party sees the other's posts or comments, and the blocked user can no longer reply to or interact with the blocker's posts. Blocked users are listed under Settings > Blocked users and can be unblocked there. Both the report and block flows are shown in the recording. Reporting deliberately still works against a user you have blocked, so that blocking cannot be used to shield someone from moderation.
 
 2. Payments. The iOS app contains no purchase, subscription or payment flow of any kind - no in-app purchase, no external purchase link, no checkout screen. Paid entitlements are purchased on our website and carry over when the user signs in.
 
@@ -118,7 +118,7 @@ LIBERTASIAN
 
 ## (c) Screen recording — shot list
 
-**Shot by brick on a physical iPhone 16 Pro (iOS 18.5), not a simulator.** Apple can tell, and
+**Shot by brick on a physical iPhone 17 Pro Max (iOS 26.6), not a simulator.** Apple can tell, and
 a simulator capture invites a second 2.1. One continuous take, portrait, from a cold launch —
 force-quit the app first. Target 3–5 minutes. iOS Screen Recording from Control Centre is fine;
 enable the microphone only if you intend to narrate.
@@ -161,10 +161,12 @@ resequencing anything.
 | 8 | Search | Type `constitution`, wait, scroll the **8 cited sources** | |
 | 9 | AI assistant | From **inside the reader**, open the document chat sheet, ask a question, let it **stream**, scroll to the citations | This is the real AI surface (`features/ai-answers/components/document-chat-sheet.tsx`). See trap 3 |
 | 10 | Scan tab | Tap Scan so the **camera permission prompt** fires. Grant it. Scan any printed page | |
-| 11 | Feed — Report | **From the feed list, not post detail.** Tap the ⋯ on someone else's post card, open the options sheet, tap **Report Post**, pick a reason, submit | See trap 4 — the ⋯ on post detail is wired to a no-op |
-| 12 | Settings | Settings screen and the account section | |
-| 13 | Delete account | **Sign out, sign in as the throwaway account**, then Settings → Delete account, confirm | See trap 1 |
-| 14 | Restore link | Open Mail, show the account-restore email | |
+| 11 | Feed — Report | Tap the ⋯ on **someone else's** post card, open the options sheet, tap **Report Post**, pick a reason, submit | Report only renders for non-owners |
+| 12 | Feed — **Block** | On another user's post, open ⋯ again and tap **Block <name>**. Show the confirmation dialog, confirm, then show **their post disappearing from the feed** | This is what Apple's item 1 asked to see. The disappearance is the proof it took effect |
+| 13 | Settings — Blocked users | Settings → **Blocked users**, show the person you just blocked in the list, tap **Unblock**, confirm | Apple wants the block to be reversible and discoverable, not a dead end |
+| 14 | Settings | Settings screen and the account section | |
+| 15 | Delete account | **Sign out, sign in as the throwaway account**, then Settings → Delete account, confirm | See trap 1 |
+| 16 | Restore link | Open Mail, show the account-restore email | |
 
 ### Traps — read these before recording
 
@@ -190,26 +192,23 @@ resequencing anything.
    calls** (`chat-knowledge-base.ts`). Putting a canned FAQ reply in front of the reviewer as
    our AI would be worse than showing nothing. Use the reader's document chat sheet.
 
-4. **Do not film the ⋯ button on post detail — it is dead.** `feed/[postId].tsx:85-89` passes
-   `onOptionsPress={() => {}}` and `onCommentPress={() => {}}`, so both buttons render and do
-   nothing. Shoot Report from the feed list card, where the sheet is actually wired
-   (`post-card.tsx:124-127`). **This is a real bug, not just a filming hazard — see the note
-   below.**
+4. **Block needs two accounts' content on screen.** You can only block someone else, so the
+   feed must already contain a post by another user before segment 12. Line that up before
+   recording — hunting for a blockable post on camera reads as an empty product.
 
 5. **Do not stage a purchase flow.** There is none in the app, we have told Apple there is
    none, and inventing one creates a 3.1.1 problem that does not currently exist.
 
-6. **Blocking is not in build 16.** Do not attempt to film it. Sections (a) and (b) tell Apple
-   this in plain language; showing a half-built screen would contradict that.
+6. **Do not block the demo account's own posts away.** The block is symmetric, so blocking a
+   user also hides YOUR posts from them. Unblock at segment 13 as scripted, so the account is
+   left in a clean state for the reviewer.
 
 7. **One continuous take.** Do not stitch clips. If a segment goes wrong, restart from the cold
    launch — a cut invites the question of what happened in the gap.
 
-> **Open bug worth fixing before the next build.** Trap 4 is a live defect: the options and
-> comment buttons on the post detail screen are visible and inert. A reviewer who taps ⋯ on a
-> post detail sees a moderation control that does nothing — exactly the impression we are
-> trying to correct. Wiring those two handlers is small and belongs with the block-user work,
-> but it is a build decision, so it is called out here rather than folded in silently.
+> **Fixed since the first draft.** The post-detail ⋯ and comment buttons were visible and
+> inert (`onOptionsPress={() => {}}`). They are wired as of #395, so Report and Block now work
+> from post detail as well as from the feed list — either surface is safe to film.
 
 ### After recording
 
