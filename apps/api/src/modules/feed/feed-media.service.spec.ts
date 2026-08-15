@@ -69,6 +69,7 @@ const mockPrisma = {
   },
   feedUserBlock: {
     findMany: jest.fn(),
+    findUnique: jest.fn(),
     findFirst: jest.fn(),
     count: jest.fn(),
     create: jest.fn(),

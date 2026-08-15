@@ -53,6 +53,7 @@ const mockPrisma: {
   feedPostReport: { create: jest.Mock; findUnique: jest.Mock; findMany: jest.Mock; update: jest.Mock };
   feedUserBlock: {
     findMany: jest.Mock;
+    findUnique: jest.Mock;
     findFirst: jest.Mock;
     count: jest.Mock;
     create: jest.Mock;
@@ -95,6 +96,7 @@ const mockPrisma: {
   },
   feedUserBlock: {
     findMany: jest.fn(),
+    findUnique: jest.fn(),
     findFirst: jest.fn(),
     count: jest.fn(),
     create: jest.fn(),
@@ -542,9 +544,45 @@ describe('FeedInteractionsService', () => {
       await expect(
         service.createComment(POST_ID, { textContent: 'hi' }, USER_ID, ORG_ID),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    it('still allows REPORTING a blocked user, so blocking is not a moderation shield', async () => {
+      withBlock();
+      // The post is readable on its own merits; only the block would hide it.
+      mockPrisma.feedPost.findFirst.mockResolvedValue(mockPublishedPost);
+      mockPrisma.feedPostReport.create.mockResolvedValue({ id: 'report-1' });
+
       await expect(
         service.reportPost(POST_ID, { reason: 'spam' }, USER_ID, ORG_ID),
+      ).resolves.toEqual(expect.objectContaining({ id: 'report-1' }));
+
+      // The gate ran WITHOUT the block predicate.
+      const call = mockPrisma.feedPost.findFirst.mock.calls[0]![0];
+      expect(call.where).not.toHaveProperty('authorId');
+    });
+
+    it('404s comments on a post the viewer cannot read', async () => {
+      withBlock();
+      mockPrisma.feedPost.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.getComments(POST_ID, {}, USER_ID, ORG_ID),
       ).rejects.toThrow(NotFoundException);
+      expect(mockPrisma.feedComment.findMany).not.toHaveBeenCalled();
+    });
+
+    it('blocks liking a blocked author\'s comment', async () => {
+      withBlock();
+      mockPrisma.feedComment.findUnique.mockResolvedValue({
+        id: COMMENT_ID,
+        authorId: BLOCKED_ID,
+        deletedAt: null,
+      });
+
+      await expect(
+        service.likeComment(COMMENT_ID, USER_ID, ORG_ID),
+      ).rejects.toThrow(NotFoundException);
+      expect(mockPrisma.feedCommentLike.create).not.toHaveBeenCalled();
     });
 
     it('applies the block predicate inside the write gate', async () => {

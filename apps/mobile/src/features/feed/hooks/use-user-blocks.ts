@@ -1,3 +1,4 @@
+import { Alert } from 'react-native';
 import {
   useInfiniteQuery,
   useMutation,
@@ -60,6 +61,14 @@ export function useBlockUser() {
     onMutate: async (userId) => {
       removeAuthorFromFeeds(queryClient, userId);
     },
+    // Error handling lives HERE, not in a per-call mutate(_, { onError }).
+    // onMutate unmounts the PostCard that owns the options sheet, and
+    // TanStack v5 drops per-call callbacks when their observer unsubscribes,
+    // so a caller-supplied onError would never fire from the feed list — the
+    // post would silently vanish and then reappear on the onSettled refetch.
+    onError: () => {
+      Alert.alert('Could not block', 'Something went wrong. Please try again.');
+    },
     onSettled: () => {
       // The block is symmetric and also hides comments and post detail, so
       // refetch rather than trying to patch every derived cache by hand.
@@ -77,6 +86,12 @@ export function useUnblockUser() {
   return useMutation({
     mutationFn: (userId: string) =>
       apiClient.delete(`/feed/users/${userId}/block`),
+    onError: () => {
+      Alert.alert(
+        'Could not unblock',
+        'Something went wrong. Please try again.',
+      );
+    },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ['feed'] });
       void queryClient.invalidateQueries({ queryKey: ['feed-post'] });

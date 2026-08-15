@@ -11,6 +11,7 @@ const THIRD = 'user-third';
 const mockPrisma = {
   feedUserBlock: {
     findMany: jest.fn(),
+    findUnique: jest.fn(),
     count: jest.fn(),
     create: jest.fn(),
     deleteMany: jest.fn(),
@@ -39,6 +40,7 @@ describe('FeedBlocksService', () => {
     jest.clearAllMocks();
 
     mockPrisma.user.findFirst.mockResolvedValue({ id: THEM });
+    mockPrisma.feedUserBlock.findUnique.mockResolvedValue(null);
     mockPrisma.feedUserBlock.count.mockResolvedValue(0);
     mockPrisma.feedUserBlock.create.mockResolvedValue({ id: 'block-1' });
     mockPrisma.feedUserBlock.deleteMany.mockResolvedValue({ count: 1 });
@@ -142,6 +144,17 @@ describe('FeedBlocksService', () => {
       await expect(service.blockUser(ME, THEM)).rejects.toThrow(
         BadRequestException,
       );
+      expect(mockPrisma.feedUserBlock.create).not.toHaveBeenCalled();
+    });
+
+    it('stays a no-op at the cap when the pair is already blocked', async () => {
+      // Order matters: the existing-pair check must run BEFORE the cap check,
+      // or a stale client re-blocking someone gets a 400 at exactly 1000.
+      mockPrisma.feedUserBlock.findUnique.mockResolvedValue({ id: 'block-1' });
+      mockPrisma.feedUserBlock.count.mockResolvedValue(1000);
+
+      await expect(service.blockUser(ME, THEM)).resolves.toBeUndefined();
+      expect(mockPrisma.feedUserBlock.count).not.toHaveBeenCalled();
       expect(mockPrisma.feedUserBlock.create).not.toHaveBeenCalled();
     });
   });

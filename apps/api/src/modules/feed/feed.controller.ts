@@ -125,6 +125,12 @@ export class FeedController {
   @HttpCode(HttpStatus.NO_CONTENT)
   // Deliberately throttled, unlike the report route above: blocking is a
   // cheap write that fans out into every feed query, so it needs a ceiling.
+  // NOTE: this bucket is keyed by IP, not user. AppThrottlerGuard is bound as
+  // an APP_GUARD and Nest runs global guards before route-level ones, so
+  // req.user is still undefined in getTracker and it falls back to req.ip.
+  // Per CLAUDE.md an entire firm can share one egress IP, so the limit is set
+  // well above what one person would ever need rather than at a per-user
+  // ceiling. Same caveat applies to every route-level @Throttle here.
   @Throttle({ default: { ttl: 3_600_000, limit: 60 } })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Block a user' })

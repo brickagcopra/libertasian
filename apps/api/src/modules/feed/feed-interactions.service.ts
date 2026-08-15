@@ -216,6 +216,12 @@ export class FeedInteractionsService {
   ) {
     const limit = query.limit ?? 20;
 
+    // Gate on the parent post first. Without this, blocking is inconsistent
+    // across the post surface: GET /feed/posts/:id would 404 for a blocked
+    // viewer while GET /feed/posts/:id/comments still served the thread
+    // underneath it, leaving a window into a post they cannot see.
+    await this.validatePostReadable(postId, userId, viewerOrgId);
+
     // Blocked authors must be filtered in THREE places on this one query:
     // the top-level `where`, the inlined `replies`, and the `_count.replies`
     // aggregate. Omitting the last one still leaks the fact that a blocked
@@ -301,6 +307,13 @@ export class FeedInteractionsService {
     if (!comment || comment.deletedAt) {
       throw new NotFoundException('Comment not found');
     }
+    // Blocked either way: without this, a blocked user could still like the
+    // blocker's comments on third-party posts — the one interaction path the
+    // symmetric model would otherwise leave open.
+    const hidden = await this.blocks.getHiddenUserIds(userId);
+    if (hidden.includes(comment.authorId)) {
+      throw new NotFoundException('Comment not found');
+    }
 
     try {
       // feedCommentLike has no organization_id column — direct prisma.
@@ -345,7 +358,16 @@ export class FeedInteractionsService {
     userId: string,
     viewerOrgId: string,
   ) {
-    await this.validatePostReadable(postId, userId, viewerOrgId);
+    // Deliberately does NOT enforce blocks. The block filter is symmetric, so
+    // enforcing it here would make a user un-reportable by anyone they have
+    // blocked: A posts something abusive about B, A blocks B, and B can no
+    // longer report it even after learning of the post out-of-band, while
+    // every other user still sees it. Blocking must not become a shield
+    // against moderation — the mirror image of the "a harasser must not be
+    // able to erase report evidence" rule in the migration.
+    await this.validatePostReadable(postId, userId, viewerOrgId, {
+      enforceBlocks: false,
+    });
 
     try {
       const report = await this.prisma.feedPostReport.create({
@@ -489,6 +511,7 @@ export class FeedInteractionsService {
     postId: string,
     userId: string,
     viewerOrgId: string,
+    { enforceBlocks = true }: { enforceBlocks?: boolean } = {},
   ) {
     const post = await this.prisma.feedPost.findFirst({
       where: {
@@ -499,7 +522,7 @@ export class FeedInteractionsService {
           { visibility: 'public' },
           { visibility: 'organization', organizationId: viewerOrgId },
         ],
-        ...(await this.blocks.authorFilterFor(userId)),
+        ...(enforceBlocks ? await this.blocks.authorFilterFor(userId) : {}),
       },
       select: { id: true },
     });

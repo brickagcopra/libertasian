@@ -12,6 +12,8 @@ interface PostOptionsSheetProps {
   onClose: () => void;
   onEdit: () => void;
   onReport: () => void;
+  /** Called after a block succeeds. Screens showing only this post use it to navigate away. */
+  onBlocked?: () => void;
 }
 
 export function PostOptionsSheet({
@@ -21,6 +23,7 @@ export function PostOptionsSheet({
   onClose,
   onEdit,
   onReport,
+  onBlocked,
 }: PostOptionsSheetProps) {
   const deletePost = useDeletePost();
   const blockUser = useBlockUser();
@@ -35,14 +38,13 @@ export function PostOptionsSheet({
         {
           text: 'Block',
           style: 'destructive',
-          onPress: () =>
-            blockUser.mutate(post.author.id, {
-              onError: () =>
-                Alert.alert(
-                  'Could not block',
-                  'Something went wrong. Please try again.',
-                ),
-            }),
+          // Failure is surfaced by useBlockUser's own onError — a callback
+          // passed here would be dropped when this sheet unmounts. onBlocked
+          // is called optimistically for the same reason.
+          onPress: () => {
+            blockUser.mutate(post.author.id);
+            onBlocked?.();
+          },
         },
       ],
     );

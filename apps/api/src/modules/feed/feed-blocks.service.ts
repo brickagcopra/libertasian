@@ -9,11 +9,19 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { FeedQueryDto } from './dto';
 
 /**
- * Hard cap on outbound blocks per user.
+ * Hard cap on OUTBOUND blocks per user.
  *
  * getHiddenUserIds() feeds its result into `authorId: { notIn: [...] }` on the
- * hottest query in the app. An unbounded list would put thousands of UUID bind
- * parameters into GET /feed. No legitimate user approaches this.
+ * hottest query in the app, and this keeps the half a user controls from
+ * growing without bound. No legitimate user approaches it.
+ *
+ * It is NOT a bound on the union getHiddenUserIds() returns: the inbound half
+ * ("people who blocked me") cannot be capped, because you cannot stop others
+ * from blocking you. N accounts each blocking the same victim once still
+ * produces an N-element notIn on that victim's queries. That is acceptable at
+ * our scale but it is a brigading vector, not a closed invariant — if the
+ * inbound half ever grows large, the fix is to move the filter to a
+ * NOT EXISTS join rather than to raise this number.
  */
 const MAX_BLOCKS_PER_USER = 1000;
 
@@ -100,6 +108,15 @@ export class FeedBlocksService {
       throw new NotFoundException('User not found');
     }
 
+    // Check for an existing row BEFORE the cap, so that a stale client
+    // re-blocking someone already blocked stays a no-op instead of 400-ing
+    // once the user happens to sit at the cap.
+    const existing = await this.prisma.feedUserBlock.findUnique({
+      where: { blockerUserId_blockedUserId: { blockerUserId, blockedUserId } },
+      select: { id: true },
+    });
+    if (existing) return;
+
     const existingCount = await this.prisma.feedUserBlock.count({
       where: { blockerUserId },
     });
@@ -109,6 +126,9 @@ export class FeedBlocksService {
       );
     }
 
+    // Read-then-write, so concurrent requests can overshoot the cap slightly.
+    // Acceptable: the cap is a resource guard, not a security boundary, and
+    // serialising it would cost a transaction on every block.
     try {
       await this.prisma.feedUserBlock.create({
         data: { blockerUserId, blockedUserId },

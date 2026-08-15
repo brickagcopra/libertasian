@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -24,6 +25,7 @@ export default function BlockedUsersScreen() {
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useBlockedUsers();
   const unblockUser = useUnblockUser();
+  const [pendingId, setPendingId] = useState<string | null>(null);
 
   const items: FeedBlockedUser[] = data?.pages.flatMap((p) => p.data) ?? [];
 
@@ -35,14 +37,13 @@ export default function BlockedUsersScreen() {
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Unblock',
-          onPress: () =>
+          onPress: () => {
+            // Failure is surfaced by useUnblockUser's own onError.
+            setPendingId(row.user.id);
             unblockUser.mutate(row.user.id, {
-              onError: () =>
-                Alert.alert(
-                  'Could not unblock',
-                  'Something went wrong. Please try again.',
-                ),
-            }),
+              onSettled: () => setPendingId(null),
+            });
+          },
         },
       ],
     );
@@ -146,7 +147,10 @@ export default function BlockedUsersScreen() {
             </Text>
             <TouchableOpacity
               onPress={() => confirmUnblock(item)}
-              disabled={unblockUser.isPending}
+              // Gated on the in-flight row, not on the shared hook's
+              // isPending — otherwise unblocking one person greys out every
+              // other row until the request settles.
+              disabled={pendingId === item.user.id}
               accessibilityRole="button"
               accessibilityLabel={`Unblock ${item.user.fullName}`}
               style={{ paddingVertical: 6, paddingHorizontal: 12 }}

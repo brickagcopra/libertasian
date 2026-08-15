@@ -115,6 +115,11 @@ export default function PostDetailScreen() {
         visible={showOptions}
         post={post}
         isOwner={user?.id === post.author.id}
+        // Leave the detail screen on a successful block: the post is now
+        // unreadable, but useQuery keeps the last successful data on a failed
+        // refetch, so the blocked author's post would otherwise stay fully
+        // rendered on screen.
+        onBlocked={() => router.back()}
         onClose={() => setShowOptions(false)}
         onEdit={() => router.push(`/feed/create?editPostId=${post.id}` as `/${string}`)}
         onReport={() => setShowReport(true)}
