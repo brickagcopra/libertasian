@@ -12,6 +12,7 @@ import { useTabBarNav } from '@/features/navigation/use-tab-bar-nav';
 import { Button } from '@/components/ui/Button';
 import { Chip } from '@/components/ui/Chip';
 import { Fab } from '@/components/ui/Fab';
+import { useTabBarClearance } from '@/components/ui/TabBar';
 import { LibraryScreen } from '@/components/screens/LibraryScreen';
 import { useDocuments } from '@/features/documents/hooks/use-documents';
 import { useBarSubjects } from '@/features/study/hooks/use-bar-subjects';
@@ -76,6 +77,7 @@ function buildItems(docs: DocumentListItem[]): LibraryItem[] {
 
 export default function DocumentsRoute() {
   const navigate = useTabBarNav();
+  const clearance = useTabBarClearance();
   const { theme } = useTheme();
   const [activeFilter, setActiveFilter] = useState<FilterLabel>('All');
   const [searchQuery, setSearchQuery] = useState('');
@@ -217,7 +219,7 @@ export default function DocumentsRoute() {
           disabled={isFetchingNextPage}
           style={{
             position: 'absolute',
-            bottom: 90,
+            bottom: clearance,
             left: 18,
             paddingHorizontal: 14,
             paddingVertical: 10,

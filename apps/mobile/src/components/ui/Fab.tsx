@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Pressable, type StyleProp, type ViewStyle } from 'react-native';
+import { useTabBarClearance } from '@/components/ui/TabBar';
 import { useTheme } from '@/providers/theme-provider';
 
 export interface FabProps {
@@ -8,7 +9,11 @@ export interface FabProps {
   icon?: keyof typeof Ionicons.glyphMap;
   /** Accessibility label. Required for screen readers; defaults to "Scan". */
   accessibilityLabel?: string;
-  /** Override the bottom offset (default 90 — clears the design TabBar). */
+  /**
+   * Override the bottom offset. Defaults to `useTabBarClearance()`, which
+   * tracks the safe-area inset — do not pass a literal unless the screen has
+   * no TabBar.
+   */
   bottom?: number;
   /** Override the right offset (default 18). */
   right?: number;
@@ -19,19 +24,25 @@ export interface FabProps {
 
 /**
  * Floating Action Button used on Home + Library to launch the Scan flow.
- * Sits above the design TabBar (bottom: 90) so the two never overlap.
+ *
+ * Sits above the design TabBar. The offset comes from `useTabBarClearance()`,
+ * not a literal: the old `bottom: 90` was below the bar's top edge (98) on any
+ * notched iPhone, so the bar — rendered later, same elevation — painted over
+ * the FAB.
  * Theme-aware: uses theme.accent + theme.accentInk.
  */
 export function Fab({
   onPress,
   icon = 'camera',
   accessibilityLabel = 'Scan',
-  bottom = 90,
+  bottom,
   right = 18,
   size = 56,
   style,
 }: FabProps) {
   const { theme } = useTheme();
+  const clearance = useTabBarClearance();
+  const resolvedBottom = bottom ?? clearance;
 
   return (
     <Pressable
@@ -42,7 +53,7 @@ export function Fab({
         {
           position: 'absolute',
           right,
-          bottom,
+          bottom: resolvedBottom,
           width: size,
           height: size,
           borderRadius: size / 2,

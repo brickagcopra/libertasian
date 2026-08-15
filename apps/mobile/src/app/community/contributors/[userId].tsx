@@ -8,6 +8,9 @@ import {
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
+import { TabBar, useTabBarClearance } from '@/components/ui/TabBar';
+import { useTabBarNav } from '@/features/navigation/use-tab-bar-nav';
+
 import { useContributorProfile } from '../../../features/community/hooks/use-marketplace';
 import { ExpertBadge } from '../../../features/community/components/expert-badge';
 import { StarRatingDisplay } from '../../../features/community/components/star-rating';
@@ -25,6 +28,8 @@ const STAT_CARDS: Array<{
 
 export default function ContributorProfileScreen() {
   const { userId } = useLocalSearchParams<{ userId: string }>();
+  const navigate = useTabBarNav();
+  const clearance = useTabBarClearance();
   const { data, isLoading, error } = useContributorProfile(userId ?? '');
 
   const profile = data?.data;
@@ -36,6 +41,7 @@ export default function ContributorProfileScreen() {
         <View style={styles.loadingState}>
           <ActivityIndicator size="large" color="#1a56db" />
         </View>
+        <TabBar active="feed" onPress={navigate} />
       </>
     );
   }
@@ -52,6 +58,7 @@ export default function ContributorProfileScreen() {
               : 'Failed to load contributor profile'}
           </Text>
         </View>
+        <TabBar active="feed" onPress={navigate} />
       </>
     );
   }
@@ -59,7 +66,7 @@ export default function ContributorProfileScreen() {
   return (
     <>
       <Stack.Screen options={{ title: profile.user.fullName }} />
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <ScrollView style={styles.container} contentContainerStyle={[styles.content, { paddingBottom: clearance }]}>
         {/* Profile header */}
         <View style={styles.profileHeader}>
           <View style={styles.avatar}>
@@ -116,13 +123,18 @@ export default function ContributorProfileScreen() {
           })}
         </View>
       </ScrollView>
+
+      {/* app/community/* sits outside the (tabs) group and (tabs)/_layout
+          hides the native tab bar, so without this the screen has no
+          navigation at all beyond the Stack back button. */}
+      <TabBar active="feed" onPress={navigate} />
     </>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f3f4f6' },
-  content: { padding: 12, paddingBottom: 32 },
+  content: { padding: 12 },
   loadingState: {
     flex: 1,
     alignItems: 'center',

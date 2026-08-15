@@ -16,6 +16,14 @@ jest.mock('expo-router', () => ({
     canGoBack: jest.fn().mockReturnValue(false),
   },
   Link: ({ children }: { children: React.ReactNode }) => children,
+  // Screens configure their native header with <Stack.Screen options={...} />.
+  // It renders nothing itself, so a null-returning stub is enough to let a
+  // screen mount under RNTL — without it every such screen throws on
+  // "Cannot read properties of undefined (reading 'Screen')".
+  Stack: Object.assign(
+    ({ children }: { children?: React.ReactNode }) => children ?? null,
+    { Screen: () => null },
+  ),
   useRouter: () => ({
     push: jest.fn(),
     replace: jest.fn(),

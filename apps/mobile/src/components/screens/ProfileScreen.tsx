@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { HeaderAmbient } from '@/components/ui/HeaderAmbient';
-import { TabBar, type TabBarItemId } from '@/components/ui/TabBar';
+import { TabBar, useTabBarClearance, type TabBarItemId } from '@/components/ui/TabBar';
 import { THEMES, type ThemeKey } from '@/lib/design-tokens';
 import { useTheme } from '@/providers/theme-provider';
 
@@ -83,6 +83,7 @@ export function ProfileScreen({
   contentTopPadding = 60,
 }: ProfileScreenProps) {
   const { theme, themeKey: providerKey, setTheme } = useTheme();
+  const clearance = useTabBarClearance();
   const activeThemeKey = themeKeyProp ?? providerKey;
 
   const handleThemeChange = (next: ThemeKey) => {
@@ -98,7 +99,7 @@ export function ProfileScreen({
       <ScrollView
         contentContainerStyle={{
           paddingTop: contentTopPadding,
-          paddingBottom: 110,
+          paddingBottom: clearance,
           paddingHorizontal: 18,
         }}
       >
