@@ -1,6 +1,7 @@
 import { BullModule } from '@nestjs/bullmq';
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -319,6 +320,11 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
     AiAnswersModule,
     HealthModule,
     MetricsModule,
+    // AppThrottlerGuard is an APP_GUARD declared in THIS module, so JwtService
+    // has to be resolvable here. AuthModule's own JwtModule is configured with
+    // the PRIVATE signing key and is not exported; the guard only verifies, and
+    // passes the public key explicitly per call.
+    JwtModule.register({}),
     AuthModule,
     UsersModule,
     AccountDeletionModule,
