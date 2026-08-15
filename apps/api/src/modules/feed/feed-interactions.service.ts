@@ -7,20 +7,24 @@ import {
 } from '@nestjs/common';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { FeedBlocksService } from './feed-blocks.service';
 import { CreateCommentDto, UpdateCommentDto, ReportPostDto, FeedQueryDto } from './dto';
 
 @Injectable()
 export class FeedInteractionsService {
   private readonly logger = new Logger(FeedInteractionsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly blocks: FeedBlocksService,
+  ) {}
 
   // =========================================================================
   // Likes (Posts)
   // =========================================================================
 
   async likePost(postId: string, userId: string, viewerOrgId: string) {
-    await this.validatePostReadable(postId, viewerOrgId);
+    await this.validatePostReadable(postId, userId, viewerOrgId);
 
     // Upsert-like: ignore if already exists (unique constraint)
     try {
@@ -59,7 +63,7 @@ export class FeedInteractionsService {
   // =========================================================================
 
   async bookmarkPost(postId: string, userId: string, viewerOrgId: string) {
-    await this.validatePostReadable(postId, viewerOrgId);
+    await this.validatePostReadable(postId, userId, viewerOrgId);
 
     try {
       await this.prisma.feedPostBookmark.create({
@@ -101,7 +105,7 @@ export class FeedInteractionsService {
     userId: string,
     viewerOrgId: string,
   ) {
-    await this.validatePostReadable(postId, viewerOrgId);
+    await this.validatePostReadable(postId, userId, viewerOrgId);
 
     // Validate parent if provided (must belong to same post, max 1 level deep)
     if (dto.parentId) {
@@ -212,6 +216,27 @@ export class FeedInteractionsService {
   ) {
     const limit = query.limit ?? 20;
 
+    // Gate on the parent post first. Without this, blocking is inconsistent
+    // across the post surface: GET /feed/posts/:id would 404 for a blocked
+    // viewer while GET /feed/posts/:id/comments still served the thread
+    // underneath it, leaving a window into a post they cannot see.
+    await this.validatePostReadable(postId, userId, viewerOrgId);
+
+    // Blocked authors must be filtered in THREE places on this one query:
+    // the top-level `where`, the inlined `replies`, and the `_count.replies`
+    // aggregate. Omitting the last one still leaks the fact that a blocked
+    // user replied — the visible replies would be hidden but the count would
+    // not match. `authorFilter` is {} when the viewer has no blocks, so the
+    // generated query is unchanged on the hot path.
+    const authorFilter = this.blocks.hiddenAuthorFilter(
+      await this.blocks.getHiddenUserIds(userId),
+    );
+    const liveReplyFilter = {
+      deletedAt: null,
+      status: 'published',
+      ...authorFilter,
+    };
+
     // Get top-level comments
     const comments = await this.prisma.forTenant(viewerOrgId).feedComment.findMany({
       take: limit + 1,
@@ -221,12 +246,13 @@ export class FeedInteractionsService {
         parentId: null,
         deletedAt: null,
         status: 'published',
+        ...authorFilter,
       },
       orderBy: { createdAt: 'desc' },
       include: {
         author: { select: { id: true, fullName: true } },
         replies: {
-          where: { deletedAt: null, status: 'published' },
+          where: liveReplyFilter,
           orderBy: { createdAt: 'asc' },
           take: 3, // Show first 3 replies inline
           include: {
@@ -236,7 +262,7 @@ export class FeedInteractionsService {
         _count: {
           select: {
             replies: {
-              where: { deletedAt: null, status: 'published' },
+              where: liveReplyFilter,
             },
           },
         },
@@ -279,6 +305,13 @@ export class FeedInteractionsService {
       where: { id: commentId },
     });
     if (!comment || comment.deletedAt) {
+      throw new NotFoundException('Comment not found');
+    }
+    // Blocked either way: without this, a blocked user could still like the
+    // blocker's comments on third-party posts — the one interaction path the
+    // symmetric model would otherwise leave open.
+    const hidden = await this.blocks.getHiddenUserIds(userId);
+    if (hidden.includes(comment.authorId)) {
       throw new NotFoundException('Comment not found');
     }
 
@@ -325,7 +358,16 @@ export class FeedInteractionsService {
     userId: string,
     viewerOrgId: string,
   ) {
-    await this.validatePostReadable(postId, viewerOrgId);
+    // Deliberately does NOT enforce blocks. The block filter is symmetric, so
+    // enforcing it here would make a user un-reportable by anyone they have
+    // blocked: A posts something abusive about B, A blocks B, and B can no
+    // longer report it even after learning of the post out-of-band, while
+    // every other user still sees it. Blocking must not become a shield
+    // against moderation — the mirror image of the "a harasser must not be
+    // able to erase report evidence" rule in the migration.
+    await this.validatePostReadable(postId, userId, viewerOrgId, {
+      enforceBlocks: false,
+    });
 
     try {
       const report = await this.prisma.feedPostReport.create({
@@ -461,7 +503,16 @@ export class FeedInteractionsService {
   // organization-scoped post belonging to a tenant they were not a
   // member of (BYPASS #2, write-path E14-class). Mirrors the getPost
   // fix shape exactly. (BYPASS #2 / security-investigation.md)
-  private async validatePostReadable(postId: string, viewerOrgId: string) {
+  // Blocking is enforced here too, which closes all four write paths
+  // (like, bookmark, comment, report) in one place. Because the block is
+  // symmetric, this also stops a blocked user from replying under the
+  // blocker's posts — the harassment vector a mute-only model leaves open.
+  private async validatePostReadable(
+    postId: string,
+    userId: string,
+    viewerOrgId: string,
+    { enforceBlocks = true }: { enforceBlocks?: boolean } = {},
+  ) {
     const post = await this.prisma.feedPost.findFirst({
       where: {
         id: postId,
@@ -471,6 +522,7 @@ export class FeedInteractionsService {
           { visibility: 'public' },
           { visibility: 'organization', organizationId: viewerOrgId },
         ],
+        ...(enforceBlocks ? await this.blocks.authorFilterFor(userId) : {}),
       },
       select: { id: true },
     });

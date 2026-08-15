@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { FeedBlocksService } from './feed-blocks.service';
 import { CreatePostDto, UpdatePostDto, FeedQueryDto } from './dto';
 
 const AUTHOR_SELECT = {
@@ -49,7 +50,10 @@ const POST_SELECT = {
 export class FeedService {
   private readonly logger = new Logger(FeedService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly blocks: FeedBlocksService,
+  ) {}
 
   async createPost(dto: CreatePostDto, userId: string, organizationId: string) {
     const hasText = (dto.textContent ?? '').trim().length > 0;
@@ -157,6 +161,9 @@ export class FeedService {
     // "non-published", and "not readable from viewer's org". Keeping one
     // exception shape prevents an attacker from fingerprinting the
     // existence or org membership of a post via error type. (E14)
+    // A blocked author's post collapses into the same NotFoundException as
+    // every other unreadable case above — no new error branch, so blocking
+    // does not become a fingerprinting oracle either. (E14)
     // CARVE-OUT: cross-org public read — forTenant() would break visibility: 'public'
     const post = await this.prisma.feedPost.findFirst({
       where: {
@@ -167,6 +174,7 @@ export class FeedService {
           { visibility: 'public' },
           { visibility: 'organization', organizationId: viewerOrgId },
         ],
+        ...(await this.blocks.authorFilterFor(userId)),
       },
       select: POST_SELECT,
     });
@@ -185,6 +193,7 @@ export class FeedService {
         visibility: 'public',
         status: 'published',
         deletedAt: null,
+        ...(await this.blocks.authorFilterFor(userId)),
       },
       query,
       userId,
@@ -202,6 +211,7 @@ export class FeedService {
         status: 'published',
         deletedAt: null,
         visibility: { in: ['organization', 'public'] },
+        ...(await this.blocks.authorFilterFor(userId)),
       },
       query,
       userId,
@@ -210,6 +220,18 @@ export class FeedService {
 
   async getUserProfileFeed(query: FeedQueryDto, profileUserId: string, requesterId: string) {
     const isSelf = profileUserId === requesterId;
+
+    // Blocking short-circuits here rather than spreading hiddenAuthorFilter()
+    // into the WHERE below: this reader already keys on `authorId`, and
+    // `authorId: { notIn: [...] }` would overwrite it and silently widen the
+    // query to every author. An empty page is also the honest answer — a
+    // blocked author's profile has nothing the viewer may see.
+    if (!isSelf) {
+      const hidden = await this.blocks.getHiddenUserIds(requesterId);
+      if (hidden.includes(profileUserId)) {
+        return { items: [], hasNext: false, nextCursor: null };
+      }
+    }
 
     // CARVE-OUT: cross-org public read — forTenant() would break visibility: 'public'
     return this.queryFeed(
@@ -257,6 +279,9 @@ export class FeedService {
             { visibility: 'public' },
             { visibility: 'organization', organizationId: viewerOrgId },
           ],
+          // The bookmark row itself is left alone — blocking is a view
+          // filter, not a delete — so unblocking restores the bookmark.
+          ...(await this.blocks.authorFilterFor(userId)),
         },
       },
       orderBy: { createdAt: 'desc' },

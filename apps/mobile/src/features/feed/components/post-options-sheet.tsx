@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, Modal, Pressable, StyleSheet, Alert } fro
 import { Ionicons } from '@expo/vector-icons';
 import type { FeedPostItem } from '@libertasian/types';
 import { useDeletePost } from '../hooks/use-create-post';
+import { useBlockUser } from '../hooks/use-user-blocks';
 
 interface PostOptionsSheetProps {
   visible: boolean;
@@ -11,6 +12,8 @@ interface PostOptionsSheetProps {
   onClose: () => void;
   onEdit: () => void;
   onReport: () => void;
+  /** Called after a block succeeds. Screens showing only this post use it to navigate away. */
+  onBlocked?: () => void;
 }
 
 export function PostOptionsSheet({
@@ -20,8 +23,32 @@ export function PostOptionsSheet({
   onClose,
   onEdit,
   onReport,
+  onBlocked,
 }: PostOptionsSheetProps) {
   const deletePost = useDeletePost();
+  const blockUser = useBlockUser();
+
+  const handleBlock = () => {
+    onClose();
+    Alert.alert(
+      `Block ${post.author.fullName}?`,
+      'You will no longer see their posts or comments, and they will no longer see yours or be able to reply to you. You can undo this in Settings > Blocked users.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Block',
+          style: 'destructive',
+          // Failure is surfaced by useBlockUser's own onError — a callback
+          // passed here would be dropped when this sheet unmounts. onBlocked
+          // is called optimistically for the same reason.
+          onPress: () => {
+            blockUser.mutate(post.author.id);
+            onBlocked?.();
+          },
+        },
+      ],
+    );
+  };
 
   const handleDelete = () => {
     onClose();
@@ -63,10 +90,19 @@ export function PostOptionsSheet({
               </TouchableOpacity>
             </>
           ) : (
-            <TouchableOpacity style={styles.option} onPress={() => { onClose(); onReport(); }}>
-              <Ionicons name="flag-outline" size={22} color="#dc2626" />
-              <Text style={[styles.optionText, styles.destructive]}>Report Post</Text>
-            </TouchableOpacity>
+            <>
+              <TouchableOpacity style={styles.option} onPress={() => { onClose(); onReport(); }}>
+                <Ionicons name="flag-outline" size={22} color="#dc2626" />
+                <Text style={[styles.optionText, styles.destructive]}>Report Post</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.option} onPress={handleBlock}>
+                <Ionicons name="person-remove-outline" size={22} color="#dc2626" />
+                <Text style={[styles.optionText, styles.destructive]}>
+                  Block {post.author.fullName}
+                </Text>
+              </TouchableOpacity>
+            </>
           )}
 
           <TouchableOpacity style={styles.cancelButton} onPress={onClose}>

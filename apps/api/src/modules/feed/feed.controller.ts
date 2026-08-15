@@ -29,6 +29,7 @@ import { AuditService } from '../audit/audit.service';
 import { FeedService } from './feed.service';
 import { FeedMediaService } from './feed-media.service';
 import { FeedInteractionsService } from './feed-interactions.service';
+import { FeedBlocksService } from './feed-blocks.service';
 import { CreatePostDto, UpdatePostDto, FeedQueryDto, CreateCommentDto, UpdateCommentDto, ReportPostDto } from './dto';
 
 @ApiTags('Feed')
@@ -38,6 +39,7 @@ export class FeedController {
     private readonly feedService: FeedService,
     private readonly feedMediaService: FeedMediaService,
     private readonly interactionsService: FeedInteractionsService,
+    private readonly blocksService: FeedBlocksService,
     private readonly auditService: AuditService,
   ) {}
 
@@ -96,6 +98,78 @@ export class FeedController {
       user.organizationId,
     );
     return { success: true, data: result.items, meta: { hasNext: result.hasNext, nextCursor: result.nextCursor } };
+  }
+
+  // =========================================================================
+  // Blocking
+  //
+  // No TenantGuard on any of these: a block is cross-org by design, because
+  // the public feed is. Requiring an org context would make it impossible to
+  // block an author you met on the public feed from another tenant.
+  // =========================================================================
+
+  @Get('blocks')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'List users you have blocked' })
+  async getBlockedUsers(
+    @CurrentUser() user: JwtPayload,
+    @Query() query: FeedQueryDto,
+  ) {
+    const result = await this.blocksService.listBlockedUsers(user.sub, query);
+    return { success: true, data: result.items, meta: { hasNext: result.hasNext, nextCursor: result.nextCursor } };
+  }
+
+  @Post('users/:userId/block')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  // Deliberately throttled, unlike the report route above: blocking is a
+  // cheap write that fans out into every feed query, so it needs a ceiling.
+  // NOTE: this bucket is keyed by IP, not user. AppThrottlerGuard is bound as
+  // an APP_GUARD and Nest runs global guards before route-level ones, so
+  // req.user is still undefined in getTracker and it falls back to req.ip.
+  // Per CLAUDE.md an entire firm can share one egress IP, so the limit is set
+  // well above what one person would ever need rather than at a per-user
+  // ceiling. Same caveat applies to every route-level @Throttle here.
+  @Throttle({ default: { ttl: 3_600_000, limit: 60 } })
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Block a user' })
+  async blockUser(
+    @CurrentUser() user: JwtPayload,
+    @Param('userId', ParseUUIDPipe) userId: string,
+  ) {
+    await this.blocksService.blockUser(user.sub, userId);
+    await this.auditService.log({
+      actorUserId: user.sub,
+      actorType: 'user',
+      organizationId: user.organizationId,
+      action: 'feed_user.block',
+      entityType: 'feed_user_block',
+      entityId: userId,
+      metadata: { blockedUserId: userId },
+    });
+  }
+
+  @Delete('users/:userId/block')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Throttle({ default: { ttl: 3_600_000, limit: 60 } })
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Unblock a user' })
+  async unblockUser(
+    @CurrentUser() user: JwtPayload,
+    @Param('userId', ParseUUIDPipe) userId: string,
+  ) {
+    await this.blocksService.unblockUser(user.sub, userId);
+    await this.auditService.log({
+      actorUserId: user.sub,
+      actorType: 'user',
+      organizationId: user.organizationId,
+      action: 'feed_user.unblock',
+      entityType: 'feed_user_block',
+      entityId: userId,
+      metadata: { blockedUserId: userId },
+    });
   }
 
   // =========================================================================

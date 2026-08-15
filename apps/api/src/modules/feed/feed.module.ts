@@ -4,6 +4,7 @@ import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { UploadsModule } from '../uploads/uploads.module';
 import { FeedAdminController } from './feed-admin.controller';
+import { FeedBlocksService } from './feed-blocks.service';
 import { FeedController } from './feed.controller';
 import { FeedInteractionsService } from './feed-interactions.service';
 import { FeedMediaProcessor } from './feed-media.processor';
@@ -17,7 +18,13 @@ import { FeedService } from './feed.service';
     BullModule.registerQueue({ name: 'feed-media' }),
   ],
   controllers: [FeedController, FeedAdminController],
-  providers: [FeedService, FeedMediaService, FeedMediaProcessor, FeedInteractionsService],
+  providers: [
+    FeedService,
+    FeedMediaService,
+    FeedMediaProcessor,
+    FeedInteractionsService,
+    FeedBlocksService,
+  ],
   exports: [FeedService],
 })
 export class FeedModule {}

@@ -15,6 +15,7 @@ async function fileTypeFromBuffer(buffer: Uint8Array | ArrayBuffer) {
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { S3Service } from '../uploads/s3.service';
+import { FeedBlocksService } from './feed-blocks.service';
 
 /** Allowed MIME types for feed images (no SVG per Addendum) */
 const ALLOWED_MIMES = ['image/jpeg', 'image/png', 'image/webp'] as const;
@@ -37,6 +38,7 @@ export class FeedMediaService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly s3: S3Service,
+    private readonly blocks: FeedBlocksService,
     @InjectQueue('feed-media') private readonly mediaQueue: Queue,
   ) {}
 
@@ -188,6 +190,9 @@ export class FeedMediaService {
     // published post the viewer is entitled to read (public, or
     // organization-scoped and the viewer is in that organization).
     if (media.ownerUserId !== userId) {
+      // Blocking applies to the non-owner branch only — you can always fetch
+      // your own media. Without this, a blocked author's image stays
+      // retrievable by object key once the mediaId is known.
       // CARVE-OUT: cross-org public read — forTenant() would break visibility: 'public'
       const post = await this.prisma.feedPost.findFirst({
         where: {
@@ -198,6 +203,7 @@ export class FeedMediaService {
             { visibility: 'public' },
             { visibility: 'organization', organizationId: viewerOrgId },
           ],
+          ...(await this.blocks.authorFilterFor(userId)),
         },
         select: { id: true },
       });

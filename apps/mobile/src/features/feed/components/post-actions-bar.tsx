@@ -6,7 +6,12 @@ import { useLikePost, useUnlikePost, useBookmarkPost, useUnbookmarkPost } from '
 
 interface PostActionsBarProps {
   post: FeedPostItem;
-  onCommentPress: () => void;
+  /**
+   * Omit on screens that already show the comments (the post detail screen).
+   * The count then renders as plain text instead of a button that looks
+   * tappable but has nowhere to go.
+   */
+  onCommentPress?: () => void;
   onOptionsPress: () => void;
 }
 
@@ -45,12 +50,21 @@ export function PostActionsBar({ post, onCommentPress, onOptionsPress }: PostAct
         )}
       </TouchableOpacity>
 
-      <TouchableOpacity style={styles.action} onPress={onCommentPress}>
-        <Ionicons name="chatbubble-outline" size={19} color="#6b7280" />
-        {post.commentCount > 0 && (
-          <Text style={styles.count}>{post.commentCount}</Text>
-        )}
-      </TouchableOpacity>
+      {onCommentPress ? (
+        <TouchableOpacity style={styles.action} onPress={onCommentPress}>
+          <Ionicons name="chatbubble-outline" size={19} color="#6b7280" />
+          {post.commentCount > 0 && (
+            <Text style={styles.count}>{post.commentCount}</Text>
+          )}
+        </TouchableOpacity>
+      ) : (
+        <View style={styles.action}>
+          <Ionicons name="chatbubble-outline" size={19} color="#6b7280" />
+          {post.commentCount > 0 && (
+            <Text style={styles.count}>{post.commentCount}</Text>
+          )}
+        </View>
+      )}
 
       <TouchableOpacity style={styles.action} onPress={handleBookmarkToggle}>
         <Ionicons
