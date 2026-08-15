@@ -6,9 +6,9 @@ import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Chip } from '@/components/ui/Chip';
 import { HeaderAmbient } from '@/components/ui/HeaderAmbient';
-import { TabBar, type TabBarItemId } from '@/components/ui/TabBar';
+import { TabBar, useTabBarClearance, type TabBarItemId } from '@/components/ui/TabBar';
 import { photoTones, type PhotoTone } from '@/lib/design-tokens';
-import { topInsetPadding, bottomInsetPaddingStacked } from '@/lib/safe-area';
+import { topInsetPadding } from '@/lib/safe-area';
 import { useTheme } from '@/providers/theme-provider';
 
 export type SearchResultKind = 'CASE' | 'ARTICLE' | 'OUTLINE' | 'STATUTE';
@@ -92,6 +92,7 @@ export function SearchScreen({
 }: SearchScreenProps) {
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
+  const clearance = useTabBarClearance();
   const [internalQuery, setInternalQuery] = useState(query);
   const effectiveQuery = onChangeQuery ? query : internalQuery;
   const setQuery = (next: string) => {
@@ -129,7 +130,7 @@ export function SearchScreen({
       <ScrollView
         contentContainerStyle={{
           paddingTop: topInsetPadding(insets, 54),
-          paddingBottom: bottomInsetPaddingStacked(insets, 110),
+          paddingBottom: clearance,
           paddingHorizontal: 18,
         }}
       >

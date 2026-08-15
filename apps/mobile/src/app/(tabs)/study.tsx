@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { TabBar } from '@/components/ui/TabBar';
+import { TabBar, useTabBarClearance } from '@/components/ui/TabBar';
 import { useTabBarNav } from '@/features/navigation/use-tab-bar-nav';
 import { useBarSubjects } from '../../features/study/hooks/use-bar-subjects';
 import { useFlashcardSets } from '../../features/study/hooks/use-flashcard-sets';
@@ -30,6 +30,7 @@ function formatStudyTime(totalSecs: number): string {
 
 export default function StudyTab() {
   const navigate = useTabBarNav();
+  const clearance = useTabBarClearance();
   const {
     data: subjects,
     isLoading: subjectsLoading,
@@ -75,7 +76,7 @@ export default function StudyTab() {
   const body = (
     <ScrollView
       style={styles.container}
-      contentContainerStyle={styles.content}
+      contentContainerStyle={[styles.content, { paddingBottom: clearance }]}
       refreshControl={
         <RefreshControl
           refreshing={isFetching && !subjectsLoading}
@@ -326,7 +327,7 @@ export default function StudyTab() {
     <View style={styles.screen}>
       {body}
       {/* Floating pill TabBar — same treatment as (tabs)/digests.tsx. The
-          content's paddingBottom: 96 keeps the last card clear of it. */}
+          content's paddingBottom comes from useTabBarClearance(). */}
       <TabBar active="study" onPress={navigate} />
     </View>
   );
@@ -336,7 +337,7 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#f3f4f6' },
   container: { flex: 1, backgroundColor: '#f3f4f6' },
   // 96, matching (tabs)/digests.tsx listContent — clears the floating pill.
-  content: { padding: 12, paddingBottom: 96 },
+  content: { padding: 12, },
   loadingState: {
     flex: 1,
     alignItems: 'center',

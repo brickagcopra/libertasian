@@ -3,8 +3,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { HeaderAmbient } from '@/components/ui/HeaderAmbient';
-import { TabBar, type TabBarItemId } from '@/components/ui/TabBar';
-import { topInsetPadding, bottomInsetPaddingStacked } from '@/lib/safe-area';
+import { TabBar, useTabBarClearance, type TabBarItemId } from '@/components/ui/TabBar';
+import { topInsetPadding } from '@/lib/safe-area';
 import { useTheme } from '@/providers/theme-provider';
 
 export interface HomeFeedItem {
@@ -74,6 +74,7 @@ export function HomeScreen({
 }: HomeScreenProps) {
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
+  const clearance = useTabBarClearance();
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -81,7 +82,7 @@ export function HomeScreen({
       <ScrollView
         contentContainerStyle={{
           paddingTop: topInsetPadding(insets, 60),
-          paddingBottom: bottomInsetPaddingStacked(insets, 110),
+          paddingBottom: clearance,
           paddingHorizontal: 18,
         }}
       >

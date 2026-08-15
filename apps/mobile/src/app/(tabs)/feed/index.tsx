@@ -4,7 +4,8 @@ import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { usePublicFeed, useOrganizationFeed } from '../../../features/feed/hooks/use-feed';
 import { FeedList } from '../../../features/feed/components/feed-list';
-import { TabBar } from '@/components/ui/TabBar';
+import { Fab } from '@/components/ui/Fab';
+import { TabBar, useTabBarClearance } from '@/components/ui/TabBar';
 import { useTabBarNav } from '@/features/navigation/use-tab-bar-nav';
 import { useTheme } from '@/providers/theme-provider';
 
@@ -13,6 +14,7 @@ type FeedTab = 'organization' | 'public';
 export default function FeedIndexScreen() {
   const { theme } = useTheme();
   const navigate = useTabBarNav();
+  const clearance = useTabBarClearance();
   const [activeTab, setActiveTab] = useState<FeedTab>('organization');
 
   const orgFeed = useOrganizationFeed();
@@ -86,20 +88,21 @@ export default function FeedIndexScreen() {
         isRefreshing={feed.isRefetching && !feed.isFetchingNextPage}
         fetchNextPage={() => feed.fetchNextPage()}
         onRefresh={handleRefresh}
-        contentBottomPadding={96}
+        contentBottomPadding={clearance}
       />
 
-      {/* FAB - Create post */}
-      <TouchableOpacity
-        style={[styles.fab, { backgroundColor: theme.accent, shadowColor: theme.accent }]}
+      {/* FAB - Create post. Uses the shared Fab so its offset comes from
+          useTabBarClearance() rather than a local literal. */}
+      <Fab
+        icon="add"
+        accessibilityLabel="Create post"
+        right={20}
         onPress={() => router.push('/feed/create' as `/${string}`)}
-        activeOpacity={0.8}
-      >
-        <Ionicons name="add" size={28} color={theme.accentInk} />
-      </TouchableOpacity>
+      />
 
       {/* Floating pill TabBar — same treatment as Home/Search/Digests. The
-          list's contentBottomPadding: 96 keeps the last post clear of it. */}
+          list's contentBottomPadding comes from the same clearance hook, so
+          the last post always clears the pill. */}
       <TabBar active="feed" onPress={navigate} />
     </View>
   );
@@ -131,21 +134,5 @@ const styles = StyleSheet.create({
   },
   bookmarksButton: {
     padding: 8,
-  },
-  fab: {
-    position: 'absolute',
-    // 90, matching the shared `Fab` component's default, so the create-post
-    // button clears the floating pill TabBar instead of sitting under it.
-    bottom: 90,
-    right: 20,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
   },
 });

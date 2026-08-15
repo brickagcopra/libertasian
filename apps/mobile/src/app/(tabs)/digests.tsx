@@ -15,7 +15,7 @@ import {
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Input } from '@/components/ui';
-import { TabBar } from '@/components/ui/TabBar';
+import { TabBar, useTabBarClearance } from '@/components/ui/TabBar';
 import { useTabBarNav } from '@/features/navigation/use-tab-bar-nav';
 import {
   useDigests,
@@ -160,6 +160,7 @@ function DigestCard({ item }: { item: Digest }) {
 
 export default function DigestsTab() {
   const navigate = useTabBarNav();
+  const clearance = useTabBarClearance();
   const [digestType, setDigestType] = useState<string | undefined>();
   const [reviewStatus, setReviewStatus] = useState<string | undefined>();
   const [sourceOrigin, setSourceOrigin] = useState<string | undefined>();
@@ -470,7 +471,7 @@ export default function DigestsTab() {
         data={matchedDocuments}
         renderItem={renderMatchedDocument}
         keyExtractor={matchedKeyExtractor}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[styles.listContent, { paddingBottom: clearance }]}
         keyboardShouldPersistTaps="handled"
         ListHeaderComponent={
           <Text style={styles.matchedHeaderText}>
@@ -499,7 +500,7 @@ export default function DigestsTab() {
         data={listData}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[styles.listContent, { paddingBottom: clearance }]}
         keyboardShouldPersistTaps="handled"
         refreshControl={
           isSearching ? undefined : (
@@ -637,7 +638,7 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   // Extra bottom padding keeps the last cards clear of the floating TabBar.
-  listContent: { padding: 12, gap: 10, paddingBottom: 96 },
+  listContent: { padding: 12, gap: 10, },
   matchedHeaderText: {
     fontSize: 13,
     color: '#6b7280',

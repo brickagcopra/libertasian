@@ -11,6 +11,9 @@ import {
 import { Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
+import { TabBar, useTabBarClearance } from '@/components/ui/TabBar';
+import { useTabBarNav } from '@/features/navigation/use-tab-bar-nav';
+
 import { useMarketplaceDigests } from '../../../features/community/hooks/use-marketplace';
 import { MarketplaceItemCard } from '../../../features/community/components/marketplace-item-card';
 import type { MarketplaceSortBy, MarketplaceItem } from '../../../features/community/types';
@@ -24,6 +27,8 @@ const SORT_OPTIONS: Array<{ value: MarketplaceSortBy; label: string }> = [
 
 export default function MarketplaceDigestsScreen() {
   const [search, setSearch] = useState('');
+  const navigate = useTabBarNav();
+  const clearance = useTabBarClearance();
   const [sortBy, setSortBy] = useState<MarketplaceSortBy>('top_rated');
 
   const { data, isLoading, isFetching, refetch } = useMarketplaceDigests({
@@ -97,7 +102,7 @@ export default function MarketplaceDigestsScreen() {
           data={items}
           keyExtractor={(item) => item.id}
           renderItem={renderItem}
-          contentContainerStyle={styles.listContent}
+          contentContainerStyle={[styles.listContent, { paddingBottom: clearance }]}
           refreshing={isFetching && !isLoading}
           onRefresh={handleRefresh}
           ListEmptyComponent={
@@ -116,6 +121,8 @@ export default function MarketplaceDigestsScreen() {
           }
         />
       </View>
+
+      <TabBar active="feed" onPress={navigate} />
     </>
   );
 }
@@ -170,7 +177,6 @@ const styles = StyleSheet.create({
   },
   listContent: {
     paddingHorizontal: 12,
-    paddingBottom: 32,
   },
   loadingBox: {
     paddingVertical: 40,

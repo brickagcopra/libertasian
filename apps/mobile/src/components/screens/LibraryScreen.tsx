@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Pressable, RefreshControl, ScrollView, Text, TextInput, View } from 'react-native';
 import { Chip } from '@/components/ui/Chip';
-import { TabBar, type TabBarItemId } from '@/components/ui/TabBar';
+import { TabBar, useTabBarClearance, type TabBarItemId } from '@/components/ui/TabBar';
 import { photoTones, type PhotoTone } from '@/lib/design-tokens';
 import { useTheme } from '@/providers/theme-provider';
 
@@ -104,6 +104,7 @@ export function LibraryScreen({
   contentTopPadding = 60,
 }: LibraryScreenProps) {
   const { theme } = useTheme();
+  const clearance = useTabBarClearance();
   const isControlledSearch = onSearchChange !== undefined;
 
   return (
@@ -111,7 +112,7 @@ export function LibraryScreen({
       <ScrollView
         contentContainerStyle={{
           paddingTop: contentTopPadding,
-          paddingBottom: 110,
+          paddingBottom: clearance,
           paddingHorizontal: 18,
         }}
         refreshControl={

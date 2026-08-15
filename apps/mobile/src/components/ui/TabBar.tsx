@@ -4,6 +4,40 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { bottomInsetPadding } from '@/lib/safe-area';
 import { useTheme } from '@/providers/theme-provider';
 
+/**
+ * Height of the floating pill. Exported so nothing has to re-derive it.
+ *
+ * See `useTabBarClearance` — every caller that needs to sit above the bar must
+ * go through that hook rather than hardcoding a number.
+ */
+export const TAB_BAR_HEIGHT = 64;
+
+/** Design gap between the bottom of the screen and the bottom of the pill. */
+export const TAB_BAR_BOTTOM_INSET = 14;
+
+/** Breathing room between the top of the pill and whatever sits above it. */
+const TAB_BAR_CLEARANCE_GAP = 12;
+
+/**
+ * Vertical space anything must leave at the bottom of the screen to sit clear
+ * of the TabBar: the bar's own bottom offset, plus its height, plus a gap.
+ *
+ * This exists because the offsets were previously hardcoded in a dozen places
+ * as 90, 96 or 110, and none of them tracked `insets.bottom`. On a notched
+ * iPhone the bar's bottom offset is `max(14, 34) = 34`, so its top edge is at
+ * 98 — above the FAB's old `bottom: 90`, which is why the bar painted over the
+ * FAB. Anything positioned against the bottom of a screen that also renders a
+ * TabBar must use this hook.
+ */
+export function useTabBarClearance(): number {
+  const insets = useSafeAreaInsets();
+  return (
+    bottomInsetPadding(insets, TAB_BAR_BOTTOM_INSET) +
+    TAB_BAR_HEIGHT +
+    TAB_BAR_CLEARANCE_GAP
+  );
+}
+
 export type TabBarItemId =
   | 'home'
   | 'docs'
@@ -62,8 +96,8 @@ export function TabBar({ active, onPress, items = DEFAULT_ITEMS }: TabBarProps) 
         position: 'absolute',
         left: 12,
         right: 12,
-        bottom: bottomInsetPadding(insets, 14),
-        height: 64,
+        bottom: bottomInsetPadding(insets, TAB_BAR_BOTTOM_INSET),
+        height: TAB_BAR_HEIGHT,
         borderRadius: 24,
         backgroundColor: theme.pillBg,
         flexDirection: 'row',

@@ -11,6 +11,9 @@ import {
 import { Stack, router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
+import { TabBar, useTabBarClearance } from '@/components/ui/TabBar';
+import { useTabBarNav } from '@/features/navigation/use-tab-bar-nav';
+
 import { useMarketplaceFeatured } from '../../features/community/hooks/use-marketplace';
 import { MarketplaceItemCard } from '../../features/community/components/marketplace-item-card';
 
@@ -44,6 +47,8 @@ export default function CommunityScreen() {
   } = useMarketplaceFeatured();
 
   const featured = featuredRes?.data;
+  const navigate = useTabBarNav();
+  const clearance = useTabBarClearance();
 
   const handleRefresh = useCallback(() => {
     refetch();
@@ -54,7 +59,7 @@ export default function CommunityScreen() {
       <Stack.Screen options={{ title: 'Community' }} />
       <ScrollView
         style={styles.container}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { paddingBottom: clearance }]}
         refreshControl={
           <RefreshControl
             refreshing={isFetching && !isLoading}
@@ -197,13 +202,18 @@ export default function CommunityScreen() {
           </>
         )}
       </ScrollView>
+
+      {/* app/community/* sits outside the (tabs) group and (tabs)/_layout
+          hides the native tab bar, so without this the screen has no
+          navigation at all beyond the Stack back button. */}
+      <TabBar active="feed" onPress={navigate} />
     </>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f3f4f6' },
-  content: { padding: 12, paddingBottom: 32 },
+  content: { padding: 12 },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
