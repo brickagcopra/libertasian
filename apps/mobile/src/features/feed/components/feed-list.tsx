@@ -32,6 +32,13 @@ interface FeedListProps {
    * Pass 96 to match `(tabs)/digests.tsx` listContent.
    */
   contentBottomPadding?: number;
+  /**
+   * Extra top padding, in points. Opt-in for the same reason as
+   * contentBottomPadding: only the routes rendered with headerShown: false
+   * (feed/index, feed/organization) start at y=0 and need to clear the notch.
+   * Routes with a native header already sit below it.
+   */
+  contentTopPadding?: number;
 }
 
 export function FeedList({
@@ -48,6 +55,7 @@ export function FeedList({
   emptyMessage = 'Be the first to share something with the community!',
   ListHeaderComponent,
   contentBottomPadding,
+  contentTopPadding,
 }: FeedListProps) {
   const renderItem = useCallback(
     ({ item }: { item: FeedPostItem }) => (
@@ -71,6 +79,7 @@ export function FeedList({
         styles.content,
         posts.length === 0 && styles.emptyContent,
         contentBottomPadding !== undefined && { paddingBottom: contentBottomPadding },
+        contentTopPadding !== undefined && { paddingTop: contentTopPadding },
       ]}
       refreshControl={
         <RefreshControl

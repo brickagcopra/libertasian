@@ -12,6 +12,8 @@ import {
   StyleSheet,
 } from 'react-native';
 import { router } from 'expo-router';
+import { useHeaderHeight } from '@react-navigation/elements';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { FeedPostVisibility } from '@libertasian/types';
 import { useCreatePost, useUpdatePost } from '../hooks/use-create-post';
 import { useUploadFeedMedia, useFeedMediaStatus, useDeleteFeedMedia } from '../hooks/use-feed-media';
@@ -19,6 +21,8 @@ import { useImagePicker } from '../hooks/use-image-picker';
 import { ImagePickerButton } from './image-picker-button';
 import { ImagePreview } from './image-preview';
 import { Ionicons } from '@expo/vector-icons';
+import { bottomInsetPadding } from '@/lib/safe-area';
+import { useTheme } from '@/providers/theme-provider';
 
 interface CreatePostFormProps {
   editPostId?: string;
@@ -35,6 +39,12 @@ const VISIBILITY_OPTIONS: { value: FeedPostVisibility; label: string; icon: stri
 ];
 
 export function CreatePostForm({ editPostId, initialText = '', initialVisibility = 'organization' }: CreatePostFormProps) {
+  const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
+  // This screen is presentation: 'modal' with headerShown: true
+  // (feed/_layout.tsx), so the old hardcoded 88 was never the real header
+  // height and the toolbar slid under the keyboard on the first keystroke.
+  const headerHeight = useHeaderHeight();
   const [textContent, setTextContent] = useState(initialText);
   const [visibility, setVisibility] = useState<FeedPostVisibility>(initialVisibility);
   const [mediaId, setMediaId] = useState<string | null>(null);
@@ -152,25 +162,43 @@ export function CreatePostForm({ editPostId, initialText = '', initialVisibility
 
   return (
     <KeyboardAvoidingView
-      style={styles.container}
+      style={[styles.container, { backgroundColor: theme.bg }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={88}
+      keyboardVerticalOffset={headerHeight}
     >
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
         {/* Visibility picker */}
-        <View style={styles.visibilityRow}>
+        <View testID="visibility-row" style={styles.visibilityRow}>
           {VISIBILITY_OPTIONS.map((opt) => (
             <TouchableOpacity
               key={opt.value}
-              style={[styles.visibilityChip, visibility === opt.value && styles.visibilityActive]}
+              style={[
+                styles.visibilityChip,
+                { borderColor: theme.line, backgroundColor: theme.chipBg },
+                visibility === opt.value && {
+                  borderColor: theme.accent,
+                  backgroundColor: theme.accentSoft,
+                },
+              ]}
               onPress={() => setVisibility(opt.value)}
             >
               <Ionicons
                 name={opt.icon as keyof typeof Ionicons.glyphMap}
                 size={14}
-                color={visibility === opt.value ? '#1a56db' : '#6b7280'}
+                color={visibility === opt.value ? theme.accent : theme.inkSoft}
               />
-              <Text style={[styles.visibilityText, visibility === opt.value && styles.visibilityTextActive]}>
+              <Text
+                // One line, and allowed to shrink inside the chip: at the
+                // largest non-accessibility Dynamic Type step the three labels
+                // no longer fit one row, and Yoga's flexShrink defaults to 0 —
+                // so without this the row overflowed and "Draft" was pushed
+                // off-screen rather than wrapping.
+                numberOfLines={1}
+                style={[
+                  styles.visibilityText,
+                  { color: visibility === opt.value ? theme.accent : theme.inkSoft },
+                ]}
+              >
                 {opt.label}
               </Text>
             </TouchableOpacity>
@@ -179,9 +207,9 @@ export function CreatePostForm({ editPostId, initialText = '', initialVisibility
 
         {/* Text input */}
         <TextInput
-          style={styles.textInput}
+          style={[styles.textInput, { color: theme.ink }]}
           placeholder="What's on your mind?"
-          placeholderTextColor="#9ca3af"
+          placeholderTextColor={theme.inkFaint}
           value={textContent}
           onChangeText={setTextContent}
           multiline
@@ -191,7 +219,13 @@ export function CreatePostForm({ editPostId, initialText = '', initialVisibility
         />
 
         {/* Character counter */}
-        <Text style={[styles.charCount, textContent.length > MAX_TEXT_LENGTH * 0.9 && styles.charCountWarn]}>
+        <Text
+          style={[
+            styles.charCount,
+            { color: theme.inkFaint },
+            textContent.length > MAX_TEXT_LENGTH * 0.9 && styles.charCountWarn,
+          ]}
+        >
           {textContent.length}/{MAX_TEXT_LENGTH}
         </Text>
 
@@ -216,7 +250,20 @@ export function CreatePostForm({ editPostId, initialText = '', initialVisibility
       </ScrollView>
 
       {/* Bottom toolbar */}
-      <View style={styles.toolbar}>
+      <View
+        testID="create-post-toolbar"
+        style={[
+          styles.toolbar,
+          {
+            borderTopColor: theme.line,
+            backgroundColor: theme.surface,
+            // Clears the home indicator when the keyboard is DOWN. With the
+            // keyboard up, KeyboardAvoidingView lifts the whole container and
+            // this padding simply rides along.
+            paddingBottom: bottomInsetPadding(insets, 10),
+          },
+        ]}
+      >
         {!isEditing && (
           <ImagePickerButton
             onPickFromLibrary={handlePickImage}
@@ -226,14 +273,20 @@ export function CreatePostForm({ editPostId, initialText = '', initialVisibility
         )}
         <View style={styles.toolbarSpacer} />
         <TouchableOpacity
-          style={[styles.submitButton, (!canSubmit || isPending) && styles.submitDisabled]}
+          style={[
+            styles.submitButton,
+            { backgroundColor: theme.accent },
+            (!canSubmit || isPending) && styles.submitDisabled,
+          ]}
           onPress={handleSubmit}
           disabled={!canSubmit || isPending}
         >
           {isPending ? (
-            <ActivityIndicator size="small" color="#fff" />
+            <ActivityIndicator size="small" color={theme.accentInk} />
           ) : (
-            <Text style={styles.submitText}>{isEditing ? 'Update' : 'Post'}</Text>
+            <Text style={[styles.submitText, { color: theme.accentInk }]}>
+              {isEditing ? 'Update' : 'Post'}
+            </Text>
           )}
         </TouchableOpacity>
       </View>
@@ -244,7 +297,6 @@ export function CreatePostForm({ editPostId, initialText = '', initialVisibility
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
   },
   scrollView: {
     flex: 1,
@@ -254,7 +306,12 @@ const styles = StyleSheet.create({
   },
   visibilityRow: {
     flexDirection: 'row',
-    gap: 8,
+    // Wraps rather than overflowing: at large Dynamic Type the three chips
+    // exceed one row on every iPhone width, and an unwrapped row would push
+    // the last chip past the screen edge instead of moving it to a new line.
+    flexWrap: 'wrap',
+    rowGap: 8,
+    columnGap: 8,
     marginBottom: 14,
   },
   visibilityChip: {
@@ -265,30 +322,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#f9fafb',
-  },
-  visibilityActive: {
-    borderColor: '#1a56db',
-    backgroundColor: '#eff6ff',
+    // Lets a chip give up width before the row overflows.
+    flexShrink: 1,
   },
   visibilityText: {
     fontSize: 12,
-    color: '#6b7280',
     fontWeight: '500',
-  },
-  visibilityTextActive: {
-    color: '#1a56db',
+    flexShrink: 1,
   },
   textInput: {
     fontSize: 15,
-    color: '#111827',
     lineHeight: 22,
     minHeight: 120,
   },
   charCount: {
     fontSize: 11,
-    color: '#9ca3af',
     textAlign: 'right',
     marginTop: 4,
   },
@@ -304,15 +352,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingTop: 10,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#e5e7eb',
   },
   toolbarSpacer: {
     flex: 1,
   },
   submitButton: {
-    backgroundColor: '#1a56db',
     borderRadius: 20,
     paddingVertical: 10,
     paddingHorizontal: 24,
