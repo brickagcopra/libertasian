@@ -29,7 +29,9 @@ shot on a physical device.
 ## (a) App Review Information → Notes
 
 Paste into **App Store Connect → App Review Information → Notes**, replacing the existing text.
-Limit 4000 characters; this text is **3,880**. Everything between the fences, nothing else.
+Limit 4000 characters; this text is **3,923**. Everything between the fences, nothing else.
+It is **already live on ASC** — pushed via `PATCH /v1/appStoreReviewDetails/48204d2a-…`. Re-paste
+only if you edit it here.
 
 > **One deviation from `PLAY_LISTING.md`, flagged deliberately.** Item 3 reuses the Play full
 > description verbatim — WHAT'S INSIDE, WHO IT IS FOR and the DISCLAIMER block are untouched —
@@ -43,8 +45,8 @@ Limit 4000 characters; this text is **3,880**. Everything between the fences, no
 <!-- ASC-NOTES-BEGIN -->
 ```
 1) DEMONSTRATION VIDEO
-A screen recording is attached: one continuous take on a physical iPhone, from cold launch to in-app account deletion.
-Moderation in this build: any user can report any post and delete their own posts. User-level blocking is not in build 16; it is implemented and ships in the next build, hiding blocked authors from the feed, post detail and comments, with an unblock list in Settings. We can submit that build now if you want to see blocking first.
+A screen recording is attached to our Resolution Center reply: one continuous take on a physical iPhone, from cold launch to in-app account deletion.
+Moderation in this build: any user can report another user's post, and delete their own posts. User-level blocking is not in build 16; it is implemented and ships in the next build, hiding blocked authors from the feed, post detail and comments, with an unblock list in Settings. We can submit that build now if you want to see blocking first.
 
 2) DEVICES AND OS VERSIONS TESTED
 Physical device: iPhone 16 Pro on iOS 18.5. Simulators: iPhone 16 Pro Max and iPad Pro 13-inch (M4) on iOS 18.x.
@@ -98,7 +100,7 @@ We have answered all seven items in full in the App Review Information Notes fie
 
 Three points we want to state plainly rather than leave you to infer:
 
-1. Moderation. Build 16 lets any user report any feed post and delete their own posts. User-level blocking is not in build 16. It is already implemented on our side and will ship in the next build, where blocked authors are removed from the feed, post detail and comments, with an unblock list under Settings. If you would prefer to review blocking before approving, tell us and we will upload that build immediately.
+1. Moderation. Build 16 lets any user report another user's post, and delete their own posts. User-level blocking is not in build 16. It is already implemented on our side and will ship in the next build, where blocked authors are removed from the feed, post detail and comments, with an unblock list under Settings. If you would prefer to review blocking before approving, tell us and we will upload that build immediately.
 
 2. Payments. The iOS app contains no purchase, subscription or payment flow of any kind - no in-app purchase, no external purchase link, no checkout screen. Paid entitlements are purchased on our website and carry over when the user signs in.
 
@@ -123,58 +125,91 @@ enable the microphone only if you intend to narrate.
 
 ### Before you press record
 
-- [ ] **Read the traps section below first.** Two of them will cost you the whole take.
-- [ ] Sign out of the app entirely, then force-quit it.
-- [ ] Delete and reinstall the app if you have already granted camera or notification
-      permissions on this device — the permission prompts only fire once, and Apple asked to
-      see them.
-- [ ] Have **two** accounts ready: the demo account for the main walkthrough, and a **fresh
-      throwaway account** for the deletion segment.
-- [ ] Silence notifications (Focus / Do Not Disturb) so no banner covers the UI.
-- [ ] Charge above 30% so the low-battery banner does not appear.
+- [ ] **Read the traps section first.** Three of them will cost you the whole take.
+- [ ] **Delete and reinstall the app.** iOS shows each permission prompt once per install, and
+      Apple asked to see them. A device that has already granted camera or notifications
+      cannot produce this footage.
+- [ ] **Create the throwaway account and get it through email verification and onboarding
+      *before* you record.** Registration does not sign you in — it returns you to the login
+      screen with an alert telling you to check your email for a 6-digit code
+      (`(auth)/register.tsx:52-55`; `/auth/register` returns `{ user }` with no tokens). If you
+      film yourself hunting for that email, the take is dead. Register it, verify it, sign in
+      once, complete the 3-step onboarding carousel, then sign out and reinstall.
+- [ ] Have both accounts to hand: the demo account for the walkthrough, the throwaway for
+      deletion only.
+- [ ] Pick a feed post the **demo account has never reported**. `feed_post_reports` is
+      `@@unique([postId, reporterUserId])` and a repeat report throws *"You have already
+      reported this post"* on camera. A rehearsal burns the post you rehearsed on.
+- [ ] The post must be authored by **someone else** — Report only renders for non-owners
+      (`post-options-sheet.tsx:53-70`).
+- [ ] Silence notifications (Focus / Do Not Disturb) and charge above 30%.
 
 ### The take, in order
 
-| # | Segment | What must be visible |
-|---|---|---|
-| 1 | Cold launch | App icon tapped from the Home Screen, splash, unauthenticated landing |
-| 2 | Registration | Fill the sign-up form with the **throwaway** account and complete it |
-| 3 | Login | Sign out, then sign in as `brickagcopra5871+test@gmail.com`. Show that no 2FA step appears |
-| 4 | Home | Scroll the home surface so the main navigation is legible |
-| 5 | Codal reader | Open the 1987 Constitution, scroll a section, show cross-references |
-| 6 | Case digest | Open a Supreme Court digest, show facts / issues / ruling / doctrine and the provenance links |
-| 7 | Search | Type `constitution`, wait for the answer, scroll through the **8 cited sources** |
-| 8 | AI assistant | Ask a question, let the response **stream visibly**, scroll to the citations |
-| 9 | Scan tab | Tap Scan so the **iOS camera permission prompt** fires. Grant it. Scan any printed page |
-| 10 | Notifications | Trigger the **notification permission prompt**. Grant it |
-| 11 | Feed | Open a post, open the post options sheet, show **Report Post** and complete a report |
-| 12 | Settings | Show the Settings screen and the account section |
-| 13 | Delete account | **Switch to the throwaway account first.** Settings → Delete account, confirm |
-| 14 | Restore link | Open Mail, show the account-restore email that arrives after deletion |
+The ordering below is dictated by app behaviour, not preference. Read the "why" column before
+resequencing anything.
+
+| # | Segment | What must be visible | Why here |
+|---|---|---|---|
+| 1 | Cold launch | Tap the icon from the Home Screen, splash, unauthenticated landing | |
+| 2 | Registration | Fill the sign-up form with the throwaway account, submit, show the "check your email for a 6-digit code" alert, then let it return you to Login | Do not wait for the email on camera |
+| 3 | Login | Sign in as `brickagcopra5871+test@gmail.com`. Show that **no 2FA step appears** | There is no session to sign out of after segment 2 |
+| 4 | **Notification permission** | The **iOS notification prompt fires here, by itself.** Grant it | `_layout.tsx:37` runs `usePushNotifications(isAuthenticated)`, so the prompt fires the moment auth flips true. It **cannot** be triggered later — there is no in-app re-prompt |
+| 5 | Home | Scroll the home surface so the tab bar is legible | |
+| 6 | Codal reader | Open the 1987 Constitution, scroll a section, show cross-references | |
+| 7 | Case digest | Open a Supreme Court digest — facts / issues / ruling / doctrine and the provenance links | |
+| 8 | Search | Type `constitution`, wait, scroll the **8 cited sources** | |
+| 9 | AI assistant | From **inside the reader**, open the document chat sheet, ask a question, let it **stream**, scroll to the citations | This is the real AI surface (`features/ai-answers/components/document-chat-sheet.tsx`). See trap 3 |
+| 10 | Scan tab | Tap Scan so the **camera permission prompt** fires. Grant it. Scan any printed page | |
+| 11 | Feed — Report | **From the feed list, not post detail.** Tap the ⋯ on someone else's post card, open the options sheet, tap **Report Post**, pick a reason, submit | See trap 4 — the ⋯ on post detail is wired to a no-op |
+| 12 | Settings | Settings screen and the account section | |
+| 13 | Delete account | **Sign out, sign in as the throwaway account**, then Settings → Delete account, confirm | See trap 1 |
+| 14 | Restore link | Open Mail, show the account-restore email | |
 
 ### Traps — read these before recording
 
-1. **Never shoot the Delete Account segment on `brickagcopra5871+test@gmail.com`.**
-   Deleting it destroys complimentary subscription `6741e44f-7445-4347-869e-550b9845be3f`.
-   The next reviewer would sign in and hit paywalls on every paid surface, which turns a
-   2.1 into a far worse rejection. Sign out, sign in as the throwaway account created in
-   segment 2, and delete **that**.
+1. **Never shoot Delete Account on `brickagcopra5871+test@gmail.com`.** This is the one that
+   ends the whole submission. Deletion sets `status = pending_deletion`, revokes every session
+   and soft-deletes solo orgs (`account-deletion.service.ts:113-136`), and `auth.service.ts:201`
+   then rejects any non-active status with *"Account is suspended or deactivated."* The next
+   reviewer would not hit paywalls — **they could not sign in at all**, which is a guaranteed
+   repeat 2.1 and the worst outcome available. It also destroys comp subscription
+   `6741e44f-7445-4347-869e-550b9845be3f`. (It is restorable for 30 days via the emailed token,
+   but do not rely on that.) Sign out, sign in as the throwaway, delete **that**.
 
-2. **Read every AI answer on screen before you keep the take.** Some queries still return
-   *"the provided source passages do not contain…"*. On video that abstention looks identical
-   to a real answer — same bubble, same streaming animation — and a reviewer reading it
-   concludes the core feature does not work. `constitution` is verified to return a real
-   sourced answer with 8 sources; if you improvise a different query, check the text before
-   moving on. If an abstention appears, restart the take.
+2. **Read every AI answer on screen before you keep the take.** Abstentions are real and they
+   are not obvious in motion. On Search an abstention renders as client copy in a distinct
+   **amber shield container** (`ai-summary-results.tsx:82-87` via `abstention-copy.ts`); in the
+   reader chat it reads **"Not enough grounding in this document to answer that."**
+   (`document-chat-sheet.tsx:205-212`). The server-side phrase *"the provided source passages
+   do not contain…"* never reaches the screen, so do not scan for it. `constitution` is
+   verified to return a real sourced answer with 8 sources. If an abstention appears, restart.
 
-3. **Do not stage a purchase flow.** There is none in the app, we have told Apple there is
-   none, and inventing one on video creates a 3.1.1 problem that does not currently exist.
+3. **Film the right assistant.** Settings → "Help & FAQ" advertises *"Chat with the LIBERTASIAN
+   assistant"* but routes to `/help`, which is a **rule-based FAQ with no AI and no network
+   calls** (`chat-knowledge-base.ts`). Putting a canned FAQ reply in front of the reviewer as
+   our AI would be worse than showing nothing. Use the reader's document chat sheet.
 
-4. **Blocking is not in build 16.** Do not attempt to film it. Sections (a) and (b) tell Apple
+4. **Do not film the ⋯ button on post detail — it is dead.** `feed/[postId].tsx:85-89` passes
+   `onOptionsPress={() => {}}` and `onCommentPress={() => {}}`, so both buttons render and do
+   nothing. Shoot Report from the feed list card, where the sheet is actually wired
+   (`post-card.tsx:124-127`). **This is a real bug, not just a filming hazard — see the note
+   below.**
+
+5. **Do not stage a purchase flow.** There is none in the app, we have told Apple there is
+   none, and inventing one creates a 3.1.1 problem that does not currently exist.
+
+6. **Blocking is not in build 16.** Do not attempt to film it. Sections (a) and (b) tell Apple
    this in plain language; showing a half-built screen would contradict that.
 
-5. **One continuous take.** Do not stitch clips. If a segment goes wrong, restart from the
-   cold launch — a cut invites the question of what happened in the gap.
+7. **One continuous take.** Do not stitch clips. If a segment goes wrong, restart from the cold
+   launch — a cut invites the question of what happened in the gap.
+
+> **Open bug worth fixing before the next build.** Trap 4 is a live defect: the options and
+> comment buttons on the post detail screen are visible and inert. A reviewer who taps ⋯ on a
+> post detail sees a moderation control that does nothing — exactly the impression we are
+> trying to correct. Wiring those two handlers is small and belongs with the block-user work,
+> but it is a build decision, so it is called out here rather than folded in silently.
 
 ### After recording
 
