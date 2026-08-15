@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.libertasian.app",
-      "buildNumber": "17",
+      "buildNumber": "18",
       "usesAppleSignIn": true,
       "associatedDomains": [
         "applinks:libertasian.com"
