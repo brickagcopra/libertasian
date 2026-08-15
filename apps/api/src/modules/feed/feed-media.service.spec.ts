@@ -19,6 +19,7 @@ jest.mock('@aws-sdk/client-s3', () => ({
 }));
 
 import { FeedMediaService } from './feed-media.service';
+import { FeedBlocksService } from './feed-blocks.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { S3Service } from '../uploads/s3.service';
 
@@ -66,6 +67,16 @@ const mockPrisma = {
   feedPost: {
     findUnique: jest.fn(),
   },
+  feedUserBlock: {
+    findMany: jest.fn(),
+    findFirst: jest.fn(),
+    count: jest.fn(),
+    create: jest.fn(),
+    deleteMany: jest.fn(),
+  },
+  user: {
+    findFirst: jest.fn(),
+  },
   forTenant: jest.fn(),
 };
 
@@ -96,6 +107,7 @@ describe('FeedMediaService', () => {
       providers: [
         FeedMediaService,
         { provide: PrismaService, useValue: mockPrisma },
+        FeedBlocksService,
         { provide: S3Service, useValue: mockS3 },
         { provide: getQueueToken('feed-media'), useValue: mockQueue },
       ],
@@ -105,6 +117,10 @@ describe('FeedMediaService', () => {
     jest.clearAllMocks();
     // forTenant returns the same mock so existing model mocks keep firing
     mockPrisma.forTenant.mockReturnValue(mockPrisma);
+
+    // Default: the viewer has blocked nobody, so hiddenAuthorFilter() is {}
+    // and every WHERE below stays byte-identical to the pre-blocking shape.
+    mockPrisma.feedUserBlock.findMany.mockResolvedValue([]);
   });
 
   // ─── Upload ───────────────────────────────────────────────────────────────

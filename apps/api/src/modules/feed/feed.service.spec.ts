@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 
 import { FeedService } from './feed.service';
+import { FeedBlocksService } from './feed-blocks.service';
 import { PrismaService } from '../../prisma/prisma.service';
 
 // ─── Mock Data ────────────────────────────────────────────────────────────────
@@ -73,6 +74,16 @@ const mockPrisma = {
     findUnique: jest.fn(),
     findMany: jest.fn(),
   },
+  feedUserBlock: {
+    findMany: jest.fn(),
+    findFirst: jest.fn(),
+    count: jest.fn(),
+    create: jest.fn(),
+    deleteMany: jest.fn(),
+  },
+  user: {
+    findFirst: jest.fn(),
+  },
   forTenant: jest.fn(),
 };
 
@@ -84,6 +95,7 @@ describe('FeedService', () => {
       providers: [
         FeedService,
         { provide: PrismaService, useValue: mockPrisma },
+        FeedBlocksService,
       ],
     }).compile();
 
@@ -94,6 +106,10 @@ describe('FeedService', () => {
 
     // forTenant returns the same mock so existing model mocks keep firing
     mockPrisma.forTenant.mockReturnValue(mockPrisma);
+
+    // Default: the viewer has blocked nobody, so hiddenAuthorFilter() is {}
+    // and every WHERE below stays byte-identical to the pre-blocking shape.
+    mockPrisma.feedUserBlock.findMany.mockResolvedValue([]);
 
     // Default: no like/bookmark for requesting user
     mockPrisma.feedPostLike.findUnique.mockResolvedValue(null);
@@ -464,6 +480,133 @@ describe('FeedService', () => {
           }),
         }),
       );
+    });
+  });
+
+  // ─── Blocking ─────────────────────────────────────────────────────────────
+
+  describe('blocked authors', () => {
+    const BLOCKED_ID = 'user-blocked';
+
+    /** Simulate a symmetric block between USER_ID and BLOCKED_ID. */
+    function withBlock() {
+      mockPrisma.feedUserBlock.findMany.mockResolvedValue([
+        { blockerUserId: USER_ID, blockedUserId: BLOCKED_ID },
+      ]);
+    }
+
+    it('filters blocked authors out of the public feed', async () => {
+      withBlock();
+      mockPrisma.feedPost.findMany.mockResolvedValue([]);
+
+      await service.getPublicFeed({}, USER_ID);
+
+      expect(mockPrisma.feedPost.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            authorId: { notIn: [BLOCKED_ID] },
+          }),
+        }),
+      );
+    });
+
+    it('filters blocked authors out of the organization feed', async () => {
+      withBlock();
+      mockPrisma.feedPost.findMany.mockResolvedValue([]);
+
+      await service.getOrganizationFeed({}, ORG_ID, USER_ID);
+
+      expect(mockPrisma.feedPost.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            authorId: { notIn: [BLOCKED_ID] },
+          }),
+        }),
+      );
+    });
+
+    it('hides a blocked author\'s post detail behind the standard 404', async () => {
+      withBlock();
+      mockPrisma.feedPost.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.getPost(POST_ID, USER_ID, ORG_ID),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(mockPrisma.feedPost.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            authorId: { notIn: [BLOCKED_ID] },
+          }),
+        }),
+      );
+    });
+
+    it('filters blocked authors out of bookmarks without deleting the bookmark', async () => {
+      withBlock();
+      mockPrisma.feedPostBookmark.findMany.mockResolvedValue([]);
+
+      await service.getBookmarkedPosts({}, USER_ID, ORG_ID);
+
+      const call = mockPrisma.feedPostBookmark.findMany.mock.calls[0]![0];
+      expect(call.where.post).toEqual(
+        expect.objectContaining({ authorId: { notIn: [BLOCKED_ID] } }),
+      );
+      // The bookmark row itself is untouched — unblocking restores it.
+      expect(call.where.userId).toBe(USER_ID);
+    });
+
+    it('returns an empty page for a blocked user\'s profile without querying posts', async () => {
+      withBlock();
+
+      const result = await service.getUserProfileFeed(
+        {},
+        BLOCKED_ID,
+        USER_ID,
+      );
+
+      expect(result).toEqual({ items: [], hasNext: false, nextCursor: null });
+      // Critically: authorId must NOT be clobbered by a notIn predicate.
+      expect(mockPrisma.feedPost.findMany).not.toHaveBeenCalled();
+    });
+
+    it('still shows your own profile feed to yourself', async () => {
+      withBlock();
+      mockPrisma.feedPost.findMany.mockResolvedValue([]);
+
+      await service.getUserProfileFeed({}, USER_ID, USER_ID);
+
+      expect(mockPrisma.feedPost.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ authorId: USER_ID }),
+        }),
+      );
+    });
+
+    it('is symmetric — someone who blocked me is hidden from my feed too', async () => {
+      mockPrisma.feedUserBlock.findMany.mockResolvedValue([
+        { blockerUserId: BLOCKED_ID, blockedUserId: USER_ID },
+      ]);
+      mockPrisma.feedPost.findMany.mockResolvedValue([]);
+
+      await service.getPublicFeed({}, USER_ID);
+
+      expect(mockPrisma.feedPost.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            authorId: { notIn: [BLOCKED_ID] },
+          }),
+        }),
+      );
+    });
+
+    it('adds no authorId predicate at all when the viewer has no blocks', async () => {
+      mockPrisma.feedPost.findMany.mockResolvedValue([]);
+
+      await service.getPublicFeed({}, USER_ID);
+
+      const call = mockPrisma.feedPost.findMany.mock.calls[0]![0];
+      expect(call.where).not.toHaveProperty('authorId');
     });
   });
 });

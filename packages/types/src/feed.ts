@@ -126,6 +126,21 @@ export interface FeedPostReport {
   };
 }
 
+// ─── Blocks ─────────────────────────────────────────────────────────────
+
+/**
+ * One outbound block, as returned by GET /feed/blocks.
+ *
+ * Only ever the blocks you created — the inbound direction is never
+ * surfaced, so a blocked user is not told they were blocked.
+ */
+export interface FeedBlockedUser {
+  /** Block row id; also the pagination cursor. */
+  id: string;
+  user: FeedAuthor;
+  createdAt: string;
+}
+
 // ─── Pagination ─────────────────────────────────────────────────────────
 
 export interface FeedPaginationMeta {

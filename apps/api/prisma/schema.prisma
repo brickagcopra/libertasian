@@ -115,6 +115,8 @@ model User {
   feedPostBookmarks          FeedPostBookmark[]        @relation("FeedPostBookmarkUser")
   feedPostReports            FeedPostReport[]          @relation("FeedPostReportReporter")
   feedPostReportsResolved    FeedPostReport[]          @relation("FeedPostReportResolver")
+  feedUserBlocksInitiated    FeedUserBlock[]           @relation("FeedUserBlockBlocker")
+  feedUserBlocksReceived     FeedUserBlock[]           @relation("FeedUserBlockBlocked")
   exportJobs                 ExportJob[]
   // Accounting relations
   accountingPeriodsClosedBy  AccountingPeriod[]        @relation("PeriodClosedBy")
@@ -2913,6 +2915,32 @@ model FeedPostReport {
   @@unique([postId, reporterUserId], map: "uq_feed_post_report_post_reporter")
   @@index([status], map: "idx_feed_post_report_status")
   @@map("feed_post_reports")
+}
+
+/// User-level blocking for the community feed (App Store Guideline 1.2:
+/// UGC apps must offer blocking alongside reporting).
+///
+/// A block is SYMMETRIC for reads: if A blocks B, neither sees the other's
+/// posts or comments, and B cannot like/bookmark/comment/report A's posts.
+/// Only A can see or remove the row; B is never told.
+///
+/// No organizationId, mirroring FeedPostReport: the public feed is cross-org,
+/// so a block cannot be tenant-scoped. Deliberately absent from the
+/// forTenant() model map in prisma.service.ts.
+model FeedUserBlock {
+  id            String   @id @default(uuid()) @db.Uuid
+  blockerUserId String   @map("blocker_user_id") @db.Uuid
+  blockedUserId String   @map("blocked_user_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  blocker User @relation("FeedUserBlockBlocker", fields: [blockerUserId], references: [id], onDelete: Cascade)
+  blocked User @relation("FeedUserBlockBlocked", fields: [blockedUserId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerUserId, blockedUserId], map: "uq_feed_user_block_pair")
+  @@index([blockedUserId], map: "idx_feed_user_block_blocked")
+  @@index([blockerUserId, createdAt(sort: Desc)], map: "idx_feed_user_block_blocker_created")
+  @@map("feed_user_blocks")
 }
 
 // ==========================================================================

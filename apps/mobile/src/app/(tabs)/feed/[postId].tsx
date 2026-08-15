@@ -1,14 +1,20 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, Text, ScrollView, ActivityIndicator, Image, StyleSheet } from 'react-native';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { usePostDetail } from '../../../features/feed/hooks/use-feed';
 import { PostActionsBar } from '../../../features/feed/components/post-actions-bar';
+import { PostOptionsSheet } from '../../../features/feed/components/post-options-sheet';
+import { ReportSheet } from '../../../features/feed/components/report-sheet';
 import { CommentList } from '../../../features/feed/components/comment-list';
+import { useAuth } from '../../../providers/auth-provider';
 
 export default function PostDetailScreen() {
   const { postId } = useLocalSearchParams<{ postId: string }>();
   const { data, isLoading } = usePostDetail(postId ?? '');
+  const { user } = useAuth();
+  const [showOptions, setShowOptions] = useState(false);
+  const [showReport, setShowReport] = useState(false);
 
   const post = data?.data;
 
@@ -82,10 +88,16 @@ export default function PostDetailScreen() {
           )}
 
           {/* Actions */}
+          {/*
+            No onCommentPress here: the comments are already rendered below,
+            so the count shows as plain text rather than a button with
+            nowhere to go. onOptionsPress opens the real sheet — it was
+            previously wired to a no-op, leaving a visible but dead
+            moderation control on this screen.
+          */}
           <PostActionsBar
             post={post}
-            onCommentPress={() => {}}
-            onOptionsPress={() => {}}
+            onOptionsPress={() => setShowOptions(true)}
           />
         </ScrollView>
       </View>
@@ -97,6 +109,21 @@ export default function PostDetailScreen() {
         </Text>
         <CommentList postId={post.id} />
       </View>
+
+      {/* Sheets */}
+      <PostOptionsSheet
+        visible={showOptions}
+        post={post}
+        isOwner={user?.id === post.author.id}
+        onClose={() => setShowOptions(false)}
+        onEdit={() => router.push(`/feed/create?editPostId=${post.id}` as `/${string}`)}
+        onReport={() => setShowReport(true)}
+      />
+      <ReportSheet
+        visible={showReport}
+        postId={post.id}
+        onClose={() => setShowReport(false)}
+      />
     </View>
   );
 }

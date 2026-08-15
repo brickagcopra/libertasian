@@ -121,6 +121,13 @@ export default function SettingsRoute() {
       onPress: () => router.push('/notifications'),
     },
     {
+      id: 'blocked-users',
+      icon: 'person-remove-outline',
+      label: 'Blocked users',
+      sub: "Manage people you've blocked",
+      onPress: () => router.push('/settings/blocked-users'),
+    },
+    {
       id: 'help',
       icon: 'chatbubble-ellipses-outline',
       label: 'Help & FAQ',
