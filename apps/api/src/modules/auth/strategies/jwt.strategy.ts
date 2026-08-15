@@ -2,9 +2,9 @@ import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy, StrategyOptionsWithoutRequest } from 'passport-jwt';
-import * as fs from 'fs';
 import type { JwtPayload } from '@libertasian/types';
 
+import { resolveJwtVerification } from '../../../common/jwt/jwt-verification-key';
 import { PermissionsService } from '../../rbac/permissions.service';
 
 /**
@@ -23,28 +23,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     config: ConfigService,
     private readonly permissions: PermissionsService,
   ) {
-    const publicKeyPath = config.get<string>('JWT_PUBLIC_KEY_PATH', '');
-    const publicKeyEnv = config.get<string>('JWT_PUBLIC_KEY', '');
-    const jwtSecret = config.get<string>('JWT_SECRET', 'dev-secret-change-in-production');
-
-    let secretOrKey: string;
-    let algorithms: ('RS256' | 'HS256')[];
-
-    // RS256 via file path
-    if (publicKeyPath && fs.existsSync(publicKeyPath)) {
-      secretOrKey = fs.readFileSync(publicKeyPath, 'utf8');
-      algorithms = ['RS256'];
-    }
-    // RS256 via base64-encoded env var
-    else if (publicKeyEnv) {
-      secretOrKey = Buffer.from(publicKeyEnv, 'base64').toString('utf8');
-      algorithms = ['RS256'];
-    }
-    // Fallback: symmetric HMAC (development only)
-    else {
-      secretOrKey = jwtSecret;
-      algorithms = ['HS256'];
-    }
+    // Shared with AppThrottlerGuard: if these two ever resolved different
+    // keys, the guard's verification would fail silently and rate limiting
+    // would fall back to IP keying across the whole API.
+    const { key: secretOrKey, algorithms } = resolveJwtVerification(config);
 
     const opts: StrategyOptionsWithoutRequest = {
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
