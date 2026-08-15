@@ -1,20 +1,28 @@
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
 import { HeaderAmbient } from '@/components/ui/HeaderAmbient';
 import { TabBar, useTabBarClearance } from '@/components/ui/TabBar';
 import { useTabBarNav } from '@/features/navigation/use-tab-bar-nav';
+import { topInsetPadding } from '@/lib/safe-area';
 import { DERIVATIVE_TYPES } from '../../../features/derivatives/taxonomy';
 
 export default function LibraryHubScreen() {
   const navigate = useTabBarNav();
   const clearance = useTabBarClearance();
+  const insets = useSafeAreaInsets();
 
   return (
     <View style={styles.container}>
       <HeaderAmbient />
-      <ScrollView style={styles.scroll} contentContainerStyle={[styles.content, { paddingBottom: clearance }]}>
+      <ScrollView style={styles.scroll} contentContainerStyle={[
+          styles.content,
+          // library/_layout.tsx sets headerShown: false, so the title starts
+          // at y=0 and lands under the Dynamic Island without this.
+          { paddingTop: topInsetPadding(insets, 16), paddingBottom: clearance },
+        ]}>
         <View style={styles.header}>
           <Text style={styles.title} accessibilityRole="header">
             Library
@@ -58,7 +66,8 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f3f4f6' },
   scroll: { flex: 1 },
   // 96, matching (tabs)/digests.tsx listContent — clears the floating pill.
-  content: { padding: 16, gap: 16, },
+  // paddingTop/paddingBottom are applied inline (safe-area + tab clearance).
+  content: { paddingHorizontal: 16, gap: 16 },
   header: { gap: 4 },
   title: { fontSize: 24, fontWeight: '700', color: '#111827' },
   subtitle: { fontSize: 14, color: '#6b7280', lineHeight: 20 },
