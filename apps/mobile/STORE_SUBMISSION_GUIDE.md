@@ -13,7 +13,7 @@ Package / bundle id: `com.libertasian.app` · Play app id `4972935521557273777` 
 - **Government apps:** No.
 - **Financial features:** "My app doesn't provide any financial features."
 - **Health apps:** "My app does not have any health features."
-- **Content rating:** IARC questionnaire completed (category *Reference / All Other App Types*; UGC reporting = yes, blocking = no, chat moderation = no; online content = yes; news/educational = yes). Generated rating: **All ages / ESRB Everyone / PEGI 3 / ClassInd L.** Saved.
+- **Content rating:** ⚠️ **STALE — the questionnaire must be re-run before the next Play submission.** It was completed (category *Reference / All Other App Types*; UGC reporting = yes, **blocking = no**, chat moderation = no; online content = yes; news/educational = yes), generating **All ages / ESRB Everyone / PEGI 3 / ClassInd L**, and saved. **The "blocking = no" answer is now false.** #394 (`00c8c48`, *feat(feed): add user blocking to the community feed*) shipped user-level blocking: `apps/mobile/src/app/settings/blocked-users.tsx` lists blocked users and lifts a block, backed by `apps/api/src/modules/feed/feed-blocks.service.ts`. Android versionCode 10 is the first Play build to carry it. IARC treats the UGC moderation answers as material, so leaving a saved rating that contradicts the binary is a compliance risk in its own right — re-answer **blocking = yes** in Play Console → App content → Content rating and re-generate. Apple's side of the same fact is already corrected (`store/APP_REVIEW_2_1_RESPONSE.md`, #398).
 - **Data safety:** Full questionnaire completed and saved as draft — collection = Yes, encrypted in transit = Yes, account-creation methods = Username+password and OAuth, delete-account URL = `https://libertasian.com/account-deletion`. All 13 collected data types declared with purposes and required/optional exactly per `store/DATA_SAFETY.md`:
   - Personal info: Name (opt), Email (req), User IDs (req), Phone (opt)
   - Financial info: Purchase history (opt)
@@ -29,9 +29,9 @@ Package / bundle id: `com.libertasian.app` · Play app id `4972935521557273777` 
 **Repo assets generated / created:**
 - App icon 512×512: `assets/store/play-icon-512.png` (no alpha — Play-compliant).
 - Feature graphic 1024×500: `assets/store/feature-graphic-1024x500.png`.
-- **30 marketing screenshots** (6 screens × 5 sizes) at `assets/store/screenshots/marketing/<platform>/<slug>.png`:
-  - `iphone-6-7` 1290×2796, `ipad-12-9` 2048×2732, `android-phone` 1080×1920, `android-tablet-7` 1200×1920, `android-tablet-10` 1600×2560.
-  - Regenerate anytime: `pnpm --filter mobile screenshots:marketing`.
+- **Marketing screenshots** at `assets/store/screenshots/marketing/<platform>/<slug>.png` — Apple sizes only (`iphone-6-7` 1290×2796, `iphone-6-9` 1320×2868, `ipad-12-9` 2048×2732, `ipad-13` 2064×2752). Regenerate: `pnpm --filter mobile screenshots:marketing`.
+  - ⚠️ These are **designed mockups, not captures of the running app** — App Store Guideline 2.3.3 and Play's equivalent. They are superseded by the real captures in `framed/` and must not be uploaded to either store.
+  - The three `marketing/android-*` directories were **deleted** when the real Play captures landed. One of their six slides was `06-offline-sync`, a screen that does not exist in the app at all. Keeping them in the tree is how the wrong set gets re-uploaded.
 - New web page for the required deletion URL: `apps/web/src/app/(public)/account-deletion/page.tsx` → serves at `https://libertasian.com/account-deletion`.
 
 ---
@@ -43,16 +43,25 @@ Package / bundle id: `com.libertasian.app` · Play app id `4972935521557273777` 
 
 ---
 
-## PART 2 — Google Play store listing graphics — DONE
+## PART 2 — Google Play store listing graphics — SCREENSHOTS MUST BE RE-UPLOADED
 
-All listing graphics are applied and saved (2026-07-17):
+Icon and feature graphic are applied and saved (2026-07-17) and need no action:
 - **App icon** (owl, 512×512) — `assets/store/play-icon-512.png`
 - **Feature graphic** (1024×500) — `assets/store/feature-graphic-1024x500.png`
-- **Phone screenshots** ×6 — `assets/store/screenshots/marketing/android-phone/`
-- **7-inch tablet screenshots** ×6 — `.../android-tablet-7/`
-- **10-inch tablet screenshots** ×6 — `.../android-tablet-10/`
 
-The store listing saved with no validation errors. Nothing to do here.
+**The screenshots currently live on the listing are the synthetic `marketing/android-*` set and must be replaced.** They are designed mockups rather than captures of the running app — the same class of asset Apple rejected under Guideline 2.3.3 — and one of the six slides is `06-offline-sync`, a feature that **does not exist in the build**: settings has no such screen, and offline lives on codal cards and the reader's download control instead. Those three directories have been deleted from the repo so the wrong set cannot be re-uploaded by accident.
+
+Upload these instead — real emulator captures, one pass per form factor:
+
+| Play slot | Upload from | Size |
+|---|---|---|
+| Phone | `assets/store/screenshots/framed/android-phone/` | 1080×1920 |
+| 7-inch tablet | `assets/store/screenshots/framed/android-tablet-7/` | 1200×1920 |
+| 10-inch tablet | `assets/store/screenshots/framed/android-tablet-10/` | 1600×2560 |
+
+Six slides each, `01`…`06`. **Upload one file at a time, in filename order, waiting for each to finish** — uploading a set at once orders them by upload-completion rather than filename, which scrambled the ASC set on 2026-08-07 and had to be redone.
+
+Delete the old six from each slot after the new ones are applied.
 
 > How it was done (for future reference, since the picker is non-obvious): open the field's **Add assets** → **Upload** the file(s). For a single-image field (icon, feature graphic) open the uploaded asset's detail view (the **→** on the tile) and click **Add** in the detail bottom bar. For a multi-image field (screenshots) the uploaded files auto-select; click **Add** in the drawer's bottom action bar to apply them all at once. The Adobe Acrobat browser extension's floating button overlaps that **Add** button in a small window — widen the window or disable the extension.
 
