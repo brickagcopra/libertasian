@@ -1,6 +1,7 @@
 import Constants from 'expo-constants';
 import { fetch as expoFetch } from 'expo/fetch';
 
+import { apiClient } from '../../lib/api-client';
 import { authStorage } from '../../storage/auth-storage';
 import type { AiAnswerChunk, AiAnswerSource } from '../search/types';
 import { splitCompleteText } from './format-answer-text';
@@ -227,26 +228,59 @@ export async function streamAiAnswer(
   handlers.onAttempt?.(attempt);
 
   try {
-    const token = await authStorage.getAccessToken();
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-
-    const response = await expoFetch(`${API_BASE_URL}/ai-answers/stream`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        query: request.query,
-        ...(request.documentId ? { documentId: request.documentId } : {}),
-        ...(request.history?.length ? { history: request.history } : {}),
-      }),
-      signal,
+    const body = JSON.stringify({
+      query: request.query,
+      ...(request.documentId ? { documentId: request.documentId } : {}),
+      ...(request.history?.length ? { history: request.history } : {}),
     });
 
+    // Reads the access token at call time, deliberately. After a refresh the
+    // stored token has changed, so the retry must not reuse the one captured
+    // for the first attempt.
+    const send = async () => {
+      const token = await authStorage.getAccessToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      return expoFetch(`${API_BASE_URL}/ai-answers/stream`, {
+        method: 'POST',
+        headers,
+        body,
+        signal,
+      });
+    };
+
+    let response = await send();
+
+    // Access tokens are 15-minute RS256 JWTs, so any session outlives one.
+    // `apiClient.request` has always refreshed and retried on 401; this
+    // transport did not, so every AI answer and reader-chat turn after the
+    // token lapsed failed with "Session expired" while every other screen in
+    // the app silently recovered. A reviewer reproduces it by using the app for
+    // 15 minutes, and our Guideline 2.1 reply points them at the reader chat.
+    //
+    // The refresh MUST go through apiClient.attemptRefresh: refresh tokens are
+    // single-use with rotation and reuse detection revokes the whole token
+    // family, so an independent refresh here would race the client's own and
+    // turn this fake logout into a real one across every device on the account.
     if (response.status === 401) {
-      handlers.onError?.({ kind: 'auth', message: 'Session expired. Please log in again.' });
-      return;
+      const refreshed = await apiClient.attemptRefresh();
+      if (signal.aborted) return;
+
+      if (refreshed) {
+        response = await send();
+        if (signal.aborted) return;
+      }
+
+      // Surface auth failure only once the retry has also failed — or there was
+      // nothing to retry with. This is the one place allowed to sign the user
+      // out, because by here the refresh path is genuinely exhausted.
+      if (!refreshed || response.status === 401) {
+        apiClient.notifyUnauthorized();
+        handlers.onError?.({ kind: 'auth', message: 'Session expired. Please log in again.' });
+        return;
+      }
     }
 
     if (response.status === 403) {

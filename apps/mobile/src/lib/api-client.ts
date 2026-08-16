@@ -113,6 +113,16 @@ class ApiClient {
     this.onUnauthorized = handler;
   }
 
+  /**
+   * Fire the global sign-out handler. For transports that do not route through
+   * `request()` (the SSE stream client) and so cannot reach it themselves.
+   * Call only after a refresh-and-retry has already failed — a 401 that a
+   * refresh would have fixed must never reach this.
+   */
+  notifyUnauthorized(): void {
+    this.onUnauthorized?.();
+  }
+
   private async getAuthHeaders(): Promise<Record<string, string>> {
     const token = await authStorage.getAccessToken();
     return token ? { Authorization: `Bearer ${token}` } : {};
@@ -132,7 +142,20 @@ class ApiClient {
     return url;
   }
 
-  private async attemptRefresh(): Promise<boolean> {
+  /**
+   * Refresh the access token, collapsing concurrent callers onto one request.
+   *
+   * PUBLIC ON PURPOSE, and the only refresh path any transport may use.
+   * Refresh tokens are single-use with rotation and the API revokes the entire
+   * token family on reuse detection, so two refreshes racing with the same
+   * stored token do not merely waste a round trip — they sign the account out
+   * on every device. `streamAiAnswer` runs on `expo/fetch` rather than this
+   * client but must still join this single-flight, so it calls this method
+   * instead of posting to /auth/refresh itself.
+   *
+   * Returns true if a new access/refresh pair was stored.
+   */
+  async attemptRefresh(): Promise<boolean> {
     if (this.isRefreshing && this.refreshPromise) {
       return this.refreshPromise;
     }
