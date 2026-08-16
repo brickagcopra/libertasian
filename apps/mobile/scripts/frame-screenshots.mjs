@@ -26,8 +26,20 @@
  *   - Footer band: 12 px deep amber accent strip (matches feature graphic).
  *
  * Platform-to-source mapping:
- *   apple platforms (iphone-6-7, iphone-6-9, ipad-12-9, ipad-13) → raw/<slug>.ios.png
- *   play  platforms (android-*)             → raw/<slug>.android.png
+ *   Each platform may declare its own `rawSource` in screenshots.config.json;
+ *   the raw it frames is raw/<slug>.<rawSource>.png. Platforms that omit it
+ *   fall back to the historical default — "ios" for apple, "android" for play.
+ *
+ *   A shared rawSource across canvases of DIFFERENT form factors is a store
+ *   rejection waiting to happen: framing one 1080x2424 phone capture into the
+ *   1600x2560 tablet canvas letterboxes phone UI into a tablet slot, which is
+ *   the same misrepresentation (Apple 2.3.3 / Play's equivalent) that the real
+ *   captures exist to fix. The three android platforms therefore each declare a
+ *   distinct rawSource and need a separate emulator pass per form factor.
+ *
+ *   The four apple platforms still share "ios" — that is deliberate, and the
+ *   two-pass procedure in store/IOS_SCREENSHOT_CAPTURE.md §4 is what keeps the
+ *   iPhone and iPad sets honest: capture, frame, re-capture, frame again.
  */
 
 import { fileURLToPath } from 'node:url';
@@ -229,7 +241,7 @@ async function main() {
   let framed = 0;
   let skipped = 0;
   for (const [platformKey, platform] of platforms) {
-    const rawSource = platform.store === 'apple' ? 'ios' : 'android';
+    const rawSource = platform.rawSource ?? (platform.store === 'apple' ? 'ios' : 'android');
     const outDir = path.join(FRAMED_ROOT, platformKey);
     await fs.mkdir(outDir, { recursive: true });
 

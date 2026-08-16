@@ -3,10 +3,22 @@
  * capture-screenshots.mjs — drive an attached emulator/simulator to capture
  * raw store screenshots, one per screen entry in screenshots.config.json.
  *
- * Usage:
- *   pnpm filter=mobile screenshots:capture -- --platform android
- *   pnpm filter=mobile screenshots:capture -- --platform ios
- *   pnpm filter=mobile screenshots:capture -- --platform android --only 01-past-bar-exams
+ * Usage (from apps/mobile — `pnpm filter=mobile ...` is not valid pnpm):
+ *   pnpm screenshots:capture -- --platform android-phone
+ *   pnpm screenshots:capture -- --platform ios
+ *   pnpm screenshots:capture -- --platform android-tablet-10 --only 01-past-bar-exams
+ *   pnpm screenshots:capture -- --platform android-phone --serial emulator-5554
+ *
+ * --platform doubles as the raw-file suffix, so each Play form factor writes to
+ * its own raw/<slug>.<platform>.png and frame-screenshots.mjs picks it up via
+ * that platform's `rawSource`. Capturing one phone pass and framing it into the
+ * tablet canvases letterboxes phone UI into a tablet slot — the exact
+ * misrepresentation these real captures exist to fix. Do a pass per form factor.
+ *
+ * --serial pins adb to one device. With several emulators attached adb aborts
+ * on ambiguity; worse, the iOS side of this script hit the silent version of
+ * that bug (`simctl io booted` picked the wrong simulator and framed an iPad
+ * into the iPhone canvas — see store/IOS_SCREENSHOT_CAPTURE.md §8a note 4).
  *
  * Tooling required on PATH:
  *   - android: adb (Android platform-tools)
@@ -35,26 +47,44 @@ const MOBILE_ROOT = path.resolve(__dirname, '..');
 const CONFIG_PATH = path.join(MOBILE_ROOT, 'assets', 'store', 'screenshots.config.json');
 const RAW_DIR = path.join(MOBILE_ROOT, 'assets', 'store', 'screenshots', 'raw');
 
+// Every accepted --platform value, mapped to the device family it drives. The
+// key is also the raw-file suffix, which is what keeps the three Play form
+// factors in separate files. "android" is kept for backwards compatibility with
+// the original single-pass invocation.
+const PLATFORMS = {
+  'ios': 'ios',
+  'android': 'android',
+  'android-phone': 'android',
+  'android-tablet-7': 'android',
+  'android-tablet-10': 'android',
+};
+
 function parseArgs(argv) {
-  const args = { platform: null, only: null };
+  const args = { platform: null, only: null, serial: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--platform') args.platform = argv[++i];
     else if (a === '--only') args.only = argv[++i];
+    else if (a === '--serial') args.serial = argv[++i];
     else if (a === '--help' || a === '-h') args.help = true;
   }
   return args;
 }
 
 function printHelp() {
-  console.log(`Usage: capture-screenshots.mjs --platform <android|ios> [--only <slug>]
+  console.log(`Usage: capture-screenshots.mjs --platform <${Object.keys(PLATFORMS).join('|')}> [--only <slug>] [--serial <id>]
 
 Captures raw screenshots from an attached emulator/simulator. The user is
 prompted to navigate to each screen before pressing Enter to capture.
 
+Raw frames are written to raw/<slug>.<platform>.png, so each Play form factor
+gets its own pass — do NOT frame a phone capture into a tablet canvas.
+
 Options:
-  --platform <android|ios>   which device to capture from (required)
+  --platform <name>          which device to capture from (required)
   --only <slug>              capture a single screen by slug (e.g. 01-past-bar-exams)
+  --serial <id>              adb device serial (android only; required when
+                             more than one emulator is attached)
 `);
 }
 
@@ -71,11 +101,12 @@ function which(cmd) {
   return probe.status === 0;
 }
 
-async function captureAndroid(outPath) {
+async function captureAndroid(outPath, serial) {
   // `adb exec-out screencap -p` streams a PNG to stdout — capture to file.
   return new Promise((resolve, reject) => {
     const out = [];
-    const child = spawn('adb', ['exec-out', 'screencap', '-p']);
+    const argv = serial ? ['-s', serial] : [];
+    const child = spawn('adb', [...argv, 'exec-out', 'screencap', '-p']);
     child.stdout.on('data', (chunk) => out.push(chunk));
     child.stderr.on('data', (chunk) => process.stderr.write(chunk));
     child.on('error', reject);
@@ -105,16 +136,17 @@ async function captureIos(outPath) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) { printHelp(); return; }
-  if (!args.platform || !['android', 'ios'].includes(args.platform)) {
+  const family = PLATFORMS[args.platform];
+  if (!family) {
     printHelp();
     process.exit(2);
   }
 
-  if (args.platform === 'android' && !which('adb')) {
+  if (family === 'android' && !which('adb')) {
     console.error('adb not found on PATH. Install Android platform-tools.');
     process.exit(3);
   }
-  if (args.platform === 'ios' && !which('xcrun')) {
+  if (family === 'ios' && !which('xcrun')) {
     console.error('xcrun not found on PATH. iOS capture requires macOS + Xcode.');
     process.exit(3);
   }
@@ -143,7 +175,7 @@ async function main() {
     const outName = `${screen.slug}.${args.platform}.png`;
     const outPath = path.join(RAW_DIR, outName);
     try {
-      if (args.platform === 'android') await captureAndroid(outPath);
+      if (family === 'android') await captureAndroid(outPath, args.serial);
       else await captureIos(outPath);
       console.log(`  ✓ saved ${path.relative(MOBILE_ROOT, outPath).replace(/\\/g, '/')}`);
     } catch (e) {

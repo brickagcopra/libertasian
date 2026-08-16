@@ -27,14 +27,14 @@
     {
       "slug": "03-codal-reader",
       "title": "Codal Reader",
-      "caption": "1987 Constitution, Rules of Court, Republic Acts.",
-      "navHint": "Search → \"constitution\" → 1987 Constitution, Article I. The Codals-tab route does not work."
+      "caption": "Revised Penal Code, Labor Code, Civil Code in full.",
+      "navHint": "Library tab → Codals filter chip → \"The Revised Penal Code\" (Act No. 3815). Do NOT use the 1987 Constitution: it is in the corpus and published, but a document_type filter bug keeps it out of the Codals list. Verify on screen that whichever codal you pick actually renders before shooting. Expect the pre-existing section-segmentation off-by-one (each Article heading carries the NEXT article's body) — it affects every codal and is not introduced by the capture."
     },
     {
       "slug": "04-ai-assistant",
       "title": "AI Study Assistant",
       "caption": "Grounded answers with citations — never fabricated.",
-      "navHint": "Open the AI chat, send a sample query, wait for the answer with citations."
+      "navHint": "Use the IN-DOCUMENT READER CHAT — the ✨ button in the reader header, sheet titled \"Ask this document\" — NOT the Search AI Summary, which abstains on most substantive queries. Frame the answer body so an inline [n] citation AND the \"Sources (n)\" panel are both visible. READ THE ANSWER BEFORE CAPTURING: ask something the document answers outright (\"When do the provisions of this Code apply outside the Philippines\" works on the RPC); a question it cannot ground renders \"Not enough grounding in this document to answer that.\""
     },
     {
       "slug": "05-camera-scan",
@@ -46,7 +46,7 @@
       "slug": "06-search",
       "title": "Search the Corpus",
       "caption": "Cases, codals and digests in one search.",
-      "navHint": "Search tab → a broad legal term (e.g. \"estafa\") → results showing mixed result types."
+      "navHint": "Search tab → \"constitution\" → Top results showing CONSTITUTION, DECISION, EXECUTIVE ORDER and BAR EXAM QUESTIONS. Do NOT use \"estafa\": on the phone viewport it returns almost entirely BAR EXAM QUESTIONS, which contradicts the caption. Check the result-type labels before shooting — the caption promises mixed types."
     }
   ],
   "platforms": {
@@ -92,6 +92,8 @@
       "height": 1920,
       "required": true,
       "store": "play",
+      "rawSource": "android-phone",
+      "captureAvd": "Pixel_9",
       "framePadding": { "top": 320, "bottom": 60, "left": 50, "right": 50 },
       "captionFontSize": 56
     },
@@ -101,6 +103,8 @@
       "height": 1920,
       "required": false,
       "store": "play",
+      "rawSource": "android-tablet-7",
+      "captureAvd": "libertasian_tab7",
       "framePadding": { "top": 320, "bottom": 60, "left": 60, "right": 60 },
       "captionFontSize": 60
     },
@@ -110,6 +114,8 @@
       "height": 2560,
       "required": false,
       "store": "play",
+      "rawSource": "android-tablet-10",
+      "captureAvd": "libertasian_tab10",
       "framePadding": { "top": 380, "bottom": 80, "left": 80, "right": 80 },
       "captionFontSize": 72
     }

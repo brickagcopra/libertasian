@@ -76,3 +76,11 @@ logs/
 
 # Design handoff bundle (reference only, not shipped)
 .design-bundle/
+
+# Stub Expo config that `eas` drops when it is run from the repo ROOT instead of
+# apps/mobile. It is always exactly {"expo":{}} — there is no legitimate root
+# app.json in this monorepo; the real one is apps/mobile/app.json. Left
+# untracked it dirties the tree, and EAS refuses to archive a dirty tree, so the
+# stub breaks the next build rather than the command that created it.
+# Always run eas from apps/mobile.
+/app.json

@@ -21,9 +21,22 @@ Captions, slugs, and platform sizes live in `apps/mobile/assets/store/screenshot
 | ----------------------- | --------- | ---------------------------------- | ------------------- |
 | iPhone 6.7" 1290×2796   | Yes (Apple) | `xcrun simctl` (macOS + Xcode)    | iPhone 15 Pro Max   |
 | iPad 12.9" 2048×2732    | Yes (Apple — app `supportsTablet: true`) | `xcrun simctl` | iPad Pro 12.9"   |
-| Android phone 1080×1920 | Yes (Play, ≥2 phone images) | `adb` (Android platform-tools) | Pixel 5 / Pixel 7 |
-| Android 7" tablet 1200×1920 | Optional | `adb` | Nexus 7-class AVD |
-| Android 10" tablet 1600×2560 | Optional | `adb` | Pixel Tablet AVD |
+| Android phone 1080×1920 | Yes (Play, ≥2 phone images) | `adb` (Android platform-tools) | `Pixel_9` AVD (1080×2424) |
+| Android 7" tablet 1200×1920 | Optional | `adb` | `libertasian_tab7` AVD (Nexus 7 2013, 1200×1920) |
+| Android 10" tablet 1600×2560 | Optional | `adb` | `libertasian_tab10` AVD (Nexus 10, 1600×2560 portrait) |
+
+Each platform in `screenshots.config.json` names the AVD it was captured from
+in `captureAvd`. The two tablet AVDs are not stock — recreate them with:
+
+```bash
+avdmanager create avd -n libertasian_tab7  -k "system-images;android-36;google_apis_playstore;x86_64" -d "Nexus 7 2013"
+avdmanager create avd -n libertasian_tab10 -k "system-images;android-36;google_apis_playstore;x86_64" -d "Nexus 10"
+# Nexus 10 is landscape-native. Swap the two lines in its config.ini so the
+# panel itself is portrait — hw.initialOrientation alone leaves `wm size`
+# reporting 2560x1600 and the capture comes out landscape:
+#   hw.lcd.width=1600
+#   hw.lcd.height=2560
+```
 
 Apple minimum: ≥1 screenshot per required device size. Play minimum: ≥2 phone screenshots, with tablet sizes recommended for the tablet visibility checkbox in Play Console.
 
@@ -31,33 +44,58 @@ Apple minimum: ≥1 screenshot per required device size. Play minimum: ≥2 phon
 
 ## Capture workflow
 
+> **`pnpm filter=mobile …` is not valid pnpm and fails.** Every command below runs
+> from `apps/mobile` as `pnpm screenshots:capture -- …`. The old form is wrong
+> everywhere it appears in the older store docs too.
+
 1. Boot the target emulator or simulator and confirm it is attached:
-   - Android: `adb devices` should list one device.
-   - iOS:     `xcrun simctl list devices booted` should list one booted simulator.
-2. Launch a dev build of LIBERTASIAN on the device. Sign in with the demo reviewer account or a seeded account that has visible data on every screen.
-3. Run the capture script:
+   - Android: `adb devices`. If more than one device is listed, pass `--serial <id>`.
+   - iOS:     `xcrun simctl list devices booted` should list **exactly one** booted
+     simulator — `simctl io booted` picks arbitrarily otherwise, and has already
+     framed an iPad capture into the iPhone canvas once.
+2. Install a **release-configuration** build and sign in to an account with visible
+   data on every screen. Use a real account you own — **not** the App Store demo
+   reviewer account, which carries a comp Pro subscription reviewers depend on
+   (`store/IOS_SCREENSHOT_CAPTURE.md` §8). An EAS `preview` APK is the easy route:
+   it is release-mode and already points at prod.
+   ```bash
+   eas build --profile preview --platform android      # run from apps/mobile
+   curl -L -o app.apk "<artifact url>" && adb -s <serial> install -r app.apk
+   ```
+3. Run the capture script, **once per form factor**:
 
    ```bash
-   # Android
-   pnpm filter=mobile screenshots:capture -- --platform android
+   # Android — one pass per form factor, each writing its own raw file
+   pnpm screenshots:capture -- --platform android-phone      --serial emulator-5554
+   pnpm screenshots:capture -- --platform android-tablet-7   --serial emulator-5556
+   pnpm screenshots:capture -- --platform android-tablet-10  --serial emulator-5558
 
    # iOS
-   pnpm filter=mobile screenshots:capture -- --platform ios
+   pnpm screenshots:capture -- --platform ios
 
    # One screen only (re-shoot a single slug)
-   pnpm filter=mobile screenshots:capture -- --platform android --only 02-case-digests
+   pnpm screenshots:capture -- --platform android-phone --only 02-case-digests
    ```
 
 4. For each screen, the script prints the `navHint` from `screenshots.config.json` and waits for Enter. Navigate the app to that screen, then press Enter — the script writes `raw/<slug>.<platform>.png`.
 
+> **Never derive a tablet slide from a phone capture.** Framing a 1080×2424 phone
+> shot into the 1600×2560 tablet canvas letterboxes phone UI into a tablet slot,
+> which misrepresents the app the same way the synthetic `marketing/` set did.
+> That is why each Play form factor has its own `rawSource` and its own AVD.
+
 The six screens (drafted from the listing copy in `apps/mobile/store.config.json` and `apps/mobile/store/PLAY_LISTING.md`) are:
 
 1. `01-past-bar-exams` — Past Bar Exams browser
-2. `02-case-digests` — Supreme Court case digest reader
-3. `03-codal-reader` — Codal reader (Constitution)
-4. `04-ai-assistant` — AI Study Assistant with citations
-5. `05-camera-scan` — Camera scan-to-digest
-6. `06-offline-sync` — Settings: offline + sync status
+2. `02-case-digests` — Case digests **list** (not the detail screen — its hero is a `<Photo label="hero · digest" />` placeholder)
+3. `03-codal-reader` — Codal reader (1987 Constitution), reached via Search; the Codals-tab route does not work
+4. `04-ai-assistant` — AI assistant answering **with citations**. Read the answer before capturing: most substantive queries currently abstain ("The provided source passages do not contain…") and an abstention looks almost identical to an answer at a glance
+5. `05-camera-scan` — Scan **landing** screen (Start Scan + real Recent Scans), not a staged viewfinder
+6. `06-search` — Search results across mixed result types
+
+> `06-offline-sync` used to be listed here and still exists under `marketing/`.
+> **There is no offline-sync screen in the app** — settings has no such entry;
+> offline lives on codal cards and the reader's download control. Do not ship it.
 
 ---
 
