@@ -119,7 +119,7 @@ export default function StudyTab() {
           <View style={styles.syllabusContent}>
             <Text style={styles.syllabusTitle}>Bar Exam Syllabus</Text>
             <Text style={styles.syllabusScore}>
-              {readiness.overallPct}% readiness \u00b7 {readiness.completedTopics}/
+              {readiness.overallPct}% readiness · {readiness.completedTopics}/
               {readiness.totalTopics} topics
             </Text>
           </View>

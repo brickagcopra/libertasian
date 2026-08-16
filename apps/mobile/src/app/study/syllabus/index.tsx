@@ -65,7 +65,7 @@ function SyllabusCard({ item }: { item: BarSyllabus }) {
           </Text>
           <Text style={styles.cardMeta}>
             {item.barSubjectCode.replace(/_/g, ' ')}
-            {topicCount > 0 ? ` \u00b7 ${topicCount} topic${topicCount !== 1 ? 's' : ''}` : ''}
+            {topicCount > 0 ? ` · ${topicCount} topic${topicCount !== 1 ? 's' : ''}` : ''}
           </Text>
         </View>
         <Ionicons name="chevron-forward" size={18} color="#9ca3af" />
