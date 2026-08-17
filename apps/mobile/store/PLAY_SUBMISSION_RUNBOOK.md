@@ -21,21 +21,47 @@
 | Play app id | `4972935521557273777` |
 | Track | **Closed testing → `alpha`** (never `internal`, never `production`) |
 
-**Entry point:** https://play.google.com/console → select **LIBERTASIAN**.
+**Entry point / dashboard:**
+https://play.google.com/console/u/0/developers/8499737484299150451/app/4972935521557273777/app-dashboard
 
-I cannot give you deep links. Play Console URLs are of the form
-`https://play.google.com/console/u/0/developers/<developerId>/app/<appId>/...`
-and I do not have your `developerId`. **If you paste me any Play Console URL
-from your browser, I will extract the `developers/<id>` segment and regenerate
-this runbook with real one-click deep links for every step.** Until then each
-step gives the exact left-nav path.
+Developer id `8499737484299150451`, app id `4972935521557273777`.
+
+### Deep links — every step, in order
+
+| Step | Page | Link |
+|---|---|---|
+| — | App content (hub) | https://play.google.com/console/u/0/developers/8499737484299150451/app/4972935521557273777/app-content |
+| 1 | Content rating | https://play.google.com/console/u/0/developers/8499737484299150451/app/4972935521557273777/app-content/content-rating |
+| 2 | Data safety | https://play.google.com/console/u/0/developers/8499737484299150451/app/4972935521557273777/app-content/data-privacy-security |
+| 3 | App access | https://play.google.com/console/u/0/developers/8499737484299150451/app/4972935521557273777/app-content/app-access |
+| 4 | Target audience | https://play.google.com/console/u/0/developers/8499737484299150451/app/4972935521557273777/app-content/target-audience |
+| 5 / 7 | Closed testing | https://play.google.com/console/u/0/developers/8499737484299150451/app/4972935521557273777/tracks/closed-testing |
+| 5A | Main store listing | https://play.google.com/console/u/0/developers/8499737484299150451/app/4972935521557273777/main-store-listing |
+| 6 | Publishing overview | https://play.google.com/console/u/0/developers/8499737484299150451/app/4972935521557273777/publishing |
+
+> **Confidence, stated honestly.** The base
+> (`/u/0/developers/8499737484299150451/app/4972935521557273777/`) and
+> `app-dashboard` are confirmed — they came from the URL in your address bar.
+> The leaf segments (`app-content/...`, `tracks/closed-testing`,
+> `main-store-listing`, `publishing`) follow Play Console's documented URL scheme
+> but I could not load them to check, because I have no browser access.
+> **If one 404s or lands somewhere unexpected, use the left-nav path given in the
+> step — every step below still carries it — then paste me the real URL and I
+> will correct this table.** The `/u/0/` segment assumes Play Console is on your
+> first signed-in Google account; if you are multi-signed-in it may be `/u/1/`
+> or higher.
 
 ---
 
 ## What I can and cannot do for you
 
-I checked: **browser automation (claude-in-chrome) is NOT available in this
-session.** I have no tool that can open, read, or click a page. So for now:
+I checked the full tool surface — deferred tools, installed plugins, and skills.
+**Browser automation is NOT available in this session.** There is no
+claude-in-chrome, no "cowork" browser tool, no installed plugins, and the
+available skills are all authoring/config ones. The only web tool is `WebFetch`,
+which explicitly fails on authenticated pages, so it cannot reach Play Console
+even though you are signed in — your browser session is not something it can
+borrow. I have no tool that can open, read, or click a Play Console page.
 
 | | |
 |---|---|
@@ -89,9 +115,9 @@ The release never reached testers, so **the 14-day clock never started.**
 
 ## Step 1 — Content rating: re-run the IARC questionnaire
 
-**Left nav:** Play Console → your app → **Monetise with Play** section is *not*
-it → go to **Policy and programmes** → **App content** → **Content rating** →
-**Start questionnaire** (or **Manage** if it shows a saved rating).
+**Left nav:** **Policy and programmes** → **App content** → **Content rating** →
+**Start questionnaire** (or **Manage**, if it already shows a saved rating).
+**Direct link:** https://play.google.com/console/u/0/developers/8499737484299150451/app/4972935521557273777/app-content/content-rating
 
 **Why you are redoing this.** The saved answers recorded **UGC reporting = yes,
 blocking = NO**. PR **#394** (`00c8c48`, *feat(feed): add user blocking to the
@@ -133,6 +159,7 @@ rating that contradicts the binary is its own compliance problem.
 ## Step 2 — Data safety: it is COMPLETE but saved as a DRAFT. Submit it.
 
 **Left nav:** **App content** → **Data safety**.
+**Direct link:** https://play.google.com/console/u/0/developers/8499737484299150451/app/4972935521557273777/app-content/data-privacy-security
 
 This is **half of why `1d1d1fe9` was rejected.** Every answer is already filled
 in. The form was simply never walked to the end and submitted. **Do not re-enter
@@ -209,6 +236,7 @@ Two notes if a screen makes you hesitate:
 ## Step 3 — App access (Sign in details)
 
 **Left nav:** **App content** → **App access**.
+**Direct link:** https://play.google.com/console/u/0/developers/8499737484299150451/app/4972935521557273777/app-content/app-access
 
 This is the other half of why `1d1d1fe9` was rejected. The app requires login,
 and **Google reviewers cannot use social sign-in and cannot create accounts**, so
@@ -254,6 +282,7 @@ Account deletion is in-app: Settings > Delete account.
 ## Step 4 — Target audience and content
 
 **Left nav:** **App content** → **Target audience and content**.
+**Direct link:** https://play.google.com/console/u/0/developers/8499737484299150451/app/4972935521557273777/app-content/target-audience
 
 4.1 Click **App content** → **Target audience and content**.
 4.2 **Target age groups:** tick **18 and over** ONLY. Untick everything else.
@@ -272,6 +301,7 @@ Account deletion is in-app: Settings > Delete account.
 ## Step 5 — Upload versionCode 11 to Closed testing (`alpha`)
 
 **Left nav:** **Test and release** → **Testing** → **Closed testing**.
+**Direct link:** https://play.google.com/console/u/0/developers/8499737484299150451/app/4972935521557273777/tracks/closed-testing
 
 > 🛑 **Closed testing, track `alpha`. Never Internal testing, never Production.**
 > Internal-track releases do **not** count toward the 12-tester / 14-day rule —
@@ -328,6 +358,7 @@ pick a build. The `submit.production.android` profile already targets
 ## Step 5A — Replace the store listing screenshots ⚠️ *added, not in the original brief*
 
 **Left nav:** **Grow users** → **Store presence** → **Main store listing**.
+**Direct link:** https://play.google.com/console/u/0/developers/8499737484299150451/app/4972935521557273777/main-store-listing
 
 **Do this before Send for review.** The listing currently serves the synthetic
 `marketing/android-*` set: designed mockups rather than captures of the running
@@ -371,6 +402,7 @@ leave them alone.
 ## Step 6 — Send for review
 
 **Left nav:** **Publishing overview** (top of the left nav).
+**Direct link:** https://play.google.com/console/u/0/developers/8499737484299150451/app/4972935521557273777/publishing
 
 6.1 Click **Publishing overview**.
 6.2 Review the list of pending changes. You should see, at minimum: content
@@ -392,6 +424,8 @@ leave them alone.
 
 **Left nav:** **Test and release** → **Testing** → **Closed testing** →
 **alpha** → **Testers** tab.
+**Direct link:** https://play.google.com/console/u/0/developers/8499737484299150451/app/4972935521557273777/tracks/closed-testing
+(then open the **alpha** track and switch to the **Testers** tab)
 
 Your Play developer account is a personal account created after 13 Nov 2023, so
 production access is gated on:
