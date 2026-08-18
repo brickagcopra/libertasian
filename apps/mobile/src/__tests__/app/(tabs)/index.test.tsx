@@ -126,16 +126,34 @@ describe('HomeRoute', () => {
     expect(router.push).toHaveBeenCalledWith('/digest/brief-1');
   });
 
-  it('renders a loading indicator while the feed is in flight', () => {
+  // Loading and error must BOTH keep the full screen mounted. Every tab route
+  // hides the native tab bar, so HomeScreen's own TabBar is the only
+  // navigation in the app — a bare spinner or error card here strands the
+  // user (the App Store 2.1(a) rejection of build 19).
+  it('renders the screen with an empty feed — and a usable tab bar — while the feed is in flight', () => {
     mockUseHomeFeed.mockReturnValueOnce({
       data: undefined,
       isLoading: true,
       isError: false,
     });
-    const { UNSAFE_getByType } = render(<HomeRoute />);
-    // ActivityIndicator from react-native is used during loading
-    const ActivityIndicator = require('react-native').ActivityIndicator;
-    expect(UNSAFE_getByType(ActivityIndicator)).toBeTruthy();
+    const { getByText, getByLabelText, queryByText } = render(<HomeRoute />);
+
+    expect(getByText(/^Hi, Juan\./)).toBeTruthy();
+    expect(getByLabelText('Search')).toBeTruthy();
+    // No fixture items leak in while the request is still in flight.
+    expect(queryByText('Right to be Forgotten')).toBeNull();
+  });
+
+  it('keeps the tab bar navigable while the feed is in flight', () => {
+    mockUseHomeFeed.mockReturnValueOnce({
+      data: undefined,
+      isLoading: true,
+      isError: false,
+    });
+    const { getByLabelText } = render(<HomeRoute />);
+
+    fireEvent.press(getByLabelText('Digests'));
+    expect(router.push).toHaveBeenCalledWith('/(tabs)/digests');
   });
 
   it('renders the screen with an empty feed when the API errors out', () => {
@@ -144,9 +162,10 @@ describe('HomeRoute', () => {
       isLoading: false,
       isError: true,
     });
-    const { getByText, queryByText } = render(<HomeRoute />);
+    const { getByText, getByLabelText, queryByText } = render(<HomeRoute />);
     // Greeting still mounts (the screen stays usable on error).
     expect(getByText(/^Hi, Juan\./)).toBeTruthy();
+    expect(getByLabelText('Read')).toBeTruthy();
     // No fixture items leak in — the API-only seam is tight.
     expect(queryByText('Right to be Forgotten')).toBeNull();
   });

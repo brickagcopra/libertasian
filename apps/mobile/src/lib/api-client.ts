@@ -56,6 +56,14 @@ const DEFAULT_HEADERS: Record<string, string> = {
   'X-Client': 'mobile',
 };
 
+/**
+ * Hard deadline for every request on this client. React Native's `fetch` has
+ * no timeout of its own, so a connection the OS never fails (captive portal,
+ * dropped carrier handoff, a stalled TLS handshake) leaves the promise pending
+ * forever — and any screen awaiting it spins forever with it.
+ */
+const REQUEST_TIMEOUT_MS = 20000;
+
 export class ApiClientError extends Error {
   statusCode: number;
   serverMessage: string;
@@ -128,6 +136,31 @@ class ApiClient {
     return token ? { Authorization: `Bearer ${token}` } : {};
   }
 
+  /**
+   * `fetch` with an AbortController deadline. Aborts surface as a 408 so
+   * callers get a renderable error instead of a promise that never settles.
+   * Non-abort failures (real network errors) propagate untouched.
+   */
+  private async fetchWithTimeout(
+    url: string,
+    init: RequestInit,
+    timeoutMs: number = REQUEST_TIMEOUT_MS,
+  ): Promise<Response> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      return await fetch(url, { ...init, signal: controller.signal });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new ApiClientError(408, 'Request timed out. Check your connection.');
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   private buildUrl(endpoint: string, params?: Record<string, string>): string {
     let url = `${this.baseUrl}${endpoint}`;
     if (params) {
@@ -176,7 +209,7 @@ class ApiClient {
     if (!refreshToken) return false;
 
     try {
-      const response = await fetch(`${this.baseUrl}/auth/refresh`, {
+      const response = await this.fetchWithTimeout(`${this.baseUrl}/auth/refresh`, {
         method: 'POST',
         headers: { ...DEFAULT_HEADERS },
         body: JSON.stringify({ refreshToken }),
@@ -205,7 +238,7 @@ class ApiClient {
     const url = this.buildUrl(endpoint, params);
     const authHeaders = skipAuth ? {} : await this.getAuthHeaders();
 
-    const response = await fetch(url, {
+    const response = await this.fetchWithTimeout(url, {
       ...init,
       headers: {
         ...DEFAULT_HEADERS,
@@ -218,7 +251,7 @@ class ApiClient {
       const refreshed = await this.attemptRefresh();
       if (refreshed) {
         const retryHeaders = await this.getAuthHeaders();
-        const retryResponse = await fetch(url, {
+        const retryResponse = await this.fetchWithTimeout(url, {
           ...init,
           headers: {
             ...DEFAULT_HEADERS,

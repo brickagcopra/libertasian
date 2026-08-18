@@ -1,11 +1,9 @@
 import { useMemo } from 'react';
-import { ActivityIndicator, View } from 'react-native';
 import { router } from 'expo-router';
 import { HomeScreen, type HomeFeedItem } from '@/components/screens/HomeScreen';
 import { useTabBarNav } from '@/features/navigation/use-tab-bar-nav';
 import { useHomeFeed } from '@/features/home/hooks/use-home-feed';
 import { useAuth } from '@/providers/auth-provider';
-import { useTheme } from '@/providers/theme-provider';
 import type { HomeFeedItem as ApiHomeFeedItem } from '@/features/home/types';
 
 function formatGreetingDate(d: Date): string {
@@ -37,7 +35,6 @@ function routeForItem(item: ApiHomeFeedItem): string {
 export default function HomeRoute() {
   const navigate = useTabBarNav();
   const { user } = useAuth();
-  const { theme } = useTheme();
   const { data, isLoading, isError } = useHomeFeed();
 
   const greetingDate = useMemo(() => formatGreetingDate(new Date()), []);
@@ -73,26 +70,22 @@ export default function HomeRoute() {
     router.push(routeForItem(item));
   };
 
-  // Loading: render the chrome with a centred spinner so the launch
-  // transition stays smooth instead of flashing fixtures.
-  if (isLoading && !data) {
-    return (
-      <View style={{ flex: 1, backgroundColor: theme.bg, alignItems: 'center', justifyContent: 'center' }}>
-        <ActivityIndicator color={theme.accent} />
-      </View>
-    );
-  }
-
-  // Error: keep the screen mounted with an empty feed array so the user can
-  // still navigate. The bottom tabs and greeting remain interactive.
-  const errorEmptyFeed = isError && !data ? [] : undefined;
+  // NEVER return early from this screen. Every one of the 8 tab routes sets
+  // `tabBarStyle: { display: 'none' }`, so HomeScreen's own TabBar is the only
+  // navigation in the app — any branch that renders something else (a bare
+  // spinner, an error card) is a dead end the user cannot leave. That is how
+  // build 19 read as "unresponsive" to App Store review (2.1(a)).
+  //
+  // Loading and error therefore both render the full screen with an empty
+  // feed; the chrome, greeting and tabs stay interactive throughout.
+  const feed = isLoading || isError ? [] : (feedItems ?? []);
 
   return (
     <HomeScreen
       greetingDate={greetingDate}
       greetingName={greetingName}
       {...(briefProp ? { brief: briefProp } : {})}
-      feed={errorEmptyFeed ?? feedItems ?? []}
+      feed={feed}
       onProfilePress={() => router.push('/settings')}
       onPressFeedItem={handleFeedItemPress}
       onSeeAllFeed={() => router.push('/(tabs)/digests')}
