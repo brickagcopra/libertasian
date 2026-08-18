@@ -489,6 +489,57 @@ describe('apiClient - concurrent 401 deduplication', () => {
   });
 });
 
+describe('apiClient - request timeout', () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('rejects with 408 when a request outlives the 20s deadline', async () => {
+    jest.useFakeTimers();
+
+    // A request the network never settles — it resolves only when the
+    // client's own AbortController fires.
+    mockFetch.mockImplementationOnce(
+      (_url: string, init: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => {
+            reject(new Error('The operation was aborted.'));
+          });
+        }),
+    );
+
+    // Attach the rejection assertion up front: the timeout fires while the
+    // timers are being advanced below, and an unhandled rejection in between
+    // would fail the test on its own.
+    const assertion = expect(apiClient.get('/slow')).rejects.toMatchObject({
+      statusCode: 408,
+      serverMessage: 'Request timed out. Check your connection.',
+    });
+
+    // `request()` awaits the auth headers before it arms the deadline — flush
+    // those microtasks first, or there is no timer here yet to advance.
+    await Promise.resolve();
+    await Promise.resolve();
+    await jest.advanceTimersByTimeAsync(20000);
+
+    await assertion;
+  });
+
+  it('passes an abort signal on every request and clears the timer on success', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: 'ok' }),
+    });
+
+    await expect(apiClient.get('/fast')).resolves.toBe('ok');
+
+    const init = mockFetch.mock.calls[0][1] as RequestInit;
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect(init.signal?.aborted).toBe(false);
+  });
+});
+
 describe('URL building', () => {
   it('filters out empty string params', async () => {
     mockFetch.mockResolvedValueOnce({

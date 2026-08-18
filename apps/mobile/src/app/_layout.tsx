@@ -21,6 +21,7 @@ import { Slot, router, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 import { AuthProvider, useAuth } from '../providers/auth-provider';
 import { ThemeProvider } from '../providers/theme-provider';
 import { useNotificationSocket } from '../features/workspace/hooks/use-notifications';
@@ -108,17 +109,22 @@ export default function RootLayout() {
     );
   }
 
+  // ErrorBoundary is the outermost element on purpose: a throw from any
+  // provider below it (query client, theme, auth) would otherwise unmount the
+  // whole tree and leave a blank, unresponsive screen with no way back.
   return (
-    <QueryClientProvider client={queryClient}>
-      <ThemeProvider>
-        <AuthProvider>
-          <StatusBar style="auto" />
-          <AuthNavigationGuard>
-            <Slot />
-          </AuthNavigationGuard>
-        </AuthProvider>
-      </ThemeProvider>
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider>
+          <AuthProvider>
+            <StatusBar style="auto" />
+            <AuthNavigationGuard>
+              <Slot />
+            </AuthNavigationGuard>
+          </AuthProvider>
+        </ThemeProvider>
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 }
 
