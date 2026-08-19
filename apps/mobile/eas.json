@@ -70,7 +70,19 @@
         // 12-testers/14-continuous-days requirement that gates production
         // access for personal developer accounts, so an internal submit
         // silently burns days without advancing the clock.
-        "track": "alpha"
+        "track": "alpha",
+        // "draft" uploads the .aab as a DRAFT release on the alpha track instead
+        // of publishing it immediately. Play rejects a COMPLETED release with
+        // "the app is missing the required metadata" until the app has been
+        // through its FIRST review, because the store listing and App content
+        // declarations are still pending. Submissions 1d1d1fe9 (versionCode 9)
+        // and 9c08591f (versionCode 11) both died on exactly that.
+        // With "draft", the bundle lands in the track and you press
+        // Publishing overview -> "Send app for review", which submits the
+        // release together with the listing and declarations in one go.
+        // AFTER the first review has been approved, change this back to
+        // "completed" so later submits roll out to testers without a manual step.
+        "releaseStatus": "draft"
       },
       "ios": {
         "appleId": "bma5871@gmail.com",

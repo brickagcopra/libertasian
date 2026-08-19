@@ -1,5 +1,68 @@
 # LIBERTASIAN — Play Console submission runbook
 
+> ## ⚠️ READ THIS FIRST — state verified in the live console on **2026-08-19**
+>
+> Most of this runbook is now **history**. Steps 1–4 were already done on
+> 2026-08-03/16, and steps 5, 5A and the tester wiring were done on 2026-08-19.
+> The corrected picture:
+>
+> | Runbook step | Real status on 2026-08-19 |
+> |---|---|
+> | 1 Content rating (IARC) | **DONE** — re-run and submitted 2026-08-16 23:05. Summary reads *"Users or user-generated content can be blocked"* **and** *"…can be reported"*. Status **Completed**. |
+> | 2 Data safety | **DONE** — actioned 2026-08-16, **not** a draft. 7 categories / 13 sub-types, deletion URL present, encrypted-in-transit yes. See the divergence note in `DATA_SAFETY.md`. |
+> | 3 App access → now called **"Sign in details"** | **DONE** — 2026-08-03. `brickagcopra5871+test@gmail.com`, password + 323-char instructions present, "full access" box ticked. |
+> | 4 Target audience | **DONE** — 2026-08-03. *"The target age group for your app is: 18 and over"*. |
+> | **NEW — Advertising ID** | Was the **only** blocker. Play: *"You can't roll out releases with artifacts targeting Android 13 until you have completed this declaration."* Answered **No** on 2026-08-19 (no ads SDK, no Firebase Analytics, zero `AD_ID` references in `apps/mobile`). App content now reads **"You're all caught up"**. |
+> | 5 Upload vC11 to closed `alpha` | **DONE 2026-08-19** via `eas submit` — the first Android submit that ever succeeded. Draft release **1.0.0 / versionCode 11**, Philippines, 18,612 devices. Required adding `"releaseStatus": "draft"` to `eas.json` (see below). |
+> | 5A Store listing screenshots | **DONE 2026-08-19** — all three slots (phone / 7-inch / 10-inch) replaced with the real `assets/store/screenshots/framed/android-*` captures, old synthetic set incl. the `06-offline-sync` slide deleted, saved and re-verified after reload. |
+> | Testers | Email list **"Libertasian Testers" (7 users)** existed but was **not attached** to the alpha track. Attached and saved 2026-08-19. **7 < 12 — this is the long pole.** |
+> | 6 Send for review | **NOT DONE — deliberately left for brick.** |
+>
+> **Why `eas submit` kept failing.** `submit.production.android.releaseStatus`
+> defaulted to `completed`. Play refuses a COMPLETED release with *"the app is
+> missing the required metadata"* until the app has been through its first
+> review. Submissions `1d1d1fe9` (vC9) and `9c08591f` (vC11) both died there.
+> With `"releaseStatus": "draft"` the bundle lands in the track and you press
+> **Send app for review** yourself. **Flip it back to `completed` once the first
+> review is approved**, otherwise every future submit stops at draft.
+>
+> **Nothing has been sent to Google for review.** Submission activity reads
+> *"You have no recent submissions."*
+>
+> ### What is left, in order
+>
+> 1. **Closed testing → Alpha → "Preview and confirm the release"** — check the
+>    "What's new" / release-notes box (EAS does not fill it; the paste-ready text
+>    is in step 5.8 below) and confirm.
+> 2. **Publishing overview → "Send app for review"** (currently locked until
+>    step 1 above is done).
+> 3. **Grow the tester list from 7 to 15+** and get every one of them to open the
+>    opt-in link. The link only appears after the release is live.
+>
+> ### Corrected console URLs — the old table below was wrong
+>
+> `…/app-content` alone 404s to the app list. App content now lives under
+> **Monitor and improve → Policy and programs → App content**.
+>
+> | Page | Working URL (suffix on `…/app/4972935521557273777/`) |
+> |---|---|
+> | App content hub | `app-content/overview` |
+> | Content rating | `app-content/content-rating-overview` |
+> | Data safety | `app-content/data-privacy-security` |
+> | Sign in details (was "App access") | `app-content/testing-credentials` |
+> | Advertising ID | `app-content/ad-id-declaration` |
+> | Closed testing list | `closed-testing` |
+> | Alpha track (releases / countries / testers) | `tracks/4699465590580651197` |
+> | Main store listing | `main-store-listing` |
+> | Publishing overview | `publishing` |
+> | Submission activity | `publishing/submission-activity` |
+>
+> Everything below this banner is the original 2026-08-16 runbook, kept for the
+> paste-ready copy blocks. Treat its status claims as stale.
+
+---
+
+
 > Written 2026-08-16 for **brick**, to be worked through by hand in Play Console.
 > **Android is code-complete.** Everything left is console clicking.
 >
@@ -110,6 +173,45 @@ exactly those two things**:
 - **App access (Sign in details)** had no credentials entered.
 
 The release never reached testers, so **the 14-day clock never started.**
+
+---
+
+## Step 0 — Advertising ID ⚠️ *added 2026-08-19; this step blocks everything else*
+
+**Left nav:** **Monitor and improve** → **Policy and programs** → **App content**
+→ *Need attention* tab → **Advertising ID** → **Start declaration**.
+**Direct link:** https://play.google.com/console/u/0/developers/8499737484299150451/app/4972935521557273777/app-content/ad-id-declaration
+
+This declaration appears nowhere in the original runbook and was the **only** App
+content item still outstanding on 2026-08-19. Play states it plainly on the page:
+
+> You can't rollout releases with artifacts targeting Android 13 until you have
+> completed this declaration.
+
+`app.json` sets `targetSdkVersion: 35`, so **every** release is gated on it —
+closed track included. Until it is answered, `eas submit` and the console both
+refuse the rollout, and the failure message says nothing about advertising ID.
+
+0.1 **"Does your app use advertising ID?"** (the question includes any SDK the
+    app imports) → **No**.
+0.2 Click **Save**. This does *not* send anything for review.
+0.3 Re-open **App content**; the *Need attention* tab should read
+    **"You're all caught up"** and the *Actioned* tab should list **10**
+    declarations.
+
+**Why "No" is the defensible answer.** There is no ads SDK and no Firebase
+Analytics in `apps/mobile`, and `grep -r AD_ID` over the app returns nothing.
+The dependency list is expo-\*, `@react-native-google-signin/google-signin`
+(play-services-auth, which does not use the advertising ID), MMKV and
+socket.io-client. The Expo **push token** the app does send is a device
+identifier, not an advertising identifier — it is declared under Play's
+*Device or other IDs* in Data safety and has no bearing on this answer. See
+`store/DATA_SAFETY.md` § 3.
+
+> **Answered "No" on 2026-08-19.** If an ads or attribution SDK is ever added,
+> this declaration must be changed to **Yes** *and*
+> `com.google.android.gms.permission.AD_ID` added to the manifest, or Play will
+> zero out the identifier and block the release.
 
 ---
 
@@ -349,6 +451,15 @@ cd apps/mobile
 eas submit --profile production --platform android --id fc383de9-fdac-47eb-8c33-69f8913c234e
 ```
 
+> **This is the command that actually worked on 2026-08-19** — but only after
+> `submit.production.android.releaseStatus` was set to **`"draft"`**. Left at the
+> default `completed`, Play answers *"The app is missing the required metadata to
+> submit the app to Google Play Store"*, which is what killed submissions
+> `1d1d1fe9` (versionCode 9) and `9c08591f` (versionCode 11) — **not** missing
+> declarations. With `"draft"` the bundle lands in the track and **you** press
+> *Send app for review*. Flip it back to `"completed"` once Play approves the
+> first closed-track review, or every future submit silently stops at draft.
+
 `--id` is required for a non-interactive submit; without it EAS prompts you to
 pick a build. The `submit.production.android` profile already targets
 `track: "alpha"`.
@@ -494,6 +605,7 @@ pass, **after** step 6, navigating to each page fresh:
 - [ ] **Data safety** — 13 collected types present; Payment info and Device IDs still **not** collected
 - [ ] **App access** — reviewer credentials present, note text intact
 - [ ] **Target audience** — **18+** only
+- [ ] **Advertising ID** — declaration completed, answer is **No** (step 0)
 - [ ] **Ads** — still "No, my app does not contain ads"
 - [ ] **Government apps** — still No
 - [ ] **Financial features** — still "My app doesn't provide any financial features"

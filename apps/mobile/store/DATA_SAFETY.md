@@ -17,12 +17,12 @@ Source of truth for the data-collection answers you give to Apple (App Store Con
 
 | # | Category | Examples | Why we need it | Linked to user identity? | Optional? |
 |---|---|---|---|---|---|
-| 1 | Account info | Email (required), full name, phone (optional) | Sign-in, account recovery, support correspondence | Yes | No (required to create account) |
+| 1 | Account info | Email (required), full name. (`phone` exists on the API model but **no shipped mobile screen collects it** — see § 3.) | Sign-in, account recovery, support correspondence | Yes | No (required to create account) |
 | 2 | User content — uploaded documents | PDFs, images uploaded for OCR/digest generation | Core product feature: OCR → searchable digest, scoped to your organization | Yes | Yes (only collected when user uploads) |
 | 3 | User content — camera scans | Photos taken in-app of pleadings / case printouts | Core product feature: scan-to-digest | Yes | Yes (only collected when user scans) |
 | 4 | User content — notes, annotations, bookmarks, search queries, AI prompts | Free-text notes; saved bookmarks; search history; chat with AI assistant | Workspace persistence; AI assistant context | Yes | Yes (only when user creates them) |
 | 5 | Usage / diagnostics | Crash logs, performance metrics, screen views, button taps | Stability and product analytics; redacted of PII before storage | Yes (associated with account but not sold) | Partial — essential analytics on; product analytics user-toggleable |
-| 6 | Device / log data | IP prefix only (for session binding), user-agent, timestamps | Refresh-token reuse detection, rate limiting, audit log | Yes | No (required for security) |
+| 6 | Device / log data | IP prefix only (for session binding), user-agent, timestamps, **Expo push token** (installation-scoped, POSTed to `/notifications/push-tokens`) | Refresh-token reuse detection, rate limiting, audit log; push delivery | Yes | No (required for security); push token only if notifications are enabled |
 | 7 | Billing info | Last-4 / token only; full card data handled by Xendit (PCI) | Subscription billing | Yes | Yes (only paid plans) |
 
 The app does **not** collect: precise location, contacts, calendar, health, fitness, audio recordings, sensors, financial info beyond billing token, browsing history outside the app, advertising identifiers.
@@ -83,7 +83,7 @@ Play Console → App content → Data safety. For each Play category, you declar
 |---|---|---|---|---|---|---|
 | Personal info | Name | Yes | No | Account management, App functionality | Optional | 1 |
 | Personal info | Email address | Yes | No | Account management, App functionality, Developer communications | Required | 1 |
-| Personal info | Phone number | Yes | No | App functionality | Optional | 1 |
+| Personal info | Phone number | **No**† | No | — | — | 1 |
 | Personal info | User IDs | Yes | No | Account management, App functionality | Required | 1 |
 | Financial info | Purchase history | Yes | No | App functionality (subscription state) | Optional (paid plans) | 7 |
 | Financial info | Payment info | No* | No | — | — | 7 |
@@ -95,7 +95,7 @@ Play Console → App content → Data safety. For each Play category, you declar
 | App info and performance | Crash logs | Yes | No | Analytics, App functionality | Required | 5 |
 | App info and performance | Diagnostics | Yes | No | Analytics, App functionality | Required | 5 |
 | App info and performance | Other app performance data | Yes | No | Analytics | Required | 5 |
-| Device or other IDs | Device or other IDs | No | No | — | — | 6 (IP prefix only, no advertising ID) |
+| Device or other IDs | Device or other IDs | **Yes**‡ | No | App functionality (push delivery) | Required (when notifications are enabled) | 6 |
 | Location | Approximate / Precise location | No | No | — | — | — |
 | Contacts | Contacts | No | No | — | — | — |
 | Calendar | Calendar events | No | No | — | — | — |
@@ -105,6 +105,40 @@ Play Console → App content → Data safety. For each Play category, you declar
 | Web browsing | — | No | No | — | — | — |
 
 \* Card numbers and CVCs are handled by Xendit's PCI-compliant payment widget; the app receives only a billing token. Declare Payment info as **not collected** by us on Play; declare Financial Info → Payment Info as **Linked** on Apple because we still hold the Xendit token tied to the user.
+
+### Why Phone number is "no" and Device IDs is "yes" (aligned 2026-08-19)
+
+The two answers below are the ones actually submitted in Play Console, and this
+file was corrected to match them rather than the other way round. **Personal info
+is 3 of 9: Name, Email address, User IDs.** Both answers are grounded in the
+shipped Android binary, not in what the API is capable of storing:
+
+**† Phone number — not collected.** The API `User` model has a `phone` column and
+`useUpdateProfile` in `apps/mobile/src/features/auth/hooks/use-auth.ts` is the
+only client path that accepts one — and **it has no callers**; the only reference
+outside its own definition is `use-auth.test.ts`. No shipped screen renders a
+phone input. A field the app cannot populate is not collected. **If a phone input
+ever ships in the mobile UI, this row and the console form must be changed
+before that build goes out** — under-declaring is the failure mode that gets a
+release pulled.
+
+**‡ Device or other IDs — collected.** `getPushToken()` in
+`apps/mobile/src/lib/push-notifications.ts` calls
+`Notifications.getExpoPushTokenAsync({ projectId })`, and `registerPushToken()`
+POSTs the result to `/notifications/push-tokens` with the platform. That token is
+an installation-scoped identifier transmitted off the device to us, which is
+exactly what Play's "Device or other IDs" covers. This is not a conservative
+guess — the token genuinely leaves the device.
+
+**Still no advertising ID.** There is no ads SDK, no Firebase Analytics, and zero
+`com.google.android.gms.permission.AD_ID` references anywhere in `apps/mobile`.
+The separate **Advertising ID** declaration in App content is therefore answered
+**No** — see `store/PLAY_SUBMISSION_RUNBOOK.md` step 0. Do not confuse that
+declaration with this row: a push token is a device ID, not an advertising ID.
+
+**Apple's answers legitimately differ.** App Store Connect still declares Phone
+Number under Contact Info (§ 2 above). Over-declaring on Apple is harmless and
+the label is already submitted; do not "fix" one store to match the other.
 
 ### Security practices
 
