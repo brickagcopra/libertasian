@@ -16,7 +16,8 @@
 > | 5 Upload vC11 to closed `alpha` | **DONE 2026-08-19** via `eas submit` — the first Android submit that ever succeeded. Draft release **1.0.0 / versionCode 11**, Philippines, 18,612 devices. Required adding `"releaseStatus": "draft"` to `eas.json` (see below). |
 > | 5A Store listing screenshots | **DONE 2026-08-19** — all three slots (phone / 7-inch / 10-inch) replaced with the real `assets/store/screenshots/framed/android-*` captures, old synthetic set incl. the `06-offline-sync` slide deleted, saved and re-verified after reload. |
 > | Testers | Email list **"Libertasian Testers" (7 users)** existed but was **not attached** to the alpha track. Attached and saved 2026-08-19. **7 < 12 — this is the long pole.** |
-> | 6 Send for review | **NOT DONE — deliberately left for brick.** |
+> | 6 Send for review | **DONE 2026-08-19.** Release confirmed and the whole edit sent. Publishing overview reads **"Changes in review"**. |
+> | **NEW — Signing-key registration** | Hard-blocked **Save** on the release: *"To proceed with this release, all keys should be registered to meet the Android Developer Verification requirements."* Registered 2026-08-19 — see **step 0b**. |
 >
 > **Why `eas submit` kept failing.** `submit.production.android.releaseStatus`
 > defaulted to `completed`. Play refuses a COMPLETED release with *"the app is
@@ -26,18 +27,32 @@
 > **Send app for review** yourself. **Flip it back to `completed` once the first
 > review is approved**, otherwise every future submit stops at draft.
 >
-> **Nothing has been sent to Google for review.** Submission activity reads
-> *"You have no recent submissions."*
+> **The app is IN REVIEW as of 2026-08-19.** Publishing overview reads **"Changes
+> in review"**. The submitted edit contains: **Closed testing – Alpha 1.0.0 →
+> Start full rollout**, Philippines, the **"Libertasian Testers"** email list
+> attached, the en-US default store listing, the **Education** app category, and
+> all of the App content declarations. **Managed publishing is OFF**, so approval
+> **auto-publishes** — there is no second click waiting for you.
+>
+> **First review of a brand-new app takes 1–7 days.** Google gives no progress
+> signal in the meantime; an unchanged "Changes in review" is the expected state,
+> not a stall.
+>
+> 🛑 **Do not edit anything while the review is open.** Any save — a screenshot,
+> a declaration, a release note, a tester list — creates a *new* pending item, and
+> that can push the app back into the queue and restart the wait. If something is
+> genuinely wrong, it is still usually cheaper to let this review finish and fix
+> it in the next one.
 >
 > ### What is left, in order
 >
-> 1. **Closed testing → Alpha → "Preview and confirm the release"** — check the
->    "What's new" / release-notes box (EAS does not fill it; the paste-ready text
->    is in step 5.8 below) and confirm.
-> 2. **Publishing overview → "Send app for review"** (currently locked until
->    step 1 above is done).
-> 3. **Grow the tester list from 7 to 15+** and get every one of them to open the
->    opt-in link. The link only appears after the release is live.
+> 1. **Grow the tester list from 7 to 15+** and get every one of them to open the
+>    opt-in link. The link only appears once the release is live, but recruiting
+>    should run **now, in parallel with the review** — Google's review sits in
+>    front of the 14-day clock, which is still at **day 0 / 0 testers opted in**.
+> 2. **After Play approves this review**, flip
+>    `submit.production.android.releaseStatus` in `apps/mobile/eas.json` back to
+>    `"completed"`, or every future submit silently stops at draft.
 >
 > ### Corrected console URLs — the old table below was wrong
 >
@@ -56,6 +71,7 @@
 > | Main store listing | `main-store-listing` |
 > | Publishing overview | `publishing` |
 > | Submission activity | `publishing/submission-activity` |
+> | **App signing key fingerprints** (legacy URL — the only route that works) | `keymanagement` |
 >
 > Everything below this banner is the original 2026-08-16 runbook, kept for the
 > paste-ready copy blocks. Treat its status claims as stale.
@@ -212,6 +228,57 @@ identifier, not an advertising identifier — it is declared under Play's
 > this declaration must be changed to **Yes** *and*
 > `com.google.android.gms.permission.AD_ID` added to the manifest, or Play will
 > zero out the identifier and block the release.
+
+---
+
+## Step 0b — Register your signing key (Android Developer Verification) ⚠️ *added 2026-08-19*
+
+**This is the third unnamed gate.** It does not surface as an App content item
+and it does not warn you in advance — it hard-blocks **Save** on the release
+itself, with:
+
+> To proceed with this release, all keys should be registered to meet the Android
+> Developer Verification requirements.
+
+Do this **before** the closed-testing step, or you will hit the wall with the
+release form already filled in.
+
+**Why the green account banner does not cover you.** Play Console auto-registers
+the **package name** for apps created in the console — that is what
+*"All of your apps have been successfully registered to meet Android developer
+verification requirements"* on the account home page is telling you. The
+**signing key** is a *separate* registration. For an app with install history
+Google can attach the key automatically; a brand-new app has none, so nobody
+attaches it and nothing tells you until Save fails.
+
+0b.1 Open the fingerprint page. **The legacy URL is the only route that works —
+     verified 2026-08-19:**
+     https://play.google.com/console/u/0/developers/8499737484299150451/app/4972935521557273777/keymanagement
+
+> **Both nav routes are dead ends, do not waste time on them.** There is no
+> **Setup** level in the left nav any more. **App integrity** now only says the
+> settings have moved to **Protected with Play**. And **Protected with Play** has
+> no app-signing card at its top level — it is the row **"Protect app signing key
+> — Releases signed by Play"** nested inside **Play Store protection**.
+
+0b.2 Copy the **App signing key certificate → SHA-256 certificate fingerprint**.
+
+> 🛑 **App signing key, not Upload key.** The page shows both.
+> - **App signing key certificate** — held by Google, signs the APKs users
+>   actually install. **This is the one to register.**
+> - **Upload key certificate** — held by EAS, only signs the `.aab` on its way
+>   *into* Play. Registering this one does not satisfy the requirement.
+
+0b.3 Go to **Android developer verification** (account-level left nav) and click
+     **Add key**.
+
+> **The UI does not match Google's help doc.** The doc describes a key *picker*.
+> What you actually get is a **plain text input for a SHA-256 fingerprint** — 32
+> colon-separated hex pairs, e.g. `AB:CD:…:EF`. Paste the fingerprint from 0b.2
+> verbatim, colons included.
+
+0b.4 Save, then return to the release and Save again. The blocking message should
+     be gone.
 
 ---
 
