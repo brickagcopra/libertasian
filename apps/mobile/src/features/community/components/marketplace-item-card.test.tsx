@@ -266,7 +266,7 @@ describe('MarketplaceItemCard', () => {
 
     fireEvent.press(getByText('Marcos v. Manglapus Digest'));
 
-    expect(router.push).toHaveBeenCalledWith('/digests/d-1');
+    expect(router.push).toHaveBeenCalledWith('/digest/d-1');
   });
 
   it('navigates to contributor profile on creator name press', () => {

@@ -26,7 +26,7 @@ function getContentRoute(contentType: string, id: string): string {
     case 'reviewer_pack':
       return `/study/reviewer-packs/${id}`;
     case 'digest':
-      return `/digests/${id}`;
+      return `/digest/${id}`;
     default:
       return `/community`;
   }

@@ -123,7 +123,7 @@ describe('usePushNotifications', () => {
     renderHook(() => usePushNotifications(true), { wrapper: createWrapper() });
 
     await waitFor(() =>
-      expect(mockRouterPush).toHaveBeenCalledWith('/digests/digest-9'),
+      expect(mockRouterPush).toHaveBeenCalledWith('/digest/digest-9'),
     );
 
     // Same response re-delivered through the listener must be a no-op.

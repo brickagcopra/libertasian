@@ -58,7 +58,7 @@ function DigestCard({ digest }: { digest: SearchDigestItem }) {
   return (
     <TouchableOpacity
       style={styles.digestCard}
-      onPress={() => router.push(`/digests/${digest.id}`)}
+      onPress={() => router.push(`/digest/${digest.id}`)}
       activeOpacity={0.7}
     >
       <Text style={styles.digestTitle} numberOfLines={2}>
