@@ -103,7 +103,7 @@ export default function DoctrinesListScreen() {
         <TouchableOpacity
           style={styles.card}
           activeOpacity={0.7}
-          onPress={() => router.push(`/admin/doctrines/${item.id}` as never)}
+          onPress={() => router.push(`/admin/doctrines/${item.id}`)}
         >
           <View style={styles.badgeRow}>
             <DoctrineTypeBadge type={item.doctrineType} />

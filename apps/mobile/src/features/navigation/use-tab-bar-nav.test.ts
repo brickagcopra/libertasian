@@ -38,6 +38,10 @@ describe('useTabBarNav', () => {
     expect(Object.keys(TAB_BAR_ROUTES)).toHaveLength(8);
     for (const route of Object.values(TAB_BAR_ROUTES)) {
       expect(typeof route).toBe('string');
+      // TAB_BAR_ROUTES is Record<TabBarItemId, Href> now, and Href also admits
+      // the { pathname, params } object form — so narrow before asserting on
+      // length rather than casting the union away.
+      if (typeof route !== 'string') continue;
       expect(route.length).toBeGreaterThan(0);
     }
   });

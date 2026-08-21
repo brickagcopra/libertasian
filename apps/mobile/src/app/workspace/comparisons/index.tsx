@@ -162,7 +162,7 @@ export default function ComparisonsListScreen() {
           headerRight: () => (
             <TouchableOpacity
               onPress={() =>
-                router.push('/workspace/comparisons/create' as never)
+                router.push('/workspace/comparisons/create')
               }
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
@@ -211,7 +211,7 @@ export default function ComparisonsListScreen() {
             <TouchableOpacity
               style={styles.emptyButton}
               onPress={() =>
-                router.push('/workspace/comparisons/create' as never)
+                router.push('/workspace/comparisons/create')
               }
             >
               <Text style={styles.emptyButtonText}>New Comparison</Text>

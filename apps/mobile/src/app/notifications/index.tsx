@@ -121,7 +121,7 @@ export default function NotificationsScreen() {
       if (item.entityType && item.entityId) {
         const routeFn = ENTITY_ROUTES[item.entityType];
         if (routeFn) {
-          router.push(routeFn(item.entityId) as never);
+          router.push(routeFn(item.entityId));
         }
       }
     },

@@ -19,7 +19,7 @@ export function BlogPostCard({ post }: BlogPostCardProps) {
   }, [post.publishedAt]);
 
   const handlePress = useCallback(() => {
-    router.push(`/blog/${post.slug}` as `/${string}`);
+    router.push(`/blog/${post.slug}`);
   }, [post.slug]);
 
   return (

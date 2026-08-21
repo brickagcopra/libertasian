@@ -193,7 +193,7 @@ export default function StudyTab() {
       {/* Legal Documents Link */}
       <TouchableOpacity
         style={styles.documentsBanner}
-        onPress={() => router.push('/documents/')}
+        onPress={() => router.push('/documents')}
         activeOpacity={0.7}
       >
         <View style={styles.documentsIconBox}>

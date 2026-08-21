@@ -8,7 +8,7 @@ import {
   ActivityIndicator,
   RefreshControl,
 } from 'react-native';
-import { Stack, router } from 'expo-router';
+import { Stack, router, type Href } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
 import { TabBar, useTabBarClearance } from '@/components/ui/TabBar';
@@ -17,7 +17,12 @@ import { useTabBarNav } from '@/features/navigation/use-tab-bar-nav';
 import { useMarketplaceFeatured } from '../../features/community/hooks/use-marketplace';
 import { MarketplaceItemCard } from '../../features/community/components/marketplace-item-card';
 
-const BROWSE_LINKS = [
+const BROWSE_LINKS: Array<{
+  href: Href;
+  label: string;
+  description: string;
+  icon: keyof typeof Ionicons.glyphMap;
+}> = [
   {
     href: '/community/flashcard-sets',
     label: 'Flashcard Sets',
@@ -82,9 +87,9 @@ export default function CommunityScreen() {
         <View style={styles.browseGrid}>
           {BROWSE_LINKS.map((link) => (
             <TouchableOpacity
-              key={link.href}
+              key={link.label}
               style={styles.browseCard}
-              onPress={() => router.push(link.href as never)}
+              onPress={() => router.push(link.href)}
               activeOpacity={0.7}
             >
               <View style={styles.browseIconBox}>
@@ -104,7 +109,7 @@ export default function CommunityScreen() {
         {/* Expert CTA */}
         <TouchableOpacity
           style={styles.expertCard}
-          onPress={() => router.push('/settings' as never)}
+          onPress={() => router.push('/settings')}
           activeOpacity={0.7}
         >
           <View style={styles.expertIcon}>
@@ -139,7 +144,7 @@ export default function CommunityScreen() {
                   <Text style={styles.featuredLabel}>Flashcard Sets</Text>
                   <TouchableOpacity
                     onPress={() =>
-                      router.push('/community/flashcard-sets' as never)
+                      router.push('/community/flashcard-sets')
                     }
                   >
                     <Text style={styles.seeAll}>See All</Text>
@@ -158,7 +163,7 @@ export default function CommunityScreen() {
                   <Text style={styles.featuredLabel}>Reviewer Packs</Text>
                   <TouchableOpacity
                     onPress={() =>
-                      router.push('/community/reviewer-packs' as never)
+                      router.push('/community/reviewer-packs')
                     }
                   >
                     <Text style={styles.seeAll}>See All</Text>
@@ -177,7 +182,7 @@ export default function CommunityScreen() {
                   <Text style={styles.featuredLabel}>Case Digests</Text>
                   <TouchableOpacity
                     onPress={() =>
-                      router.push('/community/digests' as never)
+                      router.push('/community/digests')
                     }
                   >
                     <Text style={styles.seeAll}>See All</Text>

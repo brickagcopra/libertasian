@@ -155,7 +155,7 @@ export default function TimelinesListScreen() {
           headerRight: () => (
             <TouchableOpacity
               onPress={() =>
-                router.push('/workspace/timelines/create' as never)
+                router.push('/workspace/timelines/create')
               }
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
@@ -204,7 +204,7 @@ export default function TimelinesListScreen() {
             <TouchableOpacity
               style={styles.emptyButton}
               onPress={() =>
-                router.push('/workspace/timelines/create' as never)
+                router.push('/workspace/timelines/create')
               }
             >
               <Text style={styles.emptyButtonText}>New Timeline</Text>

@@ -123,7 +123,7 @@ export default function ResearchWorkspacesListScreen() {
             <TouchableOpacity
               onPress={() =>
                 router.push(
-                  '/workspace/research-workspaces/create' as never,
+                  '/workspace/research-workspaces/create',
                 )
               }
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -150,7 +150,7 @@ export default function ResearchWorkspacesListScreen() {
               style={styles.emptyButton}
               onPress={() =>
                 router.push(
-                  '/workspace/research-workspaces/create' as never,
+                  '/workspace/research-workspaces/create',
                 )
               }
             >

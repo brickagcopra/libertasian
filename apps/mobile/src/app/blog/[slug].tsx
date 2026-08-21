@@ -63,7 +63,7 @@ export default function BlogPostScreen() {
     if (router.canGoBack()) {
       router.back();
     } else {
-      router.replace('/blog' as `/${string}`);
+      router.replace('/blog');
     }
   }, []);
 
