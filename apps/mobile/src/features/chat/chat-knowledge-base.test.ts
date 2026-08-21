@@ -48,7 +48,10 @@ describe('no purchasable-tier surface in user-visible FAQ copy', () => {
     'Team',
     'Enterprise',
     'Premium',
-    'plans',
+    // Singular: the `s?` below covers 'plans' too. Listing only 'plans' left a
+    // hole exactly where the regression is likeliest — "your plan" is the
+    // phrasing of the answer this guard exists to keep deleted.
+    'plan',
     'pricing',
     'upgrade',
     '$',
