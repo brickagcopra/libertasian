@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { router } from 'expo-router';
+import { router, type Href } from 'expo-router';
 
 import type { TabBarItemId } from '@/components/ui/TabBar';
 
@@ -12,7 +12,7 @@ import type { TabBarItemId } from '@/components/ui/TabBar';
  * depended on which screen you happened to be standing on. With eight items in
  * the bar that stops being a tidiness problem and becomes dead buttons.
  */
-export const TAB_BAR_ROUTES: Record<TabBarItemId, string> = {
+export const TAB_BAR_ROUTES: Record<TabBarItemId, Href> = {
   home: '/(tabs)',
   // Deliberately `/documents`, NOT `/(tabs)/library`. That inconsistency
   // predates this hook; it is preserved verbatim rather than "fixed" here,
@@ -34,6 +34,6 @@ export const TAB_BAR_ROUTES: Record<TabBarItemId, string> = {
 export function useTabBarNav() {
   return useCallback((id: TabBarItemId) => {
     const route = TAB_BAR_ROUTES[id];
-    if (route) router.push(route as never);
+    if (route) router.push(route);
   }, []);
 }

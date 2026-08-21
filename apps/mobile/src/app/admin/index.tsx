@@ -6,14 +6,14 @@ import {
   ScrollView,
   useWindowDimensions,
 } from 'react-native';
-import { router, Stack } from 'expo-router';
+import { router, Stack, type Href } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
 interface AdminCard {
   title: string;
   description: string;
   icon: keyof typeof Ionicons.glyphMap;
-  route: string;
+  route: Href;
 }
 
 const ADMIN_CARDS: AdminCard[] = [
@@ -61,10 +61,10 @@ export default function AdminDashboardScreen() {
         <View style={[styles.grid, isWide && styles.gridWide]}>
           {ADMIN_CARDS.map((card) => (
             <TouchableOpacity
-              key={card.route}
+              key={card.title}
               style={[styles.card, isWide && styles.cardWide]}
               activeOpacity={0.7}
-              onPress={() => router.push(card.route as never)}
+              onPress={() => router.push(card.route)}
             >
               <View style={styles.cardIconContainer}>
                 <Ionicons name={card.icon} size={28} color="#1a56db" />

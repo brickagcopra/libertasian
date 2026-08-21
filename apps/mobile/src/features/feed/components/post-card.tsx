@@ -40,15 +40,15 @@ export function PostCard({ post, currentUserId }: PostCardProps) {
     : null;
 
   const handleCommentPress = useCallback(() => {
-    router.push(`/feed/${post.id}` as `/${string}`);
+    router.push(`/feed/${post.id}`);
   }, [post.id]);
 
   const handleEdit = useCallback(() => {
-    router.push(`/feed/create?editPostId=${post.id}` as `/${string}`);
+    router.push(`/feed/create?editPostId=${post.id}`);
   }, [post.id]);
 
   const handleAuthorPress = useCallback(() => {
-    router.push(`/feed/user/${post.author.id}` as `/${string}`);
+    router.push(`/feed/user/${post.author.id}`);
   }, [post.author.id]);
 
   return (

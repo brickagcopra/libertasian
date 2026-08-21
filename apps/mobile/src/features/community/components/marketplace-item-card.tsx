@@ -1,5 +1,5 @@
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { router } from 'expo-router';
+import { router, type Href } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
 import type { MarketplaceItem } from '../types';
@@ -19,7 +19,7 @@ const CONTENT_TYPE_LABELS: Record<string, string> = {
   digest: 'Digest',
 };
 
-function getContentRoute(contentType: string, id: string): string {
+function getContentRoute(contentType: string, id: string): Href {
   switch (contentType) {
     case 'flashcard_set':
       return `/study/flashcards/${id}`;
@@ -52,7 +52,7 @@ export function MarketplaceItemCard({
   return (
     <TouchableOpacity
       style={styles.card}
-      onPress={() => router.push(getContentRoute(item.contentType, item.id) as never)}
+      onPress={() => router.push(getContentRoute(item.contentType, item.id))}
       activeOpacity={0.7}
     >
       <View style={styles.row}>
@@ -102,7 +102,7 @@ export function MarketplaceItemCard({
             <TouchableOpacity
               style={styles.creatorRow}
               onPress={() =>
-                router.push(`/community/contributors/${item.creator.id}` as never)
+                router.push(`/community/contributors/${item.creator.id}`)
               }
               hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
             >

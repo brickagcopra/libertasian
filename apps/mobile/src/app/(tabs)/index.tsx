@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { router } from 'expo-router';
+import { router, type Href } from 'expo-router';
 import { HomeScreen, type HomeFeedItem } from '@/components/screens/HomeScreen';
 import { useTabBarNav } from '@/features/navigation/use-tab-bar-nav';
 import { useHomeFeed } from '@/features/home/hooks/use-home-feed';
@@ -28,7 +28,7 @@ function toScreenItem(item: ApiHomeFeedItem): HomeFeedItem {
   };
 }
 
-function routeForItem(item: ApiHomeFeedItem): string {
+function routeForItem(item: ApiHomeFeedItem): Href {
   return item.kind === 'digest' ? `/digest/${item.id}` : `/reader/${item.id}`;
 }
 

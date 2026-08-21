@@ -121,7 +121,7 @@ export default function PostDetailScreen() {
         // rendered on screen.
         onBlocked={() => router.back()}
         onClose={() => setShowOptions(false)}
-        onEdit={() => router.push(`/feed/create?editPostId=${post.id}` as `/${string}`)}
+        onEdit={() => router.push(`/feed/create?editPostId=${post.id}`)}
         onReport={() => setShowReport(true)}
       />
       <ReportSheet

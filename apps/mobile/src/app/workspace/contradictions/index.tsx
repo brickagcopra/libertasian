@@ -158,7 +158,7 @@ export default function ContradictionsListScreen() {
           headerRight: () => (
             <TouchableOpacity
               onPress={() =>
-                router.push('/workspace/contradictions/create' as never)
+                router.push('/workspace/contradictions/create')
               }
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
@@ -206,7 +206,7 @@ export default function ContradictionsListScreen() {
             <TouchableOpacity
               style={styles.emptyButton}
               onPress={() =>
-                router.push('/workspace/contradictions/create' as never)
+                router.push('/workspace/contradictions/create')
               }
             >
               <Text style={styles.emptyButtonText}>New Analysis</Text>

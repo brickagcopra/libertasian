@@ -147,7 +147,7 @@ export default function MemosListScreen() {
           title: 'Legal Memos',
           headerRight: () => (
             <TouchableOpacity
-              onPress={() => router.push('/workspace/memos/create' as never)}
+              onPress={() => router.push('/workspace/memos/create')}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
               <Ionicons name="add-circle-outline" size={26} color="#1a56db" />
@@ -193,7 +193,7 @@ export default function MemosListScreen() {
             </Text>
             <TouchableOpacity
               style={styles.emptyButton}
-              onPress={() => router.push('/workspace/memos/create' as never)}
+              onPress={() => router.push('/workspace/memos/create')}
             >
               <Text style={styles.emptyButtonText}>Generate Memo</Text>
             </TouchableOpacity>

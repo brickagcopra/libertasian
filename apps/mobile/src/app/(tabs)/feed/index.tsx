@@ -84,7 +84,7 @@ export default function FeedIndexScreen() {
 
         <TouchableOpacity
           style={styles.bookmarksButton}
-          onPress={() => router.push('/feed/bookmarks' as `/${string}`)}
+          onPress={() => router.push('/feed/bookmarks')}
         >
           <Ionicons name="bookmark-outline" size={20} color={theme.inkSoft} />
         </TouchableOpacity>
@@ -108,7 +108,7 @@ export default function FeedIndexScreen() {
         icon="add"
         accessibilityLabel="Create post"
         right={20}
-        onPress={() => router.push('/feed/create' as `/${string}`)}
+        onPress={() => router.push('/feed/create')}
       />
 
       {/* Floating pill TabBar — same treatment as Home/Search/Digests. The
