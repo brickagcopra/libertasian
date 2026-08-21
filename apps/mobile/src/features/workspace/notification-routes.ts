@@ -6,5 +6,5 @@
 export const ENTITY_ROUTES: Record<string, (id: string) => string> = {
   task: (id) => `/workspace/tasks/${id}`,
   matter: (id) => `/workspace/matters/${id}`,
-  digest: (id) => `/digests/${id}`,
+  digest: (id) => `/digest/${id}`,
 };
