@@ -65,17 +65,31 @@ const DEFAULT_HEADERS: Record<string, string> = {
 const REQUEST_TIMEOUT_MS = 20000;
 
 /**
- * The one sentence the app is allowed to show for an entitlement refusal.
- *
- * Names no tier, shows no price, offers no purchase path — App Review 2.1(b)
- * rejected build 20 over a tier name that reached the UI. Matches the wording
- * on `features/derivatives/renderers/gated-notice.tsx`.
+ * 402 Payment Required — the entitlement refusal. Names no tier, shows no
+ * price, offers no purchase path: App Review 2.1(b) rejected build 20 over a
+ * tier name that reached the UI. Matches the wording on
+ * `features/derivatives/renderers/gated-notice.tsx`.
  */
 export const NOT_INCLUDED_MESSAGE = "This isn't included in your plan.";
 
-/** 402 Payment Required and 403 Forbidden are the API's entitlement refusals. */
-function isEntitlementRefusal(statusCode: number): boolean {
-  return statusCode === 402 || statusCode === 403;
+/**
+ * 403 Forbidden — an authorization denial, NOT an entitlement refusal.
+ * RolesGuard, TenantGuard and MfaGuard all throw ForbiddenException, so a 403
+ * usually means the caller lacks the role, is reaching across a tenant
+ * boundary, or has not satisfied MFA. Telling those users their plan is the
+ * problem would be simply wrong. Names no tier either, so 2.1(b) holds on
+ * the paths where a 403 IS a subscription gate.
+ */
+export const NO_ACCESS_MESSAGE = "You don't have access to this.";
+
+/**
+ * The fixed client-side message for a refusal status, or null to keep the
+ * server's own message.
+ */
+function safeRefusalMessage(statusCode: number): string | null {
+  if (statusCode === 402) return NOT_INCLUDED_MESSAGE;
+  if (statusCode === 403) return NO_ACCESS_MESSAGE;
+  return null;
 }
 
 export class ApiClientError extends Error {
@@ -88,9 +102,7 @@ export class ApiClientError extends Error {
     // `error.message` raw, and any new one would inherit the leak. The server
     // body for a 402/403 can name a tier ("requires a pro subscription"), so
     // it is discarded outright — never rendered, never stored.
-    const safeMessage = isEntitlementRefusal(statusCode)
-      ? NOT_INCLUDED_MESSAGE
-      : message;
+    const safeMessage = safeRefusalMessage(statusCode) ?? message;
     super(safeMessage);
     this.name = 'ApiClientError';
     this.statusCode = statusCode;

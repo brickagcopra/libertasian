@@ -1,4 +1,8 @@
-import { ApiClientError, NOT_INCLUDED_MESSAGE } from './api-client';
+import {
+  ApiClientError,
+  NOT_INCLUDED_MESSAGE,
+  NO_ACCESS_MESSAGE,
+} from './api-client';
 
 // We need to mock dependencies before importing the module
 const mockGetAccessToken = jest.fn();
@@ -216,32 +220,43 @@ describe('apiClient - error handling', () => {
   });
 
   // App Review 2.1(b): a dozen screens render `error.message` raw, so the
-  // server body for an entitlement refusal — which can name a tier — is
-  // discarded here rather than at each call site.
-  it.each([402, 403])(
-    'replaces the server message on %i with the neutral not-included string',
-    async (status) => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status,
-        json: () =>
-          Promise.resolve({
-            message: 'This feature requires a pro subscription or higher.',
-          }),
-      });
+  // server body for a refusal — which can name a tier — is discarded here
+  // rather than at each call site. The two statuses get DIFFERENT messages:
+  // 402 is an entitlement refusal, but 403 is thrown by RolesGuard,
+  // TenantGuard and MfaGuard too, so blaming the user's plan would be wrong.
+  it.each([
+    [402, NOT_INCLUDED_MESSAGE],
+    [403, NO_ACCESS_MESSAGE],
+  ])('replaces the server message on %i with the fixed neutral string', async (
+    status,
+    expected,
+  ) => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status,
+      json: () =>
+        Promise.resolve({
+          message: 'This feature requires a pro subscription or higher.',
+        }),
+    });
 
-      try {
-        await apiClient.get('/gated');
-        throw new Error('expected a rejection');
-      } catch (err) {
-        expect(err).toBeInstanceOf(ApiClientError);
-        expect((err as ApiClientError).statusCode).toBe(status);
-        expect((err as ApiClientError).message).toBe(NOT_INCLUDED_MESSAGE);
-        expect((err as ApiClientError).serverMessage).toBe(NOT_INCLUDED_MESSAGE);
-        expect(NOT_INCLUDED_MESSAGE).not.toMatch(/pro|edu|team|enterprise|₱/i);
-      }
-    },
-  );
+    try {
+      await apiClient.get('/refused');
+      throw new Error('expected a rejection');
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiClientError);
+      expect((err as ApiClientError).statusCode).toBe(status);
+      expect((err as ApiClientError).message).toBe(expected);
+      expect((err as ApiClientError).serverMessage).toBe(expected);
+    }
+  });
+
+  it('maps 402 and 403 to two distinct messages, neither naming a tier', () => {
+    expect(NOT_INCLUDED_MESSAGE).not.toBe(NO_ACCESS_MESSAGE);
+    for (const msg of [NOT_INCLUDED_MESSAGE, NO_ACCESS_MESSAGE]) {
+      expect(msg).not.toMatch(/free|edu|pro|team|enterprise|upgrade|₱/i);
+    }
+  });
 
   it('handles non-JSON error responses', async () => {
     mockFetch.mockResolvedValueOnce({
