@@ -66,8 +66,11 @@ export class SubscriptionGuard implements CanActivate {
     );
 
     if (!SubscriptionsService.meetsMinimumTier(currentTier, requiredTier)) {
+      // Deliberately names no tier and no price: App Review 2.1(b) treats a
+      // tier name in a client-visible string as an offer to purchase, and the
+      // mobile client surfaces this body verbatim on some paths.
       throw new ForbiddenException(
-        `This feature requires a ${requiredTier} subscription or higher. Current plan: ${currentTier}.`,
+        "This feature isn't included in your plan.",
       );
     }
 

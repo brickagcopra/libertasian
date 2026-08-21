@@ -3,10 +3,9 @@ export type {
   SubscriptionDetail as SubscriptionInfo,
   SubscriptionResponse,
 } from '../billing/types';
-export { PLAN_LABELS, TIER_ORDER } from '../billing/types';
-export type { PlanInfo } from '../billing/types';
 
-// Legacy type alias
+// Legacy type alias — plan codes as they arrive from the API. Not display
+// text: nothing in the UI renders a tier name (App Review 2.1(b)).
 export type PlanCode = 'free' | 'edu' | 'pro' | 'team' | 'enterprise';
 
 // Legacy interfaces re-exported from new billing types

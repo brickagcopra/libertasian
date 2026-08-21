@@ -1,4 +1,6 @@
-import { Audio } from 'expo-av';
+import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
+
+import { logger } from '../../../lib/logger';
 
 /**
  * Audio session plumbing shared by all players.
@@ -17,13 +19,30 @@ export async function ensureAudioMode(): Promise<void> {
   if (audioModeConfigured) return;
   audioModeConfigured = true;
   try {
+    // Every field is passed explicitly. Omitting `interruptionModeIOS` left
+    // expo-av's default of MixWithOthers, which makes the session non-primary
+    // — and iOS suspends a non-primary session the moment the app
+    // backgrounds, so nothing played behind the Home Screen no matter what
+    // UIBackgroundModes said. DoNotMix claims the session as primary, which
+    // is what `staysActiveInBackground` actually needs to hold. App Review
+    // 2.5.4 rejected build 20 for exactly this.
     await Audio.setAudioModeAsync({
+      allowsRecordingIOS: false,
       playsInSilentModeIOS: true,
       staysActiveInBackground: true,
+      interruptionModeIOS: InterruptionModeIOS.DoNotMix,
+      shouldDuckAndroid: false,
+      playThroughEarpieceAndroid: false,
+      interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
     });
-  } catch {
-    // Retry on the next player load rather than permanently failing silent.
+  } catch (err) {
+    // A rejected call used to vanish into a bare `catch {}`, so a session that
+    // never configured looked identical to one that did. Retry on the next
+    // player load, but say so.
     audioModeConfigured = false;
+    logger.warn('audio_session_configure_failed', {
+      reason: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 

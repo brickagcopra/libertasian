@@ -1,35 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../../../lib/api-client';
-import type {
-  CancelSubscriptionInput,
-  PaymentMethodDetail,
-  InvoiceDetail,
-} from '../types';
+import type { PaymentMethodDetail, InvoiceDetail } from '../types';
 
 /**
- * Billing hooks the mobile app still needs — all of them READ or CANCEL.
+ * Billing hooks the mobile app still needs — all of them READ-ONLY.
  *
  * The checkout, checkout-preview, coupon-validation and promotion-eligibility
  * hooks were removed: Apple Guideline 3.1.1 and Google Play's Payments policy
  * forbid selling digital content outside the store, and nothing in the app
- * may price, sell, or link to an external purchase. The API endpoints
+ * may price, sell, or link to an external purchase. `useCancelSubscription`
+ * went with the subscription screen for App Review 2.1(b): managing a
+ * subscription in-app implies one is sold in-app. The API endpoints
  * themselves are untouched — the web app still uses them.
  */
-
-// ─── Cancel Subscription ───────────────────────────────────
-
-export function useCancelSubscription() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (input?: CancelSubscriptionInput) => {
-      await apiClient.post('/billing/cancel', input ?? { cancelAtPeriodEnd: true });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['billing'] });
-    },
-  });
-}
 
 // ─── Payment Methods ───────────────────────────────────────
 

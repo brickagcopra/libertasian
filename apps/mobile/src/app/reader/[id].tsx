@@ -46,7 +46,7 @@ import type { Annotation, AnnotationColor } from '@/features/annotations/types';
 import { useCanUseBookmarksAnnotations } from '@/features/billing/hooks/use-can-use-bookmarks-annotations';
 import { DocumentChatSheet } from '@/features/ai-answers/components/document-chat-sheet';
 import { useCanUseOffline } from '@/features/billing/hooks/use-can-use-offline';
-import { PlanUpsellSheet } from '@/features/billing/components/plan-upsell-sheet';
+import { FeatureUnavailableSheet } from '@/features/billing/components/feature-unavailable-sheet';
 import { AudioPlayerBar } from '@/features/audio/components/AudioPlayerBar';
 import { SectionListenButton } from '@/features/audio/components/SectionListenButton';
 import { useSectionPlayback } from '@/features/audio/hooks/use-section-playback';
@@ -264,7 +264,7 @@ export default function ReaderRoute() {
   // stay visible but open the upsell sheet instead of the create sheets.
   // While the subscription is loading/undetermined this reports locked:false
   // and the 402/403 Alert catches below remain the fallback.
-  const { locked: paywallLocked, planName } = useCanUseBookmarksAnnotations();
+  const { locked: paywallLocked } = useCanUseBookmarksAnnotations();
   // Saving a document for offline reading is the `offlineReading` entitlement
   // (Edu+). Same proactive-paywall treatment; removing an already-saved
   // document stays available on every plan so cached content is never stranded.
@@ -973,16 +973,16 @@ export default function ReaderRoute() {
         </View>
       </Modal>
 
-      {/* Edu+ upsell sheet — bookmark button / paragraph long-press / save
-          offline for below-Edu orgs. Proactive paywall: no create request
-          ever fires and nothing is written to offline storage. */}
-      <PlanUpsellSheet
+      {/* Not-included sheet — bookmark button / paragraph long-press / save
+          offline for gated orgs. Proactive gate: no create request ever fires
+          and nothing is written to offline storage. Names no tier, shows no
+          price, offers no purchase path (App Review 2.1(b)). */}
+      <FeatureUnavailableSheet
         visible={upsellFeature !== null}
-        planName={planName}
         message={
           upsellFeature === 'offline'
-            ? 'Save documents for offline reading anywhere.'
-            : 'Save bookmarks and highlight passages with notes.'
+            ? 'Saving documents for offline reading is not included in your plan.'
+            : 'Bookmarks and highlighted passages with notes are not included in your plan.'
         }
         onClose={() => setUpsellFeature(null)}
       />

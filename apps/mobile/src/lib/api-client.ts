@@ -64,15 +64,37 @@ const DEFAULT_HEADERS: Record<string, string> = {
  */
 const REQUEST_TIMEOUT_MS = 20000;
 
+/**
+ * The one sentence the app is allowed to show for an entitlement refusal.
+ *
+ * Names no tier, shows no price, offers no purchase path — App Review 2.1(b)
+ * rejected build 20 over a tier name that reached the UI. Matches the wording
+ * on `features/derivatives/renderers/gated-notice.tsx`.
+ */
+export const NOT_INCLUDED_MESSAGE = "This isn't included in your plan.";
+
+/** 402 Payment Required and 403 Forbidden are the API's entitlement refusals. */
+function isEntitlementRefusal(statusCode: number): boolean {
+  return statusCode === 402 || statusCode === 403;
+}
+
 export class ApiClientError extends Error {
   statusCode: number;
   serverMessage: string;
 
   constructor(statusCode: number, message: string) {
-    super(message);
+    // Substituted HERE, at the single point every throw path in this client
+    // funnels through, rather than per screen: a dozen screens render
+    // `error.message` raw, and any new one would inherit the leak. The server
+    // body for a 402/403 can name a tier ("requires a pro subscription"), so
+    // it is discarded outright — never rendered, never stored.
+    const safeMessage = isEntitlementRefusal(statusCode)
+      ? NOT_INCLUDED_MESSAGE
+      : message;
+    super(safeMessage);
     this.name = 'ApiClientError';
     this.statusCode = statusCode;
-    this.serverMessage = message;
+    this.serverMessage = safeMessage;
   }
 }
 

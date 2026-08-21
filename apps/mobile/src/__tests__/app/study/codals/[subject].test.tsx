@@ -38,7 +38,7 @@ jest.mock('@/features/study/hooks/use-offline-codals', () => ({
 }));
 
 // Offline-save gate — default unlocked; the gate block flips `locked`.
-const mockUseCanUseOffline = jest.fn(() => ({ locked: false, planName: 'Free' }));
+const mockUseCanUseOffline = jest.fn(() => ({ locked: false }));
 jest.mock('@/features/billing/hooks/use-can-use-offline', () => ({
   useCanUseOffline: () => mockUseCanUseOffline(),
 }));
@@ -89,7 +89,7 @@ describe('CodalListScreen', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockIsOffline.mockReturnValue(false);
-    mockUseCanUseOffline.mockReturnValue({ locked: false, planName: 'Free' });
+    mockUseCanUseOffline.mockReturnValue({ locked: false });
   });
 
   it('shows loading state', () => {
@@ -290,36 +290,56 @@ describe('CodalListScreen', () => {
       return render(<CodalListScreen />, { wrapper: createWrapper() });
     }
 
-    it('below-edu: download opens the upsell and never writes to storage', () => {
-      mockUseCanUseOffline.mockReturnValue({ locked: true, planName: 'Free' });
+    it('below-edu: download opens the not-included sheet and never writes to storage', () => {
+      mockUseCanUseOffline.mockReturnValue({ locked: true });
 
       const { getByTestId, getByText } = renderWithOneCodal();
       fireEvent.press(getByTestId('toggle-offline-codal-1'));
 
-      expect(getByText('Available on Edu plans and above')).toBeTruthy();
-      expect(getByText(/Download codals and read them offline anywhere/)).toBeTruthy();
+      expect(getByText('Not included in your plan')).toBeTruthy();
+      expect(
+        getByText(
+          /Downloading codals for offline reading is not included in your plan/,
+        ),
+      ).toBeTruthy();
       expect(mockSaveForOffline).not.toHaveBeenCalled();
     });
 
     it('below-edu: an already-downloaded codal can still be removed', () => {
-      mockUseCanUseOffline.mockReturnValue({ locked: true, planName: 'Free' });
+      mockUseCanUseOffline.mockReturnValue({ locked: true });
       mockIsOffline.mockReturnValue(true);
 
       const { getByTestId, queryByText } = renderWithOneCodal();
       fireEvent.press(getByTestId('toggle-offline-codal-1'));
 
       expect(mockRemoveOffline).toHaveBeenCalledWith('codal-1');
-      expect(queryByText('Available on Edu plans and above')).toBeNull();
+      expect(queryByText('Not included in your plan')).toBeNull();
     });
 
-    it('edu+: download saves without an upsell', () => {
-      mockUseCanUseOffline.mockReturnValue({ locked: false, planName: 'Edu' });
+    // App Review 2.1(b): the sheet may not name a tier, show a price, or route
+    // anywhere. Its only control dismisses it.
+    it('offers no purchase path — no tier name, no price, no navigation', () => {
+      mockUseCanUseOffline.mockReturnValue({ locked: true });
+
+      const { getByTestId, getByText, queryByText } = renderWithOneCodal();
+      fireEvent.press(getByTestId('toggle-offline-codal-1'));
+
+      expect(queryByText('See plans')).toBeNull();
+      expect(queryByText(/Edu|Pro|Free|upgrade/i)).toBeNull();
+      expect(queryByText(/₱/)).toBeNull();
+
+      fireEvent.press(getByText('OK'));
+      expect(queryByText('Not included in your plan')).toBeNull();
+    });
+
+    it('edu+: download saves without the not-included sheet', () => {
+      mockUseCanUseOffline.mockReturnValue({ locked: false });
 
       const { getByTestId, queryByText } = renderWithOneCodal();
       fireEvent.press(getByTestId('toggle-offline-codal-1'));
 
       expect(mockSaveForOffline).toHaveBeenCalledWith('codal-1', 'civil_law');
-      expect(queryByText('Available on Edu plans and above')).toBeNull();
+      expect(queryByText('Not included in your plan')).toBeNull();
     });
   });
 });
