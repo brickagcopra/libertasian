@@ -8,10 +8,8 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useQuotaUsage } from '../../features/billing/hooks/use-quotas';
-import { useSubscription } from '../../features/billing/hooks/use-subscription';
 import {
   ENTITLEMENT_LABELS,
-  PLAN_LABELS,
   quotaPercent,
   isNearLimit,
   isUnlimited,
@@ -119,12 +117,8 @@ export default function UsageScreen() {
     isFetching,
     refetch,
   } = useQuotaUsage();
-  const { data: subscription } = useSubscription();
 
   const isLoading = quotaLoading;
-  const planLabel = subscription
-    ? PLAN_LABELS[subscription.planCode] ?? subscription.planCode
-    : '—';
 
   const quotaEntries = quotaData
     ? Object.entries(quotaData.quotas).sort(([a], [b]) => {
@@ -149,13 +143,13 @@ export default function UsageScreen() {
         <ActivityIndicator color="#1a56db" style={styles.loader} />
       ) : (
         <>
-          {/* Plan & Period Summary */}
-          <View style={styles.summaryCard}>
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Current Plan</Text>
-              <Text style={styles.summaryValue}>{planLabel}</Text>
-            </View>
-            {quotaData?.billingPeriodStart && (
+          {/* Period summary. The plan row is gone: the screen reports what is
+              used and what is left, and never names the tier that sets those
+              limits (App Review 2.1(b)). The billing period was the card's
+              only other row, so the card is now conditional on it — otherwise
+              an org with no period renders an empty bordered box. */}
+          {quotaData?.billingPeriodStart && (
+            <View style={styles.summaryCard}>
               <View style={styles.summaryRow}>
                 <Text style={styles.summaryLabel}>Billing Period</Text>
                 <Text style={styles.summaryValue}>
@@ -163,8 +157,8 @@ export default function UsageScreen() {
                   {formatDate(quotaData.billingPeriodEnd)}
                 </Text>
               </View>
-            )}
-          </View>
+            </View>
+          )}
 
           {/* Quota Usage */}
           <View style={styles.section}>

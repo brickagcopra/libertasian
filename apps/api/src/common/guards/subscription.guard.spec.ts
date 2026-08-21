@@ -115,7 +115,11 @@ describe('SubscriptionGuard', () => {
   });
 
   describe('error message content', () => {
-    it('should include the required and current tier in error message', async () => {
+    // Inverted deliberately. This message used to interpolate the required and
+    // current tier, and the mobile client rendered the body verbatim — which
+    // is how the word "Pro" reached the UI and drew the App Review 2.1(b)
+    // rejection of iOS build 20. The message must now name no tier.
+    it('should name no tier in the error message', async () => {
       jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue('pro');
       subscriptionsService.getPlanCode.mockResolvedValue('free');
       const context = createMockContext({ organizationId: 'org-123' });
@@ -124,8 +128,8 @@ describe('SubscriptionGuard', () => {
         fail('Expected ForbiddenException');
       } catch (err) {
         const msg = (err as ForbiddenException).message;
-        expect(msg).toContain('pro');
-        expect(msg).toContain('free');
+        expect(msg).toBe("This feature isn't included in your plan.");
+        expect(msg).not.toMatch(/free|edu|pro|team|enterprise|upgrade|₱/i);
       }
     });
   });

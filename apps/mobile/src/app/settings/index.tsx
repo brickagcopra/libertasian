@@ -57,21 +57,10 @@ export default function SettingsRoute() {
     },
   ];
 
+  // Usage & quotas only. The subscription and plan rows are gone with their
+  // screens: naming or managing a purchasable tier in-app is what App Review
+  // rejected build 20 for (Guideline 2.1(b)).
   const billingRows: ProfileRow[] = [
-    {
-      id: 'subscription',
-      icon: 'card-outline',
-      label: 'Subscription',
-      sub: 'Manage plan and billing',
-      onPress: () => router.push('/settings/subscription'),
-    },
-    {
-      id: 'plans',
-      icon: 'pricetags-outline',
-      label: 'Your plan',
-      sub: 'See what your plan includes',
-      onPress: () => router.push('/settings/plans'),
-    },
     {
       id: 'usage',
       icon: 'bar-chart-outline',
@@ -100,7 +89,7 @@ export default function SettingsRoute() {
           id: 'api-keys',
           icon: 'key-outline',
           label: 'API keys',
-          sub: 'Integrations (Enterprise)',
+          sub: 'Integrations',
           onPress: () => router.push('/settings/api-keys'),
         },
       ]

@@ -26,6 +26,7 @@ import { AuthProvider, useAuth } from '../providers/auth-provider';
 import { ThemeProvider } from '../providers/theme-provider';
 import { useNotificationSocket } from '../features/workspace/hooks/use-notifications';
 import { usePushNotifications } from '../features/workspace/hooks/use-push-notifications';
+import { ensureAudioMode } from '../features/audio/lib/audio-session';
 import '../../global.css';
 
 function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
@@ -43,10 +44,7 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
     const inAuthGroup = segments[0] === '(auth)';
     const inPublicGroup = segments[0] === 'shared';
     const inOnboardingGroup = segments[0] === '(onboarding)';
-    const inBillingDeepLink = segments[0] === 'billing';
     const hasCompletedOnboarding = !!user?.onboardingCompletedAt;
-
-    if (inBillingDeepLink) return;
 
     if (!isAuthenticated && !inAuthGroup && !inPublicGroup) {
       router.replace('/(auth)/login');
@@ -71,6 +69,14 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
 }
 
 export default function RootLayout() {
+  // Claim the audio session at startup, not lazily on the first sound load.
+  // iOS applies the category when it is set; setting it in the same tick as
+  // the first `playAsync` can leave the first play running under the default
+  // (mixable, background-suspended) session. Idempotent after the first call.
+  useEffect(() => {
+    void ensureAudioMode();
+  }, []);
+
   const [queryClient] = useState(
     () =>
       new QueryClient({

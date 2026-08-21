@@ -1,23 +1,20 @@
 import { ApiClientError } from '../../../lib/api-client';
-import { PLAN_LABELS } from '../types';
 import { meetsMinimumTier, useSubscription } from './use-subscription';
 
 export interface CanUseBookmarksAnnotationsResult {
   /**
    * True only when the org is KNOWN to be below the Edu tier — the only
    * state in which the reader swaps the bookmark sheet / annotation-create
-   * sheet for the upsell sheet.
+   * sheet for the feature-unavailable sheet.
    */
   locked: boolean;
-  /** Display name of the current plan ('Free' when no subscription exists). */
-  planName: string;
 }
 
 /**
  * POST /bookmarks and POST /annotations require the `edu` tier or above
  * (method-level SubscriptionGuard + @RequiredSubscription('edu')). This hook
- * resolves that gate client-side so the reader can open an upsell sheet
- * instead of letting the request fire and 403.
+ * resolves that gate client-side so the reader can open a feature-unavailable
+ * sheet instead of letting the request fire and 403.
  *
  * Built on the existing useSubscription query (GET /billing/subscription) +
  * meetsMinimumTier — the same single source of truth the web gate uses.
@@ -40,19 +37,16 @@ export function useCanUseBookmarksAnnotations(): CanUseBookmarksAnnotationsResul
     error instanceof ApiClientError && error.statusCode === 404;
 
   if (noSubscription) {
-    return { locked: true, planName: PLAN_LABELS['free'] ?? 'Free' };
+    return { locked: true };
   }
   if (isLoading || error || !sub) {
     // Undetermined — never lock on loading/errored subscription state.
-    return { locked: false, planName: PLAN_LABELS['free'] ?? 'Free' };
+    return { locked: false };
   }
 
   const allowed =
     (sub.status === 'active' || sub.status === 'trialing') &&
     meetsMinimumTier(sub.planCode, 'edu');
 
-  return {
-    locked: !allowed,
-    planName: PLAN_LABELS[sub.planCode] ?? sub.planCode,
-  };
+  return { locked: !allowed };
 }

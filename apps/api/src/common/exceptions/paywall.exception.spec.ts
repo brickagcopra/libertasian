@@ -21,7 +21,7 @@ describe('PaywallException', () => {
     >;
     expect(body['code']).toBe('subscription_required');
     expect(body['corpus']).toBe('documents');
-    expect(body['message']).toBe('Upgrade your plan to access the full corpus.');
+    expect(body['message']).toBe("This content isn't included in your plan.");
   });
 
   it('includes previewItemId when provided', () => {

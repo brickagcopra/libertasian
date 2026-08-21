@@ -110,9 +110,8 @@ beforeEach(() => {
   mockDeleteAnnotation.mockResolvedValue({ message: 'Annotation deleted' });
   mockUseCanUseBookmarksAnnotations.mockReturnValue({
     locked: false,
-    planName: 'Free',
   });
-  mockUseCanUseOffline.mockReturnValue({ locked: false, planName: 'Free' });
+  mockUseCanUseOffline.mockReturnValue({ locked: false });
   mockIsOffline.mockReturnValue(false);
   mockUseAudioRendition.mockReturnValue({
     data: undefined,
@@ -518,31 +517,29 @@ describe('ReaderRoute — Edu+ paywall (bookmarks + annotations)', () => {
 
   describe('below-edu org (locked)', () => {
     beforeEach(() => {
-      mockUseCanUseBookmarksAnnotations.mockReturnValue({
-        locked: true,
-        planName: 'Free',
-      });
+      mockUseCanUseBookmarksAnnotations.mockReturnValue({ locked: true });
     });
 
-    it('long-press opens the upsell sheet instead of the create sheet', () => {
+    it('long-press opens the not-included sheet instead of the create sheet', () => {
       const { getByText, queryByText } = render(<ReaderRoute />, {
         wrapper: createWrapper(),
       });
 
       fireEvent(getByText('Alpha beta gamma delta.'), 'longPress');
 
-      expect(getByText('Available on Edu plans and above')).toBeTruthy();
+      expect(getByText('Not included in your plan')).toBeTruthy();
       expect(
-        getByText(/Save bookmarks and highlight passages with notes/),
+        getByText(
+          /Bookmarks and highlighted passages with notes are not included in your plan/,
+        ),
       ).toBeTruthy();
-      expect(getByText(/You're on the Free plan/)).toBeTruthy();
       // Create sheet never opened and no annotation request fired.
       expect(queryByText('Highlight paragraph')).toBeNull();
       expect(queryByText('Save highlight')).toBeNull();
       expect(mockCreateAnnotation).not.toHaveBeenCalled();
     });
 
-    it('bookmark button opens the upsell sheet instead of the note sheet', () => {
+    it('bookmark button opens the not-included sheet instead of the note sheet', () => {
       const { getByLabelText, getByText, queryByText } = render(
         <ReaderRoute />,
         { wrapper: createWrapper() },
@@ -550,30 +547,38 @@ describe('ReaderRoute — Edu+ paywall (bookmarks + annotations)', () => {
 
       fireEvent.press(getByLabelText('Bookmark'));
 
-      expect(getByText('Available on Edu plans and above')).toBeTruthy();
+      expect(getByText('Not included in your plan')).toBeTruthy();
       // Bookmark note sheet never opened.
       expect(queryByText('Add a note')).toBeNull();
       expect(queryByText('Save bookmark')).toBeNull();
     });
 
-    it('"See plans" navigates to Settings → Plans', () => {
+    // App Review 2.1(b): the sheet may not name a tier, show a price, or
+    // route anywhere. Its only control dismisses it.
+    it('offers no purchase path — no tier name, no price, no navigation', () => {
       const { router } = jest.requireMock('expo-router') as {
         router: { push: jest.Mock };
       };
-      const { getByLabelText, getByText } = render(<ReaderRoute />, {
+      const { getByLabelText, getByText, queryByText } = render(<ReaderRoute />, {
         wrapper: createWrapper(),
       });
 
       fireEvent.press(getByLabelText('Bookmark'));
-      fireEvent.press(getByText('See plans'));
 
-      expect(router.push).toHaveBeenCalledWith('/settings/plans');
+      expect(queryByText('See plans')).toBeNull();
+      expect(queryByText(/Edu|Pro|Free|upgrade/i)).toBeNull();
+      expect(queryByText(/₱/)).toBeNull();
+
+      router.push.mockClear();
+      fireEvent.press(getByText('OK'));
+      expect(router.push).not.toHaveBeenCalled();
+      expect(queryByText('Not included in your plan')).toBeNull();
     });
   });
 
   describe('offline saving gate', () => {
-    it('below-edu: "Save offline" opens the upsell and never writes to storage', () => {
-      mockUseCanUseOffline.mockReturnValue({ locked: true, planName: 'Free' });
+    it('below-edu: "Save offline" opens the not-included sheet and never writes to storage', () => {
+      mockUseCanUseOffline.mockReturnValue({ locked: true });
 
       const { getByLabelText, getByText } = render(<ReaderRoute />, {
         wrapper: createWrapper(),
@@ -581,15 +586,17 @@ describe('ReaderRoute — Edu+ paywall (bookmarks + annotations)', () => {
 
       fireEvent.press(getByLabelText('Save offline'));
 
-      expect(getByText('Available on Edu plans and above')).toBeTruthy();
+      expect(getByText('Not included in your plan')).toBeTruthy();
       expect(
-        getByText(/Save documents for offline reading anywhere/),
+        getByText(
+          /Saving documents for offline reading is not included in your plan/,
+        ),
       ).toBeTruthy();
       expect(mockSaveForOffline).not.toHaveBeenCalled();
     });
 
     it('below-edu: an already-saved document can still be removed', async () => {
-      mockUseCanUseOffline.mockReturnValue({ locked: true, planName: 'Free' });
+      mockUseCanUseOffline.mockReturnValue({ locked: true });
       mockIsOffline.mockReturnValue(true);
 
       const { getByLabelText, queryByText } = render(<ReaderRoute />, {
@@ -599,11 +606,11 @@ describe('ReaderRoute — Edu+ paywall (bookmarks + annotations)', () => {
       fireEvent.press(getByLabelText('Saved offline'));
 
       await waitFor(() => expect(mockRemoveOffline).toHaveBeenCalledWith('doc-1'));
-      expect(queryByText('Available on Edu plans and above')).toBeNull();
+      expect(queryByText('Not included in your plan')).toBeNull();
     });
 
-    it('edu+: "Save offline" saves without an upsell', async () => {
-      mockUseCanUseOffline.mockReturnValue({ locked: false, planName: 'Edu' });
+    it('edu+: "Save offline" saves without the not-included sheet', async () => {
+      mockUseCanUseOffline.mockReturnValue({ locked: false });
 
       const { getByLabelText, queryByText } = render(<ReaderRoute />, {
         wrapper: createWrapper(),
@@ -612,16 +619,13 @@ describe('ReaderRoute — Edu+ paywall (bookmarks + annotations)', () => {
       fireEvent.press(getByLabelText('Save offline'));
 
       await waitFor(() => expect(mockSaveForOffline).toHaveBeenCalled());
-      expect(queryByText('Available on Edu plans and above')).toBeNull();
+      expect(queryByText('Not included in your plan')).toBeNull();
     });
   });
 
   describe('edu+ org (unlocked)', () => {
     beforeEach(() => {
-      mockUseCanUseBookmarksAnnotations.mockReturnValue({
-        locked: false,
-        planName: 'Edu',
-      });
+      mockUseCanUseBookmarksAnnotations.mockReturnValue({ locked: false });
     });
 
     it('long-press opens the create-annotation sheet and saving fires the mutation', async () => {
@@ -631,7 +635,7 @@ describe('ReaderRoute — Edu+ paywall (bookmarks + annotations)', () => {
 
       fireEvent(getByText('Alpha beta gamma delta.'), 'longPress');
 
-      expect(queryByText('Available on Edu plans and above')).toBeNull();
+      expect(queryByText('Not included in your plan')).toBeNull();
       fireEvent.press(getByText('Save highlight'));
 
       await waitFor(() => expect(mockCreateAnnotation).toHaveBeenCalledTimes(1));
@@ -646,7 +650,7 @@ describe('ReaderRoute — Edu+ paywall (bookmarks + annotations)', () => {
       fireEvent.press(getByLabelText('Bookmark'));
 
       expect(getByText('Add a note')).toBeTruthy();
-      expect(queryByText('Available on Edu plans and above')).toBeNull();
+      expect(queryByText('Not included in your plan')).toBeNull();
     });
   });
 });

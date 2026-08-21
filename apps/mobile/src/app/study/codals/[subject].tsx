@@ -17,7 +17,7 @@ import {
 } from '../../../features/study/hooks/use-codals';
 import { useOfflineCodals } from '../../../features/study/hooks/use-offline-codals';
 import { useCanUseOffline } from '../../../features/billing/hooks/use-can-use-offline';
-import { PlanUpsellSheet } from '../../../features/billing/components/plan-upsell-sheet';
+import { FeatureUnavailableSheet } from '../../../features/billing/components/feature-unavailable-sheet';
 import { useNetworkState } from '../../../hooks/use-network-state';
 import { OfflineBanner } from '../../../components/offline-banner';
 import { CodalCard } from '../../../features/study/components/codal-card';
@@ -65,7 +65,7 @@ export default function CodalListScreen() {
   // Saving a codal for offline reading is the `offlineReading` entitlement
   // (Edu+). Below-Edu orgs get the upsell sheet instead; removing an
   // already-saved codal stays available so cached content is never stranded.
-  const { locked: offlineLocked, planName } = useCanUseOffline();
+  const { locked: offlineLocked } = useCanUseOffline();
   const [upsellOpen, setUpsellOpen] = useState(false);
 
   // Online: fetch from API
@@ -241,12 +241,12 @@ export default function CodalListScreen() {
         )}
       </View>
 
-      {/* Edu+ upsell — shown instead of writing a new codal to offline
-          storage. Already-downloaded codals are untouched. */}
-      <PlanUpsellSheet
+      {/* Not-included sheet — shown instead of writing a new codal to
+          offline storage. Already-downloaded codals are untouched. Names no
+          tier, shows no price, offers no purchase path (App Review 2.1(b)). */}
+      <FeatureUnavailableSheet
         visible={upsellOpen}
-        planName={planName}
-        message="Download codals and read them offline anywhere."
+        message="Downloading codals for offline reading is not included in your plan."
         onClose={() => setUpsellOpen(false)}
       />
     </>

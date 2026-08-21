@@ -60,6 +60,11 @@ jest.mock('expo-av', () => {
         ),
       },
     },
+    // audio-session passes the interruption modes explicitly; without these
+    // enums on the mock the import resolves to undefined and every suite that
+    // reaches a player fails to load.
+    InterruptionModeIOS: { MixWithOthers: 0, DoNotMix: 1, DuckOthers: 2 },
+    InterruptionModeAndroid: { DoNotMix: 1, DuckOthers: 2 },
   };
 });
 

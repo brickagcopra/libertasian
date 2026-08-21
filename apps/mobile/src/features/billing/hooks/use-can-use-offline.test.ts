@@ -43,13 +43,12 @@ describe('useCanUseOffline', () => {
     expect(result.current.locked).toBe(false);
   });
 
-  it('locks free plan orgs with the Free plan name', async () => {
+  it('locks free plan orgs', async () => {
     mockGet.mockResolvedValueOnce({ planCode: 'free', status: 'active' });
     const { result } = renderHook(() => useCanUseOffline(), {
       wrapper: createWrapper(),
     });
     await waitFor(() => expect(result.current.locked).toBe(true));
-    expect(result.current.planName).toBe('Free');
   });
 
   it('treats a 404 (no subscription record) as the free tier and locks', async () => {
@@ -60,7 +59,6 @@ describe('useCanUseOffline', () => {
       wrapper: createWrapper(),
     });
     await waitFor(() => expect(result.current.locked).toBe(true));
-    expect(result.current.planName).toBe('Free');
   });
 
   it('does not lock on non-404 errors (fail-open)', async () => {
@@ -77,8 +75,8 @@ describe('useCanUseOffline', () => {
     const { result } = renderHook(() => useCanUseOffline(), {
       wrapper: createWrapper(),
     });
-    await waitFor(() => expect(result.current.planName).toBe('Edu'));
-    expect(result.current.locked).toBe(false);
+    await waitFor(() => expect(mockGet).toHaveBeenCalled());
+    await waitFor(() => expect(result.current.locked).toBe(false));
   });
 
   it('does not lock trialing pro plan orgs', async () => {
@@ -86,8 +84,8 @@ describe('useCanUseOffline', () => {
     const { result } = renderHook(() => useCanUseOffline(), {
       wrapper: createWrapper(),
     });
-    await waitFor(() => expect(result.current.planName).toBe('Pro'));
-    expect(result.current.locked).toBe(false);
+    await waitFor(() => expect(mockGet).toHaveBeenCalled());
+    await waitFor(() => expect(result.current.locked).toBe(false));
   });
 
   it('locks edu plan orgs with a non-active subscription', async () => {
@@ -96,6 +94,5 @@ describe('useCanUseOffline', () => {
       wrapper: createWrapper(),
     });
     await waitFor(() => expect(result.current.locked).toBe(true));
-    expect(result.current.planName).toBe('Edu');
   });
 });

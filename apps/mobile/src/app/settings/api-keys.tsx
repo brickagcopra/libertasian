@@ -203,9 +203,12 @@ export default function ApiKeysScreen() {
               <Ionicons name="key-outline" size={48} color="#9ca3af" />
             </View>
             <Text style={styles.emptyTitle}>No API Keys</Text>
+            {/* Names no tier: App Review 2.1(b). The server still enforces the
+                entitlement and the create call surfaces the neutral
+                not-included message if it is not held. */}
             <Text style={styles.emptyDescription}>
               Create an API key to integrate LIBERTASIAN with your applications.
-              Requires an Enterprise subscription.
+              API keys are not included in every plan.
             </Text>
             <TouchableOpacity
               style={styles.emptyButton}
