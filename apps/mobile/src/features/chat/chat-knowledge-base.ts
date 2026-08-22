@@ -4,6 +4,11 @@
  *  apps/mobile/src/features/chat/chat-knowledge-base.ts — do NOT move into
  *  packages/*: shared-package runtime imports break the web Docker build.)
  *
+ * DIVERGENCE (intentional): the web copy still carries a `pricing` entry. This
+ * mobile copy must not name or describe a purchasable tier anywhere a user can
+ * read it — App Review rejected build 20 under Guideline 2.1(b) for exactly
+ * that. `chat-knowledge-base.test.ts` enforces it; do not "re-sync" it back.
+ *
  * Phase-1 rule-based FAQ knowledge base for the support chat widget.
  *
  * Everything here runs client-side and is fully deterministic — no AI, no
@@ -30,15 +35,19 @@ export const FAQ_ENTRIES: FaqEntry[] = [
       'LIBERTASIAN is a Philippine legal-research platform — AI-powered search, auto-generated case digests, codal reading, and a bar-exam reviewer, all grounded in authoritative PH sources.',
   },
   {
-    id: 'pricing',
-    topic: 'Plans & pricing',
-    keywords: ['price', 'pricing', 'plan', 'plans', 'cost', 'free', 'pro', 'subscription', 'upgrade', 'billing'],
-    question: 'Plans & pricing',
-    // No prices, no plan comparison, and no link to a pricing page: describing
-    // what to buy and where is the steering Apple 3.1.1 / Play Payments
-    // forbid. Settings → Your plan shows what the account already has.
+    id: 'usage',
+    topic: 'Usage & limits',
+    // The plan/pricing keywords stay so those questions still MATCH here and
+    // get an answer. What is gone is the topic itself: build 20 was rejected
+    // under Apple 2.1(b) for naming purchasable tiers, and the screen this
+    // used to point at (Settings → Your plan) no longer exists.
+    keywords: [
+      'usage', 'limits', 'quota', 'quotas', 'remaining', 'allowance', 'cost',
+      'billing', 'plan', 'pricing', 'price', 'plans', 'free', 'subscription', 'upgrade',
+    ],
+    question: 'Usage & limits',
     answer:
-      'Your current plan and what it includes are shown under Settings → Your plan. Settings → Usage & quotas shows how much of each limit you have used.',
+      'Settings → Usage & quotas shows how much of each limit you have used. Features not included in your account show a note where they appear.',
   },
   {
     id: 'search',
@@ -85,8 +94,10 @@ export const FAQ_ENTRIES: FaqEntry[] = [
     topic: 'Account',
     keywords: ['account', 'sign', 'signup', 'register', 'login', 'log', 'create', 'join'],
     question: 'Sign up / sign in',
+    // Screen names, not web paths: /register and /login are web routes and
+    // rendered here as literal dead-end text on mobile.
     answer:
-      'New here? Create an account at /register. Already have one? Sign in at /login.',
+      'New here? Tap "Create an account" at the bottom of the sign-in screen. Already have one? Sign in with your email and password on that same screen.',
   },
   {
     id: 'change-password',
@@ -110,7 +121,7 @@ export const FAQ_ENTRIES: FaqEntry[] = [
     keywords: ['contact', 'support', 'human', 'help', 'email', 'team', 'agent', 'talk', 'reach'],
     question: 'Talk to a human / support',
     answer:
-      'Happy to point you to the team — email us at info.libertasian@gmail.com and a human will get back to you.',
+      'Happy to put you in touch — email us at info.libertasian@gmail.com and a human will get back to you.',
   },
 ];
 
@@ -146,7 +157,7 @@ function tokenize(input: string): string[] {
  * clears the bar (caller shows the support-email fallback).
  *
  * Examples:
- *   matchFaq('how much does it cost?')   -> 'pricing'
+ *   matchFaq('how much does it cost?')   -> 'usage'
  *   matchFaq('is my scan private')       -> 'privacy'  (scan + private both hit)
  *   matchFaq('asdfghjkl')                -> null
  */

@@ -23,10 +23,12 @@ const SUPPORT_EMAIL = 'info.libertasian@gmail.com';
 export const FALLBACK_ANSWER = `I'm not sure about that one yet — our team can help: ${SUPPORT_EMAIL}.`;
 
 const GREETING =
-  "Hi! I'm the LIBERTASIAN assistant. Ask me about search, pricing, digests, privacy, and more — or pick a topic below.";
+  "Hi! I'm the LIBERTASIAN assistant. Ask me about search, digests, privacy, usage limits, and more — or pick a topic below.";
 
-// Topics surfaced as quick-reply chips, in display order.
-const QUICK_REPLY_IDS = ['what-is', 'pricing', 'search', 'bar-exams', 'privacy', 'contact'];
+// Topics surfaced as quick-reply chips, in display order. The chip label is the
+// entry's `question`, so this list is what decides which topics are visible:
+// there is deliberately no plans-or-pricing topic to surface (Apple 2.1(b)).
+const QUICK_REPLY_IDS = ['what-is', 'usage', 'search', 'bar-exams', 'privacy', 'contact'];
 
 const TYPING_DELAY_MS = 500;
 
