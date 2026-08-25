@@ -272,8 +272,6 @@ export default function DigestDetailRoute() {
       onBack={() => router.back()}
       onShare={handleShare}
       onCTAPress={handleSourcePress}
-      onBookmark={() => Alert.alert('Bookmark', 'Bookmarking digests is coming in the next release.')}
-      onMore={() => Alert.alert('More', 'More actions coming soon.')}
     />
   );
 }

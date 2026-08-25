@@ -47,3 +47,48 @@ describe('DigestDetailScreen — no placeholder markers', () => {
     expect(getByText('Facts')).toBeTruthy();
   });
 });
+
+/**
+ * Bookmark and More shipped as unconditional buttons whose only behaviour was
+ * a "coming soon" alert — Guideline 2.1 (App Completeness), the same defect as
+ * the dead SSO button removed in #418. Digests are not bookmarkable
+ * server-side either (create-bookmark.dto.ts takes a legalDocumentId only), so
+ * the fix is removal, not wiring.
+ *
+ * They now render only when a handler is supplied, which keeps the component
+ * reusable for a caller that one day has a real one. Share is unconditional on
+ * purpose: it is wired to a genuine Share.share() call.
+ */
+describe('DigestDetailScreen — header controls', () => {
+  const props = {
+    headline: 'Spouses Hing v. Choachuy',
+    eyebrow: 'Case digest \u00b7 Civil Law',
+    author: { name: 'LIBERTASIAN Editorial', meta: '4 min read' },
+    intro: 'The Court resolved whether the installation of CCTV cameras...',
+    tldr: 'Right to privacy extends to a business office.',
+    sections: [
+      {
+        id: 'facts',
+        heading: 'Facts',
+        paragraphs: ['Respondents installed cameras overlooking the property.'],
+      },
+    ],
+  };
+
+  it('omits Bookmark and More when no handler is supplied, and keeps Share', () => {
+    const { queryByLabelText } = render(<DigestDetailScreen {...props} />);
+
+    expect(queryByLabelText('Bookmark')).toBeNull();
+    expect(queryByLabelText('More')).toBeNull();
+    expect(queryByLabelText('Share')).toBeTruthy();
+  });
+
+  it('renders Bookmark and More once real handlers are supplied', () => {
+    const { queryByLabelText } = render(
+      <DigestDetailScreen {...props} onBookmark={jest.fn()} onMore={jest.fn()} />,
+    );
+
+    expect(queryByLabelText('Bookmark')).toBeTruthy();
+    expect(queryByLabelText('More')).toBeTruthy();
+  });
+});
