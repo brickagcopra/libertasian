@@ -246,6 +246,39 @@ class MobileAnalyticsClient {
     }
   }
 
+  /**
+   * Track an event from a PRE-AUTH screen (login, register, forgot password).
+   *
+   * Posts to the UNAUTHENTICATED POST /analytics/events with `skipAuth`, not
+   * to /analytics/events/auth like `track()` does. /events/auth sits behind
+   * JwtAuthGuard, so routing a sign-in failure through it would 401 for
+   * exactly the users whose failures we need to see — and `skipAuth` also
+   * keeps a stale token from dragging the request into a refresh/sign-out
+   * dance while the user is trying to log in.
+   *
+   * Offline events fall back to the SQLite buffer, which flushes to
+   * /analytics/events/batch — also unauthenticated, so a pre-auth event that
+   * was buffered still lands.
+   *
+   * Callers must never put token material or raw PII in `properties`.
+   */
+  trackPreAuth(eventName: string, properties: Record<string, unknown> = {}): void {
+    const payload: TrackEventPayload = {
+      eventName,
+      sessionId: this.sessionId ?? undefined,
+      deviceType: this.deviceType,
+      properties,
+    };
+
+    if (this.isOnline) {
+      apiClient.post('/analytics/events', payload, { skipAuth: true }).catch(() => {
+        void this.bufferEvent(payload);
+      });
+    } else {
+      void this.bufferEvent(payload);
+    }
+  }
+
   /** Update the current path for heartbeat tracking. */
   setCurrentPath(path: string): void {
     this.currentPath = path;

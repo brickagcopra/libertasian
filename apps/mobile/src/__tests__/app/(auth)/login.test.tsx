@@ -3,6 +3,11 @@ import { Alert } from 'react-native';
 import { render, fireEvent, waitFor, act } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
+// The real analytics client pulls in expo-sqlite / NetInfo / MMKV.
+jest.mock('@/lib/analytics', () => ({
+  mobileAnalytics: { trackPreAuth: jest.fn(), track: jest.fn() },
+}));
+
 jest.mock('@/lib/api-client', () => ({
   apiClient: {
     post: jest.fn(),
@@ -306,7 +311,7 @@ describe('LoginScreen — social sign-in buttons', () => {
     }
   });
 
-  it('Google without EXPO_PUBLIC_GOOGLE_* env: shows Coming soon, never touches the native module', async () => {
+  it('Google without EXPO_PUBLIC_GOOGLE_* env: says the BUILD is unconfigured, not "Coming soon"', async () => {
     mockWebClientId.mockReturnValue(undefined);
     mockIosClientId.mockReturnValue(undefined);
     const { getByText } = render(<LoginScreen />, { wrapper: createWrapper() });
@@ -315,9 +320,33 @@ describe('LoginScreen — social sign-in buttons', () => {
       fireEvent.press(getByText('Google'));
     });
 
-    expect(Alert.alert).toHaveBeenCalledWith('Coming soon', 'Google sign-in is not yet enabled.');
+    // "Coming soon" described a feature that had not been written. The feature
+    // exists; this build just shipped without the client IDs, and a tester
+    // reading "Coming soon" has no way to tell us that.
+    expect(Alert.alert).toHaveBeenCalledWith(
+      'Google sign-in unavailable',
+      expect.stringContaining('not configured for Google sign-in'),
+    );
     expect(mockGoogleSignIn).not.toHaveBeenCalled();
     expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it('a native failure surfaces the error code in the alert so a tester can read it back', async () => {
+    mockGoogleSignIn.mockRejectedValue(
+      Object.assign(new Error('DEVELOPER_ERROR'), { code: '10' }),
+    );
+    const { getByText } = render(<LoginScreen />, { wrapper: createWrapper() });
+
+    await act(async () => {
+      fireEvent.press(getByText('Google'));
+    });
+
+    await waitFor(() => {
+      expect(Alert.alert).toHaveBeenCalledWith('Sign-in failed', expect.stringContaining('(code 10)'));
+    });
+    // The raw native message stays out of the UI.
+    const [, body] = (Alert.alert as jest.Mock).mock.calls[0] as [string, string];
+    expect(body).not.toContain('DEVELOPER_ERROR');
   });
 
   it('Google success: exchanges the idToken and signs in through the shared auth path', async () => {
