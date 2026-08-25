@@ -120,7 +120,6 @@ export default function LoginRoute() {
         onCreateAccount={() => router.push('/(auth)/register')}
         onApple={handleApple}
         onGoogle={handleGoogle}
-        onSSO={() => Alert.alert('Coming soon', 'SSO is not yet enabled.')}
         showApple={Platform.OS === 'ios'}
       />
 

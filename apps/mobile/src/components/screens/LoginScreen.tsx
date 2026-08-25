@@ -16,7 +16,6 @@ export interface LoginScreenProps {
   onCreateAccount?: () => void;
   onApple?: () => void;
   onGoogle?: () => void;
-  onSSO?: () => void;
   /** Apple guideline 4.8 — the Apple button is iOS-only; Android hides it. */
   showApple?: boolean;
   loading?: boolean;
@@ -34,7 +33,6 @@ export function LoginScreen({
   onCreateAccount,
   onApple,
   onGoogle,
-  onSSO,
   showApple = true,
   loading = false,
   error,
@@ -216,7 +214,6 @@ export function LoginScreen({
           {[
             ...(showApple ? [{ l: 'Apple', onPress: onApple }] : []),
             { l: 'Google', onPress: onGoogle },
-            { l: 'SSO', onPress: onSSO },
           ].map((opt) => (
             <Pressable
               key={opt.l}
