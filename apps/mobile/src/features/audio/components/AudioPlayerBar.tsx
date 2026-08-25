@@ -42,8 +42,8 @@ interface AudioPlayerBarProps {
   /** Called when narration finishes naturally (drives the section chain). */
   onEnded?: () => void;
   /**
-   * Copy for the 402 not-included notice. Must be a neutral statement — no
-   * plan name, no price, no instruction on where to buy.
+   * Copy for the 402 refusal notice. Must be a neutral statement — no tier
+   * name, no price, no instruction on where to buy.
    */
   paywallMessage?: string;
   /** Copy for the terminal `unavailable` state. */
@@ -52,10 +52,10 @@ interface AudioPlayerBarProps {
 
 const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5] as const;
 
-// Names no plan and offers no purchase: Apple 3.1.1 and Play Payments treat
-// "Listen with Pro" plus a "See plans" button as an external-purchase entry
-// point, even when the button only opens an in-app screen.
-const DEFAULT_PAYWALL_MESSAGE = 'Narrated audio is not included in your plan.';
+// Names no tier and offers no purchase: Apple 3.1.1 and Play Payments treat
+// a tier name plus a "see what's available" button as an external-purchase
+// entry point, even when the button only opens an in-app screen.
+const DEFAULT_PAYWALL_MESSAGE = "Narration isn't available right now.";
 const DEFAULT_UNAVAILABLE_MESSAGE = 'Narration isn’t available for this content.';
 
 /** Auto-recoveries closer together than this are treated as a hard failure. */
@@ -442,7 +442,7 @@ export function AudioPlayerBar({
           <Ionicons name="lock-closed-outline" size={14} color={theme.inkSoft} />
           <Text style={[styles.noticeText, { color: theme.inkSoft }]}>{paywallMessage}</Text>
         </View>
-        {/* The "See plans" action was removed with the purchase path: it routed
+        {/* The purchase action was removed with the purchase path: it routed
             to a screen that sold, and a route to a purchase is itself an
             entry point. The notice now only states the fact. */}
       </View>

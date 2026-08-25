@@ -191,20 +191,16 @@ describe('ScanResult', () => {
     expect(getByText('Generating Digest...')).toBeTruthy();
   });
 
-  it('states digests are not included, naming no plan, when showUpgradePrompt is true', () => {
-    const { getByText, queryByText } = render(
-      <ScanResult
-        {...defaultProps}
-        canGenerateDigest={false}
-        showUpgradePrompt={true}
-      />,
+  // Inverted deliberately. This used to render a "not included in your plan"
+  // notice whenever the caller was below Edu. There is no plan to be below any
+  // more, so the notice — and the tier wording with it — is gone.
+  it('renders no tier notice when the digest action is unavailable', () => {
+    const { queryByText } = render(
+      <ScanResult {...defaultProps} canGenerateDigest={false} />,
     );
     expect(
-      getByText(/AI digests from scans are not included in your plan/),
-    ).toBeTruthy();
-    // No plan named and no upsell (Apple 3.1.1 / Play Payments).
-    expect(queryByText(/Upgrade/i)).toBeNull();
-    expect(queryByText(/Edu or Pro/i)).toBeNull();
+      queryByText(/plan|premium|upgrade|subscription|tier|not included/i),
+    ).toBeNull();
   });
 
   it('shows digest error', () => {
@@ -224,11 +220,10 @@ describe('ScanResult', () => {
     expect(getByText('Generated 10 flashcards')).toBeTruthy();
   });
 
-  it('shows secondary action buttons for paid plan', () => {
+  it('shows secondary action buttons whenever their handlers are supplied', () => {
     const { getByText } = render(
       <ScanResult
         {...defaultProps}
-        isPaidPlan={true}
         onGenerateFlashcards={jest.fn()}
         onGenerateOutline={jest.fn()}
         onAttachToMatter={jest.fn()}

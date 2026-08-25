@@ -59,7 +59,10 @@ export default function SettingsRoute() {
 
   // Usage & quotas only. The subscription and plan rows are gone with their
   // screens: naming or managing a purchasable tier in-app is what App Review
-  // rejected build 20 for (Guideline 2.1(b)).
+  // rejected build 20 for (Guideline 2.1(b)). The API-keys row went with its
+  // screen for a related reason — API keys are an enterprise-gated developer
+  // surface the API deliberately leaves closed, so it is the one row that
+  // would still 403 with tier wording, and it has no place in a phone app.
   const billingRows: ProfileRow[] = [
     {
       id: 'usage',
@@ -82,18 +85,6 @@ export default function SettingsRoute() {
           },
         ]
       : [];
-
-  const developerRows: ProfileRow[] = displayUser
-    ? [
-        {
-          id: 'api-keys',
-          icon: 'key-outline',
-          label: 'API keys',
-          sub: 'Integrations',
-          onPress: () => router.push('/settings/api-keys'),
-        },
-      ]
-    : [];
 
   const accountRows: ProfileRow[] = [
     {
@@ -145,7 +136,6 @@ export default function SettingsRoute() {
     ...drawerRows,
     ...billingRows,
     ...adminRows,
-    ...developerRows,
     ...accountRows,
   ];
 

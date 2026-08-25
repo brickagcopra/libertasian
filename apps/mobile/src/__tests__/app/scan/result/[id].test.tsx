@@ -41,18 +41,19 @@ jest.mock('@/features/camera-scan/hooks/use-attach-to-matter', () => ({
   useAttachToMatter: () => ({ mutate: jest.fn(), isPending: false }),
 }));
 
-const mockSubscription = jest.fn();
-jest.mock('@/features/subscription/hooks/use-subscription', () => ({
-  useSubscription: () => mockSubscription(),
-}));
-
 jest.mock('@/features/camera-scan/components/scan-result', () => ({
-  ScanResult: ({ upload, showUpgradePrompt }: { upload: { id: string }; showUpgradePrompt: boolean }) => {
+  ScanResult: ({
+    upload,
+    canGenerateDigest,
+  }: {
+    upload: { id: string };
+    canGenerateDigest: boolean;
+  }) => {
     const { Text } = require('react-native');
     return (
       <>
         <Text>ScanResult: {upload.id}</Text>
-        {showUpgradePrompt && <Text>Upgrade to generate digests</Text>}
+        {canGenerateDigest && <Text>Digest action available</Text>}
       </>
     );
   },
@@ -70,7 +71,6 @@ function createWrapper() {
 describe('ScanResultScreen', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockSubscription.mockReturnValue({ data: { planCode: 'free' } });
     mockOcrResults.mockReturnValue({ data: null, isLoading: false });
   });
 
@@ -104,24 +104,26 @@ describe('ScanResultScreen', () => {
     expect(getByText('ScanResult: upload-1')).toBeTruthy();
   });
 
-  it('shows upgrade prompt for free plan users', () => {
+  // Inverted deliberately. These two cases used to assert that the digest
+  // action was withheld from a `free` org and granted to a `pro` one. The
+  // screen no longer reads planCode at all: the scan's own OCR/processing
+  // state is the only input, and the server is the only authority on access.
+  it('offers the digest action once the scan has finished processing', () => {
     mockUploadDetail.mockReturnValue({
       data: { id: 'upload-1', ocrStatus: 'completed', processingStatus: 'completed' },
       isLoading: false,
     });
-    mockSubscription.mockReturnValue({ data: { planCode: 'free' } });
     const { getByText } = render(<ScanResultScreen />, { wrapper: createWrapper() });
-    expect(getByText('Upgrade to generate digests')).toBeTruthy();
+    expect(getByText('Digest action available')).toBeTruthy();
   });
 
-  it('does not show upgrade prompt for paid plan', () => {
+  it('withholds the digest action while the scan is still processing', () => {
     mockUploadDetail.mockReturnValue({
-      data: { id: 'upload-1', ocrStatus: 'completed', processingStatus: 'completed' },
+      data: { id: 'upload-1', ocrStatus: 'completed', processingStatus: 'processing' },
       isLoading: false,
     });
-    mockSubscription.mockReturnValue({ data: { planCode: 'pro' } });
     const { queryByText } = render(<ScanResultScreen />, { wrapper: createWrapper() });
-    expect(queryByText('Upgrade to generate digests')).toBeNull();
+    expect(queryByText('Digest action available')).toBeNull();
   });
 
 });

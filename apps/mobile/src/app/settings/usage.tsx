@@ -145,13 +145,14 @@ export default function UsageScreen() {
         <>
           {/* Period summary. The plan row is gone: the screen reports what is
               used and what is left, and never names the tier that sets those
-              limits (App Review 2.1(b)). The billing period was the card's
+              limits (App Review 2.1(b)). The label reads "Current period", not
+              "Billing Period" — nothing here is billed. The period was the card's
               only other row, so the card is now conditional on it — otherwise
               an org with no period renders an empty bordered box. */}
           {quotaData?.billingPeriodStart && (
             <View style={styles.summaryCard}>
               <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Billing Period</Text>
+                <Text style={styles.summaryLabel}>Current period</Text>
                 <Text style={styles.summaryValue}>
                   {formatDate(quotaData.billingPeriodStart)} –{' '}
                   {formatDate(quotaData.billingPeriodEnd)}

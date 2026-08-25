@@ -116,7 +116,7 @@ export function DocumentChatSheet({
             {atLimit ? (
               /*
                * Neutral by construction. Apple 3.1.1 and Play Payments forbid
-               * steering users to buy, so this names no plan, shows no price,
+               * steering users to buy, so this names no tier, shows no price,
                * and offers no link — the same rule `gated-notice.tsx` states and
                * the bar-exam accordion follows. The server's 403 message is
                * discarded upstream for exactly this reason.

@@ -24,13 +24,6 @@ export interface ProfileRow {
   destructive?: boolean;
 }
 
-export interface ProfilePlan {
-  name: string;
-  price: string;
-  renewsOn?: string;
-  onManage?: () => void;
-}
-
 export interface ProfileScreenProps {
   identity: {
     name: string;
@@ -39,7 +32,6 @@ export interface ProfileScreenProps {
     avatarUrl?: string;
   };
   stats?: ProfileStat[];
-  plan?: ProfilePlan;
   rows?: ProfileRow[];
   onSettingsPress?: () => void;
   /** Currently selected theme key (kept in sync with provider when omitted). */
@@ -73,7 +65,6 @@ const DEFAULT_ROWS: ProfileRow[] = [
 export function ProfileScreen({
   identity,
   stats = DEFAULT_STATS,
-  plan,
   rows = DEFAULT_ROWS,
   onSettingsPress,
   themeKey: themeKeyProp,
@@ -215,89 +206,6 @@ export function ProfileScreen({
             ))}
           </View>
         </View>
-
-        <View style={{ height: 22 }} />
-
-        {plan ? (
-          <View
-            style={{
-              backgroundColor: theme.pillBg,
-              borderRadius: 18,
-              padding: 16,
-              overflow: 'hidden',
-              position: 'relative',
-            }}
-          >
-            <View
-              style={{
-                position: 'absolute',
-                right: -10,
-                top: -10,
-                width: 90,
-                height: 90,
-                borderRadius: 45,
-                backgroundColor: theme.accent,
-                opacity: 0.95,
-              }}
-            />
-            <Text
-              style={{
-                fontFamily: 'Inter_700Bold',
-                fontSize: 11,
-                letterSpacing: 0.6,
-                color: theme.pillInk,
-                opacity: 0.7,
-              }}
-            >
-              YOUR PLAN
-            </Text>
-            <Text
-              style={{
-                marginTop: 4,
-                fontFamily: theme.serif,
-                fontSize: 22,
-                letterSpacing: -0.4,
-                color: theme.pillInk,
-              }}
-            >
-              {plan.name} · {plan.price}
-            </Text>
-            {plan.renewsOn ? (
-              <Text
-                style={{
-                  marginTop: 4,
-                  fontFamily: 'Inter_400Regular',
-                  fontSize: 12,
-                  color: theme.pillInk,
-                  opacity: 0.7,
-                }}
-              >
-                Renews on {plan.renewsOn}
-              </Text>
-            ) : null}
-            <View style={{ height: 14 }} />
-            <Pressable
-              onPress={plan.onManage}
-              style={{
-                alignSelf: 'flex-start',
-                backgroundColor: theme.accent,
-                paddingHorizontal: 14,
-                paddingVertical: 8,
-                borderRadius: 10,
-              }}
-            >
-              <Text
-                style={{
-                  color: theme.accentInk,
-                  fontFamily: 'Inter_600SemiBold',
-                  fontSize: 13,
-                }}
-              >
-                Manage plan
-              </Text>
-            </Pressable>
-          </View>
-        ) : null}
 
         <View style={{ height: 22 }} />
 

@@ -199,7 +199,7 @@ export function SignupScreen({
               marginTop: 2,
             }}
           >
-            Unlock MBE drills + outline packs
+            MBE drills + outline packs
           </Text>
         </View>
         <Pressable

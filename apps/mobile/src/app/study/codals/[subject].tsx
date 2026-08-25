@@ -16,8 +16,6 @@ import {
   type CodalTabGroup,
 } from '../../../features/study/hooks/use-codals';
 import { useOfflineCodals } from '../../../features/study/hooks/use-offline-codals';
-import { useCanUseOffline } from '../../../features/billing/hooks/use-can-use-offline';
-import { FeatureUnavailableSheet } from '../../../features/billing/components/feature-unavailable-sheet';
 import { useNetworkState } from '../../../hooks/use-network-state';
 import { OfflineBanner } from '../../../components/offline-banner';
 import { CodalCard } from '../../../features/study/components/codal-card';
@@ -62,12 +60,6 @@ export default function CodalListScreen() {
   const { isOffline, saveForOffline, removeOffline, saving } =
     useOfflineCodals();
 
-  // Saving a codal for offline reading is the `offlineReading` entitlement
-  // (Edu+). Below-Edu orgs get the upsell sheet instead; removing an
-  // already-saved codal stays available so cached content is never stranded.
-  const { locked: offlineLocked } = useCanUseOffline();
-  const [upsellOpen, setUpsellOpen] = useState(false);
-
   // Online: fetch from API
   const {
     data,
@@ -105,13 +97,9 @@ export default function CodalListScreen() {
         await removeOffline(codalId);
         return;
       }
-      if (offlineLocked) {
-        setUpsellOpen(true);
-        return;
-      }
       await saveForOffline(codalId, subjectCode);
     },
-    [isOffline, offlineLocked, removeOffline, saveForOffline, subjectCode],
+    [isOffline, removeOffline, saveForOffline, subjectCode],
   );
 
   const renderItem = useCallback(
@@ -240,15 +228,6 @@ export default function CodalListScreen() {
           />
         )}
       </View>
-
-      {/* Not-included sheet — shown instead of writing a new codal to
-          offline storage. Already-downloaded codals are untouched. Names no
-          tier, shows no price, offers no purchase path (App Review 2.1(b)). */}
-      <FeatureUnavailableSheet
-        visible={upsellOpen}
-        message="Downloading codals for offline reading is not included in your plan."
-        onClose={() => setUpsellOpen(false)}
-      />
     </>
   );
 }

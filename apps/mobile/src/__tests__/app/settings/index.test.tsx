@@ -104,13 +104,13 @@ describe('SettingsRoute (Phase 2 ProfileScreen)', () => {
     expect(router.push).toHaveBeenCalledWith('/settings/security');
   });
 
-  it('renders the API keys row and routes to /settings/api-keys', () => {
-    const { getByText } = render(<SettingsRoute />, { wrapper: createWrapper() });
+  // Inverted deliberately. API keys are an enterprise-gated developer surface
+  // the API leaves closed, so the row was the one settings entry that would
+  // still 403 with tier wording. The screen is gone from mobile 1.0.
+  it('renders no API keys row', () => {
+    const { queryByText } = render(<SettingsRoute />, { wrapper: createWrapper() });
 
-    expect(getByText('API keys')).toBeTruthy();
-
-    fireEvent.press(getByText('API keys'));
-    expect(router.push).toHaveBeenCalledWith('/settings/api-keys');
+    expect(queryByText('API keys')).toBeNull();
   });
 
   // getAllByText, not getByText: the floating pill TabBar now carries its own

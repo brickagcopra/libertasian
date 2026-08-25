@@ -14,14 +14,14 @@ interface GatedNoticeProps {
  * Payments policy forbid selling digital content outside the store — and
  * equally forbid steering users to buy elsewhere. So this notice:
  *
- * - states that the content is not included, and nothing more;
- * - names no plan or tier (naming what to buy is steering);
+ * - states that the content is unavailable, and nothing more;
+ * - names no tier (naming what to buy is steering);
  * - shows no price;
  * - has no button, no deep link, and no outbound URL.
  *
  * It deliberately takes no `upgradeTier` prop. The API still returns one; not
- * accepting it is what stops a future caller from quietly reintroducing
- * "available on the pro plan" here.
+ * accepting it is what stops a future caller from quietly reintroducing a
+ * tier name here.
  */
 export function GatedNotice({ typeLabel }: GatedNoticeProps) {
   return (
@@ -29,10 +29,10 @@ export function GatedNotice({ typeLabel }: GatedNoticeProps) {
       <View style={styles.header}>
         <Ionicons name="lock-closed" size={16} color="#92400e" />
         <Text style={styles.title} accessibilityRole="header">
-          Not included in your plan
+          Not available
         </Text>
       </View>
-      <Text style={styles.body}>{typeLabel} is not included in your plan.</Text>
+      <Text style={styles.body}>{typeLabel} isn&apos;t available right now.</Text>
     </View>
   );
 }

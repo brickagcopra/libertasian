@@ -43,10 +43,7 @@ import {
   annotationColorStyle,
 } from '@/features/annotations/colors';
 import type { Annotation, AnnotationColor } from '@/features/annotations/types';
-import { useCanUseBookmarksAnnotations } from '@/features/billing/hooks/use-can-use-bookmarks-annotations';
 import { DocumentChatSheet } from '@/features/ai-answers/components/document-chat-sheet';
-import { useCanUseOffline } from '@/features/billing/hooks/use-can-use-offline';
-import { FeatureUnavailableSheet } from '@/features/billing/components/feature-unavailable-sheet';
 import { AudioPlayerBar } from '@/features/audio/components/AudioPlayerBar';
 import { SectionListenButton } from '@/features/audio/components/SectionListenButton';
 import { useSectionPlayback } from '@/features/audio/hooks/use-section-playback';
@@ -259,20 +256,9 @@ export default function ReaderRoute() {
   const [bookmarkSheetOpen, setBookmarkSheetOpen] = useState(false);
   const [bookmarkNote, setBookmarkNote] = useState('');
 
-  // Bookmarks + annotations are Edu+ features (SubscriptionGuard on the
-  // POST endpoints). When the org is KNOWN to be below Edu, the affordances
-  // stay visible but open the upsell sheet instead of the create sheets.
-  // While the subscription is loading/undetermined this reports locked:false
-  // and the 402/403 Alert catches below remain the fallback.
-  const { locked: paywallLocked } = useCanUseBookmarksAnnotations();
-  // Saving a document for offline reading is the `offlineReading` entitlement
-  // (Edu+). Same proactive-paywall treatment; removing an already-saved
-  // document stays available on every plan so cached content is never stranded.
-  const { locked: offlineLocked } = useCanUseOffline();
-  /** Which feature opened the Edu+ upsell sheet; null = sheet closed. */
-  const [upsellFeature, setUpsellFeature] = useState<
-    'bookmarks' | 'offline' | null
-  >(null);
+  // Bookmarks, annotations and offline saves are unconditional here. The
+  // client no longer predicts entitlement from a plan code: the request path's
+  // error Alert is the fallback if the server ever refuses.
   const [chatOpen, setChatOpen] = useState(false);
 
   // Annotations — whole-paragraph highlights (see buildParagraphs).
@@ -375,10 +361,7 @@ export default function ReaderRoute() {
         error instanceof ApiClientError &&
         (error.statusCode === 402 || error.statusCode === 403)
       ) {
-        Alert.alert(
-          'Not included in your plan',
-          'Bookmarks and annotations are not included in your plan.',
-        );
+        Alert.alert('Bookmark unavailable', "This isn't available right now.");
       } else {
         Alert.alert('Error', 'Failed to create bookmark.');
       }
@@ -390,24 +373,16 @@ export default function ReaderRoute() {
       Alert.alert('Bookmarked', 'This document is already in your bookmarks.');
       return;
     }
-    if (paywallLocked) {
-      setUpsellFeature('bookmarks');
-      return;
-    }
     setBookmarkSheetOpen(true);
-  }, [isBookmarked, paywallLocked]);
+  }, [isBookmarked]);
 
   const handleParagraphLongPress = useCallback(
     (sectionId: string, paragraphText: string, startOffset?: number) => {
-      if (paywallLocked) {
-        setUpsellFeature('bookmarks');
-        return;
-      }
       setAnnotationColor('yellow');
       setAnnotationNote('');
       setAnnotationTarget({ sectionId, paragraphText, startOffset });
     },
-    [paywallLocked],
+    [],
   );
 
   const handleAnnotationPress = useCallback(
@@ -445,18 +420,14 @@ export default function ReaderRoute() {
       setAnnotationTarget(null);
       setAnnotationNote('');
     } catch (error) {
-      // Annotation creation is tier-gated server-side. The server message is
-      // deliberately NOT surfaced here: it is written for the web app and may
-      // name a plan or tell the user where to upgrade, which is exactly the
-      // steering Apple 3.1.1 / Play Payments forbid in the app.
+      // The server message is deliberately NOT surfaced here: it is written
+      // for the web app and may name a tier or point at a purchase, which is
+      // exactly the steering Apple 3.1.1 / Play Payments forbid in the app.
       if (
         error instanceof ApiClientError &&
         (error.statusCode === 403 || error.statusCode === 402)
       ) {
-        Alert.alert(
-          'Not included in your plan',
-          'Annotations are not included in your plan.',
-        );
+        Alert.alert('Annotation unavailable', "This isn't available right now.");
         return;
       }
       Alert.alert('Error', 'Failed to save the annotation.');
@@ -493,12 +464,6 @@ export default function ReaderRoute() {
 
   const handleToggleOffline = useCallback(async () => {
     if (!doc) return;
-    // Gate NEW saves only — removal (and reading what is already cached)
-    // stays available on every plan.
-    if (!documentIsOffline && offlineLocked) {
-      setUpsellFeature('offline');
-      return;
-    }
     try {
       if (documentIsOffline) {
         await removeOffline(doc.id);
@@ -508,7 +473,7 @@ export default function ReaderRoute() {
     } catch {
       Alert.alert('Error', 'Failed to update offline storage.');
     }
-  }, [doc, documentIsOffline, offlineLocked, removeOffline, saveForOffline]);
+  }, [doc, documentIsOffline, removeOffline, saveForOffline]);
 
   const handleGenerateDigest = useCallback(() => {
     if (existingDigestId) {
@@ -629,7 +594,6 @@ export default function ReaderRoute() {
           title={sectionInfoById.get(playback.activeSectionId)?.heading}
           autoStart={playback.autoStart}
           onEnded={playback.handleEnded}
-          paywallMessage="Narration for this document is not included in your plan."
           unavailableMessage="Narration isn’t available for this section."
         />
       ) : (
@@ -972,20 +936,6 @@ export default function ReaderRoute() {
           </View>
         </View>
       </Modal>
-
-      {/* Not-included sheet — bookmark button / paragraph long-press / save
-          offline for gated orgs. Proactive gate: no create request ever fires
-          and nothing is written to offline storage. Names no tier, shows no
-          price, offers no purchase path (App Review 2.1(b)). */}
-      <FeatureUnavailableSheet
-        visible={upsellFeature !== null}
-        message={
-          upsellFeature === 'offline'
-            ? 'Saving documents for offline reading is not included in your plan.'
-            : 'Bookmarks and highlighted passages with notes are not included in your plan.'
-        }
-        onClose={() => setUpsellFeature(null)}
-      />
 
       {/* Document-scoped AI assistant. Distinct from the rule-based FAQ widget
           at /help, which is unchanged. Each turn consumes an aiAnswers unit, so
