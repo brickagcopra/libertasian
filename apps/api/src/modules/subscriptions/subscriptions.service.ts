@@ -1,5 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
+import { isPaywallEnforced } from '../../common/config/paywall';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FeatureFlagService } from '../feature-flags/feature-flags.service';
 import { PlansService } from '../plans/plans.service';
@@ -50,6 +52,7 @@ export class SubscriptionsService {
     private readonly prisma: PrismaService,
     private readonly plansService: PlansService,
     private readonly featureFlagService: FeatureFlagService,
+    private readonly configService: ConfigService,
   ) {}
 
   /**
@@ -120,6 +123,28 @@ export class SubscriptionsService {
    * In both cases, per-subscription overrides from entitlementsJson are merged on top.
    */
   async getEntitlements(organizationId: string): Promise<SubscriptionEntitlements> {
+    // PAYWALL_ENFORCED=false — no payment gateway is live, so no org can
+    // actually buy its way past a gate. Everyone resolves to 'pro'.
+    //
+    // 'pro' and not 'enterprise' on purpose: the team/enterprise-only admin
+    // surfaces (audit logs, org seats, API keys) stay closed.
+    //
+    // aiAnswers and cameraScansPerMonth are overridden to finite values > 0
+    // rather than left at 'pro' unlimited (-1) so that exhausting them returns
+    // 429 quota_exceeded — a usage limit, which App Review accepts — and never
+    // 402 subscription_required, which reads as a demand for payment.
+    //
+    // The stored `sub.entitlementsJson` overrides are deliberately NOT merged:
+    // a persisted 0 or previewOnly:true from the paid era would re-introduce
+    // the exact 402 this switch exists to remove.
+    if (!isPaywallEnforced(this.configService)) {
+      return {
+        ...this.getDefaultEntitlements('pro'),
+        aiAnswers: 50,
+        cameraScansPerMonth: 20,
+      };
+    }
+
     const sub = await this.getActiveSubscription(organizationId);
     const planCode = sub?.planCode ?? 'free';
 

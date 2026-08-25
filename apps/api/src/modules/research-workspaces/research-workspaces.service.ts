@@ -53,8 +53,10 @@ export class ResearchWorkspacesService {
         where: { organizationId, userId },
       });
       if (currentCount >= maxWorkspaces) {
+        // Factual usage cap only — no tier name, no purchase action
+        // (App Review 3.1.1); mobile renders this body verbatim.
         throw new ForbiddenException(
-          `Research workspace limit reached. You have ${currentCount}/${maxWorkspaces} workspaces. Upgrade your plan for more.`,
+          `Research workspace limit reached. You have ${currentCount}/${maxWorkspaces} workspaces.`,
         );
       }
     }

@@ -21,7 +21,20 @@ describe('PaywallException', () => {
     >;
     expect(body['code']).toBe('subscription_required');
     expect(body['corpus']).toBe('documents');
-    expect(body['message']).toBe("This content isn't included in your plan.");
+    expect(body['message']).toBe("This isn't available on this account.");
+  });
+
+  // The `code` above is machine-readable and deliberately unchanged; the
+  // `message` is the string a user can end up seeing, so it must name no
+  // tier, price or purchase action (App Review 3.1.1/2.1(b)).
+  it('names no tier, price or purchase action in the user-visible message', () => {
+    const body = new PaywallException({ corpus: 'documents' }).getResponse() as Record<
+      string,
+      unknown
+    >;
+    expect(body['message']).not.toMatch(
+      /plan|subscription|upgrade|premium|pro\b|tier|paid|billing|price|free|edu|team|enterprise|₱|\$/i,
+    );
   });
 
   it('includes previewItemId when provided', () => {

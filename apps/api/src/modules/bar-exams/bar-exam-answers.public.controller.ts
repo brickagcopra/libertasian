@@ -72,14 +72,18 @@ export class BarExamAnswersPublicController {
       { isPlatformAdmin: user.isPlatformAdmin === true },
     );
     if (!quota.allowed) {
-      // limit=0 means the user's plan has no aiAnswers entitlement at all —
-      // surface as 402 so the UI can show an upgrade prompt rather than a
-      // "try again tomorrow" message.
+      // limit=0 means there is no aiAnswers entitlement at all — distinct
+      // from "used it all up today", so the client can tell the two apart
+      // via the machine-readable `code`. The user-visible string names no
+      // tier and no purchase action (App Review 3.1.1). While
+      // PAYWALL_ENFORCED=false this branch is unreachable: every org
+      // resolves to a finite aiAnswers > 0, so exhaustion lands on the 429
+      // below instead.
       if (quota.limit === 0) {
         throw new HttpException(
           {
             code: 'subscription_required',
-            message: 'Upgrade your plan to access AI answers.',
+            message: "This isn't available on this account.",
           },
           HttpStatus.PAYMENT_REQUIRED,
         );

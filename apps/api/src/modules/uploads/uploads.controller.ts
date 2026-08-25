@@ -90,7 +90,7 @@ export class UploadsController {
       throw new BadRequestException('No file provided');
     }
 
-    // Enforce plan-based document upload quota (free/edu: 0, pro+: unlimited)
+    // Enforce the entitlement-based document upload quota.
     const quota = await this.usageQuota.checkAndIncrement(
       user.organizationId,
       user.sub,
@@ -99,7 +99,7 @@ export class UploadsController {
     );
     if (!quota.allowed) {
       throw new ForbiddenException({
-        message: 'Document uploads are available on Pro plans and above.',
+        message: "This isn't available on this account.",
         quota: { used: quota.used, limit: quota.limit, resetsAt: quota.resetsAt },
       });
     }
