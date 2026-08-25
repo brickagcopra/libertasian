@@ -251,10 +251,16 @@ describe('apiClient - error handling', () => {
     }
   });
 
-  it('maps 402 and 403 to two distinct messages, neither naming a tier', () => {
+  // The full word list the whole mobile app is held to after the 3.1.1
+  // rejection of build 23 — not just the tier nouns that drew 2.1(b) on
+  // build 20. These two strings are the last line of defence: every screen
+  // that renders `error.message` raw shows one of them.
+  it('maps 402 and 403 to two distinct messages, neither implying a purchase', () => {
     expect(NOT_INCLUDED_MESSAGE).not.toBe(NO_ACCESS_MESSAGE);
     for (const msg of [NOT_INCLUDED_MESSAGE, NO_ACCESS_MESSAGE]) {
-      expect(msg).not.toMatch(/free|edu|pro|team|enterprise|upgrade|₱/i);
+      expect(msg).not.toMatch(
+        /free|edu|pro|team|enterprise|plan|subscription|premium|upgrade|unlock|tier|paid|billing|price|₱|\$/i,
+      );
     }
   });
 

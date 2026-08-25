@@ -34,12 +34,13 @@ describe('chat-knowledge-base', () => {
  * REGRESSION GUARD — this is the point of the PR.
  *
  * App Review rejected build 20 under Guideline 2.1(b) for referencing
- * purchasable tiers. PR #412 deleted the plan screens but missed this in-app
- * help chat, which is reachable at Settings → Help & FAQ. Nothing a user can
- * READ in the FAQ (topic, question, or answer) may name a tier, a plan, a
- * price, or an upgrade. Keywords are exempt on purpose: they are never
- * rendered, and keeping them is what lets a pricing question still get an
- * answer instead of the support-email fallback.
+ * purchasable tiers, then build 23 under 3.1.1 for the paywall itself. PR #412
+ * deleted the plan screens but missed this in-app help chat, which is reachable
+ * at Settings → Help & FAQ. Nothing a user can READ in the FAQ (topic,
+ * question, or answer) may name a tier, a plan, a price, an upgrade, or
+ * anything else that implies something is for sale. Keywords are exempt on
+ * purpose: they are never rendered, and keeping them is what lets a pricing
+ * question still get an answer instead of the support-email fallback.
  */
 describe('no purchasable-tier surface in user-visible FAQ copy', () => {
   const FORBIDDEN = [
@@ -54,6 +55,14 @@ describe('no purchasable-tier surface in user-visible FAQ copy', () => {
     'plan',
     'pricing',
     'upgrade',
+    // Added with the 3.1.1 sweep: the full word list the whole mobile app is
+    // now held to, not just the tier nouns.
+    'subscription',
+    'tier',
+    'paid',
+    'billing',
+    'price',
+    'unlock',
     '$',
     '₱',
   ];

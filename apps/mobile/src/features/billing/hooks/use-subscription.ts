@@ -8,8 +8,6 @@ import type { SubscriptionDetail } from '../types';
  * them is how "Pro" reached the UI and drew App Review 2.1(b) — the app names
  * no purchasable tier anywhere a user can see.
  */
-const TIER_ORDER = ['free', 'edu', 'pro', 'team', 'enterprise'];
-
 export type { SubscriptionDetail };
 
 export const subscriptionKeys = {
@@ -27,26 +25,13 @@ export function useSubscription(enabled = true) {
     queryFn: () => apiClient.get<SubscriptionDetail>('/billing/subscription'),
     enabled,
     staleTime: 5 * 60 * 1000,
-    // A 404 (no active subscription = free tier) is deterministic — retrying
-    // only delays the paywall lock for free users.
+    // A 404 (no active subscription) is deterministic — retrying only delays
+    // an answer the caller already has.
     retry: false,
   });
 }
 
-export function meetsMinimumTier(
-  currentPlan: string | undefined,
-  requiredTier: string,
-): boolean {
-  if (!currentPlan) return false;
-  const currentIdx = TIER_ORDER.indexOf(currentPlan);
-  const requiredIdx = TIER_ORDER.indexOf(requiredTier);
-  if (currentIdx === -1 || requiredIdx === -1) return false;
-  return currentIdx >= requiredIdx;
-}
-
-export function useCanGenerateDigest(): boolean {
-  const { data } = useSubscription();
-  if (!data) return false;
-  const plan = data.planCode;
-  return plan === 'edu' || plan === 'pro' || plan === 'team' || plan === 'enterprise';
-}
+// meetsMinimumTier() and useCanGenerateDigest() lived here. Both compared the
+// org's planCode against a required tier and both are gone: the server is the
+// only authority on what an account can reach, and a client-side copy of that
+// decision is what kept screens locked after the API stopped locking them.

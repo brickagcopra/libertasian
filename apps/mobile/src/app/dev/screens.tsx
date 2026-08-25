@@ -241,7 +241,6 @@ function renderScreen(id: ScreenId) {
       return (
         <ProfileScreen
           identity={{ name: 'Maya Reyes', subtitle: '2L · Stanford Law · Bar prep' }}
-          plan={{ name: 'Student', price: '$9/mo', renewsOn: 'June 1' }}
         />
       );
     default: {

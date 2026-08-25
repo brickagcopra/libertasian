@@ -25,7 +25,6 @@ export { OnboardingScreen } from './OnboardingScreen';
 export type { OnboardingScreenProps } from './OnboardingScreen';
 export { ProfileScreen } from './ProfileScreen';
 export type {
-  ProfilePlan,
   ProfileRow,
   ProfileScreenProps,
   ProfileStat,

@@ -11,7 +11,6 @@ import { AudioPlayerBar } from '@/features/audio/components/AudioPlayerBar';
 import { ReadAlongDigestBody } from '@/features/audio/components/ReadAlongDigestBody';
 import { suspendAutoFollow } from '@/features/audio/stores/read-along-store';
 import { useDigest } from '@/features/digests/hooks/use-digests';
-import { ApiClientError } from '@/lib/api-client';
 import { ContentDisclaimer } from '@/features/documents/components/content-disclaimer';
 import { ExportButton } from '@/features/exports/components/export-button';
 import { useTheme } from '@/providers/theme-provider';
@@ -162,7 +161,6 @@ export default function DigestDetailRoute() {
   }
 
   if (error || !digest) {
-    const isPremiumLocked = error instanceof ApiClientError && error.statusCode === 402;
     const handleErrorBack = () => {
       if (router.canGoBack()) {
         router.back();
@@ -173,12 +171,10 @@ export default function DigestDetailRoute() {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.bg, paddingHorizontal: 32 }}>
         <Text style={{ fontFamily: theme.serif, fontSize: 22, color: theme.ink, marginBottom: 8 }}>
-          {isPremiumLocked ? 'Premium digest' : 'Digest not found'}
+          Digest unavailable
         </Text>
         <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 14, color: theme.inkSoft, textAlign: 'center' }}>
-          {isPremiumLocked
-            ? 'Full case digests are not included in your plan.'
-            : "The digest you're looking for could not be loaded."}
+          The digest you&apos;re looking for could not be loaded.
         </Text>
         <Pressable
           onPress={handleErrorBack}

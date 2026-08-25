@@ -227,7 +227,7 @@ export default function DigestsTab() {
   const keyExtractor = useCallback((item: Digest) => item.id, []);
 
   // Same confirm-Alert pattern as the search tab's generate flow, plus
-  // explicit 402 (subscription) / 429 (quota) messaging.
+  // explicit 402 (refused) / 429 (quota) messaging.
   const handleGenerate = useCallback(
     (doc: MatchedDocument) => {
       Alert.alert(
@@ -250,11 +250,11 @@ export default function DigestsTab() {
                 if (digestId) router.push(`/digest/${digestId}`);
               } catch (err) {
                 if (err instanceof ApiClientError && err.statusCode === 402) {
-                  // Neutral statement only — no plan named, no price, no
+                  // Neutral statement only — no tier named, no price, no
                   // steering (Apple 3.1.1 / Play Payments).
                   Alert.alert(
-                    'Not included in your plan',
-                    'On-demand digest generation is not included in your plan.',
+                    'Digest unavailable',
+                    "This isn't available right now.",
                   );
                   return;
                 }

@@ -17,7 +17,6 @@ import { useGenerateDigest } from '../../../features/camera-scan/hooks/use-gener
 import { useGenerateFlashcardsFromScan } from '../../../features/camera-scan/hooks/use-generate-flashcards';
 import { useGenerateOutlineFromScan } from '../../../features/camera-scan/hooks/use-generate-outline';
 import { useAttachToMatter } from '../../../features/camera-scan/hooks/use-attach-to-matter';
-import { useSubscription } from '../../../features/subscription/hooks/use-subscription';
 
 export default function ScanResultScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -33,16 +32,11 @@ export default function ScanResultScreen() {
   const flashcardMutation = useGenerateFlashcardsFromScan();
   const outlineMutation = useGenerateOutlineFromScan();
   const attachMutation = useAttachToMatter();
-  const { data: subscription } = useSubscription();
 
-  // Entitlement check: free users get OCR only, edu+ can generate digests
-  const isPaidPlan =
-    subscription?.planCode === 'edu' ||
-    subscription?.planCode === 'pro' ||
-    subscription?.planCode === 'team' ||
-    subscription?.planCode === 'enterprise';
+  // Availability is a function of the scan itself, not of who is asking. The
+  // server is the only authority on entitlement; gating here on a planCode
+  // would keep this locked no matter what the API allows.
   const canGenerateDigest =
-    isPaidPlan &&
     !!upload &&
     upload.ocrStatus === 'completed' &&
     upload.processingStatus === 'completed';
@@ -158,12 +152,6 @@ export default function ScanResultScreen() {
         isGeneratingDigest={digestMutation.isPending}
         canGenerateDigest={canGenerateDigest}
         digestError={digestMutation.error?.message ?? null}
-        showUpgradePrompt={
-          !isPaidPlan &&
-          !!upload &&
-          upload.ocrStatus === 'completed' &&
-          upload.processingStatus === 'completed'
-        }
         onGenerateFlashcards={handleGenerateFlashcards}
         isGeneratingFlashcards={flashcardMutation.isPending}
         flashcardResult={flashcardMutation.data?.data ?? null}
@@ -172,7 +160,6 @@ export default function ScanResultScreen() {
         outlineResult={outlineMutation.data?.data ?? null}
         onAttachToMatter={handleAttachToMatter}
         isAttaching={attachMutation.isPending}
-        isPaidPlan={isPaidPlan}
       />
     </View>
   );

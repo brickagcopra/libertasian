@@ -65,20 +65,24 @@ const DEFAULT_HEADERS: Record<string, string> = {
 const REQUEST_TIMEOUT_MS = 20000;
 
 /**
- * 402 Payment Required — the entitlement refusal. Names no tier, shows no
+ * 402 Payment Required — a refusal from the server. Names no tier, shows no
  * price, offers no purchase path: App Review 2.1(b) rejected build 20 over a
- * tier name that reached the UI. Matches the wording on
+ * tier name that reached the UI, and 3.1.1 rejected build 23 over the wording
+ * that replaced it. Matches the wording on
  * `features/derivatives/renderers/gated-notice.tsx`.
+ *
+ * With PAYWALL_ENFORCED=false on the API, no authenticated caller should see
+ * a 402 at all. This is the belt-and-braces string for the paths that could.
  */
-export const NOT_INCLUDED_MESSAGE = "This isn't included in your plan.";
+export const NOT_INCLUDED_MESSAGE = "This isn't available right now.";
 
 /**
  * 403 Forbidden — an authorization denial, NOT an entitlement refusal.
  * RolesGuard, TenantGuard and MfaGuard all throw ForbiddenException, so a 403
  * usually means the caller lacks the role, is reaching across a tenant
- * boundary, or has not satisfied MFA. Telling those users their plan is the
- * problem would be simply wrong. Names no tier either, so 2.1(b) holds on
- * the paths where a 403 IS a subscription gate.
+ * boundary, or has not satisfied MFA. Telling those users that what they own
+ * is the problem would be simply wrong. Names no tier either, so 3.1.1 and
+ * 2.1(b) hold on the paths where a 403 IS an entitlement gate.
  */
 export const NO_ACCESS_MESSAGE = "You don't have access to this.";
 
@@ -100,8 +104,8 @@ export class ApiClientError extends Error {
     // Substituted HERE, at the single point every throw path in this client
     // funnels through, rather than per screen: a dozen screens render
     // `error.message` raw, and any new one would inherit the leak. The server
-    // body for a 402/403 can name a tier ("requires a pro subscription"), so
-    // it is discarded outright — never rendered, never stored.
+    // body for a 402/403 can still name a tier, so it is discarded outright —
+    // never rendered, never stored.
     const safeMessage = safeRefusalMessage(statusCode) ?? message;
     super(safeMessage);
     this.name = 'ApiClientError';

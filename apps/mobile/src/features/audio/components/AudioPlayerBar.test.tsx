@@ -115,12 +115,13 @@ describe('AudioPlayerBar', () => {
     fireEvent.press(screen.getByTestId('listen-button'));
     expect(screen.getByTestId('audio-paywall')).toBeTruthy();
     expect(
-      screen.getByText('Narrated audio is not included in your plan.'),
+      screen.getByText("Narration isn't available right now."),
     ).toBeTruthy();
 
-    // The "See plans" button routed to a screen that sold. A route to a
+    // The purchase button routed to a screen that sold. A route to a
     // purchase is itself an entry point under Apple 3.1.1 / Play Payments,
-    // so the notice now states the fact and offers nothing.
+    // so the notice now states the fact and offers nothing — and names no
+    // tier, since there is nothing to sell at all.
     expect(screen.queryByLabelText('See plans')).toBeNull();
     expect(router.push).not.toHaveBeenCalled();
   });

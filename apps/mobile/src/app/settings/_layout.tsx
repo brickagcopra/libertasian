@@ -8,7 +8,6 @@ export default function SettingsLayout() {
       <Stack.Screen name="index" options={{ title: 'Settings', headerTitle: '' }} />
       <Stack.Screen name="security" options={{ title: 'Security' }} />
       <Stack.Screen name="usage" options={{ title: 'Usage' }} />
-      <Stack.Screen name="api-keys" options={{ title: 'API Keys' }} />
       <Stack.Screen name="blocked-users" options={{ title: 'Blocked users' }} />
       <Stack.Screen name="delete-account" options={{ title: 'Delete account' }} />
     </Stack>

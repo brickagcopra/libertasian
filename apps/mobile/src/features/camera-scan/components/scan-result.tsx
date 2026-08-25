@@ -20,12 +20,6 @@ interface ScanResultProps {
   isGeneratingDigest: boolean;
   canGenerateDigest: boolean;
   digestError?: string | null;
-  /**
-   * Show the neutral "not included in your plan" notice instead of the
-   * generate action. Named `showUpgradePrompt` for continuity with its
-   * callers; it no longer prompts an upgrade — nothing in the app may.
-   */
-  showUpgradePrompt?: boolean;
   onGenerateFlashcards?: () => void;
   isGeneratingFlashcards?: boolean;
   flashcardResult?: { generatedCount: number } | null;
@@ -34,7 +28,6 @@ interface ScanResultProps {
   outlineResult?: { outline: { title: string; sections: OutlineSection[] } } | null;
   onAttachToMatter?: () => void;
   isAttaching?: boolean;
-  isPaidPlan?: boolean;
 }
 
 type Tab = 'ocr' | 'details' | 'citations' | 'outline';
@@ -47,7 +40,6 @@ export function ScanResult({
   isGeneratingDigest,
   canGenerateDigest,
   digestError,
-  showUpgradePrompt = false,
   onGenerateFlashcards,
   isGeneratingFlashcards = false,
   flashcardResult,
@@ -56,7 +48,6 @@ export function ScanResult({
   outlineResult,
   onAttachToMatter,
   isAttaching = false,
-  isPaidPlan = false,
 }: ScanResultProps) {
   const [activeTab, setActiveTab] = useState<Tab>('ocr');
 
@@ -275,7 +266,7 @@ export function ScanResult({
 
             {/* Secondary action row */}
             <View style={styles.secondaryActions}>
-              {onGenerateFlashcards && isPaidPlan && (
+              {onGenerateFlashcards && (
                 <TouchableOpacity
                   style={[styles.secondaryButton, isGeneratingFlashcards && styles.digestButtonDisabled]}
                   onPress={onGenerateFlashcards}
@@ -292,7 +283,7 @@ export function ScanResult({
                 </TouchableOpacity>
               )}
 
-              {onGenerateOutline && isPaidPlan && (
+              {onGenerateOutline && (
                 <TouchableOpacity
                   style={[styles.secondaryButton, isGeneratingOutline && styles.digestButtonDisabled]}
                   onPress={onGenerateOutline}
@@ -336,17 +327,6 @@ export function ScanResult({
               </View>
             )}
           </>
-        ) : showUpgradePrompt ? (
-          // Names no plan and offers no purchase (Apple 3.1.1 / Play
-          // Payments). It still says what the user DOES have — the OCR text —
-          // which is information, not an upsell.
-          <View style={styles.upgradePrompt}>
-            <Ionicons name="lock-closed" size={16} color="#d97706" />
-            <Text style={styles.upgradeText}>
-              AI digests from scans are not included in your plan. The OCR text
-              above is available.
-            </Text>
-          </View>
         ) : null}
 
         {digestError && (
@@ -588,22 +568,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 15,
     fontWeight: '600',
-  },
-  upgradePrompt: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#f9fafb',
-    padding: 14,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  upgradeText: {
-    fontSize: 13,
-    color: '#6b7280',
-    flex: 1,
-    lineHeight: 18,
   },
   digestError: {
     fontSize: 12,

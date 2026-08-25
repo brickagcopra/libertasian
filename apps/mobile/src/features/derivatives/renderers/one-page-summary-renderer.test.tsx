@@ -43,7 +43,7 @@ describe('OnePageSummaryRenderer', () => {
     expect(queryByText('Highlights')).toBeNull();
     expect(queryByText('Quick Reference')).toBeNull();
     // The notice heads AND bodies with this phrase, hence getAllByText.
-        expect(queryAllByText(/Not included in your plan/i).length).toBeGreaterThan(0);
+        expect(queryAllByText(/Not available/i).length).toBeGreaterThan(0);
         // Neutral notice only: no plan named, no price, no purchase action
         // (Apple 3.1.1 / Play Payments).
         expect(queryByText(/Upgrade/i)).toBeNull();

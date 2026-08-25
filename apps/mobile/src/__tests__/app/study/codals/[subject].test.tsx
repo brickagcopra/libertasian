@@ -37,12 +37,6 @@ jest.mock('@/features/study/hooks/use-offline-codals', () => ({
   }),
 }));
 
-// Offline-save gate — default unlocked; the gate block flips `locked`.
-const mockUseCanUseOffline = jest.fn(() => ({ locked: false }));
-jest.mock('@/features/billing/hooks/use-can-use-offline', () => ({
-  useCanUseOffline: () => mockUseCanUseOffline(),
-}));
-
 const mockUseNetworkState = jest.fn(() => ({
   isConnected: true,
   isInternetReachable: true,
@@ -89,7 +83,6 @@ describe('CodalListScreen', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockIsOffline.mockReturnValue(false);
-    mockUseCanUseOffline.mockReturnValue({ locked: false });
   });
 
   it('shows loading state', () => {
@@ -271,7 +264,11 @@ describe('CodalListScreen', () => {
     expect(queryByTestId('offline-banner')).toBeNull();
   });
 
-  describe('offline download gate (offlineReading entitlement)', () => {
+  // Inverted deliberately. This block used to assert that a below-Edu org got
+  // a not-included sheet instead of an offline download. The client no longer
+  // predicts entitlement from a plan code, so the download is unconditional
+  // and the sheet — with its tier wording — is gone.
+  describe('offline download', () => {
     const codal = { id: 'codal-1', title: 'Civil Code', shortTitle: 'Civil Code' };
 
     function renderWithOneCodal() {
@@ -290,56 +287,24 @@ describe('CodalListScreen', () => {
       return render(<CodalListScreen />, { wrapper: createWrapper() });
     }
 
-    it('below-edu: download opens the not-included sheet and never writes to storage', () => {
-      mockUseCanUseOffline.mockReturnValue({ locked: true });
-
-      const { getByTestId, getByText } = renderWithOneCodal();
-      fireEvent.press(getByTestId('toggle-offline-codal-1'));
-
-      expect(getByText('Not included in your plan')).toBeTruthy();
-      expect(
-        getByText(
-          /Downloading codals for offline reading is not included in your plan/,
-        ),
-      ).toBeTruthy();
-      expect(mockSaveForOffline).not.toHaveBeenCalled();
-    });
-
-    it('below-edu: an already-downloaded codal can still be removed', () => {
-      mockUseCanUseOffline.mockReturnValue({ locked: true });
-      mockIsOffline.mockReturnValue(true);
-
-      const { getByTestId, queryByText } = renderWithOneCodal();
-      fireEvent.press(getByTestId('toggle-offline-codal-1'));
-
-      expect(mockRemoveOffline).toHaveBeenCalledWith('codal-1');
-      expect(queryByText('Not included in your plan')).toBeNull();
-    });
-
-    // App Review 2.1(b): the sheet may not name a tier, show a price, or route
-    // anywhere. Its only control dismisses it.
-    it('offers no purchase path — no tier name, no price, no navigation', () => {
-      mockUseCanUseOffline.mockReturnValue({ locked: true });
-
-      const { getByTestId, getByText, queryByText } = renderWithOneCodal();
-      fireEvent.press(getByTestId('toggle-offline-codal-1'));
-
-      expect(queryByText('See plans')).toBeNull();
-      expect(queryByText(/Edu|Pro|Free|upgrade/i)).toBeNull();
-      expect(queryByText(/₱/)).toBeNull();
-
-      fireEvent.press(getByText('OK'));
-      expect(queryByText('Not included in your plan')).toBeNull();
-    });
-
-    it('edu+: download saves without the not-included sheet', () => {
-      mockUseCanUseOffline.mockReturnValue({ locked: false });
-
+    it('downloads unconditionally, with no gate in the way', () => {
       const { getByTestId, queryByText } = renderWithOneCodal();
       fireEvent.press(getByTestId('toggle-offline-codal-1'));
 
       expect(mockSaveForOffline).toHaveBeenCalledWith('codal-1', 'civil_law');
-      expect(queryByText('Not included in your plan')).toBeNull();
+      expect(
+        queryByText(/plan|premium|upgrade|subscription|tier|not included/i),
+      ).toBeNull();
+    });
+
+    it('still removes an already-downloaded codal', () => {
+      mockIsOffline.mockReturnValue(true);
+
+      const { getByTestId } = renderWithOneCodal();
+      fireEvent.press(getByTestId('toggle-offline-codal-1'));
+
+      expect(mockRemoveOffline).toHaveBeenCalledWith('codal-1');
+      expect(mockSaveForOffline).not.toHaveBeenCalled();
     });
   });
 });

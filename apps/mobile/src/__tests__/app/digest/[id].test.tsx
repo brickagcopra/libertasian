@@ -42,36 +42,37 @@ beforeEach(() => {
 });
 
 describe('DigestDetailRoute (Phase 3 DigestDetailScreen)', () => {
-  it('shows the not-found state when the digest fails to load', () => {
+  it('shows the unavailable state when the digest fails to load', () => {
     mockUseDigest.mockReturnValue({ data: null, isLoading: false, error: new Error('Not found') });
     const { getByText } = render(<DigestDetailRoute />, { wrapper: createWrapper() });
-    expect(getByText('Digest not found')).toBeTruthy();
+    expect(getByText('Digest unavailable')).toBeTruthy();
   });
 
-  it('shows the premium state on a 402 ApiClientError', () => {
+  // A 402 gets the SAME neutral state as any other failure. There is nothing
+  // to buy, so a distinct "premium" branch could only advertise a tier that
+  // does not exist for sale — which is what Apple quoted back on build 23.
+  it('shows the same neutral state on a 402 ApiClientError', () => {
     mockUseDigest.mockReturnValue({
       data: null,
       isLoading: false,
       error: new ApiClientError(402, 'Payment required'),
     });
     const { getByText, queryByText } = render(<DigestDetailRoute />, { wrapper: createWrapper() });
-    expect(getByText('Premium digest')).toBeTruthy();
+    expect(getByText('Digest unavailable')).toBeTruthy();
     expect(
-      getByText('Full case digests are not included in your plan.'),
+      getByText("The digest you're looking for could not be loaded."),
     ).toBeTruthy();
-    // No purchase steering (Apple 3.1.1 / Play Payments).
-    expect(queryByText(/Upgrade/i)).toBeNull();
-    expect(queryByText('Digest not found')).toBeNull();
+    expect(queryByText(/premium|plan|upgrade|subscription/i)).toBeNull();
   });
 
-  it('keeps the not-found copy for non-402 ApiClientErrors', () => {
+  it('keeps the same copy for non-402 ApiClientErrors', () => {
     mockUseDigest.mockReturnValue({
       data: null,
       isLoading: false,
       error: new ApiClientError(404, 'Not found'),
     });
     const { getByText } = render(<DigestDetailRoute />, { wrapper: createWrapper() });
-    expect(getByText('Digest not found')).toBeTruthy();
+    expect(getByText('Digest unavailable')).toBeTruthy();
   });
 
   it('navigates back from the error state when history exists', () => {
