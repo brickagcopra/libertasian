@@ -202,6 +202,33 @@ export const EVENT_TAXONOMY: Record<string, EventDefinition> = {
     category: 'auth',
     requiredProperties: ['activation_event', 'time_to_activate_hours'],
   },
+  /**
+   * Native social sign-in failed ON DEVICE, before (or at) the token exchange.
+   * Emitted PRE-AUTH by the mobile login screen through the unauthenticated
+   * POST /analytics/events, because a user who cannot sign in has no JWT and
+   * would be dropped by /events/auth — which is exactly why six weeks of
+   * mobile Google failures produced no evidence at all.
+   *
+   * `stage` is how far the flow got (configure > play_services >
+   * native_sign_in > id_token > token_exchange) and is what separates a
+   * console misconfiguration (DEVELOPER_ERROR at native_sign_in) from a
+   * server-side rejection (token_exchange). `code` is the native error code.
+   * Never carries token material — see mobile social-login-telemetry.ts.
+   */
+  social_login_failed: {
+    category: 'auth',
+    requiredProperties: ['provider', 'platform', 'stage'],
+  },
+  /**
+   * The build shipped without the inlined EXPO_PUBLIC_GOOGLE_* client IDs, so
+   * the button could never work. Deliberately NOT social_login_failed: nothing
+   * was attempted, no native code exists, and the fix is a build-profile env
+   * change rather than a retry.
+   */
+  social_login_unavailable: {
+    category: 'auth',
+    requiredProperties: ['provider', 'platform', 'reason'],
+  },
   subscription_started: {
     category: 'billing',
     requiredProperties: ['plan_code', 'billing_period'],

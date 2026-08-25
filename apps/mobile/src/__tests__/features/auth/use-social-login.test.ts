@@ -1,7 +1,14 @@
 import { renderHook, act } from '@testing-library/react-native';
+import { Platform } from 'react-native';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import { router } from 'expo-router';
+
+// The real client pulls in expo-sqlite / NetInfo / MMKV. We only care that the
+// failure reporting reaches the PRE-AUTH endpoint, so stub the whole module.
+jest.mock('@/lib/analytics', () => ({
+  mobileAnalytics: { trackPreAuth: jest.fn(), track: jest.fn() },
+}));
 
 jest.mock('@/lib/api-client', () => ({
   apiClient: {
@@ -40,6 +47,7 @@ jest.mock('@/features/auth/social-login-env', () => ({
 }));
 
 import { apiClient } from '@/lib/api-client';
+import { mobileAnalytics } from '@/lib/analytics';
 import {
   getGoogleIosClientId,
   getGoogleWebClientId,
@@ -48,9 +56,13 @@ import {
   isAppleSignInAvailable,
   isGoogleSignInAvailable,
   useSocialLogin,
+  type SocialLoginResult,
 } from '@/features/auth/hooks/use-social-login';
 
 const mockPost = apiClient.post as jest.MockedFunction<typeof apiClient.post>;
+const mockTrackPreAuth = mobileAnalytics.trackPreAuth as jest.MockedFunction<
+  typeof mobileAnalytics.trackPreAuth
+>;
 const mockGoogleSignIn = GoogleSignin.signIn as jest.MockedFunction<typeof GoogleSignin.signIn>;
 const mockAppleSignIn = AppleAuthentication.signInAsync as jest.MockedFunction<
   typeof AppleAuthentication.signInAsync
@@ -106,21 +118,21 @@ describe('use-social-login', () => {
       mockPost.mockResolvedValue(authResponse);
 
       const { result } = renderHook(() => useSocialLogin());
-      let outcome: string | undefined;
+      let outcome: SocialLoginResult | undefined;
       await act(async () => {
         outcome = await result.current.signInWithGoogle();
       });
 
-      expect(outcome).toBe('success');
+      expect(outcome?.outcome).toBe('success');
       expect(GoogleSignin.configure).toHaveBeenCalledWith(
         expect.objectContaining({
           webClientId: 'web-id.apps.googleusercontent.com',
           iosClientId: 'ios-id.apps.googleusercontent.com',
         }),
       );
-      expect(GoogleSignin.hasPlayServices).toHaveBeenCalledWith({
-        showPlayServicesUpdateDialog: true,
-      });
+      // hasPlayServices is a no-op on iOS (the library returns true before
+      // touching the native module), so it is no longer called there.
+      expect(GoogleSignin.hasPlayServices).not.toHaveBeenCalled();
       expect(mockPost).toHaveBeenCalledWith(
         '/auth/google/mobile',
         { idToken: 'google-id-token' },
@@ -153,12 +165,12 @@ describe('use-social-login', () => {
       mockGoogleSignIn.mockResolvedValue({ type: 'cancelled', data: null } as never);
 
       const { result } = renderHook(() => useSocialLogin());
-      let outcome: string | undefined;
+      let outcome: SocialLoginResult | undefined;
       await act(async () => {
         outcome = await result.current.signInWithGoogle();
       });
 
-      expect(outcome).toBe('cancelled');
+      expect(outcome?.outcome).toBe('cancelled');
       expect(mockPost).not.toHaveBeenCalled();
       expect(mockAuthSignIn).not.toHaveBeenCalled();
     });
@@ -169,12 +181,12 @@ describe('use-social-login', () => {
       );
 
       const { result } = renderHook(() => useSocialLogin());
-      let outcome: string | undefined;
+      let outcome: SocialLoginResult | undefined;
       await act(async () => {
         outcome = await result.current.signInWithGoogle();
       });
 
-      expect(outcome).toBe('cancelled');
+      expect(outcome?.outcome).toBe('cancelled');
       expect(mockPost).not.toHaveBeenCalled();
     });
 
@@ -186,27 +198,136 @@ describe('use-social-login', () => {
       mockPost.mockRejectedValue(new Error('401'));
 
       const { result } = renderHook(() => useSocialLogin());
-      let outcome: string | undefined;
+      let outcome: SocialLoginResult | undefined;
       await act(async () => {
         outcome = await result.current.signInWithGoogle();
       });
 
-      expect(outcome).toBe('failed');
+      expect(outcome?.outcome).toBe('failed');
       expect(mockAuthSignIn).not.toHaveBeenCalled();
       expect(router.replace).not.toHaveBeenCalled();
     });
 
-    it('missing env → failed without touching the native module', async () => {
+    it('missing env → unavailable, reported as its own event, native module untouched', async () => {
       mockWebClientId.mockReturnValue(undefined);
 
       const { result } = renderHook(() => useSocialLogin());
-      let outcome: string | undefined;
+      let outcome: SocialLoginResult | undefined;
       await act(async () => {
         outcome = await result.current.signInWithGoogle();
       });
 
-      expect(outcome).toBe('failed');
+      // NOT 'failed': nothing was attempted and retrying cannot help.
+      expect(outcome?.outcome).toBe('unavailable');
       expect(GoogleSignin.signIn).not.toHaveBeenCalled();
+      expect(mockTrackPreAuth).toHaveBeenCalledWith('social_login_unavailable', {
+        provider: 'google',
+        platform: Platform.OS,
+        reason: 'missing_web_client_id',
+      });
+    });
+
+    it('iOS without the iOS client ID reports which precondition failed', async () => {
+      mockIosClientId.mockReturnValue(undefined);
+
+      const { result } = renderHook(() => useSocialLogin());
+      await act(async () => {
+        await result.current.signInWithGoogle();
+      });
+
+      expect(mockTrackPreAuth).toHaveBeenCalledWith(
+        'social_login_unavailable',
+        expect.objectContaining({ reason: 'missing_ios_client_id' }),
+      );
+    });
+
+    it('calls hasPlayServices on Android, where it means something', async () => {
+      const replaced = jest.replaceProperty(Platform, 'OS', 'android');
+      try {
+        mockGoogleSignIn.mockResolvedValue({
+          type: 'success',
+          data: { idToken: 't' },
+        } as never);
+        mockPost.mockResolvedValue(authResponse);
+
+        const { result } = renderHook(() => useSocialLogin());
+        await act(async () => {
+          await result.current.signInWithGoogle();
+        });
+
+        expect(GoogleSignin.hasPlayServices).toHaveBeenCalledWith({
+          showPlayServicesUpdateDialog: true,
+        });
+      } finally {
+        replaced.restore();
+      }
+    });
+
+    it('a native DEVELOPER_ERROR reports stage + code and returns the code to the caller', async () => {
+      mockGoogleSignIn.mockRejectedValue(
+        Object.assign(new Error('DEVELOPER_ERROR'), { code: '10' }),
+      );
+
+      const { result } = renderHook(() => useSocialLogin());
+      let outcome: SocialLoginResult | undefined;
+      await act(async () => {
+        outcome = await result.current.signInWithGoogle();
+      });
+
+      expect(outcome).toEqual({ outcome: 'failed', code: '10' });
+      expect(mockTrackPreAuth).toHaveBeenCalledWith('social_login_failed', {
+        provider: 'google',
+        platform: Platform.OS,
+        stage: 'native_sign_in',
+        code: '10',
+        message: 'DEVELOPER_ERROR',
+      });
+    });
+
+    it('an API rejection is reported at the token_exchange stage, never the id token', async () => {
+      mockGoogleSignIn.mockResolvedValue({
+        type: 'success',
+        data: { idToken: 'super-secret-id-token' },
+      } as never);
+      mockPost.mockRejectedValue(new Error('401 Unauthorized'));
+
+      const { result } = renderHook(() => useSocialLogin());
+      await act(async () => {
+        await result.current.signInWithGoogle();
+      });
+
+      expect(mockTrackPreAuth).toHaveBeenCalledWith(
+        'social_login_failed',
+        expect.objectContaining({ stage: 'token_exchange' }),
+      );
+      // No token material may reach analytics, ever.
+      const sent = JSON.stringify(mockTrackPreAuth.mock.calls);
+      expect(sent).not.toContain('super-secret-id-token');
+    });
+
+    it('a cancel is never reported — it is not a failure', async () => {
+      mockGoogleSignIn.mockResolvedValue({ type: 'cancelled', data: null } as never);
+
+      const { result } = renderHook(() => useSocialLogin());
+      await act(async () => {
+        await result.current.signInWithGoogle();
+      });
+
+      expect(mockTrackPreAuth).not.toHaveBeenCalled();
+    });
+
+    it('a missing id token is reported at the id_token stage', async () => {
+      mockGoogleSignIn.mockResolvedValue({ type: 'success', data: {} } as never);
+
+      const { result } = renderHook(() => useSocialLogin());
+      await act(async () => {
+        await result.current.signInWithGoogle();
+      });
+
+      expect(mockTrackPreAuth).toHaveBeenCalledWith(
+        'social_login_failed',
+        expect.objectContaining({ stage: 'id_token', message: 'no_id_token' }),
+      );
     });
   });
 
@@ -219,12 +340,12 @@ describe('use-social-login', () => {
       mockPost.mockResolvedValue(authResponse);
 
       const { result } = renderHook(() => useSocialLogin());
-      let outcome: string | undefined;
+      let outcome: SocialLoginResult | undefined;
       await act(async () => {
         outcome = await result.current.signInWithApple();
       });
 
-      expect(outcome).toBe('success');
+      expect(outcome?.outcome).toBe('success');
       expect(mockPost).toHaveBeenCalledWith(
         '/auth/apple/mobile',
         { identityToken: 'apple-jwt', fullName: 'Juan Dela Cruz' },
@@ -258,12 +379,12 @@ describe('use-social-login', () => {
       );
 
       const { result } = renderHook(() => useSocialLogin());
-      let outcome: string | undefined;
+      let outcome: SocialLoginResult | undefined;
       await act(async () => {
         outcome = await result.current.signInWithApple();
       });
 
-      expect(outcome).toBe('cancelled');
+      expect(outcome?.outcome).toBe('cancelled');
       expect(mockPost).not.toHaveBeenCalled();
       expect(mockAuthSignIn).not.toHaveBeenCalled();
     });
@@ -272,12 +393,12 @@ describe('use-social-login', () => {
       mockAppleSignIn.mockResolvedValue({ identityToken: null, fullName: null } as never);
 
       const { result } = renderHook(() => useSocialLogin());
-      let outcome: string | undefined;
+      let outcome: SocialLoginResult | undefined;
       await act(async () => {
         outcome = await result.current.signInWithApple();
       });
 
-      expect(outcome).toBe('failed');
+      expect(outcome?.outcome).toBe('failed');
       expect(mockPost).not.toHaveBeenCalled();
     });
   });

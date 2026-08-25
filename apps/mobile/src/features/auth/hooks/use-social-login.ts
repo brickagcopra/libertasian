@@ -3,19 +3,38 @@ import { Platform } from 'react-native';
 import { router } from 'expo-router';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import { apiClient } from '../../../lib/api-client';
-import { logger } from '../../../lib/logger';
 import { useAuth } from '../../../providers/auth-provider';
 import { getGoogleIosClientId, getGoogleWebClientId } from '../social-login-env';
+import {
+  errorMessage,
+  reportSocialLoginFailure,
+  reportSocialLoginUnavailable,
+  type SocialLoginStage,
+} from '../social-login-telemetry';
 import type { AuthResponse } from '../types';
 
 export type SocialProvider = 'google' | 'apple';
 
 /**
  * `cancelled` = the user backed out of the native sheet — callers must treat
- * it as a silent no-op, never an error. `failed` = anything else (native
- * error, network, API rejection); callers show ONE friendly message.
+ * it as a silent no-op, never an error. `unavailable` = the build shipped
+ * without the inlined Google client IDs, so nothing was attempted and
+ * retrying cannot help. `failed` = anything else (native error, network, API
+ * rejection); callers show ONE friendly message.
  */
-export type SocialLoginOutcome = 'success' | 'cancelled' | 'failed';
+export type SocialLoginOutcome = 'success' | 'cancelled' | 'unavailable' | 'failed';
+
+/**
+ * `code` is the native error code (Google's `10` = DEVELOPER_ERROR, Apple's
+ * `ERR_*`). It is surfaced in the alert so a tester can read it back — until
+ * now `unavailable` and every native failure produced byte-identical UI, which
+ * is a large part of why this went undiagnosed for six weeks.
+ */
+export type SocialLoginResult =
+  | { outcome: 'success' }
+  | { outcome: 'cancelled' }
+  | { outcome: 'unavailable' }
+  | { outcome: 'failed'; code?: string };
 
 /**
  * Whether native Google Sign-In can run in this build. Both client IDs are
@@ -23,10 +42,17 @@ export type SocialLoginOutcome = 'success' | 'cancelled' | 'failed';
  * without them the Google button degrades to the "Coming soon" alert
  * instead of crashing into an unconfigured native module.
  */
+export function googleUnavailableReason():
+  | 'missing_web_client_id'
+  | 'missing_ios_client_id'
+  | null {
+  if (!getGoogleWebClientId()) return 'missing_web_client_id';
+  if (Platform.OS === 'ios' && !getGoogleIosClientId()) return 'missing_ios_client_id';
+  return null;
+}
+
 export function isGoogleSignInAvailable(): boolean {
-  if (!getGoogleWebClientId()) return false;
-  if (Platform.OS === 'ios' && !getGoogleIosClientId()) return false;
-  return true;
+  return googleUnavailableReason() === null;
 }
 
 /** Apple guideline 4.8: Sign in with Apple is required (and iOS-only). */
@@ -107,10 +133,20 @@ export function useSocialLogin() {
     [signIn],
   );
 
-  const signInWithGoogle = useCallback(async (): Promise<SocialLoginOutcome> => {
-    if (!isGoogleSignInAvailable()) return 'failed';
+  const signInWithGoogle = useCallback(async (): Promise<SocialLoginResult> => {
+    const unavailableReason = googleUnavailableReason();
+    if (unavailableReason) {
+      // The build shipped without EXPO_PUBLIC_GOOGLE_*. Report it as its own
+      // event: nothing was attempted, and the fix is an EAS build-profile env
+      // change rather than anything the user or the native SDK can do.
+      reportSocialLoginUnavailable({ provider: 'google', reason: unavailableReason });
+      return { outcome: 'unavailable' };
+    }
     setPendingProvider('google');
     let cancelCode: string | undefined;
+    // Advanced as the flow progresses so the catch below can say WHERE it
+    // broke. Without it every failure looked alike in the logs.
+    let stage: SocialLoginStage = 'configure';
     try {
       const { GoogleSignin, statusCodes } = requireGoogleSignin();
       cancelCode = String(statusCodes.SIGN_IN_CANCELLED);
@@ -120,38 +156,58 @@ export function useSocialLogin() {
         webClientId: getGoogleWebClientId() as string,
         ...(iosClientId ? { iosClientId } : {}),
       });
-      await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
 
-      const { cancelled, idToken } = extractGoogleSignInResult(await GoogleSignin.signIn());
-      if (cancelled) return 'cancelled';
-      if (!idToken) {
-        logger.warn('social_login_failed', { provider: 'google', reason: 'no_id_token' });
-        return 'failed';
+      // Android only. google-signin's hasPlayServices returns `true`
+      // immediately when Platform.OS === 'ios'
+      // (lib/commonjs/signIn/GoogleSignin.js), so on iOS it was a no-op that
+      // could not fail — and its only throw path there is the dev-mode guard
+      // for a missing `showPlayServicesUpdateDialog`. Gate it to the platform
+      // where it actually means something.
+      if (Platform.OS === 'android') {
+        stage = 'play_services';
+        await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
       }
 
+      stage = 'native_sign_in';
+      const { cancelled, idToken } = extractGoogleSignInResult(await GoogleSignin.signIn());
+      if (cancelled) return { outcome: 'cancelled' };
+      if (!idToken) {
+        reportSocialLoginFailure({
+          provider: 'google',
+          stage: 'id_token',
+          message: 'no_id_token',
+        });
+        return { outcome: 'failed' };
+      }
+
+      stage = 'token_exchange';
       const response = await apiClient.post<AuthResponse>(
         '/auth/google/mobile',
         { idToken },
         { skipAuth: true },
       );
       await completeLogin(response);
-      return 'success';
+      return { outcome: 'success' };
     } catch (err) {
       const code = errorCode(err);
-      if (cancelCode !== undefined && code === cancelCode) return 'cancelled';
-      logger.warn('social_login_failed', {
+      if (cancelCode !== undefined && code === cancelCode) return { outcome: 'cancelled' };
+      reportSocialLoginFailure({
         provider: 'google',
+        stage,
         code,
-        message: err instanceof Error ? err.message : 'unknown',
+        message: errorMessage(err),
       });
-      return 'failed';
+      return { outcome: 'failed', ...(code ? { code } : {}) };
     } finally {
       setPendingProvider(null);
     }
   }, [completeLogin]);
 
-  const signInWithApple = useCallback(async (): Promise<SocialLoginOutcome> => {
+  const signInWithApple = useCallback(async (): Promise<SocialLoginResult> => {
     setPendingProvider('apple');
+    // Apple works today. The reporting is here so that if it ever stops
+    // working we are not blind for six weeks the way Google was.
+    let stage: SocialLoginStage = 'native_sign_in';
     try {
       const credential = await AppleAuthentication.signInAsync({
         requestedScopes: [
@@ -161,10 +217,15 @@ export function useSocialLogin() {
       });
 
       if (!credential.identityToken) {
-        logger.warn('social_login_failed', { provider: 'apple', reason: 'no_identity_token' });
-        return 'failed';
+        reportSocialLoginFailure({
+          provider: 'apple',
+          stage: 'id_token',
+          message: 'no_identity_token',
+        });
+        return { outcome: 'failed' };
       }
 
+      stage = 'token_exchange';
       const fullName = formatAppleFullName(credential.fullName);
       const response = await apiClient.post<AuthResponse>(
         '/auth/apple/mobile',
@@ -172,16 +233,17 @@ export function useSocialLogin() {
         { skipAuth: true },
       );
       await completeLogin(response);
-      return 'success';
+      return { outcome: 'success' };
     } catch (err) {
       const code = errorCode(err);
-      if (code === 'ERR_REQUEST_CANCELED') return 'cancelled';
-      logger.warn('social_login_failed', {
+      if (code === 'ERR_REQUEST_CANCELED') return { outcome: 'cancelled' };
+      reportSocialLoginFailure({
         provider: 'apple',
+        stage,
         code,
-        message: err instanceof Error ? err.message : 'unknown',
+        message: errorMessage(err),
       });
-      return 'failed';
+      return { outcome: 'failed', ...(code ? { code } : {}) };
     } finally {
       setPendingProvider(null);
     }

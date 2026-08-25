@@ -5,13 +5,19 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { LoginScreen as LoginScreenView } from '@/components/screens/LoginScreen';
 import { useLogin } from '@/features/auth/hooks/use-auth';
-import {
-  isGoogleSignInAvailable,
-  useSocialLogin,
-} from '@/features/auth/hooks/use-social-login';
+import { useSocialLogin } from '@/features/auth/hooks/use-social-login';
 import { useAuth } from '@/providers/auth-provider';
 import { useTheme } from '@/providers/theme-provider';
 import { ApiClientError } from '@/lib/api-client';
+
+/**
+ * Append the native error code to a failure message, low-key, so a tester can
+ * read it back to us. The code alone (Google's `10` = DEVELOPER_ERROR) is
+ * usually enough to name the cause; the raw native message is NOT surfaced.
+ */
+function withCode(message: string, code?: string): string {
+  return code ? `${message} (code ${code})` : message;
+}
 
 export default function LoginRoute() {
   const { theme } = useTheme();
@@ -28,22 +34,34 @@ export default function LoginRoute() {
   const { signInWithGoogle, signInWithApple } = useSocialLogin();
 
   async function handleGoogle() {
-    // Build shipped without the Google client IDs → keep the old stub alert.
-    if (!isGoogleSignInAvailable()) {
-      Alert.alert('Coming soon', 'Google sign-in is not yet enabled.');
+    const result = await signInWithGoogle();
+    // 'cancelled' is a deliberate user action — silent no-op, never an error.
+    // 'unavailable' and 'failed' used to be the same "Coming soon" alert, which
+    // is why a build shipped without the client IDs was indistinguishable from
+    // a native error. They are now separate messages: one is honest that the
+    // build cannot do it, the other carries the code a tester can report.
+    if (result.outcome === 'unavailable') {
+      Alert.alert(
+        'Google sign-in unavailable',
+        'This build was not configured for Google sign-in. Please sign in with your email and password.',
+      );
       return;
     }
-    const outcome = await signInWithGoogle();
-    // 'cancelled' is a deliberate user action — silent no-op, never an error.
-    if (outcome === 'failed') {
-      Alert.alert('Sign-in failed', "We couldn't sign you in with Google. Please try again.");
+    if (result.outcome === 'failed') {
+      Alert.alert(
+        'Sign-in failed',
+        withCode("We couldn't sign you in with Google. Please try again.", result.code),
+      );
     }
   }
 
   async function handleApple() {
-    const outcome = await signInWithApple();
-    if (outcome === 'failed') {
-      Alert.alert('Sign-in failed', "We couldn't sign you in with Apple. Please try again.");
+    const result = await signInWithApple();
+    if (result.outcome === 'failed') {
+      Alert.alert(
+        'Sign-in failed',
+        withCode("We couldn't sign you in with Apple. Please try again.", result.code),
+      );
     }
   }
 

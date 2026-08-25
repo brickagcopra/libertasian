@@ -27,7 +27,17 @@
         "pnpm": "10.30.3",
         "buildType": "apk",
         "env": {
-          "EXPO_PUBLIC_API_URL": "https://libertasian.com/api/v1"
+          "EXPO_PUBLIC_API_URL": "https://libertasian.com/api/v1",
+          // The SAME public OAuth client IDs the production profile uses.
+          // Without them an internal build inlines `undefined` for both, and
+          // because EXPO_PUBLIC_* is baked in at bundle time no OTA can add
+          // them afterwards: the Google button short-circuits to
+          // `unavailable` before it ever reaches the native module. Google
+          // sign-in was therefore untestable on exactly the builds testers
+          // install. Client IDs are public identifiers, not secrets — they
+          // already ship inside every production binary.
+          "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "611735597639-gritsa8iokpu4h8t5kmbmfum9m3sr6fc.apps.googleusercontent.com",
+          "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "611735597639-pu2f1jbvsunsbt7sfhglhoo4i82kj1b9.apps.googleusercontent.com"
         }
       }
     },
@@ -38,7 +48,10 @@
         "pnpm": "10.30.3",
         "simulator": true,
         "env": {
-          "EXPO_PUBLIC_API_URL": "https://libertasian.com/api/v1"
+          "EXPO_PUBLIC_API_URL": "https://libertasian.com/api/v1",
+          // See the preview.android.env note above.
+          "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "611735597639-gritsa8iokpu4h8t5kmbmfum9m3sr6fc.apps.googleusercontent.com",
+          "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "611735597639-pu2f1jbvsunsbt7sfhglhoo4i82kj1b9.apps.googleusercontent.com"
         }
       }
     },
