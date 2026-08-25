@@ -285,12 +285,12 @@ describe('LoginScreen — social sign-in buttons', () => {
     mockIosClientId.mockReturnValue('ios-id.apps.googleusercontent.com');
   });
 
-  it('renders Apple, Google, and SSO buttons on iOS', () => {
-    const { getByText } = render(<LoginScreen />, { wrapper: createWrapper() });
+  it('renders Apple and Google buttons on iOS, and no SSO stub', () => {
+    const { getByText, queryByText } = render(<LoginScreen />, { wrapper: createWrapper() });
 
     expect(getByText('Apple')).toBeTruthy();
     expect(getByText('Google')).toBeTruthy();
-    expect(getByText('SSO')).toBeTruthy();
+    expect(queryByText('SSO')).toBeNull();
   });
 
   it('hides the Apple button on Android (guideline 4.8 is iOS-only)', () => {
@@ -300,7 +300,7 @@ describe('LoginScreen — social sign-in buttons', () => {
 
       expect(queryByText('Apple')).toBeNull();
       expect(getByText('Google')).toBeTruthy();
-      expect(getByText('SSO')).toBeTruthy();
+      expect(queryByText('SSO')).toBeNull();
     } finally {
       replaced.restore();
     }
@@ -413,15 +413,5 @@ describe('LoginScreen — social sign-in buttons', () => {
     expect(Alert.alert).not.toHaveBeenCalled();
     expect(mockPost).not.toHaveBeenCalled();
     expect(mockSignIn).not.toHaveBeenCalled();
-  });
-
-  it('SSO stays a Coming soon stub', async () => {
-    const { getByText } = render(<LoginScreen />, { wrapper: createWrapper() });
-
-    await act(async () => {
-      fireEvent.press(getByText('SSO'));
-    });
-
-    expect(Alert.alert).toHaveBeenCalledWith('Coming soon', 'SSO is not yet enabled.');
   });
 });
