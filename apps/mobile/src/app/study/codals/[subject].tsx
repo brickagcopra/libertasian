@@ -40,7 +40,7 @@ function emptyCopyFor(tabGroup: CodalTabGroup, subjectLabel: string): string {
     case 'constitutions':
       return `No constitutional documents yet for ${subjectLabel}.`;
     case 'executive_issuances':
-      return 'Executive issuances are not yet in the library. Coming soon.';
+      return `No executive issuances yet for ${subjectLabel}.`;
     case 'rules':
       return `No rules yet for ${subjectLabel}.`;
   }

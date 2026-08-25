@@ -148,7 +148,10 @@ describe('CodalListScreen', () => {
     expect((lastCall[0] as { tabGroup: string }).tabGroup).toBe('rules');
   });
 
-  it('shows the "Coming soon" copy for the Executive Issuances tab when empty', () => {
+  // The old copy said "Executive issuances are not yet in the library. Coming
+  // soon." That was both a Guideline 2.1 smell and simply false — executive
+  // issuances are live in prod. It now matches the other three empty states.
+  it('shows the standard empty copy for the Executive Issuances tab when empty', () => {
     mockUseNetworkState.mockReturnValue({ isConnected: true, isInternetReachable: true, type: 'wifi' });
     mockUseInfiniteCodals.mockReturnValue({
       data: { pages: [{ data: [] }] },
@@ -157,9 +160,10 @@ describe('CodalListScreen', () => {
       fetchNextPage: jest.fn(),
       isFetchingNextPage: false,
     });
-    const { getByText } = render(<CodalListScreen />, { wrapper: createWrapper() });
+    const { getByText, queryByText } = render(<CodalListScreen />, { wrapper: createWrapper() });
     fireEvent.press(getByText('Executive Issuances'));
-    expect(getByText(/Coming soon/i)).toBeTruthy();
+    expect(getByText(/No executive issuances yet for/i)).toBeTruthy();
+    expect(queryByText(/Coming soon/i)).toBeNull();
   });
 
   it('renders codal items when online', () => {

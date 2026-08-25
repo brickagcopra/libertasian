@@ -236,20 +236,25 @@ export function DigestDetailScreen({
               <Ionicons name={a.icon} size={16} color={theme.ink} />
             </Pressable>
           ))}
-          <Pressable
-            onPress={onBookmark}
-            accessibilityLabel="Bookmark"
-            style={{
-              width: 38,
-              height: 38,
-              borderRadius: 19,
-              backgroundColor: TOP_ACTION_BG,
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <Ionicons name="bookmark-outline" size={16} color={theme.ink} />
-          </Pressable>
+          {/* Renders only when a handler is supplied. A control that exists but
+              does nothing is Guideline 2.1 (App Completeness) — the same
+              defect as the dead SSO button removed in #418. */}
+          {onBookmark ? (
+            <Pressable
+              onPress={onBookmark}
+              accessibilityLabel="Bookmark"
+              style={{
+                width: 38,
+                height: 38,
+                borderRadius: 19,
+                backgroundColor: TOP_ACTION_BG,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Ionicons name="bookmark-outline" size={16} color={theme.ink} />
+            </Pressable>
+          ) : null}
           <Pressable
             onPress={onShare}
             accessibilityLabel="Share"
@@ -264,20 +269,23 @@ export function DigestDetailScreen({
           >
             <Ionicons name="share-outline" size={16} color={theme.ink} />
           </Pressable>
-          <Pressable
-            onPress={onMore}
-            accessibilityLabel="More"
-            style={{
-              width: 38,
-              height: 38,
-              borderRadius: 19,
-              backgroundColor: TOP_ACTION_BG,
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <Ionicons name="ellipsis-horizontal" size={16} color={theme.ink} />
-          </Pressable>
+          {/* Same rule as Bookmark above. */}
+          {onMore ? (
+            <Pressable
+              onPress={onMore}
+              accessibilityLabel="More"
+              style={{
+                width: 38,
+                height: 38,
+                borderRadius: 19,
+                backgroundColor: TOP_ACTION_BG,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Ionicons name="ellipsis-horizontal" size={16} color={theme.ink} />
+            </Pressable>
+          ) : null}
         </View>
       </View>
 
