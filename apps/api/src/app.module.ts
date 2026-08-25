@@ -156,6 +156,13 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
         // exam ALAC answers. Disabled by default; flip to 'true' once a
         // baseline batch of answers has been approved by editorial.
         FEATURE_BAR_EXAM_ANSWERS_PUBLIC: Joi.string().valid('true', 'false').default('false'),
+        // Kill switch for every paid-tier gate in the API. `true` (the
+        // default) preserves the historical behaviour and keeps every existing
+        // spec green. Prod runs `false` while no payment gateway is live: with
+        // no purchasable tier, a 402 subscription_required is an unfulfillable
+        // demand for payment (App Review 3.1.1). Flip back to `true` the day
+        // IAP ships.
+        PAYWALL_ENFORCED: Joi.boolean().default(true),
         // Search dedup post-filter: when 'true' (default), excludes
         // non-canonical duplicate documents from search results via a
         // Redis-backed must_not.terms clause. Flip to 'false' to revert

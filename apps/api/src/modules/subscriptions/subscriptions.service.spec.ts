@@ -1,3 +1,4 @@
+import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 
 import { PrismaService } from '../../prisma/prisma.service';
@@ -14,6 +15,7 @@ describe('SubscriptionsService', () => {
   let prisma: jest.Mocked<PrismaService>;
   let plansService: jest.Mocked<PlansService>;
   let featureFlagService: jest.Mocked<FeatureFlagService>;
+  let configService: { get: jest.Mock };
 
   const mockSubscription = {
     id: 'sub-1',
@@ -53,6 +55,14 @@ describe('SubscriptionsService', () => {
             isEnabled: jest.fn().mockResolvedValue(false),
           },
         },
+        {
+          provide: ConfigService,
+          useValue: {
+            // Enforced by default so every pre-existing expectation in this
+            // file describes the historical (paywalled) behaviour.
+            get: jest.fn().mockReturnValue(true),
+          },
+        },
       ],
     }).compile();
 
@@ -60,6 +70,7 @@ describe('SubscriptionsService', () => {
     prisma = module.get(PrismaService);
     plansService = module.get(PlansService);
     featureFlagService = module.get(FeatureFlagService);
+    configService = module.get(ConfigService);
   });
 
   /**
@@ -488,6 +499,96 @@ describe('SubscriptionsService', () => {
       expect(plansService.resolveEntitlements).toHaveBeenCalledWith('free');
       expect(ent.aiAnswers).toBe(10);
       expect(ent.searchQueries).toBe(40);
+    });
+  });
+
+  // ---- getEntitlements (PAYWALL_ENFORCED kill switch) ----
+  describe('getEntitlements (PAYWALL_ENFORCED=false)', () => {
+    beforeEach(() => {
+      configService.get.mockReturnValue(false);
+    });
+
+    it('should resolve a free org to pro entitlements', async () => {
+      (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(null);
+
+      const ent = await service.getEntitlements('org-1');
+
+      expect(ent.previewOnly).toBe(false);
+      expect(ent.offlineReading).toBe(true);
+      expect(ent.digestsPerMonth).toBe(-1);
+      expect(ent.searchQueries).toBe(-1);
+      expect(ent.documentUploadsPerMonth).toBe(-1);
+    });
+
+    it('should cap aiAnswers and cameraScansPerMonth at finite positive values', async () => {
+      (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(null);
+
+      const ent = await service.getEntitlements('org-1');
+
+      // Finite and > 0 so exhaustion yields 429 quota_exceeded (a usage
+      // limit) rather than 402 subscription_required (a demand for payment).
+      expect(ent.aiAnswers).toBe(50);
+      expect(ent.cameraScansPerMonth).toBe(20);
+    });
+
+    it('should leave team/enterprise-only entitlements closed', async () => {
+      (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(null);
+
+      const ent = await service.getEntitlements('org-1');
+
+      expect(ent.teamCollaboration).toBe(false);
+      expect(ent.auditLogs).toBe(false);
+      expect(ent.editorialTools).toBe(false);
+      expect(ent.maxApiKeys).toBe(0);
+    });
+
+    it('should NOT merge stored entitlementsJson (a stored 0 would re-introduce a 402)', async () => {
+      (prisma.subscription.findFirst as jest.Mock).mockResolvedValue({
+        ...mockSubscription,
+        planCode: 'free',
+        entitlementsJson: {
+          previewOnly: true,
+          aiAnswers: 0,
+          digestsPerMonth: 0,
+          offlineReading: false,
+        },
+      });
+
+      const ent = await service.getEntitlements('org-1');
+
+      expect(ent.previewOnly).toBe(false);
+      expect(ent.aiAnswers).toBe(50);
+      expect(ent.digestsPerMonth).toBe(-1);
+      expect(ent.offlineReading).toBe(true);
+    });
+
+    it('should short-circuit before any DB or feature-flag lookup', async () => {
+      await service.getEntitlements('org-1');
+
+      expect(prisma.subscription.findFirst).not.toHaveBeenCalled();
+      expect(featureFlagService.isEnabled).not.toHaveBeenCalled();
+      expect(plansService.resolveEntitlements).not.toHaveBeenCalled();
+    });
+
+    it('should treat the string "false" (process.env round-trip) as off', async () => {
+      configService.get.mockReturnValue('false');
+      (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(null);
+
+      const ent = await service.getEntitlements('org-1');
+
+      expect(ent.previewOnly).toBe(false);
+    });
+
+    it('should fail closed when the var is absent or unparseable', async () => {
+      for (const value of [undefined, 'nope', true, 'true']) {
+        configService.get.mockReturnValue(value);
+        (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(null);
+
+        const ent = await service.getEntitlements('org-1');
+
+        expect(ent.previewOnly).toBe(true);
+        expect(ent.aiAnswers).toBe(15);
+      }
     });
   });
 });

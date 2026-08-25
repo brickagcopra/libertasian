@@ -74,11 +74,15 @@ export class WorkspaceService {
             where: { status: { notIn: ['closed', 'archived'] } },
           });
         if (activeCount >= limit) {
+          // Names no tier and no purchase action: mobile renders this body
+          // verbatim and App Review 3.1.1 reads tier wording as an offer to
+          // purchase outside IAP. The numeric limit stays — it is a factual
+          // usage cap, not a sales pitch.
           throw new ForbiddenException({
             message:
               limit === 0
-                ? 'Matters are available on Pro plans and above.'
-                : `Matter limit reached. Your plan allows ${limit} active matters.`,
+                ? "This isn't available on this account."
+                : `Matter limit reached. This account allows ${limit} active matters.`,
             quota: { used: activeCount, limit, resetsAt: '' },
           });
         }

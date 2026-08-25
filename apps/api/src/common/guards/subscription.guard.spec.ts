@@ -1,4 +1,5 @@
 import { ExecutionContext, ForbiddenException } from '@nestjs/common';
+import type { ConfigService } from '@nestjs/config';
 import { Reflector } from '@nestjs/core';
 
 import { AdminBypassAuditService } from '../services/admin-bypass-audit.service';
@@ -25,6 +26,15 @@ describe('SubscriptionGuard', () => {
   let subscriptionsService: jest.Mocked<SubscriptionsService>;
   let adminBypassAudit: jest.Mocked<AdminBypassAuditService>;
 
+  /** ConfigService double returning a fixed PAYWALL_ENFORCED value. */
+  function configWith(
+    paywallEnforced: boolean | string | undefined,
+  ): ConfigService {
+    return {
+      get: jest.fn().mockReturnValue(paywallEnforced),
+    } as unknown as ConfigService;
+  }
+
   beforeEach(() => {
     reflector = new Reflector();
     subscriptionsService = {
@@ -34,7 +44,13 @@ describe('SubscriptionGuard', () => {
       record: jest.fn(),
     } as unknown as jest.Mocked<AdminBypassAuditService>;
 
-    guard = new SubscriptionGuard(reflector, subscriptionsService, adminBypassAudit);
+    // Default across the existing suite: enforced, i.e. historical behaviour.
+    guard = new SubscriptionGuard(
+      reflector,
+      subscriptionsService,
+      adminBypassAudit,
+      configWith(true),
+    );
   });
 
   describe('no subscription metadata', () => {
@@ -100,15 +116,17 @@ describe('SubscriptionGuard', () => {
       );
     });
 
-    it('should throw with message about subscription requirement', async () => {
+    it('should throw a message that names no tier and no purchase action', async () => {
       jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue('pro');
       const context = createMockContext({});
       try {
         await guard.canActivate(context);
         fail('Expected ForbiddenException');
       } catch (err) {
-        expect((err as ForbiddenException).message).toContain(
-          'subscription required',
+        const msg = (err as ForbiddenException).message;
+        expect(msg).toBe("This isn't available on this account.");
+        expect(msg).not.toMatch(
+          /plan|subscription|upgrade|premium|pro|tier|paid|billing/i,
         );
       }
     });
@@ -128,8 +146,10 @@ describe('SubscriptionGuard', () => {
         fail('Expected ForbiddenException');
       } catch (err) {
         const msg = (err as ForbiddenException).message;
-        expect(msg).toBe("This feature isn't included in your plan.");
-        expect(msg).not.toMatch(/free|edu|pro|team|enterprise|upgrade|₱/i);
+        expect(msg).toBe("This isn't available on this account.");
+        expect(msg).not.toMatch(
+          /free|edu|pro|team|enterprise|plan|subscription|upgrade|premium|tier|₱|\$/i,
+        );
       }
     });
   });
@@ -181,6 +201,97 @@ describe('SubscriptionGuard', () => {
         ForbiddenException,
       );
       expect(adminBypassAudit.record).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---- PAYWALL_ENFORCED kill switch ----
+  describe('PAYWALL_ENFORCED=false', () => {
+    function guardWithPaywallOff(): SubscriptionGuard {
+      return new SubscriptionGuard(
+        reflector,
+        subscriptionsService,
+        adminBypassAudit,
+        configWith(false),
+      );
+    }
+
+    // 'edu' and 'pro' are the consumer-facing gates (study, uploads,
+    // bookmarks, research workspaces). They must all open.
+    ['free', 'edu', 'pro'].forEach((required) => {
+      it(`should allow a free org through a '${required}'-gated route`, async () => {
+        jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(required);
+        subscriptionsService.getPlanCode.mockResolvedValue('free');
+        const context = createMockContext({ organizationId: 'org-123' });
+
+        await expect(guardWithPaywallOff().canActivate(context)).resolves.toBe(
+          true,
+        );
+      });
+    });
+
+    // Deliberately still closed: these are staff/developer surfaces, not paid
+    // consumer features, and mobile 1.0 ships no screen that needs them.
+    ['team', 'enterprise'].forEach((required) => {
+      it(`should still deny a free org on a '${required}'-gated route`, async () => {
+        jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(required);
+        subscriptionsService.getPlanCode.mockResolvedValue('free');
+        const context = createMockContext({ organizationId: 'org-123' });
+
+        await expect(
+          guardWithPaywallOff().canActivate(context),
+        ).rejects.toThrow(ForbiddenException);
+      });
+    });
+
+    it("should not consult the org's real tier at all", async () => {
+      jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue('pro');
+      const context = createMockContext({ organizationId: 'org-123' });
+
+      await expect(guardWithPaywallOff().canActivate(context)).resolves.toBe(
+        true,
+      );
+      expect(subscriptionsService.getPlanCode).not.toHaveBeenCalled();
+    });
+
+    it('should still reject a caller with no organizationId (auth is not weakened)', async () => {
+      jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue('edu');
+      const context = createMockContext({ sub: 'user-1' });
+
+      await expect(guardWithPaywallOff().canActivate(context)).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it('should treat the string "false" (process.env round-trip) as off', async () => {
+      jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue('pro');
+      subscriptionsService.getPlanCode.mockResolvedValue('free');
+      const guardStr = new SubscriptionGuard(
+        reflector,
+        subscriptionsService,
+        adminBypassAudit,
+        configWith('false'),
+      );
+
+      await expect(
+        guardStr.canActivate(createMockContext({ organizationId: 'org-123' })),
+      ).resolves.toBe(true);
+    });
+
+    it('should fail closed when the var is absent or unparseable', async () => {
+      jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue('pro');
+      subscriptionsService.getPlanCode.mockResolvedValue('free');
+
+      for (const value of [undefined, 'nope', true, 'true']) {
+        const g = new SubscriptionGuard(
+          reflector,
+          subscriptionsService,
+          adminBypassAudit,
+          configWith(value as boolean | string | undefined),
+        );
+        await expect(
+          g.canActivate(createMockContext({ organizationId: 'org-123' })),
+        ).rejects.toThrow(ForbiddenException);
+      }
     });
   });
 });

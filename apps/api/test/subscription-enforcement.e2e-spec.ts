@@ -545,7 +545,7 @@ describe('Subscription Enforcement (E2E)', () => {
         email: `sub-mat1-${Date.now()}@test.com`,
       });
       const res = await createMatter(user.accessToken).expect(403);
-      expect(res.body.message).toBe('Matters are available on Pro plans and above.');
+      expect(res.body.message).toBe("This isn't available on this account.");
       expect(res.body.quota).toEqual({ used: 0, limit: 0, resetsAt: '' });
     });
 

@@ -235,11 +235,10 @@ export class DigestsController {
     @CurrentUser() user: JwtPayload,
     @Ip() ip: string,
   ) {
-    // Subscription + quota gate. We call checkAndIncrement up-front: its
-    // allowed=false branch handles both "no active subscription" (limit=0)
-    // and "active subscription but quota exceeded" (used>=limit). We
-    // disambiguate for the caller via the response body so the web can
-    // route to /pricing vs. "comes back on <date>".
+    // Entitlement + quota gate. We call checkAndIncrement up-front: its
+    // allowed=false branch handles both "not entitled at all" (limit=0) and
+    // "entitled but quota exceeded" (used>=limit). We disambiguate for the
+    // caller via the machine-readable `error` code in the response body.
     const quota = await this.usageQuota.checkAndIncrement(
       user.organizationId,
       user.sub,
@@ -253,8 +252,7 @@ export class DigestsController {
           {
             success: false,
             error: 'subscription_required',
-            upgradeUrl: '/pricing',
-            message: 'An active subscription is required to generate digests on demand.',
+            message: "This isn't available on this account.",
           },
           HttpStatus.PAYMENT_REQUIRED,
         );
