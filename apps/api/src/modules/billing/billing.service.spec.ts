@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ConfigService } from '@nestjs/config';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 
 import { PrismaService } from '../../prisma/prisma.service';
@@ -156,6 +157,10 @@ describe('BillingService', () => {
           },
         },
         {
+          provide: ConfigService,
+          useValue: { get: (_key: string, fallback?: unknown) => fallback },
+        },
+        {
           // BillingService depends on the PORT, never on XenditService. The mock
           // below speaks only the neutral DTOs.
           provide: PAYMENT_PROVIDER,
@@ -172,6 +177,7 @@ describe('BillingService', () => {
             }),
             retrieveSubscription: jest.fn(),
             cancelSubscription: jest.fn().mockResolvedValue({ id: 'repl_1', status: 'INACTIVE' }),
+            attachSubscriptionPaymentMethod: jest.fn(),
             verifyWebhookSignature: jest.fn(),
             parseWebhookEvent: jest.fn(),
           },

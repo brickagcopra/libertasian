@@ -1,4 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ConfigService } from '@nestjs/config';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -22,6 +24,7 @@ import {
   type ProviderCustomer,
   type ProviderInvoice,
   type ProviderSubscription,
+  type ProviderPaymentMethodAttachment,
   type ProviderSubscriptionSession,
   type WebhookVerification,
 } from './payment-provider.interface';
@@ -47,6 +50,10 @@ class FakeGateway implements PaymentProvider {
   /** Set to a reference id to make the next createCustomer 409 as a duplicate. */
   duplicateFor: string | null = null;
   existingCustomer: ProviderCustomer | null = null;
+  attachments: { providerSubscriptionId: string; paymentMethodId: string; redirectUrl: string }[] =
+    [];
+  /** Set to a URL to make the next attach report a required customer step. */
+  nextActionUrl: string | null = null;
 
   async createCustomer(params: CreateCustomerParams): Promise<ProviderCustomer> {
     if (this.duplicateFor === params.referenceId) {
@@ -78,6 +85,15 @@ class FakeGateway implements PaymentProvider {
   async cancelSubscription(id: string): Promise<ProviderSubscription> {
     this.cancelled.push(id);
     return { id, status: 'INACTIVE' };
+  }
+
+  async attachSubscriptionPaymentMethod(
+    providerSubscriptionId: string,
+    paymentMethodId: string,
+    redirectUrl: string,
+  ): Promise<ProviderPaymentMethodAttachment> {
+    this.attachments.push({ providerSubscriptionId, paymentMethodId, redirectUrl });
+    return { status: 'INCOMPLETE', nextActionUrl: this.nextActionUrl };
   }
 
   async createInvoice(params: CreateInvoiceParams): Promise<ProviderInvoice> {
@@ -182,6 +198,10 @@ describe('BillingService against a non-Xendit PaymentProvider', () => {
       providers: [
         BillingService,
         { provide: PAYMENT_PROVIDER, useValue: gateway },
+        {
+          provide: ConfigService,
+          useValue: { get: (_key: string, fallback?: unknown) => fallback },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: SubscriptionsService, useValue: subscriptionsService },
         { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
@@ -311,5 +331,116 @@ describe('BillingService against a non-Xendit PaymentProvider', () => {
       }),
     );
     expect(lifecycleService.executeTransition).toHaveBeenCalled();
+  });
+
+  describe('authorizeSubscription (gateways with no hosted subscription checkout)', () => {
+    const SUB_ID = '6d5a4e3c-2b1f-4a8e-9c7d-5e4f3a2b1c0d';
+
+    const provisioningRow = (overrides: Record<string, unknown> = {}) => ({
+      id: SUB_ID,
+      organizationId: 'org-1',
+      planCode: 'pro',
+      billingPeriod: 'monthly',
+      status: 'provisioning',
+      provider: 'fakepay',
+      providerSubscriptionId: 'fp_sub_1',
+      ...overrides,
+    });
+
+    it('attaches through the port using only neutral arguments', async () => {
+      prisma.subscription.findUnique.mockResolvedValue(provisioningRow());
+
+      const result = await service.authorizeSubscription('org-1', SUB_ID, 'fp_pm_1', 'user-1');
+
+      expect(gateway.attachments).toEqual([
+        expect.objectContaining({
+          providerSubscriptionId: 'fp_sub_1',
+          paymentMethodId: 'fp_pm_1',
+        }),
+      ]);
+      expect(result.subscriptionId).toBe(SUB_ID);
+    });
+
+    it('builds the 3DS redirect target itself rather than taking one from the caller', async () => {
+      prisma.subscription.findUnique.mockResolvedValue(provisioningRow());
+
+      await service.authorizeSubscription('org-1', SUB_ID, 'fp_pm_1', 'user-1');
+
+      // A caller-supplied redirect would be an open-redirect hole; the URL must
+      // be derived from our own APP_URL and carry only our subscription id.
+      expect(gateway.attachments[0]?.redirectUrl).toContain('/billing/authorize');
+      expect(gateway.attachments[0]?.redirectUrl).toContain(SUB_ID);
+    });
+
+    it('hands back the next action when the gateway requires a further step', async () => {
+      prisma.subscription.findUnique.mockResolvedValue(provisioningRow());
+      gateway.nextActionUrl = 'https://pay.fakepay.test/3ds/abc';
+
+      const result = await service.authorizeSubscription('org-1', SUB_ID, 'fp_pm_1', 'user-1');
+
+      expect(result).toEqual({
+        status: 'requires_action',
+        nextActionUrl: 'https://pay.fakepay.test/3ds/abc',
+        subscriptionId: SUB_ID,
+      });
+    });
+
+    it('leaves the row PROVISIONING in both branches — the webhook is authoritative', async () => {
+      prisma.subscription.findUnique.mockResolvedValue(provisioningRow());
+
+      const pending = await service.authorizeSubscription('org-1', SUB_ID, 'fp_pm_1', 'user-1');
+      expect(pending.status).toBe('pending_confirmation');
+
+      gateway.nextActionUrl = 'https://pay.fakepay.test/3ds/abc';
+      const action = await service.authorizeSubscription('org-1', SUB_ID, 'fp_pm_1', 'user-1');
+      expect(action.status).toBe('requires_action');
+
+      // Neither branch may activate the subscription or touch its status.
+      expect(prisma.subscription.update).not.toHaveBeenCalled();
+      expect(lifecycleService.executeTransition).not.toHaveBeenCalled();
+    });
+
+    it('403s a subscription owned by another organization, without calling the gateway', async () => {
+      prisma.subscription.findUnique.mockResolvedValue(
+        provisioningRow({ organizationId: 'org-other' }),
+      );
+
+      await expect(
+        service.authorizeSubscription('org-1', SUB_ID, 'fp_pm_1', 'user-1'),
+      ).rejects.toThrow(ForbiddenException);
+      expect(gateway.attachments).toHaveLength(0);
+    });
+
+    it('403s an unknown subscription with the same message as a foreign one', async () => {
+      prisma.subscription.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.authorizeSubscription('org-1', SUB_ID, 'fp_pm_1', 'user-1'),
+      ).rejects.toThrow('Subscription not available for authorization');
+      expect(gateway.attachments).toHaveLength(0);
+    });
+
+    it.each(['active', 'cancelled', 'past_due'])(
+      '403s a subscription in %s rather than provisioning',
+      async (status) => {
+        prisma.subscription.findUnique.mockResolvedValue(provisioningRow({ status }));
+
+        await expect(
+          service.authorizeSubscription('org-1', SUB_ID, 'fp_pm_1', 'user-1'),
+        ).rejects.toThrow(ForbiddenException);
+        expect(gateway.attachments).toHaveLength(0);
+      },
+    );
+
+    it('rejects a row that carries no gateway subscription to authorize', async () => {
+      prisma.subscription.findUnique.mockResolvedValue(
+        provisioningRow({ providerSubscriptionId: null }),
+      );
+
+      await expect(
+        service.authorizeSubscription('org-1', SUB_ID, 'fp_pm_1', 'user-1'),
+      ).rejects.toThrow(BadRequestException);
+      expect(gateway.attachments).toHaveLength(0);
+    });
   });
 });

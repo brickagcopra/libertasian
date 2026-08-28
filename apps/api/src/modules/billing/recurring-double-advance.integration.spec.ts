@@ -183,6 +183,7 @@ function buildStack() {
     {} as never, // notificationsService
     noopEntitlement as never, // entitlementService
     noopUsageQuota as never, // usageQuotaService
+    { get: (_k: string, d: unknown) => d } as never, // config (ConfigService)
   );
 
   const controller = new WebhookController(

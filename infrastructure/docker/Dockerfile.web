@@ -34,6 +34,14 @@ ENV NEXT_PUBLIC_GOOGLE_AUTH_ENABLED=$NEXT_PUBLIC_GOOGLE_AUTH_ENABLED
 ARG NEXT_PUBLIC_FEATURE_BAR_EXAM_ANSWERS_PUBLIC=false
 ENV NEXT_PUBLIC_FEATURE_BAR_EXAM_ANSWERS_PUBLIC=$NEXT_PUBLIC_FEATURE_BAR_EXAM_ANSWERS_PUBLIC
 
+# PayMongo PUBLISHABLE key. The browser uses it to tokenize cards directly
+# against PayMongo, so card data never reaches our servers (PCI scope).
+# NEXT_PUBLIC_* vars are inlined at BUILD time, so this needs BOTH the ARG/ENV
+# here AND a build arg in docker-compose.prod.yml. With either one missing the
+# value is undefined at runtime and the /billing/authorize page fails silently.
+ARG NEXT_PUBLIC_PAYMONGO_PUBLIC_KEY=
+ENV NEXT_PUBLIC_PAYMONGO_PUBLIC_KEY=$NEXT_PUBLIC_PAYMONGO_PUBLIC_KEY
+
 # Build shared workspace packages web imports at runtime (dist/ is gitignored
 # and NOT produced by `next build`). Must precede the web build.
 RUN pnpm --filter @libertasian/types build

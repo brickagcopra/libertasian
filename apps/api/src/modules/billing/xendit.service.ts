@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'crypto';
 
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotImplementedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import {
@@ -13,6 +13,7 @@ import {
   type ProviderCustomer,
   type ProviderInvoice,
   type ProviderSubscription,
+  type ProviderPaymentMethodAttachment,
   type ProviderSubscriptionSession,
   type WebhookVerification,
 } from './payment-provider.interface';
@@ -363,6 +364,19 @@ export class XenditService implements PaymentProvider {
       XENDIT_RECURRING_API_VERSION,
     );
     return XenditService.toProviderSubscription(plan);
+  }
+
+  /**
+   * NOT APPLICABLE to Xendit. Its hosted SUBSCRIPTION session collects the
+   * instrument as part of checkout, so a subscription is never left waiting
+   * for one, and this authorization step has no Xendit equivalent. Throwing
+   * keeps the port honest: a caller that reaches here has routed a
+   * PayMongo-only flow at the wrong gateway.
+   */
+  attachSubscriptionPaymentMethod(): Promise<ProviderPaymentMethodAttachment> {
+    throw new NotImplementedException(
+      'Xendit collects the payment instrument in its hosted subscription session; there is no separate authorization step.',
+    );
   }
 
   /**
