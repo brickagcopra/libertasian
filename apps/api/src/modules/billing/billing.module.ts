@@ -6,6 +6,7 @@ import { PromotionsModule } from '../promotions/promotions.module';
 import { BillingController } from './billing.controller';
 import { BillingService } from './billing.service';
 import { PAYMENT_PROVIDER, type PaymentProvider } from './payment-provider.interface';
+import { PaymongoService, PAYMONGO_PROVIDER_SLUG } from './paymongo.service';
 import { XenditService, XENDIT_PROVIDER_SLUG } from './xendit.service';
 import { WebhookController } from './webhook.controller';
 
@@ -16,12 +17,18 @@ import { WebhookController } from './webhook.controller';
  */
 const paymentProviderFactory = {
   provide: PAYMENT_PROVIDER,
-  inject: [ConfigService, XenditService],
-  useFactory: (config: ConfigService, xendit: XenditService): PaymentProvider => {
+  inject: [ConfigService, XenditService, PaymongoService],
+  useFactory: (
+    config: ConfigService,
+    xendit: XenditService,
+    paymongo: PaymongoService,
+  ): PaymentProvider => {
     const slug = config.get<string>('PAYMENT_PROVIDER', XENDIT_PROVIDER_SLUG);
     switch (slug) {
       case XENDIT_PROVIDER_SLUG:
         return xendit;
+      case PAYMONGO_PROVIDER_SLUG:
+        return paymongo;
       default:
         // Fail at boot rather than at the first checkout.
         throw new Error(`Unsupported PAYMENT_PROVIDER: ${slug}`);
@@ -32,7 +39,7 @@ const paymentProviderFactory = {
 @Module({
   imports: [CouponsModule, PromotionsModule],
   controllers: [BillingController, WebhookController],
-  providers: [BillingService, XenditService, paymentProviderFactory],
+  providers: [BillingService, XenditService, PaymongoService, paymentProviderFactory],
   // PAYMENT_PROVIDER is exported for AccountDeletionModule, which cancels a
   // deleted user's plan directly rather than going through the full
   // cancellation flow (emails, state machine, free-tier fallback).

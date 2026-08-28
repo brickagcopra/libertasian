@@ -229,6 +229,17 @@ export class BillingService {
       throw err;
     }
 
+    // Persist the gateway subscription id when the gateway supplied one at
+    // session creation (PayMongo). Xendit leaves it undefined — its
+    // recurring-plan id only arrives on activation — so nothing is written
+    // and its behaviour is byte-identical to before.
+    if (session.providerSubscriptionId) {
+      await this.prisma.subscription.update({
+        where: { id: subscription.id },
+        data: { providerSubscriptionId: session.providerSubscriptionId },
+      });
+    }
+
     await this.auditService.log({
       organizationId,
       actorUserId: userId,

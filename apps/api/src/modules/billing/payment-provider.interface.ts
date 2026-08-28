@@ -20,7 +20,7 @@ export const PAYMENT_PROVIDER = Symbol('PAYMENT_PROVIDER');
  * Subscription / PaymentMethod / Payment, as the `:provider` webhook path
  * segment, and in audit action names (`billing.webhook.<slug>.<event>`).
  */
-export const PAYMENT_PROVIDERS = ['xendit'] as const;
+export const PAYMENT_PROVIDERS = ['xendit', 'paymongo'] as const;
 export type PaymentProviderSlug = (typeof PAYMENT_PROVIDERS)[number];
 
 /**
@@ -78,6 +78,14 @@ export interface ProviderSubscriptionSession {
   checkoutUrl: string | null;
   referenceId: string;
   status?: string;
+  /**
+   * The gateway subscription id, when it is known at session-creation time.
+   * PayMongo returns it immediately; Xendit leaves it undefined (the Xendit
+   * recurring-plan id only arrives on plan activation), so callers MUST treat
+   * it as optional and behave exactly as before when it is absent.
+   * BillingService persists it onto the local Subscription when present.
+   */
+  providerSubscriptionId?: string;
 }
 
 /** A recurring plan / subscription as the gateway sees it. */
