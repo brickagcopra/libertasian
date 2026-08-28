@@ -501,7 +501,9 @@ export class PaymongoService implements PaymentProvider {
 
     const parts = PaymongoService.parseSignatureHeader(header);
     const timestamp = parts['t'];
-    // Prefer the live signature; fall back to the test one.
+    // Prefer the live signature; fall back to the test one. Present-but-empty
+    // fields were dropped at the parse step, so this reaches the populated one
+    // whichever mode the event came from.
     const provided = parts['li'] ?? parts['te'];
     if (!timestamp || !provided) {
       return 'invalid';
@@ -537,7 +539,13 @@ export class PaymongoService implements PaymentProvider {
       if (separator === -1) continue;
       const key = segment.slice(0, separator).trim();
       const value = segment.slice(separator + 1).trim();
-      if (key) parts[key] = value;
+      // Drop EMPTY values. PayMongo populates only the field matching the mode
+      // of the event and sends the OTHER one present but empty (`li=` in test
+      // mode, `te=` in live mode). Storing an empty string would make the
+      // fallback in verifyWebhookSignature bind to it and reject every webhook
+      // from that mode. The PayMongo Node SDK guards the same way, with
+      // explicit non-empty checks on both fields.
+      if (key && value) parts[key] = value;
     }
     return parts;
   }

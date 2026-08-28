@@ -493,6 +493,32 @@ describe('PaymongoService', () => {
       );
     });
 
+    // REGRESSION: PayMongo populates ONLY the field matching the mode of the
+    // event and sends the other one PRESENT BUT EMPTY. `??` does not fall
+    // through on an empty string, so an empty `li=` used to bind as the
+    // signature and every test-mode webhook was rejected — a failure that would
+    // look like "PayMongo is not sending webhooks" in test mode and then
+    // silently start working on the live key swap. Empties are now dropped at
+    // the parse step. The two tests below use the real header shapes; the
+    // fallback test above omits `li=` entirely, which is why this got through.
+    it('accepts the real test-mode header shape, with li present but empty', () => {
+      const t = nowSec();
+      const header = `t=${t},te=${sign(t)},li=`;
+
+      expect(service.verifyWebhookSignature(rawBody, { 'paymongo-signature': header })).toBe(
+        'valid',
+      );
+    });
+
+    it('accepts the real live-mode header shape, with te present but empty', () => {
+      const t = nowSec();
+      const header = `t=${t},te=,li=${sign(t)}`;
+
+      expect(service.verifyWebhookSignature(rawBody, { 'paymongo-signature': header })).toBe(
+        'valid',
+      );
+    });
+
     it('rejects a signature computed with the wrong secret', () => {
       const t = nowSec();
       const header = `t=${t},li=${sign(t, rawBody, 'whsk_wrong_secret')}`;
