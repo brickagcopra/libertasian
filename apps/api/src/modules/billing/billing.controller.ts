@@ -19,7 +19,12 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { TenantGuard } from '../../common/guards/tenant.guard';
 import { TrackEvent } from '../analytics';
 import { BillingService } from './billing.service';
-import { CreateCheckoutDto, PreviewCheckoutDto, CancelSubscriptionDto } from './dto';
+import {
+  CreateCheckoutDto,
+  PreviewCheckoutDto,
+  CancelSubscriptionDto,
+  AuthorizeSubscriptionDto,
+} from './dto';
 
 @ApiTags('Billing')
 @Controller('billing')
@@ -62,6 +67,28 @@ export class BillingController {
     const result = await this.billingService.createCheckout(
       user.organizationId,
       dto,
+      user.sub,
+    );
+    return { success: true, data: result };
+  }
+
+  @Post('authorize')
+  @ApiOperation({
+    summary: 'Attach a tokenized card to a provisioning subscription',
+    description:
+      'For gateways with no hosted subscription checkout (PayMongo). The card is ' +
+      'tokenized in the browser directly against the gateway; this endpoint accepts ' +
+      'ONLY the resulting payment-method id. Raw card details must never reach this API.',
+  })
+  @Throttle({ default: { ttl: 60000, limit: 10 } })
+  async authorizeSubscription(
+    @Body() dto: AuthorizeSubscriptionDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const result = await this.billingService.authorizeSubscription(
+      user.organizationId,
+      dto.subscriptionRef,
+      dto.paymentMethodId,
       user.sub,
     );
     return { success: true, data: result };

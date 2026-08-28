@@ -98,6 +98,17 @@ export interface ProviderSubscription {
   amount?: number;
 }
 
+/** Outcome of attaching a saved instrument to a gateway subscription. */
+export interface ProviderPaymentMethodAttachment {
+  /** Gateway-native subscription status after the attach. */
+  status: string;
+  /**
+   * URL the customer must be sent to in order to finish authorisation (3DS or
+   * a bank redirect), or null when the gateway needed no further step.
+   */
+  nextActionUrl: string | null;
+}
+
 // ---- One-off invoices ----
 
 export interface CreateInvoiceParams {
@@ -253,6 +264,21 @@ export interface PaymentProvider {
   ): Promise<ProviderSubscriptionSession>;
   retrieveSubscription(id: string): Promise<ProviderSubscription>;
   cancelSubscription(id: string): Promise<ProviderSubscription>;
+
+  /**
+   * Attach a saved instrument to a gateway subscription that is waiting for
+   * one, and report whether the customer must complete a further step.
+   *
+   * Only gateways WITHOUT a hosted subscription checkout need this. Xendit
+   * collects the instrument inside its own hosted session and throws
+   * NotImplementedException here; PayMongo requires it, because a PayMongo
+   * subscription stays `incomplete` until an instrument is attached.
+   */
+  attachSubscriptionPaymentMethod(
+    providerSubscriptionId: string,
+    paymentMethodId: string,
+    redirectUrl: string,
+  ): Promise<ProviderPaymentMethodAttachment>;
 
   createInvoice(params: CreateInvoiceParams): Promise<ProviderInvoice>;
   retrieveInvoice(id: string): Promise<ProviderInvoice>;

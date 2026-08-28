@@ -13,6 +13,7 @@ import {
   type ProviderCustomer,
   type ProviderInvoice,
   type ProviderSubscription,
+  type ProviderPaymentMethodAttachment,
   type ProviderSubscriptionSession,
   type RefundEventData,
   type SubscriptionEventData,
@@ -91,6 +92,11 @@ interface PaymongoSubscriptionAttributes {
   /** CENTAVOS, when the surface inlines the plan amount. */
   amount?: number;
   currency?: string;
+  /**
+   * Present on the attach response when the instrument needs a further
+   * customer step (3DS). `next_action_url` is where the customer must go.
+   */
+  setup_intent?: { next_action_url?: string | null; [key: string]: unknown };
   [key: string]: unknown;
 }
 
@@ -415,21 +421,37 @@ export class PaymongoService implements PaymentProvider {
 
   /**
    * Attach a payment method to an `incomplete` subscription, making it
-   * chargeable. Not part of the `PaymentProvider` port — PayMongo is the only
-   * gateway needing an explicit attach step, and it is called by the authorize
-   * page (separate PR), not by BillingService.
+   * chargeable. PayMongo is the only gateway that needs this: it has no
+   * hosted subscription checkout, so the subscription created at checkout
+   * sits at `incomplete` until an instrument is attached here.
+   *
+   * `redirect_url` is where PayMongo returns the customer after any 3DS step.
+   * When the instrument needs that step the response carries
+   * `setup_intent.next_action_url` and the caller must send the customer
+   * there; when it does not, the field is absent and we report null.
    */
-  async attachPaymentMethod(
-    subscriptionId: string,
+  async attachSubscriptionPaymentMethod(
+    providerSubscriptionId: string,
     paymentMethodId: string,
     redirectUrl: string,
-  ): Promise<ProviderSubscription> {
+  ): Promise<ProviderPaymentMethodAttachment> {
     const response = await this.request<PaymongoEnvelope<PaymongoSubscriptionAttributes>>(
       'PUT',
-      `/v1/subscriptions/${subscriptionId}/payment_method`,
+      `/v1/subscriptions/${providerSubscriptionId}/payment_method`,
       { data: { attributes: { payment_method_id: paymentMethodId, redirect_url: redirectUrl } } },
     );
-    return PaymongoService.toProviderSubscription(response.data);
+
+    const attributes = response.data.attributes ?? {};
+    return {
+      status: attributes.status ?? '',
+      // PENDING VENDOR CONFIRMATION: we do not yet know whether PayMongo
+      // always issues a next action here, nor whether the first invoice
+      // charges immediately or waits for the plan anchor. Both shapes are
+      // handled by the caller — see BillingService.authorizeSubscription,
+      // which keeps the subscription PROVISIONING and lets the webhooks
+      // decide either way.
+      nextActionUrl: attributes.setup_intent?.next_action_url ?? null,
+    };
   }
 
   // ---- One-off invoices (Checkout Sessions) ----

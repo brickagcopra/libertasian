@@ -2,11 +2,13 @@ import { randomUUID } from 'crypto';
 
 import {
   BadRequestException,
+  ForbiddenException,
   Inject,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
@@ -63,6 +65,7 @@ export class BillingService {
     private readonly notificationsService: NotificationsService,
     private readonly entitlementService: EntitlementService,
     private readonly usageQuotaService: UsageQuotaService,
+    private readonly config: ConfigService,
   ) {}
 
   // ---- Subscription ----
@@ -262,6 +265,108 @@ export class BillingService {
       checkoutUrl: session.checkoutUrl,
       checkoutSessionId: session.sessionId,
       subscriptionId: subscription.id,
+    };
+  }
+
+  /**
+   * Attach a tokenized card to a subscription that is waiting for one.
+   *
+   * Only gateways WITHOUT a hosted subscription checkout reach this path
+   * (today: PayMongo). The card itself never touches this API — the browser
+   * tokenizes it directly against the gateway and sends us only the resulting
+   * payment-method id, which is what keeps us out of full PCI scope.
+   *
+   * Ownership and state are verified BEFORE any gateway call: the row must
+   * belong to the caller's organization and must still be PROVISIONING.
+   * Anything else is a 403 — a subscription that is already active, cancelled
+   * or someone else's must not be re-authorized.
+   */
+  async authorizeSubscription(
+    organizationId: string,
+    subscriptionRef: string,
+    paymentMethodId: string,
+    userId: string,
+  ) {
+    const sub = await this.prisma.subscription.findUnique({
+      where: { id: subscriptionRef },
+    });
+
+    // One message for both failures: a caller probing subscription ids should
+    // not learn which ones exist.
+    if (!sub || sub.organizationId !== organizationId) {
+      throw new ForbiddenException('Subscription not available for authorization');
+    }
+    if (sub.status !== SubscriptionState.PROVISIONING) {
+      throw new ForbiddenException('Subscription not available for authorization');
+    }
+
+    if (!sub.providerSubscriptionId) {
+      // The gateway id is written at checkout for providers that issue one up
+      // front. Its absence means this row came from a hosted-checkout gateway,
+      // which has no authorization step to perform.
+      throw new BadRequestException('Subscription has no gateway subscription to authorize');
+    }
+
+    // Where the gateway returns the customer after a 3DS step. Built here, not
+    // taken from the request: a caller-supplied redirect target would be an
+    // open-redirect hole.
+    const appUrl = this.config.get<string>('APP_URL', 'http://localhost:3000');
+    const redirectUrl = `${appUrl}/billing/authorize?ref=${encodeURIComponent(sub.id)}&returned=1`;
+
+    const attachment = await this.paymentProvider.attachSubscriptionPaymentMethod(
+      sub.providerSubscriptionId,
+      paymentMethodId,
+      redirectUrl,
+    );
+
+    await this.auditService.log({
+      organizationId,
+      actorUserId: userId,
+      actorType: 'user',
+      action: 'billing.subscription_authorized',
+      entityType: 'subscription',
+      entityId: sub.id,
+      // PII-safe: ids and gateway status only, never card data.
+      metadata: {
+        provider: this.paymentProvider.slug,
+        providerSubscriptionId: sub.providerSubscriptionId,
+        paymentMethodId,
+        gatewayStatus: attachment.status,
+        requiresAction: attachment.nextActionUrl !== null,
+      },
+    });
+
+    // PENDING VENDOR CONFIRMATION — the one unresolved branch in this flow.
+    // We do not yet know whether PayMongo charges the first invoice
+    // immediately on attach or waits for the plan anchor, nor whether
+    // `next_action_url` is always issued. So we do not decide activation here
+    // at all:
+    //   - a next action means the customer still has a step to complete, so we
+    //     hand the URL back and let the client redirect there;
+    //   - no next action means there is nothing left for the customer to do,
+    //     and the subscription simply waits.
+    // EITHER WAY the row stays PROVISIONING. `subscription.updated` (status
+    // active) and `subscription.invoice.paid` are what activate it, exactly as
+    // `recurring.plan.activated` is for Xendit. Never mark it active here or
+    // client-side: the webhook is authoritative.
+    if (attachment.nextActionUrl) {
+      this.logger.log(
+        `Subscription ${sub.id} authorization requires a further customer step`,
+      );
+      return {
+        status: 'requires_action' as const,
+        nextActionUrl: attachment.nextActionUrl,
+        subscriptionId: sub.id,
+      };
+    }
+
+    this.logger.log(
+      `Subscription ${sub.id} instrument attached; awaiting gateway webhook to activate`,
+    );
+    return {
+      status: 'pending_confirmation' as const,
+      nextActionUrl: null,
+      subscriptionId: sub.id,
     };
   }
 

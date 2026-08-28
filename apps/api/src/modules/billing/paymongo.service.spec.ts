@@ -349,11 +349,15 @@ describe('PaymongoService', () => {
     });
   });
 
-  describe('attachPaymentMethod', () => {
+  describe('attachSubscriptionPaymentMethod', () => {
     it('PUTs the instrument and redirect url', async () => {
       global.fetch = jest.fn().mockResolvedValue(okOnce(envelope('sub_1', { status: 'active' })));
 
-      await service.attachPaymentMethod('sub_1', 'pm_1', 'https://app.test/billing/return');
+      await service.attachSubscriptionPaymentMethod(
+        'sub_1',
+        'pm_1',
+        'https://app.test/billing/return',
+      );
 
       const [url, init] = (global.fetch as jest.Mock).mock.calls[0];
       expect(url).toBe('https://api.paymongo.com/v1/subscriptions/sub_1/payment_method');
@@ -366,6 +370,56 @@ describe('PaymongoService', () => {
           },
         },
       });
+    });
+
+    it('surfaces setup_intent.next_action_url when the card needs a further step', async () => {
+      global.fetch = jest.fn().mockResolvedValue(
+        okOnce(
+          envelope('sub_1', {
+            status: 'incomplete',
+            setup_intent: { next_action_url: 'https://paymongo.test/3ds/abc' },
+          }),
+        ),
+      );
+
+      const result = await service.attachSubscriptionPaymentMethod(
+        'sub_1',
+        'pm_1',
+        'https://app.test/billing/return',
+      );
+
+      expect(result).toEqual({
+        status: 'incomplete',
+        nextActionUrl: 'https://paymongo.test/3ds/abc',
+      });
+    });
+
+    it('reports a null next action when the gateway issues none', async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValue(okOnce(envelope('sub_1', { status: 'active' })));
+
+      const result = await service.attachSubscriptionPaymentMethod(
+        'sub_1',
+        'pm_1',
+        'https://app.test/billing/return',
+      );
+
+      expect(result).toEqual({ status: 'active', nextActionUrl: null });
+    });
+
+    it('treats an explicitly null next_action_url as no next action', async () => {
+      global.fetch = jest.fn().mockResolvedValue(
+        okOnce(envelope('sub_1', { status: 'active', setup_intent: { next_action_url: null } })),
+      );
+
+      const result = await service.attachSubscriptionPaymentMethod(
+        'sub_1',
+        'pm_1',
+        'https://app.test/billing/return',
+      );
+
+      expect(result.nextActionUrl).toBeNull();
     });
   });
 
