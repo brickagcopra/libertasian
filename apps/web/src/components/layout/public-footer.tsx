@@ -5,6 +5,8 @@ import {
   getHomepageContent,
 } from '@/features/homepage/server/homepage-content';
 
+import { APP_STORE_URL, AppStoreQr } from './app-store-qr';
+
 export async function PublicFooter() {
   const content = await getHomepageContent();
   const tagline = content.footer.tagline ?? content.footer.brandDescription;
@@ -82,6 +84,31 @@ export async function PublicFooter() {
                 {content.footer.contactEmail}
               </a>
             </address>
+
+            {/*
+              Scan-to-install for the iOS listing that went live 2026-08-28. The
+              panel is white with its own padding because the code carries a
+              quiet zone that the dark footer would otherwise swallow; see
+              app-store-qr.tsx for why it is not recolored to the footer theme.
+            */}
+            <div className="mt-6">
+              <p
+                className="mb-2 text-[11px] uppercase tracking-[1px] opacity-50"
+                style={{ fontFamily: 'var(--font-mono)', color: 'var(--warm-cream)' }}
+              >
+                Get the iOS app
+              </p>
+              <a
+                href={APP_STORE_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Get the LIBERTASIAN iOS app on the App Store"
+                title="Get the LIBERTASIAN iOS app on the App Store"
+                className="inline-block rounded-xl bg-white p-2.5 transition-opacity hover:opacity-90"
+              >
+                <AppStoreQr />
+              </a>
+            </div>
           </div>
 
           <FooterColumn heading="Product" items={content.footer.productLinks} />
@@ -140,17 +167,34 @@ function FooterColumn({
         {heading}
       </p>
       <ul className="flex flex-col gap-2.5">
-        {items.map((link) => (
-          <li key={`${heading}-${link.href}-${link.label}`}>
-            <Link
-              href={link.href}
-              className="text-sm opacity-85 transition-opacity hover:opacity-100"
-              style={{ color: 'var(--warm-cream)' }}
-            >
-              {link.label}
-            </Link>
-          </li>
-        ))}
+        {items.map((link) => {
+          // Footer links were all internal until the App Store listing landed.
+          // Absolute URLs leave the site, so they get a new tab and the
+          // rel that denies the opened page a handle on window.opener.
+          const isExternal = link.href.startsWith('http');
+          const linkClassName = 'text-sm opacity-85 transition-opacity hover:opacity-100';
+          const linkStyle = { color: 'var(--warm-cream)' };
+
+          return (
+            <li key={`${heading}-${link.href}-${link.label}`}>
+              {isExternal ? (
+                <a
+                  href={link.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={linkClassName}
+                  style={linkStyle}
+                >
+                  {link.label}
+                </a>
+              ) : (
+                <Link href={link.href} className={linkClassName} style={linkStyle}>
+                  {link.label}
+                </Link>
+              )}
+            </li>
+          );
+        })}
       </ul>
     </div>
   );

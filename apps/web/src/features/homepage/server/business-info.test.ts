@@ -146,10 +146,16 @@ describe('footer links — KYC reachability', () => {
     expect(redirectsToLogin(href as string)).toBe(false);
   });
 
-  it('does not advertise app-store listings that do not exist', () => {
+  // The 2026-08-05 KYC flag was for advertising apps that were not downloadable.
+  // iOS shipped 2026-08-28 so it is advertised again, pinned to the real listing
+  // rather than a placeholder href; Play still 404s, so Android stays out.
+  it('advertises only the app-store listing that exists', () => {
     const labels = footer.productLinks.map((l) => l.label);
-    expect(labels).not.toContain('iOS App');
     expect(labels).not.toContain('Android App');
+    expect(labels).toContain('iOS App');
+
+    const ios = footer.productLinks.find((l) => l.label === 'iOS App');
+    expect(ios?.href).toBe('https://apps.apple.com/app/libertasian/id6788971669');
   });
 
   it('points "About" at the About page, not the blog', () => {

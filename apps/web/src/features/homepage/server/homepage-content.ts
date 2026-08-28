@@ -373,10 +373,14 @@ export const DEFAULT_HOMEPAGE_CONTENT: HomepageContent = {
       { label: 'Case Digests', href: '/#features' },
       { label: 'Codal Reader', href: '/#features' },
       { label: 'AI Study Assistant', href: '/#features' },
-      // "iOS App" and "Android App" were removed 2026-08-05: neither store
-      // listing exists (App Store bundleId lookup for com.libertasian.app
-      // returns 0 results, Play returns 404). Linking them to /#features
-      // misrepresented availability.
+      // Both app links were removed 2026-08-05 because neither listing existed,
+      // and a payment-gateway KYC reviewer flagged the site for advertising
+      // apps you could not download. iOS went live 2026-08-28 and is back below.
+      //
+      // "Android App" stays out until its Play listing stops returning 404.
+      // Re-add it only against a real, verified listing URL — not a /#features
+      // placeholder, which is what caused the flag.
+      { label: 'iOS App', href: 'https://apps.apple.com/app/libertasian/id6788971669' },
     ],
     legalLinks: [
       { label: 'Terms of Service', href: '/terms' },
