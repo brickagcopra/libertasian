@@ -9,7 +9,7 @@ document exists ahead of the branch that implements it.
 *Decision / Why / If you disagree* block. They are deliberately separable — you can
 reject `D9` (grace period) or `D14` (SurfaceGuard) without touching the port, the
 schema or the state mapping. Open questions for brick are numbered `Q1`–`Q8` and
-collected in §13.3.
+collected in §13.4.
 
 **Sourcing rule used throughout:** anything asserted about RevenueCat or the stores
 is quoted from a doc fetched while writing this, with the URL in §15. Where I could
@@ -49,7 +49,22 @@ defaulted into.
 | Sellable via IAP | **`pro` only.** `edu`, `team`, `enterprise` remain web/sales-led and must be neither purchasable **nor unlockable** from mobile. |
 | Platforms | iOS and Android, together. |
 | Price intent | Mark up so net-after-store-commission ≈ the web net, at the 15% Small Business / reduced-service-fee rate. Web `pro` is ₱999/mo, ₱9,990/yr. |
-| `PAYWALL_ENFORCED` | Stays `false`. Not touched by this design. See `Q2` for the sequencing consequence — flagging it is not the same as proposing to change it. |
+| `PAYWALL_ENFORCED` | Stays `false`. Not touched by this design. **Verified `false` in production on 2026-08-29** (see below). See `Q2` for the sequencing consequence — flagging it is not the same as proposing to change it — and §13.1 for a finding about *how* it is `false`. |
+
+**`PAYWALL_ENFORCED` is verified `false` in production**, three independent ways on
+2026-08-29:
+
+| Check | Result |
+|---|---|
+| Production `.env`, line 154 | `PAYWALL_ENFORCED=false` |
+| Live API container, `printenv` | `false` |
+| A free org's `GET /quotas/usage` | `previewOnly=false`, `digestsPerMonth=-1`, `cameraScansPerMonth=20` — i.e. the `pro` shape |
+
+The third check is the one that matters, because it observes the *effect* rather
+than the config: a free-tier org is resolving to `pro` entitlements today, which is
+exactly what `getEntitlements()` does when the kill switch is off. This is no longer
+an assumption the design rests on — `Q2` (when it flips, and globally or per-cohort)
+stays open, but it is now a scheduling question rather than a premise.
 
 Verified against the codebase while writing, so the design does not restate them as
 questions:
@@ -1099,7 +1114,7 @@ needs brick's accountant, not an engineering guess, and no answer is asserted he
 At the **30%** rate — before Small Business Program enrolment, or after crossing the
 threshold — every figure roughly halves the margin: ₱1,190 nets ₱833.00 and ₱11,750
 nets ₱8,225.00, both **below** the web net. Enrolment in the reduced-rate programmes
-is therefore not an optimisation, it is a precondition (§13.1).
+is therefore not an optimisation, it is a precondition (§13.2).
 
 ### What is and is not verifiable about the price points themselves
 
@@ -1125,7 +1140,49 @@ someone has entered the number in Play Console.)
 
 ## 13. Rollout sequence and open questions
 
-### 13.1 Blocked on brick's Apple / Google account work
+### 13.1 Prerequisite finding — `PAYWALL_ENFORCED` fails unsafe
+
+This surfaced while verifying that the flag really is `false` in production (§1),
+and it is a live risk to the **already-approved** iOS binary, independent of IAP.
+
+**The finding.** Production is `false` because of one line in one file. Both
+defaults point the other way:
+
+| Location | Value |
+|---|---|
+| `.env.example:319` | `PAYWALL_ENFORCED=true` |
+| `apps/api/src/app.module.ts:172` | `Joi.boolean().default(true)` |
+| `apps/api/src/common/config/paywall.ts` | *"anything else — including the var being absent — means enforced"* |
+
+So the flag is `false` only for as long as that one production `.env` line survives.
+Lose it — a rebuilt environment, a new host, a deploy seeded from `.env.example`, a
+container that comes up without the var — and the flag silently becomes `true`.
+Freemium activates. `previewOnly` flips to `true`. The shipped, approved iOS binary
+starts hiding paid surfaces and returning `402 subscription_required` on the paths
+that can still refuse — and it does so **with no way to buy**, which is precisely
+the Guideline 3.1.1 pattern build 23 was rejected for.
+
+**What makes it worse than an ordinary misconfiguration:** there is no review gate
+in the path. The binary is already approved and on devices; the behaviour change
+happens server-side, instantly, to every installed copy, with nothing between the
+missing env line and an App Store violation. It would be discovered by a user or by
+Apple, not by a deploy check.
+
+The `paywall.ts` comment (*"a typo can never silently open the paid surface"*) is
+correct about the direction it was written to defend — a typo cannot accidentally
+*disable* the paywall. But the current business need is the opposite direction, and
+in that direction the same code fails open.
+
+**Prerequisite: flip both defaults to `false`,** so the safe direction is the
+default direction and the production `.env` line becomes a redundant restatement
+rather than the only thing holding the line. The day IAP ships, both go back to
+`true` deliberately — which is a reviewed change, not an absence.
+
+**This is a separate one-line PR, not part of the IAP work.** It should land
+immediately and independently: it protects the binary that is live today, and
+nothing in this design depends on it.
+
+### 13.2 Blocked on brick's Apple / Google account work
 
 Nothing store-side can be configured until these land. In particular, **IAP products
 cannot be created at all without an active Paid Applications Agreement.**
@@ -1142,7 +1199,7 @@ cannot be created at all without an active Paid Applications Agreement.**
 The ASC app record (6788971669) and the iOS signing credentials already exist, so the
 app-level prerequisites are done — this is purely the commercial/legal layer.
 
-### 13.2 What can be built and tested first
+### 13.3 What can be built and tested first
 
 | Phase | Needs | Work |
 |---|---|---|
@@ -1156,12 +1213,12 @@ app-level prerequisites are done — this is purely the commercial/legal layer.
 Phase 0 is the large majority of the engineering work and it is **completely
 unblocked today**.
 
-### 13.3 Open questions for brick
+### 13.4 Open questions for brick
 
 | # | Question | Why it cannot be defaulted |
 |---|---|---|
 | **Q1** | Is the web ₱999 VAT-inclusive, and do Apple/Google withhold 12% PH VAT before taking commission? | Moves the mobile shelf price by 12% (§12). An accountant's question, not an engineer's |
-| **Q2** | `PAYWALL_ENFORCED` is `false`, so `getEntitlements` returns `pro` (`previewOnly: false`) to **every** org. While that holds, an IAP purchase sells something the account already has — which App Review will notice, and which makes the purchase surface untestable. When does it flip, and globally or per-cohort? | Not a proposal to change it. It is a hard sequencing dependency for Phase 5 and it has to be scheduled |
+| **Q2** | `PAYWALL_ENFORCED` is `false` — **verified in production on 2026-08-29** (§1) — so `getEntitlements` returns `pro` (`previewOnly: false`) to **every** org. While that holds, an IAP purchase sells something the account already has, which App Review will notice and which makes the purchase surface untestable. When does it flip, and globally or per-cohort? | Not a proposal to change it, and no longer resting on an unverified premise. It is a hard sequencing dependency for Phase 5 and it has to be scheduled. Independently of the schedule, §13.1 must land first |
 | **Q3** | Block IAP entirely for orgs with >1 member (recommended), or let the billing owner buy for the whole org? | `pro` is `maxSeats: 1`, and one seed org already has 5 members (§5.2) |
 | **Q4** | After IAP is approved: keep hiding paid surfaces (A) or show them with a purchase entry point (B)? | Product/conversion call. C is the mechanism either way (§11) |
 | **Q5** | Accept the stores' own grace-period behaviour (recommended), or run ours in parallel? | Two authorities that disagree revoke at the wrong time (D9) |
@@ -1193,9 +1250,11 @@ Listed rather than guessed.
    around a documented guarantee.
 4. **PH VAT mechanics on store proceeds** (`Q1`). Apple's Small Business Program page
    and the general commission docs do not spell out the PH order of operations.
-5. **Whether `PAYWALL_ENFORCED` is actually `false` in production.** `.env.example`
-   ships `true` and the Joi default in `app.module.ts` is `true`; the brief states
-   production is `false`. I took the brief. `Q2` depends on which is true.
+
+> **Resolved since the first draft.** "Whether `PAYWALL_ENFORCED` is actually `false`
+> in production" was item 5 here. It was verified `false` three ways on 2026-08-29
+> and the answer now lives in §1. Verifying it is what surfaced the fail-unsafe
+> finding in §13.1.
 
 ---
 
