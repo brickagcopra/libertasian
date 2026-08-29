@@ -8,12 +8,12 @@ document exists ahead of the branch that implements it.
 **How to review this:** every decision is numbered `D1`–`D14` and carries its own
 *Decision / Why / If you disagree* block. They are deliberately separable — you can
 reject `D9` (grace period) or `D14` (SurfaceGuard) without touching the port, the
-schema or the state mapping. Open questions for brick are numbered `Q1`–`Q8` and
-collected in §13.4.
+schema or the state mapping. Open questions for brick are numbered `Q1`–`Q10` and
+collected in §14.4.
 
 **Sourcing rule used throughout:** anything asserted about RevenueCat or the stores
-is quoted from a doc fetched while writing this, with the URL in §15. Where I could
-not verify something, it says so in the text rather than reading as fact. §14 lists
+is quoted from a doc fetched while writing this, with the URL in §16. Where I could
+not verify something, it says so in the text rather than reading as fact. §15 lists
 what stayed unverified.
 
 ---
@@ -32,9 +32,10 @@ what stayed unverified.
 10. [The copy-test collision](#10-the-copy-test-collision)
 11. [The SurfaceGuard interaction](#11-the-surfaceguard-interaction)
 12. [Store price points](#12-store-price-points)
-13. [Rollout sequence and open questions](#13-rollout-sequence-and-open-questions)
-14. [What I could not determine](#14-what-i-could-not-determine)
-15. [References](#15-references)
+13. [The "unlimited" entitlement review](#13-the-unlimited-entitlement-review)
+14. [Rollout sequence and open questions](#14-rollout-sequence-and-open-questions)
+15. [What I could not determine](#15-what-i-could-not-determine)
+16. [References](#16-references)
 
 ---
 
@@ -46,10 +47,11 @@ defaulted into.
 | | |
 |---|---|
 | SDK | RevenueCat (`react-native-purchases`) for **both** stores. Not native StoreKit 2 / Play Billing. One SDK, one webhook, instead of Apple ASSN V2 + Google Pub/Sub RTDN. |
-| Sellable via IAP | **`pro` only.** `edu`, `team`, `enterprise` remain web/sales-led and must be neither purchasable **nor unlockable** from mobile. |
+| Sellable via IAP | **`pro` and `edu`.** (Revised — the first draft said `pro` only.) `team` and `enterprise` remain web/sales-led and must be neither purchasable **nor unlockable** from mobile. `edu` raises a question the design cannot answer on its own — see `Q9`. |
 | Platforms | iOS and Android, together. |
-| Price intent | Mark up so net-after-store-commission ≈ the web net, at the 15% Small Business / reduced-service-fee rate. Web `pro` is ₱999/mo, ₱9,990/yr. |
-| `PAYWALL_ENFORCED` | Stays `false`. Not touched by this design. **Verified `false` in production on 2026-08-29** (see below). See `Q2` for the sequencing consequence — flagging it is not the same as proposing to change it — and §13.1 for a finding about *how* it is `false`. |
+| Apple account | The existing **personal** developer account. No entity conversion, no D-U-N-S. Seller name stays "BRICK DE MANUEL AGCOPRA". See §14.2 for what deferring conversion costs. |
+| Price intent | Mark up so net-after-store-commission ≈ the web net, at the 15% Small Business / reduced-service-fee rate. Web `pro` is ₱999/mo and ₱9,990/yr; web `edu` is ₱299/mo and ₱2,990/yr. |
+| `PAYWALL_ENFORCED` | Stays `false`. Not touched by this design. **Verified `false` in production on 2026-08-29** (see below). See `Q2` for the sequencing consequence — flagging it is not the same as proposing to change it — and §14.1 for a finding about *how* it is `false`. |
 
 **`PAYWALL_ENFORCED` is verified `false` in production**, three independent ways on
 2026-08-29:
@@ -241,7 +243,7 @@ rewrite subscription rows.
 **Shared (reused verbatim, never forked):**
 
 - The `Subscription` row itself. An IAP subscriber is a `Subscription` with
-  `planCode='pro'` and a store `provider`. Everything downstream —
+  `planCode` of `'pro'` or `'edu'` and a store `provider`. Everything downstream —
   `getActiveSubscription`, `ACCESSIBLE_STATE_VALUES`, `SubscriptionGuard`,
   `/quotas/usage` — keeps working with no knowledge of IAP.
 - `subscription-state-machine.ts`. Not one new state, not one new action. §4 maps
@@ -377,7 +379,7 @@ CREATE TABLE store_purchases (
   rc_transaction_id           varchar(255) NOT NULL,
   rc_original_transaction_id  varchar(255) NOT NULL,
   -- The raw store token when it differs from RevenueCat's id. TEXT on purpose:
-  -- a Google Play purchase token is long and its ceiling is undocumented (§14).
+  -- a Google Play purchase token is long and its ceiling is undocumented (§15).
   store_transaction_id        text,
 
   -- TRIAL | INTRO | NORMAL | PROMOTIONAL | PREPAID
@@ -445,26 +447,40 @@ never `DELETE`. `payload_json` carries no PII — the App User ID is an org uuid
 **Decision.** A constant, validated at boot:
 
 ```ts
+/**
+ * The plans that may be sold as IAP. `team` and `enterprise` are absent by
+ * design and adding either is a compile error, not a config change — see the
+ * `SellablePlanCode` union below.
+ */
+type SellablePlanCode = 'pro' | 'edu';
+
 export const STORE_PRODUCT_MAP = {
   'com.libertasian.pro.monthly': { planCode: 'pro', billingPeriod: 'monthly' },
   'com.libertasian.pro.annual':  { planCode: 'pro', billingPeriod: 'annual'  },
+  'com.libertasian.edu.monthly': { planCode: 'edu', billingPeriod: 'monthly' },
+  'com.libertasian.edu.annual':  { planCode: 'edu', billingPeriod: 'annual'  },
 } as const satisfies Record<
   string,
-  { planCode: 'pro'; billingPeriod: 'monthly' | 'annual' }
+  { planCode: SellablePlanCode; billingPeriod: 'monthly' | 'annual' }
 >;
 ```
 
 An event whose `product_id` is absent from this map is **recorded and refused** — it
-never grants anything. This is the enforcement point for "only `pro` is sold as
-IAP": there is no product id in the map that resolves to `edu`, `team` or
+never grants anything. This is the enforcement point for "only `pro` and `edu` are
+sold as IAP": there is no product id in the map that resolves to `team` or
 `enterprise`, so no store event, however malformed or hostile, can unlock them. The
-literal type on `planCode` makes adding one a compile error rather than a config
-mistake.
+`SellablePlanCode` union makes adding one a compile error rather than a config
+mistake — which is the whole reason it is a narrow named type and not `string`.
 
-**Why not a `plan_store_products` table.** Two rows, changed only when a product is
+**Note that this map does not, and cannot, enforce student eligibility for `edu`.**
+It maps a product id to a plan; it has no idea who tapped Buy. That gap is `Q9`
+(§14.4) and it is a product decision, not something this file can close.
+
+**Why not a `plan_store_products` table.** Four rows, changed only when a product is
 created in App Store Connect, which is itself a manual act. A table adds a
-migration, a seed and an admin surface to manage two constants, and turns the "only
-`pro`" guarantee into a runtime data question instead of a compile-time one.
+migration, a seed and an admin surface to manage four constants, and turns the
+"`pro` and `edu` only" guarantee into a runtime data question instead of a
+compile-time one.
 
 **If you disagree:** promoting this to a table later is a pure add — the map becomes
 the seed. Cheap to revisit; that is what makes it safe to start narrow.
@@ -490,9 +506,15 @@ Fields][rc-events].
 
 ### 4.1 The mapping
 
+**Two plans, four products, one resolver.** Every row below is plan-agnostic:
+`planCode` and `billingPeriod` come from `STORE_PRODUCT_MAP[product_id]` (D7) and
+are carried on the `store_purchases` row, so nothing in the lifecycle branches on
+which plan was bought. The one place the plan matters is `PRODUCT_CHANGE`, which
+can now cross plans as well as billing periods — see D8.
+
 | RevenueCat event | Current state | Action | Resulting state | Notes |
 |---|---|---|---|---|
-| **`INITIAL_PURCHASE`** `period_type != TRIAL` | *(none)* | create row `provisioning`, then `ACTIVATE` | `active` | Row created with `provider='app_store'\|'play_store'`, `planCode='pro'` |
+| **`INITIAL_PURCHASE`** `period_type != TRIAL` | *(none)* | create row `provisioning`, then `ACTIVATE` | `active` | Row created with `provider='app_store'\|'play_store'` and `planCode` resolved from the product id — `'pro'` or `'edu'`, never assumed |
 | **`INITIAL_PURCHASE`** `period_type == TRIAL` | *(none)* | create row `provisioning`, then `START_TRIAL` | `trialing` | `trialing` ∈ `ACCESSIBLE_STATES`, so entitlement holds. Schedules `trial_expiry` — see finding (f) |
 | `INITIAL_PURCHASE` | `active` / `trialing` already | *(none)* | unchanged | Idempotent replay. Log and ack |
 | `INITIAL_PURCHASE` | a web sub is accessible | **honour + cancel web** | see §6 | §6.1 |
@@ -519,7 +541,7 @@ Fields][rc-events].
 | `EXPIRATION` | `cancelled` / `expired` / `trial_expired` | none | unchanged | Already terminal — the same guard `handlePlanDeactivated` uses |
 | **`REFUND_REVERSED`** | `cancelled` | `REACTIVATE` | `active` | §8 |
 | `REFUND_REVERSED` | `active` | none | unchanged | Nothing was revoked |
-| **`PRODUCT_CHANGE`** | any | **none — D8** | unchanged | Record the pending product; the following `RENEWAL` applies it |
+| **`PRODUCT_CHANGE`** | any | **none — D8** | unchanged | Record the pending product; the following `RENEWAL` applies it. Now covers `edu` ↔ `pro` as well as monthly ↔ annual |
 | **`SUBSCRIPTION_PAUSED`** | any | **none — D9** | unchanged | Play-only. The later `EXPIRATION` (`expiration_reason = SUBSCRIPTION_PAUSED`) does the work |
 | **`SUBSCRIPTION_EXTENDED`** | any accessible | none | unchanged | Update `currentPeriodEnd` and `store_purchases.expires_at` only |
 | **`TRANSFER`** | — | see §5.3 | — | Revoke on the losing org, grant on the gaining one |
@@ -576,17 +598,37 @@ PR's tests.
 
 **Decision.** On `PRODUCT_CHANGE`, write the new `product_id` to
 `store_purchases.metadata_json.pending_product_id`. Do not transition. The next
-`RENEWAL` carries the new `product_id`, which updates `billing_period` and creates
-the new `store_purchases` row.
+`RENEWAL` carries the new `product_id`, which updates `planCode` **and**
+`billing_period` and creates the new `store_purchases` row.
 
 **Why.** The machine's `UPGRADE` / `DOWNGRADE` both go to `MIGRATING` and declare
 `PRORATE_PAYMENT` and `CREATE_MIGRATION_RECORD` side effects. Both are wrong here:
 the store already prorated (or deferred), and we hold no money to prorate with —
 `SubscriptionMigration` rows would carry fabricated centavo amounts into the
-accounting tables. Separately, monthly ↔ annual within `pro` is not a plan change at
-all: `planCode` is `'pro'` before and after, entitlements are identical, and
-`MIGRATING` — while accessible — is a state nothing on this path would ever move it
-out of.
+accounting tables. And `MIGRATING`, while accessible, is a state nothing on this
+path would ever move it out of.
+
+**Now that two plans are sold, `PRODUCT_CHANGE` has two shapes and the deferral
+matters more, not less:**
+
+| Change | `planCode` | Deferral consequence |
+|---|---|---|
+| monthly ↔ annual within one plan | unchanged | Entitlements identical throughout. Nothing to get wrong |
+| `edu` ↔ `pro` | **changes** | Entitlements differ. The user keeps the OLD plan's entitlements until the change actually takes effect at the next renewal |
+
+The second row is the correct behaviour, not a compromise: on both stores a
+plan change of this kind takes effect at the next renewal, so the user has not yet
+paid for the new plan when the event arrives. Granting `pro` entitlements the
+instant an `edu` subscriber schedules an upgrade would hand out a month of the
+higher tier for free — and, in the other direction, revoking down to `edu` early
+would take away something already paid for. **Following the store's own timing is
+what keeps entitlement and money aligned**; our applying it eagerly is what would
+break them.
+
+The one thing this does require: the `RENEWAL` handler must write `planCode` from
+`STORE_PRODUCT_MAP`, not carry forward whatever the row already had. A handler that
+only updates `billing_period` would leave an upgraded subscriber on `edu`
+indefinitely. That belongs in a test.
 
 **If you disagree:** the alternative is `UPGRADE`/`DOWNGRADE` with the two money
 side effects suppressed for store providers. That means a `provider ===` branch
@@ -668,9 +710,11 @@ who can be removed from it. Recorded as the runner-up, not dismissed.
 ### 5.2 Which org a purchase entitles, and who may buy
 
 **The org whose id was the `app_user_id` at purchase time** — the buyer's current
-org. If that org has 5 members, **all 5 get `pro`**. There is no seat accounting on
-the IAP path: `pro` is `defaultSeats: 1, maxSeats: 1` in the plan seed, so a
-multi-member org on `pro` is already a state web checkout would not have sold.
+org. If that org has 5 members, **all 5 get the purchased plan**. There is no seat
+accounting on the IAP path, and both sellable plans are single-seat in the plan
+seed (`pro`: `defaultSeats: 1, maxSeats: 1`; `edu`: a student plan by definition),
+so a multi-member org on either is already a state web checkout would not have
+sold.
 
 Two guards follow:
 
@@ -680,16 +724,21 @@ Two guards follow:
    refundable only by them, but it grants the whole tenant — a non-owner buying for
    an org they can be removed from tomorrow is a support ticket with no clean
    resolution.
-2. **Recommended: orgs with more than one active member cannot buy `pro` via IAP at
-   all.** `purchase-intent` returns `409 multi_member_org` and the surface stays
-   hidden. Those orgs are `team`/`enterprise` prospects and stay web/sales-led,
-   which is already the settled rule for those plans.
+2. **Recommended: orgs with more than one active member cannot buy `pro` or `edu`
+   via IAP at all.** `purchase-intent` returns `409 multi_member_org` and the
+   surface stays hidden. Those orgs are `team`/`enterprise` prospects and stay
+   web/sales-led, which is already the settled rule for those plans.
 
 Guard 2 is a product decision — see `Q3`. Guard 1 stands either way.
 
+**`edu` makes guard 2 more attractive, not less.** A multi-member org buying the
+discounted student tier is the cheapest possible way to put several working lawyers
+on a plan priced for one student. The eligibility question itself is `Q9`; this is
+the one part of it the org rule can close on its own.
+
 If an `INITIAL_PURCHASE` arrives for a multi-member org anyway (old client, or the
 org grew between intent and purchase): **honour it.** The money is already taken and
-cannot be returned by us. Grant `pro` to the org and raise
+cannot be returned by us. Grant the purchased plan to the org and raise
 `billing.iap.multi_member_grant` for support to follow up. Refusing entitlement for
 a completed store purchase is the one failure mode that gets an app pulled.
 
@@ -1070,30 +1119,49 @@ answer is A, the flag simply never flips and nothing was wasted.
 
 ### The target, and the number that decides it
 
-Web `pro`: **₱999.00/mo** (`99900` centavos) and **₱9,990.00/yr** (`999000`), per
-`prisma/seeds/plan-seed.ts`.
+Web prices, per `prisma/seeds/plan-seed.ts`:
+
+| Plan | Monthly | Annual |
+|---|---|---|
+| `pro` | **₱999.00** (`99900` centavos) | **₱9,990.00** (`999000`) |
+| `edu` | **₱299.00** (`29900`) | **₱2,990.00** (`299000`) |
 
 Netting the same at a 15% store commission, commission only:
 
-- Monthly: `999 ÷ 0.85` = **₱1,175.29**
-- Annual: `9,990 ÷ 0.85` = **₱11,752.94**
+| Plan | Monthly target | Annual target |
+|---|---|---|
+| `pro` | `999 ÷ 0.85` = **₱1,175.29** | `9,990 ÷ 0.85` = **₱11,752.94** |
+| `edu` | `299 ÷ 0.85` = **₱351.76** | `2,990 ÷ 0.85` = **₱3,517.65** |
 
-These match the ₱1,175 / ₱11,750 targets in the brief exactly, which tells us the
-targets assume **commission only, with no VAT layer**.
+The `pro` figures match the ₱1,175 / ₱11,750 targets in the brief exactly, and the
+`edu` figures match the ~₱352 / ~₱3,518 targets, which tells us both assume
+**commission only, with no VAT layer**.
+
+**`edu` is more sensitive to getting this wrong, in absolute terms it is smaller
+but in proportional terms it is the same.** At ₱352/mo the store's own price-point
+granularity is a larger share of the price than it is at ₱1,175, so the nearest
+available point may miss the target by a few percent where the `pro` point lands
+within a fraction of one. That is a rounding cost to accept, not a reason to move
+the plan — but it should be measured against the actual point, not assumed away.
 
 **`Q1` — that assumption is the single biggest open number in this document.** The
 Philippines now taxes non-resident digital services (RA 12023, 12% VAT), and Apple
 and Google act as the collecting party on their storefronts. If the store price is
 VAT-inclusive and 12% is removed *before* the 15% commission, then:
 
-- Monthly to net ₱999: `999 × 1.12 ÷ 0.85` = **₱1,316.33**
-- Annual to net ₱9,990: **₱13,163.29**
+| Plan | Monthly | Annual |
+|---|---|---|
+| `pro` | `999 × 1.12 ÷ 0.85` = **₱1,316.33** | **₱13,163.29** |
+| `edu` | `299 × 1.12 ÷ 0.85` = **₱393.98** | **₱3,939.76** |
 
-A **12% difference in the shelf price** — the gap between under- and over-shooting
-the web net. It also depends on whether the web ₱999 is itself VAT-inclusive. This
-needs brick's accountant, not an engineering guess, and no answer is asserted here.
+A **12% difference in the shelf price**, on both plans — the gap between under- and
+over-shooting the web net. It also depends on whether the web prices are themselves
+VAT-inclusive. This needs brick's accountant, not an engineering guess, and no
+answer is asserted here.
 
 ### Candidate price points, under both readings
+
+**`pro` — target net ₱999/mo, ₱9,990/yr**
 
 | Monthly candidate | Net @15%, no VAT | Net @15%, 12% VAT-inclusive | Verdict |
 |---|---|---|---|
@@ -1111,10 +1179,34 @@ needs brick's accountant, not an engineering guess, and no answer is asserted he
 | ₱13,150 | ₱11,177.50 | **₱9,979.91** | ✓ ≈ exact under the VAT reading |
 | ₱13,200 | ₱11,220.00 | ₱10,017.86 | ✓ under the VAT reading |
 
+**`edu` — target net ₱299/mo, ₱2,990/yr**
+
+| Monthly candidate | Net @15%, no VAT | Net @15%, 12% VAT-inclusive | Verdict |
+|---|---|---|---|
+| ₱299 | ₱254.15 | ₱226.92 | short either way — matching the web price does not match the web net |
+| ₱349 | ₱296.65 | ₱264.87 | just short under the no-VAT reading |
+| **₱359** | **₱305.15** | ₱272.46 | ✓ under the no-VAT reading |
+| ₱390 | ₱331.50 | ₱295.98 | just short under the VAT reading |
+| **₱399** | ₱339.15 | **₱302.81** | ✓ under the VAT reading |
+
+| Annual candidate | Net @15%, no VAT | Net @15%, 12% VAT-inclusive | Verdict |
+|---|---|---|---|
+| ₱2,990 | ₱2,541.50 | ₱2,269.20 | short either way |
+| ₱3,490 | ₱2,966.50 | ₱2,648.66 | just short under the no-VAT reading |
+| **₱3,590** | **₱3,051.50** | ₱2,724.55 | ✓ under the no-VAT reading |
+| ₱3,900 | ₱3,315.00 | ₱2,959.82 | just short under the VAT reading |
+| **₱3,990** | ₱3,391.50 | **₱3,028.13** | ✓ under the VAT reading |
+
+The first row of each `edu` table is worth reading rather than skipping: **charging
+the same ₱299 on mobile as on web nets ₱254.15**, a 15% shortfall, and under the VAT
+reading ₱226.92, a 24% shortfall. "Same price everywhere" is the intuitive choice
+and it is the one that quietly loses the most on the smaller plan.
+
 At the **30%** rate — before Small Business Program enrolment, or after crossing the
-threshold — every figure roughly halves the margin: ₱1,190 nets ₱833.00 and ₱11,750
-nets ₱8,225.00, both **below** the web net. Enrolment in the reduced-rate programmes
-is therefore not an optimisation, it is a precondition (§13.2).
+threshold — every figure roughly halves the margin. On `pro`, ₱1,190 nets ₱833.00
+and ₱11,750 nets ₱8,225.00; on `edu`, ₱359 nets ₱251.30 and ₱3,590 nets ₱2,513.00.
+All four are **below** the web net. Enrolment in the reduced-rate programmes is
+therefore not an optimisation, it is a precondition (§14.2).
 
 ### What is and is not verifiable about the price points themselves
 
@@ -1138,9 +1230,132 @@ someone has entered the number in Play Console.)
 
 ---
 
-## 13. Rollout sequence and open questions
+## 13. The "unlimited" entitlement review
 
-### 13.1 Prerequisite finding — `PAYWALL_ENFORCED` fails unsafe
+**This is a proposal, not a change.** Nothing here is decided, and no entitlement
+value in the codebase is modified by this PR. It exists because unlimited
+entitlements are unbounded cost per subscriber, and IAP is what makes that cost
+real: today nobody can buy `pro`, so nobody is consuming an unlimited plan at a
+price we committed to.
+
+### 13.1 The facts, verified on prod 2026-08-29
+
+**`billing.db_plans` is DISABLED** (`prisma/seeds/plan-seed.ts:275`,
+`{ key: 'billing.db_plans', enabled: false }`). So the live source of truth is the
+hardcoded `getDefaultEntitlements()` switch in
+`apps/api/src/modules/subscriptions/subscriptions.service.ts`, **not** the
+`plan_entitlements` DB rows. The DB rows currently agree with the hardcoded values,
+which is why the discrepancy has never bitten — but they are inert.
+
+> **Any change to an entitlement value must be made in BOTH places or it will not
+> take effect.** Editing only the DB rows changes nothing while the flag is off.
+> Editing only the hardcoded switch leaves a landmine for the day the flag flips.
+> This is the single most likely way a well-intentioned cap silently fails to apply.
+
+Unlimited (`-1`) entitlements per plan, as they stand:
+
+| Plan | Count | Which |
+|---|---|---|
+| `free` | 0 | — |
+| `edu` | **1** | `searchQueries` |
+| `pro` | **5** | `aiAnswers`, `searchQueries`, `digestsPerMonth`, `cameraScansPerMonth`, `documentUploadsPerMonth` |
+| `team` | **10** | |
+| `enterprise` | **14** | |
+
+### 13.2 We cannot measure per-user consumption, and must say so
+
+There is no observed-usage evidence to argue from:
+
+- **`model_runs` has no organization or user column.** Every inference call is
+  recorded, but nothing ties one to whoever caused it. The table can answer "how
+  much did we spend" and cannot answer "who spent it".
+- **Quota counters live in Redis with no history.** They are current-period
+  counters with a TTL, not a time series. Last month's consumption does not exist
+  anywhere to query.
+
+So **every cap below is argued from unit economics — marginal cost per call and the
+plan price — not from observed usage.** That is a weaker basis than measurement and
+it should be treated as such: these are opening positions for a discussion, not
+numbers derived from data. If the answer matters enough to argue about, the first
+move is to add `organization_id` to `model_runs`, ship it, and revisit in a month
+with real percentiles.
+
+### 13.3 Classifying the five `pro` unlimiteds by marginal cost
+
+The question for each is simple: does one more call cost us money?
+
+| Entitlement | Marginal cost | Driver | Verdict |
+|---|---|---|---|
+| `aiAnswers` | **High** | LLM inference, per answer, plus retrieval and reranking | Cap |
+| `digestsPerMonth` | **High** | LLM inference over a large context — the digest/memo budget is 8,192 tokens vs 4,096 for an answer, so each one costs materially more than an answer | Cap |
+| `cameraScansPerMonth` | **High** | OCR compute, image processing, storage, then a digest generation on top | Cap |
+| `documentUploadsPerMonth` | **Moderate** | Storage, ClamAV scan, Sharp processing; and each upload is the front half of a generation that costs more | Cap |
+| `searchQueries` | **Near zero** | Served by OpenSearch. A query is CPU and cache on infrastructure we run regardless of who is querying | **May safely stay unlimited** |
+
+`searchQueries` staying unlimited is not a concession, it is the correct answer:
+capping it would cost us a support burden and a worse product for no saving. It is
+also the only unlimited `edu` has, which means **`edu` needs no change at all**
+under this proposal.
+
+### 13.4 The constraint every cap must respect
+
+From §1 and `getDefaultEntitlements()`'s own comment: **a `0` limit returns
+`402 subscription_required`, which App Review reads as a paywall; an exhausted
+positive quota returns `429 quota_exceeded`, which is a usage limit and is
+accepted.** That is why the `free` tier deliberately keeps `aiAnswers: 15` and
+`searchQueries: 50` rather than zeroing them.
+
+**Therefore: every cap proposed here must be a positive integer. Never 0.** A cap of
+0 is not a smaller cap, it is a different HTTP status and a different App Review
+outcome. This constraint is not negotiable independently of the freemium design.
+
+### 13.5 The proposal
+
+Opening positions, with the reasoning shown so each can be argued with
+individually. All are per month, all positive, none is `0`.
+
+| Entitlement | Now | Proposed | Reasoning |
+|---|---|---|---|
+| `aiAnswers` | `-1` | **300** | The headline risk. At ₱999/mo, ten answers a day every day is already a heavy research practice; 300 covers it with room and still bounds the worst case. An unbounded count here is the one line item where a single subscriber can cost multiples of what they pay |
+| `digestsPerMonth` | `-1` | **100** | Costlier per unit than an answer (8,192-token context vs 4,096). 100 is more than three a day, which is well beyond observed editorial throughput for a solo practitioner |
+| `cameraScansPerMonth` | `-1` | **200** | OCR plus a digest per scan. 200 is roughly 7/day — generous for a scan-heavy workflow, and it bounds the case where a device is left scanning a filing cabinet |
+| `documentUploadsPerMonth` | `-1` | **300** | Cheaper per unit than the three above, but it is the entry point to them. Set above the generation caps so uploading is never the binding constraint |
+| `searchQueries` | `-1` | **`-1` — keep** | Near-zero marginal cost. Capping it degrades the product for no saving |
+
+**Why these are round and generous rather than tight.** With no consumption data
+(§13.2), a tight cap risks hitting real users on day one — and a `429` on a paid
+plan is a support ticket and a refund request. A generous cap costs nothing if
+nobody reaches it and converts the *unbounded* risk into a *bounded* one, which is
+the actual goal. Tighten later, from measurement. Loosening a cap after complaints
+is easy; explaining a surprise bill is not.
+
+**The specific risk IAP makes real.** Unlimited `aiAnswers` on a ₱999/mo plan means
+one subscriber's LLM spend has no ceiling while their revenue does. On web, with a
+handful of subscribers and a gateway we control, that was a theoretical exposure. As
+soon as `pro` is one tap away in an app store — with promotional offers, trials, and
+whatever traffic the stores send — it becomes an exposure anyone can take. That, not
+the current bill, is the reason to have this discussion before IAP ships rather than
+after.
+
+### 13.6 What acting on this would involve
+
+Recorded so the size is clear, not proposed as work:
+
+1. Change the five values in `getDefaultEntitlements()` **and** the corresponding
+   `plan_entitlements` rows, in one PR, or the change does not take effect (§13.1).
+2. Verify the resulting statuses: an exhausted cap must return `429`, never `402`.
+   `entitlement-gates.spec.ts` is where that belongs.
+3. Decide whether existing `pro` subscribers are grandfathered. There are 39
+   subscription rows, all `xendit`, so the blast radius today is small — which is
+   exactly why now is the cheap moment.
+4. Separately and independently: add `organization_id` to `model_runs`, so the next
+   version of this section can be written from data instead of from reasoning.
+
+---
+
+## 14. Rollout sequence and open questions
+
+### 14.1 Prerequisite finding — `PAYWALL_ENFORCED` fails unsafe
 
 This surfaced while verifying that the flag really is `false` in production (§1),
 and it is a live risk to the **already-approved** iOS binary, independent of IAP.
@@ -1182,30 +1397,62 @@ rather than the only thing holding the line. The day IAP ships, both go back to
 immediately and independently: it protects the binary that is live today, and
 nothing in this design depends on it.
 
-### 13.2 Blocked on brick's Apple / Google account work
+### 14.2 Blocked on brick's Apple / Google account work
 
-Nothing store-side can be configured until these land. In particular, **IAP products
-cannot be created at all without an active Paid Applications Agreement.**
+**Decided: ship on the existing PERSONAL Apple Developer account. No entity
+conversion, no D-U-N-S.** Converting to an organization account is deferred, not
+cancelled. This removes the longest external dependency in the whole rollout —
+entity conversion and D-U-N-S registration are third-party, open-ended, and were
+blocking everything downstream on iOS.
+
+Nothing store-side can be configured until the remaining items land. In particular,
+**IAP products cannot be created at all without an active Paid Applications
+Agreement.**
 
 | Blocker | Blocks |
 |---|---|
-| Apple: entity conversion (individual → organization) | Everything downstream on iOS; also changes the seller name shown to users |
-| Apple: Paid Applications Agreement (Schedule 2) accepted | Creating **any** IAP product in App Store Connect |
-| Apple: banking + tax (W-8BEN-E as a PH entity) | Agreement activation, payouts |
+| Apple: Paid Applications Agreement (Schedule 2), accepted **by the individual** | Creating **any** IAP product in App Store Connect |
+| Apple: banking + tax — **W-8BEN**, the individual form, not W-8BEN-E | Agreement activation, payouts |
 | Apple: Small Business Program enrolment | The 15% rate. At 30% the §12 table does not net the web price |
 | Google: payments profile + merchant setup | Creating subscription products in Play Console |
 | Google: tax information | Payouts, and the reduced service fee |
 
-The ASC app record (6788971669) and the iOS signing credentials already exist, so the
-app-level prerequisites are done — this is purely the commercial/legal layer.
+Consequences of shipping personal, stated so none of them is a surprise later:
 
-### 13.3 What can be built and tested first
+- The **App Store seller name stays "BRICK DE MANUEL AGCOPRA"**. It is what appears
+  on the product page and on the customer's receipt. There is no way to show a
+  business name from a personal account.
+- The Paid Applications Agreement is signed by the individual, and the tax form is
+  **W-8BEN** (individual) rather than W-8BEN-E (entity). Simpler, and no D-U-N-S
+  number is needed for either.
+- Small Business Program enrolment is unaffected: it is keyed on proceeds, not on
+  account type.
+
+**What deferring costs.** Converting later is a real migration, not a settings
+change:
+
+- The **seller name changes** on the store listing. Existing customers see a
+  different name on future receipts than on past ones.
+- The **Paid Applications Agreement and all banking/tax details must be redone**
+  under the new entity, and payouts pause until the new agreement is active.
+- **IDFV resets.** Harmless here: the app makes no use of IDFV and there is no
+  mobile measurement partner attached, so nothing is keyed on it. Worth recording
+  because it is the usual reason conversion is treated as dangerous, and in this
+  codebase it simply is not.
+- RevenueCat, the product ids and every subscriber survive the conversion — the
+  store transactions belong to the app record, not to the account type.
+
+The ASC app record (6788971669) and the iOS signing credentials already exist, so
+the app-level prerequisites are done — what remains is purely the commercial/legal
+layer, now on the shorter path.
+
+### 14.3 What can be built and tested first
 
 | Phase | Needs | Work |
 |---|---|---|
 | **0** | Nothing | The port (D1/D2), both tables (D6), `STORE_PRODUCT_MAP` (D7), the webhook controller and its auth (D4), the full `(event, state) → action` resolver, the double-billing guards, the reconciliation pull, the purchase-intent endpoint. **All of §2–§9.** Tested against synthetic RevenueCat payloads: every row of §4.1 becomes a unit test, and every finding in §4.2 becomes a test asserting the no-op |
 | **1** | RevenueCat account (free) | Dashboard project, webhook URL + `Authorization` header, the `pro` entitlement, transfer behaviour set per §5.3. Fire a `TEST` event end to end. Still no store products |
-| **2** | Paid Apps agreements ✅ | Create the two products in ASC and Play Console at the §12 price points; add `react-native-purchases`; build the purchase surface under `features/purchase/`; land the D13 test scoping; plumb `storePurchaseAvailable` |
+| **2** | Paid Apps agreements ✅ | Create the four products in ASC and Play Console at the §12 price points; add `react-native-purchases`; build the purchase surface under `features/purchase/`; land the D13 test scoping; plumb `storePurchaseAvailable` |
 | **3** | Sandbox testers | TestFlight + Play internal testing. Walk **every row of §4.1** against real sandbox purchases — buy, cancel, uncancel, let it lapse, refund, product-change, restore, transfer |
 | **4** | — | Submit with `storePurchaseAvailable=false` everywhere. The build behaves identically to the currently approved one |
 | **5** | Approval | Flip the flag per platform. Then take the §11 A-vs-B decision with real data |
@@ -1213,22 +1460,54 @@ app-level prerequisites are done — this is purely the commercial/legal layer.
 Phase 0 is the large majority of the engineering work and it is **completely
 unblocked today**.
 
-### 13.4 Open questions for brick
+### 14.4 Open questions for brick
 
 | # | Question | Why it cannot be defaulted |
 |---|---|---|
 | **Q1** | Is the web ₱999 VAT-inclusive, and do Apple/Google withhold 12% PH VAT before taking commission? | Moves the mobile shelf price by 12% (§12). An accountant's question, not an engineer's |
-| **Q2** | `PAYWALL_ENFORCED` is `false` — **verified in production on 2026-08-29** (§1) — so `getEntitlements` returns `pro` (`previewOnly: false`) to **every** org. While that holds, an IAP purchase sells something the account already has, which App Review will notice and which makes the purchase surface untestable. When does it flip, and globally or per-cohort? | Not a proposal to change it, and no longer resting on an unverified premise. It is a hard sequencing dependency for Phase 5 and it has to be scheduled. Independently of the schedule, §13.1 must land first |
+| **Q2** | `PAYWALL_ENFORCED` is `false` — **verified in production on 2026-08-29** (§1) — so `getEntitlements` returns `pro` (`previewOnly: false`) to **every** org. While that holds, an IAP purchase sells something the account already has, which App Review will notice and which makes the purchase surface untestable. When does it flip, and globally or per-cohort? | Not a proposal to change it, and no longer resting on an unverified premise. It is a hard sequencing dependency for Phase 5 and it has to be scheduled. Independently of the schedule, §14.1 must land first |
 | **Q3** | Block IAP entirely for orgs with >1 member (recommended), or let the billing owner buy for the whole org? | `pro` is `maxSeats: 1`, and one seed org already has 5 members (§5.2) |
 | **Q4** | After IAP is approved: keep hiding paid surfaces (A) or show them with a purchase entry point (B)? | Product/conversion call. C is the mechanism either way (§11) |
 | **Q5** | Accept the stores' own grace-period behaviour (recommended), or run ours in parallel? | Two authorities that disagree revoke at the wrong time (D9) |
 | **Q6** | Confirm the RevenueCat transfer behaviour setting = "Transfer if there are no active subscriptions" | A dashboard toggle whose default is wrong for us, and it fails silently (§5.3) |
 | **Q7** | Offer a store free trial? `pro` is `trialEnabled: true, trialDurationDays: 14` on web | A user could take a web trial and a store trial. Also interacts with findings (a) and (f) in §4.2 |
 | **Q8** | Do we honour a store refund of an *earlier* period, which RevenueCat never tells us about? | Documented gap (§8). Affects the monthly reconciliation, not entitlement |
+| **Q9** | **`edu` eligibility.** `edu` is a discounted student tier, but an IAP product can be bought by anyone with an Apple ID. Does the app gate `edu` purchase behind student verification, or does `edu` become "`pro` at a 70% discount for whoever taps it"? | See the options below. Neither the product map (D7) nor the org rule (§5.2) can close this — the map knows a product id, not who tapped Buy. Brick's call |
+| **Q10** | **The unlimited entitlements.** §13 proposes finite caps for the four COGS-bearing `pro` unlimiteds and keeps `searchQueries` unlimited. Accept, adjust, or reject? | Proposal, not a change. Argued from unit economics because consumption cannot be measured (§13.2). Unbounded LLM cost per subscriber is the risk IAP makes real |
+
+#### `Q9` in full — the `edu` eligibility gap
+
+The web `edu` tier is sold at a 70% discount to `pro` (₱299 vs ₱999). On the web
+that discount sits behind whatever eligibility check the sales-led flow applies. **An
+IAP product has no such check.** It is a product id in a store; anyone with an Apple
+ID or Google account can buy it, and neither store offers us any signal about who
+they are. If `edu` ships as an unguarded IAP product, the rational move for every
+mobile buyer is to buy `edu`, and `pro` stops selling on mobile.
+
+Four options, none of which the design can choose on its own:
+
+| Option | What it means | Cost |
+|---|---|---|
+| **A — verify before purchase** | The `edu` product is only offered after a student check (`.edu.ph` domain, school ID upload, or a manual review queue). Unverified accounts see only `pro` | Real build cost, and a manual queue is ongoing work. Also a friction point in the one flow where friction directly costs a sale |
+| **B — verify after purchase, downgrade on failure** | Anyone may buy `edu`; verification is requested afterwards and a failure moves them to `pro` or refunds | We cannot refund a store purchase ourselves (§8), so "downgrade" means taking away something already paid for. A refund-request support queue, and likely store complaints |
+| **C — accept it: `edu` is just a cheaper plan on mobile** | No verification. `edu` becomes a lower-priced tier available to anyone who finds it | Zero build cost, and it is honest. But it makes `pro` unsellable on mobile unless `edu`'s entitlements are meaningfully thinner — which today they are, and that is the actual argument for this option |
+| **D — do not sell `edu` on mobile at all** | Revert to `pro`-only IAP; `edu` stays web/sales-led like `team` and `enterprise` | Zero build cost, zero risk. Loses the student segment on the platform students actually use |
+
+**The design's observation, offered as input rather than as a recommendation:** `edu`
+and `pro` already have materially different entitlements — `edu` has one unlimited
+(`searchQueries`) against `pro`'s five, and `edu` is `maxMatters: 0` with no memo,
+pleading, comparison or timeline allowance at all. So option C is less damaging here
+than the raw price gap suggests: a working lawyer who buys `edu` to save ₱700 gets a
+plan without the tools they need. That is a fact about the current plan table, and it
+would stop being true if `edu`'s entitlements were ever brought closer to `pro`'s.
+
+Whichever option is taken, it must be settled **before** the `edu` products are
+created in App Store Connect — a live product id that turns out to need a
+verification gate is far harder to walk back than one that was never created.
 
 ---
 
-## 14. What I could not determine
+## 15. What I could not determine
 
 Listed rather than guessed.
 
@@ -1254,11 +1533,11 @@ Listed rather than guessed.
 > **Resolved since the first draft.** "Whether `PAYWALL_ENFORCED` is actually `false`
 > in production" was item 5 here. It was verified `false` three ways on 2026-08-29
 > and the answer now lives in §1. Verifying it is what surfaced the fail-unsafe
-> finding in §13.1.
+> finding in §14.1.
 
 ---
 
-## 15. References
+## 16. References
 
 Every quotation in this document comes from one of these, fetched while writing it.
 
