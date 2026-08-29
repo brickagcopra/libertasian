@@ -11,6 +11,7 @@ import {
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { TabBar, useTabBarClearance } from '@/components/ui/TabBar';
+import { SurfaceGuard } from '@/features/entitlements/surface-guard';
 import { useTabBarNav } from '@/features/navigation/use-tab-bar-nav';
 import { useMatters } from '../../features/workspace/hooks/use-matters';
 import { useNotes } from '../../features/workspace/hooks/use-notes';
@@ -195,7 +196,7 @@ function SectionHeader({
 
 // ─── Main Tab ──────────────────────────────────────────────
 
-export default function WorkspaceTab() {
+function WorkspaceTabScreen() {
   const navigate = useTabBarNav();
   const clearance = useTabBarClearance();
   const [refreshing, setRefreshing] = useState(false);
@@ -568,3 +569,20 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
 });
+
+/**
+ * `/(tabs)/workspace` is a different route from the `/workspace` subtree, and
+ * its own deep link. `href: null` in `(tabs)/_layout.tsx` drops the tab button
+ * but leaves the route registered, so a push notification, a restored
+ * navigation state or a stale back stack still renders this dashboard — and
+ * every tile and the New Matter button below it 402 on the free tier. Guarded
+ * here as well as in `app/workspace/_layout.tsx`: tab screen AND stack layout,
+ * the same pairing `/(tabs)/scan` and `/(tabs)/study` already use.
+ */
+export default function WorkspaceTab() {
+  return (
+    <SurfaceGuard surface="workspace">
+      <WorkspaceTabScreen />
+    </SurfaceGuard>
+  );
+}

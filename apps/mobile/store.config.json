@@ -23,12 +23,14 @@
 // 1. The `description` below is CORRECT and must not be edited to "fix" the
 //    live copy. The LIVE App Store description still ends its Past Bar Exams
 //    bullet with "...AI-generated ALAC answers for paid users" - verified
-//    2026-08-29 against the iTunes lookup API
+//    2026-08-29 against TWO sources: the iTunes lookup API
 //    (itunes.apple.com/lookup?id=6788971669&country=ph), which returned that
-//    line verbatim. The rendered apps.apple.com/ph/app/libertasian page
-//    answered HTTP 429 on every attempt that day and could not serve as a
-//    second reading. The divergence is expected: this file was corrected in
-//    #421 and the store has not taken it yet.
+//    line verbatim, and the rendered
+//    apps.apple.com/ph/app/libertasian/id6788971669 page, which answered
+//    HTTP 200 with three occurrences of the bullet. (Repeated fetches of the
+//    rendered page rate-limit to HTTP 429; that is throttling, not an
+//    unavailable source.) The divergence is expected: this file was corrected
+//    in #421 and the store has not taken it yet.
 //
 // 2. Apple FREEZES Description once a version is Ready for Distribution, so
 //    the live text cannot change until a 1.0.1 submission carries it. Naming
