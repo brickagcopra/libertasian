@@ -38,20 +38,34 @@ const FREE_TIER: FreemiumSurfaces = { scan: false, study: false, barExams: false
  * `useCanGenerateDigest()` used to live in
  * `features/billing/hooks/use-subscription.ts` and did exactly that; both were
  * deleted because a client-side copy of an entitlement decision kept screens
- * locked after the API had stopped locking them. The signal here is the
- * SERVER's own resolved answer: `/quotas/usage` limits come from
- * `resolveEffectiveEntitlements`, so an admin override or a promotional bonus
- * raises the limit and the surface comes back with no client change.
+ * locked after the API had stopped locking them.
  *
- * `cameraScansPerMonth` and `digestsPerMonth` are both 0 on the free tier and
- * positive (or -1, unlimited) on every paid one, which is what makes the pair a
- * faithful reading of "non-entitled". A first-class `previewOnly` field on
- * `/quotas/usage` would say it directly and is worth adding; until then this is
- * the resolved entitlement rather than a guess about a tier.
+ * PRIMARY SIGNAL: `previewOnly` on `/quotas/usage`. It is the server's own
+ * `resolveEffectiveEntitlements().previewOnly` — literally the value
+ * `DocumentsController` and `SearchController` gate on — so the client hides
+ * exactly what the server refuses, with no reasoning of its own in between.
+ *
+ * FALLBACK: the `cameraScansPerMonth` / `digestsPerMonth` pair, used ONLY when
+ * `previewOnly` is absent from the response. It is not a second opinion; it is
+ * what a build talks to when it outlives its API. Store rollouts are gradual
+ * and builds live on devices for months, so a shipped client will meet an API
+ * without the field. Treating a missing field as "entitled" would put Scan and
+ * Study in front of a free account on every older deployment.
+ *
+ * The fallback is an INFERENCE and it is wrong in a case the flag gets right:
+ * both quotas are 0 on today's free tier and positive on every paid one, but a
+ * plan with generation quotas and no corpus entitlement would read as entitled.
+ * That is precisely why the flag exists — never promote the fallback back to
+ * primary because it happens to agree on the current plan table.
  */
 export function surfacesFromQuotas(
   quotas: Record<string, { limit: number }>,
+  previewOnly?: boolean,
 ): FreemiumSurfaces {
+  if (typeof previewOnly === 'boolean') {
+    return previewOnly ? FREE_TIER : ALL_VISIBLE;
+  }
+
   const limitOf = (key: string): number => quotas[key]?.limit ?? 0;
   const entitled =
     limitOf('cameraScansPerMonth') !== 0 || limitOf('digestsPerMonth') !== 0;
@@ -110,7 +124,7 @@ export function useFreemiumSurfacesSync(enabled: boolean): void {
     if (!data) return;
     storage.set(
       STORAGE_KEYS.ENTITLED_SURFACES,
-      JSON.stringify(surfacesFromQuotas(data.quotas)),
+      JSON.stringify(surfacesFromQuotas(data.quotas, data.previewOnly)),
     );
   }, [data]);
 }

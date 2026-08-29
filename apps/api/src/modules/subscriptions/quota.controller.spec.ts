@@ -9,7 +9,9 @@ import { EntitlementService } from './entitlement.service';
 describe('QuotaController', () => {
   let controller: QuotaController;
   let usageQuota: jest.Mocked<Pick<UsageQuotaService, 'getUsageSummaryV2'>>;
-  let entitlementService: jest.Mocked<Pick<EntitlementService, 'getActiveBonuses'>>;
+  let entitlementService: jest.Mocked<
+    Pick<EntitlementService, 'getActiveBonuses' | 'resolveEffectiveEntitlements'>
+  >;
 
   const mockGuard = { canActivate: jest.fn().mockReturnValue(true) };
 
@@ -34,6 +36,9 @@ describe('QuotaController', () => {
           provide: EntitlementService,
           useValue: {
             getActiveBonuses: jest.fn(),
+            resolveEffectiveEntitlements: jest
+              .fn()
+              .mockResolvedValue({ previewOnly: false }),
           },
         },
       ],
@@ -91,6 +96,90 @@ describe('QuotaController', () => {
       expect(result.data.billingPeriodStart).toBe('2026-03-01T00:00:00.000Z');
       expect(result.data.billingPeriodEnd).toBe('2026-04-01T00:00:00.000Z');
       expect(result.data.activeBonuses).toEqual(mockBonuses);
+    });
+
+    /**
+     * `previewOnly` is the whole reason this field exists: clients were
+     * otherwise inferring it from quota numbers, and an inference is wrong the
+     * moment a plan has generation quotas but no corpus entitlement.
+     */
+    describe('previewOnly', () => {
+      const withEntitlements = (previewOnly: boolean | undefined) => {
+        usageQuota.getUsageSummaryV2.mockResolvedValue({
+          quotas: {},
+          billingPeriodStart: null,
+          billingPeriodEnd: null,
+        } as any);
+        entitlementService.getActiveBonuses.mockResolvedValue([]);
+        entitlementService.resolveEffectiveEntitlements.mockResolvedValue({
+          previewOnly,
+        } as any);
+      };
+
+      it('is true for a non-entitled org', async () => {
+        withEntitlements(true);
+
+        const result = await controller.getUsage(mockUser);
+
+        expect(result.data.previewOnly).toBe(true);
+      });
+
+      it('is false for an entitled org', async () => {
+        withEntitlements(false);
+
+        const result = await controller.getUsage(mockUser);
+
+        expect(result.data.previewOnly).toBe(false);
+      });
+
+      it('comes from resolveEffectiveEntitlements, not from quota values', async () => {
+        // The exact case the old client-side inference gets wrong: positive
+        // generation quotas on an account that still cannot read the paid
+        // corpora. The flag must say true regardless of the numbers beside it.
+        usageQuota.getUsageSummaryV2.mockResolvedValue({
+          quotas: {
+            cameraScansPerMonth: { limit: 25, used: 0 },
+            digestsPerMonth: { limit: 100, used: 0 },
+          },
+          billingPeriodStart: null,
+          billingPeriodEnd: null,
+        } as any);
+        entitlementService.getActiveBonuses.mockResolvedValue([]);
+        entitlementService.resolveEffectiveEntitlements.mockResolvedValue({
+          previewOnly: true,
+        } as any);
+
+        const result = await controller.getUsage(mockUser);
+
+        expect(result.data.previewOnly).toBe(true);
+        expect(entitlementService.resolveEffectiveEntitlements).toHaveBeenCalledWith(
+          'org-1',
+        );
+      });
+
+      it('defaults to false when the entitlement is absent', async () => {
+        // Never fail closed on a missing field: an account wrongly marked
+        // non-entitled loses surfaces it paid for.
+        withEntitlements(undefined);
+
+        const result = await controller.getUsage(mockUser);
+
+        expect(result.data.previewOnly).toBe(false);
+      });
+
+      it('is false for a platform admin even on a non-entitled org', async () => {
+        // Mirrors DocumentsController/SearchController.resolvePreviewOnly: an
+        // admin whose client hid surfaces the API will serve them is a worse
+        // outcome than an admin seeing everything.
+        withEntitlements(true);
+
+        const result = await controller.getUsage({
+          ...mockUser,
+          isPlatformAdmin: true,
+        } as any);
+
+        expect(result.data.previewOnly).toBe(false);
+      });
     });
 
     it('should call services with correct user context', async () => {

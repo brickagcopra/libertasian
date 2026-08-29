@@ -21,7 +21,11 @@ const MOBILE_SRC = join(__dirname, '..', '..');
 /** Files this PR introduced or changed. */
 const GUARDED_FILES = [
   'features/entitlements/use-freemium-surfaces.ts',
+  'features/entitlements/surface-guard.tsx',
   'features/entitlements/test-helpers.ts',
+  'app/scan/_layout.tsx',
+  'app/study/_layout.tsx',
+  'app/bar-exams/_layout.tsx',
   'components/ui/TabBar.tsx',
   'app/(tabs)/_layout.tsx',
   'app/(tabs)/study.tsx',

@@ -12,6 +12,7 @@ import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { TabBar, useTabBarClearance } from '@/components/ui/TabBar';
 import { useFreemiumSurfaces } from '@/features/entitlements/use-freemium-surfaces';
+import { SurfaceGuard } from '@/features/entitlements/surface-guard';
 import { useTabBarNav } from '@/features/navigation/use-tab-bar-nav';
 import { useBarSubjects } from '../../features/study/hooks/use-bar-subjects';
 import { useFlashcardSets } from '../../features/study/hooks/use-flashcard-sets';
@@ -29,7 +30,7 @@ function formatStudyTime(totalSecs: number): string {
   return `${minutes}m`;
 }
 
-export default function StudyTab() {
+function StudyTabScreen() {
   const navigate = useTabBarNav();
   const surfaces = useFreemiumSurfaces();
   const clearance = useTabBarClearance();
@@ -605,3 +606,15 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
 });
+
+/**
+ * Same as `/(tabs)/scan`: a distinct route from the `/study` subtree, with
+ * its own deep link, so it carries its own guard.
+ */
+export default function StudyTab() {
+  return (
+    <SurfaceGuard surface="study">
+      <StudyTabScreen />
+    </SurfaceGuard>
+  );
+}
