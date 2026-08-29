@@ -264,15 +264,83 @@ describe('SubscriptionsService', () => {
 
   // ---- getDefaultEntitlements ----
 
+  /**
+   * `billing.db_plans` is OFF in production, so `getDefaultEntitlements()` is
+   * what actually ships. The seed is the canonical copy. If the two drift, the
+   * live tier and the documented tier stop being the same thing.
+   *
+   * `require` rather than `import`: prisma/seeds is outside this package's
+   * tsconfig `rootDir`, so a static import would break `tsc`.
+   */
+  describe('getDefaultEntitlements stays in sync with plan-seed', () => {
+    type SeedEntitlement = {
+      key: string;
+      valueType: string;
+      numericValue?: number;
+      booleanValue?: boolean;
+    };
+    type SeedPlan = { code: string; entitlements: SeedEntitlement[] };
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { PLAN_SEEDS } = require('../../../prisma/seeds/plan-seed') as {
+      PLAN_SEEDS: SeedPlan[];
+    };
+
+    it.each(['free', 'edu', 'pro', 'team'])(
+      'every %s seed entitlement the defaults define has the same value',
+      (planCode) => {
+        const seed = PLAN_SEEDS.find((plan) => plan.code === planCode);
+        expect(seed).toBeDefined();
+
+        const defaults = service.getDefaultEntitlements(planCode) as unknown as Record<
+          string,
+          number | boolean
+        >;
+
+        for (const entitlement of seed!.entitlements) {
+          // Keys the seed defines but the hardcoded defaults do not (edu's
+          // `codalReader`) are a pre-existing gap, out of scope here; the
+          // free-plan key-set test below is the one that has to be exact.
+          if (!(entitlement.key in defaults)) continue;
+          // `unlimited` is the seed's spelling of the hardcoded -1 sentinel.
+          const seeded =
+            entitlement.valueType === 'boolean'
+              ? entitlement.booleanValue
+              : entitlement.valueType === 'unlimited'
+                ? -1
+                : entitlement.numericValue;
+          expect({ key: entitlement.key, value: defaults[entitlement.key] }).toEqual({
+            key: entitlement.key,
+            value: seeded,
+          });
+        }
+      },
+    );
+
+    it('free defines exactly the seeded keys — these are the live values', () => {
+      const seed = PLAN_SEEDS.find((plan) => plan.code === 'free')!;
+      const defaults = service.getDefaultEntitlements('free');
+
+      expect(seed.entitlements.map((e) => e.key).sort()).toEqual(
+        Object.keys(defaults).sort(),
+      );
+    });
+  });
+
   describe('getDefaultEntitlements', () => {
     it('should return free tier defaults', () => {
       const ent = service.getDefaultEntitlements('free');
+      // Positive quotas on purpose: exhausting one returns 429 quota_exceeded,
+      // not the 402 that App Review reads as a paywall.
       expect(ent.aiAnswers).toBe(15);
       expect(ent.searchQueries).toBe(50);
-      expect(ent.digestsPerMonth).toBe(3);
-      expect(ent.cameraScansPerMonth).toBe(3);
+      // Generation features are hidden from the free client entirely, so a
+      // 0 limit here is unreachable by tapping around.
+      expect(ent.digestsPerMonth).toBe(0);
+      expect(ent.cameraScansPerMonth).toBe(0);
       expect(ent.maxMatters).toBe(0);
-      expect(ent.offlineReading).toBe(false);
+      // The statutory corpus is free to read, including offline.
+      expect(ent.offlineReading).toBe(true);
       expect(ent.teamCollaboration).toBe(false);
       expect(ent.auditLogs).toBe(false);
       expect(ent.editorialTools).toBe(false);

@@ -1134,7 +1134,14 @@ export class OpenSearchService implements OnModuleInit {
     const filterClauses: Record<string, unknown>[] = [];
     const mustNotClauses: Record<string, unknown>[] = [];
     if (filters?.documentType) {
-      filterClauses.push({ term: { document_type: filters.documentType } });
+      // `terms` for a list, `term` for a scalar — VectorSearchOptions has always
+      // typed this as `string | string[]`, and the free-tier document-type
+      // allowlist is the first caller to pass the array form.
+      filterClauses.push(
+        Array.isArray(filters.documentType)
+          ? { terms: { document_type: filters.documentType } }
+          : { term: { document_type: filters.documentType } },
+      );
     }
     if (filters?.court) {
       filterClauses.push(buildVectorCourtClause(filters.court));

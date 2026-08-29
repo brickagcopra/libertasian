@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { InjectQueue } from '@nestjs/bullmq';
 import {
   BadRequestException,
@@ -38,8 +40,13 @@ const CONFIDENCE_THRESHOLD = 0.7;
 /** Source origins that come from user scans — always private visibility */
 export const USER_SCAN_ORIGINS = ['user_scan', 'user_upload', 'camera_capture'];
 
-const PREVIEW_DIGEST_CACHE_KEY = 'cache:digest-preview-id';
-const PREVIEW_DIGEST_CACHE_TTL = 60;
+/** How many approved public_editorial digests a free caller may read. */
+export const FREE_DIGEST_COUNT = 3;
+
+const FREE_DIGEST_CACHE_PREFIX = 'cache:digest-free-ids';
+
+/** Seed used for callers with no user identity (anonymous / service reads). */
+const ANONYMOUS_DIGEST_SEED = 'anonymous';
 
 @Injectable()
 export class DigestsService {
@@ -53,53 +60,95 @@ export class DigestsService {
   ) {}
 
   /**
-   * Single newest public_editorial+approved digest id, used as the
-   * free-plan preview. Cached 60s in Redis.
+   * The three approved `public_editorial` digest ids a non-entitled caller may
+   * read this month.
+   *
+   * Chosen PER USER and rotating monthly, deterministically: the selection is
+   * a pure function of `sha256(userId + 'YYYY-MM')`, so there is no counter
+   * table to increment and no monthly reset job to run. Re-deriving it any
+   * time in the same month yields the same three ids; the month rolls over and
+   * everyone gets a different three.
+   *
+   * NOTE: entitlements resolve per ORGANIZATION, but this selection keys on
+   * the USER (`user.sub`). The two are deliberately not conflated — every
+   * member of a free org gets their own three digests, not a shared three.
+   *
+   * Anonymous callers share one fixed seed.
+   *
+   * Redis is a cache only: on a miss or an outage the ids are recomputed from
+   * the same seed and come out identical, so a Redis failure degrades latency
+   * and never the selection.
    */
-  async getFreePreviewDigestId(): Promise<string | null> {
+  async getFreeDigestIds(userId: string | null): Promise<string[]> {
+    const month = new Date().toISOString().slice(0, 7); // YYYY-MM, UTC
+    const principal = userId ?? ANONYMOUS_DIGEST_SEED;
+    const seed = createHash('sha256').update(`${principal}${month}`).digest('hex');
+    const cacheKey = `${FREE_DIGEST_CACHE_PREFIX}:${month}:${seed.slice(0, 32)}`;
+
     if (this.redis) {
       try {
-        const cached = await this.redis.get(PREVIEW_DIGEST_CACHE_KEY);
+        const cached = await this.redis.get(cacheKey);
         if (cached !== null) {
-          // Empty string sentinel means "no rows match" — distinguish from
-          // cache miss so we don't re-query on every request.
-          return cached === '' ? null : cached;
+          // '[]' is a real answer (no approved digests yet), not a cache miss.
+          return JSON.parse(cached) as string[];
         }
       } catch (err) {
         this.logger.warn(
-          `Digest preview-id cache read failed: ${(err as Error).message}`,
+          `Free-digest id cache read failed: ${(err as Error).message}`,
         );
       }
     }
 
     // CARVE-OUT: public_editorial cross-org read; forTenant() would filter out cross-org rows
-    const row = await this.prisma.digest.findFirst({
-      where: { visibility: 'public_editorial', reviewStatus: 'approved' },
-      orderBy: { createdAt: 'desc' },
-      select: { id: true },
-    });
-    const id = row?.id ?? null;
+    // Ordering by md5(id || seed) shuffles the approved pool per seed without
+    // materialising it — parameterized, never interpolated (CLAUDE.md).
+    const rows = await this.prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT id
+      FROM digests
+      WHERE visibility = 'public_editorial' AND review_status = 'approved'
+      ORDER BY md5(id::text || ${seed})
+      LIMIT ${FREE_DIGEST_COUNT}
+    `;
+    const ids = rows.map((r) => r.id);
 
     if (this.redis) {
       try {
         await this.redis.set(
-          PREVIEW_DIGEST_CACHE_KEY,
-          id ?? '',
-          PREVIEW_DIGEST_CACHE_TTL,
+          cacheKey,
+          JSON.stringify(ids),
+          this.secondsUntilMonthEnd(),
         );
       } catch (err) {
         this.logger.warn(
-          `Digest preview-id cache write failed: ${(err as Error).message}`,
+          `Free-digest id cache write failed: ${(err as Error).message}`,
         );
       }
     }
 
-    return id;
+    return ids;
   }
 
-  private async assertDigestPreviewAllowed(id: string): Promise<void> {
-    const previewId = await this.getFreePreviewDigestId();
-    if (previewId !== id) {
+  /**
+   * TTL that expires with the selection it caches: seconds from now to the
+   * start of the next UTC month. Floored at 60s so a write landing in the last
+   * moments of a month still gets a valid TTL (CLAUDE.md: every key has one).
+   */
+  private secondsUntilMonthEnd(): number {
+    const now = new Date();
+    const nextMonth = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
+    return Math.max(60, Math.ceil((nextMonth - now.getTime()) / 1000));
+  }
+
+  /**
+   * 402 unless `id` is one of this caller's three digests for the month.
+   * Reachable by direct id only: list and search filter to exactly these ids.
+   */
+  private async assertDigestPreviewAllowed(
+    id: string,
+    userId: string | null,
+  ): Promise<void> {
+    const allowed = await this.getFreeDigestIds(userId);
+    if (!allowed.includes(id)) {
       throw new PaywallException({ corpus: 'digests' });
     }
   }
@@ -168,8 +217,8 @@ export class DigestsService {
 
   /**
    * Get a digest by ID. Enforces user/org access for private digests.
-   * When `previewOnly` is true, only the single preview digest id is
-   * accessible; other ids 402.
+   * When `previewOnly` is true, only this caller's three digests for the
+   * month are accessible; other ids 402 — by direct id only.
    */
   async findById(
     digestId: string,
@@ -178,7 +227,7 @@ export class DigestsService {
     previewOnly = false,
   ) {
     if (previewOnly) {
-      await this.assertDigestPreviewAllowed(digestId);
+      await this.assertDigestPreviewAllowed(digestId, userId);
     }
     // CARVE-OUT: assertDigestAccess (line 1198) permits visibility='public_editorial' cross-org; forTenant() would 404 those
     const digest = await this.prisma.digest.findUnique({
@@ -234,8 +283,8 @@ export class DigestsService {
   /**
    * List digests with cursor-based pagination and filters.
    * Scoped to user's organization for private/org digests.
-   * When `previewOnly` is true, returns at most the single newest
-   * public_editorial+approved digest with meta.previewMode/lockedCount.
+   * When `previewOnly` is true, returns exactly this caller's three approved
+   * public_editorial digests for the month, with meta.previewMode/lockedCount.
    */
   async list(
     userId: string,
@@ -246,17 +295,17 @@ export class DigestsService {
     const limit = query.limit ?? 20;
 
     if (previewOnly) {
-      const previewId = await this.getFreePreviewDigestId();
+      const freeIds = await this.getFreeDigestIds(userId);
       // CARVE-OUT: public_editorial cross-org read; forTenant() would filter out cross-org rows
       const totalApproved = await this.prisma.digest.count({
         where: { visibility: 'public_editorial', reviewStatus: 'approved' },
       });
-      const lockedCount = Math.max(0, totalApproved - (previewId ? 1 : 0));
+      const lockedCount = Math.max(0, totalApproved - freeIds.length);
 
-      const items = previewId
+      const items = freeIds.length > 0
         // CARVE-OUT: public_editorial cross-org read; forTenant() would filter out cross-org rows
         ? await this.prisma.digest.findMany({
-            where: { id: previewId },
+            where: { id: { in: freeIds } },
             include: {
               legalDocument: {
                 select: {
@@ -1331,22 +1380,26 @@ export class DigestsService {
       limit?: number;
     },
     previewOnly = false,
+    userId: string | null = null,
   ) {
     const limit = query.limit ?? 20;
     const needle = (query.q ?? '').trim();
 
+    // A free caller's search is filtered to the same three ids their list
+    // returns — the query never surfaces a digest they cannot open, so no
+    // result here can lead to a 402.
     if (previewOnly) {
-      const previewId = await this.getFreePreviewDigestId();
+      const freeIds = await this.getFreeDigestIds(userId);
       // CARVE-OUT: public_editorial cross-org read; forTenant() would filter out cross-org rows
       const totalApproved = await this.prisma.digest.count({
         where: { visibility: 'public_editorial', reviewStatus: 'approved' },
       });
-      const lockedCount = Math.max(0, totalApproved - (previewId ? 1 : 0));
+      const lockedCount = Math.max(0, totalApproved - freeIds.length);
 
-      const results = previewId
+      const results = freeIds.length > 0
         // CARVE-OUT: public_editorial cross-org read; forTenant() would filter out cross-org rows
         ? await this.prisma.digest.findMany({
-            where: { id: previewId },
+            where: { id: { in: freeIds } },
             include: {
               legalDocument: {
                 select: {

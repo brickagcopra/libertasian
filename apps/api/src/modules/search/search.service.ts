@@ -10,6 +10,10 @@ import { ConfigService } from '@nestjs/config';
 
 import { RedisService } from '../../common/services/redis.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  FREE_DOCUMENT_TYPES,
+  isFreeDocumentType,
+} from '../documents/documents.service';
 import { EmbeddingClientService } from './embedding-client.service';
 import {
   OpenSearchService,
@@ -88,6 +92,27 @@ export interface FederatedSearchMeta extends SearchResponseMeta {
   warnings: string[];
 }
 
+/**
+ * How a non-entitled ("previewOnly") caller's search is treated.
+ *
+ * `excludeLocked` is set for mobile clients: locked results are removed from
+ * the result set entirely, so no result can be tapped into a 402 (App Store
+ * 3.1.1). Every other client gets the locked results plus
+ * `previewMode`/`lockedCount`/`upgradeRequired` meta so the web upgrade banner
+ * keeps working — web is not subject to App Review, mobile is.
+ */
+export interface FreeTierSearchGate {
+  previewOnly: boolean;
+  excludeLocked: boolean;
+}
+
+/** Free-tier meta, additive and present only when `previewOnly` was resolved. */
+export interface FreeTierSearchMeta {
+  previewMode: true;
+  lockedCount: number;
+  upgradeRequired: true;
+}
+
 @Injectable()
 export class SearchService {
   private readonly logger = new Logger(SearchService.name);
@@ -124,15 +149,92 @@ export class SearchService {
   async search(
     dto: SearchQueryDto,
     caller: DerivativeSearchPrincipal | null = null,
+    gate: FreeTierSearchGate | null = null,
   ): Promise<SearchResponse> {
-    // A request that did not send `scope` takes the pre-C3 path verbatim. This
-    // is a structural guarantee rather than a promise to keep two branches in
-    // sync: there is exactly one code path for legacy clients and C3 does not
-    // touch it. `searchDocuments` below IS that path, unmodified.
-    if (dto.scope === undefined) {
-      return this.searchDocuments(dto);
+    // Free-tier gating happens HERE, around the two search paths, so neither
+    // `searchDocuments` nor `federatedSearch` had to learn about entitlements:
+    // the exclusion is expressed as a narrowed `documentType` filter on the
+    // way in, and the web-only banner meta as an annotation on the way out.
+    // An entitled caller (`gate` null or `previewOnly` false) gets the
+    // pre-existing behavior byte-for-byte.
+    const hideLocked = gate?.previewOnly === true && gate.excludeLocked;
+    const effectiveDto = hideLocked ? this.restrictToFreeDocumentTypes(dto) : dto;
+
+    // A request that did not send `scope` takes the pre-C3 path verbatim.
+    // `searchDocuments` below IS that path, unmodified.
+    const response =
+      effectiveDto.scope === undefined
+        ? await this.searchDocuments(effectiveDto)
+        : await this.federatedSearch(
+            effectiveDto,
+            effectiveDto.scope,
+            caller,
+            hideLocked,
+          );
+
+    return this.annotateFreeTier(response, gate);
+  }
+
+  /**
+   * Narrow the requested document types to the free statutory allowlist.
+   *
+   * An explicit request for a paid type (`documentType=decision`) intersects to
+   * an EMPTY list, which OpenSearch renders as `terms: { document_type: [] }`
+   * and matches nothing — the caller gets zero results, never a locked one.
+   * The narrowed value is part of the cache key (`buildCacheKey` reads `dt`),
+   * so a free caller's results can never be served from an entitled caller's
+   * cache entry or vice versa.
+   */
+  private restrictToFreeDocumentTypes(dto: SearchQueryDto): SearchQueryDto {
+    const requested = dto.documentType;
+    const allowed =
+      requested && requested.length > 0
+        ? requested.filter((type) => isFreeDocumentType(type))
+        : [...FREE_DOCUMENT_TYPES];
+    return { ...dto, documentType: allowed };
+  }
+
+  /**
+   * Attach `previewMode`/`lockedCount`/`upgradeRequired` for a non-entitled
+   * caller whose locked results were RETURNED rather than excluded (web).
+   *
+   * When the results were excluded (mobile) there is nothing locked left to
+   * count and no banner to render, so no meta is added: a hidden feature shows
+   * nothing at all.
+   */
+  private annotateFreeTier(
+    response: SearchResponse,
+    gate: FreeTierSearchGate | null,
+  ): SearchResponse {
+    if (gate?.previewOnly !== true || gate.excludeLocked) {
+      return response;
     }
-    return this.federatedSearch(dto, dto.scope, caller);
+    const lockedCount = response.items.filter((item) =>
+      this.isLockedItem(item),
+    ).length;
+    return {
+      items: response.items,
+      meta: {
+        ...response.meta,
+        previewMode: true,
+        lockedCount,
+        upgradeRequired: true,
+      } as SearchResponseMeta & FreeTierSearchMeta,
+    };
+  }
+
+  /** True when a result item is a document outside the free statutory corpus. */
+  private isLockedItem(item: unknown): boolean {
+    if (typeof item !== 'object' || item === null) return false;
+    const record = item as Record<string, unknown>;
+    // Federated non-document arms (derivatives, digests) are paid corpora in
+    // their entirety; the document arm is locked only outside the allowlist.
+    const kind = record['kind'];
+    if (kind === 'derivative' || kind === 'digest') return true;
+    const source = record['source'];
+    if (typeof source !== 'object' || source === null) return false;
+    const documentType = (source as Record<string, unknown>)['document_type'];
+    return typeof documentType === 'string' && !isFreeDocumentType(documentType);
   }
 
   /**
@@ -150,14 +252,22 @@ export class SearchService {
     dto: SearchQueryDto,
     scope: SearchScope,
     caller: DerivativeSearchPrincipal | null,
+    hideLocked = false,
   ): Promise<SearchResponse> {
     const page = dto.page ?? 0;
     const limit = dto.limit ?? 20;
     const warnings: string[] = [];
 
+    // The derivative and digest corpora are paid in their entirety, so for a
+    // non-entitled caller who must not see locked results (mobile) the arms are
+    // not queried at all — their `counts` come back 0, which is the truth about
+    // what this caller can reach. No warning is pushed: a warning string would
+    // be exactly the "there is more if you pay" hint the exclusion exists to
+    // avoid. The document arm still runs, narrowed to the free allowlist.
     const wantsDocuments = scope === 'documents' || scope === 'all';
-    const wantsDerivatives = scope === 'derivatives' || scope === 'all';
-    const wantsDigests = scope === 'digests' || scope === 'all';
+    const wantsDerivatives =
+      !hideLocked && (scope === 'derivatives' || scope === 'all');
+    const wantsDigests = !hideLocked && (scope === 'digests' || scope === 'all');
 
     const documentResponse = wantsDocuments
       ? await this.searchDocuments(dto)

@@ -7,6 +7,10 @@ import {
 import { ConfigService } from '@nestjs/config';
 
 import { SearchService } from './search.service';
+import {
+  FREE_DOCUMENT_TYPES,
+  isFreeDocumentType,
+} from '../documents/documents.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../common/services/redis.service';
 import { OpenSearchService, type SearchResultItem } from './opensearch.service';
@@ -1091,6 +1095,201 @@ describe('SearchService', () => {
       });
 
       await expect(service.search({ query: 'anything', limit: 20 })).resolves.toBeDefined();
+    });
+  });
+  // ---- free statutory tier gating ----
+
+  describe('free statutory tier (previewOnly gate)', () => {
+    const codalItem: SearchResultItem = {
+      id: 'doc-codal',
+      score: 2,
+      source: { document_id: 'doc-codal', title: 'Civil Code', document_type: 'codal' },
+    };
+    const decisionItem: SearchResultItem = {
+      id: 'doc-decision',
+      score: 1.5,
+      source: {
+        document_id: 'doc-decision',
+        title: 'People v. Doe',
+        document_type: 'decision',
+      },
+    };
+    const barItem: SearchResultItem = {
+      id: 'doc-bar',
+      score: 1.2,
+      source: {
+        document_id: 'doc-bar',
+        title: '2019 Bar Questions',
+        document_type: 'bar_exam_questions',
+      },
+    };
+    const CORPUS = [codalItem, decisionItem, barItem];
+
+    /**
+     * Honour the `documentType` filter the way OpenSearch does, so an
+     * assertion about what came back is an assertion about the query rather
+     * than about the mock.
+     */
+    const respectFilters = () => {
+      openSearchService.searchKeyword.mockImplementation(
+        (opts: { filters?: { documentType?: string | string[] } }) => {
+          const dt = opts.filters?.documentType;
+          const allowed = dt === undefined ? null : Array.isArray(dt) ? dt : [dt];
+          const items =
+            allowed === null
+              ? CORPUS
+              : CORPUS.filter((item) =>
+                  allowed.includes(item.source['document_type'] as string),
+                );
+          return Promise.resolve({
+            total: items.length,
+            approximateTotal: false,
+            maxScore: items[0]?.score ?? null,
+            items,
+            timedOut: false,
+          });
+        },
+      );
+      embeddingClientService.embed.mockResolvedValue(null);
+    };
+
+    const gatedTypesIn = (items: unknown[]): string[] =>
+      items
+        .map(
+          (item) =>
+            ((item as SearchResultItem).source?.['document_type'] as string) ?? '',
+        )
+        .filter((type) => !isFreeDocumentType(type));
+
+    beforeEach(() => {
+      respectFilters();
+    });
+
+    describe('mobile client (excludeLocked)', () => {
+      it('returns zero gated documentType values', async () => {
+        const result = await service.search({ query: 'code', limit: 20 }, null, {
+          previewOnly: true,
+          excludeLocked: true,
+        });
+
+        expect(gatedTypesIn(result.items)).toEqual([]);
+        expect(result.items).toHaveLength(1);
+      });
+
+      it('narrows the OpenSearch filter to the free allowlist', async () => {
+        await service.search({ query: 'code', limit: 20 }, null, {
+          previewOnly: true,
+          excludeLocked: true,
+        });
+
+        const call = openSearchService.searchKeyword.mock.calls[0]![0]!;
+        expect(call.filters.documentType).toEqual([...FREE_DOCUMENT_TYPES]);
+      });
+
+      it('returns nothing when a gated documentType is explicitly requested', async () => {
+        const result = await service.search(
+          { query: 'code', limit: 20, documentType: ['decision'] },
+          null,
+          { previewOnly: true, excludeLocked: true },
+        );
+
+        const call = openSearchService.searchKeyword.mock.calls[0]![0]!;
+        expect(call.filters.documentType).toEqual([]);
+        expect(result.items).toEqual([]);
+      });
+
+      it('adds no previewMode/upgrade meta — a hidden result shows nothing', async () => {
+        const result = await service.search({ query: 'code', limit: 20 }, null, {
+          previewOnly: true,
+          excludeLocked: true,
+        });
+
+        expect(result.meta).not.toHaveProperty('previewMode');
+        expect(result.meta).not.toHaveProperty('upgradeRequired');
+      });
+
+      it('does not query the derivative or digest arms on a federated request', async () => {
+        const searchDerivatives = jest.fn().mockResolvedValue({
+          items: [],
+          total: 0,
+          timedOut: false,
+        });
+        const searchCaseDigests = jest.fn().mockResolvedValue({
+          items: [],
+          total: 0,
+          timedOut: false,
+        });
+        Object.assign(openSearchService, { searchDerivatives, searchCaseDigests });
+
+        const result = await service.search(
+          { query: 'code', limit: 20, scope: 'all' },
+          { organizationId: 'org-1' },
+          { previewOnly: true, excludeLocked: true },
+        );
+
+        expect(searchDerivatives).not.toHaveBeenCalled();
+        expect(searchCaseDigests).not.toHaveBeenCalled();
+        expect(gatedTypesIn(result.items)).toEqual([]);
+      });
+    });
+
+    describe('non-mobile client (web keeps its upgrade banner)', () => {
+      it('returns locked results with previewMode/lockedCount/upgradeRequired', async () => {
+        const result = await service.search({ query: 'code', limit: 20 }, null, {
+          previewOnly: true,
+          excludeLocked: false,
+        });
+
+        expect(result.items).toHaveLength(3);
+        expect(result.meta).toMatchObject({
+          previewMode: true,
+          lockedCount: 2, // decision + bar_exam_questions
+          upgradeRequired: true,
+        });
+      });
+
+      it('leaves the documentType filter untouched', async () => {
+        await service.search({ query: 'code', limit: 20 }, null, {
+          previewOnly: true,
+          excludeLocked: false,
+        });
+
+        const call = openSearchService.searchKeyword.mock.calls[0]![0]!;
+        expect(call.filters.documentType).toBeUndefined();
+      });
+    });
+
+    describe('entitled callers', () => {
+      it('behaves exactly as before when no gate is passed', async () => {
+        const result = await service.search({ query: 'code', limit: 20 });
+
+        expect(result.items).toHaveLength(3);
+        expect(result.meta).not.toHaveProperty('previewMode');
+        const call = openSearchService.searchKeyword.mock.calls[0]![0]!;
+        expect(call.filters.documentType).toBeUndefined();
+      });
+
+      it('behaves as before when previewOnly is false, even from mobile', async () => {
+        const result = await service.search({ query: 'code', limit: 20 }, null, {
+          previewOnly: false,
+          excludeLocked: true,
+        });
+
+        expect(result.items).toHaveLength(3);
+        expect(result.meta).not.toHaveProperty('previewMode');
+      });
+    });
+
+    it('caches free and entitled result sets under different keys', async () => {
+      await service.search({ query: 'code', limit: 20 }, null, {
+        previewOnly: true,
+        excludeLocked: true,
+      });
+      await service.search({ query: 'code', limit: 20 });
+
+      const freeKey = redisService.set.mock.calls[0]![0] as string;
+      const entitledKey = redisService.set.mock.calls[1]![0] as string;
+      expect(freeKey).not.toBe(entitledKey);
     });
   });
 });

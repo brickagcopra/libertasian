@@ -7,11 +7,14 @@ import {
   Param,
   Post,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { SkipThrottle, Throttle } from '@nestjs/throttler';
 import type { JwtPayload } from '@libertasian/types';
+
+import type { Request } from 'express';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequiredPermissions } from '../../common/decorators/permissions.decorator';
@@ -20,8 +23,10 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { MfaGuard } from '../../common/guards/mfa.guard';
 import { TenantGuard } from '../../common/guards/tenant.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { AdminBypassAuditService } from '../../common/services/admin-bypass-audit.service';
 import { TrackEvent } from '../analytics';
 import { AuditService } from '../audit/audit.service';
+import { EntitlementService } from '../subscriptions/entitlement.service';
 import { UsageQuotaService } from '../subscriptions/usage-quota.service';
 import { IndexRebuildService } from './index-rebuild.service';
 import { SearchService } from './search.service';
@@ -49,7 +54,53 @@ export class SearchController {
     private readonly auditService: AuditService,
     private readonly usageQuota: UsageQuotaService,
     private readonly indexRebuild: IndexRebuildService,
+    private readonly entitlementService: EntitlementService,
+    private readonly adminBypassAudit: AdminBypassAuditService,
   ) {}
+
+  /**
+   * Resolve whether the caller sees only the free statutory corpus.
+   *
+   * Same rule as `DocumentsController.resolvePreviewOnly`, including the
+   * audited platform-admin bypass, so search cannot drift from the surface it
+   * indexes.
+   */
+  private async resolvePreviewOnly(
+    user: JwtPayload | null,
+    req: Request,
+  ): Promise<boolean> {
+    if (user?.isPlatformAdmin === true) {
+      this.adminBypassAudit.record({
+        userId: user.sub,
+        organizationId: user.organizationId,
+        route: `${req.method} ${req.route?.path ?? req.path}`,
+      });
+      return false;
+    }
+    if (!user) return true;
+    const ent = await this.entitlementService.resolveEffectiveEntitlements(
+      user.organizationId,
+    );
+    return ent.previewOnly === true;
+  }
+
+  /**
+   * Whether locked results are removed from the response rather than returned
+   * with upgrade meta. Keyed off the opt-in `X-Client: mobile` header, matching
+   * `AuthController.isMobileClient`.
+   *
+   * The header is trivially spoofable and that is ACCEPTABLE here, because it
+   * selects PRESENTATION and never ACCESS: `previewOnly` — resolved from the
+   * verified JWT and the org's entitlements above — is what decides which
+   * documents a caller may open. Spoofing `X-Client: mobile` only makes a web
+   * caller see FEWER results; spoofing it away only restores the upgrade
+   * banner a browser would show anyway. Neither reveals a locked document.
+   */
+  private isMobileClient(req: Request): boolean {
+    const headerValue = req.headers['x-client'];
+    const value = Array.isArray(headerValue) ? headerValue[0] : headerValue;
+    return typeof value === 'string' && value.toLowerCase() === 'mobile';
+  }
 
   @Post()
   @Throttle({ default: { ttl: 60000, limit: 30 } })
@@ -70,6 +121,7 @@ export class SearchController {
   async search(
     @Body() dto: SearchQueryDto,
     @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
   ) {
     // Enforce plan-based search query quota
     const quota = await this.usageQuota.checkAndIncrement(
@@ -91,9 +143,12 @@ export class SearchController {
     // derivatives. This route is behind JwtAuthGuard, so a caller always exists
     // — an unauthenticated route would pass `null` and get the public branch,
     // never skip the filter.
-    const result = await this.searchService.search(dto, {
-      organizationId: user.organizationId,
-    });
+    const previewOnly = await this.resolvePreviewOnly(user, req);
+    const result = await this.searchService.search(
+      dto,
+      { organizationId: user.organizationId },
+      { previewOnly, excludeLocked: this.isMobileClient(req) },
+    );
 
     // Log search for analytics (non-blocking)
     this.auditService.log({
