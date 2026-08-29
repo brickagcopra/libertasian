@@ -116,6 +116,17 @@ export interface QuotaUsageData {
   billingPeriodStart: string | null;
   billingPeriodEnd: string | null;
   activeBonuses: ActiveBonus[];
+  /**
+   * Whether this account is limited to the free corpus — the server's own
+   * `resolveEffectiveEntitlements().previewOnly`, the same value the API gates
+   * documents and search on.
+   *
+   * Optional because a shipped build can outlive the API version that added it:
+   * store rollouts are gradual and builds live on devices for months, so a
+   * client cannot assume the field is there. See `surfacesFromQuotas` for what
+   * happens when it is absent.
+   */
+  previewOnly?: boolean;
 }
 
 export interface QuotaUsageResponse {

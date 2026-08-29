@@ -25,6 +25,50 @@ beforeEach(() => {
  * the client, and this must not reintroduce it.
  */
 describe('surfacesFromQuotas', () => {
+  describe('previewOnly — the primary signal', () => {
+    it('hides every surface when previewOnly is true, whatever the quotas say', () => {
+      // THE case the quota inference gets wrong: positive generation quotas on
+      // an account that still cannot read the paid corpora. The flag is the
+      // server's own resolveEffectiveEntitlements().previewOnly, so it wins.
+      expect(
+        surfacesFromQuotas(
+          { cameraScansPerMonth: quota(25), digestsPerMonth: quota(100) },
+          true,
+        ),
+      ).toEqual({ scan: false, study: false, barExams: false });
+    });
+
+    it('shows every surface when previewOnly is false, whatever the quotas say', () => {
+      // The mirror image: an entitled account that has exhausted its
+      // allowances still reaches the surfaces. A spent quota is a 429, not a
+      // reason to remove the feature.
+      expect(
+        surfacesFromQuotas(
+          { cameraScansPerMonth: quota(0), digestsPerMonth: quota(0) },
+          false,
+        ),
+      ).toEqual({ scan: true, study: true, barExams: true });
+    });
+
+    it('falls back to the quota pair only when the field is absent', () => {
+      // A shipped build outliving the API version that added previewOnly.
+      // Treating the missing field as "entitled" would put Scan and Study in
+      // front of a free account on every older deployment.
+      expect(
+        surfacesFromQuotas({
+          cameraScansPerMonth: quota(0),
+          digestsPerMonth: quota(0),
+        }).scan,
+      ).toBe(false);
+      expect(
+        surfacesFromQuotas({
+          cameraScansPerMonth: quota(10),
+          digestsPerMonth: quota(0),
+        }).scan,
+      ).toBe(true);
+    });
+  });
+
   it('hides every paid surface when both generation quotas are 0', () => {
     expect(
       surfacesFromQuotas({
@@ -105,10 +149,27 @@ describe('useFreemiumSurfacesSync', () => {
     expect(mockUseQuotaUsage).toHaveBeenCalledWith(false);
   });
 
+  it('passes previewOnly through to the resolver', () => {
+    mockUseQuotaUsage.mockReturnValue({
+      data: {
+        // Quotas that would read as entitled under the fallback.
+        quotas: { cameraScansPerMonth: quota(25), digestsPerMonth: quota(100) },
+        previewOnly: true,
+      },
+    });
+
+    renderHook(() => useFreemiumSurfacesSync(true));
+
+    expect(
+      JSON.parse(storage.getString(STORAGE_KEYS.ENTITLED_SURFACES) ?? '{}'),
+    ).toEqual({ scan: false, study: false, barExams: false });
+  });
+
   it('persists the resolved answer so the next cold start does not flicker', () => {
     mockUseQuotaUsage.mockReturnValue({
       data: {
         quotas: { cameraScansPerMonth: quota(-1), digestsPerMonth: quota(-1) },
+        previewOnly: false,
       },
     });
 

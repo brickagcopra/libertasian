@@ -11,6 +11,7 @@ import {
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useUploads } from '../../features/camera-scan/hooks/use-uploads';
+import { SurfaceGuard } from '@/features/entitlements/surface-guard';
 import { useQuotaUsage } from '../../features/billing/hooks/use-quotas';
 import type { UploadListItem } from '../../features/camera-scan/types';
 
@@ -76,7 +77,7 @@ function ScanItem({ item }: { item: UploadListItem }) {
   );
 }
 
-export default function ScanTab() {
+function ScanTabScreen() {
   const { data, isLoading, refetch, isRefetching } = useUploads({ uploadType: 'camera_scan' });
   const { data: quotaData } = useQuotaUsage();
 
@@ -322,3 +323,16 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
 });
+
+/**
+ * `/(tabs)/scan` is a different route from the `/scan` subtree, and its own
+ * deep link. Guarded here so a restored navigation state or a stale back
+ * stack lands on Home rather than on a screen that refuses.
+ */
+export default function ScanTab() {
+  return (
+    <SurfaceGuard surface="scan">
+      <ScanTabScreen />
+    </SurfaceGuard>
+  );
+}

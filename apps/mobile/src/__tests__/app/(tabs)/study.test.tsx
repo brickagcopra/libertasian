@@ -1,5 +1,6 @@
 import React from 'react';
 import { render } from '@testing-library/react-native';
+import { setEntitled, setFreeTier } from '@/features/entitlements/test-helpers';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // Mock dependencies
@@ -28,6 +29,13 @@ jest.mock('@/features/study/components/subject-grid', () => ({
 jest.mock('expo-router', () => ({
   Stack: { Screen: () => null },
   router: { push: jest.fn() },
+  // SurfaceGuard renders <Redirect> instead of the screen when the surface is
+  // hidden. Rendered as a marker so a test can assert the redirect happened
+  // AND that none of the screen mounted behind it.
+  Redirect: ({ href }: { href: string }) => {
+    const { Text } = require('react-native');
+    return <Text testID="redirect">{href}</Text>;
+  },
 }));
 
 jest.mock('@expo/vector-icons', () => ({
@@ -55,6 +63,9 @@ function createWrapper() {
 
 describe('StudyTab', () => {
   beforeEach(() => {
+    // These cases are about the screen's content, so they stand in an
+    // account that can reach it. The guard has its own block below.
+    setEntitled();
     jest.clearAllMocks();
   });
 
@@ -252,5 +263,35 @@ describe('StudyTab', () => {
 
     expect(queryByText('Evidence Reviewer')).toBeTruthy();
     expect(queryByText(/12 items/)).toBeTruthy();
+  });
+  // Hiding the tab removes the way IN; it does not remove the route. A deep
+  // link, a restored navigation state, or a back-stack entry from before a
+  // downgrade all land here without passing a tab or a settings row.
+  describe('free tier', () => {
+    beforeEach(() => {
+      setFreeTier();
+    });
+
+    it('redirects home instead of rendering the screen', () => {
+      const { getByTestId } = render(<StudyTab />, { wrapper: createWrapper() });
+
+      expect(getByTestId('redirect').props.children).toBe('/(tabs)');
+    });
+
+    it('mounts none of the screen behind the redirect', () => {
+      const { queryByText } = render(<StudyTab />, { wrapper: createWrapper() });
+
+      // No paid UI paints for a frame, and no requests fire.
+      expect(queryByText('Bar Subjects')).toBeNull();
+      expect(mockUseBarSubjects).not.toHaveBeenCalled();
+    });
+
+    it('presents no refusal — the point is to never show one', () => {
+      const { queryByText } = render(<StudyTab />, { wrapper: createWrapper() });
+
+      for (const word of ['Upgrade', 'Locked', 'Not available', 'Pro', 'Plan']) {
+        expect(queryByText(word)).toBeNull();
+      }
+    });
   });
 });

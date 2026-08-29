@@ -1,6 +1,7 @@
 import React from 'react';
 import { render, fireEvent } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { setEntitled, setFreeTier } from '@/features/entitlements/test-helpers';
 
 // Mock dependencies
 const mockUseUploads = jest.fn();
@@ -16,6 +17,13 @@ jest.mock('@/features/billing/hooks/use-quotas', () => ({
 jest.mock('expo-router', () => ({
   Stack: { Screen: () => null },
   router: { push: jest.fn(), back: jest.fn(), replace: jest.fn() },
+  // SurfaceGuard renders <Redirect> instead of the screen when the surface is
+  // hidden. Rendered as a marker so a test can assert the redirect happened
+  // AND that none of the screen mounted behind it.
+  Redirect: ({ href }: { href: string }) => {
+    const { Text } = require('react-native');
+    return <Text testID="redirect">{href}</Text>;
+  },
 }));
 
 jest.mock('@expo/vector-icons', () => ({
@@ -44,6 +52,9 @@ function createWrapper() {
 
 describe('ScanTab', () => {
   beforeEach(() => {
+    // These cases are about the screen's content, so they stand in an
+    // account that can reach it. The guard has its own block below.
+    setEntitled();
     jest.clearAllMocks();
     mockUseQuotaUsage.mockReturnValue({
       data: null,
@@ -197,5 +208,36 @@ describe('ScanTab', () => {
     });
 
     expect(getByText('Recent Scans')).toBeTruthy();
+  });
+  // Hiding the FAB removes the way IN; it does not remove the route. A push
+  // notification about a finished upload, a restored navigation state, or a
+  // back-stack entry from before a downgrade all land here without passing an
+  // entry point.
+  describe('free tier', () => {
+    beforeEach(() => {
+      setFreeTier();
+    });
+
+    it('redirects home instead of rendering the screen', () => {
+      const { getByTestId } = render(<ScanTab />, { wrapper: createWrapper() });
+
+      expect(getByTestId('redirect').props.children).toBe('/(tabs)');
+    });
+
+    it('mounts none of the screen behind the redirect', () => {
+      const { queryByText } = render(<ScanTab />, { wrapper: createWrapper() });
+
+      // No paid UI paints for a frame, and no requests fire.
+      expect(queryByText('Scan a document')).toBeNull();
+      expect(mockUseUploads).not.toHaveBeenCalled();
+    });
+
+    it('presents no refusal — the point is to never show one', () => {
+      const { queryByText } = render(<ScanTab />, { wrapper: createWrapper() });
+
+      for (const word of ['Upgrade', 'Locked', 'Not available', 'Pro', 'Plan']) {
+        expect(queryByText(word)).toBeNull();
+      }
+    });
   });
 });
