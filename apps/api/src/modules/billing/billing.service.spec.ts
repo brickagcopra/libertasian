@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -450,6 +450,56 @@ describe('BillingService', () => {
         planCode: 'pro',
         status: SubscriptionState.ACTIVE,
         cancelAtPeriodEnd: true,
+      } as never);
+      subscriptionsService.getDefaultEntitlements.mockReturnValue({} as never);
+
+      await expect(service.createCheckout('org-1', dto, 'user-1')).resolves.toHaveProperty(
+        'checkoutSessionId',
+        'ps-1',
+      );
+    });
+
+    // ---- §6.2 — the double-billing guard, web side (IAP design) ----
+
+    it('refuses web checkout for an org that already subscribes through a store', async () => {
+      // The mirror of `409 already_subscribed_elsewhere` on
+      // POST /store/purchase-intent. We cannot cancel or refund an Apple or
+      // Google subscription server-side, so the charge we could stop is the one
+      // we would be creating here.
+      subscriptionsService.getActiveSubscription.mockResolvedValue({
+        planCode: 'pro',
+        status: SubscriptionState.ACTIVE,
+        cancelAtPeriodEnd: false,
+        provider: 'app_store',
+      } as never);
+
+      await expect(service.createCheckout('org-1', dto, 'user-1')).rejects.toThrow(
+        ConflictException,
+      );
+      expect(prisma.subscription.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses web checkout for a play_store subscriber too', async () => {
+      subscriptionsService.getActiveSubscription.mockResolvedValue({
+        planCode: 'edu',
+        status: SubscriptionState.ACTIVE,
+        cancelAtPeriodEnd: false,
+        provider: 'play_store',
+      } as never);
+
+      await expect(service.createCheckout('org-1', dto, 'user-1')).rejects.toThrow(
+        ConflictException,
+      );
+    });
+
+    it('does NOT refuse web checkout for a gateway-backed subscription', async () => {
+      // The guard must key on the STORE slugs specifically. A xendit subscriber
+      // upgrading on the web is the ordinary path and must stay open.
+      subscriptionsService.getActiveSubscription.mockResolvedValue({
+        planCode: 'edu',
+        status: SubscriptionState.ACTIVE,
+        cancelAtPeriodEnd: false,
+        provider: 'xendit',
       } as never);
       subscriptionsService.getDefaultEntitlements.mockReturnValue({} as never);
 

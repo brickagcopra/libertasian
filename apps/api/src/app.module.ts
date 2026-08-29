@@ -47,6 +47,7 @@ import { UsersModule } from './modules/users/users.module';
 import { WorkspaceModule } from './modules/workspace/workspace.module';
 import { ApiKeysModule } from './modules/api-keys/api-keys.module';
 import { BillingModule } from './modules/billing/billing.module';
+import { StorePurchasesModule } from './modules/store-purchases/store-purchases.module';
 import { CouponsModule } from './modules/coupons/coupons.module';
 import { PromotionsModule } from './modules/promotions/promotions.module';
 import { ExportsModule } from './modules/exports/exports.module';
@@ -141,6 +142,24 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
         // Billing (Xendit)
         XENDIT_SECRET_KEY: Joi.string().default('xnd_development_change_me'),
         XENDIT_WEBHOOK_CALLBACK_TOKEN: Joi.string().default('callback_token_change_me'),
+        // Store purchases (IAP) — which conduit StorePurchasesModule binds to
+        // STORE_PURCHASE_PROVIDER. Unlike PAYMENT_PROVIDER this is NOT an
+        // exclusive-or with the web gateway: both run at the same time, for
+        // different subscribers.
+        STORE_PURCHASE_CONDUIT: Joi.string().valid('revenuecat').default('revenuecat'),
+        // The value RevenueCat echoes back in the `Authorization` header. NOT an
+        // HMAC key — there is no signature over the body to recompute.
+        //
+        // THE DEFAULT IS THE EMPTY STRING AND MUST STAY THAT WAY. An unset
+        // secret makes RevenueCatService.verifyWebhookAuthorization return
+        // 'invalid' for every request, so the endpoint is CLOSED when
+        // unconfigured. Any non-empty default here would be a shared, published
+        // credential that lets an anonymous caller move a subscription.
+        REVENUECAT_WEBHOOK_AUTH_TOKEN: Joi.string().allow('').default(''),
+        // Secret API key for the §9 pull path. Empty disables the nightly
+        // reconciliation sweep rather than failing it once per org per night.
+        REVENUECAT_API_KEY: Joi.string().allow('').default(''),
+        REVENUECAT_API_URL: Joi.string().default('https://api.revenuecat.com'),
         // Billing (PayMongo)
         PAYMONGO_SECRET_KEY: Joi.string().default('sk_test_change_me'),
         PAYMONGO_WEBHOOK_SECRET: Joi.string().default('whsk_test_change_me'),
@@ -382,6 +401,7 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
     WorkspaceModule,
     ApiKeysModule,
     BillingModule,
+    StorePurchasesModule,
     CouponsModule,
     PromotionsModule,
     ExportsModule,
