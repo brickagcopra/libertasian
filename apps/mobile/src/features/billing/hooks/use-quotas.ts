@@ -7,9 +7,15 @@ export const quotaKeys = {
   usage: () => [...quotaKeys.all, 'usage'] as const,
 };
 
-export function useQuotaUsage() {
+/**
+ * `enabled` exists for `useFreemiumSurfacesSync`, which mounts at the root and
+ * must not fire this request while signed out. Defaults to true, so the
+ * existing caller (Settings → Usage & quotas) is unchanged.
+ */
+export function useQuotaUsage(enabled = true) {
   return useQuery({
     queryKey: quotaKeys.usage(),
+    enabled,
     queryFn: async (): Promise<QuotaUsageData> => {
       const res = await apiClient.get<QuotaUsageResponse>('/quotas/usage');
       return res.data;

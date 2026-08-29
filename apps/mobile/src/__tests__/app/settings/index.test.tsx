@@ -33,6 +33,7 @@ jest.mock('@/features/auth/hooks/use-auth', () => ({
 
 import { router } from 'expo-router';
 import SettingsRoute from '@/app/settings/index';
+import { setEntitled, setFreeTier } from '@/features/entitlements/test-helpers';
 
 function createWrapper() {
   const queryClient = new QueryClient({
@@ -118,12 +119,27 @@ describe('SettingsRoute (Phase 2 ProfileScreen)', () => {
   // appears twice on this screen. "Workspace" stays unique — the bar's slot is
   // labelled "Work" so eight items fit a 375pt screen.
   it('renders drawer-replacement quick links (Phase 2 IA)', () => {
+    setEntitled();
     const { getAllByText, getByText } = render(<SettingsRoute />, {
       wrapper: createWrapper(),
     });
 
     expect(getAllByText('Digests').length).toBeGreaterThan(0);
     expect(getAllByText('Study').length).toBeGreaterThan(0);
+    expect(getAllByText('Feed').length).toBeGreaterThan(0);
+    expect(getByText('Workspace')).toBeTruthy();
+  });
+
+  // This profile surface is the Study tab's OTHER entry point. Filtering the
+  // TabBar alone would leave a row here that taps straight into a refusal.
+  it('drops the Study quick link for a free account, keeping the rest', () => {
+    setFreeTier();
+    const { queryByText, getAllByText, getByText } = render(<SettingsRoute />, {
+      wrapper: createWrapper(),
+    });
+
+    expect(queryByText('Study')).toBeNull();
+    expect(getAllByText('Digests').length).toBeGreaterThan(0);
     expect(getAllByText('Feed').length).toBeGreaterThan(0);
     expect(getByText('Workspace')).toBeTruthy();
   });

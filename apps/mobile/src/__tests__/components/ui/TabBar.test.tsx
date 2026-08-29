@@ -1,5 +1,6 @@
 import { fireEvent, render } from '@testing-library/react-native';
 import { TabBar } from '@/components/ui/TabBar';
+import { setEntitled, setFreeTier } from '@/features/entitlements/test-helpers';
 
 jest.mock('@expo/vector-icons', () => ({
   Ionicons: ({ name }: { name: string }) => {
@@ -9,6 +10,13 @@ jest.mock('@expo/vector-icons', () => ({
 }));
 
 describe('TabBar', () => {
+  // The bar filters itself by entitlement, so every case has to say which
+  // account it is standing in. Entitled is the baseline here; the free-tier
+  // cases have their own block at the bottom.
+  beforeEach(() => {
+    setEntitled();
+  });
+
   it('renders all eight default labels, in order', () => {
     const { getByText } = render(<TabBar active="home" />);
     for (const label of ['Read', 'Library', 'Search', 'Digests', 'Study', 'Feed', 'Work', 'Me']) {
@@ -66,5 +74,44 @@ describe('TabBar', () => {
     const { getByText } = render(<TabBar active="home" onPress={onPress} />);
     fireEvent.press(getByText('Search'));
     expect(onPress).toHaveBeenCalledWith('search');
+  });
+
+  describe('free tier', () => {
+    beforeEach(() => {
+      setFreeTier();
+    });
+
+    it('drops the Study slot entirely — no label, no lock, no notice', () => {
+      const { queryByText } = render(<TabBar active="home" />);
+
+      expect(queryByText('Study')).toBeNull();
+      // Hidden means hidden: nothing takes its place.
+      for (const word of ['Locked', 'Upgrade', 'Pro', 'Plan', 'Premium']) {
+        expect(queryByText(word)).toBeNull();
+      }
+    });
+
+    it('keeps Library — the corpus browser is where the free codals live', () => {
+      const { getByText } = render(<TabBar active="home" />);
+      expect(getByText('Library')).toBeTruthy();
+    });
+
+    it('keeps the other six slots', () => {
+      const { getByText } = render(<TabBar active="home" />);
+      for (const label of ['Read', 'Library', 'Search', 'Digests', 'Feed', 'Work', 'Me']) {
+        expect(getByText(label)).toBeTruthy();
+      }
+    });
+
+    it('still honours an explicit items prop', () => {
+      const { getByText } = render(
+        <TabBar
+          active="study"
+          items={[{ id: 'study', label: 'Study', icon: 'school' }]}
+        />,
+      );
+      // A caller passing its own list has already decided what belongs there.
+      expect(getByText('Study')).toBeTruthy();
+    });
   });
 });

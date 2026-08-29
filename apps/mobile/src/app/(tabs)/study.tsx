@@ -11,6 +11,7 @@ import {
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { TabBar, useTabBarClearance } from '@/components/ui/TabBar';
+import { useFreemiumSurfaces } from '@/features/entitlements/use-freemium-surfaces';
 import { useTabBarNav } from '@/features/navigation/use-tab-bar-nav';
 import { useBarSubjects } from '../../features/study/hooks/use-bar-subjects';
 import { useFlashcardSets } from '../../features/study/hooks/use-flashcard-sets';
@@ -30,6 +31,7 @@ function formatStudyTime(totalSecs: number): string {
 
 export default function StudyTab() {
   const navigate = useTabBarNav();
+  const surfaces = useFreemiumSurfaces();
   const clearance = useTabBarClearance();
   const {
     data: subjects,
@@ -127,7 +129,13 @@ export default function StudyTab() {
         </TouchableOpacity>
       ) : null}
 
-      {/* Past Bar Exams */}
+      {/* Past Bar Exams. Gated independently of the Study tab that contains it:
+          bar exam questions are their own paid corpus on the API
+          (`bar_exam_questions` is outside FREE_DOCUMENT_TYPES), and this banner
+          is the app's only route to them. Belt and braces — the Study tab is
+          already hidden for the same accounts — but the entry point should not
+          depend on its container to stay hidden. */}
+      {surfaces.barExams ? (
       <TouchableOpacity
         style={styles.barExamsBanner}
         onPress={() => router.push('/bar-exams')}
@@ -144,6 +152,7 @@ export default function StudyTab() {
         </View>
         <Ionicons name="chevron-forward" size={16} color="#9ca3af" />
       </TouchableOpacity>
+      ) : null}
 
       {/* Study Stats */}
       {studyStats ? (

@@ -49,8 +49,8 @@ describe('STORAGE_KEYS', () => {
     expect(STORAGE_KEYS.ONBOARDING_COMPLETED).toBe('onboarding_completed');
   });
 
-  it('has 13 storage keys', () => {
-    expect(Object.keys(STORAGE_KEYS)).toHaveLength(13);
+  it('has 14 storage keys', () => {
+    expect(Object.keys(STORAGE_KEYS)).toHaveLength(14);
   });
 
   it('defines blog and ad storage keys', () => {

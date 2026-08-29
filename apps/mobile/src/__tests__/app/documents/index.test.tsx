@@ -20,6 +20,7 @@ jest.mock('@/features/study/hooks/use-bar-subjects', () => ({
 
 import { router } from 'expo-router';
 import DocumentsRoute from '@/app/documents/index';
+import { setEntitled, setFreeTier } from '@/features/entitlements/test-helpers';
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -119,9 +120,36 @@ describe('DocumentsRoute (Phase 2 LibraryScreen)', () => {
     expect(getByText('No documents')).toBeTruthy();
   });
 
-  it('exposes the camera Scan FAB', () => {
+  it('exposes the camera Scan FAB to an account that can scan', () => {
+    setEntitled();
     mockUseDocuments.mockReturnValue(noopPage([]));
     const { getByLabelText } = render(<DocumentsRoute />);
     expect(getByLabelText('Scan a document')).toBeTruthy();
+  });
+
+  describe('free tier', () => {
+    beforeEach(() => {
+      setFreeTier();
+      mockUseDocuments.mockReturnValue(noopPage([]));
+    });
+
+    it('removes the Scan FAB entirely', () => {
+      const { queryByLabelText } = render(<DocumentsRoute />);
+      expect(queryByLabelText('Scan a document')).toBeNull();
+    });
+
+    it('keeps the Library itself open — the free codals live here', () => {
+      // The corpus browser is NOT gated. Hiding it would take the free
+      // statutory corpus with it, which is the whole point of the tier.
+      const { getByText } = render(<DocumentsRoute />);
+      expect(getByText('No documents')).toBeTruthy();
+    });
+
+    it('puts nothing in its place — no lock, no prompt, no price', () => {
+      const { queryByText } = render(<DocumentsRoute />);
+      for (const word of ['Upgrade', 'Locked', 'Pro', 'Plan', 'Premium', 'libertasian.com']) {
+        expect(queryByText(word)).toBeNull();
+      }
+    });
   });
 });

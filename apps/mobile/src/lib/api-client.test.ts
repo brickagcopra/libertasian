@@ -74,6 +74,25 @@ describe('apiClient.get', () => {
     expect(result).toEqual([]);
   });
 
+  it('sends X-App-Version from the Expo manifest on every request', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: [] }),
+    });
+
+    await apiClient.get('/test');
+
+    // Sourced from Constants.expoConfig.version — app.json is the one place
+    // the shipped version is bumped, so there is no second copy to drift.
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'X-App-Version': '1.0.0' }),
+      }),
+    );
+  });
+
   it('appends query params to URL', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
