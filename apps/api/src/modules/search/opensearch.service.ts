@@ -1014,8 +1014,13 @@ export class OpenSearchService implements OnModuleInit {
    * keyword field, so a near-miss docket (246499) can never outscore the exact
    * one (246999) — which it did under the previous fuzzy `match_phrase` model.
    */
-  async searchExactCitation(citation: string) {
-    const body = buildCitationQueryBody(citation, deriveGrNoDigits(citation));
+  async searchExactCitation(citation: string, documentTypes?: readonly string[]) {
+    const body = buildCitationQueryBody(
+      citation,
+      deriveGrNoDigits(citation),
+      10,
+      documentTypes,
+    );
 
     try {
       const response = await this.client.search({ index: KEYWORD_INDEX, body });
@@ -1044,8 +1049,12 @@ export class OpenSearchService implements OnModuleInit {
    * Returns a flat, UI-shaped row rather than a raw hit — callers render these
    * directly in a dropdown.
    */
-  async searchSuggestions(prefix: string, limit = 10): Promise<SuggestionItem[]> {
-    const body = buildSuggestionQueryBody(prefix, limit);
+  async searchSuggestions(
+    prefix: string,
+    limit = 10,
+    documentTypes?: readonly string[],
+  ): Promise<SuggestionItem[]> {
+    const body = buildSuggestionQueryBody(prefix, limit, documentTypes);
 
     try {
       const response = await this.client.search({ index: KEYWORD_INDEX, body });

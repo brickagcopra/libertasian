@@ -356,6 +356,32 @@ describe('buildCitationQueryBody', () => {
     const clauses = walk(buildCitationQueryBody('Republic Act', undefined));
     expect(clauses.some((node) => 'gr_no_digits' in node)).toBe(false);
   });
+
+  it('adds no document-type filter when none is supplied', () => {
+    const bool = walk(buildCitationQueryBody('G.R. No. 246999', '246999')).find(
+      (node) => 'minimum_should_match' in node,
+    );
+    expect(bool?.['filter']).toBeUndefined();
+  });
+
+  it('narrows to the supplied document types', () => {
+    const bool = walk(
+      buildCitationQueryBody('G.R. No. 246999', '246999', 10, ['codal', 'constitution']),
+    ).find((node) => 'minimum_should_match' in node);
+
+    expect(bool?.['filter']).toEqual([
+      { terms: { document_type: ['codal', 'constitution'] } },
+    ]);
+  });
+
+  it('matches nothing for an empty allowlist rather than everything', () => {
+    // An empty list means the caller asked for a type they cannot read.
+    // `terms: []` is the query that returns no hit and, crucially, a total of 0.
+    const bool = walk(buildCitationQueryBody('G.R. No. 246999', '246999', 10, [])).find(
+      (node) => 'minimum_should_match' in node,
+    );
+    expect(bool?.['filter']).toEqual([{ terms: { document_type: [] } }]);
+  });
 });
 
 describe('buildSuggestionQueryBody', () => {
@@ -383,5 +409,15 @@ describe('buildSuggestionQueryBody', () => {
     expect(body['collapse']).toEqual({ field: 'document_id' });
     const bool = walk(body).find((node) => 'filter' in node);
     expect(bool?.['filter']).toEqual([{ term: { is_published: true } }]);
+  });
+
+  it('narrows to the supplied document types alongside the published filter', () => {
+    const body = buildSuggestionQueryBody('People', 10, ['codal']);
+    const bool = walk(body).find((node) => 'filter' in node);
+
+    expect(bool?.['filter']).toEqual([
+      { term: { is_published: true } },
+      { terms: { document_type: ['codal'] } },
+    ]);
   });
 });
