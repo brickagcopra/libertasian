@@ -3,7 +3,11 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
 
-import { PricingPageClient } from './pricing-page-client';
+import {
+  PricingPageClient,
+  STATIC_COMPARISON_FEATURES,
+} from './pricing-page-client';
+import { PLANS } from '@/features/billing/types';
 import type { PlanDetail } from '@/features/billing/types';
 
 // Mock the hooks — we test them separately
@@ -485,5 +489,177 @@ describe('PricingPageClient — CTA routing by auth state', () => {
       'href',
       '/register',
     );
+  });
+});
+
+/**
+ * The pricing page is the public statement of what a tier gets, so these
+ * assertions are pinned to what the API actually gates: `FREE_DOCUMENT_TYPES`
+ * in `documents.service.ts`, the three rotating digests in
+ * `digests.service.ts`, and the free-plan entitlements in
+ * `subscriptions.service.ts` / `prisma/seeds/plan-seed.ts`.
+ *
+ * Unlike the mobile app, this page names tiers and prices freely — Apple's
+ * 3.1.1 / 2.1(b) restrictions apply to the iOS build, not to the web.
+ */
+describe('PricingPageClient — freemium comparison table', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authState.isAuthenticated = false;
+    subscriptionState.data = undefined;
+    vi.mocked(useActivePromotions).mockReturnValue({
+      data: [],
+      isLoading: false,
+      isSuccess: true,
+      isError: false,
+    } as ReturnType<typeof useActivePromotions>);
+  });
+
+  const rowFor = (name: string) => {
+    const row = STATIC_COMPARISON_FEATURES.flatMap((c) => c.features).find(
+      (f) => f.name === name,
+    );
+    expect(row, `no comparison row named "${name}"`).toBeDefined();
+    return row!;
+  };
+
+  it('no longer claims blanket public corpus access on free', () => {
+    // The row this PR exists to remove. The public corpus is not one thing
+    // any more, so one green check over it promised the paid half.
+    const names = STATIC_COMPARISON_FEATURES.flatMap((c) => c.features).map(
+      (f) => f.name,
+    );
+    expect(names).not.toContain('Public corpus access');
+  });
+
+  it.each([
+    ['Statutory corpus (Constitution, codals, Rules of Court)', 'Full'],
+    ['Supreme Court decisions', false],
+    ['Case digests (read)', '3'],
+    ['Case digest generation', false],
+    ['Bar exam questions', false],
+    ['Offline mobile reading', true],
+    ['AI answers', '15 credits'],
+    ['Camera scan digests', false],
+  ])('free column for "%s" is %s', (name, expected) => {
+    expect(rowFor(name as string).free).toBe(expected);
+  });
+
+  it('gives every paid tier what the free tier is refused', () => {
+    // A row that is false everywhere is a feature nobody has, which would mean
+    // the gate is not a tier boundary at all.
+    for (const name of [
+      'Supreme Court decisions',
+      'Bar exam questions',
+      'Case digest generation',
+      'Camera scan digests',
+    ]) {
+      const row = rowFor(name);
+      expect({ name, edu: row.edu !== false, pro: row.pro !== false }).toEqual({
+        name,
+        edu: true,
+        pro: true,
+      });
+    }
+  });
+
+  it('renders the freemium rows in the comparison table', () => {
+    vi.mocked(usePlans).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isSuccess: false,
+      isError: false,
+    } as ReturnType<typeof usePlans>);
+
+    const Wrapper = createWrapper();
+    render(
+      <Wrapper>
+        <PricingPageClient dynamicEnabled={false} fetchError={false} />
+      </Wrapper>,
+    );
+
+    expect(
+      screen.getByText('Statutory corpus (Constitution, codals, Rules of Court)'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Supreme Court decisions')).toBeInTheDocument();
+    expect(screen.getByText('Bar exam questions')).toBeInTheDocument();
+    expect(screen.getByText('Case digests (read)')).toBeInTheDocument();
+    expect(screen.queryByText('Public corpus access')).not.toBeInTheDocument();
+  });
+});
+
+describe('free plan card copy matches the comparison table', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authState.isAuthenticated = false;
+    subscriptionState.data = undefined;
+    vi.mocked(useActivePromotions).mockReturnValue({
+      data: [],
+      isLoading: false,
+      isSuccess: true,
+      isError: false,
+    } as ReturnType<typeof useActivePromotions>);
+  });
+
+  const freePlan = PLANS.find((p) => p.code === 'free')!;
+
+  it('promises the statutory corpus rather than "the public corpus"', () => {
+    expect(freePlan.features).toContain(
+      'Full statutory corpus — Constitution, codals, Rules of Court',
+    );
+  });
+
+  it('drops the two claims the freemium tier made false', () => {
+    // "Browse public legal corpus" promised decisions and bar exams;
+    // "OCR preview" promised a camera scan the free plan no longer has.
+    expect(freePlan.features).not.toContain('Browse public legal corpus');
+    for (const feature of freePlan.features) {
+      expect(feature).not.toMatch(/OCR|scan/i);
+    }
+  });
+
+  it('claims nothing the comparison table marks as not included on free', () => {
+    const freeIsFalse = STATIC_COMPARISON_FEATURES.flatMap((c) => c.features)
+      .filter((f) => f.free === false)
+      .map((f) => f.name.toLowerCase());
+
+    // A card bullet for a feature the table shows as "—" is the exact
+    // inconsistency that made "Public corpus access ✓" survive this long.
+    for (const feature of freePlan.features) {
+      for (const denied of freeIsFalse) {
+        expect({ feature, denied, claimed: feature.toLowerCase().includes(denied) }).toEqual(
+          { feature, denied, claimed: false },
+        );
+      }
+    }
+  });
+
+  it('renders the free card copy on the static fallback', () => {
+    vi.mocked(usePlans).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isSuccess: false,
+      isError: false,
+    } as ReturnType<typeof usePlans>);
+
+    const Wrapper = createWrapper();
+    render(
+      <Wrapper>
+        <PricingPageClient dynamicEnabled={false} fetchError={false} />
+      </Wrapper>,
+    );
+
+    expect(
+      screen.getByText('Full statutory corpus — Constitution, codals, Rules of Court'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('3 case digests to read')).toBeInTheDocument();
+    // Appears more than once by design — a bullet on the free and edu cards
+    // and a row in the comparison table. What matters is that it is now on the
+    // FREE card at all, which it was not before this change.
+    expect(
+      screen
+        .getAllByText('Offline mobile reading')
+        .some((el) => el.tagName === 'LI'),
+    ).toBe(true);
   });
 });

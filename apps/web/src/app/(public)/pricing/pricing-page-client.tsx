@@ -1058,11 +1058,24 @@ function EntitlementCell({ entitlement }: { entitlement: PlanEntitlementDetail |
 
 // ─── Static Feature Comparison (Hardcoded Fallback) ───────
 
-const STATIC_COMPARISON_FEATURES = [
+/**
+ * The comparison table is the public statement of what each tier gets, so it
+ * has to match what the API actually gates — `FREE_DOCUMENT_TYPES` in
+ * `documents.service.ts` and the free-plan entitlements in
+ * `subscriptions.service.ts` / `prisma/seeds/plan-seed.ts`.
+ *
+ * "Public corpus access: free ✓" was the row that stopped being true. The
+ * public corpus is not one thing any more: the statutory half is free to read
+ * in full, and Supreme Court decisions and bar exam questions are paid. One
+ * green check over both halves promised the paid half.
+ */
+export const STATIC_COMPARISON_FEATURES = [
   {
     category: 'Search & Research',
     features: [
-      { name: 'Public corpus access', free: true, edu: true, pro: true, team: true, enterprise: true },
+      { name: 'Statutory corpus (Constitution, codals, Rules of Court)', free: 'Full', edu: 'Full', pro: 'Full', team: 'Full', enterprise: 'Full' },
+      { name: 'Supreme Court decisions', free: false, edu: true, pro: true, team: true, enterprise: true },
+      { name: 'Bar exam questions', free: false, edu: true, pro: true, team: true, enterprise: true },
       { name: 'Search queries', free: '50/day', edu: 'Unlimited', pro: 'Unlimited', team: 'Unlimited', enterprise: 'Unlimited' },
       { name: 'AI answers', free: '15 credits', edu: 'Plan-based', pro: 'Unlimited', team: 'Unlimited', enterprise: 'Unlimited' },
       { name: 'Answer modes (ALAC/IRAC/Bar)', free: false, edu: true, pro: true, team: true, enterprise: true },
@@ -1071,6 +1084,10 @@ const STATIC_COMPARISON_FEATURES = [
   {
     category: 'Digests & Documents',
     features: [
+      // Reading a digest and generating one are separate entitlements, and the
+      // free tier has one and not the other. The read cap is exactly three,
+      // chosen per user and rotating monthly (digests.service.ts).
+      { name: 'Case digests (read)', free: '3', edu: 'Unlimited', pro: 'Unlimited', team: 'Unlimited', enterprise: 'Unlimited' },
       { name: 'Case digest generation', free: false, edu: 'Plan-based', pro: 'Unlimited', team: 'Unlimited', enterprise: 'Unlimited' },
       { name: 'Camera scan digests', free: false, edu: '10/month', pro: 'Unlimited', team: 'Unlimited', enterprise: 'Unlimited' },
       { name: 'Document uploads', free: false, edu: false, pro: true, team: true, enterprise: true },
@@ -1081,7 +1098,10 @@ const STATIC_COMPARISON_FEATURES = [
     category: 'Study Tools',
     features: [
       { name: 'Codal reader', free: true, edu: true, pro: true, team: true, enterprise: true },
-      { name: 'Offline mobile reading', free: false, edu: true, pro: true, team: true, enterprise: true },
+      // Free now, and deliberately: the statutory corpus is free to read, and
+      // reading it offline is the same entitlement. `offlineReading` is true on
+      // the free plan in subscriptions.service.ts and plan-seed.ts.
+      { name: 'Offline mobile reading', free: true, edu: true, pro: true, team: true, enterprise: true },
       { name: 'Flashcard generation', free: false, edu: true, pro: true, team: true, enterprise: true },
       { name: 'Study progress tracking', free: false, edu: true, pro: true, team: true, enterprise: true },
       { name: 'Reviewer packs', free: false, edu: true, pro: true, team: true, enterprise: true },

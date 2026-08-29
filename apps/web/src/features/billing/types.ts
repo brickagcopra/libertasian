@@ -469,11 +469,17 @@ export const PLANS: PlanInfo[] = [
     name: 'Free',
     monthlyPrice: 0,
     annualPrice: 0,
+    // Must match STATIC_COMPARISON_FEATURES on the pricing page, which in turn
+    // matches what the API gates. Two claims changed with the freemium tier:
+    // "Browse public legal corpus" promised the paid half of the corpus
+    // (decisions and bar exams are gated), and "OCR preview" promised a camera
+    // scan the free plan no longer has — cameraScansPerMonth is 0.
     features: [
-      'Browse public legal corpus',
+      'Full statutory corpus — Constitution, codals, Rules of Court',
+      'Offline mobile reading',
+      '3 case digests to read',
       '15 AI answer credits',
-      'Limited search queries',
-      'OCR preview (no saved digests)',
+      '50 search queries per day',
     ],
   },
   {
