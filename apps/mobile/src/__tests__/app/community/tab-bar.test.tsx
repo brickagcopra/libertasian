@@ -66,6 +66,7 @@ import CommunityDigests from '@/app/community/digests/index';
 import CommunityFlashcardSets from '@/app/community/flashcard-sets/index';
 import CommunityReviewerPacks from '@/app/community/reviewer-packs/index';
 import ContributorProfile from '@/app/community/contributors/[userId]';
+import { setEntitled, setFreeTier } from '@/features/entitlements/test-helpers';
 
 /** Labels unique to the shared TabBar. */
 const TAB_LABELS = ['Read', 'Search', 'Digests', 'Study', 'Feed', 'Work', 'Me'];
@@ -79,6 +80,13 @@ const SCREENS: Array<[string, React.ComponentType]> = [
 ];
 
 describe('community screens render the TabBar', () => {
+  // TAB_LABELS includes Study, which the bar now filters out for a free
+  // account. These cases are about whether the screens mount the bar at all,
+  // so they stand in an entitled account and get the full set.
+  beforeEach(() => {
+    setEntitled();
+  });
+
   // Matched on accessibilityRole="tab", which only TabBar sets — the
   // contributor screen has its own "Digests" stat card, so a plain text query
   // would collide with screen content.
@@ -94,5 +102,15 @@ describe('community screens render the TabBar', () => {
     expect(
       getByRole('tab', { name: 'Feed' }).props.accessibilityState.selected,
     ).toBe(true);
+  });
+
+  // These screens live outside (tabs), so they were the likeliest place for the
+  // Study slot to survive the gate and hand a free account a way in.
+  it.each(SCREENS)('%s shows no Study tab to a free account', (_name, Screen) => {
+    setFreeTier();
+    const { queryByRole, getByRole } = render(<Screen />);
+
+    expect(queryByRole('tab', { name: 'Study' })).toBeNull();
+    expect(getByRole('tab', { name: 'Feed' })).toBeTruthy();
   });
 });

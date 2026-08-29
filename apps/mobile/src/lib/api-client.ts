@@ -47,13 +47,35 @@ interface ApiError {
 }
 
 /**
- * Default headers attached to every request. `X-Client: mobile` opts into the
- * mobile auth transport on the API: refresh tokens travel in the response body
- * instead of an httpOnly Set-Cookie (RN's fetch does not persist cookies).
+ * The build this client is running, read from the Expo manifest.
+ *
+ * `Constants.expoConfig` is the resolved app.json, so this tracks the shipped
+ * version without a second place to bump. It can be absent (a bare runtime, a
+ * test harness), in which case the header is simply not sent rather than sent
+ * as "undefined".
+ */
+function resolveAppVersion(): string | undefined {
+  const version = Constants.expoConfig?.version;
+  return typeof version === 'string' && version.length > 0 ? version : undefined;
+}
+
+/**
+ * Default headers attached to every request.
+ *
+ * `X-Client: mobile` opts into the mobile auth transport on the API: refresh
+ * tokens travel in the response body instead of an httpOnly Set-Cookie (RN's
+ * fetch does not persist cookies). The API also reads it to decide whether
+ * locked search results are excluded outright or returned with upgrade meta —
+ * presentation only, never access.
+ *
+ * `X-App-Version` lets the API tell an old build from a current one. Store
+ * rollouts are gradual and builds live on devices for months, so a server-side
+ * behaviour change has to know which client it is talking to.
  */
 const DEFAULT_HEADERS: Record<string, string> = {
   'Content-Type': 'application/json',
   'X-Client': 'mobile',
+  ...(resolveAppVersion() ? { 'X-App-Version': resolveAppVersion()! } : {}),
 };
 
 /**

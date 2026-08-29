@@ -32,4 +32,9 @@ export const STORAGE_KEYS = {
   AD_DISMISSED_IDS: 'ad_dismissed_ids',
   AD_SESSION_ID: 'ad_session_id',
   AD_IMPRESSED_IDS: 'ad_impressed_ids',
+  /**
+   * Last resolved answer from `useFreemiumSurfaces()`. Cached so a cold start
+   * does not flash the pre-resolution default at an entitled account.
+   */
+  ENTITLED_SURFACES: 'entitled_surfaces',
 } as const;

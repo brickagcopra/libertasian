@@ -1,6 +1,7 @@
 import { Tabs, router } from 'expo-router';
 import { TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useFreemiumSurfaces } from '@/features/entitlements/use-freemium-surfaces';
 import { useTheme } from '@/providers/theme-provider';
 
 function SettingsButton() {
@@ -18,6 +19,17 @@ function SettingsButton() {
 
 export default function TabsLayout() {
   const { theme } = useTheme();
+  const surfaces = useFreemiumSurfaces();
+
+  // `href: null` is expo-router's way to drop a route from the tab bar without
+  // unregistering the screen. Hide, do not refuse: an account that cannot open
+  // Study or Scan is never shown a way in, so the API's refusal for those
+  // features is unreachable by tapping (App Store 3.1.1).
+  //
+  // Library is deliberately NOT gated — it is the corpus browser, and the free
+  // statutory codals live there.
+  const hidden = { href: null } as const;
+
   return (
     <Tabs
       screenOptions={{
@@ -85,6 +97,7 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="school-outline" size={size} color={color} />
           ),
+          ...(surfaces.study ? {} : hidden),
         }}
       />
       <Tabs.Screen
@@ -95,6 +108,7 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="camera-outline" size={size} color={color} />
           ),
+          ...(surfaces.scan ? {} : hidden),
         }}
       />
       <Tabs.Screen

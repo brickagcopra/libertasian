@@ -39,6 +39,13 @@ jest.mock('@/features/workspace/hooks/use-push-notifications', () => ({
   usePushNotifications: (isAuthenticated: boolean) =>
     mockUsePushNotifications(isAuthenticated),
 }));
+// Same treatment: the entitlement sync hook holds the /quotas/usage query for
+// the whole app and is unit-tested separately.
+const mockUseFreemiumSurfacesSync = jest.fn();
+jest.mock('@/features/entitlements/use-freemium-surfaces', () => ({
+  useFreemiumSurfacesSync: (isAuthenticated: boolean) =>
+    mockUseFreemiumSurfacesSync(isAuthenticated),
+}));
 
 jest.mock('@expo-google-fonts/inter', () => ({
   useFonts: () => [true],
@@ -212,6 +219,10 @@ describe('AuthNavigationGuard', () => {
 
     expect(mockUseNotificationSocket).toHaveBeenCalledWith(true);
     expect(mockUsePushNotifications).toHaveBeenCalledWith(true);
+    // The entitlement answer every screen reads is refreshed from exactly one
+    // place. If this stops being mounted, `useFreemiumSurfaces()` falls back to
+    // its last persisted value forever.
+    expect(mockUseFreemiumSurfacesSync).toHaveBeenCalledWith(true);
   });
 
   it('does not perform any navigation while loading', () => {

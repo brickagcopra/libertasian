@@ -1,6 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
+import { useMemo } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFreemiumSurfaces } from '@/features/entitlements/use-freemium-surfaces';
 import { bottomInsetPadding } from '@/lib/safe-area';
 import { useTheme } from '@/providers/theme-provider';
 
@@ -64,7 +66,7 @@ export interface TabBarProps {
  * All eight destinations. Scan is deliberately NOT here — it keeps its FAB
  * (`components/ui/Fab.tsx`), which is the primary capture affordance.
  */
-const DEFAULT_ITEMS: TabBarItem[] = [
+export const DEFAULT_ITEMS: TabBarItem[] = [
   { id: 'home', label: 'Read', icon: 'home' },
   { id: 'docs', label: 'Library', icon: 'library' },
   { id: 'search', label: 'Search', icon: 'search' },
@@ -86,9 +88,24 @@ const DEFAULT_ITEMS: TabBarItem[] = [
  * the longest and clipping a character is better than shrinking the type
  * further. "Work" rather than "Workspace" for the same reason.
  */
-export function TabBar({ active, onPress, items = DEFAULT_ITEMS }: TabBarProps) {
+export function TabBar({ active, onPress, items }: TabBarProps) {
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
+  const surfaces = useFreemiumSurfaces();
+
+  // The entitlement filter lives HERE rather than at the call sites, and that
+  // is the whole point: seventeen screens render this bar, and a call site that
+  // forgot to filter would put a Study tab in front of an account that cannot
+  // open it. One place to be right beats seventeen places to remember.
+  //
+  // An explicit `items` prop still wins — a caller passing its own list has
+  // already decided what belongs in the bar.
+  const resolvedItems = useMemo(
+    () =>
+      items ??
+      DEFAULT_ITEMS.filter((item) => (item.id === 'study' ? surfaces.study : true)),
+    [items, surfaces.study],
+  );
 
   return (
     <View
@@ -111,7 +128,7 @@ export function TabBar({ active, onPress, items = DEFAULT_ITEMS }: TabBarProps) 
         elevation: 12,
       }}
     >
-      {items.map((it) => {
+      {resolvedItems.map((it) => {
         const isActive = active === it.id;
         return (
           <Pressable

@@ -15,6 +15,7 @@ import { Fab } from '@/components/ui/Fab';
 import { useTabBarClearance } from '@/components/ui/TabBar';
 import { LibraryScreen } from '@/components/screens/LibraryScreen';
 import { useDocuments } from '@/features/documents/hooks/use-documents';
+import { useFreemiumSurfaces } from '@/features/entitlements/use-freemium-surfaces';
 import { useBarSubjects } from '@/features/study/hooks/use-bar-subjects';
 import { useNetworkState } from '@/hooks/use-network-state';
 import { useTheme } from '@/providers/theme-provider';
@@ -77,6 +78,7 @@ function buildItems(docs: DocumentListItem[]): LibraryItem[] {
 
 export default function DocumentsRoute() {
   const navigate = useTabBarNav();
+  const surfaces = useFreemiumSurfaces();
   const clearance = useTabBarClearance();
   const { theme } = useTheme();
   const [activeFilter, setActiveFilter] = useState<FilterLabel>('All');
@@ -238,7 +240,13 @@ export default function DocumentsRoute() {
           )}
         </Pressable>
       ) : null}
-      <Fab onPress={() => router.push('/(tabs)/scan')} accessibilityLabel="Scan a document" />
+      {/* The Scan FAB is the app's primary capture affordance and it is the one
+          entry point into a paid feature that sits on a free screen. Removed
+          outright when the account cannot scan — the Library itself stays open,
+          because it is where the free statutory codals live. */}
+      {surfaces.scan ? (
+        <Fab onPress={() => router.push('/(tabs)/scan')} accessibilityLabel="Scan a document" />
+      ) : null}
 
       {/* Advanced filter sheet — Court + Bar Subject. */}
       <Modal

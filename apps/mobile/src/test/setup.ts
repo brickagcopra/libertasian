@@ -103,6 +103,8 @@ jest.mock('expo-constants', () => ({
   __esModule: true,
   default: {
     expoConfig: {
+      // Mirrors app.json: `version` is what api-client sends as X-App-Version.
+      version: '1.0.0',
       extra: {
         apiUrl: 'http://localhost:3001/api/v1',
       },

@@ -4,6 +4,7 @@ import { useTabBarNav } from '@/features/navigation/use-tab-bar-nav';
 import { ProfileScreen } from '../../components/screens/ProfileScreen';
 import { useAuth } from '../../providers/auth-provider';
 import { useProfile } from '../../features/auth/hooks/use-auth';
+import { useFreemiumSurfaces } from '../../features/entitlements/use-freemium-surfaces';
 import { useTheme } from '../../providers/theme-provider';
 import type { ProfileRow } from '../../components/screens/ProfileScreen';
 import type { OrganizationRole } from '../../features/auth/types';
@@ -15,6 +16,7 @@ export default function SettingsRoute() {
   const { theme } = useTheme();
   const { user, signOut } = useAuth();
   const { data: profile } = useProfile();
+  const surfaces = useFreemiumSurfaces();
   const displayUser = profile ?? user;
 
   function handleLogout() {
@@ -34,13 +36,20 @@ export default function SettingsRoute() {
       sub: 'Auto-generated case digests',
       onPress: () => router.push('/(tabs)/digests'),
     },
-    {
-      id: 'study',
-      icon: 'school-outline',
-      label: 'Study',
-      sub: 'Bar reviewer & flashcards',
-      onPress: () => router.push('/(tabs)/study'),
-    },
+    // Study is the same paid surface the TabBar filters out; this profile
+    // surface is its other entry point, so it has to drop the row too. A row
+    // left here would be a tap straight into a refusal.
+    ...(surfaces.study
+      ? ([
+          {
+            id: 'study',
+            icon: 'school-outline',
+            label: 'Study',
+            sub: 'Bar reviewer & flashcards',
+            onPress: () => router.push('/(tabs)/study'),
+          },
+        ] as ProfileRow[])
+      : []),
     {
       id: 'feed',
       icon: 'newspaper-outline',

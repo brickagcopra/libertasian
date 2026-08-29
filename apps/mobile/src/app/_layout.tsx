@@ -24,6 +24,7 @@ import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { AuthProvider, useAuth } from '../providers/auth-provider';
 import { ThemeProvider } from '../providers/theme-provider';
+import { useFreemiumSurfacesSync } from '../features/entitlements/use-freemium-surfaces';
 import { useNotificationSocket } from '../features/workspace/hooks/use-notifications';
 import { usePushNotifications } from '../features/workspace/hooks/use-push-notifications';
 import { ensureAudioMode } from '../features/audio/lib/audio-session';
@@ -37,6 +38,11 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
   // device push registration + tap deep-linking. Both no-op while signed out.
   useNotificationSocket(isAuthenticated);
   usePushNotifications(isAuthenticated);
+
+  // Keeps the persisted entitlement answer current for `useFreemiumSurfaces()`.
+  // Mounted here, once, for the same reason as the two hooks above: exactly one
+  // component should hold the query while any number read the result.
+  useFreemiumSurfacesSync(isAuthenticated);
 
   useEffect(() => {
     if (isLoading) return;
