@@ -163,13 +163,30 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
         // exam ALAC answers. Disabled by default; flip to 'true' once a
         // baseline batch of answers has been approved by editorial.
         FEATURE_BAR_EXAM_ANSWERS_PUBLIC: Joi.string().valid('true', 'false').default('false'),
-        // Kill switch for every paid-tier gate in the API. `true` (the
-        // default) preserves the historical behaviour and keeps every existing
-        // spec green. Prod runs `false` while no payment gateway is live: with
-        // no purchasable tier, a 402 subscription_required is an unfulfillable
-        // demand for payment (App Review 3.1.1). Flip back to `true` the day
-        // IAP ships.
-        PAYWALL_ENFORCED: Joi.boolean().default(true),
+        // Kill switch for every paid-tier gate in the API. Prod runs `false`
+        // while no payment gateway is live: with no purchasable tier, a 402
+        // subscription_required is an unfulfillable demand for payment, which
+        // is what got iOS build 23 rejected under App Review 3.1.1.
+        //
+        // THE DEFAULT IS `false` BECAUSE THE SAFE DIRECTION MUST BE THE DEFAULT
+        // DIRECTION. It used to be `true`, which meant production was compliant
+        // only for as long as one line survived in one .env file. Lose that line
+        // — a rebuilt environment, a new host, a deploy seeded from
+        // .env.example, a container that comes up without the var — and the
+        // paywall switches itself on, server-side, instantly, for every
+        // installed copy of an ALREADY-APPROVED iOS binary that has no way to
+        // buy anything. That is an app-removal path reachable by omission, with
+        // no review gate anywhere in front of it.
+        //
+        // Enforcing the paywall is therefore a DELIBERATE ACT: it requires an
+        // explicit `PAYWALL_ENFORCED=true` in the environment. Absence is not
+        // consent. Set it on the day IAP ships, not before.
+        //
+        // Note that `isPaywallEnforced()` (common/config/paywall.ts) still
+        // treats every non-`false` value as enforced, so a typo in an explicit
+        // value cannot accidentally disable the paywall. The two rules compose:
+        // an ABSENT var is off, a MALFORMED var is on.
+        PAYWALL_ENFORCED: Joi.boolean().default(false),
         // Search dedup post-filter: when 'true' (default), excludes
         // non-canonical duplicate documents from search results via a
         // Redis-backed must_not.terms clause. Flip to 'false' to revert
