@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -36,6 +37,10 @@ import {
   type SubscriptionEventData,
 } from './payment-provider.interface';
 import type { CreateCheckoutDto, PreviewCheckoutDto } from './dto';
+// A TYPE-LEVEL import of the store slugs only. BillingModule acquires no
+// dependency on StorePurchasesModule: this is a string comparison against the
+// canonical list, not a call into the IAP path.
+import { isStoreProviderSlug } from '../store-purchases/store-purchase-provider.interface';
 
 /** Renewal reminders go out 3 days before the scheduled charge (T-3d). */
 const RENEWAL_REMINDER_LEAD_MS = 3 * 24 * 60 * 60 * 1000;
@@ -146,6 +151,25 @@ export class BillingService {
     const currentSub = await this.subscriptionsService.getActiveSubscription(
       organizationId,
     );
+
+    // DOUBLE-BILLING GUARD, web side (IAP design §6.2). The mirror of the
+    // `409 already_subscribed_elsewhere` on POST /store/purchase-intent.
+    //
+    // We cannot cancel or refund an Apple or Google subscription server-side,
+    // so an org that already bought through a store must not be able to start a
+    // second, parallel charge here — the one we could stop is the one we would
+    // be creating. Web is OUR surface (App Review 3.1.3's restriction on
+    // steering applies inside the iOS app, not on our own website), so this
+    // message may name the store freely.
+    if (currentSub && isStoreProviderSlug(currentSub.provider)) {
+      throw new ConflictException({
+        code: 'already_subscribed_via_store',
+        message:
+          'This account already subscribes through the App Store or Google Play. Manage or cancel it in your store subscription settings before subscribing on the web.',
+        store: currentSub.provider,
+      });
+    }
+
     if (
       currentSub &&
       !currentSub.cancelAtPeriodEnd &&

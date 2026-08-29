@@ -239,13 +239,13 @@ model AccountRestoreToken {
 }
 
 model Organization {
-  id                 String   @id @default(uuid()) @db.Uuid
-  name               String   @db.VarChar(255)
-  slug               String   @unique @db.VarChar(100)
-  type               String   @default("individual") @db.VarChar(20)
-  billingOwnerUserId String?  @map("billing_owner_user_id") @db.Uuid
-  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt          DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  id                 String    @id @default(uuid()) @db.Uuid
+  name               String    @db.VarChar(255)
+  slug               String    @unique @db.VarChar(100)
+  type               String    @default("individual") @db.VarChar(20)
+  billingOwnerUserId String?   @map("billing_owner_user_id") @db.Uuid
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   // Set when the org's sole member requested account deletion. The row itself
   // survives the purge (billing records are retained 5 years per the published
   // policy); this marks it as no longer a live tenant.
@@ -297,6 +297,10 @@ model Organization {
   revenueSchedules            RevenueSchedule[]
   // Derivative artifacts (§2.2)
   derivativeArtifacts         DerivativeArtifact[]
+  // Store purchases (IAP)
+  storePurchases              StorePurchase[]              @relation("StorePurchaseOrg")
+  storePurchasesTransferredIn StorePurchase[]              @relation("StorePurchaseTransferredTo")
+  storeWebhookEvents          StoreWebhookEvent[]          @relation("StoreWebhookEventOrg")
 
   @@map("organizations")
 }
@@ -319,27 +323,27 @@ model OrganizationMember {
 }
 
 model Subscription {
-  id                   String    @id @default(uuid()) @db.Uuid
-  organizationId       String    @map("organization_id") @db.Uuid
-  planCode             String    @map("plan_code") @db.VarChar(50)
-  planId               String?   @map("plan_id") @db.Uuid
-  status               String    @default("active") @db.VarChar(20)
-  billingPeriod        String    @default("monthly") @map("billing_period") @db.VarChar(20)
-  currentPeriodStart   DateTime? @map("current_period_start") @db.Timestamptz
-  currentPeriodEnd     DateTime? @map("current_period_end") @db.Timestamptz
-  seats                Int       @default(1)
-  entitlementsJson     Json      @default("{}") @map("entitlements_json")
+  id                     String    @id @default(uuid()) @db.Uuid
+  organizationId         String    @map("organization_id") @db.Uuid
+  planCode               String    @map("plan_code") @db.VarChar(50)
+  planId                 String?   @map("plan_id") @db.Uuid
+  status                 String    @default("active") @db.VarChar(20)
+  billingPeriod          String    @default("monthly") @map("billing_period") @db.VarChar(20)
+  currentPeriodStart     DateTime? @map("current_period_start") @db.Timestamptz
+  currentPeriodEnd       DateTime? @map("current_period_end") @db.Timestamptz
+  seats                  Int       @default(1)
+  entitlementsJson       Json      @default("{}") @map("entitlements_json")
   // Which payment gateway backs this row (see PAYMENT_PROVIDERS).
-  provider             String    @default("xendit") @db.VarChar(20)
+  provider               String    @default("xendit") @db.VarChar(20)
   // Gateway Customer id (reusable across re-subscriptions for the same org).
-  providerCustomerId     String? @map("provider_customer_id") @db.VarChar(255)
-  providerSubscriptionId String? @unique @map("provider_subscription_id") @db.VarChar(255)
-  cancelAtPeriodEnd    Boolean   @default(false) @map("cancel_at_period_end")
-  canceledAt           DateTime? @map("canceled_at") @db.Timestamptz
-  trialStart           DateTime? @map("trial_start") @db.Timestamptz
-  trialEnd             DateTime? @map("trial_end") @db.Timestamptz
-  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt            DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  providerCustomerId     String?   @map("provider_customer_id") @db.VarChar(255)
+  providerSubscriptionId String?   @unique @map("provider_subscription_id") @db.VarChar(255)
+  cancelAtPeriodEnd      Boolean   @default(false) @map("cancel_at_period_end")
+  canceledAt             DateTime? @map("canceled_at") @db.Timestamptz
+  trialStart             DateTime? @map("trial_start") @db.Timestamptz
+  trialEnd               DateTime? @map("trial_end") @db.Timestamptz
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt              DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   // Relations
   organization         Organization                 @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -357,6 +361,8 @@ model Subscription {
   // Accounting relations
   journalEntryLines    JournalEntryLine[]
   revenueSchedules     RevenueSchedule[]
+  // Store purchases (IAP). Additive: no column on this model changes.
+  storePurchases       StorePurchase[]
 
   @@index([planId], map: "idx_subscriptions_plan")
   @@index([organizationId], map: "idx_subscriptions_org")
@@ -367,22 +373,22 @@ model Subscription {
 }
 
 model PaymentMethod {
-  id                      String @id @default(uuid()) @db.Uuid
-  organizationId          String @map("organization_id") @db.Uuid
+  id                      String   @id @default(uuid()) @db.Uuid
+  organizationId          String   @map("organization_id") @db.Uuid
   // Which payment gateway issued this instrument (see PAYMENT_PROVIDERS).
-  provider                String @default("xendit") @db.VarChar(20)
-  providerPaymentMethodId String @unique @map("provider_payment_method_id") @db.VarChar(255)
-  type                  String   @db.VarChar(20)
+  provider                String   @default("xendit") @db.VarChar(20)
+  providerPaymentMethodId String   @unique @map("provider_payment_method_id") @db.VarChar(255)
+  type                    String   @db.VarChar(20)
   // type: card, gcash, maya
-  brand                 String?  @db.VarChar(50)
-  last4                 String?  @db.VarChar(4)
-  expiryMonth           Int?     @map("expiry_month")
-  expiryYear            Int?     @map("expiry_year")
-  billingEmail          String?  @map("billing_email") @db.VarChar(255)
-  isDefault             Boolean  @default(false) @map("is_default")
-  isActive              Boolean  @default(true) @map("is_active")
-  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt             DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  brand                   String?  @db.VarChar(50)
+  last4                   String?  @db.VarChar(4)
+  expiryMonth             Int?     @map("expiry_month")
+  expiryYear              Int?     @map("expiry_year")
+  billingEmail            String?  @map("billing_email") @db.VarChar(255)
+  isDefault               Boolean  @default(false) @map("is_default")
+  isActive                Boolean  @default(true) @map("is_active")
+  createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt               DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   // Relations
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -393,33 +399,33 @@ model PaymentMethod {
 }
 
 model Payment {
-  id              String    @id @default(uuid()) @db.Uuid
-  organizationId  String    @map("organization_id") @db.Uuid
-  subscriptionId  String?   @map("subscription_id") @db.Uuid
-  paymentMethodId String?   @map("payment_method_id") @db.Uuid
+  id                String    @id @default(uuid()) @db.Uuid
+  organizationId    String    @map("organization_id") @db.Uuid
+  subscriptionId    String?   @map("subscription_id") @db.Uuid
+  paymentMethodId   String?   @map("payment_method_id") @db.Uuid
   // Which payment gateway processed this charge (see PAYMENT_PROVIDERS).
-  provider          String  @default("xendit") @db.VarChar(20)
-  providerInvoiceId String  @unique @map("provider_invoice_id") @db.VarChar(255)
-  amount          Int
+  provider          String    @default("xendit") @db.VarChar(20)
+  providerInvoiceId String    @unique @map("provider_invoice_id") @db.VarChar(255)
+  amount            Int
   // amount in centavos (PHP smallest unit)
-  currency        String    @default("PHP") @db.VarChar(3)
-  status          String    @default("pending") @db.VarChar(20)
+  currency          String    @default("PHP") @db.VarChar(3)
+  status            String    @default("pending") @db.VarChar(20)
   // status: pending, processing, succeeded, failed, refunded
-  paymentType     String    @map("payment_type") @db.VarChar(20)
+  paymentType       String    @map("payment_type") @db.VarChar(20)
   // paymentType: subscription, upgrade, one_time
-  description     String?
-  metadata        Json?     @default("{}")
-  paidAt          DateTime? @map("paid_at") @db.Timestamptz
-  failedAt        DateTime? @map("failed_at") @db.Timestamptz
-  failureReason   String?   @map("failure_reason")
+  description       String?
+  metadata          Json?     @default("{}")
+  paidAt            DateTime? @map("paid_at") @db.Timestamptz
+  failedAt          DateTime? @map("failed_at") @db.Timestamptz
+  failureReason     String?   @map("failure_reason")
   // Refund tracking — populated from Xendit refund.succeeded webhooks.
-  refundedAt      DateTime? @map("refunded_at") @db.Timestamptz
-  refundedAmount  Int?      @map("refunded_amount")
+  refundedAt        DateTime? @map("refunded_at") @db.Timestamptz
+  refundedAmount    Int?      @map("refunded_amount")
   // refundedAmount in centavos (PHP smallest unit), matches `amount`
-  refundId        String?   @unique @map("refund_id") @db.VarChar(255)
-  refundReason    String?   @map("refund_reason")
-  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  refundId          String?   @unique @map("refund_id") @db.VarChar(255)
+  refundReason      String?   @map("refund_reason")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   // Relations
   organization          Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -4283,26 +4289,135 @@ model EvaluationRun {
 // ==========================================================================
 
 model AudioRendition {
-  id             String   @id @default(uuid()) @db.Uuid
-  contentType    String   @map("content_type") @db.VarChar(30) // 'digest' | 'bar_exam_answer'
-  contentId      String   @map("content_id") @db.VarChar(255)
-  contentHash    String   @map("content_hash") @db.VarChar(64) // sha256 of normalized SSML input
-  language       String   @default("en") @db.VarChar(10)
-  voiceId        String   @map("voice_id") @db.VarChar(50)
-  engine         String   @default("polly") @db.VarChar(30)
-  audioObjectKey String   @map("audio_object_key") @db.VarChar(500)
-  marksObjectKey String?  @map("marks_object_key") @db.VarChar(500)
-  readalongObjectKey String? @map("readalong_object_key") @db.VarChar(500) // segment read-along manifest JSON (S3 key)
-  durationMs     Int?     @map("duration_ms")
-  charCount      Int?     @map("char_count")
-  status         String   @default("pending") @db.VarChar(20)
+  id                 String   @id @default(uuid()) @db.Uuid
+  contentType        String   @map("content_type") @db.VarChar(30) // 'digest' | 'bar_exam_answer'
+  contentId          String   @map("content_id") @db.VarChar(255)
+  contentHash        String   @map("content_hash") @db.VarChar(64) // sha256 of normalized SSML input
+  language           String   @default("en") @db.VarChar(10)
+  voiceId            String   @map("voice_id") @db.VarChar(50)
+  engine             String   @default("polly") @db.VarChar(30)
+  audioObjectKey     String   @map("audio_object_key") @db.VarChar(500)
+  marksObjectKey     String?  @map("marks_object_key") @db.VarChar(500)
+  readalongObjectKey String?  @map("readalong_object_key") @db.VarChar(500) // segment read-along manifest JSON (S3 key)
+  durationMs         Int?     @map("duration_ms")
+  charCount          Int?     @map("char_count")
+  status             String   @default("pending") @db.VarChar(20)
   /// Classified reason a `failed` row failed (TtsFailureReason + detail). Never
   /// contains document text. Cleared when the rendition later succeeds.
-  failureReason  String?  @map("failure_reason") @db.VarChar(200)
-  visibility     String   @default("public_editorial") @db.VarChar(30)
-  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  failureReason      String?  @map("failure_reason") @db.VarChar(200)
+  visibility         String   @default("public_editorial") @db.VarChar(30)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz
 
   @@unique([contentType, contentId, language, voiceId])
   @@index([contentHash])
   @@map("audio_renditions")
+}
+
+// ==========================================================================
+// Store purchases (IAP) — iOS App Store / Google Play via RevenueCat
+//
+// Additive by design: `subscriptions` is altered not at all. `provider` is
+// already varchar(20) with no check constraint, so 'app_store' / 'play_store'
+// are legal values today. See docs/architecture/iap-entitlements-design.md D6.
+// ==========================================================================
+
+/// One row per store transaction the conduit reports to us.
+///
+/// The Subscription row alone can GRANT entitlement; it cannot AUDIT one. It
+/// has a single provider-id slot (so a PRODUCT_CHANGE has nowhere to record
+/// the product actually sold), no per-transaction `environment` (so a sandbox
+/// purchase could not be proven to have been ignored), and it disappears from
+/// an org that lapses (so a refund or TRANSFER months later has nothing to
+/// resolve against). This table is that record.
+model StorePurchase {
+  id             String  @id @default(uuid()) @db.Uuid
+  organizationId String  @map("organization_id") @db.Uuid
+  subscriptionId String? @map("subscription_id") @db.Uuid
+
+  /// 'app_store' | 'play_store'. Mirrors subscriptions.provider — the STORE,
+  /// not the conduit. RevenueCat is swappable; the store of record is not.
+  store       String @db.VarChar(20)
+  /// 'production' | 'sandbox'. A sandbox row NEVER grants entitlement in prod.
+  environment String @db.VarChar(10)
+
+  /// RevenueCat App User ID. Equals organization_id today (D11), stored
+  /// verbatim so a future change of convention stays diagnosable.
+  appUserId String @map("app_user_id") @db.VarChar(255)
+
+  productId      String @map("product_id") @db.VarChar(255)
+  entitlementIds Json   @default("[]") @map("entitlement_ids")
+  /// Resolved from productId via STORE_PRODUCT_MAP (D7), denormalised so a
+  /// later map change cannot rewrite history.
+  planCode       String @map("plan_code") @db.VarChar(50)
+  billingPeriod  String @map("billing_period") @db.VarChar(20)
+
+  rcTransactionId         String  @map("rc_transaction_id") @db.VarChar(255)
+  rcOriginalTransactionId String  @map("rc_original_transaction_id") @db.VarChar(255)
+  /// The raw store token when it differs from the conduit's id. Text on
+  /// purpose: a Google Play purchase token is long and its ceiling is
+  /// undocumented (design §15 item 2).
+  storeTransactionId      String? @map("store_transaction_id")
+
+  /// TRIAL | INTRO | NORMAL | PROMOTIONAL | PREPAID
+  periodType  String    @map("period_type") @db.VarChar(20)
+  purchasedAt DateTime  @map("purchased_at") @db.Timestamptz
+  expiresAt   DateTime? @map("expires_at") @db.Timestamptz
+
+  /// active | expired | refunded | transferred
+  status             String    @default("active") @db.VarChar(20)
+  refundedAt         DateTime? @map("refunded_at") @db.Timestamptz
+  transferredAt      DateTime? @map("transferred_at") @db.Timestamptz
+  transferredToOrgId String?   @map("transferred_to_org_id") @db.Uuid
+
+  metadataJson Json     @default("{}") @map("metadata_json")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization     Organization  @relation("StorePurchaseOrg", fields: [organizationId], references: [id], onDelete: Cascade)
+  transferredToOrg Organization? @relation("StorePurchaseTransferredTo", fields: [transferredToOrgId], references: [id], onDelete: SetNull)
+  subscription     Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  @@unique([store, rcTransactionId], map: "uq_store_purchases_txn")
+  @@index([organizationId], map: "idx_store_purchases_org")
+  @@index([store, rcOriginalTransactionId], map: "idx_store_purchases_original")
+  @@index([appUserId], map: "idx_store_purchases_app_user")
+  @@index([subscriptionId], map: "idx_store_purchases_sub")
+  @@map("store_purchases")
+}
+
+/// Append-only receipt log: durable idempotency, plus the audit artefact a
+/// refund months later has to be explained against.
+///
+/// The Redis idempotency key is a 7-day TTL on a `noeviction` cache — it covers
+/// the conduit's ~155-minute retry window and nothing longer. The UNIQUE on
+/// `rcEventId` is the durable one. Grant this table like `audit_logs`: INSERT
+/// plus a narrow UPDATE on processedAt / processingError, never DELETE.
+model StoreWebhookEvent {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// The conduit's own event id. The durable idempotency key.
+  rcEventId      String  @unique @map("rc_event_id") @db.VarChar(255)
+  /// Which conduit delivered it ('revenuecat'). Deliberately NOT the store —
+  /// see D2's note on conduit vs store.
+  conduit        String  @default("revenuecat") @db.VarChar(20)
+  eventType      String  @map("event_type") @db.VarChar(50)
+  store          String? @db.VarChar(20)
+  environment    String  @db.VarChar(10)
+  appUserId      String  @map("app_user_id") @db.VarChar(255)
+  /// Nullable: an event can arrive for an app_user_id we cannot resolve, and
+  /// that fact must be recorded rather than dropped.
+  organizationId String? @map("organization_id") @db.Uuid
+
+  /// Carries no PII — the App User ID is an org uuid (D11) and the conduit is
+  /// never sent an email address.
+  payloadJson     Json      @map("payload_json")
+  receivedAt      DateTime  @default(now()) @map("received_at") @db.Timestamptz
+  processedAt     DateTime? @map("processed_at") @db.Timestamptz
+  processingError String?   @map("processing_error")
+
+  organization Organization? @relation("StoreWebhookEventOrg", fields: [organizationId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, receivedAt(sort: Desc)], map: "idx_store_webhook_events_org_received")
+  @@index([appUserId], map: "idx_store_webhook_events_app_user")
+  @@map("store_webhook_events")
 }
