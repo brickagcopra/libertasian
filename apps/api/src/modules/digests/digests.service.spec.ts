@@ -1331,45 +1331,108 @@ describe('DigestsService', () => {
     });
   });
 
-  // ---- free-plan preview cap (previewOnly) ----
+  // ---- free statutory tier: three rotating digests (previewOnly) ----
 
-  describe('free-plan preview cap (previewOnly)', () => {
-    const previewDigest = {
-      id: 'digest-preview',
+  describe('free digest selection (previewOnly)', () => {
+    const FREE_IDS = [
+      { id: 'digest-free-1' },
+      { id: 'digest-free-2' },
+      { id: 'digest-free-3' },
+    ];
+    const freeDigests = FREE_IDS.map((row) => ({
+      id: row.id,
       visibility: 'public_editorial',
       reviewStatus: 'approved',
       legalDocument: mockLegalDocument,
-    };
+    }));
+
+    beforeEach(() => {
+      prismaService.$queryRaw.mockResolvedValue(FREE_IDS);
+    });
+
+    describe('getFreeDigestIds', () => {
+      it('returns exactly three ids from the seeded shuffle', async () => {
+        const ids = await service.getFreeDigestIds('user-1');
+        expect(ids).toEqual(['digest-free-1', 'digest-free-2', 'digest-free-3']);
+      });
+
+      it('is deterministic within a month for the same user', async () => {
+        const first = await service.getFreeDigestIds('user-1');
+        const second = await service.getFreeDigestIds('user-1');
+        expect(second).toEqual(first);
+
+        // Same seed both times — the SQL parameter is stable.
+        const seedA = prismaService.$queryRaw.mock.calls[0]![1];
+        const seedB = prismaService.$queryRaw.mock.calls[1]![1];
+        expect(seedB).toBe(seedA);
+      });
+
+      it('seeds differently per user — the selection is per USER, not per org', async () => {
+        await service.getFreeDigestIds('user-1');
+        await service.getFreeDigestIds('user-2');
+
+        const seedA = prismaService.$queryRaw.mock.calls[0]![1];
+        const seedB = prismaService.$queryRaw.mock.calls[1]![1];
+        expect(seedB).not.toBe(seedA);
+      });
+
+      it('rotates the seed monthly', async () => {
+        jest.useFakeTimers().setSystemTime(new Date('2026-08-15T00:00:00Z'));
+        await service.getFreeDigestIds('user-1');
+        const august = prismaService.$queryRaw.mock.calls[0]![1];
+
+        jest.setSystemTime(new Date('2026-09-15T00:00:00Z'));
+        await service.getFreeDigestIds('user-1');
+        const september = prismaService.$queryRaw.mock.calls[1]![1];
+
+        expect(september).not.toBe(august);
+        jest.useRealTimers();
+      });
+
+      it('uses one fixed seed for anonymous callers', async () => {
+        await service.getFreeDigestIds(null);
+        await service.getFreeDigestIds(null);
+
+        const seedA = prismaService.$queryRaw.mock.calls[0]![1];
+        const seedB = prismaService.$queryRaw.mock.calls[1]![1];
+        expect(seedB).toBe(seedA);
+      });
+
+      it('returns an empty list when no approved digest exists', async () => {
+        prismaService.$queryRaw.mockResolvedValue([]);
+        await expect(service.getFreeDigestIds('user-1')).resolves.toEqual([]);
+      });
+    });
 
     describe('list', () => {
-      it('returns the single preview digest and stamps meta.previewMode when previewOnly=true', async () => {
-        prismaService.digest.findFirst.mockResolvedValue({ id: 'digest-preview' });
+      it('returns exactly the three free digests and stamps preview meta', async () => {
         prismaService.digest.count.mockResolvedValue(50);
-        prismaService.digest.findMany.mockResolvedValue([previewDigest]);
+        prismaService.digest.findMany.mockResolvedValue(freeDigests);
 
         const result = await service.list('user-1', 'org-1', {}, true);
 
-        expect(result.items).toHaveLength(1);
-        expect(result.items[0]!.id).toBe('digest-preview');
+        expect(result.items).toHaveLength(3);
         expect(result.meta).toMatchObject({
           previewMode: true,
-          lockedCount: 49, // 50 - 1 preview
+          lockedCount: 47, // 50 approved - 3 free
           upgradeRequired: true,
           hasNext: false,
         });
+
+        const call = prismaService.digest.findMany.mock.calls[0]![0]!;
+        expect(call.where).toEqual({
+          id: { in: ['digest-free-1', 'digest-free-2', 'digest-free-3'] },
+        });
       });
 
-      it('returns empty list and lockedCount=0 when no public_editorial digest exists', async () => {
-        prismaService.digest.findFirst.mockResolvedValue(null);
+      it('returns empty list and lockedCount=0 when no approved digest exists', async () => {
+        prismaService.$queryRaw.mockResolvedValue([]);
         prismaService.digest.count.mockResolvedValue(0);
 
         const result = await service.list('user-1', 'org-1', {}, true);
 
         expect(result.items).toEqual([]);
-        expect(result.meta).toMatchObject({
-          previewMode: true,
-          lockedCount: 0,
-        });
+        expect(result.meta).toMatchObject({ previewMode: true, lockedCount: 0 });
       });
 
       it('behaves unchanged when previewOnly=false', async () => {
@@ -1378,24 +1441,37 @@ describe('DigestsService', () => {
         const result = await service.list('user-1', 'org-1', {}, false);
 
         expect(result.meta).not.toHaveProperty('previewMode');
-        // No preview-id lookup
-        expect(prismaService.digest.findFirst).not.toHaveBeenCalled();
+        expect(prismaService.$queryRaw).not.toHaveBeenCalled();
       });
     });
 
     describe('search', () => {
-      it('returns only the preview digest with lockedCount when previewOnly=true', async () => {
-        prismaService.digest.findFirst.mockResolvedValue({ id: 'digest-preview' });
+      it('returns only the three free digests with lockedCount when previewOnly=true', async () => {
         prismaService.digest.count.mockResolvedValue(120);
-        prismaService.digest.findMany.mockResolvedValue([previewDigest]);
+        prismaService.digest.findMany.mockResolvedValue(freeDigests);
 
-        const result = await service.search({ q: 'people v doe' }, true);
+        const result = await service.search(
+          { q: 'people v doe' },
+          true,
+          'user-1',
+        );
 
-        expect(result.results).toHaveLength(1);
-        expect(result.results[0]!.id).toBe('digest-preview');
+        expect(result.results).toHaveLength(3);
         expect(result.previewMode).toBe(true);
-        expect(result.lockedCount).toBe(119);
+        expect(result.lockedCount).toBe(117);
         expect(result.matchedDocuments).toEqual([]);
+      });
+
+      it('never surfaces a digest the caller cannot open', async () => {
+        prismaService.digest.count.mockResolvedValue(120);
+        prismaService.digest.findMany.mockResolvedValue(freeDigests);
+
+        const result = await service.search({ q: 'anything' }, true, 'user-1');
+        const allowed = await service.getFreeDigestIds('user-1');
+
+        for (const row of result.results as Array<{ id: string }>) {
+          expect(allowed).toContain(row.id);
+        }
       });
 
       it('behaves unchanged when previewOnly=false (or omitted)', async () => {
@@ -1415,37 +1491,34 @@ describe('DigestsService', () => {
     });
 
     describe('findById', () => {
-      it('throws PaywallException when previewOnly=true and id is NOT the preview digest', async () => {
-        prismaService.digest.findFirst.mockResolvedValue({ id: 'digest-preview' });
-
+      it('throws PaywallException when previewOnly=true and id is not one of the three', async () => {
         await expect(
-          service.findById('other-digest-id', 'user-1', 'org-1', true),
+          service.findById('digest-locked', 'user-1', 'org-1', true),
         ).rejects.toBeInstanceOf(PaywallException);
 
-        // Should NOT have called findUnique once paywall throws
+        // Underlying lookup should never have run
         expect(prismaService.digest.findUnique).not.toHaveBeenCalled();
       });
 
-      it('returns the digest when previewOnly=true and id IS the preview digest', async () => {
-        prismaService.digest.findFirst.mockResolvedValue({ id: 'digest-preview' });
-        const digestWithIncludes = {
+      it('returns the digest when previewOnly=true and id IS one of the three', async () => {
+        prismaService.digest.findUnique.mockResolvedValue({
           ...mockDigest,
-          id: 'digest-preview',
-          userId: 'user-1', // owner gets access through assertDigestAccess
+          id: 'digest-free-2',
+          visibility: 'public_editorial',
+          reviewStatus: 'approved',
           legalDocument: mockLegalDocument,
           reviews: [],
           _count: { doctrineExtracts: 0, editorialFlags: 0 },
-        };
-        prismaService.digest.findUnique.mockResolvedValue(digestWithIncludes);
+        });
 
         const result = await service.findById(
-          'digest-preview',
+          'digest-free-2',
           'user-1',
           'org-1',
           true,
         );
 
-        expect(result.id).toBe('digest-preview');
+        expect(result.id).toBe('digest-free-2');
       });
 
       it('behaves unchanged when previewOnly=false', async () => {
@@ -1460,34 +1533,12 @@ describe('DigestsService', () => {
         const result = await service.findById('digest-1', 'user-1', 'org-1', false);
 
         expect(result).toEqual(digestWithIncludes);
-        // No preview-id lookup
-        expect(prismaService.digest.findFirst).not.toHaveBeenCalled();
+        expect(prismaService.$queryRaw).not.toHaveBeenCalled();
       });
     });
+  });
 
-    describe('getFreePreviewDigestId', () => {
-      it('returns the id of the newest public_editorial+approved digest', async () => {
-        prismaService.digest.findFirst.mockResolvedValue({ id: 'digest-preview' });
-
-        const id = await service.getFreePreviewDigestId();
-        expect(id).toBe('digest-preview');
-
-        const call = prismaService.digest.findFirst.mock.calls[0][0];
-        expect(call.where).toEqual({
-          visibility: 'public_editorial',
-          reviewStatus: 'approved',
-        });
-        expect(call.orderBy).toEqual({ createdAt: 'desc' });
-      });
-
-      it('returns null when no digest matches', async () => {
-        prismaService.digest.findFirst.mockResolvedValue(null);
-
-        const id = await service.getFreePreviewDigestId();
-        expect(id).toBeNull();
-      });
-    });
-
+  describe('review stats', () => {
     describe('getReviewStats', () => {
       it('counts only pending-review digests for total (excludes approved + rejected)', async () => {
         prismaService.digest.count.mockResolvedValue(7);

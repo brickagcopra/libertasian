@@ -32,12 +32,18 @@ interface PlanSeedData {
   entitlements: { key: string; valueType: string; numericValue?: number; booleanValue?: boolean; description: string }[];
 }
 
-const PLAN_SEEDS: PlanSeedData[] = [
+/**
+ * Exported so `subscriptions.service.spec.ts` can assert that these values and
+ * `SubscriptionsService.getDefaultEntitlements()` agree. `billing.db_plans` is
+ * OFF in production, which makes the hardcoded defaults the live ones — a
+ * silent divergence here would ship the wrong tier.
+ */
+export const PLAN_SEEDS: PlanSeedData[] = [
   {
     code: 'free',
     name: 'Free',
     displayName: 'Free',
-    description: 'Browse public legal corpus with basic AI credits',
+    description: 'Read the full statutory corpus with basic AI credits',
     type: 'free',
     category: 'free',
     isActive: true,
@@ -59,10 +65,10 @@ const PLAN_SEEDS: PlanSeedData[] = [
     entitlements: [
       { key: 'aiAnswers', valueType: 'numeric', numericValue: 15, description: '15 AI answer credits' },
       { key: 'searchQueries', valueType: 'numeric', numericValue: 50, description: 'Search queries (50/day)' },
-      { key: 'digestsPerMonth', valueType: 'numeric', numericValue: 3, description: 'Case digests (3/month)' },
-      { key: 'cameraScansPerMonth', valueType: 'numeric', numericValue: 3, description: 'Camera scans (3/month, OCR preview only)' },
+      { key: 'digestsPerMonth', valueType: 'numeric', numericValue: 0, description: 'Case digest generation' },
+      { key: 'cameraScansPerMonth', valueType: 'numeric', numericValue: 0, description: 'Camera scan digests' },
       { key: 'maxMatters', valueType: 'numeric', numericValue: 0, description: 'Active matters' },
-      { key: 'offlineReading', valueType: 'boolean', booleanValue: false, description: 'Offline reading' },
+      { key: 'offlineReading', valueType: 'boolean', booleanValue: true, description: 'Offline reading of the free statutory corpus' },
       { key: 'teamCollaboration', valueType: 'boolean', booleanValue: false, description: 'Team collaboration' },
       { key: 'auditLogs', valueType: 'boolean', booleanValue: false, description: 'Audit logs' },
       { key: 'editorialTools', valueType: 'boolean', booleanValue: false, description: 'Editorial ingestion tools' },
@@ -75,7 +81,7 @@ const PLAN_SEEDS: PlanSeedData[] = [
       { key: 'documentUploadsPerMonth', valueType: 'numeric', numericValue: 0, description: 'Document uploads' },
       { key: 'maxResearchWorkspaces', valueType: 'numeric', numericValue: 0, description: 'Research workspaces' },
       { key: 'maxApiKeys', valueType: 'numeric', numericValue: 0, description: 'API keys' },
-      { key: 'previewOnly', valueType: 'boolean', booleanValue: true, description: 'Preview-only public corpus access' },
+      { key: 'previewOnly', valueType: 'boolean', booleanValue: true, description: 'Free tier: statutory corpus only; decisions and bar exams filtered out' },
     ],
   },
   {

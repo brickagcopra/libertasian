@@ -187,13 +187,24 @@ export class SubscriptionsService {
   getDefaultEntitlements(planCode: string): SubscriptionEntitlements {
     switch (planCode) {
       case 'free':
+        // Freemium tier: the statutory corpus is free to read (offlineReading
+        // TRUE), Supreme Court decisions and bar exams are paid, and the
+        // digest read cap is enforced by selection (3 rotating ids) rather
+        // than by a quota counter.
+        //
+        // aiAnswers (15) and searchQueries (50) are deliberately LEFT AS
+        // POSITIVE QUOTAS. A quota that exists returns 429 quota_exceeded when
+        // exhausted; a 0 limit returns 402 subscription_required, and 402 is
+        // the status App Review reads as a paywall. Camera scans and digest
+        // GENERATION are 0 because those features are hidden from the free
+        // client entirely, so the 402 is unreachable by tapping around.
         return {
           aiAnswers: 15,
           searchQueries: 50,
-          digestsPerMonth: 3,
-          cameraScansPerMonth: 3,
+          digestsPerMonth: 0,
+          cameraScansPerMonth: 0,
           maxMatters: 0,
-          offlineReading: false,
+          offlineReading: true,
           teamCollaboration: false,
           auditLogs: false,
           editorialTools: false,

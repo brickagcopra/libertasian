@@ -201,7 +201,11 @@ export class DigestsController {
     @Req() req: Request,
   ) {
     const previewOnly = await this.resolvePreviewOnly(user, req);
-    const searchResult = await this.digestsService.search(query, previewOnly);
+    const searchResult = await this.digestsService.search(
+      query,
+      previewOnly,
+      user.sub,
+    );
     return {
       success: true,
       data: {
