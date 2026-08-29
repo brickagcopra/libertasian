@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import { useFreemiumSurfaces } from '@/features/entitlements/use-freemium-surfaces';
 import { useTabBarNav } from '@/features/navigation/use-tab-bar-nav';
 import {
   SearchScreen,
@@ -55,6 +56,7 @@ function toResult(item: SearchResultItem, index: number): SearchResult {
 export default function SearchRoute() {
   const navigate = useTabBarNav();
   const { theme } = useTheme();
+  const surfaces = useFreemiumSurfaces();
   const [query, setQuery] = useState('');
   const [submittedQuery, setSubmittedQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<string>(
@@ -86,6 +88,10 @@ export default function SearchRoute() {
   }, [submittedQuery, data, addEntry]);
 
   const handleGenerateDigest = (documentId: string) => {
+    // Unreachable by tapping — the action below is not rendered without the
+    // surface. Kept so the confirm-Alert can never offer an account an action
+    // it cannot perform, whatever calls it.
+    if (!surfaces.digestGeneration) return;
     Alert.alert(
       'Generate digest',
       'Generate an AI case digest for this document? This uses your digest quota.',
@@ -113,23 +119,28 @@ export default function SearchRoute() {
     );
   };
 
-  const renderResultAction = (id: string) => (
-    <Pressable
-      onPress={() => handleGenerateDigest(id)}
-      hitSlop={8}
-      accessibilityLabel="Generate digest"
-      style={{
-        width: 32,
-        height: 32,
-        borderRadius: 16,
-        backgroundColor: theme.accentSoft,
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-    >
-      <Ionicons name="sparkles" size={14} color={theme.accent} />
-    </Pressable>
-  );
+  // Omitted, not disabled: free digestsPerMonth is 0, so this sparkle 402s on
+  // every tap. `undefined` rather than a null-returning function so
+  // SearchScreen lays the row out with no action slot at all.
+  const renderResultAction = !surfaces.digestGeneration
+    ? undefined
+    : (id: string) => (
+        <Pressable
+          onPress={() => handleGenerateDigest(id)}
+          hitSlop={8}
+          accessibilityLabel="Generate digest"
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 16,
+            backgroundColor: theme.accentSoft,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Ionicons name="sparkles" size={14} color={theme.accent} />
+        </Pressable>
+      );
 
   // SearchTabBar slot — tabs only meaningful once a query is submitted.
   const tabBarSlot = submittedQuery.trim() ? (

@@ -19,7 +19,7 @@ jest.mock('@/features/study/hooks/use-bar-subjects', () => ({
   useBarSubjects: () => mockUseBarSubjects(),
 }));
 
-import CodalsSubjectSelector from '@/app/study/codals/index';
+import CodalsSubjectSelector from '@/app/codals/index';
 
 function createWrapper() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -65,6 +65,6 @@ describe('CodalsSubjectSelector', () => {
     const { getByText } = render(<CodalsSubjectSelector />, { wrapper: createWrapper() });
     fireEvent.press(getByText('Civil Law'));
     const { router } = require('expo-router');
-    expect(router.push).toHaveBeenCalledWith('/study/codals/civil_law');
+    expect(router.push).toHaveBeenCalledWith('/codals/civil_law');
   });
 });

@@ -70,7 +70,7 @@ jest.mock('@/features/study/components/codal-card', () => ({
   },
 }));
 
-import CodalListScreen from '@/app/study/codals/[subject]';
+import CodalListScreen from '@/app/codals/[subject]';
 
 function createWrapper() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });

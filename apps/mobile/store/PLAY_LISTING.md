@@ -33,7 +33,7 @@ Philippine legal research: case digests, codals, and bar drills — for law stud
 LIBERTASIAN is a Philippine legal research library for law students, bar reviewees, and practitioners.
 
 WHAT'S INSIDE
-• Past Bar Exams — 97 sittings, 1,500+ questions from 1953 to 2024 with AI-generated ALAC answers for paid users.
+• Past Bar Exams — 97 sittings, 1,500+ questions from 1953 to 2024 with AI-generated ALAC answers.
 • Case Digests — Philippine Supreme Court cases with facts, issues, ruling, doctrine, and provenance, generated from authoritative sources only.
 • Codal Reader — Republic Acts, the 1987 Constitution, and the Rules of Court, organized by bar subject with cross-references.
 • AI Study Assistant — chat and Q&A grounded in what you are reading. Sourced answers only; the model abstains rather than fabricate.
@@ -63,7 +63,7 @@ Initial release.
 
 • Browse Philippine Supreme Court case digests with provenance back to the source.
 • Read the 1987 Constitution, Rules of Court, and Republic Acts in the codal reader.
-• Drill 1,500+ past bar exam questions with AI-generated ALAC answers for paid users.
+• Drill 1,500+ past bar exam questions with AI-generated ALAC answers.
 • Scan a printout with your camera to generate a structured digest.
 • Offline codal cache and sync with libertasian.com on the web.
 ```

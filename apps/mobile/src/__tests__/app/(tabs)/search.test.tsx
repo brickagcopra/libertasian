@@ -40,6 +40,7 @@ jest.mock('@/features/search/hooks/use-search-digests', () => ({
 
 import { router } from 'expo-router';
 import SearchRoute from '@/app/(tabs)/search';
+import { setEntitled, setFreeTier } from '@/features/entitlements/test-helpers';
 
 const SEARCH_PLACEHOLDER = 'Search cases, articles, statutes…';
 
@@ -84,8 +85,39 @@ function renderWithQuery() {
 describe('SearchRoute', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    // The generate affordance is entitlement-gated, so a test that expects to
+    // find it has to say which account it is standing in.
+    setEntitled();
     mockUseDigestCount.mockReturnValue({ data: undefined, isLoading: false, error: null });
     mockUseSearch.mockReturnValue({ data: { data: [sectionHit] }, isLoading: false });
+  });
+
+  /**
+   * Free `digestsPerMonth` is 0, so this button 402s on every tap. A visible
+   * control that refuses when pressed is what got build 23 rejected under
+   * App Store 3.1.1 — the control is omitted, not disabled.
+   */
+  describe('free tier', () => {
+    beforeEach(() => {
+      setFreeTier();
+    });
+
+    it('offers no Generate digest action on a result', () => {
+      const { queryByLabelText } = renderWithQuery();
+      expect(queryByLabelText('Generate digest')).toBeNull();
+    });
+
+    it('still lists the result — the document itself is readable', () => {
+      const { getByText } = renderWithQuery();
+      expect(getByText('People v. Reyes')).toBeTruthy();
+    });
+
+    it('puts nothing in the place of the action', () => {
+      const { queryByText } = renderWithQuery();
+      for (const word of ['Locked', 'Upgrade', 'Pro', 'Plan', 'Premium']) {
+        expect(queryByText(word)).toBeNull();
+      }
+    });
   });
 
   it('opens the reader with the legal document id, not the OpenSearch section id', () => {

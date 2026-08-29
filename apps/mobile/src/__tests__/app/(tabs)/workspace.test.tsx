@@ -41,6 +41,13 @@ jest.mock('@/features/pleadings/hooks/use-pleadings', () => ({
 jest.mock('expo-router', () => ({
   Stack: { Screen: () => null },
   router: { push: jest.fn(), back: jest.fn(), replace: jest.fn() },
+  // SurfaceGuard renders <Redirect> instead of the screen when the surface is
+  // hidden. Rendered as a marker so a test can assert the redirect happened
+  // AND that none of the screen mounted behind it.
+  Redirect: ({ href }: { href: string }) => {
+    const { Text } = require('react-native');
+    return <Text testID="redirect">{href}</Text>;
+  },
 }));
 
 jest.mock('@expo/vector-icons', () => ({
@@ -51,6 +58,7 @@ jest.mock('@expo/vector-icons', () => ({
 }));
 
 import WorkspaceTab from '@/app/(tabs)/workspace';
+import { setEntitled, setFreeTier } from '@/features/entitlements/test-helpers';
 
 function createWrapper() {
   const queryClient = new QueryClient({
@@ -75,6 +83,9 @@ const defaultHookReturn = {
 
 describe('WorkspaceTab', () => {
   beforeEach(() => {
+    // These cases are about the screen's content, so they stand in an
+    // account that can reach it. The guard has its own block below.
+    setEntitled();
     jest.clearAllMocks();
     mockUseMatters.mockReturnValue(defaultHookReturn);
     mockUseNotes.mockReturnValue(defaultHookReturn);
@@ -261,5 +272,57 @@ describe('WorkspaceTab', () => {
     });
 
     expect(getAllByText('View All').length).toBeGreaterThanOrEqual(2);
+  });
+
+  // Hiding the tab removes the way IN; it does not remove the route.
+  // `(tabs)/_layout.tsx` uses `href: null`, which drops the tab button and
+  // leaves `/(tabs)/workspace` registered — and `use-tab-bar-nav.ts` maps the
+  // workspace destination to exactly that path. A deep link, a push
+  // notification or a restored navigation state lands here without passing a
+  // tab, and every tile and the New Matter button below 402 on the free tier.
+  // `app/workspace/_layout.tsx` guards only `/workspace/*`, so this screen
+  // needs its own guard — the pairing `/(tabs)/scan` and `/(tabs)/study` use.
+  describe('free tier', () => {
+    beforeEach(() => {
+      setFreeTier();
+    });
+
+    it('redirects home instead of rendering the screen', () => {
+      const { getByTestId } = render(<WorkspaceTab />, {
+        wrapper: createWrapper(),
+      });
+
+      expect(getByTestId('redirect').props.children).toBe('/(tabs)');
+    });
+
+    it('mounts none of the dashboard behind the redirect', () => {
+      const { queryByText } = render(<WorkspaceTab />, {
+        wrapper: createWrapper(),
+      });
+
+      // No paid UI paints for a frame, and no requests fire.
+      expect(queryByText('Recent Matters')).toBeNull();
+      expect(queryByText('New Matter')).toBeNull();
+      expect(mockUseMatters).not.toHaveBeenCalled();
+    });
+
+    it('presents no refusal — the point is to never show one', () => {
+      const { queryByText } = render(<WorkspaceTab />, {
+        wrapper: createWrapper(),
+      });
+
+      for (const word of ['Locked', 'Upgrade', 'Pro', 'Plan', 'Premium']) {
+        expect(queryByText(word)).toBeNull();
+      }
+    });
+  });
+
+  it('renders the dashboard for an entitled account', () => {
+    const { getByText, queryByTestId } = render(<WorkspaceTab />, {
+      wrapper: createWrapper(),
+    });
+
+    expect(queryByTestId('redirect')).toBeNull();
+    expect(getByText('Recent Matters')).toBeTruthy();
   });
 });

@@ -28,6 +28,7 @@ jest.mock('@expo/vector-icons', () => ({
 }));
 
 import DigestsTab from '@/app/(tabs)/digests';
+import { setEntitled, setFreeTier } from '@/features/entitlements/test-helpers';
 
 const SEARCH_PLACEHOLDER = 'Search by title, case name, or citation...';
 
@@ -48,6 +49,9 @@ function createWrapper() {
 describe('DigestsTab', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    // The generate affordance is entitlement-gated, so a test that expects to
+    // find it has to say which account it is standing in.
+    setEntitled();
     mockUseDigestTextSearch.mockReturnValue({
       data: undefined,
       isLoading: false,
@@ -395,6 +399,51 @@ describe('DigestsTab', () => {
       expect(queryByText('People v. Reyes')).toBeTruthy();
       expect(queryByText('G.R. No. 123456')).toBeTruthy();
       expect(queryByText('Generate digest')).toBeTruthy();
+    });
+
+    /**
+     * Free `digestsPerMonth` is 0, so this button 402s on every tap. A visible
+     * control that refuses when pressed is what got build 23 rejected under
+     * App Store 3.1.1 — the control is omitted, not disabled.
+     */
+    it('omits Generate digest for a free account, keeping the match itself', () => {
+      jest.useFakeTimers();
+      setFreeTier();
+      mockUseDigests.mockReturnValue(browseReturn);
+      mockUseDigestTextSearch.mockReturnValue({
+        data: {
+          results: [],
+          hasMore: false,
+          cursor: null,
+          matchedDocuments: [
+            {
+              id: 'ld-1',
+              title: 'People v. Reyes',
+              grNo: 'G.R. No. 123456',
+              citationText: null,
+            },
+          ],
+        },
+        isLoading: false,
+        error: null,
+      });
+
+      const { getByPlaceholderText, queryByText } = render(<DigestsTab />, {
+        wrapper: createWrapper(),
+      });
+
+      fireEvent.changeText(getByPlaceholderText(SEARCH_PLACEHOLDER), 'reyes');
+      act(() => {
+        jest.advanceTimersByTime(300);
+      });
+
+      // The matched document still lists — it is readable.
+      expect(queryByText('People v. Reyes')).toBeTruthy();
+      expect(queryByText('Generate digest')).toBeNull();
+      // Nothing takes its place.
+      for (const word of ['Locked', 'Upgrade', 'Pro', 'Plan', 'Premium']) {
+        expect(queryByText(word)).toBeNull();
+      }
     });
 
     it('restores the browse list when the query is cleared', () => {

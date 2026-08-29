@@ -8,8 +8,8 @@ import {
 } from 'react-native';
 import { router, Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useBarSubjects } from '../../../features/study/hooks/use-bar-subjects';
-import type { BarSubject } from '../../../features/study/types';
+import { useBarSubjects } from '../../features/study/hooks/use-bar-subjects';
+import type { BarSubject } from '../../features/study/types';
 
 const SUBJECT_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
   civil_law: 'people-outline',
@@ -27,7 +27,7 @@ function SubjectCard({ item }: { item: BarSubject }) {
   return (
     <TouchableOpacity
       style={styles.card}
-      onPress={() => router.push(`/study/codals/${item.code}`)}
+      onPress={() => router.push(`/codals/${item.code}`)}
       activeOpacity={0.7}
     >
       <View style={styles.cardRow}>
