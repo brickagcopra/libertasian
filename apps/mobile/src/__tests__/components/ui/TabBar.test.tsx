@@ -81,24 +81,27 @@ describe('TabBar', () => {
       setFreeTier();
     });
 
-    it('drops the Study slot entirely — no label, no lock, no notice', () => {
-      const { queryByText } = render(<TabBar active="home" />);
+    it.each(['Study', 'Work'])(
+      'drops the %s slot entirely — no label, no lock, no notice',
+      (label) => {
+        const { queryByText } = render(<TabBar active="home" />);
 
-      expect(queryByText('Study')).toBeNull();
-      // Hidden means hidden: nothing takes its place.
-      for (const word of ['Locked', 'Upgrade', 'Pro', 'Plan', 'Premium']) {
-        expect(queryByText(word)).toBeNull();
-      }
-    });
+        expect(queryByText(label)).toBeNull();
+        // Hidden means hidden: nothing takes its place.
+        for (const word of ['Locked', 'Upgrade', 'Pro', 'Plan', 'Premium']) {
+          expect(queryByText(word)).toBeNull();
+        }
+      },
+    );
 
-    it('keeps Library — the corpus browser is where the free codals live', () => {
+    it('keeps Library — the corpus browser is the way in to the free codals', () => {
       const { getByText } = render(<TabBar active="home" />);
       expect(getByText('Library')).toBeTruthy();
     });
 
-    it('keeps the other six slots', () => {
+    it('keeps the other five slots', () => {
       const { getByText } = render(<TabBar active="home" />);
-      for (const label of ['Read', 'Library', 'Search', 'Digests', 'Feed', 'Work', 'Me']) {
+      for (const label of ['Read', 'Library', 'Search', 'Digests', 'Feed', 'Me']) {
         expect(getByText(label)).toBeTruthy();
       }
     });

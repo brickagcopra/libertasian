@@ -120,11 +120,18 @@ export default function UsageScreen() {
 
   const isLoading = quotaLoading;
 
+  // Rows with a limit of 0 are dropped, not rendered at 0 / 0. On the free
+  // tier every generation quota resolves to 0, so the unfiltered list reads
+  // as an inventory of what the account cannot do — "Camera scans 0 / 0",
+  // "Digests 0 / 0" — which is the same shown-and-refused surface the guards
+  // exist to remove, in list form. A negative limit is unlimited and stays.
   const quotaEntries = quotaData
-    ? Object.entries(quotaData.quotas).sort(([a], [b]) => {
-        const order = Object.keys(ENTITLEMENT_LABELS);
-        return order.indexOf(a) - order.indexOf(b);
-      })
+    ? Object.entries(quotaData.quotas)
+        .filter(([, item]) => item.limit !== 0)
+        .sort(([a], [b]) => {
+          const order = Object.keys(ENTITLEMENT_LABELS);
+          return order.indexOf(a) - order.indexOf(b);
+        })
     : [];
 
   return (

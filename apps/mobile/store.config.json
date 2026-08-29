@@ -15,6 +15,37 @@
 // JSONC: leading `//` line comments are stripped by EAS' JSON5-tolerant parser
 // (same convention used in `eas.json`). The CI JSON-validity check strips
 // these comments before `JSON.parse` (see PR description for the one-liner).
+//
+// ---------------------------------------------------------------------------
+// STATE OF THE LIVE LISTING - read before touching `description` or pushing.
+// ---------------------------------------------------------------------------
+//
+// 1. The `description` below is CORRECT and must not be edited to "fix" the
+//    live copy. The LIVE App Store description still ends its Past Bar Exams
+//    bullet with "...AI-generated ALAC answers for paid users" - verified
+//    2026-08-29 against the iTunes lookup API
+//    (itunes.apple.com/lookup?id=6788971669&country=ph), which returned that
+//    line verbatim. The rendered apps.apple.com/ph/app/libertasian page
+//    answered HTTP 429 on every attempt that day and could not serve as a
+//    second reading. The divergence is expected: this file was corrected in
+//    #421 and the store has not taken it yet.
+//
+// 2. Apple FREEZES Description once a version is Ready for Distribution, so
+//    the live text cannot change until a 1.0.1 submission carries it. Naming
+//    a purchasable class of user is what App Review flagged under Guideline
+//    2.1(b), so shipping 1.0.1 is what actually retires that line - not an
+//    edit here.
+//
+// 3. `eas metadata:push` has NEVER been run against this listing. Before it
+//    ever is:
+//      - no `apple.review` block is committed (the demo reviewer credentials
+//        are deliberately kept out of version control). A push sends this
+//        file as the whole listing, so it may CLEAR the demo-account fields
+//        already entered in App Store Connect. Add the block by hand for the
+//        push, or re-enter the fields afterwards.
+//      - the `advisory` age-rating block below is commented out because
+//        eas-cli rejects the legacy schema it uses. The age rating is
+//        answered by hand in the ASC questionnaire; a push does not carry it.
 {
   "configVersion": 0,
   "apple": {
@@ -37,7 +68,7 @@
           "RPC",
           "law school"
         ],
-        "releaseNotes": "Initial release.\n\n• Browse Philippine Supreme Court case digests with provenance back to the source.\n• Read the 1987 Constitution, Rules of Court, and Republic Acts in the codal reader.\n• Drill 1,500+ past bar exam questions with AI-generated ALAC answers.\n• Scan a printout with your camera to generate a structured digest.\n• Offline codal cache and sync with libertasian.com on the web.",
+        "releaseNotes": "\u2022 The codal reader now opens straight from Library instead of sitting inside the study section.\n\u2022 Library lists what your account can open, so nothing is shown that it cannot.\n\u2022 The usage screen reports only the allowances that apply to you.\n\u2022 Navigation fixes for deep links, notification taps, and restored sessions.",
         "promoText": "Plain-language Philippine case digests, codals, and 1,500+ bar exam questions — built for Filipino law students and lawyers.",
         "marketingUrl": "https://libertasian.com",
         "supportUrl": "https://libertasian.com/contact",

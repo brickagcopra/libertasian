@@ -222,7 +222,7 @@ function StudyTabScreen() {
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Bar Subjects</Text>
-          <TouchableOpacity onPress={() => router.push('/study/codals/')}>
+          <TouchableOpacity onPress={() => router.push('/codals/')}>
             <Text style={styles.seeAll}>See All</Text>
           </TouchableOpacity>
         </View>

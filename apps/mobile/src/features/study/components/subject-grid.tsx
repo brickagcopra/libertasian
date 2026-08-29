@@ -25,7 +25,7 @@ export function SubjectGrid({ subjects, onSubjectPress }: SubjectGridProps) {
     if (onSubjectPress) {
       onSubjectPress(code);
     } else {
-      router.push(`/study/codals/${code}`);
+      router.push(`/codals/${code}`);
     }
   };
 

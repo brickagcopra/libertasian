@@ -103,8 +103,12 @@ export function TabBar({ active, onPress, items }: TabBarProps) {
   const resolvedItems = useMemo(
     () =>
       items ??
-      DEFAULT_ITEMS.filter((item) => (item.id === 'study' ? surfaces.study : true)),
-    [items, surfaces.study],
+      DEFAULT_ITEMS.filter((item) => {
+        if (item.id === 'study') return surfaces.study;
+        if (item.id === 'workspace') return surfaces.workspace;
+        return true;
+      }),
+    [items, surfaces.study, surfaces.workspace],
   );
 
   return (

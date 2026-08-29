@@ -16,20 +16,44 @@ import { storage, STORAGE_KEYS } from '../../storage/mmkv';
 export interface FreemiumSurfaces {
   /** Camera scan → digest. */
   scan: boolean;
-  /** Study: bar subjects, flashcards, reviewer packs, sessions, syllabus. */
+  /** Study: flashcards, reviewer packs, sessions, syllabus, community. */
   study: boolean;
   /** Past bar exam questions. */
   barExams: boolean;
+  /**
+   * Generating a digest from a document. Distinct from {@link study} because
+   * it hangs off Digests and Search, which stay reachable — only the generate
+   * affordance goes.
+   */
+  digestGeneration: boolean;
+  /** Matters, memos, pleadings, comparisons, timelines, tasks, notes. */
+  workspace: boolean;
 }
 
 /** Everything visible. What an entitled account resolves to. */
-const ALL_VISIBLE: FreemiumSurfaces = { scan: true, study: true, barExams: true };
+const ALL_VISIBLE: FreemiumSurfaces = {
+  scan: true,
+  study: true,
+  barExams: true,
+  digestGeneration: true,
+  workspace: true,
+};
 
 /**
  * Nothing paid visible. What a free account resolves to, and also the
  * pre-resolution default — see {@link useFreemiumSurfaces}.
+ *
+ * Statutory codals are NOT listed here and have no flag: they are free to
+ * read, so `app/codals/` carries no guard at all rather than a flag that is
+ * always true.
  */
-const FREE_TIER: FreemiumSurfaces = { scan: false, study: false, barExams: false };
+const FREE_TIER: FreemiumSurfaces = {
+  scan: false,
+  study: false,
+  barExams: false,
+  digestGeneration: false,
+  workspace: false,
+};
 
 /**
  * The API is the only authority on what an account can reach.
@@ -80,6 +104,8 @@ function parse(raw: string | undefined): FreemiumSurfaces | null {
       scan: parsed.scan === true,
       study: parsed.study === true,
       barExams: parsed.barExams === true,
+      digestGeneration: parsed.digestGeneration === true,
+      workspace: parsed.workspace === true,
     };
   } catch {
     // A corrupt value is a cache miss, never a crash on launch.

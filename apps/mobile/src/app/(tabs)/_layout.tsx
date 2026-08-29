@@ -26,8 +26,10 @@ export default function TabsLayout() {
   // Study or Scan is never shown a way in, so the API's refusal for those
   // features is unreachable by tapping (App Store 3.1.1).
   //
-  // Library is deliberately NOT gated — it is the corpus browser, and the free
-  // statutory codals live there.
+  // Library is deliberately NOT gated — it is the corpus browser, and it is
+  // the only hub that offers a free account a way into the two things it can
+  // read: the codal reader at /codals and the document browser at /documents.
+  // The screen itself omits the derivative-type tiles when Study is hidden.
   const hidden = { href: null } as const;
 
   return (
@@ -130,6 +132,7 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="briefcase-outline" size={size} color={color} />
           ),
+          ...(surfaces.workspace ? {} : hidden),
         }}
       />
     </Tabs>

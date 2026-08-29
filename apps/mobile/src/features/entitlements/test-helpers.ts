@@ -16,13 +16,21 @@ export function setFreemiumSurfaces(surfaces: Partial<FreemiumSurfaces>): void {
       scan: surfaces.scan ?? false,
       study: surfaces.study ?? false,
       barExams: surfaces.barExams ?? false,
+      digestGeneration: surfaces.digestGeneration ?? false,
+      workspace: surfaces.workspace ?? false,
     }),
   );
 }
 
 /** Everything paid visible — an entitled account. */
 export function setEntitled(): void {
-  setFreemiumSurfaces({ scan: true, study: true, barExams: true });
+  setFreemiumSurfaces({
+    scan: true,
+    study: true,
+    barExams: true,
+    digestGeneration: true,
+    workspace: true,
+  });
 }
 
 /** Nothing paid visible — a free account. Also the default with no key set. */

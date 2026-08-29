@@ -107,22 +107,25 @@ describe('TabsLayout', () => {
       setFreeTier();
     });
 
-    it('hides the Scan and Study tabs', () => {
+    it('hides the Scan, Study and Workspace tabs', () => {
       const { getByTestId } = render(<TabsLayout />);
 
       expect(hiddenOf(getByTestId('tab-scan'))).toBe(true);
       expect(hiddenOf(getByTestId('tab-study'))).toBe(true);
+      // Every workspace quota resolves to 0 on the free tier, so each screen
+      // under the tab loads and then refuses.
+      expect(hiddenOf(getByTestId('tab-workspace'))).toBe(true);
     });
 
-    it('leaves the Library tab alone — the free codals live there', () => {
+    it('leaves the Library tab alone — it is the way in to the free corpus', () => {
       const { getByTestId } = render(<TabsLayout />);
       expect(hiddenOf(getByTestId('tab-library'))).toBe(false);
     });
 
-    it('leaves Home, Search, Digests, Feed and Workspace alone', () => {
+    it('leaves Home, Search, Digests and Feed alone', () => {
       const { getByTestId } = render(<TabsLayout />);
 
-      for (const name of ['index', 'search', 'digests', 'feed', 'workspace']) {
+      for (const name of ['index', 'search', 'digests', 'feed']) {
         expect({ name, hidden: hiddenOf(getByTestId(`tab-${name}`)) }).toEqual({
           name,
           hidden: false,
@@ -136,6 +139,7 @@ describe('TabsLayout', () => {
 
     expect(hiddenOf(getByTestId('tab-scan'))).toBe(false);
     expect(hiddenOf(getByTestId('tab-study'))).toBe(false);
+    expect(hiddenOf(getByTestId('tab-workspace'))).toBe(false);
   });
 
   it('sets headerShown to true in screenOptions', () => {

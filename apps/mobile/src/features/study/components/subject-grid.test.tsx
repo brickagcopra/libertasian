@@ -66,7 +66,7 @@ describe('SubjectGrid', () => {
     const { getByText } = render(<SubjectGrid subjects={mockSubjects} />);
 
     fireEvent.press(getByText('Civil Law'));
-    expect(router.push).toHaveBeenCalledWith('/study/codals/civil_law');
+    expect(router.push).toHaveBeenCalledWith('/codals/civil_law');
   });
 
   it('calls onSubjectPress when provided', () => {

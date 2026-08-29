@@ -14,12 +14,12 @@ import {
   useInfiniteCodals,
   useOfflineCodals as useOfflineFallback,
   type CodalTabGroup,
-} from '../../../features/study/hooks/use-codals';
-import { useOfflineCodals } from '../../../features/study/hooks/use-offline-codals';
-import { useNetworkState } from '../../../hooks/use-network-state';
-import { OfflineBanner } from '../../../components/offline-banner';
-import { CodalCard } from '../../../features/study/components/codal-card';
-import type { CodalListItem } from '../../../features/study/types';
+} from '../../features/study/hooks/use-codals';
+import { useOfflineCodals } from '../../features/study/hooks/use-offline-codals';
+import { useNetworkState } from '../../hooks/use-network-state';
+import { OfflineBanner } from '../../components/offline-banner';
+import { CodalCard } from '../../features/study/components/codal-card';
+import type { CodalListItem } from '../../features/study/types';
 
 interface TabConfig {
   key: CodalTabGroup;

@@ -16,6 +16,7 @@ import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Input } from '@/components/ui';
 import { TabBar, useTabBarClearance } from '@/components/ui/TabBar';
+import { useFreemiumSurfaces } from '@/features/entitlements/use-freemium-surfaces';
 import { useTabBarNav } from '@/features/navigation/use-tab-bar-nav';
 import {
   useDigests,
@@ -161,6 +162,7 @@ function DigestCard({ item }: { item: Digest }) {
 export default function DigestsTab() {
   const navigate = useTabBarNav();
   const clearance = useTabBarClearance();
+  const surfaces = useFreemiumSurfaces();
   const [digestType, setDigestType] = useState<string | undefined>();
   const [reviewStatus, setReviewStatus] = useState<string | undefined>();
   const [sourceOrigin, setSourceOrigin] = useState<string | undefined>();
@@ -230,6 +232,12 @@ export default function DigestsTab() {
   // explicit 402 (refused) / 429 (quota) messaging.
   const handleGenerate = useCallback(
     (doc: MatchedDocument) => {
+      // The button below is not rendered without the surface, so this is
+      // unreachable by tapping. It stays because the confirm-Alert is the
+      // last thing between a caller and a request that would 402, and a
+      // dialog offering an action the account cannot perform is the
+      // shown-and-refused pattern even when the refusal is worded neutrally.
+      if (!surfaces.digestGeneration) return;
       Alert.alert(
         'Generate digest',
         `Generate an AI case digest for "${doc.title}"? This uses your digest quota.`,
@@ -272,7 +280,7 @@ export default function DigestsTab() {
         ],
       );
     },
-    [generateDigest],
+    [generateDigest, surfaces.digestGeneration],
   );
 
   const renderMatchedDocument = useCallback(
@@ -288,22 +296,27 @@ export default function DigestsTab() {
             </Text>
           ) : null}
         </View>
-        <TouchableOpacity
-          style={[
-            styles.generateButton,
-            generateDigest.isPending && styles.generateButtonDisabled,
-          ]}
-          onPress={() => handleGenerate(item)}
-          disabled={generateDigest.isPending}
-          activeOpacity={0.7}
-          accessibilityLabel="Generate digest"
-        >
-          <Ionicons name="sparkles" size={14} color="#fff" />
-          <Text style={styles.generateButtonText}>Generate digest</Text>
-        </TouchableOpacity>
+        {/* Omitted, not disabled, when the account cannot generate: the free
+            tier's digestsPerMonth is 0, so this button 402s on every tap.
+            The matched document itself still lists — it is readable. */}
+        {surfaces.digestGeneration ? (
+          <TouchableOpacity
+            style={[
+              styles.generateButton,
+              generateDigest.isPending && styles.generateButtonDisabled,
+            ]}
+            onPress={() => handleGenerate(item)}
+            disabled={generateDigest.isPending}
+            activeOpacity={0.7}
+            accessibilityLabel="Generate digest"
+          >
+            <Ionicons name="sparkles" size={14} color="#fff" />
+            <Text style={styles.generateButtonText}>Generate digest</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
     ),
-    [generateDigest.isPending, handleGenerate],
+    [generateDigest.isPending, handleGenerate, surfaces.digestGeneration],
   );
 
   const matchedKeyExtractor = useCallback((item: MatchedDocument) => item.id, []);
