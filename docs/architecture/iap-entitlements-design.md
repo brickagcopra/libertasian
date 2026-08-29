@@ -8,7 +8,7 @@ document exists ahead of the branch that implements it.
 **How to review this:** every decision is numbered `D1`–`D14` and carries its own
 *Decision / Why / If you disagree* block. They are deliberately separable — you can
 reject `D9` (grace period) or `D14` (SurfaceGuard) without touching the port, the
-schema or the state mapping. Open questions for brick are numbered `Q1`–`Q10` and
+schema or the state mapping. Open questions for brick are numbered `Q1`–`Q8` and
 collected in §14.4.
 
 **Sourcing rule used throughout:** anything asserted about RevenueCat or the stores
@@ -32,7 +32,7 @@ what stayed unverified.
 10. [The copy-test collision](#10-the-copy-test-collision)
 11. [The SurfaceGuard interaction](#11-the-surfaceguard-interaction)
 12. [Store price points](#12-store-price-points)
-13. [The "unlimited" entitlement review](#13-the-unlimited-entitlement-review)
+13. [The "unlimited" entitlement review — resolved, no change](#13-the-unlimited-entitlement-review--resolved-no-change)
 14. [Rollout sequence and open questions](#14-rollout-sequence-and-open-questions)
 15. [What I could not determine](#15-what-i-could-not-determine)
 16. [References](#16-references)
@@ -47,7 +47,10 @@ defaulted into.
 | | |
 |---|---|
 | SDK | RevenueCat (`react-native-purchases`) for **both** stores. Not native StoreKit 2 / Play Billing. One SDK, one webhook, instead of Apple ASSN V2 + Google Pub/Sub RTDN. |
-| Sellable via IAP | **`pro` and `edu`.** (Revised — the first draft said `pro` only.) `team` and `enterprise` remain web/sales-led and must be neither purchasable **nor unlockable** from mobile. `edu` raises a question the design cannot answer on its own — see `Q9`. |
+| Mobile tiers | The mobile apps offer **`free`, `edu` and `pro`**. `team` and `enterprise` are **web-only** and must remain neither purchasable **nor unlockable** from mobile. |
+| Sellable via IAP | **`pro` and `edu`.** (Revised — the first draft said `pro` only.) |
+| `edu` eligibility | **Ungated.** `edu` ships on mobile at ₱299 with no student verification. Resolved 2026-08-29 — was `Q9`; see below. |
+| Entitlement values | **Unchanged.** `pro` keeps its five unlimited (`-1`) entitlements, `edu` keeps unlimited `searchQueries`, and no price moves. Resolved 2026-08-29 on measured cost evidence — was `Q10`; see §13. |
 | Platforms | iOS and Android, together. |
 | Apple account | The existing **personal** developer account. No entity conversion, no D-U-N-S. Seller name stays "BRICK DE MANUEL AGCOPRA". See §14.2 for what deferring conversion costs. |
 | Price intent | Mark up so net-after-store-commission ≈ the web net, at the 15% Small Business / reduced-service-fee rate. Web `pro` is ₱999/mo and ₱9,990/yr; web `edu` is ₱299/mo and ₱2,990/yr. |
@@ -67,6 +70,32 @@ than the config: a free-tier org is resolving to `pro` entitlements today, which
 exactly what `getEntitlements()` does when the kill switch is off. This is no longer
 an assumption the design rests on — `Q2` (when it flips, and globally or per-cohort)
 stays open, but it is now a scheduling question rather than a premise.
+
+### `edu` ships ungated — and nothing was gating it in the first place
+
+**Decision: leave `edu` ungated.** It stays at ₱299/mo and ships on mobile with no
+student verification. This closes what was `Q9`.
+
+The audit that settled it matters more than the decision, because it corrects an
+assumption the first draft made:
+
+| Claimed gate | Reality, audited 2026-08-29 |
+|---|---|
+| `PlansService.checkEligibility()` (`apps/api/src/modules/plans/plans.service.ts:241`) | **Zero production callers.** The only references are its own spec file. It has never run outside a test |
+| `edu.eligible_segments` | `[]` in the plan seed, and `checkEligibility` skips the segment branch entirely when the array is empty — so the check would no-op even if something did call it |
+| `.edu` email domain check | Does not exist |
+| School document submission | Does not exist |
+| Admin approval | `adminOnlyAssignment: false` and `inviteOnly: false` on the `edu` plan |
+| Org-type segmentation | All 34 production orgs are `type='individual'` — there is no student org type in use to segment on |
+
+So `edu` was **already** purchasable by anyone on the web. Shipping it ungated on
+mobile does not open a hole; it declines to build a gate that was never there.
+
+**The accepted consequence, stated so nobody assumes otherwise: `edu` is a cheaper
+tier available to anyone, not a verified student tier.** Anyone who finds it may buy
+it, on any platform. If that ever becomes a problem, the fix is to build the gate —
+`checkEligibility()` is written and tested and simply needs a caller and a non-empty
+`eligible_segments` — not to pull the product.
 
 Verified against the codebase while writing, so the design does not restate them as
 questions:
@@ -473,8 +502,10 @@ sold as IAP": there is no product id in the map that resolves to `team` or
 mistake — which is the whole reason it is a narrow named type and not `string`.
 
 **Note that this map does not, and cannot, enforce student eligibility for `edu`.**
-It maps a product id to a plan; it has no idea who tapped Buy. That gap is `Q9`
-(§14.4) and it is a product decision, not something this file can close.
+It maps a product id to a plan; it has no idea who tapped Buy. That is accepted
+rather than unresolved: `edu` ships ungated, and nothing was gating it on the web
+either (§1). If a gate is ever wanted, this map is not where it goes —
+`checkEligibility()` is.
 
 **Why not a `plan_store_products` table.** Four rows, changed only when a product is
 created in App Store Connect, which is itself a manual act. A table adds a
@@ -733,8 +764,9 @@ Guard 2 is a product decision — see `Q3`. Guard 1 stands either way.
 
 **`edu` makes guard 2 more attractive, not less.** A multi-member org buying the
 discounted student tier is the cheapest possible way to put several working lawyers
-on a plan priced for one student. The eligibility question itself is `Q9`; this is
-the one part of it the org rule can close on its own.
+on a plan priced for one student. Since `edu` ships ungated by decision (§1), the
+org rule is the *only* structural limit on that particular case — which is a point
+in favour of guard 2, not a reason to reopen eligibility.
 
 If an `INITIAL_PURCHASE` arrives for a multi-member org anyway (old client, or the
 org grew between intent and purchase): **honour it.** The money is already taken and
@@ -1230,29 +1262,110 @@ someone has entered the number in Play Console.)
 
 ---
 
-## 13. The "unlimited" entitlement review
+## 13. The "unlimited" entitlement review — resolved, no change
 
-**This is a proposal, not a change.** Nothing here is decided, and no entitlement
-value in the codebase is modified by this PR. It exists because unlimited
-entitlements are unbounded cost per subscriber, and IAP is what makes that cost
-real: today nobody can buy `pro`, so nobody is consuming an unlimited plan at a
-price we committed to.
+**Outcome: no change. Pricing and entitlements stay exactly as they are.** `pro`
+keeps its five unlimited (`-1`) entitlements, `edu` keeps unlimited `searchQueries`,
+and no price moves. This closes what was `Q10`.
 
-### 13.1 The facts, verified on prod 2026-08-29
+The first draft of this section proposed finite caps (300 aiAnswers, 100 digests,
+200 scans, 300 uploads) and argued them from unit economics, because per-user
+consumption could not be measured. **Then the actual spend was measured, and it did
+not support the proposal.** The section is kept rather than deleted so the evidence
+that settled it is on the record, and so the next person to worry about unlimited
+entitlements can start from data instead of repeating the exercise.
+
+### 13.1 The measured cost — prod `model_runs`, 2026-04-15 → 2026-08-25
+
+Costed at gpt-4o-mini rates ($0.15 per 1M input tokens, $0.60 per 1M output):
+
+| | |
+|---|---|
+| **Total spend, all time** | **$108.67** — roughly **$24/month** |
+| Cost per generation run | **$0.0005 – $0.0017**, i.e. **₱0.03 – ₱0.10** |
+
+Per run type:
+
+| Run type | Cost per run |
+|---|---|
+| `mcq_generation` | $0.00170 |
+| `digest_generation` | $0.00162 |
+| `doctrine_extract` | $0.00129 |
+| `flashcard_generation` | $0.00090 |
+| `subject_classification` | $0.00052 |
+
+**Nearly all of that is corpus generation, not user-facing AI answers.** The spend is
+dominated by the editorial pipeline building the corpus — work that happens once per
+document, is not driven by subscribers, and does not scale with subscriber count.
+
+### 13.2 What this means for unlimited `aiAnswers`
+
+An AI answer costs roughly **₱0.06 – ₱0.10**. Against a ₱999/mo subscription, a
+subscriber would need on the order of **10,000 – 16,000 answers per month** to
+consume their own subscription price in marginal inference cost. That is 300–500
+answers a day, every day.
+
+**Stated plainly: unlimited `aiAnswers` is not a meaningful cost risk at gpt-4o-mini
+rates.** The risk the first draft described — "one subscriber's LLM spend has no
+ceiling while their revenue does" — is arithmetically true and practically
+irrelevant at three orders of magnitude of headroom. Capping it would have bought
+nothing and cost a `429` on a paid plan the first time someone had a heavy research
+week.
+
+**Marginal cost per subscriber is near zero. Profitability is governed by FIXED
+infrastructure**, not by usage: a 12-core / 47GB host running the reranker,
+embedding service, TTS, OpenSearch, PostgreSQL, Redis and MinIO. That cost is
+incurred whether there is one subscriber or a thousand, and it is amortised across
+subscriber count — so the lever on unit economics is **acquisition, not rationing**.
+
+> The host bill is not in this repo and is brick's input. Any real unit-economics
+> model needs that number; nothing here substitutes for it. What the measurement
+> does establish is which side of the ledger the variable is on, and it is the fixed
+> side.
+
+**This conclusion is rate-dependent, and that dependency is the thing to watch.**
+Every figure above assumes gpt-4o-mini. Moving answer generation to a
+substantially more expensive model — or to a reasoning model with long outputs —
+changes the arithmetic, not the argument. Revisit this section on any model change,
+not on a schedule.
+
+### 13.3 The instrumentation gap — follow-up, not blocker
+
+**`ai_answer` runs are not measured.** All 69 of them in `model_runs` have `NULL`
+`tokens_in` / `tokens_out`. So the one run type that maps directly to the `pro`
+entitlement under discussion is precisely the one carrying no cost data — the
+₱0.06–0.10 figure above is inferred from comparable generation runs, not observed on
+answers themselves.
+
+Two gaps, both worth closing and neither blocking anything:
+
+1. **Populate `tokens_in` / `tokens_out` on `ai_answer` runs.** Without it, the next
+   time this question comes up the answer will again have to be inferred.
+2. **`model_runs` has no `organization_id` or `user_id` column**, and quota counters
+   live in Redis with no history. So the table can answer "how much did we spend" —
+   which is what settled this — but still cannot answer "who spent it". That is fine
+   for a fixed-cost conclusion and would matter if the cost profile ever became
+   variable.
+
+Neither is a blocker for IAP. Both should be done before anyone revisits caps.
+
+### 13.4 Facts about the entitlement plumbing, retained
+
+These were established while investigating and remain true regardless of the
+outcome. They matter to anyone who *does* eventually change an entitlement value.
 
 **`billing.db_plans` is DISABLED** (`prisma/seeds/plan-seed.ts:275`,
-`{ key: 'billing.db_plans', enabled: false }`). So the live source of truth is the
+`{ key: 'billing.db_plans', enabled: false }`). The live source of truth is the
 hardcoded `getDefaultEntitlements()` switch in
 `apps/api/src/modules/subscriptions/subscriptions.service.ts`, **not** the
 `plan_entitlements` DB rows. The DB rows currently agree with the hardcoded values,
 which is why the discrepancy has never bitten — but they are inert.
 
-> **Any change to an entitlement value must be made in BOTH places or it will not
-> take effect.** Editing only the DB rows changes nothing while the flag is off.
+> **Any future change to an entitlement value must be made in BOTH places or it will
+> not take effect.** Editing only the DB rows changes nothing while the flag is off.
 > Editing only the hardcoded switch leaves a landmine for the day the flag flips.
-> This is the single most likely way a well-intentioned cap silently fails to apply.
 
-Unlimited (`-1`) entitlements per plan, as they stand:
+Unlimited (`-1`) entitlements per plan, as they stand and as they remain:
 
 | Plan | Count | Which |
 |---|---|---|
@@ -1262,94 +1375,19 @@ Unlimited (`-1`) entitlements per plan, as they stand:
 | `team` | **10** | |
 | `enterprise` | **14** | |
 
-### 13.2 We cannot measure per-user consumption, and must say so
+**The `0` / positive-quota constraint still binds any future cap.** A `0` limit
+returns `402 subscription_required`, which App Review reads as a paywall; an
+exhausted positive quota returns `429 quota_exceeded`, which is a usage limit and is
+accepted. That is why the `free` tier keeps `aiAnswers: 15` and `searchQueries: 50`
+rather than zeroing them. Any cap introduced later must be a positive integer, never
+`0`.
 
-There is no observed-usage evidence to argue from:
-
-- **`model_runs` has no organization or user column.** Every inference call is
-  recorded, but nothing ties one to whoever caused it. The table can answer "how
-  much did we spend" and cannot answer "who spent it".
-- **Quota counters live in Redis with no history.** They are current-period
-  counters with a TTL, not a time series. Last month's consumption does not exist
-  anywhere to query.
-
-So **every cap below is argued from unit economics — marginal cost per call and the
-plan price — not from observed usage.** That is a weaker basis than measurement and
-it should be treated as such: these are opening positions for a discussion, not
-numbers derived from data. If the answer matters enough to argue about, the first
-move is to add `organization_id` to `model_runs`, ship it, and revisit in a month
-with real percentiles.
-
-### 13.3 Classifying the five `pro` unlimiteds by marginal cost
-
-The question for each is simple: does one more call cost us money?
-
-| Entitlement | Marginal cost | Driver | Verdict |
-|---|---|---|---|
-| `aiAnswers` | **High** | LLM inference, per answer, plus retrieval and reranking | Cap |
-| `digestsPerMonth` | **High** | LLM inference over a large context — the digest/memo budget is 8,192 tokens vs 4,096 for an answer, so each one costs materially more than an answer | Cap |
-| `cameraScansPerMonth` | **High** | OCR compute, image processing, storage, then a digest generation on top | Cap |
-| `documentUploadsPerMonth` | **Moderate** | Storage, ClamAV scan, Sharp processing; and each upload is the front half of a generation that costs more | Cap |
-| `searchQueries` | **Near zero** | Served by OpenSearch. A query is CPU and cache on infrastructure we run regardless of who is querying | **May safely stay unlimited** |
-
-`searchQueries` staying unlimited is not a concession, it is the correct answer:
-capping it would cost us a support burden and a worse product for no saving. It is
-also the only unlimited `edu` has, which means **`edu` needs no change at all**
-under this proposal.
-
-### 13.4 The constraint every cap must respect
-
-From §1 and `getDefaultEntitlements()`'s own comment: **a `0` limit returns
-`402 subscription_required`, which App Review reads as a paywall; an exhausted
-positive quota returns `429 quota_exceeded`, which is a usage limit and is
-accepted.** That is why the `free` tier deliberately keeps `aiAnswers: 15` and
-`searchQueries: 50` rather than zeroing them.
-
-**Therefore: every cap proposed here must be a positive integer. Never 0.** A cap of
-0 is not a smaller cap, it is a different HTTP status and a different App Review
-outcome. This constraint is not negotiable independently of the freemium design.
-
-### 13.5 The proposal
-
-Opening positions, with the reasoning shown so each can be argued with
-individually. All are per month, all positive, none is `0`.
-
-| Entitlement | Now | Proposed | Reasoning |
-|---|---|---|---|
-| `aiAnswers` | `-1` | **300** | The headline risk. At ₱999/mo, ten answers a day every day is already a heavy research practice; 300 covers it with room and still bounds the worst case. An unbounded count here is the one line item where a single subscriber can cost multiples of what they pay |
-| `digestsPerMonth` | `-1` | **100** | Costlier per unit than an answer (8,192-token context vs 4,096). 100 is more than three a day, which is well beyond observed editorial throughput for a solo practitioner |
-| `cameraScansPerMonth` | `-1` | **200** | OCR plus a digest per scan. 200 is roughly 7/day — generous for a scan-heavy workflow, and it bounds the case where a device is left scanning a filing cabinet |
-| `documentUploadsPerMonth` | `-1` | **300** | Cheaper per unit than the three above, but it is the entry point to them. Set above the generation caps so uploading is never the binding constraint |
-| `searchQueries` | `-1` | **`-1` — keep** | Near-zero marginal cost. Capping it degrades the product for no saving |
-
-**Why these are round and generous rather than tight.** With no consumption data
-(§13.2), a tight cap risks hitting real users on day one — and a `429` on a paid
-plan is a support ticket and a refund request. A generous cap costs nothing if
-nobody reaches it and converts the *unbounded* risk into a *bounded* one, which is
-the actual goal. Tighten later, from measurement. Loosening a cap after complaints
-is easy; explaining a surprise bill is not.
-
-**The specific risk IAP makes real.** Unlimited `aiAnswers` on a ₱999/mo plan means
-one subscriber's LLM spend has no ceiling while their revenue does. On web, with a
-handful of subscribers and a gateway we control, that was a theoretical exposure. As
-soon as `pro` is one tap away in an app store — with promotional offers, trials, and
-whatever traffic the stores send — it becomes an exposure anyone can take. That, not
-the current bill, is the reason to have this discussion before IAP ships rather than
-after.
-
-### 13.6 What acting on this would involve
-
-Recorded so the size is clear, not proposed as work:
-
-1. Change the five values in `getDefaultEntitlements()` **and** the corresponding
-   `plan_entitlements` rows, in one PR, or the change does not take effect (§13.1).
-2. Verify the resulting statuses: an exhausted cap must return `429`, never `402`.
-   `entitlement-gates.spec.ts` is where that belongs.
-3. Decide whether existing `pro` subscribers are grandfathered. There are 39
-   subscription rows, all `xendit`, so the blast radius today is small — which is
-   exactly why now is the cheap moment.
-4. Separately and independently: add `organization_id` to `model_runs`, so the next
-   version of this section can be written from data instead of from reasoning.
+**On marginal cost, if the question ever reopens.** `searchQueries` is served by
+OpenSearch at near-zero marginal cost and is the clearest candidate to stay
+unlimited under any future policy. `aiAnswers`, `digestsPerMonth`,
+`cameraScansPerMonth` and `documentUploadsPerMonth` are the four that consume LLM or
+OCR compute — but at measured rates, none of them is currently expensive enough to
+justify a cap.
 
 ---
 
@@ -1472,38 +1510,12 @@ unblocked today**.
 | **Q6** | Confirm the RevenueCat transfer behaviour setting = "Transfer if there are no active subscriptions" | A dashboard toggle whose default is wrong for us, and it fails silently (§5.3) |
 | **Q7** | Offer a store free trial? `pro` is `trialEnabled: true, trialDurationDays: 14` on web | A user could take a web trial and a store trial. Also interacts with findings (a) and (f) in §4.2 |
 | **Q8** | Do we honour a store refund of an *earlier* period, which RevenueCat never tells us about? | Documented gap (§8). Affects the monthly reconciliation, not entitlement |
-| **Q9** | **`edu` eligibility.** `edu` is a discounted student tier, but an IAP product can be bought by anyone with an Apple ID. Does the app gate `edu` purchase behind student verification, or does `edu` become "`pro` at a 70% discount for whoever taps it"? | See the options below. Neither the product map (D7) nor the org rule (§5.2) can close this — the map knows a product id, not who tapped Buy. Brick's call |
-| **Q10** | **The unlimited entitlements.** §13 proposes finite caps for the four COGS-bearing `pro` unlimiteds and keeps `searchQueries` unlimited. Accept, adjust, or reject? | Proposal, not a change. Argued from unit economics because consumption cannot be measured (§13.2). Unbounded LLM cost per subscriber is the risk IAP makes real |
+**Resolved since the first draft, and moved to §1 rather than deleted:**
 
-#### `Q9` in full — the `edu` eligibility gap
-
-The web `edu` tier is sold at a 70% discount to `pro` (₱299 vs ₱999). On the web
-that discount sits behind whatever eligibility check the sales-led flow applies. **An
-IAP product has no such check.** It is a product id in a store; anyone with an Apple
-ID or Google account can buy it, and neither store offers us any signal about who
-they are. If `edu` ships as an unguarded IAP product, the rational move for every
-mobile buyer is to buy `edu`, and `pro` stops selling on mobile.
-
-Four options, none of which the design can choose on its own:
-
-| Option | What it means | Cost |
+| Was | Decision | Evidence |
 |---|---|---|
-| **A — verify before purchase** | The `edu` product is only offered after a student check (`.edu.ph` domain, school ID upload, or a manual review queue). Unverified accounts see only `pro` | Real build cost, and a manual queue is ongoing work. Also a friction point in the one flow where friction directly costs a sale |
-| **B — verify after purchase, downgrade on failure** | Anyone may buy `edu`; verification is requested afterwards and a failure moves them to `pro` or refunds | We cannot refund a store purchase ourselves (§8), so "downgrade" means taking away something already paid for. A refund-request support queue, and likely store complaints |
-| **C — accept it: `edu` is just a cheaper plan on mobile** | No verification. `edu` becomes a lower-priced tier available to anyone who finds it | Zero build cost, and it is honest. But it makes `pro` unsellable on mobile unless `edu`'s entitlements are meaningfully thinner — which today they are, and that is the actual argument for this option |
-| **D — do not sell `edu` on mobile at all** | Revert to `pro`-only IAP; `edu` stays web/sales-led like `team` and `enterprise` | Zero build cost, zero risk. Loses the student segment on the platform students actually use |
-
-**The design's observation, offered as input rather than as a recommendation:** `edu`
-and `pro` already have materially different entitlements — `edu` has one unlimited
-(`searchQueries`) against `pro`'s five, and `edu` is `maxMatters: 0` with no memo,
-pleading, comparison or timeline allowance at all. So option C is less damaging here
-than the raw price gap suggests: a working lawyer who buys `edu` to save ₱700 gets a
-plan without the tools they need. That is a fact about the current plan table, and it
-would stop being true if `edu`'s entitlements were ever brought closer to `pro`'s.
-
-Whichever option is taken, it must be settled **before** the `edu` products are
-created in App Store Connect — a live product id that turns out to need a
-verification gate is far harder to walk back than one that was never created.
+| `Q9` — `edu` eligibility | **Leave ungated.** `edu` ships on mobile at ₱299 with no student verification | `checkEligibility()` has zero production callers and `edu.eligible_segments` is `[]`, so nothing was gating `edu` on the web either. §1 |
+| `Q10` — the unlimited entitlements | **No change.** Pricing and entitlements stay as they are | Measured prod spend: $108.67 all time, ~$24/month, ₱0.03–₱0.10 per run, dominated by corpus generation. A subscriber would need ~10,000–16,000 answers/month to consume a ₱999 plan. §13 |
 
 ---
 
