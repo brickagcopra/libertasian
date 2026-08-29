@@ -564,7 +564,10 @@ describe('SearchService', () => {
       const result = await service.searchByCitation(citation);
 
       expect(result).toEqual(mockResult);
-      expect(openSearchService.searchExactCitation).toHaveBeenCalledWith(normalized);
+      expect(openSearchService.searchExactCitation).toHaveBeenCalledWith(
+        normalized,
+        undefined, // no gate → no document-type narrowing
+      );
     });
 
     it('should normalize various citation formats', async () => {
@@ -580,7 +583,10 @@ describe('SearchService', () => {
 
       for (const testCase of testCases) {
         await service.searchByCitation(testCase.input);
-        expect(openSearchService.searchExactCitation).toHaveBeenCalledWith(testCase.expected);
+        expect(openSearchService.searchExactCitation).toHaveBeenCalledWith(
+          testCase.expected,
+          undefined,
+        );
       }
     });
   });
@@ -595,7 +601,11 @@ describe('SearchService', () => {
       const result = await service.getSuggestions(prefix);
 
       expect(result).toEqual(mockSuggestions);
-      expect(openSearchService.searchSuggestions).toHaveBeenCalledWith(prefix, 10);
+      expect(openSearchService.searchSuggestions).toHaveBeenCalledWith(
+        prefix,
+        10,
+        undefined,
+      );
     });
 
     it('should delegate to openSearch.searchSuggestions with custom limit', async () => {
@@ -608,7 +618,11 @@ describe('SearchService', () => {
       const result = await service.getSuggestions(prefix, limit);
 
       expect(result).toEqual(mockSuggestions);
-      expect(openSearchService.searchSuggestions).toHaveBeenCalledWith(prefix, limit);
+      expect(openSearchService.searchSuggestions).toHaveBeenCalledWith(
+        prefix,
+        limit,
+        undefined,
+      );
     });
   });
 
@@ -1290,6 +1304,145 @@ describe('SearchService', () => {
       const freeKey = redisService.set.mock.calls[0]![0] as string;
       const entitledKey = redisService.set.mock.calls[1]![0] as string;
       expect(freeKey).not.toBe(entitledKey);
+    });
+  });
+  // ---- public routes: citation lookup and typeahead ----
+
+  describe('public search routes (citation + suggestions)', () => {
+    const decisionHit = {
+      id: 'doc-decision',
+      score: 12,
+      source: {
+        document_id: 'doc-decision',
+        title: 'People v. Doe',
+        citation_text: 'G.R. No. 123456',
+        document_type: 'decision',
+      },
+    };
+    const codalHit = {
+      id: 'doc-codal',
+      score: 10,
+      source: {
+        document_id: 'doc-codal',
+        title: 'Civil Code',
+        citation_text: 'R.A. No. 386',
+        document_type: 'codal',
+      },
+    };
+
+    /**
+     * Honour the document-type filter the way OpenSearch does, so an assertion
+     * about what came back is an assertion about the query rather than the mock.
+     */
+    const CORPUS = [decisionHit, codalHit];
+    const respectCitationFilter = () => {
+      openSearchService.searchExactCitation.mockImplementation(
+        (_citation: string, documentTypes?: readonly string[]) => {
+          const items =
+            documentTypes === undefined
+              ? CORPUS
+              : CORPUS.filter((hit) =>
+                  documentTypes.includes(hit.source.document_type),
+                );
+          return Promise.resolve({ total: items.length, items });
+        },
+      );
+    };
+
+    beforeEach(() => {
+      respectCitationFilter();
+    });
+
+    describe('searchByCitation', () => {
+      it('returns no gated hit for a non-entitled mobile caller', async () => {
+        const result = await service.searchByCitation('G.R. No. 123456', {
+          previewOnly: true,
+          excludeLocked: true,
+        });
+
+        expect(result.items).toHaveLength(1);
+        expect(result.items[0]!.source['document_type']).toBe('codal');
+        // `total` must reflect the narrowed query, not the full corpus —
+        // a count of 2 would itself advertise the locked hit.
+        expect(result.total).toBe(1);
+      });
+
+      it('narrows the query to the free allowlist rather than dropping hits after', async () => {
+        await service.searchByCitation('G.R. No. 123456', {
+          previewOnly: true,
+          excludeLocked: true,
+        });
+
+        expect(openSearchService.searchExactCitation).toHaveBeenCalledWith(
+          'G.R. No. 123456',
+          FREE_DOCUMENT_TYPES,
+        );
+      });
+
+      it('still returns the gated hit to an entitled caller', async () => {
+        const result = await service.searchByCitation('G.R. No. 123456', {
+          previewOnly: false,
+          excludeLocked: true,
+        });
+
+        expect(result.items.map((hit) => hit.source['document_type'])).toEqual([
+          'decision',
+          'codal',
+        ]);
+      });
+
+      it('returns gated hits to a non-mobile client so web can count them', async () => {
+        const result = await service.searchByCitation('G.R. No. 123456', {
+          previewOnly: true,
+          excludeLocked: false,
+        });
+
+        expect(result.items).toHaveLength(2);
+        expect(service.countLockedHits(result.items)).toBe(1);
+      });
+    });
+
+    describe('getSuggestions', () => {
+      it('narrows the typeahead query for a non-entitled mobile caller', async () => {
+        openSearchService.searchSuggestions.mockResolvedValue([]);
+
+        await service.getSuggestions('people v', 8, {
+          previewOnly: true,
+          excludeLocked: true,
+        });
+
+        expect(openSearchService.searchSuggestions).toHaveBeenCalledWith(
+          'people v',
+          8,
+          FREE_DOCUMENT_TYPES,
+        );
+      });
+
+      it('leaves the query unnarrowed for everyone else', async () => {
+        openSearchService.searchSuggestions.mockResolvedValue([]);
+
+        await service.getSuggestions('people v', 8, {
+          previewOnly: true,
+          excludeLocked: false,
+        });
+
+        expect(openSearchService.searchSuggestions).toHaveBeenCalledWith(
+          'people v',
+          8,
+          undefined,
+        );
+      });
+
+      it('counts locked rows, treating an unknown documentType as locked', () => {
+        expect(
+          service.countLockedSuggestions([
+            { documentType: 'codal' },
+            { documentType: 'decision' },
+            { documentType: 'bar_exam_questions' },
+            {},
+          ]),
+        ).toBe(3);
+      });
     });
   });
 });

@@ -877,13 +877,62 @@ export class SearchService {
     return `cache:search:${hash}`;
   }
 
-  async searchByCitation(citation: string) {
+  /**
+   * Exact citation lookup, free-tier aware.
+   *
+   * This route is the sharpest edge of the whole gate: a caller who already
+   * knows "G.R. No. 123456" reaches the paid decision without touching a single
+   * list. Narrowing happens in the QUERY (`buildCitationQueryBody`), so for a
+   * client that must not see locked content the hit is never fetched and never
+   * counted in `total`. The return shape is unchanged.
+   */
+  async searchByCitation(citation: string, gate: FreeTierSearchGate | null = null) {
     const normalized = this.normalizeCitation(citation);
-    return this.openSearch.searchExactCitation(normalized);
+    return this.openSearch.searchExactCitation(
+      normalized,
+      this.freeTypeFilter(gate),
+    );
   }
 
-  async getSuggestions(prefix: string, limit = 10) {
-    return this.openSearch.searchSuggestions(prefix, limit);
+  /**
+   * Typeahead, free-tier aware. A suggestion row is a tappable route into a
+   * document, so for a client that must not see locked content the row is never
+   * built rather than built and then refused. Return shape is unchanged.
+   */
+  async getSuggestions(
+    prefix: string,
+    limit = 10,
+    gate: FreeTierSearchGate | null = null,
+  ) {
+    return this.openSearch.searchSuggestions(
+      prefix,
+      limit,
+      this.freeTypeFilter(gate),
+    );
+  }
+
+  /**
+   * The document-type allowlist to push into a query, or `undefined` to leave
+   * the query unnarrowed. Only a non-entitled caller who must not SEE locked
+   * content gets the filter; a web caller still receives locked hits so the
+   * upgrade banner has something to count.
+   */
+  private freeTypeFilter(
+    gate: FreeTierSearchGate | null,
+  ): readonly string[] | undefined {
+    return gate?.previewOnly === true && gate.excludeLocked
+      ? FREE_DOCUMENT_TYPES
+      : undefined;
+  }
+
+  /** How many of these rows a non-entitled caller could not open. */
+  countLockedSuggestions(items: readonly { documentType?: string }[]): number {
+    return items.filter((item) => !isFreeDocumentType(item.documentType)).length;
+  }
+
+  /** How many of these citation hits a non-entitled caller could not open. */
+  countLockedHits(items: readonly unknown[]): number {
+    return items.filter((item) => this.isLockedItem(item)).length;
   }
 
   /**

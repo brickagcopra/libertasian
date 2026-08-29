@@ -623,6 +623,7 @@ export function buildCitationQueryBody(
   citation: string,
   digits: string | undefined,
   size = 10,
+  documentTypes?: readonly string[],
 ): Record<string, unknown> {
   const normalized = normalizeCitationKey(citation);
   const should: Clause[] = [
@@ -635,7 +636,19 @@ export function buildCitationQueryBody(
   }
 
   return {
-    query: { bool: { should, minimum_should_match: 1 } },
+    query: {
+      bool: {
+        should,
+        minimum_should_match: 1,
+        // Free-tier narrowing, applied HERE rather than by dropping hits after
+        // the fact: an empty list is a real answer (the caller asked for a type
+        // they cannot read) and `terms: []` matches nothing, so the exact hit is
+        // never fetched, never counted and never leaks through `total`.
+        ...(documentTypes && {
+          filter: [{ terms: { document_type: [...documentTypes] } }],
+        }),
+      },
+    },
     size,
     timeout: '5s',
   };
@@ -648,6 +661,7 @@ export function buildCitationQueryBody(
 export function buildSuggestionQueryBody(
   prefix: string,
   limit: number,
+  documentTypes?: readonly string[],
 ): Record<string, unknown> {
   const normalized = normalizeCitationKey(prefix);
   const should: Clause[] = [
@@ -678,7 +692,14 @@ export function buildSuggestionQueryBody(
       bool: {
         should,
         minimum_should_match: 1,
-        filter: [{ term: { is_published: true } }],
+        filter: [
+          { term: { is_published: true } },
+          // Same free-tier narrowing as the citation lookup: a typeahead row
+          // the caller cannot open is a tap into a 402, so it is never built.
+          ...(documentTypes
+            ? [{ terms: { document_type: [...documentTypes] } }]
+            : []),
+        ],
       },
     },
     _source: [

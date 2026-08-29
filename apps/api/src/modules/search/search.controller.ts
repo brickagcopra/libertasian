@@ -21,6 +21,7 @@ import { RequiredPermissions } from '../../common/decorators/permissions.decorat
 import { InternalApiGuard } from '../../common/guards/internal-api.guard';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { MfaGuard } from '../../common/guards/mfa.guard';
+import { OptionalJwtAuthGuard } from '../../common/guards/optional-jwt-auth.guard';
 import { TenantGuard } from '../../common/guards/tenant.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { AdminBypassAuditService } from '../../common/services/admin-bypass-audit.service';
@@ -41,7 +42,10 @@ import {
 /**
  * Search controller.
  * POST /search requires authentication (search queries are audit-logged).
- * GET /citation and /suggestions are public (open access to corpus discovery).
+ * GET /citation and /suggestions stay open to anonymous callers, but carry
+ * OptionalJwtAuthGuard so a present token is hydrated and the free-tier gate
+ * can be resolved — same pattern as the public GETs on DocumentsController.
+ * Anonymous callers are treated as free-tier.
  * POST /index/* endpoints require JwtAuthGuard + MfaGuard + RolesGuard (admin/editor).
  */
 @ApiTags('Search')
@@ -174,23 +178,87 @@ export class SearchController {
     };
   }
 
+  /**
+   * `OptionalJwtAuthGuard`, matching the public GETs on `DocumentsController`:
+   * the route stays open, but a present token is hydrated so the free-tier gate
+   * can be resolved. An anonymous caller is treated as free-tier — the same
+   * default the documents surface uses.
+   *
+   * This is the sharpest edge of the whole paywall. Someone who already knows
+   * "G.R. No. 123456" reaches a paid decision here without touching a single
+   * list, which is precisely the "tapping around into a 402" the filtering rule
+   * exists to prevent.
+   */
   @Get('citation/:citation')
+  @UseGuards(OptionalJwtAuthGuard)
   @Throttle({ default: { ttl: 60000, limit: 30 } })
   @ApiOperation({ summary: 'Exact citation lookup (G.R. No., RA No., etc.)' })
-  async searchByCitation(@Param() params: CitationSearchDto) {
-    const result = await this.searchService.searchByCitation(params.citation);
-    return { success: true, data: result.items, meta: { total: result.total } };
+  async searchByCitation(
+    @Param() params: CitationSearchDto,
+    @CurrentUser() user: JwtPayload | null,
+    @Req() req: Request,
+  ) {
+    const previewOnly = await this.resolvePreviewOnly(user, req);
+    const excludeLocked = this.isMobileClient(req);
+    const result = await this.searchService.searchByCitation(params.citation, {
+      previewOnly,
+      excludeLocked,
+    });
+
+    return {
+      success: true,
+      data: result.items,
+      meta: {
+        total: result.total,
+        // Only the non-excluded branch has anything left to count: when the
+        // locked hits were filtered out of the query there is no banner to
+        // render and nothing to advertise.
+        ...(previewOnly &&
+          !excludeLocked && {
+            previewMode: true,
+            lockedCount: this.searchService.countLockedHits(result.items),
+            upgradeRequired: true,
+          }),
+      },
+    };
   }
 
+  /**
+   * Same guard and same gate as the citation lookup: a typeahead row is a
+   * tappable route into a document, so for a client that must not see locked
+   * content the row is never built.
+   */
   @Get('suggestions')
+  @UseGuards(OptionalJwtAuthGuard)
   @Throttle({ default: { ttl: 60000, limit: 30 } })
   @ApiOperation({ summary: 'Search suggestions / autocomplete' })
-  async getSuggestions(@Query() query: SuggestionQueryDto) {
+  async getSuggestions(
+    @Query() query: SuggestionQueryDto,
+    @CurrentUser() user: JwtPayload | null,
+    @Req() req: Request,
+  ) {
+    const previewOnly = await this.resolvePreviewOnly(user, req);
+    const excludeLocked = this.isMobileClient(req);
     const suggestions = await this.searchService.getSuggestions(
       query.q,
       query.limit ?? 10,
+      { previewOnly, excludeLocked },
     );
-    return { success: true, data: suggestions };
+
+    // `data` stays a bare SuggestionItem[] — both clients read it as an array
+    // today, and the meta is additive.
+    return {
+      success: true,
+      data: suggestions,
+      ...(previewOnly &&
+        !excludeLocked && {
+          meta: {
+            previewMode: true,
+            lockedCount: this.searchService.countLockedSuggestions(suggestions),
+            upgradeRequired: true,
+          },
+        }),
+    };
   }
 
   @Post('index/initialize')
