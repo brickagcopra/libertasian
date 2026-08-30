@@ -1247,7 +1247,7 @@ Console.**
 
 | Plan | Monthly | Annual |
 |---|---|---|
-| `pro` | **₱1,699** | **₱16,990** |
+| `pro` | **₱1,990** | **₱19,990** |
 | `edu` | **₱499** | **₱4,990** |
 
 **They are priced against the 30% rate, not the 15% one**, which is the single
@@ -1258,8 +1258,8 @@ can make them wrong, only more comfortable:
 
 | | Net @30%, no VAT | Net @30%, 12% VAT-inclusive | Web net to beat |
 |---|---|---|---|
-| `pro` monthly ₱1,699 | ₱1,189.30 | ₱1,061.88 | ₱999 |
-| `pro` annual ₱16,990 | ₱11,893.00 | ₱10,618.75 | ₱9,990 |
+| `pro` monthly ₱1,990 | ₱1,393.00 | ₱1,243.75 | ₱999 |
+| `pro` annual ₱19,990 | ₱13,993.00 | ₱12,493.75 | ₱9,990 |
 | `edu` monthly ₱499 | ₱349.30 | ₱311.88 | ₱299 |
 | `edu` annual ₱4,990 | ₱3,493.00 | ₱3,118.75 | ₱2,990 |
 
@@ -1270,13 +1270,13 @@ standard rate, and enrolment raises the net rather than rescuing it.
 
 | At 15% instead | Net, no VAT | Net, 12% VAT-inclusive |
 |---|---|---|
-| `pro` monthly ₱1,699 | ₱1,444.15 | ₱1,289.42 |
-| `pro` annual ₱16,990 | ₱14,441.50 | ₱12,894.19 |
+| `pro` monthly ₱1,990 | ₱1,691.50 | ₱1,510.27 |
+| `pro` annual ₱19,990 | ₱16,991.50 | ₱15,170.98 |
 | `edu` monthly ₱499 | ₱424.15 | ₱378.70 |
 | `edu` annual ₱4,990 | ₱4,241.50 | ₱3,787.05 |
 
 The practical consequence: **enrolment stops being on the critical path.** §14.2
-still lists it, because the money is real — roughly ₱255/month per `pro`
+still lists it, because the money is real — roughly ₱299/month per `pro`
 subscriber — but a delay there no longer blocks shipping, and crossing the
 million-dollar threshold later no longer breaks the model.
 
@@ -1285,10 +1285,22 @@ clear under both readings removes `Q1` from the critical path; it does not answe
 it. The VAT question still governs the reported revenue split and still needs
 brick's accountant.
 
-**These are targets until someone opens the price-point picker.** Apple's PHP list
-is per-storefront and readable only in App Store Connect (below), so the rule
-stands: take the nearest available point to each number above, then mirror it
-exactly on Play, and write the ACTUAL values back into this table.
+**These are no longer targets. They are the prices actually entered in App Store
+Connect on 2026-08-30**, in subscription group `Libertasian Membership`
+(ID `22345391`): `pro` at subscription level 1, `edu` at level 2, en-US
+localizations present on all four products and on the group itself, and no
+introductory or promotional offers on any of them.
+
+**The one finding worth keeping: two of the four targets did not exist as PHP price
+points.** `pro` monthly ₱1,699 and `pro` annual ₱16,990 were not selectable, and the
+nearest available points were ₱1,990 and ₱19,990 — which is why the two `pro` rows
+above moved. `edu` monthly ₱499 *was* an exact available point, so `edu` needed no
+rounding at all, and `edu` annual ₱4,990 is exactly 10× monthly. Apple's PHP list is
+per-storefront and readable only in App Store Connect (below), which is why this
+could not be settled on paper.
+
+**Play Console must now mirror these four ACTUAL numbers — ₱1,990 / ₱19,990 / ₱499 /
+₱4,990 — not the original targets.**
 
 ### What is and is not verifiable about the price points themselves
 
