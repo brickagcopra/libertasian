@@ -1,6 +1,7 @@
 import { Alert, View } from 'react-native';
 import { router } from 'expo-router';
 import { useTabBarNav } from '@/features/navigation/use-tab-bar-nav';
+import { PURCHASE_ROUTE } from '@/features/purchase';
 import { ProfileScreen } from '../../components/screens/ProfileScreen';
 import { useAuth } from '../../providers/auth-provider';
 import { useProfile } from '../../features/auth/hooks/use-auth';
@@ -73,6 +74,22 @@ export default function SettingsRoute() {
   // surface the API deliberately leaves closed, so it is the one row that
   // would still 403 with tier wording, and it has no place in a phone app.
   const billingRows: ProfileRow[] = [
+    // The ONLY door into the purchase surface, and the only file outside
+    // `app/purchase/` and `features/purchase/` permitted to import from it —
+    // `no-purchase-copy.test.ts` pins this list as
+    // PERMITTED_PURCHASE_ENTRY_POINTS and fails if a second one appears.
+    //
+    // The label names nothing purchasable, because this row is NOT part of the
+    // purchase surface: it sits on a settings screen that the FORBIDDEN word
+    // list still applies to in full. The plan names and prices live one tap
+    // away, on the screen that is allowed to show them.
+    {
+      id: 'plans',
+      icon: 'card-outline',
+      label: 'Manage account access',
+      sub: 'Options for your account',
+      onPress: () => router.push(PURCHASE_ROUTE),
+    },
     {
       id: 'usage',
       icon: 'bar-chart-outline',

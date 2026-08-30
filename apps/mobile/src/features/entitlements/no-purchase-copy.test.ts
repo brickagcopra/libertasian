@@ -89,6 +89,31 @@ const isAllowed = (file: string, text: string): boolean =>
   ALLOWED.some((entry) => entry.file === file && entry.text === text);
 
 /**
+ * The ONLY directories permitted to name a purchasable thing.
+ *
+ * Guideline 3.1.2 REQUIRES title, duration and price before purchase, which is
+ * the exact opposite of what FORBIDDEN enforces everywhere else. The conflict is
+ * resolved by LOCATION: these two trees are the purchase surface and may name a
+ * plan and a price; nothing else in src/ may, and the tests below PROVE the
+ * confinement rather than assuming it.
+ *
+ * Adding a third prefix here is a REVIEW GATE, not a routine change.
+ */
+const PURCHASE_SURFACE_PREFIXES = ['app/purchase/', 'features/purchase/'] as const;
+
+const inPurchaseSurface = (file: string): boolean =>
+  PURCHASE_SURFACE_PREFIXES.some((prefix) => file.startsWith(prefix));
+
+/**
+ * Every file outside the purchase surface allowed to import from it.
+ *
+ * A purchase surface reachable from an unguarded screen is a paywall on an
+ * unguarded screen, so this list is the review signal: its diff is the whole
+ * question. One entry today — the Settings row.
+ */
+const PERMITTED_PURCHASE_ENTRY_POINTS: readonly string[] = ['app/settings/index.tsx'];
+
+/**
  * Every piece of text this file can put in front of a user.
  *
  * Comments explain the policy and must be free to name it, and identifiers
@@ -137,6 +162,39 @@ const relativePath = (file: string): string =>
 
 const SOURCE_FILES = walk(MOBILE_SRC);
 
+interface Violation {
+  file: string;
+  text: string;
+  term: string;
+}
+
+/**
+ * Every FORBIDDEN hit in `src/`, honouring ALLOWED.
+ *
+ * `skipPurchaseSurface` is the ONE axis of difference between the two tests
+ * below: with it, the surface is not read at all (the historical guarantee,
+ * unchanged for every other file); without it, the surface is read and its hits
+ * are checked for PLACEMENT instead. Sharing the scan means the two can never
+ * drift into disagreeing about what counts as a violation.
+ */
+function allViolations({ skipPurchaseSurface }: { skipPurchaseSurface: boolean }): Violation[] {
+  const violations: Violation[] = [];
+
+  for (const file of SOURCE_FILES) {
+    const path = relativePath(file);
+    if (skipPurchaseSurface && inPurchaseSurface(path)) continue;
+
+    for (const text of renderableText(readFileSync(file, 'utf8'))) {
+      if (isAllowed(path, text)) continue;
+      for (const term of FORBIDDEN) {
+        if (matches(term, text)) violations.push({ file: path, text, term });
+      }
+    }
+  }
+
+  return violations;
+}
+
 describe('freemium surfaces name nothing purchasable', () => {
   it('walks the whole of src/, not a fixed file list', () => {
     // A sanity floor: if the walk silently stopped resolving files, every
@@ -148,19 +206,69 @@ describe('freemium surfaces name nothing purchasable', () => {
   });
 
   it('renders no purchase-implying copy anywhere in src/', () => {
-    const violations: { file: string; text: string; term: string }[] = [];
+    // The purchase surface is skipped here and ONLY here. Its content is
+    // checked by the confinement test below instead, which reads the same files
+    // through the same scanner and asserts where the hits are rather than that
+    // there are none.
+    expect(allViolations({ skipPurchaseSurface: true })).toEqual([]);
+  });
 
-    for (const file of SOURCE_FILES) {
-      const path = relativePath(file);
-      for (const text of renderableText(readFileSync(file, 'utf8'))) {
-        if (isAllowed(path, text)) continue;
-        for (const term of FORBIDDEN) {
-          if (matches(term, text)) violations.push({ file: path, text, term });
-        }
-      }
-    }
+  it('confines every purchase-implying string to the purchase surface', () => {
+    // The inverse of the skip above: scan src/ with NO prefix skipping and
+    // assert every hit sits inside the purchase surface.
+    //
+    // This is the test that catches "Upgrade to Pro" appearing on a settings
+    // screen. The main test can only report that a file it scanned is clean; it
+    // cannot notice a file it was told to skip, and it cannot notice a hit that
+    // moved OUT of the surface into a screen with no way to buy. This one names
+    // the file.
+    const outside = allViolations({ skipPurchaseSurface: false }).filter(
+      (violation) => !inPurchaseSurface(violation.file),
+    );
 
-    expect(violations).toEqual([]);
+    expect(outside).toEqual([]);
+  });
+
+  it('keeps the purchase surface non-empty and reachable only through the gate', () => {
+    // Two failure modes, both silent:
+    //
+    //   - a prefix matching no files is a DEAD EXEMPTION. It would sit in the
+    //     list looking like a considered decision while protecting nothing, and
+    //     the first file added under it would inherit an exemption nobody
+    //     re-reviewed.
+    //   - a purchase surface imported from an unguarded screen is a paywall on
+    //     an unguarded screen. Hiding the Settings row would not help: the
+    //     import is the reachability, not the row.
+    const files = SOURCE_FILES.map(relativePath).filter(inPurchaseSurface);
+    expect(files.length).toBeGreaterThan(0);
+
+    const importers = SOURCE_FILES.map(relativePath)
+      .filter((file) => !inPurchaseSurface(file))
+      .filter((file) =>
+        /@\/(features|app)\/purchase/.test(readFileSync(join(MOBILE_SRC, file), 'utf8')),
+      );
+
+    expect(importers).toEqual(PERMITTED_PURCHASE_ENTRY_POINTS);
+  });
+
+  it('exempts the purchase surface by LOCATION and nothing else', () => {
+    // The exemption must be a prefix match on the path, not a substring one: a
+    // file at `features/feed/purchase-banner.tsx` must NOT inherit it, and
+    // neither must anything merely containing the word.
+    expect(inPurchaseSurface('features/purchase/components/plan-card.tsx')).toBe(true);
+    expect(inPurchaseSurface('app/purchase/index.tsx')).toBe(true);
+    expect(inPurchaseSurface('features/feed/purchase-banner.tsx')).toBe(false);
+    expect(inPurchaseSurface('app/settings/purchase.tsx')).toBe(false);
+    expect(inPurchaseSurface('features/entitlements/surface-guard.tsx')).toBe(false);
+  });
+
+  it('still catches a purchase string planted outside the surface', () => {
+    // The guard on the guard. If `matches` or `renderableText` ever stopped
+    // seeing this shape, every assertion above would pass vacuously and the
+    // whole file would be decorative.
+    expect(
+      FORBIDDEN.some((term) => matches(term, 'Upgrade to Pro')),
+    ).toBe(true);
   });
 
   it('keeps every exemption earning its place', () => {
