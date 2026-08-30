@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ConfigService } from '@nestjs/config';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { TenantGuard } from '../../common/guards/tenant.guard';
@@ -15,6 +16,9 @@ describe('QuotaController', () => {
 
   const mockGuard = { canActivate: jest.fn().mockReturnValue(true) };
 
+  /** D14 flags, per platform. Both false unless a test says otherwise. */
+  let storeAvailable: Record<string, boolean>;
+
   const mockUser = {
     sub: 'user-1',
     organizationId: 'org-1',
@@ -23,6 +27,11 @@ describe('QuotaController', () => {
   } as any;
 
   beforeEach(async () => {
+    storeAvailable = {
+      STORE_PURCHASE_AVAILABLE_IOS: false,
+      STORE_PURCHASE_AVAILABLE_ANDROID: false,
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       controllers: [QuotaController],
       providers: [
@@ -40,6 +49,10 @@ describe('QuotaController', () => {
               .fn()
               .mockResolvedValue({ previewOnly: false }),
           },
+        },
+        {
+          provide: ConfigService,
+          useValue: { get: jest.fn((key: string) => storeAvailable[key]) },
         },
       ],
     })
@@ -242,6 +255,83 @@ describe('QuotaController', () => {
       // Both should be called (order doesn't matter with Promise.all)
       expect(summaryCallOrder).toBeGreaterThan(0);
       expect(bonusCallOrder).toBeGreaterThan(0);
+    });
+  });
+
+  // ======================================================================
+  // D14 mechanism C — storePurchaseAvailable
+  // ======================================================================
+
+  describe('storePurchaseAvailable', () => {
+    beforeEach(() => {
+      usageQuota.getUsageSummaryV2.mockResolvedValue({
+        quotas: {},
+        billingPeriodStart: null,
+        billingPeriodEnd: null,
+      } as never);
+      entitlementService.getActiveBonuses.mockResolvedValue([] as never);
+    });
+
+    const available = async (platform?: string) =>
+      (await controller.getUsage(mockUser, platform)).data.storePurchaseAvailable;
+
+    it('DEFAULTS TO FALSE on every platform', async () => {
+      // The whole point of the flag: the first IAP build ships behaving
+      // identically to the approved one, so it is safe to submit while store
+      // products are still in review. A `true` default would flip that on at
+      // deploy time, offering a purchase for products that do not exist.
+      expect(await available('ios')).toBe(false);
+      expect(await available('android')).toBe(false);
+    });
+
+    it('is false for web, an absent header and an unknown platform', async () => {
+      // None of these can purchase anything, and every older build sends no
+      // header at all.
+      expect(await available(undefined)).toBe(false);
+      expect(await available('web')).toBe(false);
+      expect(await available('windows')).toBe(false);
+      expect(await available('')).toBe(false);
+    });
+
+    it('resolves PER PLATFORM, not globally', async () => {
+      // An Android-approved / iOS-pending state is normal during a rollout, and
+      // one flag would get it wrong for one of them.
+      storeAvailable['STORE_PURCHASE_AVAILABLE_ANDROID'] = true;
+
+      expect(await available('android')).toBe(true);
+      expect(await available('ios')).toBe(false);
+    });
+
+    it('reads the platform case-insensitively', async () => {
+      storeAvailable['STORE_PURCHASE_AVAILABLE_IOS'] = true;
+      expect(await available('iOS')).toBe(true);
+      expect(await available('IOS')).toBe(true);
+    });
+
+    it('is independent of previewOnly', async () => {
+      // The client needs BOTH: previewOnly says whether the account is
+      // entitled, this says whether it could buy its way in. Collapsing them
+      // would lose the case the flag exists for — previewOnly true AND a
+      // purchase available.
+      storeAvailable['STORE_PURCHASE_AVAILABLE_IOS'] = true;
+      entitlementService.resolveEffectiveEntitlements.mockResolvedValue({
+        previewOnly: true,
+      } as never);
+
+      const res = await controller.getUsage(mockUser, 'ios');
+
+      expect(res.data.previewOnly).toBe(true);
+      expect(res.data.storePurchaseAvailable).toBe(true);
+    });
+
+    it('travels in the same response as previewOnly', async () => {
+      // Two values that decide one rendering must not be able to disagree
+      // because they arrived separately — the client persists one blob.
+      const res = await controller.getUsage(mockUser, 'ios');
+
+      expect(Object.keys(res.data)).toEqual(
+        expect.arrayContaining(['previewOnly', 'storePurchaseAvailable']),
+      );
     });
   });
 });

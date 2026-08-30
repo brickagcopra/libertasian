@@ -2,9 +2,11 @@ import { renderHook } from '@testing-library/react-native';
 
 import { storage, STORAGE_KEYS } from '../../storage/mmkv';
 import {
+  accessFromQuotas,
   surfacesFromQuotas,
   useFreemiumSurfaces,
   useFreemiumSurfacesSync,
+  useSurfaceAccess,
   type FreemiumSurfaces,
 } from './use-freemium-surfaces';
 
@@ -232,7 +234,7 @@ describe('useFreemiumSurfacesSync', () => {
 
     expect(
       JSON.parse(storage.getString(STORAGE_KEYS.ENTITLED_SURFACES) ?? '{}'),
-    ).toEqual(FREE_TIER);
+    ).toMatchObject(FREE_TIER);
   });
 
   it('persists the resolved answer so the next cold start does not flicker', () => {
@@ -247,7 +249,7 @@ describe('useFreemiumSurfacesSync', () => {
 
     expect(
       JSON.parse(storage.getString(STORAGE_KEYS.ENTITLED_SURFACES) ?? '{}'),
-    ).toEqual(ALL_VISIBLE);
+    ).toMatchObject(ALL_VISIBLE);
   });
 
   it('writes the free-tier answer too — a downgrade must take the tabs away', () => {
@@ -260,7 +262,7 @@ describe('useFreemiumSurfacesSync', () => {
 
     expect(
       JSON.parse(storage.getString(STORAGE_KEYS.ENTITLED_SURFACES) ?? '{}'),
-    ).toEqual(FREE_TIER);
+    ).toMatchObject(FREE_TIER);
   });
 
   it('leaves the persisted answer alone while the query has no data', () => {
@@ -273,5 +275,111 @@ describe('useFreemiumSurfacesSync', () => {
     expect(
       JSON.parse(storage.getString(STORAGE_KEYS.ENTITLED_SURFACES) ?? '{}').study,
     ).toBe(true);
+  });
+
+  // ======================================================================
+  // D14 mechanism C — storePurchaseAvailable
+  // ======================================================================
+
+  describe('storePurchaseAvailable', () => {
+    const freeQuotas = { cameraScansPerMonth: quota(0), digestsPerMonth: quota(0) };
+
+    it('WITH THE FLAG FALSE, behaves exactly as before', () => {
+      // THE safety property of mechanism C: the first IAP build must behave
+      // identically to the currently approved one, which is what makes it safe
+      // to submit while store products are still in review. Asserted as an
+      // equivalence against the pre-existing resolver rather than restated, so
+      // the two cannot drift.
+      for (const previewOnly of [true, false]) {
+        for (const flag of [undefined, false]) {
+          expect(accessFromQuotas(freeQuotas, previewOnly, flag).surfaces).toEqual(
+            surfacesFromQuotas(freeQuotas, previewOnly),
+          );
+        }
+      }
+    });
+
+    it('keeps a free account hidden when no store purchase is available', () => {
+      const access = accessFromQuotas(freeQuotas, true, false);
+
+      expect(access.surfaces).toEqual(FREE_TIER);
+      expect(access.entitled).toBe(false);
+      expect(access.storePurchaseAvailable).toBe(false);
+    });
+
+    it('SHOWS the surface to a free account once a purchase is available', () => {
+      // D14 option B: the reasoning behind "always hide" was conditional on
+      // there being no way to buy. This is that condition being removed.
+      const access = accessFromQuotas(freeQuotas, true, true);
+
+      expect(access.surfaces).toEqual(ALL_VISIBLE);
+      // ...but the account is still NOT entitled to the content. That gap is
+      // what SurfaceGuard renders the purchase entry point into.
+      expect(access.entitled).toBe(false);
+    });
+
+    it('leaves an entitled account entitled regardless of the flag', () => {
+      const paid = { cameraScansPerMonth: quota(-1), digestsPerMonth: quota(-1) };
+
+      for (const flag of [undefined, false, true]) {
+        const access = accessFromQuotas(paid, false, flag);
+        expect(access.surfaces).toEqual(ALL_VISIBLE);
+        expect(access.entitled).toBe(true);
+      }
+    });
+
+    it('persists both new values in the SAME blob as the surface flags', () => {
+      // Two caches would let the answers disagree — a stale
+      // storePurchaseAvailable beside a fresh entitled renders a purchase entry
+      // point for a store that is not live, or hides a surface someone just
+      // bought.
+      mockUseQuotaUsage.mockReturnValue({
+        data: { quotas: freeQuotas, previewOnly: true, storePurchaseAvailable: true },
+      });
+
+      renderHook(() => useFreemiumSurfacesSync(true));
+
+      const blob = JSON.parse(
+        storage.getString(STORAGE_KEYS.ENTITLED_SURFACES) ?? '{}',
+      );
+      expect(blob).toEqual({
+        ...ALL_VISIBLE,
+        entitled: false,
+        storePurchaseAvailable: true,
+      });
+    });
+
+    it('reads both values back off that one blob', () => {
+      storage.set(
+        STORAGE_KEYS.ENTITLED_SURFACES,
+        JSON.stringify({ ...ALL_VISIBLE, entitled: false, storePurchaseAvailable: true }),
+      );
+
+      const { result } = renderHook(() => useSurfaceAccess());
+
+      expect(result.current.surfaces).toEqual(ALL_VISIBLE);
+      expect(result.current.entitled).toBe(false);
+      expect(result.current.storePurchaseAvailable).toBe(true);
+    });
+
+    it('treats a blob from an older build as entitled where it was visible', () => {
+      // A build that shipped before this change wrote no `entitled` key. Its
+      // visible surfaces meant entitled, and reading them as unentitled would
+      // put a purchase entry point in front of a paying user mid-upgrade.
+      storage.set(STORAGE_KEYS.ENTITLED_SURFACES, JSON.stringify(ALL_VISIBLE));
+
+      const { result } = renderHook(() => useSurfaceAccess());
+
+      expect(result.current.entitled).toBe(true);
+      expect(result.current.storePurchaseAvailable).toBe(false);
+    });
+
+    it('defaults to no access at all before the first resolution', () => {
+      const { result } = renderHook(() => useSurfaceAccess());
+
+      expect(result.current.surfaces).toEqual(FREE_TIER);
+      expect(result.current.entitled).toBe(false);
+      expect(result.current.storePurchaseAvailable).toBe(false);
+    });
   });
 });

@@ -30,6 +30,28 @@ export interface FreemiumSurfaces {
   workspace: boolean;
 }
 
+/**
+ * The one persisted answer, and everything read off it.
+ *
+ * `surfaces` is WHETHER TO RENDER the surface at all; `entitled` is whether the
+ * account may see its paid CONTENT. They are the same value today and diverge
+ * only under D14 mechanism C, where a free account on a platform with a live
+ * store gets the surface WITH a purchase entry point instead of the content.
+ *
+ * All three live in ONE blob, deliberately. Two caches would let the answers
+ * disagree — a stale `storePurchaseAvailable: true` beside a fresh
+ * `entitled: false` renders a purchase entry point for a store that is not
+ * live, and the opposite hides a surface a paying user just bought. They are
+ * written together or not at all.
+ */
+export interface SurfaceAccess {
+  surfaces: FreemiumSurfaces;
+  /** `!previewOnly`. May this account see PAID CONTENT? */
+  entitled: boolean;
+  /** D14: is a store purchase live and approved on THIS platform? */
+  storePurchaseAvailable: boolean;
+}
+
 /** Everything visible. What an entitled account resolves to. */
 const ALL_VISIBLE: FreemiumSurfaces = {
   scan: true,
@@ -86,32 +108,97 @@ export function surfacesFromQuotas(
   quotas: Record<string, { limit: number }>,
   previewOnly?: boolean,
 ): FreemiumSurfaces {
-  if (typeof previewOnly === 'boolean') {
-    return previewOnly ? FREE_TIER : ALL_VISIBLE;
-  }
-
-  const limitOf = (key: string): number => quotas[key]?.limit ?? 0;
-  const entitled =
-    limitOf('cameraScansPerMonth') !== 0 || limitOf('digestsPerMonth') !== 0;
-  return entitled ? ALL_VISIBLE : FREE_TIER;
+  return isEntitled(quotas, previewOnly) ? ALL_VISIBLE : FREE_TIER;
 }
 
-function parse(raw: string | undefined): FreemiumSurfaces | null {
+/** The entitlement decision on its own, shared by both readings above. */
+function isEntitled(
+  quotas: Record<string, { limit: number }>,
+  previewOnly?: boolean,
+): boolean {
+  if (typeof previewOnly === 'boolean') return !previewOnly;
+
+  const limitOf = (key: string): number => quotas[key]?.limit ?? 0;
+  return limitOf('cameraScansPerMonth') !== 0 || limitOf('digestsPerMonth') !== 0;
+}
+
+/**
+ * The full answer, from one `/quotas/usage` response (D14 mechanism C).
+ *
+ * A surface is VISIBLE when the account is entitled to it, OR when it is not
+ * but a store purchase is available on this platform — the second case being
+ * the whole mechanism: show the surface, with a purchase entry point instead of
+ * its paid content.
+ *
+ * With `storePurchaseAvailable` false — which is every deployment until a
+ * platform's products are live and approved — this reduces EXACTLY to the
+ * previous behaviour: visible iff entitled. That equivalence is the safety
+ * property the flag exists to provide, and `use-freemium-surfaces.test.tsx`
+ * asserts it rather than trusting this comment.
+ */
+export function accessFromQuotas(
+  quotas: Record<string, { limit: number }>,
+  previewOnly?: boolean,
+  storePurchaseAvailable?: boolean,
+): SurfaceAccess {
+  const entitled = isEntitled(quotas, previewOnly);
+  const canPurchase = storePurchaseAvailable === true;
+
+  return {
+    surfaces: entitled || canPurchase ? ALL_VISIBLE : FREE_TIER,
+    entitled,
+    storePurchaseAvailable: canPurchase,
+  };
+}
+
+/**
+ * The persisted shape. The five surface flags stay at the TOP LEVEL exactly
+ * where they were, so a build that shipped before this change reads a blob
+ * written after it without seeing anything new — and ignores the two added
+ * keys, which is the correct degradation for a client that has no purchase
+ * surface.
+ */
+interface PersistedAccess extends Partial<FreemiumSurfaces> {
+  entitled?: boolean;
+  storePurchaseAvailable?: boolean;
+}
+
+function parse(raw: string | undefined): SurfaceAccess | null {
   if (!raw) return null;
   try {
-    const parsed = JSON.parse(raw) as Partial<FreemiumSurfaces>;
-    return {
+    const parsed = JSON.parse(raw) as PersistedAccess;
+    const surfaces: FreemiumSurfaces = {
       scan: parsed.scan === true,
       study: parsed.study === true,
       barExams: parsed.barExams === true,
       digestGeneration: parsed.digestGeneration === true,
       workspace: parsed.workspace === true,
     };
+
+    return {
+      surfaces,
+      // A blob written by an OLDER build carries no `entitled` key. Falling
+      // back to "visible means entitled" is exactly what that build meant, and
+      // it keeps a mid-upgrade read from rendering a purchase entry point on a
+      // surface the user is already paying for.
+      entitled:
+        typeof parsed.entitled === 'boolean'
+          ? parsed.entitled
+          : surfaces.scan || surfaces.study || surfaces.workspace,
+      storePurchaseAvailable: parsed.storePurchaseAvailable === true,
+    };
   } catch {
     // A corrupt value is a cache miss, never a crash on launch.
     return null;
   }
 }
+
+/** Nothing paid, nothing purchasable. The pre-resolution default. */
+const NO_ACCESS: SurfaceAccess = {
+  surfaces: FREE_TIER,
+  entitled: false,
+  storePurchaseAvailable: false,
+};
 
 /**
  * Resolve which paid surfaces to render. Synchronous, and reachable from a
@@ -132,8 +219,19 @@ function parse(raw: string | undefined): FreemiumSurfaces | null {
  * after install.
  */
 export function useFreemiumSurfaces(): FreemiumSurfaces {
+  return useSurfaceAccess().surfaces;
+}
+
+/**
+ * The full answer: what to render, and whether the content is unlocked.
+ *
+ * `useFreemiumSurfaces()` stays as it was and returns only the surface flags,
+ * because seventeen screens' tab bars read it and none of them care about the
+ * distinction. Only `SurfaceGuard` needs both halves.
+ */
+export function useSurfaceAccess(): SurfaceAccess {
   const [raw] = useMMKVString(STORAGE_KEYS.ENTITLED_SURFACES, storage);
-  return parse(raw) ?? FREE_TIER;
+  return parse(raw) ?? NO_ACCESS;
 }
 
 /**
@@ -148,9 +246,20 @@ export function useFreemiumSurfacesSync(enabled: boolean): void {
 
   useEffect(() => {
     if (!data) return;
+    const access = accessFromQuotas(
+      data.quotas,
+      data.previewOnly,
+      data.storePurchaseAvailable,
+    );
+    // ONE write, ONE key. The surface flags stay at the top level so an older
+    // build reading this blob sees exactly what it always did.
     storage.set(
       STORAGE_KEYS.ENTITLED_SURFACES,
-      JSON.stringify(surfacesFromQuotas(data.quotas, data.previewOnly)),
+      JSON.stringify({
+        ...access.surfaces,
+        entitled: access.entitled,
+        storePurchaseAvailable: access.storePurchaseAvailable,
+      }),
     );
   }, [data]);
 }
