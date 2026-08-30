@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../common/services/redis.service';
+import type { ClientPlatform } from '../../common/config/store-availability';
 import type { SubscriptionEntitlements } from './subscriptions.service';
 import { EntitlementService } from './entitlement.service';
 
@@ -162,10 +163,15 @@ export class UsageQuotaService {
   async getUsageSummaryV2(
     organizationId: string,
     userId: string,
+    // Defaults to `null` = not enforced, so the callers that do not thread a
+    // platform keep today's behaviour. Threaded by QuotaController so the
+    // quota numbers agree with the `previewOnly` and `storePurchaseAvailable`
+    // shipped in the same response.
+    platform: ClientPlatform | null = null,
   ): Promise<UsageSummaryV2> {
     const [effective, base, billingPeriod] = await Promise.all([
-      this.entitlementService.resolveEffectiveEntitlements(organizationId),
-      this.entitlementService.getBaseEntitlements(organizationId),
+      this.entitlementService.resolveEffectiveEntitlements(organizationId, platform),
+      this.entitlementService.getBaseEntitlements(organizationId, platform),
       this.getBillingPeriod(organizationId),
     ]);
 

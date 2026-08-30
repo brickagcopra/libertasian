@@ -294,4 +294,105 @@ describe('SubscriptionGuard', () => {
       }
     });
   });
+
+  // ---- per-platform enforcement (D14 mechanism C) ----
+
+  describe('gates on purchase capability, per platform', () => {
+    /** ConfigService double keyed by variable, so the two switches are independent. */
+    function configOf(env: Record<string, boolean>): ConfigService {
+      return {
+        get: jest.fn((key: string) => env[key]),
+      } as unknown as ConfigService;
+    }
+
+    /** A request carrying (or omitting) the `x-platform` header. */
+    function contextWithPlatform(platform?: string): ExecutionContext {
+      return {
+        switchToHttp: () => ({
+          getRequest: () => ({
+            user: { organizationId: 'org-123' },
+            method: 'GET',
+            path: '/documents',
+            headers: platform === undefined ? {} : { 'x-platform': platform },
+          }),
+        }),
+        getHandler: () => jest.fn(),
+        getClass: () => jest.fn(),
+      } as unknown as ExecutionContext;
+    }
+
+    const guardWith = (env: Record<string, boolean>) =>
+      new SubscriptionGuard(
+        reflector,
+        subscriptionsService,
+        adminBypassAudit,
+        configOf(env),
+      );
+
+    beforeEach(() => {
+      jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue('pro');
+      // A free org: it only gets through when the paywall is NOT enforced.
+      subscriptionsService.getPlanCode.mockResolvedValue('free');
+    });
+
+    it('does not enforce a header-less caller when iOS purchasing is ON — PROTECTS LIVE BUILD 25', async () => {
+      const guard26 = guardWith({
+        PAYWALL_ENFORCED: false,
+        STORE_PURCHASE_AVAILABLE_IOS: true,
+      });
+
+      // App Store build 25 ships no `x-platform` header (it landed in #439,
+      // after build 25 was cut) and has no purchase surface. It must keep
+      // passing even with iOS purchasing switched on for build 26 — otherwise
+      // those users get a 403 they have no way to clear, which is the
+      // build-23 rejection.
+      await expect(guard26.canActivate(contextWithPlatform())).resolves.toBe(true);
+      expect(subscriptionsService.getPlanCode).not.toHaveBeenCalled();
+    });
+
+    it('enforces an ios caller once iOS purchasing is ON', async () => {
+      const guard26 = guardWith({
+        PAYWALL_ENFORCED: false,
+        STORE_PURCHASE_AVAILABLE_IOS: true,
+      });
+
+      await expect(
+        guard26.canActivate(contextWithPlatform('ios')),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('does not enforce an android caller when only iOS purchasing is ON', async () => {
+      const guard26 = guardWith({
+        PAYWALL_ENFORCED: false,
+        STORE_PURCHASE_AVAILABLE_IOS: true,
+      });
+
+      // Android vC12 sends `x-platform: android`; its own flag is off.
+      await expect(
+        guard26.canActivate(contextWithPlatform('android')),
+      ).resolves.toBe(true);
+    });
+
+    it('does not enforce any platform when both store flags are off', async () => {
+      const today = guardWith({
+        PAYWALL_ENFORCED: false,
+        STORE_PURCHASE_AVAILABLE_IOS: false,
+        STORE_PURCHASE_AVAILABLE_ANDROID: false,
+      });
+
+      // The state this change merges into: identical behaviour for everyone.
+      await expect(today.canActivate(contextWithPlatform())).resolves.toBe(true);
+      await expect(today.canActivate(contextWithPlatform('ios'))).resolves.toBe(true);
+      await expect(today.canActivate(contextWithPlatform('android'))).resolves.toBe(true);
+    });
+
+    it('does not throw on a request with no headers bag at all', async () => {
+      const today = guardWith({ PAYWALL_ENFORCED: false });
+
+      // A guard must not TypeError on an unexpected request shape.
+      await expect(
+        today.canActivate(createMockContext({ organizationId: 'org-123' })),
+      ).resolves.toBe(true);
+    });
+  });
 });

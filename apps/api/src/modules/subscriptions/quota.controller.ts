@@ -49,10 +49,19 @@ export class QuotaController {
     @CurrentUser() user: JwtPayload,
     @Headers(CLIENT_PLATFORM_HEADER) platformHeader?: string,
   ) {
+    // Parsed ONCE and threaded into every value below. `previewOnly`, the
+    // quota numbers and `storePurchaseAvailable` all describe one rendering, so
+    // they must all be resolved for the same platform — resolving some of them
+    // platform-blind is exactly the disagreement the comment above warns about.
+    const platform = parseClientPlatform(platformHeader);
+
     const [summary, activeBonuses, entitlements] = await Promise.all([
-      this.usageQuota.getUsageSummaryV2(user.organizationId, user.sub),
+      this.usageQuota.getUsageSummaryV2(user.organizationId, user.sub, platform),
       this.entitlementService.getActiveBonuses(user.organizationId),
-      this.entitlementService.resolveEffectiveEntitlements(user.organizationId),
+      this.entitlementService.resolveEffectiveEntitlements(
+        user.organizationId,
+        platform,
+      ),
     ]);
 
     const previewOnly =
@@ -74,10 +83,7 @@ export class QuotaController {
         // Resolved from the client's own platform header and defaulting to
         // `false` for web, an absent header, and every older build — none of
         // which can purchase anything.
-        storePurchaseAvailable: isStorePurchaseAvailable(
-          this.config,
-          parseClientPlatform(platformHeader),
-        ),
+        storePurchaseAvailable: isStorePurchaseAvailable(this.config, platform),
       },
     };
   }

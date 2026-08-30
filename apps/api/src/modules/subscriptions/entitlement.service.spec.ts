@@ -86,7 +86,7 @@ describe('EntitlementService', () => {
       const result = await service.resolveEffectiveEntitlements('org-1');
 
       expect(result).toEqual(mockBaseEntitlements);
-      expect(subscriptions.getEntitlements).toHaveBeenCalledWith('org-1');
+      expect(subscriptions.getEntitlements).toHaveBeenCalledWith('org-1', null);
     });
 
     it('should return cached result if available', async () => {
@@ -103,7 +103,7 @@ describe('EntitlementService', () => {
       await service.resolveEffectiveEntitlements('org-1');
 
       expect(redis.set).toHaveBeenCalledWith(
-        'cache:entitlements:org-1',
+        'cache:entitlements:org-1:none',
         JSON.stringify(mockBaseEntitlements),
         120,
       );
@@ -342,7 +342,9 @@ describe('EntitlementService', () => {
 
       await service.grantBonus(grantParams);
 
-      expect(redis.del).toHaveBeenCalledWith('cache:entitlements:org-1');
+      expect(redis.del).toHaveBeenCalledWith('cache:entitlements:org-1:ios');
+      expect(redis.del).toHaveBeenCalledWith('cache:entitlements:org-1:android');
+      expect(redis.del).toHaveBeenCalledWith('cache:entitlements:org-1:none');
     });
 
     it('should write audit log after grant', async () => {
@@ -408,7 +410,9 @@ describe('EntitlementService', () => {
 
       await service.revokeBonus('ov-1', 'admin-1', 'Revoked');
 
-      expect(redis.del).toHaveBeenCalledWith('cache:entitlements:org-1');
+      expect(redis.del).toHaveBeenCalledWith('cache:entitlements:org-1:ios');
+      expect(redis.del).toHaveBeenCalledWith('cache:entitlements:org-1:android');
+      expect(redis.del).toHaveBeenCalledWith('cache:entitlements:org-1:none');
     });
 
     it('should write audit log after revoke', async () => {
@@ -517,7 +521,78 @@ describe('EntitlementService', () => {
     it('should delete the Redis cache key for the org', async () => {
       await service.invalidateEntitlementCache('org-1');
 
-      expect(redis.del).toHaveBeenCalledWith('cache:entitlements:org-1');
+      expect(redis.del).toHaveBeenCalledWith('cache:entitlements:org-1:ios');
+      expect(redis.del).toHaveBeenCalledWith('cache:entitlements:org-1:android');
+      expect(redis.del).toHaveBeenCalledWith('cache:entitlements:org-1:none');
+    });
+
+    it('should clear every platform variant and nothing else', async () => {
+      await service.invalidateEntitlementCache('org-1');
+
+      // Exactly three named DELs. Asserted as a count so that adding a variant
+      // without adding it to ENTITLEMENT_CACHE_PLATFORMS — which would leave a
+      // stale entitlement served for the full TTL after a grant or purchase —
+      // fails here rather than in production.
+      expect(redis.del).toHaveBeenCalledTimes(3);
+    });
+  });
+
+  // ---- platform-keyed cache isolation ----
+
+  describe('entitlement cache is keyed by platform', () => {
+    /**
+     * Entitlements became platform-dependent when the paywall started gating on
+     * purchase capability (`isPaywallEnforcedForRequest`). An org-only cache key
+     * would let the FIRST client to warm the cache decide the answer every other
+     * client sees for the next 120s: an iOS user's gated result served to a web
+     * user, or a web user's ungated result served to iOS. Both directions are
+     * wrong, and the 402 direction is the one App Review rejects for.
+     */
+    it('does not serve an ios-platform entry to a header-less caller', async () => {
+      const iosEntitlements = { ...mockBaseEntitlements, aiAnswers: 1 };
+
+      // Only the ios variant is warm.
+      redis.get.mockImplementation(async (key: string) =>
+        key === 'cache:entitlements:org-1:ios'
+          ? JSON.stringify(iosEntitlements)
+          : null,
+      );
+
+      const headerless = await service.resolveEffectiveEntitlements('org-1', null);
+
+      // Must MISS the ios entry and resolve from source, not inherit aiAnswers: 1.
+      expect(headerless).toEqual(mockBaseEntitlements);
+      expect(subscriptions.getEntitlements).toHaveBeenCalledWith('org-1', null);
+    });
+
+    it('reads and writes a distinct key per platform', async () => {
+      await service.resolveEffectiveEntitlements('org-1', 'ios');
+      await service.resolveEffectiveEntitlements('org-1', 'android');
+      await service.resolveEffectiveEntitlements('org-1', null);
+
+      expect(redis.get).toHaveBeenCalledWith('cache:entitlements:org-1:ios');
+      expect(redis.get).toHaveBeenCalledWith('cache:entitlements:org-1:android');
+      expect(redis.get).toHaveBeenCalledWith('cache:entitlements:org-1:none');
+
+      expect(redis.set).toHaveBeenCalledWith(
+        'cache:entitlements:org-1:ios',
+        expect.any(String),
+        120,
+      );
+      expect(redis.set).toHaveBeenCalledWith(
+        'cache:entitlements:org-1:none',
+        expect.any(String),
+        120,
+      );
+    });
+
+    it('threads the platform through to getEntitlements', async () => {
+      await service.resolveEffectiveEntitlements('org-1', 'ios');
+
+      // The platform must reach the layer that actually decides enforcement.
+      // Keying the cache correctly is useless if every variant resolves from
+      // the same platform-blind source.
+      expect(subscriptions.getEntitlements).toHaveBeenCalledWith('org-1', 'ios');
     });
   });
 });
