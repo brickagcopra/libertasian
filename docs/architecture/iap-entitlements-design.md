@@ -1237,8 +1237,58 @@ and it is the one that quietly loses the most on the smaller plan.
 At the **30%** rate — before Small Business Program enrolment, or after crossing the
 threshold — every figure roughly halves the margin. On `pro`, ₱1,190 nets ₱833.00
 and ₱11,750 nets ₱8,225.00; on `edu`, ₱359 nets ₱251.30 and ₱3,590 nets ₱2,513.00.
-All four are **below** the web net. Enrolment in the reduced-rate programmes is
-therefore not an optimisation, it is a precondition (§14.2).
+All four are **below** the web net. That is what the candidates above are worth at
+30% — and it is the reason the chosen prices below are not drawn from those tables.
+
+### CHOSEN — the shelf prices, priced to survive 30%
+
+**Decided 2026-08-30. These are the prices to enter in App Store Connect and Play
+Console.**
+
+| Plan | Monthly | Annual |
+|---|---|---|
+| `pro` | **₱1,699** | **₱16,990** |
+| `edu` | **₱499** | **₱4,990** |
+
+**They are priced against the 30% rate, not the 15% one**, which is the single
+change from the candidate tables above. Every candidate there was chosen to net
+the web price at 15% and therefore fell short the moment the rate was 30%. These
+clear the web net at **30%, under BOTH readings of `Q1`** — so no answer to `Q1`
+can make them wrong, only more comfortable:
+
+| | Net @30%, no VAT | Net @30%, 12% VAT-inclusive | Web net to beat |
+|---|---|---|---|
+| `pro` monthly ₱1,699 | ₱1,189.30 | ₱1,061.88 | ₱999 |
+| `pro` annual ₱16,990 | ₱11,893.00 | ₱10,618.75 | ₱9,990 |
+| `edu` monthly ₱499 | ₱349.30 | ₱311.88 | ₱299 |
+| `edu` annual ₱4,990 | ₱3,493.00 | ₱3,118.75 | ₱2,990 |
+
+**This inverts what enrolment in the reduced-rate programmes is worth.** It was
+written above as a precondition, on candidates that did not survive 30%. On these
+prices it is **upside, not a precondition**: the app is viable on day one at the
+standard rate, and enrolment raises the net rather than rescuing it.
+
+| At 15% instead | Net, no VAT | Net, 12% VAT-inclusive |
+|---|---|---|
+| `pro` monthly ₱1,699 | ₱1,444.15 | ₱1,289.42 |
+| `pro` annual ₱16,990 | ₱14,441.50 | ₱12,894.19 |
+| `edu` monthly ₱499 | ₱424.15 | ₱378.70 |
+| `edu` annual ₱4,990 | ₱4,241.50 | ₱3,787.05 |
+
+The practical consequence: **enrolment stops being on the critical path.** §14.2
+still lists it, because the money is real — roughly ₱255/month per `pro`
+subscriber — but a delay there no longer blocks shipping, and crossing the
+million-dollar threshold later no longer breaks the model.
+
+**`Q1` stays open and is deliberately not closed by this.** Choosing prices that
+clear under both readings removes `Q1` from the critical path; it does not answer
+it. The VAT question still governs the reported revenue split and still needs
+brick's accountant.
+
+**These are targets until someone opens the price-point picker.** Apple's PHP list
+is per-storefront and readable only in App Store Connect (below), so the rule
+stands: take the nearest available point to each number above, then mirror it
+exactly on Play, and write the ACTUAL values back into this table.
 
 ### What is and is not verifiable about the price points themselves
 
