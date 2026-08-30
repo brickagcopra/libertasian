@@ -142,6 +142,21 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
         // Billing (Xendit)
         XENDIT_SECRET_KEY: Joi.string().default('xnd_development_change_me'),
         XENDIT_WEBHOOK_CALLBACK_TOKEN: Joi.string().default('callback_token_change_me'),
+        // D14 mechanism C — whether the mobile client may show a purchase entry
+        // point on a surface it would otherwise hide, resolved PER PLATFORM.
+        //
+        // BOTH DEFAULT TO FALSE AND MUST STAY THAT WAY. With them false the app
+        // behaves identically to the currently approved build, which is what
+        // makes it safe to submit while store products are still in review. A
+        // `true` default would flip that on at deploy time and offer a purchase
+        // for products that do not exist — reachable by omission, with no review
+        // gate in front of it.
+        //
+        // Two vars, not one: an Android-approved / iOS-pending state is normal
+        // during a rollout and a single flag gets it wrong for one of them. Set
+        // each ONLY once that platform's products are live and approved.
+        STORE_PURCHASE_AVAILABLE_IOS: Joi.boolean().default(false),
+        STORE_PURCHASE_AVAILABLE_ANDROID: Joi.boolean().default(false),
         // Store purchases (IAP) — which conduit StorePurchasesModule binds to
         // STORE_PURCHASE_PROVIDER. Unlike PAYMENT_PROVIDER this is NOT an
         // exclusive-or with the web gateway: both run at the same time, for

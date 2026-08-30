@@ -111,7 +111,15 @@ const inPurchaseSurface = (file: string): boolean =>
  * unguarded screen, so this list is the review signal: its diff is the whole
  * question. One entry today — the Settings row.
  */
-const PERMITTED_PURCHASE_ENTRY_POINTS: readonly string[] = ['app/settings/index.tsx'];
+const PERMITTED_PURCHASE_ENTRY_POINTS: readonly string[] = [
+  // The Settings row — the door a user opens deliberately.
+  'app/settings/index.tsx',
+  // D14 option B: when a surface is visible but unentitled AND a store purchase
+  // is live on this platform, the guard renders the purchase entry point in
+  // place of the paid content. Added in the storePurchaseAvailable PR; this is
+  // the second and, for now, last door.
+  'features/entitlements/surface-guard.tsx',
+];
 
 /**
  * Every piece of text this file can put in front of a user.

@@ -2,6 +2,7 @@ import { render } from '@testing-library/react-native';
 import { Text } from 'react-native';
 
 import { storage, STORAGE_KEYS } from '../../storage/mmkv';
+import { ThemeProvider } from '../../providers/theme-provider';
 import { SurfaceGuard } from './surface-guard';
 
 jest.mock('expo-router', () => {
@@ -14,6 +15,7 @@ jest.mock('expo-router', () => {
   );
   return {
     Stack,
+    router: { push: jest.fn() },
     Redirect: ({ href }: { href: string }) => (
       <RNText testID="redirect">{href}</RNText>
     ),
@@ -26,7 +28,7 @@ import CodalsLayout from '../../app/codals/_layout';
 import StudyLayout from '../../app/study/_layout';
 import WorkspaceLayout from '../../app/workspace/_layout';
 
-const persist = (surfaces: Record<string, boolean>) =>
+const persist = (surfaces: Record<string, boolean | undefined>) =>
   storage.set(STORAGE_KEYS.ENTITLED_SURFACES, JSON.stringify(surfaces));
 
 const ALL_HIDDEN = {
@@ -189,5 +191,148 @@ describe('SurfaceGuard', () => {
         redirected: false,
       });
     }
+  });
+
+  // ======================================================================
+  // D14 mechanism C — the second branch
+  // ======================================================================
+
+  describe('with a store purchase available', () => {
+    /** The state mechanism C creates: visible, but not entitled. */
+    const showable = {
+      ...ALL_VISIBLE,
+      entitled: false,
+      storePurchaseAvailable: true,
+    };
+
+    it('WITH THE FLAG FALSE, is byte-identical to the approved build', () => {
+      // The safety property the whole mechanism exists for. A free account on
+      // a deployment with the flag off must redirect home exactly as it did
+      // before — no purchase entry point, no mounted subtree, same redirect.
+      persist({ ...ALL_HIDDEN, entitled: false, storePurchaseAvailable: false });
+
+      const { getByTestId, queryByText, queryByTestId } = render(
+        <ThemeProvider>
+          <SurfaceGuard surface="scan">
+            <Text>Capture</Text>
+          </SurfaceGuard>
+        </ThemeProvider>,
+      );
+
+      expect(getByTestId('redirect').props.children).toBe('/(tabs)');
+      expect(queryByText('Capture')).toBeNull();
+      expect(queryByTestId('purchase-entry-point')).toBeNull();
+    });
+
+    it('renders the purchase entry point instead of the paid content', () => {
+      persist(showable);
+
+      const { getByTestId, queryByTestId } = render(
+        <ThemeProvider>
+          <SurfaceGuard surface="scan">
+            <Text>Capture</Text>
+          </SurfaceGuard>
+        </ThemeProvider>,
+      );
+
+      expect(getByTestId('purchase-entry-point')).toBeTruthy();
+      // No redirect: the route is REACHED, which is the discovery half of
+      // option B. The user learns Scan exists.
+      expect(queryByTestId('redirect')).toBeNull();
+    });
+
+    it('NEVER mounts the paid subtree, so it fires no request the API refuses', () => {
+      // This is the "gate data fetching on entitlement, not on mounting"
+      // requirement, asserted at the one place it is enforced. Every guarded
+      // screen in the app is written as <SurfaceGuard><Content /></SurfaceGuard>
+      // with its queries inside Content, so a Content that never renders runs
+      // no hooks at all.
+      const paidQuery = jest.fn();
+      function PaidContent() {
+        paidQuery();
+        return <Text>Capture</Text>;
+      }
+      persist(showable);
+
+      const { queryByText } = render(
+        <ThemeProvider>
+          <SurfaceGuard surface="scan">
+            <PaidContent />
+          </SurfaceGuard>
+        </ThemeProvider>,
+      );
+
+      expect(paidQuery).not.toHaveBeenCalled();
+      expect(queryByText('Capture')).toBeNull();
+    });
+
+    it('still renders the content for an entitled account', () => {
+      persist({ ...ALL_VISIBLE, entitled: true, storePurchaseAvailable: true });
+
+      const { getByText, queryByTestId } = render(
+        <ThemeProvider>
+          <SurfaceGuard surface="scan">
+            <Text>Capture</Text>
+          </SurfaceGuard>
+        </ThemeProvider>,
+      );
+
+      expect(getByText('Capture')).toBeTruthy();
+      expect(queryByTestId('purchase-entry-point')).toBeNull();
+    });
+
+    it('redirects rather than offering a purchase for a surface still hidden', () => {
+      // storePurchaseAvailable widens VISIBILITY through accessFromQuotas; it
+      // does not override an individual surface flag that is false. A surface
+      // nobody made visible stays a redirect.
+      persist({ ...ALL_HIDDEN, entitled: false, storePurchaseAvailable: true });
+
+      const { getByTestId, queryByTestId } = render(
+        <ThemeProvider>
+          <SurfaceGuard surface="scan">
+            <Text>Capture</Text>
+          </SurfaceGuard>
+        </ThemeProvider>,
+      );
+
+      expect(getByTestId('redirect').props.children).toBe('/(tabs)');
+      expect(queryByTestId('purchase-entry-point')).toBeNull();
+    });
+
+    it('names no plan and no price on the entry point', () => {
+      // The entry point is reached from OUTSIDE the purchase surface, so it is
+      // held to the FORBIDDEN word list even though it lives inside
+      // features/purchase/. Both live one tap away, from the store's own
+      // localized offering.
+      persist(showable);
+
+      const { toJSON } = render(
+        <ThemeProvider>
+          <SurfaceGuard surface="scan">
+            <Text>Capture</Text>
+          </SurfaceGuard>
+        </ThemeProvider>,
+      );
+
+      // Only what the user READS. Matching the whole JSON tree would trip on
+      // prop names ("props" contains "pro"), which says nothing about the copy.
+      const collectText = (node: unknown): string[] => {
+        if (typeof node === 'string') return [node];
+        if (Array.isArray(node)) return node.flatMap(collectText);
+        if (node && typeof node === 'object' && 'children' in node) {
+          return collectText((node as { children?: unknown }).children);
+        }
+        return [];
+      };
+      const copy = collectText(toJSON()).join(' ');
+
+      expect(copy).not.toBe('');
+      for (const term of ['Pro', 'Edu', 'plan', 'price', 'upgrade']) {
+        expect(copy).not.toMatch(new RegExp('\b' + term + 's?\b', 'i'));
+      }
+      for (const symbol of ['₱', '$']) {
+        expect(copy).not.toContain(symbol);
+      }
+    });
   });
 });

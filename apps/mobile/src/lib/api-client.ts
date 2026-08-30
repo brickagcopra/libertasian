@@ -75,6 +75,12 @@ function resolveAppVersion(): string | undefined {
 const DEFAULT_HEADERS: Record<string, string> = {
   'Content-Type': 'application/json',
   'X-Client': 'mobile',
+  // Which store, if any, this build can purchase through. The API resolves
+  // `storePurchaseAvailable` on /quotas/usage PER PLATFORM from this, because
+  // an Android-approved / iOS-pending state is normal during a rollout. An
+  // absent or unrecognised value resolves to false server-side, which is what
+  // every older build and every web client gets.
+  'X-Platform': Platform.OS,
   ...(resolveAppVersion() ? { 'X-App-Version': resolveAppVersion()! } : {}),
 };
 

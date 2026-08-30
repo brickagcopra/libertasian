@@ -19,6 +19,10 @@ export {
 } from './products';
 export { PlanCard, type PlanCardProps } from './components/plan-card';
 export {
+  PurchaseEntryPoint,
+  type PurchaseEntryPointProps,
+} from './components/purchase-entry-point';
+export {
   PurchaseSurface,
   type PurchaseSurfaceProps,
   type PurchaseSurfaceStatus,

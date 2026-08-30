@@ -127,6 +127,19 @@ export interface QuotaUsageData {
    * happens when it is absent.
    */
   previewOnly?: boolean;
+  /**
+   * Whether a store purchase is live and approved ON THIS PLATFORM (design
+   * D14, mechanism C). Resolved server-side from the client's platform header.
+   *
+   * Distinct from {@link previewOnly} and never derived from it: that says
+   * whether the account is entitled, this says whether it could buy its way in.
+   * The case the flag exists for is precisely both being true.
+   *
+   * Optional, and ABSENT MEANS FALSE — same reasoning as `previewOnly`, with
+   * the safe direction being "no purchase entry point" rather than one for a
+   * store that may not be live.
+   */
+  storePurchaseAvailable?: boolean;
 }
 
 export interface QuotaUsageResponse {
