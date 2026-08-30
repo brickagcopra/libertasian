@@ -23,4 +23,12 @@ export {
   type PurchaseSurfaceProps,
   type PurchaseSurfaceStatus,
 } from './components/purchase-surface';
-export { usePurchaseOptions, type PurchaseOptions } from './hooks/use-purchase-options';
+export {
+  usePurchaseOptions,
+  RESTORE_NOTHING_NOTICE,
+  UNCONFIRMED_NOTICE,
+  type PurchaseOptions,
+} from './hooks/use-purchase-options';
+export { useOfferings, packageFor, offeringKeys, type OfferingsResult } from './hooks/use-offerings';
+export { configurePurchases, getPurchases } from './lib/purchases-sdk';
+export { syncPurchasesWithServer, type StoreSyncOutcome } from './lib/store-sync';
