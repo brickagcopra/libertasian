@@ -703,6 +703,22 @@ export class StorePurchasesService {
    * state the webhook path could not have produced.
    */
   async syncFromStore(organizationId: string): Promise<StoreEventOutcome> {
+    // The conduit credential gates the ONLY outbound call in this module, and
+    // `fetchSubscriberSnapshot` throws a bare Error when it is absent. Unlike
+    // the nightly sweep — which is ours and can simply not run — this method is
+    // reachable at POST /store/sync by any authenticated user, so an
+    // unconfigured deployment answers every call with a 500. Refuse before the
+    // pull instead, and say why.
+    //
+    // Mirrors the guard in store-reconciliation.scheduler.ts. If that one moves,
+    // move this one.
+    if (!this.config.get<string>('REVENUECAT_API_KEY')) {
+      this.logger.warn(
+        `Store sync requested for org ${organizationId} with no conduit credential configured — nothing to reconcile against`,
+      );
+      return { received: true, status: 'noop', detail: 'conduit_unconfigured' };
+    }
+
     const snapshot = await this.storeProvider.fetchSubscriberSnapshot(organizationId);
     const isProduction = this.config.get<string>('NODE_ENV') === 'production';
     const wantedEnvironment = isProduction ? 'production' : 'sandbox';
@@ -1051,15 +1067,9 @@ export class StorePurchasesService {
     const purchase = await this.latestPurchase(organizationId, event);
     if (!purchase) return;
 
-    await this.prisma.storePurchase.update({
-      where: { id: purchase.id },
-      data: {
-        metadataJson: {
-          ...(purchase.metadataJson as Record<string, unknown>),
-          pending_product_id: event.productId,
-          pending_product_recorded_at: new Date().toISOString(),
-        } as Prisma.InputJsonValue,
-      },
+    await this.mergePurchaseMetadata(purchase.id, {
+      pending_product_id: event.productId,
+      pending_product_recorded_at: new Date().toISOString(),
     });
   }
 
@@ -1071,16 +1081,40 @@ export class StorePurchasesService {
     const purchase = await this.latestPurchase(organizationId, event);
     if (!purchase) return;
 
-    await this.prisma.storePurchase.update({
-      where: { id: purchase.id },
-      data: {
-        metadataJson: {
-          ...(purchase.metadataJson as Record<string, unknown>),
-          auto_renew: false,
-          auto_renew_off_at: new Date().toISOString(),
-        } as Prisma.InputJsonValue,
-      },
+    await this.mergePurchaseMetadata(purchase.id, {
+      auto_renew: false,
+      auto_renew_off_at: new Date().toISOString(),
     });
+  }
+
+  /**
+   * Merge `patch` into `store_purchases.metadata_json` IN THE DATABASE.
+   *
+   * Postgres `||` on two jsonb values does the merge server-side, in one
+   * statement, so concurrent writers cannot lose each other's keys. The obvious
+   * alternative — read the row, spread its `metadataJson` in JS, write the
+   * result back — is a read-modify-write: two events arriving together each
+   * read the same `before` and the second write erases the first's key. These
+   * events genuinely do arrive together (a PRODUCT_CHANGE and a CANCELLATION on
+   * the same subscription both land here), and losing `auto_renew` or
+   * `pending_product_id` is silent — the row still looks well-formed.
+   *
+   * `updated_at` is set explicitly because Prisma's `@updatedAt` is applied by
+   * the query engine, not by the database, so raw SQL bypasses it entirely.
+   *
+   * The tagged template BINDS both values as parameters — there is no string
+   * interpolation into this SQL, and there must never be.
+   */
+  private async mergePurchaseMetadata(
+    purchaseId: string,
+    patch: Record<string, unknown>,
+  ): Promise<void> {
+    await this.prisma.$executeRaw`
+      UPDATE store_purchases
+      SET metadata_json = metadata_json || ${JSON.stringify(patch)}::jsonb,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ${purchaseId}::uuid
+    `;
   }
 
   private async markPurchaseStatus(
@@ -1094,12 +1128,32 @@ export class StorePurchasesService {
       where: { store: event.store, rcOriginalTransactionId: original },
       data: {
         status,
-        // §8 — the clawback record, and its reversal.
-        refundedAt: status === 'refunded' ? new Date() : null,
+        // §8 — the clawback record, and its reversal. THREE-WAY, not two:
+        //
+        //   'refunded' → stamp it.
+        //   'active'   → clear it. This is REFUND_REVERSED and nothing else,
+        //                so clearing is the whole point.
+        //   'expired'  → LEAVE IT ALONE.
+        //
+        // That last case is why this is not a ternary. A refunded subscription
+        // reaches its period end like any other and draws an EXPIRATION, so
+        // `refunded ? now : null` quietly erased `refunded_at` on the ordinary
+        // follow-up event — destroying the exact field the audit trail is read
+        // for months later, while `status` still said 'refunded'.
+        ...(status === 'refunded' && { refundedAt: new Date() }),
+        ...(status === 'active' && { refundedAt: null }),
       },
     });
   }
 
+  /**
+   * Resolve WHICH store_purchases row a metadata patch belongs to.
+   *
+   * Selects the id and nothing else, deliberately: `mergePurchaseMetadata`
+   * merges in the database, so the current `metadata_json` is never read into
+   * this process. Selecting it would invite someone to spread it again and
+   * quietly reintroduce the lost-update this exists to avoid.
+   */
   private async latestPurchase(organizationId: string, event: NormalizedStoreEvent) {
     return this.prisma.storePurchase.findFirst({
       where: {
@@ -1108,6 +1162,7 @@ export class StorePurchasesService {
           rcOriginalTransactionId: event.originalTransactionId,
         }),
       },
+      select: { id: true },
       orderBy: [{ purchasedAt: 'desc' }, { id: 'desc' }],
     });
   }
