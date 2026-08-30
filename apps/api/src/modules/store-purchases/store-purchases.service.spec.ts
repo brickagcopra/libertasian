@@ -90,18 +90,25 @@ describe('StorePurchasesService', () => {
     };
     storeWebhookEvent: { create: jest.Mock; update: jest.Mock; findUnique: jest.Mock };
     $transaction: jest.Mock;
+    $executeRaw: jest.Mock;
   };
   let lifecycle: { executeTransition: jest.Mock };
   let entitlements: { invalidateEntitlementCache: jest.Mock };
   let audit: { log: jest.Mock };
   let storeProvider: { slug: string; fetchSubscriberSnapshot: jest.Mock };
   let nodeEnv: string;
+  /**
+   * The conduit credential. Truthy by default so the §9 tests exercise the pull
+   * itself; one test empties it to assert the unconfigured-deployment guard.
+   */
+  let revenueCatApiKey: string;
 
   /** Transaction client handed to $transaction callbacks. */
   let txClient: Record<string, unknown>;
 
   beforeEach(async () => {
     nodeEnv = 'production';
+    revenueCatApiKey = 'sk_test_configured';
 
     prisma = {
       organization: { findUnique: jest.fn().mockResolvedValue({ id: ORG_ID }) },
@@ -127,6 +134,8 @@ describe('StorePurchasesService', () => {
         findUnique: jest.fn().mockResolvedValue(null),
       },
       $transaction: jest.fn(),
+      // Tagged template: Prisma calls this as ($executeRaw`...`) => (strings, ...values).
+      $executeRaw: jest.fn().mockResolvedValue(1),
     };
 
     txClient = {
@@ -165,13 +174,36 @@ describe('StorePurchasesService', () => {
         },
         {
           provide: ConfigService,
-          useValue: { get: jest.fn((key: string) => (key === 'NODE_ENV' ? nodeEnv : undefined)) },
+          useValue: {
+            get: jest.fn((key: string) => {
+              if (key === 'NODE_ENV') return nodeEnv;
+              if (key === 'REVENUECAT_API_KEY') return revenueCatApiKey;
+              return undefined;
+            }),
+          },
         },
       ],
     }).compile();
 
     service = module.get(StorePurchasesService);
   });
+
+  /**
+   * The metadata patches handed to the jsonb-merge statement.
+   *
+   * `$executeRaw` is a tagged template, so Prisma calls the mock as
+   * `(strings, ...values)`. The merge binds exactly two values — the JSON patch
+   * and the row id — and this reads the patch back out of the FIRST bound
+   * parameter rather than out of any Prisma `data` object, because after the
+   * fix there is no `data` object: the merge happens in Postgres.
+   */
+  function mergedMetadataPatches(): Record<string, unknown>[] {
+    return prisma.$executeRaw.mock.calls
+      .filter(([strings]: [TemplateStringsArray]) =>
+        strings.join('').includes('metadata_json ||'),
+      )
+      .map(([, patch]: [TemplateStringsArray, string]) => JSON.parse(patch));
+  }
 
   /** Put the org on an existing store subscription in `status`. */
   function withStoreSubscription(status: SubscriptionState, extra: Record<string, unknown> = {}) {
@@ -837,12 +869,8 @@ describe('StorePurchasesService', () => {
         detail: 'cancellation_during_trial',
       });
       expect(lifecycle.executeTransition).not.toHaveBeenCalled();
-      expect(prisma.storePurchase.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            metadataJson: expect.objectContaining({ auto_renew: false }),
-          }),
-        }),
+      expect(mergedMetadataPatches()).toContainEqual(
+        expect.objectContaining({ auto_renew: false }),
       );
     });
 
@@ -892,14 +920,8 @@ describe('StorePurchasesService', () => {
       );
 
       expect(lifecycle.executeTransition).not.toHaveBeenCalled();
-      expect(prisma.storePurchase.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            metadataJson: expect.objectContaining({
-              pending_product_id: 'com.libertasian.pro.annual',
-            }),
-          }),
-        }),
+      expect(mergedMetadataPatches()).toContainEqual(
+        expect.objectContaining({ pending_product_id: 'com.libertasian.pro.annual' }),
       );
     });
 
@@ -1231,6 +1253,271 @@ describe('StorePurchasesService', () => {
 
       expect(result.checked).toBe(2);
       expect(storeProvider.fetchSubscriberSnapshot).toHaveBeenCalledTimes(2);
+    });
+
+    // ---- Defect 1: an unconfigured conduit 500s every /store/sync ----
+
+    it('refuses the pull with no conduit credential instead of 500ing', async () => {
+      // POST /store/sync is JWT-guarded but otherwise open to any authenticated
+      // user, and `fetchSubscriberSnapshot` throws a bare Error when the key is
+      // absent — so an unconfigured deployment (which is every deployment
+      // today) answered every call with a 500. The nightly sweep already had
+      // this guard; the user-reachable path did not.
+      revenueCatApiKey = '';
+
+      const result = await service.syncFromStore(ORG_ID);
+
+      expect(result).toEqual({
+        received: true,
+        status: 'noop',
+        detail: 'conduit_unconfigured',
+      });
+      // The guard must come BEFORE the pull, not around it.
+      expect(storeProvider.fetchSubscriberSnapshot).not.toHaveBeenCalled();
+    });
+
+    it('changes no entitlement state when the conduit is unconfigured', async () => {
+      // "No credential" must never be read as "the store says not entitled",
+      // which is what an empty snapshot means — and that path REVOKES.
+      revenueCatApiKey = '';
+      withStoreSubscription(SubscriptionState.ACTIVE);
+
+      await service.syncFromStore(ORG_ID);
+
+      expect(lifecycle.executeTransition).not.toHaveBeenCalled();
+      expect(prisma.subscription.update).not.toHaveBeenCalled();
+      expect(entitlements.invalidateEntitlementCache).not.toHaveBeenCalled();
+    });
+
+    it('still pulls when a credential IS configured', async () => {
+      // The guard must not be reachable on a configured deployment.
+      storeProvider.fetchSubscriberSnapshot.mockResolvedValue({
+        appUserId: ORG_ID,
+        entitlements: [],
+      });
+
+      const result = await service.syncFromStore(ORG_ID);
+
+      expect(storeProvider.fetchSubscriberSnapshot).toHaveBeenCalledWith(ORG_ID);
+      expect(result.detail).not.toBe('conduit_unconfigured');
+    });
+  });
+
+  // ======================================================================
+  // Defect 2: an expiry must not erase the refund timestamp (§8)
+  // ======================================================================
+
+  describe('refund clawback record survives the follow-up expiry', () => {
+    /** The `refundedAt` each markPurchaseStatus write carried, in order. */
+    function refundedAtWrites(): { status: string; refundedAt: unknown }[] {
+      return prisma.storePurchase.updateMany.mock.calls
+        .map(([args]: [{ data: Record<string, unknown> }]) => args.data)
+        .filter((data) => 'status' in data)
+        .map((data) => ({
+          status: data['status'] as string,
+          refundedAt: 'refundedAt' in data ? data['refundedAt'] : undefined,
+        }));
+    }
+
+    it('does NOT touch refundedAt on an expiry', async () => {
+      // A refunded subscription still reaches its period end and still draws an
+      // EXPIRATION. Writing `refundedAt: null` on that ordinary follow-up event
+      // destroys the exact field a refund is explained from months later —
+      // while `status` still reads 'refunded'. The expiry must leave the column
+      // alone entirely, not set it to anything.
+      withStoreSubscription(SubscriptionState.ACTIVE);
+
+      await service.handleStoreEvent(
+        evt({ type: 'purchase.expired', providerEventName: 'EXPIRATION', eventId: 'rc_exp_keep' }),
+      );
+
+      const writes = refundedAtWrites();
+      expect(writes).toContainEqual({ status: 'expired', refundedAt: undefined });
+      expect(writes.every((w) => w.status !== 'expired' || w.refundedAt === undefined)).toBe(true);
+    });
+
+    it('survives a refund, a resubscribe, and the later expiry of the same original transaction', async () => {
+      // The sequence that actually destroys the record. A bare
+      // refund-then-EXPIRATION does NOT, because EXPIRATION from `cancelled` is
+      // §4.1 row 25's no-op and never reaches markPurchaseStatus at all — so a
+      // test written that way would pass against the bug.
+      //
+      // What does reach it: the org resubscribes after the refund (RENEWAL from
+      // `cancelled` → REACTIVATE), and the subscription later genuinely
+      // expires. A store resubscription keeps the SAME
+      // `original_transaction_id`, and markPurchaseStatus updates by
+      // `(store, rcOriginalTransactionId)` — so the 'expired' write lands on
+      // the refunded row too, months after the refund, and blanks it.
+      withStoreSubscription(SubscriptionState.ACTIVE);
+      await service.handleStoreEvent(
+        evt({
+          type: 'purchase.cancelled',
+          providerEventName: 'CANCELLATION',
+          cancelReason: 'CUSTOMER_SUPPORT',
+          eventId: 'rc_refund_then_expire_1',
+        }),
+      );
+
+      withStoreSubscription(SubscriptionState.CANCELLED);
+      await service.handleStoreEvent(
+        evt({
+          type: 'purchase.renewed',
+          providerEventName: 'RENEWAL',
+          eventId: 'rc_refund_then_expire_2',
+        }),
+      );
+
+      withStoreSubscription(SubscriptionState.ACTIVE);
+      await service.handleStoreEvent(
+        evt({
+          type: 'purchase.expired',
+          providerEventName: 'EXPIRATION',
+          eventId: 'rc_refund_then_expire_3',
+        }),
+      );
+
+      const writes = refundedAtWrites();
+      // The refund stamped it...
+      expect(writes).toContainEqual({ status: 'refunded', refundedAt: expect.any(Date) });
+      // ...the expiry did run against the same original transaction...
+      expect(writes.map((w) => w.status)).toContain('expired');
+      // ...and nothing along the way cleared it.
+      expect(writes.filter((w) => w.refundedAt === null)).toEqual([]);
+    });
+
+    it('still CLEARS refundedAt on REFUND_REVERSED, the one case that should', async () => {
+      // §8: a reversed refund is no longer a refund. This is the only status
+      // that may null the column, and it must keep doing so.
+      withStoreSubscription(SubscriptionState.CANCELLED);
+
+      await service.handleStoreEvent(
+        evt({
+          type: 'purchase.refund_reversed',
+          providerEventName: 'REFUND_REVERSED',
+          eventId: 'rc_rev_keep',
+        }),
+      );
+
+      expect(refundedAtWrites()).toContainEqual({ status: 'active', refundedAt: null });
+    });
+  });
+
+  // ======================================================================
+  // Defect 3: metadata_json merges in the database, not in this process
+  // ======================================================================
+
+  describe('metadata_json merge is atomic', () => {
+    beforeEach(() => {
+      withStoreSubscription(SubscriptionState.TRIALING);
+      prisma.storePurchase.findFirst.mockResolvedValue({ id: 'sp-1' });
+    });
+
+    it('merges server-side with jsonb ||, never read-modify-write', async () => {
+      // The lost update this replaces: two events arrive together, both read
+      // the same `metadata_json`, and the second write erases the first's key.
+      // Postgres `||` merges in one statement, so neither can lose the other.
+      await service.handleStoreEvent(
+        evt({
+          type: 'purchase.cancelled',
+          providerEventName: 'CANCELLATION',
+          cancelReason: 'UNSUBSCRIBE',
+          eventId: 'rc_meta_merge_1',
+        }),
+      );
+
+      const [strings, patch, id] = prisma.$executeRaw.mock.calls[0] as [
+        TemplateStringsArray,
+        string,
+        string,
+      ];
+      const sql = strings.join('?');
+      expect(sql).toContain('metadata_json = metadata_json || ');
+      expect(sql).toContain('::jsonb');
+      expect(JSON.parse(patch)).toEqual(
+        expect.objectContaining({ auto_renew: false, auto_renew_off_at: expect.any(String) }),
+      );
+      expect(id).toBe('sp-1');
+
+      // The Prisma object-update path is gone: nothing spreads the old value.
+      expect(prisma.storePurchase.update).not.toHaveBeenCalled();
+    });
+
+    it('never reads metadata_json into this process', async () => {
+      // The row lookup resolves an id and nothing else. Selecting the metadata
+      // would invite someone to spread it again and reintroduce the defect.
+      await service.handleStoreEvent(
+        evt({
+          type: 'purchase.product_changed',
+          providerEventName: 'PRODUCT_CHANGE',
+          productId: 'com.libertasian.pro.annual',
+          eventId: 'rc_meta_merge_2',
+        }),
+      );
+
+      const [args] = prisma.storePurchase.findFirst.mock.calls[0] as [
+        { select?: Record<string, boolean> },
+      ];
+      expect(args.select).toEqual({ id: true });
+      expect(args.select?.['metadataJson']).toBeUndefined();
+    });
+
+    it('sends a patch of ONLY the new keys, so pre-existing metadata survives', async () => {
+      // The patch is the right-hand side of `||`. Any key it does not name is
+      // left exactly as the database already has it — which is the whole
+      // guarantee. A patch carrying a stale copy of the whole object would
+      // clobber concurrent writes just as the old code did.
+      await service.handleStoreEvent(
+        evt({
+          type: 'purchase.product_changed',
+          providerEventName: 'PRODUCT_CHANGE',
+          productId: 'com.libertasian.pro.annual',
+          eventId: 'rc_meta_merge_3',
+        }),
+      );
+
+      const patches = mergedMetadataPatches();
+      expect(patches).toHaveLength(1);
+      expect(Object.keys(patches[0]!).sort()).toEqual([
+        'pending_product_id',
+        'pending_product_recorded_at',
+      ]);
+    });
+
+    it('bumps updated_at, which raw SQL would otherwise skip', async () => {
+      // `@updatedAt` is applied by the Prisma query engine, not by the
+      // database, so a raw UPDATE leaves the column stale unless it says so.
+      await service.handleStoreEvent(
+        evt({
+          type: 'purchase.cancelled',
+          providerEventName: 'CANCELLATION',
+          cancelReason: 'UNSUBSCRIBE',
+          eventId: 'rc_meta_merge_4',
+        }),
+      );
+
+      const [strings] = prisma.$executeRaw.mock.calls[0] as [TemplateStringsArray];
+      expect(strings.join('?')).toContain('updated_at = CURRENT_TIMESTAMP');
+    });
+
+    it('binds both values as parameters and interpolates nothing', async () => {
+      // CLAUDE.md: no raw SQL with string interpolation. A tagged template with
+      // two bound values is the only acceptable shape here, and the row id in
+      // particular must never be concatenated in.
+      await service.handleStoreEvent(
+        evt({
+          type: 'purchase.cancelled',
+          providerEventName: 'CANCELLATION',
+          cancelReason: 'UNSUBSCRIBE',
+          eventId: 'rc_meta_merge_5',
+        }),
+      );
+
+      const call = prisma.$executeRaw.mock.calls[0] as unknown[];
+      // (strings, patch, id) — exactly two bound parameters.
+      expect(call).toHaveLength(3);
+      const strings = call[0] as TemplateStringsArray;
+      expect(strings).toHaveLength(3);
+      expect(strings.join('')).not.toContain('sp-1');
     });
   });
 });
