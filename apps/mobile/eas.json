@@ -62,7 +62,20 @@
         "API_URL": "https://libertasian.com/api/v1",
         "EXPO_PUBLIC_API_URL": "https://libertasian.com/api/v1",
         "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "611735597639-gritsa8iokpu4h8t5kmbmfum9m3sr6fc.apps.googleusercontent.com",
-        "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "611735597639-pu2f1jbvsunsbt7sfhglhoo4i82kj1b9.apps.googleusercontent.com"
+        "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "611735597639-pu2f1jbvsunsbt7sfhglhoo4i82kj1b9.apps.googleusercontent.com",
+        // RevenueCat PUBLISHABLE (SDK) key for iOS — safe in the repo. It is
+        // the client-side key every installed binary already carries, NOT the
+        // secret API key, which stays server-side and out of version control.
+        // Like every EXPO_PUBLIC_* value it is inlined at bundle time, so it
+        // has to be present at build time or no OTA can add it later.
+        //
+        // There is deliberately NO EXPO_PUBLIC_REVENUECAT_ANDROID_KEY here.
+        // RevenueCat's Play app is still failing credential validation, so an
+        // Android publishable key does not exist yet. Do NOT "complete the
+        // pair" by inventing or guessing one — add it only once RevenueCat
+        // issues it. This key is inert on Android builds; it is carried for
+        // the next iOS shipment.
+        "EXPO_PUBLIC_REVENUECAT_IOS_KEY": "appl_knNgEKraBeaKizidAemKpaHnHwS"
       },
       "autoIncrement": true,
       "ios": {
@@ -85,18 +98,19 @@
         // access for personal developer accounts, so an internal submit
         // silently burns days without advancing the clock.
         "track": "alpha",
-        // "draft" uploads the .aab as a DRAFT release on the alpha track instead
-        // of publishing it immediately. Play rejects a COMPLETED release with
-        // "the app is missing the required metadata" until the app has been
-        // through its FIRST review, because the store listing and App content
-        // declarations are still pending. Submissions 1d1d1fe9 (versionCode 9)
-        // and 9c08591f (versionCode 11) both died on exactly that.
-        // With "draft", the bundle lands in the track and you press
-        // Publishing overview -> "Send app for review", which submits the
-        // release together with the listing and declarations in one go.
-        // AFTER the first review has been approved, change this back to
-        // "completed" so later submits roll out to testers without a manual step.
-        "releaseStatus": "draft"
+        // "draft" USED to be required here. Play rejects a COMPLETED release
+        // with "the app is missing the required metadata" until the app has
+        // been through its FIRST review, because the store listing and App
+        // content declarations are still pending. Submissions 1d1d1fe9
+        // (versionCode 9) and 9c08591f (versionCode 11) both died on exactly
+        // that, so submits went out as drafts and were published by hand via
+        // Publishing overview -> "Send app for review".
+        // That condition is now MET: the first review was approved and
+        // versionCode 11 went live on the alpha track on 2026-08-18
+        // ("Available to testers on Google Play", full rollout). So this is
+        // back to "completed" and later submits roll out to testers directly,
+        // with no manual publish step.
+        "releaseStatus": "completed"
       },
       "ios": {
         "appleId": "bma5871@gmail.com",
