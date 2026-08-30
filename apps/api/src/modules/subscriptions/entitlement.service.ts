@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../common/services/redis.service';
+import type { ClientPlatform } from '../../common/config/store-availability';
 import { AuditService } from '../audit/audit.service';
 import {
   SubscriptionsService,
@@ -10,6 +11,34 @@ import {
 
 const ENTITLEMENT_CACHE_PREFIX = 'cache:entitlements:';
 const ENTITLEMENT_CACHE_TTL = 120; // 2 minutes
+
+/**
+ * The cache-key suffix for a platform. `null` (web, no header, unrecognised
+ * value) is spelled 'none' rather than left empty so every key has the same
+ * shape and no two variants can collide.
+ */
+function platformKeyPart(platform: ClientPlatform | null): string {
+  return platform ?? 'none';
+}
+
+/**
+ * Every platform variant a cache key can exist under.
+ *
+ * `invalidateEntitlementCache` deletes all of them by name. This list is
+ * ENUMERATED ON PURPOSE — do NOT replace it with `KEYS` or `SCAN`. `KEYS` is
+ * O(n) over the whole keyspace and blocks the single-threaded Redis this
+ * process shares with BullMQ; `SCAN` is cursor-based and can miss a key that is
+ * written mid-iteration, which is exactly the write pattern an invalidation
+ * races against. Three named `DEL`s are cheap, exact, and cannot stall prod.
+ *
+ * If `ClientPlatform` ever gains a member, add it here. The type is small and
+ * closed for precisely this reason.
+ */
+const ENTITLEMENT_CACHE_PLATFORMS: readonly (ClientPlatform | null)[] = [
+  'ios',
+  'android',
+  null,
+];
 
 export interface ActiveBonus {
   id: string;
@@ -64,14 +93,22 @@ export class EntitlementService {
    */
   async resolveEffectiveEntitlements(
     organizationId: string,
+    platform: ClientPlatform | null = null,
   ): Promise<SubscriptionEntitlements> {
-    const cacheKey = `${ENTITLEMENT_CACHE_PREFIX}${organizationId}`;
+    // THE PLATFORM IS PART OF THE KEY, and must stay that way. Entitlements are
+    // platform-dependent now (see `isPaywallEnforcedForRequest`): the same org
+    // resolves to a gated result for a purchase-capable iOS client and an
+    // ungated one for web or an older build. An org-only key would serve one
+    // of those answers to the other for the full 120s TTL — gating a web user
+    // who cannot buy, or un-gating an iOS user who can, depending purely on
+    // which client happened to warm the cache first.
+    const cacheKey = `${ENTITLEMENT_CACHE_PREFIX}${organizationId}:${platformKeyPart(platform)}`;
     const cached = await this.redis.get(cacheKey);
     if (cached) {
       return JSON.parse(cached) as SubscriptionEntitlements;
     }
 
-    const base = await this.getBaseEntitlements(organizationId);
+    const base = await this.getBaseEntitlements(organizationId, platform);
     const overrides = await this.getActiveOverrides(organizationId);
 
     const effective = { ...base };
@@ -110,11 +147,16 @@ export class EntitlementService {
 
   /**
    * Get base entitlements from the subscription plan (delegates to SubscriptionsService).
+   *
+   * `platform` defaults to `null` = not enforced, matching
+   * `SubscriptionsService.getEntitlements`. Callers without request context
+   * keep today's behaviour.
    */
   async getBaseEntitlements(
     organizationId: string,
+    platform: ClientPlatform | null = null,
   ): Promise<SubscriptionEntitlements> {
-    return this.subscriptions.getEntitlements(organizationId);
+    return this.subscriptions.getEntitlements(organizationId, platform);
   }
 
   /**
@@ -279,10 +321,22 @@ export class EntitlementService {
   }
 
   /**
-   * Invalidate the entitlement cache for an organization.
+   * Invalidate the entitlement cache for an organization, across EVERY platform
+   * variant.
+   *
+   * Clearing only one variant would leave the others serving pre-change
+   * entitlements for up to the 120s TTL — so a grant, revoke, or store purchase
+   * would appear to apply on one client and not another. See
+   * `ENTITLEMENT_CACHE_PLATFORMS` for why the variants are enumerated rather
+   * than matched with KEYS/SCAN.
    */
   async invalidateEntitlementCache(organizationId: string): Promise<void> {
-    const cacheKey = `${ENTITLEMENT_CACHE_PREFIX}${organizationId}`;
-    await this.redis.del(cacheKey);
+    await Promise.all(
+      ENTITLEMENT_CACHE_PLATFORMS.map((platform) =>
+        this.redis.del(
+          `${ENTITLEMENT_CACHE_PREFIX}${organizationId}:${platformKeyPart(platform)}`,
+        ),
+      ),
+    );
   }
 }

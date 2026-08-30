@@ -1,7 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-import { isPaywallEnforced } from '../../common/config/paywall';
+import { isPaywallEnforcedForRequest } from '../../common/config/paywall';
+import type { ClientPlatform } from '../../common/config/store-availability';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FeatureFlagService } from '../feature-flags/feature-flags.service';
 import { PlansService } from '../plans/plans.service';
@@ -121,10 +122,20 @@ export class SubscriptionsService {
    * When OFF, falls back to hardcoded defaults for full backward compatibility.
    *
    * In both cases, per-subscription overrides from entitlementsJson are merged on top.
+   *
+   * `platform` is the calling client's platform, and DEFAULTS TO `null` =
+   * NOT ENFORCED. That default is deliberate and load-bearing: this method has
+   * no request context of its own, so every call site that does not thread a
+   * platform keeps exactly today's behaviour. Only a caller that can prove the
+   * request came from a purchase-capable client opts into enforcement. Do not
+   * change the default to make a call site "work"; thread the platform instead.
    */
-  async getEntitlements(organizationId: string): Promise<SubscriptionEntitlements> {
-    // PAYWALL_ENFORCED=false — no payment gateway is live, so no org can
-    // actually buy its way past a gate. Everyone resolves to 'pro'.
+  async getEntitlements(
+    organizationId: string,
+    platform: ClientPlatform | null = null,
+  ): Promise<SubscriptionEntitlements> {
+    // Not enforced for this caller — nothing is purchasable from this client,
+    // so no org can buy its way past a gate. Everyone resolves to 'pro'.
     //
     // 'pro' and not 'enterprise' on purpose: the team/enterprise-only admin
     // surfaces (audit logs, org seats, API keys) stay closed.
@@ -137,7 +148,7 @@ export class SubscriptionsService {
     // The stored `sub.entitlementsJson` overrides are deliberately NOT merged:
     // a persisted 0 or previewOnly:true from the paid era would re-introduce
     // the exact 402 this switch exists to remove.
-    if (!isPaywallEnforced(this.configService)) {
+    if (!isPaywallEnforcedForRequest(this.configService, platform)) {
       return {
         ...this.getDefaultEntitlements('pro'),
         aiAnswers: 50,

@@ -165,8 +165,11 @@ describe('QuotaController', () => {
         const result = await controller.getUsage(mockUser);
 
         expect(result.data.previewOnly).toBe(true);
+        // `null` platform: this call passes no `x-platform` header, so the
+        // controller resolves entitlements for the not-enforced variant.
         expect(entitlementService.resolveEffectiveEntitlements).toHaveBeenCalledWith(
           'org-1',
+          null,
         );
       });
 
@@ -205,7 +208,7 @@ describe('QuotaController', () => {
 
       await controller.getUsage(mockUser);
 
-      expect(usageQuota.getUsageSummaryV2).toHaveBeenCalledWith('org-1', 'user-1');
+      expect(usageQuota.getUsageSummaryV2).toHaveBeenCalledWith('org-1', 'user-1', null);
       expect(entitlementService.getActiveBonuses).toHaveBeenCalledWith('org-1');
     });
 

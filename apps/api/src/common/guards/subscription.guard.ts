@@ -11,7 +11,11 @@ import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
 
 import { SubscriptionsService } from '../../modules/subscriptions/subscriptions.service';
-import { isPaywallEnforced } from '../config/paywall';
+import { isPaywallEnforcedForRequest } from '../config/paywall';
+import {
+  CLIENT_PLATFORM_HEADER,
+  parseClientPlatform,
+} from '../config/store-availability';
 import { AdminBypassAuditService } from '../services/admin-bypass-audit.service';
 
 export const SUBSCRIPTION_KEY = 'subscription_tier';
@@ -65,14 +69,26 @@ export class SubscriptionGuard implements CanActivate {
       return true;
     }
 
-    // PAYWALL_ENFORCED=false — nothing is purchasable, so gating on the org's
-    // real tier only produces errors the user has no way to clear. Every
-    // caller is compared as 'pro', which opens the @RequiredSubscription('edu')
-    // and ('pro') routes (study, uploads, bookmarks, workspaces) while leaving
-    // 'team' (audit logs, org seats) and 'enterprise' (api-keys, external-api)
-    // closed — those are staff/developer surfaces, not paid consumer features.
-    // Roles, Tenant and MFA guards are untouched.
-    const currentTier = isPaywallEnforced(this.configService)
+    // Not enforced for this caller — nothing is purchasable FROM THIS CLIENT,
+    // so gating on the org's real tier only produces errors the user has no way
+    // to clear. Every such caller is compared as 'pro', which opens the
+    // @RequiredSubscription('edu') and ('pro') routes (study, uploads,
+    // bookmarks, workspaces) while leaving 'team' (audit logs, org seats) and
+    // 'enterprise' (api-keys, external-api) closed — those are staff/developer
+    // surfaces, not paid consumer features. Roles, Tenant and MFA guards are
+    // untouched.
+    //
+    // The platform comes from the request's own `x-platform` header. An absent
+    // header resolves to `null` and is never enforced — see
+    // `isPaywallEnforcedForRequest` for why that absence is what protects the
+    // live App Store build 25.
+    // `headers?.` — Express always populates this, but a guard must not throw
+    // a TypeError on a request shape it did not expect. A missing headers bag
+    // resolves to `null`, i.e. not enforced, which is the safe direction.
+    const platform = parseClientPlatform(
+      request.headers?.[CLIENT_PLATFORM_HEADER],
+    );
+    const currentTier = isPaywallEnforcedForRequest(this.configService, platform)
       ? await this.subscriptionsService.getPlanCode(user.organizationId)
       : 'pro';
 
