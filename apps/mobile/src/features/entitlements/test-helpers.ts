@@ -37,3 +37,36 @@ export function setEntitled(): void {
 export function setFreeTier(): void {
   storage.delete(STORAGE_KEYS.ENTITLED_SURFACES);
 }
+
+/**
+ * Set the D14 `storePurchaseAvailable` flag, which decides whether a purchase
+ * entry point renders at all.
+ *
+ * Separate from {@link setFreemiumSurfaces} because it is an ORTHOGONAL axis:
+ * "can this account see paid content" and "can this client buy anything" are
+ * different questions, and the interesting test cases are the ones where they
+ * disagree — a free account on a platform with a live store is exactly the
+ * combination mechanism C exists for.
+ *
+ * Writes the whole blob, matching `useFreemiumSurfacesSync`, so a test never
+ * ends up with a half-written key that the real parser would read differently.
+ */
+export function setSurfaceAccess(opts: {
+  surfaces?: Partial<FreemiumSurfaces>;
+  entitled?: boolean;
+  storePurchaseAvailable?: boolean;
+}): void {
+  const s = opts.surfaces ?? {};
+  storage.set(
+    STORAGE_KEYS.ENTITLED_SURFACES,
+    JSON.stringify({
+      scan: s.scan ?? false,
+      study: s.study ?? false,
+      barExams: s.barExams ?? false,
+      digestGeneration: s.digestGeneration ?? false,
+      workspace: s.workspace ?? false,
+      entitled: opts.entitled ?? false,
+      storePurchaseAvailable: opts.storePurchaseAvailable ?? false,
+    }),
+  );
+}
