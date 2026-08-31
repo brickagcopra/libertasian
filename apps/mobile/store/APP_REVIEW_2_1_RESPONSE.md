@@ -49,9 +49,12 @@ shot on a physical device.
 ## (a) App Review Information → Notes
 
 Paste into **App Store Connect → App Review Information → Notes**, replacing the existing text.
-Limit 4000 characters; this text is **3,977**. Everything between the fences, nothing else.
-It is **already live on ASC** — pushed via `PATCH /v1/appStoreReviewDetails/48204d2a-…`. Re-paste
-only if you edit it here.
+Limit 4000 characters; this text is **3,968**. Everything between the fences, nothing else.
+**NOT yet on ASC.** An earlier revision of this block was pushed via
+`PATCH /v1/appStoreReviewDetails/48204d2a-…`, but that revision still told Apple the app sells
+nothing. What is live on ASC right now is the OLD, now-false text. This block must be pasted
+before build 26 is submitted, or App Review reads "no in-app purchase" against a binary that
+has one.
 
 > **One deviation from `PLAY_LISTING.md`, flagged deliberately.** Item 3 reuses the Play full
 > description verbatim — WHAT'S INSIDE, WHO IT IS FOR and the DISCLAIMER block are untouched —
@@ -62,19 +65,23 @@ only if you edit it here.
 > keep it, cut roughly 220 characters from items 1, 4 and 5 instead — they are our own prose,
 > not vetted listing copy.
 >
-> **The budget got tighter in 1.0.1.** Rewriting the payments answer (item 5) and the regional
-> answer (item 6) for in-app purchase pushed the block back to 4,112 — 112 over — so items 1,
-> 4 and 5 were tightened as suggested above. It now sits at **3,977, leaving 23 characters of
-> headroom**. Re-count after any edit; the limit is hard and ASC truncates silently.
+> **The budget got tighter in 1.0.1, twice.** Rewriting the payments answer (item 5) and the
+> regional answer (item 6) for in-app purchase pushed the block to 4,112 — 112 over. Adding
+> the purchase-location sentence to item 4 (where App Review most often asks "where is the
+> IAP", since the demo account is already entitled and sees no purchase entry points on the
+> guarded surfaces) pushed it to 4,124. Items 1, 2, 4, 5, 6 and 7 were tightened to pay for
+> both — item 3 is untouched vetted listing copy. It now sits at **3,968, leaving 32
+> characters of headroom**. Re-count after any edit; the limit is hard and ASC truncates
+> silently.
 
 <!-- ASC-NOTES-BEGIN -->
 ```
 1) DEMONSTRATION VIDEO
-A screen recording is attached to our Resolution Center reply: one continuous take on a physical iPhone, from cold launch to in-app account deletion.
-Moderation: any user can report another user's post, block its author, or delete their own posts. Blocking is symmetric and hides the blocked author from the feed, post detail and comments; blocked users are listed under Settings > Blocked users, where the block can be lifted. The recording shows both flows end to end.
+A screen recording is attached to our Resolution Center reply: one continuous take on a physical iPhone, from cold launch to account deletion.
+Moderation: any user can report another user's post, block its author, or delete their own. Blocking is symmetric and hides the blocked author from the feed, post detail and comments; blocked users are listed under Settings > Blocked users, where it can be lifted. The recording shows both flows.
 
 2) DEVICES AND OS VERSIONS TESTED
-Physical device: iPhone 17 Pro Max on iOS 26.6. Simulators: iPhone 16 Pro Max and iPad Pro 13-inch (M4) on iOS 18.x.
+Physical: iPhone 17 Pro Max on iOS 26.6. Simulators: iPhone 16 Pro Max, iPad Pro 13-inch on iOS 18.
 
 3) CORE FUNCTIONALITY AND INTENDED AUDIENCE
 LIBERTASIAN is a Philippine legal research library for law students, bar reviewees, and practitioners.
@@ -96,17 +103,17 @@ DISCLAIMER
 LIBERTASIAN provides AI-powered legal research tools for informational purposes only. AI outputs are not legal advice and do not create an attorney-client relationship. Always consult a qualified Philippine lawyer for legal matters. The practice of law in the Philippines is reserved for members of the Philippine Bar.
 
 4) ACCESS AND SAMPLE FILES
-Demo account brickagcopra5871+test@gmail.com, password in the Sign-In Information fields above. Two-factor authentication is DISABLED; email and password are all that is needed. The account is Pro tier and sole owner of its org, so every feature is reachable with no setup. No sample files are needed; the corpus is served from our backend. Searching "constitution" returns a high-confidence answer with 8 cited sources; Camera Scan works on any printed page. Please do not delete it; it carries the complimentary Pro entitlement later reviews depend on.
+Demo account brickagcopra5871+test@gmail.com, password in the Sign-In Information fields above. Two-factor authentication is DISABLED. It carries a complimentary Pro entitlement and owns its org, so every feature is already unlocked with no setup; the purchase flow is reached from Settings > Manage account access, which stays visible regardless of entitlement so Restore Purchases is always reachable. No sample files are needed; the corpus is served from our backend. Searching "constitution" returns a sourced answer with 8 citations; Camera Scan works on any printed page. Please do not delete this account; later reviews depend on its entitlement.
 
 5) THIRD-PARTY AND EXTERNAL SERVICES
 OpenAI (gpt-4o-mini) for AI answers, digests and ALAC bar answers; Sign in with Apple; Google Sign-In; Expo push via APNs. All other infrastructure is self-hosted: PostgreSQL, OpenSearch, MinIO, Tesseract OCR, Kokoro-82M TTS, and our own embedding and reranking services.
-Subscriptions are sold through Apple in-app purchase only. There is no external purchase link, no checkout screen, and no mention of buying on our website anywhere in the app. The purchase screen shows the store's localized prices, Restore Purchases, and in-app Terms of Use and Privacy Policy links.
+Subscriptions are sold through Apple in-app purchase only. There is no external purchase link, no checkout screen, and no mention of buying on our website anywhere in the app. The purchase screen shows the store's localized prices, Restore Purchases, and in-app Terms and Privacy links.
 
 6) REGIONAL DIFFERENCES
-None. Single storefront (Philippines). Subscription prices are the App Store's own localized prices for our products; features and content do not differ by region.
+None. Single storefront (Philippines). Subscription prices are the App Store's localized prices; features and content do not differ by region.
 
 7) REGULATED CONTENT AND THIRD-PARTY MATERIAL
-The corpus is Philippine government edicts: Supreme Court decisions, Republic Acts, the 1987 Constitution, the Rules of Court, and past Bar Examination questions. Under Republic Act 8293 section 176.1, works of the Government of the Philippines carry no copyright. We republish decision and statute text only, with no third-party annotations, headnotes or editorial apparatus. The app is a research tool: it does not practise law, and every AI surface carries the disclaimer above.
+The corpus is Philippine government edicts: Supreme Court decisions, Republic Acts, the 1987 Constitution, the Rules of Court, and past Bar Examination questions. Under Republic Act 8293 s.176.1, works of the Philippine Government carry no copyright. We republish decision and statute text only, with no third-party annotations or editorial apparatus. The app is a research tool: it does not practise law, and every AI surface carries the disclaimer above.
 ```
 <!-- ASC-NOTES-END -->
 
