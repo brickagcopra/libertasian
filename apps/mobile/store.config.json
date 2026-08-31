@@ -51,7 +51,7 @@
 {
   "configVersion": 0,
   "apple": {
-    "version": "1.0",
+    "version": "1.0.1",
     "copyright": "2026 LIBERTASIAN Inc.",
     "categories": ["REFERENCE", "EDUCATION"],
     "info": {
@@ -70,7 +70,7 @@
           "RPC",
           "law school"
         ],
-        "releaseNotes": "\u2022 The codal reader now opens straight from Library instead of sitting inside the study section.\n\u2022 Library lists what your account can open, so nothing is shown that it cannot.\n\u2022 The usage screen reports only the allowances that apply to you.\n\u2022 Navigation fixes for deep links, notification taps, and restored sessions.",
+        "releaseNotes": "\u2022 You can now subscribe from inside the app to unlock case digests, past bar exams, study tools, and camera scan-to-digest.\n\u2022 Already subscribed? Restore Purchases brings your subscription back on a new device or after reinstalling.\n\u2022 Terms of Use and our Privacy Policy are now readable in the app, on the same screen.\n\u2022 Stability and navigation fixes throughout.",
         "promoText": "Plain-language Philippine case digests, codals, and 1,500+ bar exam questions — built for Filipino law students and lawyers.",
         "marketingUrl": "https://libertasian.com",
         "supportUrl": "https://libertasian.com/contact",

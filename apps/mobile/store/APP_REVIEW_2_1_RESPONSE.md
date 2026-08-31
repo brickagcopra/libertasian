@@ -1,11 +1,31 @@
-# App Review response — Guideline 2.1 Information Needed (iOS 1.0, build 16)
+# App Review response — Guideline 2.1 Information Needed (iOS, originally 1.0 build 16)
+
+> ## ⚠️ UPDATED FOR 1.0.1 / BUILD 26 — THE APP NOW SELLS SUBSCRIPTIONS
+>
+> **Build 26 is the first build with a reachable purchase surface.** Every "there is no
+> purchase in this app" claim below has been rewritten, because build 25's notes told Apple
+> verbatim that the app *"contains no in-app purchase, no external purchase link, no
+> subscription and no paid tier"* — and build 26 deliberately contradicts that.
+>
+> Telling App Review something the binary disproves is the fastest route to a 2.1 or a 3.1.1,
+> so **do not paste any older copy of this file into App Store Connect.** Five separate places
+> carried the old story and all five are corrected: the header line above, item 5 and item 6
+> of the ASC notes, point 2 of the Resolution Center reply, and trap 5 of the shot list.
+>
+> What is true of 1.0.1: subscriptions are sold **through Apple in-app purchase only**; Terms
+> of Use and the Privacy Policy are reachable **in-app**; **Restore Purchases** works; and
+> there is **no external purchase link and no mention of the website's checkout anywhere in
+> the app**.
+>
+> The build-16 history below is kept as the record of the original 2.1 rejection. It remains
+> accurate as history; it is not a description of 1.0.1.
 
 Apple rejected iOS **1.0 (16)** on 2026-08-15 under **Guideline 2.1 — Information Needed**.
 Submission `f4b2ffe6-fd76-4c7d-b20b-1ea7e88b5c9a`, ASC app `6788971669`.
 
-This is **not** a code or build defect. Build 16 is attached and valid, screenshots are real
-captures, App Privacy is Published, the app is Philippines-only and Free. Apple asked seven
-questions and wants a screen recording. Nothing here requires a new build.
+That rejection was **not** a code or build defect. Build 16 was attached and valid, screenshots
+were real captures, App Privacy was Published, and the app was Philippines-only. Apple asked
+seven questions and wanted a screen recording. Nothing about it required a new build.
 
 Live ASC state read on 2026-08-15 via the App Store Connect API:
 
@@ -29,7 +49,7 @@ shot on a physical device.
 ## (a) App Review Information → Notes
 
 Paste into **App Store Connect → App Review Information → Notes**, replacing the existing text.
-Limit 4000 characters; this text is **3,942**. Everything between the fences, nothing else.
+Limit 4000 characters; this text is **3,977**. Everything between the fences, nothing else.
 It is **already live on ASC** — pushed via `PATCH /v1/appStoreReviewDetails/48204d2a-…`. Re-paste
 only if you edit it here.
 
@@ -41,12 +61,17 @@ only if you edit it here.
 > already Published on this listing, so it is the cheapest thing to drop. If you would rather
 > keep it, cut roughly 220 characters from items 1, 4 and 5 instead — they are our own prose,
 > not vetted listing copy.
+>
+> **The budget got tighter in 1.0.1.** Rewriting the payments answer (item 5) and the regional
+> answer (item 6) for in-app purchase pushed the block back to 4,112 — 112 over — so items 1,
+> 4 and 5 were tightened as suggested above. It now sits at **3,977, leaving 23 characters of
+> headroom**. Re-count after any edit; the limit is hard and ASC truncates silently.
 
 <!-- ASC-NOTES-BEGIN -->
 ```
 1) DEMONSTRATION VIDEO
 A screen recording is attached to our Resolution Center reply: one continuous take on a physical iPhone, from cold launch to in-app account deletion.
-Moderation in the attached build: any user can report another user's post, block its author, or delete their own posts. Blocking is symmetric and hides the blocked author from the feed, post detail and comments; blocked users are listed under Settings > Blocked users, where the block can be lifted. The recording shows the report and block flows end to end.
+Moderation: any user can report another user's post, block its author, or delete their own posts. Blocking is symmetric and hides the blocked author from the feed, post detail and comments; blocked users are listed under Settings > Blocked users, where the block can be lifted. The recording shows both flows end to end.
 
 2) DEVICES AND OS VERSIONS TESTED
 Physical device: iPhone 17 Pro Max on iOS 26.6. Simulators: iPhone 16 Pro Max and iPad Pro 13-inch (M4) on iOS 18.x.
@@ -71,14 +96,14 @@ DISCLAIMER
 LIBERTASIAN provides AI-powered legal research tools for informational purposes only. AI outputs are not legal advice and do not create an attorney-client relationship. Always consult a qualified Philippine lawyer for legal matters. The practice of law in the Philippines is reserved for members of the Philippine Bar.
 
 4) ACCESS AND SAMPLE FILES
-Demo account brickagcopra5871+test@gmail.com, password in the Sign-In Information fields above. Two-factor authentication is DISABLED - email and password are all that is needed, and no code is sent to any device. The account is Pro tier and sole owner of its organization, so every feature is reachable with no setup. No sample files are needed; the corpus is served from our backend. Searching "constitution" returns a high-confidence answer with 8 cited sources, and Camera Scan works on any printed page. Please do not delete this account; it carries the complimentary Pro entitlement later reviews depend on.
+Demo account brickagcopra5871+test@gmail.com, password in the Sign-In Information fields above. Two-factor authentication is DISABLED; email and password are all that is needed. The account is Pro tier and sole owner of its org, so every feature is reachable with no setup. No sample files are needed; the corpus is served from our backend. Searching "constitution" returns a high-confidence answer with 8 cited sources; Camera Scan works on any printed page. Please do not delete it; it carries the complimentary Pro entitlement later reviews depend on.
 
 5) THIRD-PARTY AND EXTERNAL SERVICES
-OpenAI (gpt-4o-mini) for AI answers, digests and ALAC bar answers; Sign in with Apple; Google Sign-In; Expo push via APNs. All other infrastructure is self-hosted: PostgreSQL, OpenSearch, MinIO, Tesseract OCR, Kokoro-82M text-to-speech, and our own embedding and reranking services.
-The app contains no purchase, subscription or payment flow of any kind - no in-app purchase, no external purchase link, no checkout. Paid entitlements are bought on our website and carry over at sign-in.
+OpenAI (gpt-4o-mini) for AI answers, digests and ALAC bar answers; Sign in with Apple; Google Sign-In; Expo push via APNs. All other infrastructure is self-hosted: PostgreSQL, OpenSearch, MinIO, Tesseract OCR, Kokoro-82M TTS, and our own embedding and reranking services.
+Subscriptions are sold through Apple in-app purchase only. There is no external purchase link, no checkout screen, and no mention of buying on our website anywhere in the app. The purchase screen shows the store's localized prices, Restore Purchases, and in-app Terms of Use and Privacy Policy links.
 
 6) REGIONAL DIFFERENCES
-None. Single storefront (Philippines), free, one price tier, no regional differences in features, content or pricing.
+None. Single storefront (Philippines). Subscription prices are the App Store's own localized prices for our products; features and content do not differ by region.
 
 7) REGULATED CONTENT AND THIRD-PARTY MATERIAL
 The corpus is Philippine government edicts: Supreme Court decisions, Republic Acts, the 1987 Constitution, the Rules of Court, and past Bar Examination questions. Under Republic Act 8293 section 176.1, works of the Government of the Philippines carry no copyright. We republish decision and statute text only, with no third-party annotations, headnotes or editorial apparatus. The app is a research tool: it does not practise law, and every AI surface carries the disclaimer above.
@@ -102,7 +127,7 @@ Three points we want to state plainly rather than leave you to infer:
 
 1. Moderation. The attached build lets any user report another user's post, block its author, or delete their own posts. Blocking is symmetric: once a user is blocked, neither party sees the other's posts or comments, and the blocked user can no longer reply to or interact with the blocker's posts. Blocked users are listed under Settings > Blocked users and can be unblocked there. Both the report and block flows are shown in the recording. Reporting deliberately still works against a user you have blocked, so that blocking cannot be used to shield someone from moderation.
 
-2. Payments. The iOS app contains no purchase, subscription or payment flow of any kind - no in-app purchase, no external purchase link, no checkout screen. Paid entitlements are purchased on our website and carry over when the user signs in.
+2. Payments. Subscriptions are sold exclusively through Apple in-app purchase. The app contains no external purchase link and no checkout screen, and it does not mention purchasing on our website. The purchase screen displays the store's own localized prices and carries Restore Purchases together with in-app Terms of Use and Privacy Policy links.
 
 3. Content rights. Our corpus is Philippine government edicts - Supreme Court decisions, Republic Acts, the 1987 Constitution, the Rules of Court, and past Bar Examination questions. Under Republic Act 8293 section 176.1, works of the Government of the Philippines carry no copyright. We republish decision and statute text only, with no third-party annotations or editorial apparatus.
 
@@ -196,8 +221,13 @@ resequencing anything.
    feed must already contain a post by another user before segment 12. Line that up before
    recording — hunting for a blockable post on camera reads as an empty product.
 
-5. **Do not stage a purchase flow.** There is none in the app, we have told Apple there is
-   none, and inventing one creates a 3.1.1 problem that does not currently exist.
+5. **Film the purchase surface as it actually is — and buy nothing.** From build 26 the app
+   HAS a purchase flow, so the old instruction to avoid one is void. Show Settings → the
+   account-access row → the purchase screen, with the store's own prices, **Restore
+   Purchases**, and the in-app Terms and Privacy links visible. Do **not** complete a purchase
+   on camera and do **not** invent or mock any screen: the surface must be the one the binary
+   renders, and the prices must be the ones StoreKit returns. There is no external purchase
+   link to film, because there is none in the app.
 
 6. **Do not block the demo account's own posts away.** The block is symmetric, so blocking a
    user also hides YOUR posts from them. Unblock at segment 13 as scripted, so the account is

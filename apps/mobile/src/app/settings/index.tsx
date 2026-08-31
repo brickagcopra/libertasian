@@ -5,7 +5,7 @@ import { PURCHASE_ROUTE } from '@/features/purchase';
 import { ProfileScreen } from '../../components/screens/ProfileScreen';
 import { useAuth } from '../../providers/auth-provider';
 import { useProfile } from '../../features/auth/hooks/use-auth';
-import { useFreemiumSurfaces } from '../../features/entitlements/use-freemium-surfaces';
+import { useSurfaceAccess } from '../../features/entitlements/use-freemium-surfaces';
 import { useTheme } from '../../providers/theme-provider';
 import type { ProfileRow } from '../../components/screens/ProfileScreen';
 import type { OrganizationRole } from '../../features/auth/types';
@@ -17,7 +17,10 @@ export default function SettingsRoute() {
   const { theme } = useTheme();
   const { user, signOut } = useAuth();
   const { data: profile } = useProfile();
-  const surfaces = useFreemiumSurfaces();
+  // `useSurfaceAccess()` rather than `useFreemiumSurfaces()`: the latter returns
+  // only the five surface flags and drops `storePurchaseAvailable`, which is the
+  // one field the purchase row is gated on below.
+  const { surfaces, storePurchaseAvailable } = useSurfaceAccess();
   const displayUser = profile ?? user;
 
   function handleLogout() {
@@ -79,17 +82,31 @@ export default function SettingsRoute() {
     // `no-purchase-copy.test.ts` pins this list as
     // PERMITTED_PURCHASE_ENTRY_POINTS and fails if a second one appears.
     //
+    // GATED ON `storePurchaseAvailable`, the server's per-platform answer to
+    // "can this client actually buy?". Unconditional, this row was a door into
+    // a purchase screen on every build and every platform, including the ones
+    // with no live store — which is a purchase entry point for products that
+    // cannot be bought, and the shown-and-refused pattern App Review rejects.
+    // With the flag false the row is REMOVED, not disabled: a visible-but-dead
+    // row is the same violation with an extra tap in front of it.
+    //
     // The label names nothing purchasable, because this row is NOT part of the
     // purchase surface: it sits on a settings screen that the FORBIDDEN word
     // list still applies to in full. The plan names and prices live one tap
     // away, on the screen that is allowed to show them.
-    {
-      id: 'plans',
-      icon: 'card-outline',
-      label: 'Manage account access',
-      sub: 'Options for your account',
-      onPress: () => router.push(PURCHASE_ROUTE),
-    },
+    ...(storePurchaseAvailable
+      ? ([
+          {
+            id: 'plans',
+            icon: 'card-outline',
+            label: 'Manage account access',
+            sub: 'Options for your account',
+            onPress: () => router.push(PURCHASE_ROUTE),
+          },
+        ] as ProfileRow[])
+      : []),
+    // Unconditional. Usage and quotas apply to every account, paid or free, and
+    // name nothing purchasable.
     {
       id: 'usage',
       icon: 'bar-chart-outline',

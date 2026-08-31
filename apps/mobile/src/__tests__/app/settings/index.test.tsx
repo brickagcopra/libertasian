@@ -33,7 +33,11 @@ jest.mock('@/features/auth/hooks/use-auth', () => ({
 
 import { router } from 'expo-router';
 import SettingsRoute from '@/app/settings/index';
-import { setEntitled, setFreeTier } from '@/features/entitlements/test-helpers';
+import {
+  setEntitled,
+  setFreeTier,
+  setSurfaceAccess,
+} from '@/features/entitlements/test-helpers';
 
 function createWrapper() {
   const queryClient = new QueryClient({
@@ -173,5 +177,75 @@ describe('SettingsRoute (Phase 2 ProfileScreen)', () => {
     confirmButton?.onPress?.();
 
     expect(mockSignOut).toHaveBeenCalled();
+  });
+
+  // ---- the purchase door (D14 mechanism C) ----
+
+  describe('the purchase row is gated on storePurchaseAvailable', () => {
+    /**
+     * "Manage account access" is the ONLY door into the purchase surface, and
+     * `no-purchase-copy.test.ts` pins this file as the one permitted importer.
+     * Before build 26 the row rendered unconditionally, which put a door to a
+     * purchase screen on every platform — including the ones with no live
+     * store, where tapping it leads to products that cannot be bought.
+     *
+     * The flag is the server's per-platform answer, so these two cases are the
+     * whole contract.
+     */
+
+    it('hides the purchase row when storePurchaseAvailable is false', () => {
+      setSurfaceAccess({ storePurchaseAvailable: false });
+
+      const { queryByText } = render(<SettingsRoute />, { wrapper: createWrapper() });
+
+      // REMOVED, not merely disabled: a visible-but-dead row is the same
+      // shown-and-refused pattern with an extra tap in front of it.
+      expect(queryByText('Manage account access')).toBeNull();
+    });
+
+    it('shows the purchase row when storePurchaseAvailable is true', () => {
+      setSurfaceAccess({ storePurchaseAvailable: true });
+
+      const { getByText } = render(<SettingsRoute />, { wrapper: createWrapper() });
+
+      expect(getByText('Manage account access')).toBeTruthy();
+    });
+
+    it('keeps Usage & quotas visible either way', () => {
+      // Usage applies to every account and names nothing purchasable, so it
+      // must not be swept up by the gate.
+      setSurfaceAccess({ storePurchaseAvailable: false });
+      const free = render(<SettingsRoute />, { wrapper: createWrapper() });
+      expect(free.getByText('Usage & quotas')).toBeTruthy();
+      free.unmount();
+
+      setSurfaceAccess({ storePurchaseAvailable: true });
+      const purchasable = render(<SettingsRoute />, { wrapper: createWrapper() });
+      expect(purchasable.getByText('Usage & quotas')).toBeTruthy();
+    });
+
+    it('shows the purchase row for an ENTITLED account on a purchasable platform', () => {
+      // Entitlement and purchasability are orthogonal: a subscriber still needs
+      // the door to manage or restore. Gating on `entitled` instead would hide
+      // it from exactly the people most likely to want it.
+      setSurfaceAccess({
+        surfaces: { scan: true, study: true, barExams: true, digestGeneration: true, workspace: true },
+        entitled: true,
+        storePurchaseAvailable: true,
+      });
+
+      const { getByText } = render(<SettingsRoute />, { wrapper: createWrapper() });
+
+      expect(getByText('Manage account access')).toBeTruthy();
+    });
+
+    it('routes to the purchase surface when the row is pressed', () => {
+      setSurfaceAccess({ storePurchaseAvailable: true });
+
+      const { getByText } = render(<SettingsRoute />, { wrapper: createWrapper() });
+      fireEvent.press(getByText('Manage account access'));
+
+      expect(router.push).toHaveBeenCalledWith('/purchase');
+    });
   });
 });
