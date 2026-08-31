@@ -75,6 +75,7 @@ import { ReportingModule } from './modules/reporting/reporting.module';
 import { AudioModule } from './modules/audio/audio.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
+import { RequestPlatformMiddleware } from './common/middleware/request-platform.middleware';
 
 @Module({
   imports: [
@@ -459,6 +460,13 @@ import { QueryProfilerMiddleware } from './prisma/query-profiler.middleware';
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
+    // ALL ROUTES, and applied FIRST so its AsyncLocalStorage store is the
+    // outermost one every downstream guard, interceptor, controller and
+    // service runs inside. Entitlement resolution reads the client platform
+    // from it; if a route were omitted here, that route would silently resolve
+    // every caller as platform-less (ungated) with nothing failing.
+    consumer.apply(RequestPlatformMiddleware).forRoutes('(.*)');
+
     consumer.apply(QueryProfilerMiddleware).forRoutes('(.*)');
 
   }

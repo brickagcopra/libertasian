@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 
 import { isPaywallEnforcedForRequest } from '../../common/config/paywall';
 import type { ClientPlatform } from '../../common/config/store-availability';
+import { getRequestPlatform } from '../../common/context/request-context';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FeatureFlagService } from '../feature-flags/feature-flags.service';
 import { PlansService } from '../plans/plans.service';
@@ -123,17 +124,29 @@ export class SubscriptionsService {
    *
    * In both cases, per-subscription overrides from entitlementsJson are merged on top.
    *
-   * `platform` is the calling client's platform, and DEFAULTS TO `null` =
-   * NOT ENFORCED. That default is deliberate and load-bearing: this method has
-   * no request context of its own, so every call site that does not thread a
-   * platform keeps exactly today's behaviour. Only a caller that can prove the
-   * request came from a purchase-capable client opts into enforcement. Do not
-   * change the default to make a call site "work"; thread the platform instead.
+   * PLATFORM RESOLUTION. The primary path is the request-scoped context: omit
+   * `platform` and it is read from the `x-platform` header parsed once by
+   * `RequestPlatformMiddleware`. That is what makes the 15+ indirect callers of
+   * this method (via UsageQuotaService.checkAndIncrement, several behind
+   * service layers with no request object) platform-aware without threading a
+   * parameter through every one of them.
+   *
+   * The explicit `platform` argument is an OVERRIDE, not the main road. Pass it
+   * only when the caller genuinely knows better than the ambient request — a
+   * test, or a caller deliberately resolving for a platform other than its
+   * own. An explicit `null` is a real value meaning "not enforced" and WINS
+   * over the context; `undefined` (i.e. omitted) means "read the context".
+   *
+   * Outside any request — BullMQ workers, @Cron sweeps, scripts — the context
+   * is empty and this resolves to `null` = not enforced, i.e. today's
+   * behaviour. See `getRequestPlatform`.
    */
   async getEntitlements(
     organizationId: string,
-    platform: ClientPlatform | null = null,
+    platform?: ClientPlatform | null,
   ): Promise<SubscriptionEntitlements> {
+    const resolvedPlatform =
+      platform === undefined ? getRequestPlatform() : platform;
     // Not enforced for this caller — nothing is purchasable from this client,
     // so no org can buy its way past a gate. Everyone resolves to 'pro'.
     //
@@ -148,7 +161,7 @@ export class SubscriptionsService {
     // The stored `sub.entitlementsJson` overrides are deliberately NOT merged:
     // a persisted 0 or previewOnly:true from the paid era would re-introduce
     // the exact 402 this switch exists to remove.
-    if (!isPaywallEnforcedForRequest(this.configService, platform)) {
+    if (!isPaywallEnforcedForRequest(this.configService, resolvedPlatform)) {
       return {
         ...this.getDefaultEntitlements('pro'),
         aiAnswers: 50,

@@ -163,11 +163,13 @@ export class UsageQuotaService {
   async getUsageSummaryV2(
     organizationId: string,
     userId: string,
-    // Defaults to `null` = not enforced, so the callers that do not thread a
-    // platform keep today's behaviour. Threaded by QuotaController so the
-    // quota numbers agree with the `previewOnly` and `storePurchaseAvailable`
-    // shipped in the same response.
-    platform: ClientPlatform | null = null,
+    // An OVERRIDE, not the primary path: omitted, the platform is read from
+    // the request-scoped context, which is what keeps the V1 `getUsageSummary`
+    // wrapper below platform-aware without a signature change. QuotaController
+    // still passes it explicitly so the quota numbers provably come from the
+    // same platform as the `previewOnly` and `storePurchaseAvailable` shipped
+    // in the same response.
+    platform?: ClientPlatform | null,
   ): Promise<UsageSummaryV2> {
     const [effective, base, billingPeriod] = await Promise.all([
       this.entitlementService.resolveEffectiveEntitlements(organizationId, platform),
