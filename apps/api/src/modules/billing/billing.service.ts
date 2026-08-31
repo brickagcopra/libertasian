@@ -41,6 +41,7 @@ import type { CreateCheckoutDto, PreviewCheckoutDto } from './dto';
 // dependency on StorePurchasesModule: this is a string comparison against the
 // canonical list, not a call into the IAP path.
 import { isStoreProviderSlug } from '../store-purchases/store-purchase-provider.interface';
+import { addBillingPeriod } from '../../common/utils/billing-period';
 
 /** Renewal reminders go out 3 days before the scheduled charge (T-3d). */
 const RENEWAL_REMINDER_LEAD_MS = 3 * 24 * 60 * 60 * 1000;
@@ -487,12 +488,7 @@ export class BillingService {
     const promotionId = metadata['promotionId'] ?? null;
 
     const now = new Date();
-    const periodEnd = new Date(now);
-    if (billingPeriod === 'annual') {
-      periodEnd.setFullYear(periodEnd.getFullYear() + 1);
-    } else {
-      periodEnd.setMonth(periodEnd.getMonth() + 1);
-    }
+    const periodEnd = addBillingPeriod(now, billingPeriod);
 
     // Use a transaction for atomicity
     await this.prisma.$transaction(async (tx) => {
@@ -968,7 +964,7 @@ export class BillingService {
     // Schedule the T-3d renewal reminder. currentPeriodEnd is not known yet
     // (cycle.succeeded owns it), so estimate one billing period from now; the
     // activation charge's cycle.succeeded re-schedules with the exact date.
-    await this.scheduleRenewalReminder(sub, this.addBillingPeriod(now, sub.billingPeriod));
+    await this.scheduleRenewalReminder(sub, addBillingPeriod(now, sub.billingPeriod));
 
     await this.entitlementService.invalidateEntitlementCache(sub.organizationId);
 
@@ -1016,7 +1012,7 @@ export class BillingService {
     // now for the very first cycle if the period was not yet set.
     const anchor = sub.currentPeriodEnd ?? new Date();
     const newPeriodStart = sub.currentPeriodEnd ?? new Date();
-    const newPeriodEnd = this.addBillingPeriod(anchor, sub.billingPeriod);
+    const newPeriodEnd = addBillingPeriod(anchor, sub.billingPeriod);
 
     const invoiceNumber = await this.generateInvoiceNumber();
 
@@ -1419,17 +1415,6 @@ export class BillingService {
       select: { amount: true },
     });
     return lastPayment?.amount ?? null;
-  }
-
-  /** Add one billing period (month/year) to a date. */
-  private addBillingPeriod(from: Date, billingPeriod: string): Date {
-    const d = new Date(from);
-    if (billingPeriod === 'annual') {
-      d.setFullYear(d.getFullYear() + 1);
-    } else {
-      d.setMonth(d.getMonth() + 1);
-    }
-    return d;
   }
 
   // ---- Cancel Subscription ----

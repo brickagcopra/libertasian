@@ -9,6 +9,7 @@ import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SubscriptionLifecycleService } from './subscription-lifecycle.service';
 import { ProrationService } from './proration.service';
+import { addBillingPeriod } from '../../common/utils/billing-period';
 import {
   SubscriptionAction,
   SubscriptionState,
@@ -385,12 +386,7 @@ export class SubscriptionAdminService {
 
     // Calculate new period end based on new billing period
     const now = new Date();
-    const newPeriodEnd = new Date(now);
-    if (newBillingPeriod === 'annual') {
-      newPeriodEnd.setFullYear(newPeriodEnd.getFullYear() + 1);
-    } else {
-      newPeriodEnd.setMonth(newPeriodEnd.getMonth() + 1);
-    }
+    const newPeriodEnd = addBillingPeriod(now, newBillingPeriod);
 
     await this.prisma.$transaction(async (tx) => {
       // 1. Update subscription billing period
