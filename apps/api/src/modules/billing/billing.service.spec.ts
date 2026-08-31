@@ -17,6 +17,7 @@ import {
   SubscriptionState,
 } from '../subscriptions/subscription-state-machine';
 import { BillingService } from './billing.service';
+import { addBillingPeriod } from '../../common/utils/billing-period';
 import {
   PAYMENT_PROVIDER,
   PaymentProviderError,
@@ -1731,8 +1732,13 @@ describe('BillingService', () => {
         // exactly ONE month — not two.
         expect(start.getTime()).toBeGreaterThanOrEqual(before.getTime());
         expect(start.getTime()).toBeLessThanOrEqual(after.getTime());
-        const expectedEnd = new Date(start);
-        expectedEnd.setMonth(expectedEnd.getMonth() + 1);
+        // Expectation computed with the SAME clamping helper production uses.
+        // It previously inlined `setMonth(getMonth() + 1)`, which is the exact
+        // rollover bug being fixed: on the 31st that yields the 1st of the
+        // month AFTER next, so the test demanded a two-month advance while its
+        // own comment above asks for one. It passed only because most days of
+        // the month have no 31st to roll over.
+        const expectedEnd = addBillingPeriod(start, 'monthly');
         // Within a small tolerance: anchor and start are separate `new Date()`
         // reads a few ms apart when the prior end was null.
         expect(Math.abs(end.getTime() - expectedEnd.getTime())).toBeLessThan(1000);
@@ -1910,8 +1916,8 @@ describe('BillingService', () => {
         );
         // Estimated period end = now + 1 month; reminder at end − 3d.
         const createArgs = (prisma.subscriptionLifecycleEvent.create as jest.Mock).mock.calls[0][0];
-        const expectedEnd = new Date(before);
-        expectedEnd.setMonth(expectedEnd.getMonth() + 1);
+        // Clamped, as production does — see the note on the first-cycle test.
+        const expectedEnd = addBillingPeriod(before, 'monthly');
         const expectedAt = expectedEnd.getTime() - THREE_DAYS_MS;
         expect(Math.abs(createArgs.data.scheduledAt.getTime() - expectedAt)).toBeLessThan(5000);
       });
