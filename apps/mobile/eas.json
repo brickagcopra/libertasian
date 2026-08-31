@@ -69,12 +69,24 @@
         // Like every EXPO_PUBLIC_* value it is inlined at bundle time, so it
         // has to be present at build time or no OTA can add it later.
         //
-        // There is deliberately NO EXPO_PUBLIC_REVENUECAT_ANDROID_KEY here.
-        // RevenueCat's Play app is still failing credential validation, so an
-        // Android publishable key does not exist yet. Do NOT "complete the
-        // pair" by inventing or guessing one — add it only once RevenueCat
-        // issues it. This key is inert on Android builds; it is carried for
-        // the next iOS shipment.
+        // There is deliberately NO EXPO_PUBLIC_REVENUECAT_ANDROID_KEY here —
+        // but the reason has changed since this comment was first written.
+        //
+        // OUTDATED (2026-08-30): this used to say RevenueCat's Play app was
+        // failing credential validation and that no Android key existed. Both
+        // are now false. The Play service account validates — RevenueCat reads
+        // "Valid credentials" — and an Android publishable key does exist:
+        // goog_VjSuppDTBPHUMUULFkfgFSdkoxL.
+        //
+        // THE CURRENT REASON IS THAT THERE IS NOTHING TO SELL. Google Play has
+        // ZERO subscription products: the Subscriptions page was inaccessible
+        // until a payments profile existed, so no product has ever been
+        // created. Setting this key would configure the SDK against an empty
+        // catalogue — every offering lookup returns nothing and the purchase
+        // surface renders as broken rather than as "unavailable", which is the
+        // state `purchases-sdk.ts` is written to produce.
+        //
+        // Add it only once the four Play products exist and are active.
         "EXPO_PUBLIC_REVENUECAT_IOS_KEY": "appl_knNgEKraBeaKizidAemKpaHnHwS"
       },
       "autoIncrement": true,
