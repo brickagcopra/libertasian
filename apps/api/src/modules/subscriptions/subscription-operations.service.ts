@@ -12,6 +12,7 @@ import { SubscriptionLifecycleService } from './subscription-lifecycle.service';
 import { SubscriptionsService } from './subscriptions.service';
 import { ProrationService, type ProrationResult } from './proration.service';
 import { SubscriptionAction, SubscriptionState } from './subscription-state-machine';
+import { addBillingPeriod } from '../../common/utils/billing-period';
 
 // ---- Result Types ----
 
@@ -162,12 +163,7 @@ export class SubscriptionOperationsService {
 
     // Calculate period dates
     const now = new Date();
-    const periodEnd = new Date(now);
-    if (billingPeriod === 'annual') {
-      periodEnd.setFullYear(periodEnd.getFullYear() + 1);
-    } else {
-      periodEnd.setMonth(periodEnd.getMonth() + 1);
-    }
+    const periodEnd = addBillingPeriod(now, billingPeriod);
 
     // Update billing period and period dates before transition
     await this.prisma.subscription.update({
@@ -258,12 +254,7 @@ export class SubscriptionOperationsService {
     // For upgrades: apply immediately
     // Create the migration record
     const now = new Date();
-    const periodEnd = new Date(now);
-    if (effectiveBillingPeriod === 'annual') {
-      periodEnd.setFullYear(periodEnd.getFullYear() + 1);
-    } else {
-      periodEnd.setMonth(periodEnd.getMonth() + 1);
-    }
+    const periodEnd = addBillingPeriod(now, effectiveBillingPeriod);
 
     const migration = await this.prisma.subscriptionMigration.create({
       data: {
@@ -621,12 +612,7 @@ export class SubscriptionOperationsService {
 
     // Set new period dates
     const now = new Date();
-    const periodEnd = new Date(now);
-    if (subscription.billingPeriod === 'annual') {
-      periodEnd.setFullYear(periodEnd.getFullYear() + 1);
-    } else {
-      periodEnd.setMonth(periodEnd.getMonth() + 1);
-    }
+    const periodEnd = addBillingPeriod(now, subscription.billingPeriod);
 
     await this.prisma.subscription.update({
       where: { id: subscriptionId },
