@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../../../lib/api-client';
 import type {
   ContradictionListResponse,
-  ContradictionDetailResponse,
+  ContradictionReportDetail,
   ContradictionReportListItem,
   ContradictionFilters,
   GenerateContradictionInput,
@@ -27,12 +27,16 @@ export function useContradiction(id: string, enabled = true) {
   return useQuery({
     queryKey: ['contradiction', id],
     queryFn: () =>
-      apiClient.get<ContradictionDetailResponse>(`/contradictions/${id}`),
+      apiClient.get<ContradictionReportDetail>(`/contradictions/${id}`),
     enabled: enabled && id.length > 0,
     staleTime: 5 * 60 * 1000,
     refetchInterval: (query) => {
-      const resp = query.state.data as ContradictionDetailResponse | undefined;
-      const report = resp?.data;
+      // NO second `.data`: `GET /contradictions/:id` returns a bare
+      // { success, data } envelope, which `apiClient` already strips, so
+      // `query.state.data` IS the detail object. Reading `.data` off it gave
+      // `undefined` and the status check below could never be true — the poll
+      // stopped immediately and a still-generating record never refreshed.
+      const report = query.state.data as ContradictionReportDetail | undefined;
       if (
         report &&
         (report.status === 'pending' || report.status === 'generating')

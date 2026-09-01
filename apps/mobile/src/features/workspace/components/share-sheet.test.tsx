@@ -22,9 +22,10 @@ jest.mock('../../../components/date-picker-field', () => ({
   },
 }));
 
-const mockSharesData = {
-  data: [
-    {
+// `GET /shares` returns a bare { success, data } envelope, which `apiClient`
+// already strips — `useShares` resolves with the array itself.
+const mockSharesData = [
+  {
       id: 'share-1',
       entityType: 'matter',
       entityId: 'matter-1',
@@ -34,10 +35,9 @@ const mockSharesData = {
       label: 'For client review',
       accessCount: 5,
       expiresAt: '2026-04-01T00:00:00Z',
-      createdAt: '2026-03-22T10:00:00Z',
-    },
-  ],
-};
+    createdAt: '2026-03-22T10:00:00Z',
+  },
+];
 
 jest.mock('../hooks/use-shares', () => ({
   useShares: () => ({
@@ -45,7 +45,8 @@ jest.mock('../hooks/use-shares', () => ({
     isLoading: false,
   }),
   useCreateShare: () => ({
-    mutateAsync: jest.fn().mockResolvedValue({ data: { token: 'abc123' } }),
+    // `POST /shares` is a bare envelope too — resolves with the share itself.
+    mutateAsync: jest.fn().mockResolvedValue({ token: 'abc123' }),
     isPending: false,
   }),
   useUpdateShare: () => ({

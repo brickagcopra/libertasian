@@ -198,7 +198,9 @@ describe('useMarketplaceDigests', () => {
 
 describe('useMarketplaceFeatured', () => {
   it('fetches featured content', async () => {
-    mockGet.mockResolvedValueOnce(mockFeaturedResponse);
+    // GET /community/marketplace/featured is a bare { success, data }
+    // envelope, so apiClient hands back `data` itself.
+    mockGet.mockResolvedValueOnce(mockFeaturedResponse.data);
 
     const { result } = renderHook(() => useMarketplaceFeatured(), {
       wrapper: createWrapper(),
@@ -207,13 +209,13 @@ describe('useMarketplaceFeatured', () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
     expect(mockGet).toHaveBeenCalledWith('/community/marketplace/featured');
-    expect(result.current.data).toEqual(mockFeaturedResponse);
+    expect(result.current.data).toEqual(mockFeaturedResponse.data);
   });
 });
 
 describe('useContributorProfile', () => {
   it('fetches contributor profile by user ID', async () => {
-    mockGet.mockResolvedValueOnce(mockContributorResponse);
+    mockGet.mockResolvedValueOnce(mockContributorResponse.data);
 
     const { result } = renderHook(
       () => useContributorProfile('user-1'),
@@ -223,7 +225,7 @@ describe('useContributorProfile', () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
     expect(mockGet).toHaveBeenCalledWith('/community/contributors/user-1');
-    expect(result.current.data?.data.stats.flashcardSetCount).toBe(5);
+    expect(result.current.data?.stats.flashcardSetCount).toBe(5);
   });
 
   it('is disabled when userId is empty', () => {

@@ -36,7 +36,6 @@ describe('HearingPrepDetailScreen', () => {
   it('renders completed hearing prep', () => {
     mockUseHearingPrep.mockReturnValue({
       data: {
-        data: {
           id: 'hp-1',
           topic: 'Cross-exam strategy',
           issue: 'Credibility',
@@ -58,7 +57,6 @@ describe('HearingPrepDetailScreen', () => {
             suggestedQuestions: ['Did you see the accused?'],
           },
         },
-      },
       isLoading: false,
       error: null,
     });

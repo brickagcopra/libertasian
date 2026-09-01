@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../../../lib/api-client';
 import type {
   ComparisonListResponse,
-  ComparisonDetailResponse,
+  CaseComparisonDetail,
   CaseComparisonListItem,
   ComparisonFilters,
   GenerateComparisonInput,
@@ -28,12 +28,16 @@ export function useComparison(id: string, enabled = true) {
   return useQuery({
     queryKey: ['case-comparison', id],
     queryFn: () =>
-      apiClient.get<ComparisonDetailResponse>(`/case-comparisons/${id}`),
+      apiClient.get<CaseComparisonDetail>(`/case-comparisons/${id}`),
     enabled: enabled && id.length > 0,
     staleTime: 5 * 60 * 1000,
     refetchInterval: (query) => {
-      const resp = query.state.data as ComparisonDetailResponse | undefined;
-      const comparison = resp?.data;
+      // NO second `.data`: `GET /case-comparisons/:id` returns a bare
+      // { success, data } envelope, which `apiClient` already strips, so
+      // `query.state.data` IS the detail object. Reading `.data` off it gave
+      // `undefined` and the status check below could never be true — the poll
+      // stopped immediately and a still-generating record never refreshed.
+      const comparison = query.state.data as CaseComparisonDetail | undefined;
       if (
         comparison &&
         (comparison.status === 'pending' || comparison.status === 'generating')

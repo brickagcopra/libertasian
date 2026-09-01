@@ -4,7 +4,6 @@ import type {
   ReviewQueueItem,
   ReviewQueueStats,
   PaginatedResponse,
-  ApiResponse,
   BatchReviewResult,
   SubmitReviewResult,
   ReviewQueueFilters,
@@ -38,10 +37,9 @@ export function useReviewStats() {
   return useQuery({
     queryKey: ['admin', 'review', 'stats'],
     queryFn: async () => {
-      const res = await apiClient.get<ApiResponse<ReviewQueueStats>>(
-        '/admin/digests/review-stats',
-      );
-      return res.data;
+      // NO `.data`: `GET /admin/digests/review-stats` returns a bare
+      // { success, data } envelope, which `apiClient` already strips.
+      return apiClient.get<ReviewQueueStats>('/admin/digests/review-stats');
     },
     staleTime: 2 * 60 * 1000,
   });
@@ -61,11 +59,11 @@ export function useSubmitReview() {
       verdict: 'approve' | 'reject' | 'needs_revision';
       notes?: string;
     }) => {
-      const res = await apiClient.post<ApiResponse<SubmitReviewResult>>(
-        `/admin/digests/${id}/review`,
-        { verdict, notes },
-      );
-      return res.data;
+      // Bare { success, data } envelope — already unwrapped by `apiClient`.
+      return apiClient.post<SubmitReviewResult>(`/admin/digests/${id}/review`, {
+        verdict,
+        notes,
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'review'] });
@@ -113,11 +111,10 @@ export function useBatchApprove() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ digestIds }: { digestIds: string[] }) => {
-      const res = await apiClient.post<ApiResponse<BatchReviewResult>>(
-        '/admin/digests/batch-approve',
-        { digestIds },
-      );
-      return res.data;
+      // Bare { success, data } envelope — already unwrapped by `apiClient`.
+      return apiClient.post<BatchReviewResult>('/admin/digests/batch-approve', {
+        digestIds,
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'review'] });
@@ -137,11 +134,11 @@ export function useBatchReject() {
       digestIds: string[];
       reason?: string;
     }) => {
-      const res = await apiClient.post<ApiResponse<BatchReviewResult>>(
-        '/admin/digests/batch-reject',
-        { digestIds, reason },
-      );
-      return res.data;
+      // Bare { success, data } envelope — already unwrapped by `apiClient`.
+      return apiClient.post<BatchReviewResult>('/admin/digests/batch-reject', {
+        digestIds,
+        reason,
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'review'] });

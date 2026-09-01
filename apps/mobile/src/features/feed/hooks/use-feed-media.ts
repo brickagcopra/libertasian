@@ -2,17 +2,15 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../../../lib/api-client';
 import type { FeedMediaStatus, FeedMediaProcessingStatus } from '@libertasian/types';
 
-interface UploadResponse {
-  success: boolean;
-  data: {
-    mediaId: string;
-    processingStatus: FeedMediaProcessingStatus;
-  };
-}
-
-interface MediaStatusResponse {
-  success: boolean;
-  data: FeedMediaStatus;
+/**
+ * The UNWRAPPED payloads. `POST /feed/media/upload` and
+ * `GET /feed/media/:id/status` both return a bare `{ success, data }` envelope,
+ * which `apiClient` (and `uploadMultipart`) already strip — so these describe
+ * what the caller actually receives, not the wire envelope.
+ */
+interface UploadResult {
+  mediaId: string;
+  processingStatus: FeedMediaProcessingStatus;
 }
 
 interface UploadParams {
@@ -32,7 +30,7 @@ export function useUploadFeedMedia() {
         type: params.mimeType,
       } as unknown as Blob);
 
-      return apiClient.uploadMultipart<UploadResponse>('/feed/media/upload', formData, {
+      return apiClient.uploadMultipart<UploadResult>('/feed/media/upload', formData, {
         onProgress: params.onProgress,
       });
     },
@@ -43,10 +41,14 @@ export function useFeedMediaStatus(mediaId: string | null) {
   return useQuery({
     queryKey: ['feed-media-status', mediaId],
     queryFn: () =>
-      apiClient.get<MediaStatusResponse>(`/feed/media/${mediaId}/status`),
+      apiClient.get<FeedMediaStatus>(`/feed/media/${mediaId}/status`),
     enabled: !!mediaId,
     refetchInterval: (query) => {
-      const status = query.state.data?.data?.processingStatus;
+      // NO second `.data`. This poll previously compared `undefined` against
+      // 'ready'/'failed'/'quarantined' and so never terminated: every
+      // create-post screen with an attached image hit the API every 2s until
+      // it unmounted.
+      const status = query.state.data?.processingStatus;
       if (status === 'ready' || status === 'failed' || status === 'quarantined') {
         return false;
       }

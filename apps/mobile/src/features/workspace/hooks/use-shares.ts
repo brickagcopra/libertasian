@@ -24,7 +24,7 @@ export function useShares(params?: UseSharesParams) {
       if (params?.entityType) queryParams['entityType'] = params.entityType;
       if (params?.entityId) queryParams['entityId'] = params.entityId;
 
-      return apiClient.get<ShareListResponse>('/shares', { params: queryParams });
+      return apiClient.get<ShareListResponse['data']>('/shares', { params: queryParams });
     },
     enabled: !!params?.entityType && !!params?.entityId,
     staleTime: 2 * 60 * 1000,

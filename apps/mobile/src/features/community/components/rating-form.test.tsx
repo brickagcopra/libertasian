@@ -47,8 +47,11 @@ function createWrapper() {
 const mockMutate = jest.fn();
 
 function setupMocks(existingRating: unknown = null) {
+  // `useMyRating` resolves with the UNWRAPPED rating: `apiClient` already
+  // strips the { success, data } envelope that GET
+  // /community/ratings/mine/:type/:id returns.
   mockUseMyRating.mockReturnValue({
-    data: { success: true, data: existingRating },
+    data: existingRating,
     isLoading: false,
     isSuccess: true,
   } as ReturnType<typeof ratingsHooks.useMyRating>);

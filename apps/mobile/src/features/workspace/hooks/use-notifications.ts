@@ -86,7 +86,7 @@ export function useUnreadCount() {
   return useQuery({
     queryKey: ['notifications-unread-count'],
     queryFn: () =>
-      apiClient.get<UnreadCountResponse>('/notifications/unread-count'),
+      apiClient.get<UnreadCountResponse['data']>('/notifications/unread-count'),
     refetchInterval: () => (isSocketConnected() ? false : 30_000),
   });
 }

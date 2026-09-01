@@ -33,12 +33,10 @@ describe('CreatePleadingScreen', () => {
 
   it('renders template cards', () => {
     mockUsePleadingTemplates.mockReturnValue({
-      data: {
-        data: [
+      data: [
           { id: 'tpl-1', name: 'Motion to Dismiss', slug: 'motion-to-dismiss', category: 'motion', court: null, description: 'Standard motion to dismiss', isActive: true },
           { id: 'tpl-2', name: 'Answer', slug: 'answer', category: 'answer', court: null, description: 'Standard answer to complaint', isActive: true },
         ],
-      },
       isLoading: false,
     });
     const { getByText } = render(<CreatePleadingScreen />, { wrapper: createWrapper() });

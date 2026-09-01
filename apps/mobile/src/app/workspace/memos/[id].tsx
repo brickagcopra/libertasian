@@ -28,7 +28,8 @@ export default function MemoDetailScreen() {
   const deleteMemo = useDeleteMemo();
 
   // The mobile hook returns MemoDetailResponse, extract .data
-  const memo = resp?.data;
+  // Bare { success, data } envelope — already unwrapped by `apiClient`.
+  const memo = resp;
 
   const handleDelete = useCallback(() => {
     if (!id) return;

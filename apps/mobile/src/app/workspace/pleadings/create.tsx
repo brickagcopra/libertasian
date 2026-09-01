@@ -52,8 +52,10 @@ export default function CreatePleadingScreen() {
   const { data: templateDetailResp, isLoading: isLoadingDetail } =
     usePleadingTemplate(selectedTemplateId ?? '', !!selectedTemplateId);
 
-  const templates = templatesResp?.data ?? [];
-  const templateDetail = templateDetailResp?.data;
+  // Both template endpoints return a bare { success, data } envelope, already
+  // stripped by `apiClient` — the template picker was permanently empty.
+  const templates = templatesResp ?? [];
+  const templateDetail = templateDetailResp;
   const sections = templateDetail?.templateJson?.sections ?? [];
 
   const isStep2 = selectedTemplateId !== null && templateDetail !== undefined;

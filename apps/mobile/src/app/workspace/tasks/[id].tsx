@@ -158,7 +158,9 @@ export default function TaskDetailScreen() {
 
   const [commentText, setCommentText] = useState('');
 
-  const task = data?.data;
+  // `GET /tasks/:id` is a bare { success, data } envelope (unlike
+  // `GET /tasks`, which carries `meta`) — already unwrapped by `apiClient`.
+  const task = data;
 
   const handleUpdate = useCallback(
     (fields: Record<string, unknown>) => {

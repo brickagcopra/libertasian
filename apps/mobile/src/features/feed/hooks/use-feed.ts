@@ -73,7 +73,7 @@ export function useBookmarkedPosts() {
 export function usePostDetail(postId: string) {
   return useQuery({
     queryKey: ['feed-post', postId],
-    queryFn: () => apiClient.get<PostDetailResponse>(`/feed/posts/${postId}`),
+    queryFn: () => apiClient.get<PostDetailResponse['data']>(`/feed/posts/${postId}`),
     enabled: !!postId,
     staleTime: 2 * 60 * 1000,
   });

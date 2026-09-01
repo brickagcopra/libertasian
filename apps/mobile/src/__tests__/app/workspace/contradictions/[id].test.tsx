@@ -37,7 +37,6 @@ describe('ContradictionDetailScreen', () => {
   it('renders completed contradiction report', () => {
     mockUseContradiction.mockReturnValue({
       data: {
-        data: {
           id: 'ct-1',
           scope: 'selected',
           topic: null,
@@ -64,7 +63,6 @@ describe('ContradictionDetailScreen', () => {
             }],
           },
         },
-      },
       isLoading: false,
       error: null,
     });

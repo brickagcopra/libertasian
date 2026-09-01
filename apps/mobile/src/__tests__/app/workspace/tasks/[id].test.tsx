@@ -84,7 +84,6 @@ describe('TaskDetailScreen', () => {
   it('renders task title and status chips', () => {
     mockUseTask.mockReturnValue({
       data: {
-        data: {
           id: 't-1',
           title: 'File Motion',
           description: 'File the preliminary motion',
@@ -104,7 +103,6 @@ describe('TaskDetailScreen', () => {
           completedAt: null,
           _count: { comments: 0 },
         },
-      },
       isLoading: false,
     });
     const { getByText } = render(<TaskDetailScreen />, {

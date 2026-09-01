@@ -10,11 +10,11 @@ export function useFlashcardReviewStats(setId: string) {
   return useQuery({
     queryKey: ['flashcard-review-stats', setId],
     queryFn: async () => {
-      const res = await apiClient.get<{
-        success: boolean;
-        data: FlashcardReviewStats;
-      }>(`/study/flashcard-sets/${setId}/review-stats`);
-      return res.data;
+      // NO `.data`: bare { success, data } envelope, already stripped by
+      // `apiClient`.
+      return apiClient.get<FlashcardReviewStats>(
+        `/study/flashcard-sets/${setId}/review-stats`,
+      );
     },
     enabled: !!setId,
   });
@@ -31,11 +31,10 @@ export function useSubmitFlashcardReview() {
       flashcardId: string;
       input: SubmitFlashcardReviewInput;
     }) => {
-      const res = await apiClient.post<{
-        success: boolean;
-        data: FlashcardReview;
-      }>(`/study/flashcards/${flashcardId}/review`, input);
-      return res.data;
+      return apiClient.post<FlashcardReview>(
+        `/study/flashcards/${flashcardId}/review`,
+        input,
+      );
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['flashcard-review-stats'] });

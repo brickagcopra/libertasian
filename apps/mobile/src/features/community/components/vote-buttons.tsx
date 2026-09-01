@@ -24,7 +24,8 @@ export function VoteButtons({
   const upsertVote = useUpsertVote();
   const removeVote = useRemoveVote();
 
-  const myVote = myVoteRes?.data ?? null;
+  // Bare { success, data } envelope — already unwrapped by `apiClient`.
+  const myVote = myVoteRes ?? null;
   const isUpvoted = myVote?.voteType === 'up';
   const isDownvoted = myVote?.voteType === 'down';
   const isPending = upsertVote.isPending || removeVote.isPending;

@@ -41,7 +41,6 @@ describe('MemoDetailScreen', () => {
   it('renders completed memo with sections', () => {
     mockUseMemo.mockReturnValue({
       data: {
-        data: {
           id: 'memo-1',
           query: 'What is res judicata?',
           memoType: 'legal_opinion',
@@ -64,7 +63,6 @@ describe('MemoDetailScreen', () => {
           userId: 'u-1',
           organizationId: 'org-1',
         },
-      },
       isLoading: false,
       error: null,
     });
@@ -75,7 +73,6 @@ describe('MemoDetailScreen', () => {
   it('shows generating state', () => {
     mockUseMemo.mockReturnValue({
       data: {
-        data: {
           id: 'memo-1',
           query: 'Test query',
           memoType: 'legal_opinion',
@@ -91,7 +88,6 @@ describe('MemoDetailScreen', () => {
           userId: 'u-1',
           organizationId: 'org-1',
         },
-      },
       isLoading: false,
       error: null,
     });

@@ -33,7 +33,7 @@ export function useTasks(filters: TaskFilters = {}) {
 export function useTask(id: string | null) {
   return useQuery({
     queryKey: ['task', id],
-    queryFn: () => apiClient.get<TaskDetailResponse>(`/tasks/${id}`),
+    queryFn: () => apiClient.get<TaskDetailResponse['data']>(`/tasks/${id}`),
     enabled: !!id,
     staleTime: 2 * 60 * 1000,
   });

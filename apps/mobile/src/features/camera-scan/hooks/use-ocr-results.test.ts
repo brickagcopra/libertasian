@@ -20,7 +20,8 @@ beforeEach(() => jest.clearAllMocks());
 
 describe('useOcrResults', () => {
   it('fetches OCR results', async () => {
-    mockGet.mockResolvedValueOnce({ data: { ocrStatus: 'completed', text: 'Extracted text' } });
+    // apiClient returns the UNWRAPPED body — unwrapEnvelope already ran.
+    mockGet.mockResolvedValueOnce({ ocrStatus: 'completed', text: 'Extracted text' });
     const { result } = renderHook(() => useOcrResults('u1'), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(mockGet).toHaveBeenCalledWith('/uploads/u1/ocr');

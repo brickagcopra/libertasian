@@ -26,7 +26,8 @@ export function RatingForm({ entityType, entityId }: RatingFormProps) {
   const upsertRating = useUpsertRating();
   const deleteRating = useDeleteRating();
 
-  const existing = myRatingRes?.data ?? null;
+  // Bare { success, data } envelope — already unwrapped by `apiClient`.
+  const existing = myRatingRes ?? null;
 
   const [score, setScore] = useState(0);
   const [reviewTitle, setReviewTitle] = useState('');

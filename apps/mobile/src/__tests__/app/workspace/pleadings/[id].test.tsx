@@ -35,7 +35,6 @@ describe('PleadingDetailScreen', () => {
   it('renders completed pleading with sections', () => {
     mockUsePleading.mockReturnValue({
       data: {
-        data: {
           id: 'p-1',
           template: { id: 'tpl-1', name: 'Motion to Dismiss', category: 'motion' },
           status: 'completed',
@@ -53,7 +52,6 @@ describe('PleadingDetailScreen', () => {
           userId: 'u1',
           organizationId: 'org1',
         },
-      },
       isLoading: false,
       error: null,
     });

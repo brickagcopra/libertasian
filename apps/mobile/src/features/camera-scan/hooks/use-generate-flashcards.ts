@@ -15,7 +15,7 @@ export function useGenerateFlashcardsFromScan() {
 
   return useMutation({
     mutationFn: async ({ uploadId, ...body }: GenerateFlashcardsParams) => {
-      return apiClient.post<GenerateFlashcardsResponse>(
+      return apiClient.post<GenerateFlashcardsResponse['data']>(
         `/uploads/${uploadId}/generate-flashcards`,
         body,
       );

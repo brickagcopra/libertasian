@@ -105,7 +105,10 @@ export default function NotificationsScreen() {
   const deleteNotification = useDeleteNotification();
 
   const notifications = notificationsData?.data ?? [];
-  const unreadCount = unreadCountData?.data?.count ?? 0;
+  // `GET /notifications/unread-count` is a bare { success, data } envelope
+  // (unlike `GET /notifications`, which carries `meta` and so survives
+  // unwrapping) — one `.data` too many left the badge permanently at 0.
+  const unreadCount = unreadCountData?.count ?? 0;
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);

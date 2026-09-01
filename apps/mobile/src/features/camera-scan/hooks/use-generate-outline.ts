@@ -10,7 +10,7 @@ interface GenerateOutlineParams {
 export function useGenerateOutlineFromScan() {
   return useMutation({
     mutationFn: async ({ uploadId, ...body }: GenerateOutlineParams) => {
-      return apiClient.post<GenerateOutlineResponse>(
+      return apiClient.post<GenerateOutlineResponse['data']>(
         `/uploads/${uploadId}/generate-outline`,
         body,
       );

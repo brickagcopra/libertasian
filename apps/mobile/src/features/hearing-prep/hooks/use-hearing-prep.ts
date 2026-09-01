@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../../../lib/api-client';
 import type {
   HearingPrepListResponse,
-  HearingPrepDetailResponse,
+  HearingPrepDetail,
   HearingPrepListItem,
   HearingPrepFilters,
   GenerateHearingPrepInput,
@@ -27,12 +27,16 @@ export function useHearingPrep(id: string, enabled = true) {
   return useQuery({
     queryKey: ['hearing-prep', id],
     queryFn: () =>
-      apiClient.get<HearingPrepDetailResponse>(`/hearing-prep/${id}`),
+      apiClient.get<HearingPrepDetail>(`/hearing-prep/${id}`),
     enabled: enabled && id.length > 0,
     staleTime: 5 * 60 * 1000,
     refetchInterval: (query) => {
-      const resp = query.state.data as HearingPrepDetailResponse | undefined;
-      const pack = resp?.data;
+      // NO second `.data`: `GET /hearing-prep/:id` returns a bare
+      // { success, data } envelope, which `apiClient` already strips, so
+      // `query.state.data` IS the detail object. Reading `.data` off it gave
+      // `undefined` and the status check below could never be true — the poll
+      // stopped immediately and a still-generating record never refreshed.
+      const pack = query.state.data as HearingPrepDetail | undefined;
       if (
         pack &&
         (pack.status === 'pending' || pack.status === 'generating')

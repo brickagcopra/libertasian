@@ -46,7 +46,7 @@ describe('CommunityScreen', () => {
 
   it('renders browse category cards', () => {
     mockUseMarketplaceFeatured.mockReturnValue({
-      data: { data: { flashcardSets: [], reviewerPacks: [], digests: [] } },
+      data: { flashcardSets: [], reviewerPacks: [], digests: [] },
       isLoading: false,
       isFetching: false,
       refetch: jest.fn(),
@@ -59,7 +59,7 @@ describe('CommunityScreen', () => {
 
   it('renders expert verification CTA', () => {
     mockUseMarketplaceFeatured.mockReturnValue({
-      data: { data: { flashcardSets: [], reviewerPacks: [], digests: [] } },
+      data: { flashcardSets: [], reviewerPacks: [], digests: [] },
       isLoading: false,
       isFetching: false,
       refetch: jest.fn(),

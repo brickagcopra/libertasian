@@ -36,7 +36,6 @@ describe('TimelineDetailScreen', () => {
   it('renders completed timeline with events', () => {
     mockUseTimeline.mockReturnValue({
       data: {
-        data: {
           id: 'tl-1',
           title: 'Case Timeline',
           status: 'completed',
@@ -60,7 +59,6 @@ describe('TimelineDetailScreen', () => {
             }],
           },
         },
-      },
       isLoading: false,
       error: null,
     });

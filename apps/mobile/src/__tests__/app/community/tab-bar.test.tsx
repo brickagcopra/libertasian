@@ -16,7 +16,11 @@ jest.mock('@expo/vector-icons', () => ({
   },
 }));
 
-/** Shape returned by the useQuery-based marketplace list hooks. */
+/**
+ * The marketplace LIST endpoints send `{ success, data, meta }`; the `meta`
+ * sibling stops `apiClient` unwrapping them, so these hooks really do resolve
+ * with the envelope. Contrast `mockEmptyFeatured` below.
+ */
 const mockEmptyList = {
   data: { success: true, data: { items: [], hasNext: false, nextCursor: null } },
   isLoading: false,
@@ -25,12 +29,13 @@ const mockEmptyList = {
   refetch: jest.fn(),
 };
 
-/** useMarketplaceFeatured returns three named buckets, not a list. */
+/**
+ * useMarketplaceFeatured returns three named buckets, not a list — and
+ * `GET /community/marketplace/featured` is a bare { success, data } envelope,
+ * so `apiClient` strips it and the hook resolves with the buckets themselves.
+ */
 const mockEmptyFeatured = {
-  data: {
-    success: true,
-    data: { flashcardSets: [], reviewerPacks: [], digests: [] },
-  },
+  data: { flashcardSets: [], reviewerPacks: [], digests: [] },
   isLoading: false,
   isFetching: false,
   error: null,
@@ -42,21 +47,19 @@ jest.mock('@/features/community/hooks/use-marketplace', () => ({
   useMarketplaceDigests: () => mockEmptyList,
   useMarketplaceFlashcardSets: () => mockEmptyList,
   useMarketplaceReviewerPacks: () => mockEmptyList,
+  // Bare { success, data } envelope — already unwrapped by `apiClient`.
   useContributorProfile: () => ({
     isLoading: false,
     error: null,
     data: {
-      success: true,
-      data: {
-        user: { id: 'u1', fullName: 'Atty. Maria Santos' },
-        stats: {
-          totalItems: 3,
-          totalDownloads: 12,
-          averageRating: 4.5,
-          totalRatings: 4,
-        },
-        isExpert: false,
+      user: { id: 'u1', fullName: 'Atty. Maria Santos' },
+      stats: {
+        totalItems: 3,
+        totalDownloads: 12,
+        averageRating: 4.5,
+        totalRatings: 4,
       },
+      isExpert: false,
     },
   }),
 }));

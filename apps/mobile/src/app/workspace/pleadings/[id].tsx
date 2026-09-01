@@ -29,7 +29,8 @@ export default function PleadingDetailScreen() {
   const { data: resp, isLoading, error } = usePleading(id ?? '', !!id);
   const deletePleading = useDeletePleading();
 
-  const pleading = resp?.data;
+  // Bare { success, data } envelope — already unwrapped by `apiClient`.
+  const pleading = resp;
 
   const handleDelete = useCallback(() => {
     if (!id) return;

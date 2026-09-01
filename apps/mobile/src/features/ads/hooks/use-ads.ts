@@ -18,7 +18,7 @@ export function useActiveAds(page: string, userType?: string) {
     queryFn: () => {
       const params: Record<string, string> = { page };
       if (userType) params['userType'] = userType;
-      return apiClient.get<ActiveAdsResponse>('/ads/active', {
+      return apiClient.get<ActiveAdsResponse['data']>('/ads/active', {
         params,
         skipAuth: true,
       });

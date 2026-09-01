@@ -55,7 +55,6 @@ describe('ContributorProfileScreen', () => {
   it('renders contributor profile', () => {
     mockUseContributorProfile.mockReturnValue({
       data: {
-        data: {
           user: {
             id: 'user-1',
             fullName: 'Maria Santos',
@@ -70,7 +69,6 @@ describe('ContributorProfileScreen', () => {
             avgRating: 4.7,
           },
         },
-      },
       isLoading: false,
       error: null,
     });
@@ -81,7 +79,6 @@ describe('ContributorProfileScreen', () => {
   it('displays stat cards', () => {
     mockUseContributorProfile.mockReturnValue({
       data: {
-        data: {
           user: {
             id: 'user-1',
             fullName: 'Maria Santos',
@@ -96,7 +93,6 @@ describe('ContributorProfileScreen', () => {
             avgRating: 4.0,
           },
         },
-      },
       isLoading: false,
       error: null,
     });

@@ -6,7 +6,7 @@ export function useMyVote(entityType: string, entityId: string) {
   return useQuery({
     queryKey: ['my-vote', entityType, entityId],
     queryFn: () =>
-      apiClient.get<MyVoteResponse>(
+      apiClient.get<MyVoteResponse['data']>(
         `/community/votes/mine/${entityType}/${entityId}`,
       ),
     enabled: !!entityId,

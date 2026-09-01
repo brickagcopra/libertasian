@@ -40,7 +40,8 @@ export default function ContradictionDetailScreen() {
   const { data: resp, isLoading, error } = useContradiction(id ?? '', !!id);
   const deleteContradiction = useDeleteContradiction();
 
-  const report = resp?.data;
+  // Bare { success, data } envelope — already unwrapped by `apiClient`.
+  const report = resp;
 
   const handleDelete = useCallback(() => {
     if (!id) return;

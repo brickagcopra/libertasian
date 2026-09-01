@@ -32,7 +32,8 @@ export default function ContributorProfileScreen() {
   const clearance = useTabBarClearance();
   const { data, isLoading, error } = useContributorProfile(userId ?? '');
 
-  const profile = data?.data;
+  // Bare { success, data } envelope — already unwrapped by `apiClient`.
+  const profile = data;
 
   if (isLoading) {
     return (

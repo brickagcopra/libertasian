@@ -18,7 +18,9 @@ export default function BlogScreen() {
   const postsQuery = useBlogPosts(selectedTag);
 
   const posts = postsQuery.data?.pages.flatMap((p) => p.data) ?? [];
-  const tags: BlogTag[] = tagsQuery.data?.data ?? [];
+  // `GET /blog/tags` returns a bare { success, data } envelope, already
+  // stripped by `apiClient` — so the query data IS the tag array.
+  const tags: BlogTag[] = tagsQuery.data ?? [];
 
   const handleRefresh = useCallback(() => {
     postsQuery.refetch();

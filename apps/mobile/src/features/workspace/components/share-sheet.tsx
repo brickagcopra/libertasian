@@ -76,7 +76,8 @@ export function ShareSheet({
   const updateShare = useUpdateShare();
   const revokeShare = useRevokeShare();
 
-  const shares = sharesData?.data ?? [];
+  // `GET /shares` is a bare { success, data } envelope — already unwrapped.
+  const shares = sharesData ?? [];
 
   const resetForm = useCallback(() => {
     setPermission('view');
