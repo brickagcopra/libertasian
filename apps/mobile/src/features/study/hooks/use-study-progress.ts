@@ -38,7 +38,12 @@ export function useUpsertStudyProgress() {
       entityId: string;
       input: UpsertStudyProgressInput;
     }) =>
-      apiClient.patch<StudyProgress>(
+      // PUT, not PATCH. The server declares
+      // `@Put('progress/:entityType/:entityId')` (study.controller.ts:745) and
+      // has no PATCH handler on that path, so every save 404'd. It is an upsert
+      // — the whole progress record is replaced — so PUT is also the correct
+      // verb on the merits; the client was simply wrong about it.
+      apiClient.put<StudyProgress>(
         `/study/progress/${entityType}/${entityId}`,
         input,
       ),

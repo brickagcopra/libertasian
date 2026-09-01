@@ -71,10 +71,10 @@ export function useClassificationDetail(id: string) {
     queryFn: async () => {
       // Bare { success, data } envelope — already unwrapped by `apiClient`.
       //
-      // NOTE: the API has no `GET /admin/classification/:id` route today
-      // (`ClassificationController` exposes only review-queue, stats, confirm,
-      // reject and override), so this request 404s regardless of the shape.
-      // Left as-is here; adding the route is a separate API change.
+      // The server route this calls is `@Get(':id')` on
+      // `ClassificationController`, declared AFTER `review-queue` and `stats`
+      // so it does not swallow them. `id` is a legal document id, the same id
+      // confirm / reject / override take.
       return apiClient.get<ClassificationDetail>(`/admin/classification/${id}`);
     },
     enabled: id.length > 0,

@@ -5,10 +5,11 @@ import { apiClient } from '../../../lib/api-client';
 import { useStudyProgressList, useStudyProgress, useUpsertStudyProgress } from './use-study-progress';
 
 jest.mock('../../../lib/api-client', () => ({
-  apiClient: { get: jest.fn(), patch: jest.fn() },
+  apiClient: { get: jest.fn(), put: jest.fn(), patch: jest.fn() },
 }));
 
 const mockGet = apiClient.get as jest.MockedFunction<typeof apiClient.get>;
+const mockPut = apiClient.put as jest.MockedFunction<typeof apiClient.put>;
 const mockPatch = apiClient.patch as jest.MockedFunction<typeof apiClient.patch>;
 
 function createWrapper() {
@@ -52,14 +53,33 @@ describe('useStudyProgress', () => {
   });
 });
 
+/**
+ * THE VERB IS PART OF THE CONTRACT.
+ *
+ * The server declares `@Put('progress/:entityType/:entityId')` and registers no
+ * PATCH handler on that path, so the old `apiClient.patch` 404'd on every save
+ * — silently, because nothing on the study screens surfaces a failed upsert.
+ * This suite used to assert the PATCH and so proved only that the hook was
+ * self-consistent.
+ */
 describe('useUpsertStudyProgress', () => {
-  it('patches to correct endpoint', async () => {
-    mockPatch.mockResolvedValueOnce({ entityType: 'codal', entityId: '1', progress: 100 });
+  it('PUTs to the endpoint the server actually declares', async () => {
+    mockPut.mockResolvedValueOnce({ entityType: 'codal', entityId: '1', progress: 100 });
     const { result } = renderHook(() => useUpsertStudyProgress(), { wrapper: createWrapper() });
     await act(async () => {
       result.current.mutate({ entityType: 'codal', entityId: '1', input: { status: 'completed', progressPct: 100 } });
     });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(mockPatch).toHaveBeenCalledWith('/study/progress/codal/1', { status: 'completed', progressPct: 100 });
+    expect(mockPut).toHaveBeenCalledWith('/study/progress/codal/1', { status: 'completed', progressPct: 100 });
+  });
+
+  it('never issues a PATCH — there is no PATCH route to receive it', async () => {
+    mockPut.mockResolvedValueOnce({ entityType: 'codal', entityId: '1', progress: 100 });
+    const { result } = renderHook(() => useUpsertStudyProgress(), { wrapper: createWrapper() });
+    await act(async () => {
+      result.current.mutate({ entityType: 'codal', entityId: '1', input: { status: 'completed', progressPct: 100 } });
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockPatch).not.toHaveBeenCalled();
   });
 });

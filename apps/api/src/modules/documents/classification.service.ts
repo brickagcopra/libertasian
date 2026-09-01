@@ -75,6 +75,59 @@ export class ClassificationService {
     };
   }
 
+  /**
+   * One document's classification state, for the admin review detail screen.
+   *
+   * `id` here is a LEGAL DOCUMENT id, not a tag-map id: the review queue
+   * returns `legalDocument` rows and the mobile list pushes `item.id` into
+   * this route. Confirm/reject/override take the same document id, so all four
+   * screens agree on what the id in the URL means.
+   *
+   * Flattens the subject tag-maps the way the review queue's consumers expect:
+   * one primary prediction, one secondary, and the primary's confidence.
+   */
+  async getClassificationDetail(documentId: string) {
+    const doc = await this.prisma.legalDocument.findUnique({
+      where: { id: documentId },
+      select: {
+        id: true,
+        title: true,
+        documentType: true,
+        court: true,
+        createdAt: true,
+        tagMaps: {
+          where: { tag: { tagType: { in: ['bar_subject', 'subject'] } } },
+          select: {
+            isPrimary: true,
+            confidence: true,
+            tag: { select: { code: true } },
+          },
+        },
+      },
+    });
+
+    if (!doc) {
+      throw new NotFoundException(`Document ${documentId} not found`);
+    }
+
+    const primary = doc.tagMaps.find((t) => t.isPrimary) ?? null;
+    const secondary = doc.tagMaps.find((t) => !t.isPrimary) ?? null;
+
+    return {
+      id: doc.id,
+      legalDocumentId: doc.id,
+      documentTitle: doc.title,
+      documentType: doc.documentType,
+      court: doc.court,
+      createdAt: doc.createdAt,
+      predictedPrimary: primary?.tag.code ?? null,
+      predictedSecondary: secondary?.tag.code ?? null,
+      // `confidence` is nullable in the schema; the detail screen renders it as
+      // a percentage, so a missing value is 0 rather than NaN.
+      confidence: primary?.confidence ?? 0,
+    };
+  }
+
   async confirmClassification(documentId: string, tagId: string) {
     const tagMap = await this.prisma.legalDocumentTagMap.findUnique({
       where: {

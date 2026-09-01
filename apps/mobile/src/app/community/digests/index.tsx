@@ -31,16 +31,33 @@ export default function MarketplaceDigestsScreen() {
   const clearance = useTabBarClearance();
   const [sortBy, setSortBy] = useState<MarketplaceSortBy>('top_rated');
 
-  const { data, isLoading, isFetching, refetch } = useMarketplaceDigests({
+  const {
+    data,
+    isLoading,
+    isFetching,
+    refetch,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useMarketplaceDigests({
     sortBy,
     search: search.trim() || undefined,
   });
 
-  const items = data?.data?.items ?? [];
+  // `data.items` is the flattened pages; `hasNext` comes from the last
+  // page's `meta`. The old `data?.data?.items` read a field the response
+  // does not have — `data` is the item array — so this list was empty.
+  const items = data?.items ?? [];
 
   const handleRefresh = useCallback(() => {
     refetch();
   }, [refetch]);
+
+  const handleEndReached = useCallback(() => {
+    // `hasNextPage` is derived from `meta.hasNext` / `meta.nextCursor`, the
+    // cursor the server has been sending all along and nothing ever read.
+    if (hasNextPage && !isFetchingNextPage) fetchNextPage();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   const renderItem = useCallback(
     ({ item }: { item: MarketplaceItem }) => (
@@ -103,8 +120,15 @@ export default function MarketplaceDigestsScreen() {
           keyExtractor={(item) => item.id}
           renderItem={renderItem}
           contentContainerStyle={[styles.listContent, { paddingBottom: clearance }]}
-          refreshing={isFetching && !isLoading}
+          refreshing={isFetching && !isLoading && !isFetchingNextPage}
           onRefresh={handleRefresh}
+          onEndReached={handleEndReached}
+          onEndReachedThreshold={0.5}
+          ListFooterComponent={
+            isFetchingNextPage ? (
+              <ActivityIndicator style={styles.footerSpinner} color="#1a56db" />
+            ) : null
+          }
           ListEmptyComponent={
             isLoading ? (
               <View style={styles.loadingBox}>
@@ -175,6 +199,7 @@ const styles = StyleSheet.create({
   sortPillTextActive: {
     color: '#fff',
   },
+  footerSpinner: { paddingVertical: 16 },
   listContent: {
     paddingHorizontal: 12,
   },

@@ -40,7 +40,7 @@ describe('MarketplaceFlashcardSetsScreen', () => {
 
   it('shows empty state', () => {
     mockUseMarketplaceFlashcardSets.mockReturnValue({
-      data: { data: { items: [] } },
+      data: { items: [], hasNext: false },
       isLoading: false,
       isFetching: false,
       refetch: jest.fn(),
@@ -52,8 +52,7 @@ describe('MarketplaceFlashcardSetsScreen', () => {
   it('renders marketplace items', () => {
     mockUseMarketplaceFlashcardSets.mockReturnValue({
       data: {
-        data: {
-          items: [
+        items: [
             {
               id: 'mfs-1',
               contentType: 'flashcard_set',
@@ -68,8 +67,8 @@ describe('MarketplaceFlashcardSetsScreen', () => {
               createdAt: '2024-01-01',
               updatedAt: '2024-01-01',
             },
-          ],
-        },
+        ],
+        hasNext: false,
       },
       isLoading: false,
       isFetching: false,
@@ -81,7 +80,7 @@ describe('MarketplaceFlashcardSetsScreen', () => {
 
   it('renders sort pills', () => {
     mockUseMarketplaceFlashcardSets.mockReturnValue({
-      data: { data: { items: [] } },
+      data: { items: [], hasNext: false },
       isLoading: false,
       isFetching: false,
       refetch: jest.fn(),
@@ -89,5 +88,89 @@ describe('MarketplaceFlashcardSetsScreen', () => {
     const { getByText } = render(<MarketplaceFlashcardSetsScreen />, { wrapper: createWrapper() });
     expect(getByText(/Top Rated/i)).toBeTruthy();
     expect(getByText(/Newest/i)).toBeTruthy();
+  });
+  /**
+   * PAGING COMES FROM `meta`, AND THE ITEMS COME FROM `data`.
+   *
+   * The response is `{ success, data: MarketplaceItem[], meta: { hasNext,
+   * nextCursor } }`. This screen used to read `data.data.items` — a field that
+   * does not exist, because `data` IS the array — so the list rendered empty no
+   * matter what the server returned, and the cursor under `meta` was never read
+   * by anything.
+   */
+  it('renders the items the hook flattened, and pages when the list ends', () => {
+    const fetchNextPage = jest.fn();
+    mockUseMarketplaceFlashcardSets.mockReturnValue({
+      data: { items: [{
+        id: 'fs-1',
+        contentType: 'flashcard_set',
+        title: 'Sample Item',
+        description: null,
+        barSubject: null,
+        topic: null,
+        avgRating: 4.2,
+        ratingCount: 8,
+        itemCount: 5,
+        creator: { id: 'u3', fullName: 'Pedro', expertVerification: null },
+        createdAt: '2024-01-01',
+        updatedAt: '2024-01-01',
+      }], hasNext: true },
+      isLoading: false,
+      isFetching: false,
+      refetch: jest.fn(),
+      fetchNextPage,
+      hasNextPage: true,
+      isFetchingNextPage: false,
+    });
+
+    const { UNSAFE_getByType } = render(<MarketplaceFlashcardSetsScreen />, {
+      wrapper: createWrapper(),
+    });
+
+    const { FlatList } = require('react-native');
+    const list = UNSAFE_getByType(FlatList);
+
+    // The list is populated at all — this was `[]` before the fix.
+    expect(list.props.data).toHaveLength(1);
+    expect(list.props.data[0].id).toBe('fs-1');
+
+    list.props.onEndReached();
+    expect(fetchNextPage).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not page past the last page the server reports', () => {
+    const fetchNextPage = jest.fn();
+    mockUseMarketplaceFlashcardSets.mockReturnValue({
+      data: { items: [{
+        id: 'fs-1',
+        contentType: 'flashcard_set',
+        title: 'Sample Item',
+        description: null,
+        barSubject: null,
+        topic: null,
+        avgRating: 4.2,
+        ratingCount: 8,
+        itemCount: 5,
+        creator: { id: 'u3', fullName: 'Pedro', expertVerification: null },
+        createdAt: '2024-01-01',
+        updatedAt: '2024-01-01',
+      }], hasNext: false },
+      isLoading: false,
+      isFetching: false,
+      refetch: jest.fn(),
+      fetchNextPage,
+      hasNextPage: false,
+      isFetchingNextPage: false,
+    });
+
+    const { UNSAFE_getByType } = render(<MarketplaceFlashcardSetsScreen />, {
+      wrapper: createWrapper(),
+    });
+    const { FlatList } = require('react-native');
+    UNSAFE_getByType(FlatList).props.onEndReached();
+
+    // `hasNextPage` is derived from `meta.hasNext`; honouring it is what stops
+    // an endless tail of requests at the bottom of the list.
+    expect(fetchNextPage).not.toHaveBeenCalled();
   });
 });
