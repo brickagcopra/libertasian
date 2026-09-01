@@ -25,19 +25,23 @@ export class UsersController {
   ) {}
 
   /**
-   * `Cache-Control: no-store` + `Vary: X-Platform`.
+   * `Cache-Control: no-store` is the load-bearing header here.
    *
-   * The body varies by `x-platform` but the response only ever carried
-   * `Vary: Origin`, so any shared cache — and the RN fetch layer's own — is
-   * free to hand one platform's answer to another, or one ACCOUNT's answer to
-   * the next one signed in on the same device. Added per route rather than as
-   * a global interceptor: `site-content.controller.ts` and
-   * `feed.controller.ts` set their own `Cache-Control` deliberately, and a
-   * blanket rule would clobber them.
+   * This body does NOT vary by platform — it is identical for every client.
+   * It varies by ACCOUNT, and it carried no `Cache-Control` at all, which is
+   * the problem: iOS `URLCache` does not key on `Authorization`, so the
+   * previous account's profile is a legitimate cache hit for the next account
+   * signed in on the same device, on the same URL.
    *
-   * `Origin` is repeated in the value on purpose. `@Header` SETS the header,
-   * and `enableCors` already put `Vary: Origin` there; naming only
-   * `X-Platform` would silently drop it.
+   * `Vary: Origin, X-Platform` is belt-and-braces: `X-Platform` costs nothing
+   * and keeps this route's caching answer identical to `/quotas/usage`, whose
+   * body genuinely does vary by platform. `Origin` is repeated in the value
+   * because `@Header` SETS the header and `enableCors` already put
+   * `Vary: Origin` there; naming only `X-Platform` would silently drop it.
+   *
+   * Added per route rather than as a global interceptor:
+   * `site-content.controller.ts` and `feed.controller.ts` set their own
+   * `Cache-Control` deliberately, and a blanket rule would clobber them.
    */
   @Get('me')
   @UseGuards(JwtAuthGuard)

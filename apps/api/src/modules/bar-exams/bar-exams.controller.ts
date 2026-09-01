@@ -1,6 +1,5 @@
 import {
   Controller,
-  ForbiddenException,
   Get,
   Headers,
   NotFoundException,
@@ -16,14 +15,12 @@ import type { JwtPayload } from '@libertasian/types';
 
 import type { Request } from 'express';
 
-import {
-  CLIENT_PLATFORM_HEADER,
-  parseClientPlatform,
-} from '../../common/config/store-availability';
+import { CLIENT_PLATFORM_HEADER } from '../../common/config/store-availability';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { AdminBypassAuditService } from '../../common/services/admin-bypass-audit.service';
 import { EntitlementService } from '../subscriptions/entitlement.service';
+import { assertBarExamEntitlement } from './bar-exam-entitlement';
 import { BarExamsService } from './bar-exams.service';
 
 /**
@@ -32,8 +29,8 @@ import { BarExamsService } from './bar-exams.service';
  * Past bar exams are a PAID surface in the freemium tier. Until now the only
  * thing standing between a free account and the full content was the mobile
  * client choosing not to render the tab — `JwtAuthGuard` alone lets any
- * signed-in caller read every sitting. The gate below is the server-side half
- * of that, and follows `DocumentsController.resolvePreviewOnly` exactly.
+ * signed-in caller read every sitting. `assertBarExamEntitlement` is the
+ * server-side half of that.
  */
 @ApiTags('Bar Exams')
 @ApiBearerAuth()
@@ -48,49 +45,22 @@ export class BarExamsController {
 
   /**
    * Refuse the read unless the caller's org is entitled to the paid corpora.
-   *
-   * 403, NOT 402. `getDefaultEntitlements('free')` explains that 402
-   * `subscription_required` is the status App Review reads as a paywall; the
-   * free client hides this surface entirely, so this refusal is unreachable by
-   * tapping — but if Review ever does reach it, they must not be handed a
-   * payment demand. A plain forbidden is the honest answer for a surface the
-   * client never offers.
-   *
-   * Gated in the handler rather than with `SubscriptionGuard`, which carries
-   * its own semantics and would change both the status code and the body.
-   *
-   * The platform is read from `x-platform` and threaded through, so a caller
-   * that cannot buy (web, and every mobile build before 26, which sends no
-   * header) resolves to `previewOnly === false` and stays unenforced — the
-   * same rule as `isPaywallEnforcedForRequest`.
+   * Shared verbatim with `BarExamAnswersPublicController`, which serves the
+   * model answer for the same paid surface — see `bar-exam-entitlement.ts`
+   * for the full reasoning.
    */
-  private async assertEntitled(
+  private assertEntitled(
     user: JwtPayload,
     req: Request,
     platformHeader?: string,
   ): Promise<void> {
-    // Platform admins (any `admin:*` permission) read the full corpus whatever
-    // their org's subscription says. Audited — throttled per userId+route — so
-    // admin reads of paid content stay traceable.
-    if (user.isPlatformAdmin === true) {
-      this.adminBypassAudit.record({
-        userId: user.sub,
-        organizationId: user.organizationId,
-        route: `${req.method} ${req.route?.path ?? req.path}`,
-      });
-      return;
-    }
-
-    const ent = await this.entitlementService.resolveEffectiveEntitlements(
-      user.organizationId,
-      parseClientPlatform(platformHeader),
-    );
-    if (ent.previewOnly === true) {
-      throw new ForbiddenException({
-        code: 'not_available_on_this_account',
-        message: "This isn't available on this account.",
-      });
-    }
+    return assertBarExamEntitlement({
+      entitlementService: this.entitlementService,
+      adminBypassAudit: this.adminBypassAudit,
+      user,
+      req,
+      platformHeader,
+    });
   }
 
   @Get()

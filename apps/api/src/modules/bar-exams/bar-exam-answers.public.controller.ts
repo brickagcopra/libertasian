@@ -1,11 +1,13 @@
 import {
   Controller,
   Get,
+  Headers,
   HttpException,
   HttpStatus,
   NotFoundException,
   Param,
   ParseUUIDPipe,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -13,12 +15,18 @@ import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
 import type { JwtPayload } from '@libertasian/types';
 
+import type { Request } from 'express';
+
+import { CLIENT_PLATFORM_HEADER } from '../../common/config/store-availability';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { MfaGuard } from '../../common/guards/mfa.guard';
 import { TenantGuard } from '../../common/guards/tenant.guard';
+import { AdminBypassAuditService } from '../../common/services/admin-bypass-audit.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { EntitlementService } from '../subscriptions/entitlement.service';
 import { UsageQuotaService } from '../subscriptions/usage-quota.service';
+import { assertBarExamEntitlement } from './bar-exam-entitlement';
 
 /**
  * Public read surface for approved bar exam ALAC answers (Phase 3b).
@@ -36,6 +44,12 @@ import { UsageQuotaService } from '../subscriptions/usage-quota.service';
  * Visibility: only rows that are BOTH `reviewStatus='approved'` AND
  * `visibility='public_editorial'` are returned. Private, pending, or
  * rejected rows all 404 — there is no other shape this endpoint can return.
+ *
+ * Entitlement: the model answer is the same PAID surface as the sittings
+ * `BarExamsController` serves, and this controller had no entitlement check at
+ * all — verified on prod as a free, non-admin caller (`previewOnly: true`,
+ * `x-platform: ios`), which got a 200 with the complete `answerText`. It now
+ * shares that controller's gate; see `bar-exam-entitlement.ts`.
  */
 @ApiTags('Bar Exams — Public Answers')
 @ApiBearerAuth()
@@ -46,6 +60,8 @@ export class BarExamAnswersPublicController {
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
     private readonly usageQuota: UsageQuotaService,
+    private readonly entitlementService: EntitlementService,
+    private readonly adminBypassAudit: AdminBypassAuditService,
   ) {}
 
   @Get()
@@ -59,11 +75,32 @@ export class BarExamAnswersPublicController {
   async get(
     @Param('questionId', ParseUUIDPipe) questionId: string,
     @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
+    @Headers(CLIENT_PLATFORM_HEADER) platformHeader?: string,
   ) {
     const flag = this.config.get<string>('FEATURE_BAR_EXAM_ANSWERS_PUBLIC');
     if (flag !== 'true') {
       throw new NotFoundException({ code: 'feature_disabled' });
     }
+
+    // Order: flag, THEN entitlement, THEN quota.
+    //
+    // The flag stays first because its whole job is to make the endpoint
+    // invisible while off — gating entitlement ahead of it would answer 403 to
+    // a free caller and 404 to a paying one, which tells the free caller the
+    // endpoint exists.
+    //
+    // Entitlement goes ahead of `checkAndIncrement` because that call CONSUMES
+    // the `aiAnswers` quota on the retrieval attempt. Charging an account for
+    // a read it is not entitled to make would be the same mistake the flag
+    // check above already avoids.
+    await assertBarExamEntitlement({
+      entitlementService: this.entitlementService,
+      adminBypassAudit: this.adminBypassAudit,
+      user,
+      req,
+      platformHeader,
+    });
 
     const quota = await this.usageQuota.checkAndIncrement(
       user.organizationId,
