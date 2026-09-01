@@ -1220,7 +1220,19 @@ describe('StorePurchasesService', () => {
     });
 
     it('reports in_sync when nothing drifted', async () => {
-      withStoreSubscription(SubscriptionState.ACTIVE);
+      // BOTH dates must be the SAME instant AND still in the future. `in_sync`
+      // needs two things to hold at once: the entitlement is active, which
+      // `readEntitlement` decides with `expiresAt.getTime() > Date.now()`, and
+      // its expiry equals our stored `currentPeriodEnd`, or the pull reconciles
+      // the period instead. This test used to pin both to the absolute instant
+      // 2026-09-01T00:00:00Z, so it asserted the truth only until that instant
+      // arrived — and then it stopped being a date at all. Past it the store
+      // entitlement reads as expired, the pull correctly revokes, and the
+      // assertion flipped to CANCEL_IMMEDIATELY on every run from that day on.
+      // That is not a flake that clears overnight: it turned main permanently
+      // red. Derive both from `future` so the fixture describes the STATE the
+      // test is about (a live, matching entitlement) rather than a calendar day.
+      withStoreSubscription(SubscriptionState.ACTIVE, { currentPeriodEnd: future });
       storeProvider.fetchSubscriberSnapshot.mockResolvedValue({
         appUserId: ORG_ID,
         entitlements: [
@@ -1228,7 +1240,7 @@ describe('StorePurchasesService', () => {
             id: 'pro',
             productId: 'com.libertasian.pro.monthly',
             store: 'app_store',
-            expiresAt: new Date('2026-09-01T00:00:00Z'),
+            expiresAt: future,
             willRenew: true,
             periodType: 'NORMAL',
             environment: 'production',
