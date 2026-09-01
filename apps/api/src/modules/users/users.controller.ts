@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Patch, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Header, Patch, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { JwtPayload } from '@libertasian/types';
 
@@ -24,8 +24,29 @@ export class UsersController {
     private readonly prisma: PrismaService,
   ) {}
 
+  /**
+   * `Cache-Control: no-store` is the load-bearing header here.
+   *
+   * This body does NOT vary by platform — it is identical for every client.
+   * It varies by ACCOUNT, and it carried no `Cache-Control` at all, which is
+   * the problem: iOS `URLCache` does not key on `Authorization`, so the
+   * previous account's profile is a legitimate cache hit for the next account
+   * signed in on the same device, on the same URL.
+   *
+   * `Vary: Origin, X-Platform` is belt-and-braces: `X-Platform` costs nothing
+   * and keeps this route's caching answer identical to `/quotas/usage`, whose
+   * body genuinely does vary by platform. `Origin` is repeated in the value
+   * because `@Header` SETS the header and `enableCors` already put
+   * `Vary: Origin` there; naming only `X-Platform` would silently drop it.
+   *
+   * Added per route rather than as a global interceptor:
+   * `site-content.controller.ts` and `feed.controller.ts` set their own
+   * `Cache-Control` deliberately, and a blanket rule would clobber them.
+   */
   @Get('me')
   @UseGuards(JwtAuthGuard)
+  @Header('Cache-Control', 'no-store')
+  @Header('Vary', 'Origin, X-Platform')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current user profile' })
   async getMe(@CurrentUser() payload: JwtPayload) {

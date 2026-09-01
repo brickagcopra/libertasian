@@ -1,4 +1,4 @@
-import { Controller, Get, Headers, UseGuards } from '@nestjs/common';
+import { Controller, Get, Header, Headers, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import type { JwtPayload } from '@libertasian/types';
@@ -42,8 +42,23 @@ export class QuotaController {
    * serve them. No `AdminBypassAuditService.record()` here: that audit exists to
    * trace admin READS OF PAID CONTENT, and this endpoint returns the caller's
    * own usage counters, nothing gated.
+   *
+   * `Cache-Control: no-store` + `Vary: X-Platform`: the body varies by
+   * `x-platform` but the response only ever carried
+   * `Vary: Origin`, so any shared cache — and the RN fetch layer's own — is
+   * free to hand one platform's answer to another, or one ACCOUNT's answer to
+   * the next one signed in on the same device. Added per route rather than as
+   * a global interceptor: `site-content.controller.ts` and
+   * `feed.controller.ts` set their own `Cache-Control` deliberately, and a
+   * blanket rule would clobber them.
+   *
+   * `Origin` is repeated in the value on purpose. `@Header` SETS the header,
+   * and `enableCors` already put `Vary: Origin` there; naming only
+   * `X-Platform` would silently drop it.
    */
   @Get('usage')
+  @Header('Cache-Control', 'no-store')
+  @Header('Vary', 'Origin, X-Platform')
   @ApiOperation({ summary: 'Get full usage summary with bonuses and billing period' })
   async getUsage(
     @CurrentUser() user: JwtPayload,

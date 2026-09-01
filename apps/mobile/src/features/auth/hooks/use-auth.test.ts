@@ -3,7 +3,7 @@ import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { apiClient } from '../../../lib/api-client';
 import {
-  useLogin, useRegister, useLogout, useProfile,
+  useLogin, useRegister, useProfile,
   useForgotPassword, useResetPassword, useUpdateProfile,
 } from './use-auth';
 
@@ -46,16 +46,6 @@ describe('useRegister', () => {
     });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(mockPost).toHaveBeenCalledWith('/auth/register', expect.anything(), { skipAuth: true });
-  });
-});
-
-describe('useLogout', () => {
-  it('posts logout with refresh token', async () => {
-    mockPost.mockResolvedValueOnce({ success: true });
-    const { result } = renderHook(() => useLogout(), { wrapper: createWrapper() });
-    await act(async () => { result.current.mutate('refresh-token-1'); });
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(mockPost).toHaveBeenCalledWith('/auth/logout', { refreshToken: 'refresh-token-1' });
   });
 });
 

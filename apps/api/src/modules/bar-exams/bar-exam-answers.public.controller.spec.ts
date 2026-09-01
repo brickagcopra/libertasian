@@ -1,12 +1,21 @@
-import { ExecutionContext, HttpStatus, NotFoundException } from '@nestjs/common';
+import {
+  ExecutionContext,
+  ForbiddenException,
+  HttpStatus,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import type { JwtPayload } from '@libertasian/types';
 
+import type { Request } from 'express';
+
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { MfaGuard } from '../../common/guards/mfa.guard';
 import { TenantGuard } from '../../common/guards/tenant.guard';
+import { AdminBypassAuditService } from '../../common/services/admin-bypass-audit.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { EntitlementService } from '../subscriptions/entitlement.service';
 import { UsageQuotaService } from '../subscriptions/usage-quota.service';
 import { BarExamAnswersPublicController } from './bar-exam-answers.public.controller';
 
@@ -19,6 +28,14 @@ const USER: JwtPayload = {
   email: 'user@libertasian.com',
   organizationId: '00000000-0000-0000-0000-0000000000bb',
 } as JwtPayload;
+
+/** Same caller, but with any `admin:*` permission resolved by JwtStrategy. */
+const ADMIN: JwtPayload = { ...USER, isPlatformAdmin: true } as JwtPayload;
+
+const REQ = {
+  method: 'GET',
+  path: '/bar-exams/questions/x/answer',
+} as unknown as Request;
 
 const QUESTION_ID = '22222222-2222-2222-2222-222222222222';
 const ANSWER_ID = '33333333-3333-3333-3333-333333333333';
@@ -56,11 +73,17 @@ describe('BarExamAnswersPublicController', () => {
   let prisma: { barExamAnswer: { findFirst: jest.Mock } };
   let usageQuota: { checkAndIncrement: jest.Mock };
   let config: { get: jest.Mock };
+  let resolveEffectiveEntitlements: jest.Mock;
+  let recordBypass: jest.Mock;
 
   async function build(flag: 'true' | 'false' | undefined) {
     prisma = { barExamAnswer: { findFirst: jest.fn() } };
     usageQuota = { checkAndIncrement: jest.fn().mockResolvedValue(allowedQuota()) };
     config = { get: jest.fn().mockImplementation((key: string) => (key === 'FEATURE_BAR_EXAM_ANSWERS_PUBLIC' ? flag : undefined)) };
+    // Default: an entitled org, so every pre-existing assertion below
+    // exercises the same path it always did.
+    resolveEffectiveEntitlements = jest.fn().mockResolvedValue({ previewOnly: false });
+    recordBypass = jest.fn();
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [BarExamAnswersPublicController],
@@ -68,6 +91,11 @@ describe('BarExamAnswersPublicController', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: UsageQuotaService, useValue: usageQuota },
         { provide: ConfigService, useValue: config },
+        {
+          provide: EntitlementService,
+          useValue: { resolveEffectiveEntitlements },
+        },
+        { provide: AdminBypassAuditService, useValue: { record: recordBypass } },
       ],
     })
       .overrideGuard(JwtAuthGuard)
@@ -85,7 +113,7 @@ describe('BarExamAnswersPublicController', () => {
     it('returns 404 when flag is off (undefined)', async () => {
       await build(undefined);
 
-      await expect(controller.get(QUESTION_ID, USER)).rejects.toBeInstanceOf(NotFoundException);
+      await expect(controller.get(QUESTION_ID, USER, REQ, 'ios')).rejects.toBeInstanceOf(NotFoundException);
       // Quota MUST NOT be consumed when the flag is off — otherwise dark
       // launches would silently bill users for a feature they can't use.
       expect(usageQuota.checkAndIncrement).not.toHaveBeenCalled();
@@ -94,7 +122,7 @@ describe('BarExamAnswersPublicController', () => {
 
     it('returns 404 when flag is explicitly "false"', async () => {
       await build('false');
-      await expect(controller.get(QUESTION_ID, USER)).rejects.toBeInstanceOf(NotFoundException);
+      await expect(controller.get(QUESTION_ID, USER, REQ, 'ios')).rejects.toBeInstanceOf(NotFoundException);
       expect(usageQuota.checkAndIncrement).not.toHaveBeenCalled();
     });
   });
@@ -104,7 +132,7 @@ describe('BarExamAnswersPublicController', () => {
       await build('true');
       prisma.barExamAnswer.findFirst.mockResolvedValue(null);
 
-      await expect(controller.get(QUESTION_ID, USER)).rejects.toMatchObject({
+      await expect(controller.get(QUESTION_ID, USER, REQ, 'ios')).rejects.toMatchObject({
         response: { code: 'answer_not_available' },
         status: HttpStatus.NOT_FOUND,
       });
@@ -124,7 +152,7 @@ describe('BarExamAnswersPublicController', () => {
       // so a private-but-approved row never matches and findFirst returns null.
       prisma.barExamAnswer.findFirst.mockResolvedValue(null);
 
-      await expect(controller.get(QUESTION_ID, USER)).rejects.toBeInstanceOf(NotFoundException);
+      await expect(controller.get(QUESTION_ID, USER, REQ, 'ios')).rejects.toBeInstanceOf(NotFoundException);
 
       const where = prisma.barExamAnswer.findFirst.mock.calls[0][0].where;
       expect(where).toEqual({
@@ -146,7 +174,7 @@ describe('BarExamAnswersPublicController', () => {
         resetsAt: '',
       });
 
-      await expect(controller.get(QUESTION_ID, USER)).rejects.toMatchObject({
+      await expect(controller.get(QUESTION_ID, USER, REQ, 'ios')).rejects.toMatchObject({
         status: HttpStatus.PAYMENT_REQUIRED,
         response: { code: 'subscription_required' },
       });
@@ -163,7 +191,7 @@ describe('BarExamAnswersPublicController', () => {
         resetsAt: '2026-05-15T00:00:00Z',
       });
 
-      await expect(controller.get(QUESTION_ID, USER)).rejects.toMatchObject({
+      await expect(controller.get(QUESTION_ID, USER, REQ, 'ios')).rejects.toMatchObject({
         status: HttpStatus.TOO_MANY_REQUESTS,
         response: {
           code: 'quota_exceeded',
@@ -181,7 +209,7 @@ describe('BarExamAnswersPublicController', () => {
       await build('true');
       prisma.barExamAnswer.findFirst.mockResolvedValue(fakeApprovedRow());
 
-      const result = await controller.get(QUESTION_ID, USER);
+      const result = await controller.get(QUESTION_ID, USER, REQ, 'ios');
 
       expect(result).toEqual({
         success: true,
@@ -211,6 +239,107 @@ describe('BarExamAnswersPublicController', () => {
         USER.sub,
         'aiAnswers',
         { isPlatformAdmin: false },
+      );
+    });
+  });
+  /**
+   * The model answer is the same PAID surface as the sittings, and this
+   * controller had no entitlement check at all. Verified on prod as a free,
+   * non-admin caller (`previewOnly: true`, `x-platform: ios`): 200 with the
+   * complete `answerText`.
+   */
+  describe('entitlement gate', () => {
+    it('serves the answer to an entitled caller', async () => {
+      await build('true');
+      prisma.barExamAnswer.findFirst.mockResolvedValue(fakeApprovedRow());
+
+      const result = await controller.get(QUESTION_ID, USER, REQ, 'ios');
+
+      expect(result.data.answerText).toBe(fakeApprovedRow().answerText);
+      expect(resolveEffectiveEntitlements).toHaveBeenCalledWith(
+        USER.organizationId,
+        'ios',
+      );
+    });
+
+    it('refuses a previewOnly caller with 403, NOT 402', async () => {
+      // 402 `subscription_required` is the status App Review reads as a
+      // paywall. Note this endpoint DOES answer 402 further down, for an
+      // exhausted `aiAnswers` entitlement — that is a different question from
+      // "may this account read the paid surface at all", and this refusal must
+      // not borrow its status.
+      await build('true');
+      resolveEffectiveEntitlements.mockResolvedValue({ previewOnly: true });
+
+      await expect(
+        controller.get(QUESTION_ID, USER, REQ, 'ios'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(
+        controller.get(QUESTION_ID, USER, REQ, 'ios'),
+      ).rejects.toMatchObject({
+        status: HttpStatus.FORBIDDEN,
+        response: { code: 'not_available_on_this_account' },
+      });
+    });
+
+    it('refuses before consuming quota or reading the answer', async () => {
+      // `checkAndIncrement` bills the retrieval ATTEMPT, so an unentitled
+      // caller must never reach it.
+      await build('true');
+      resolveEffectiveEntitlements.mockResolvedValue({ previewOnly: true });
+
+      await expect(
+        controller.get(QUESTION_ID, USER, REQ, 'ios'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      expect(usageQuota.checkAndIncrement).not.toHaveBeenCalled();
+      expect(prisma.barExamAnswer.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('still 404s when the flag is off, whatever the entitlement', async () => {
+      // The flag check stays FIRST: a 403 to a free caller and a 404 to a
+      // paying one would tell the free caller the endpoint exists.
+      await build(undefined);
+      resolveEffectiveEntitlements.mockResolvedValue({ previewOnly: true });
+
+      await expect(
+        controller.get(QUESTION_ID, USER, REQ, 'ios'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(resolveEffectiveEntitlements).not.toHaveBeenCalled();
+    });
+
+    it('serves a platform admin on a free org, and audits the bypass', async () => {
+      await build('true');
+      resolveEffectiveEntitlements.mockResolvedValue({ previewOnly: true });
+      prisma.barExamAnswer.findFirst.mockResolvedValue(fakeApprovedRow());
+
+      const result = await controller.get(QUESTION_ID, ADMIN, REQ, 'ios');
+
+      expect(result.data.answerText).toBe(fakeApprovedRow().answerText);
+      // Short-circuits: the org's entitlements are never consulted.
+      expect(resolveEffectiveEntitlements).not.toHaveBeenCalled();
+      expect(recordBypass).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: ADMIN.sub,
+          organizationId: ADMIN.organizationId,
+        }),
+      );
+    });
+
+    it('stays unenforced with no x-platform header (web, and builds before 26)', async () => {
+      // `parseClientPlatform(undefined)` is null, and a null platform cannot
+      // buy, so `resolveEffectiveEntitlements` answers unenforced — the same
+      // rule as `isPaywallEnforcedForRequest`. Gating a shipped binary with no
+      // purchase surface is what got build 23 rejected.
+      await build('true');
+      prisma.barExamAnswer.findFirst.mockResolvedValue(fakeApprovedRow());
+
+      const result = await controller.get(QUESTION_ID, USER, REQ);
+
+      expect(result.data.answerText).toBe(fakeApprovedRow().answerText);
+      expect(resolveEffectiveEntitlements).toHaveBeenCalledWith(
+        USER.organizationId,
+        null,
       );
     });
   });

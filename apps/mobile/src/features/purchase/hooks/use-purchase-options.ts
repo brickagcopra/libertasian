@@ -33,6 +33,20 @@ export const UNCONFIRMED_NOTICE =
 export const RESTORE_NOTHING_NOTICE =
   'There was nothing to restore on this store account.';
 
+/**
+ * The restore never reached the store at all.
+ *
+ * Distinct from {@link RESTORE_NOTHING_NOTICE} on purpose: an empty result is a
+ * true statement about the store account, while a thrown
+ * `restorePurchases()` is a statement about nothing. Reporting the second as
+ * the first tells an entitled user their purchase does not exist, and hides
+ * the failure from us — the symptom that surfaced this: `reconcile()` POSTs
+ * `/store/sync` unconditionally, yet a full day of nginx logs contains no
+ * `/store/sync` request, so every restore was throwing before it got there.
+ */
+export const RESTORE_FAILED_NOTICE =
+  'We could not reach the store. Please try again.';
+
 export interface PurchaseOptions {
   status: PurchaseSurfaceStatus;
   plans: PurchasePlanOption[];
@@ -138,8 +152,10 @@ export function usePurchaseOptions(): PurchaseOptions {
         await purchases.restorePurchases();
         const confirmed = await reconcile();
         setNotice(confirmed ? null : RESTORE_NOTHING_NOTICE);
-      } catch {
-        setNotice(RESTORE_NOTHING_NOTICE);
+      } catch (error) {
+        // Dismissing the store sheet is not a failure and gets no message —
+        // same rule as `purchase()`.
+        if (!isUserCancelled(error)) setNotice(RESTORE_FAILED_NOTICE);
       } finally {
         setBusy(false);
       }

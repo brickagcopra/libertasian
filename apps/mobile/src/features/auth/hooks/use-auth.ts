@@ -22,18 +22,6 @@ export function useRegister() {
   });
 }
 
-export function useLogout() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (refreshToken: string) =>
-      apiClient.post('/auth/logout', { refreshToken }),
-    onSettled: () => {
-      queryClient.clear();
-    },
-  });
-}
-
 export function useProfile(enabled = true) {
   return useQuery({
     queryKey: ['profile'],
