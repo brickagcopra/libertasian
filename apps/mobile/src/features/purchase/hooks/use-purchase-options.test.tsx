@@ -73,6 +73,11 @@ describe('usePurchaseOptions', () => {
     });
     mockPurchasePackage.mockResolvedValue({ customerInfo: {} });
     mockRestorePurchases.mockResolvedValue({});
+    // Resolve with the UNWRAPPED body, never `{ success, data }`. `apiClient`
+    // strips the envelope itself (`unwrapEnvelope`), so a mock that returns the
+    // wrapped shape describes a response this code never sees. These mocks used
+    // to be wrapped, which is precisely what let the double-unwrap in
+    // `store-sync.ts` pass its tests while every real restore silently failed.
     post = jest.spyOn(apiClient, 'post');
   });
 
@@ -121,7 +126,7 @@ describe('usePurchaseOptions', () => {
   });
 
   it('reconciles with the server after a successful purchase', async () => {
-    post.mockResolvedValue({ success: true, data: { status: 'processed' } });
+    post.mockResolvedValue({ status: 'processed' });
     const { result } = await renderReady();
 
     await act(async () => result.current.purchase(MONTHLY));
@@ -138,10 +143,7 @@ describe('usePurchaseOptions', () => {
     // This is what `/store/sync` answers on EVERY deployment today. The store
     // took the money and the entitlement is owed; telling the user something
     // broke would send them to file a refund for a purchase that worked.
-    post.mockResolvedValue({
-      success: true,
-      data: { status: 'noop', detail: 'conduit_unconfigured' },
-    });
+    post.mockResolvedValue({ status: 'noop', detail: 'conduit_unconfigured' });
     const { result } = await renderReady();
 
     await act(async () => result.current.purchase(MONTHLY));
@@ -184,7 +186,7 @@ describe('usePurchaseOptions', () => {
   // ---- Restore ----
 
   it('restores through the SDK and then reconciles', async () => {
-    post.mockResolvedValue({ success: true, data: { status: 'processed' } });
+    post.mockResolvedValue({ status: 'processed' });
     const { result } = await renderReady();
 
     await act(async () => result.current.restore());
@@ -195,10 +197,7 @@ describe('usePurchaseOptions', () => {
   });
 
   it('says nothing was restored, neutrally, when the server cannot confirm', async () => {
-    post.mockResolvedValue({
-      success: true,
-      data: { status: 'noop', detail: 'conduit_unconfigured' },
-    });
+    post.mockResolvedValue({ status: 'noop', detail: 'conduit_unconfigured' });
     const { result } = await renderReady();
 
     await act(async () => result.current.restore());

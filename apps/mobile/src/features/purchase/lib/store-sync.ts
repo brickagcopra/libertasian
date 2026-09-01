@@ -14,11 +14,6 @@ export interface StoreSyncResult {
   detail?: string;
 }
 
-interface StoreSyncResponse {
-  success: boolean;
-  data: StoreSyncResult;
-}
-
 export type StoreSyncOutcome =
   /** The server reconciled and agrees with the store. */
   | { kind: 'confirmed' }
@@ -52,8 +47,14 @@ const UNCONFIRMED_DETAILS = new Set([
  */
 export async function syncPurchasesWithServer(): Promise<StoreSyncOutcome> {
   try {
-    const res = await apiClient.post<StoreSyncResponse>('/store/sync');
-    const result = res.data;
+    // NO `.data` HERE — same envelope trap as `use-quotas.ts`. `apiClient`
+    // already strips {success, data}, and POST /store/sync returns exactly that
+    // shape. Reading `.data` off the unwrapped result gave `undefined`, so the
+    // `result.status` below threw a TypeError that the catch swallowed — and
+    // EVERY restore silently reported 'unreachable' instead of 'confirmed'.
+    // Failing into the catch is what made this invisible: the screen renders
+    // "couldn't reach the server", which looks like a network problem.
+    const result = await apiClient.post<StoreSyncResult>('/store/sync');
 
     if (result.status === 'processed') return { kind: 'confirmed' };
 
