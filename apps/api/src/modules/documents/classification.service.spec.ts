@@ -223,4 +223,101 @@ describe('ClassificationService', () => {
       });
     });
   });
+  // ---- getClassificationDetail ----
+
+  describe('getClassificationDetail', () => {
+    const createdAt = new Date('2026-03-01T00:00:00Z');
+
+    function docWithTagMaps(
+      tagMaps: {
+        isPrimary: boolean;
+        confidence: number | null;
+        tag: { code: string };
+      }[],
+    ) {
+      return {
+        id: 'doc-1',
+        title: 'People v. Cruz',
+        documentType: 'decision',
+        court: 'Supreme Court',
+        createdAt,
+        tagMaps,
+      };
+    }
+
+    it('flattens the subject tag-maps into the shape the detail screen renders', async () => {
+      (prisma.legalDocument.findUnique as jest.Mock).mockResolvedValue(
+        docWithTagMaps([
+          { isPrimary: true, confidence: 0.42, tag: { code: 'criminal_law' } },
+          { isPrimary: false, confidence: 0.31, tag: { code: 'remedial_law' } },
+        ]),
+      );
+
+      const result = await service.getClassificationDetail('doc-1');
+
+      expect(result).toEqual({
+        id: 'doc-1',
+        legalDocumentId: 'doc-1',
+        documentTitle: 'People v. Cruz',
+        documentType: 'decision',
+        court: 'Supreme Court',
+        createdAt,
+        predictedPrimary: 'criminal_law',
+        predictedSecondary: 'remedial_law',
+        confidence: 0.42,
+      });
+    });
+
+    it('queries only subject tags, not every tag on the document', async () => {
+      (prisma.legalDocument.findUnique as jest.Mock).mockResolvedValue(
+        docWithTagMaps([]),
+      );
+
+      await service.getClassificationDetail('doc-1');
+
+      const args = (prisma.legalDocument.findUnique as jest.Mock).mock
+        .calls[0][0];
+      expect(args.where).toEqual({ id: 'doc-1' });
+      // A court or disposition tag must not be mistaken for a subject
+      // prediction — `overrideClassification` scopes its writes the same way.
+      expect(args.select.tagMaps.where).toEqual({
+        tag: { tagType: { in: ['bar_subject', 'subject'] } },
+      });
+    });
+
+    it('reports 0 confidence rather than NaN when the primary tag has none', async () => {
+      (prisma.legalDocument.findUnique as jest.Mock).mockResolvedValue(
+        docWithTagMaps([
+          { isPrimary: true, confidence: null, tag: { code: 'civil_law' } },
+        ]),
+      );
+
+      const result = await service.getClassificationDetail('doc-1');
+
+      // The screen renders `Math.round(confidence * 100)`; null would print NaN%.
+      expect(result.confidence).toBe(0);
+      expect(result.predictedPrimary).toBe('civil_law');
+      expect(result.predictedSecondary).toBeNull();
+    });
+
+    it('returns nulls, not a throw, when the document has no subject tags', async () => {
+      (prisma.legalDocument.findUnique as jest.Mock).mockResolvedValue(
+        docWithTagMaps([]),
+      );
+
+      const result = await service.getClassificationDetail('doc-1');
+
+      expect(result.predictedPrimary).toBeNull();
+      expect(result.predictedSecondary).toBeNull();
+      expect(result.confidence).toBe(0);
+    });
+
+    it('throws NotFoundException when the document does not exist', async () => {
+      (prisma.legalDocument.findUnique as jest.Mock).mockResolvedValue(null);
+
+      await expect(
+        service.getClassificationDetail('doc-999'),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
 });

@@ -145,13 +145,23 @@ export interface MarketplaceQueryParams {
 
 // ─── API Response Envelopes ─────────────────────────────────────────────
 
+/**
+ * What `GET /community/marketplace/{flashcard-sets,reviewer-packs,digests}`
+ * actually sends:
+ *
+ *   return { success: true, data: result.items,
+ *            meta: { hasNext: result.hasNext, nextCursor: result.nextCursor } };
+ *
+ * `data` is the ARRAY and the cursor lives under `meta`. This interface used to
+ * declare `data: { items, hasNext, nextCursor }`, so `data.items` was
+ * `undefined` and all three browse lists rendered empty. `meta` is also what
+ * makes these responses survive `unwrapEnvelope` — see `RatingsListResponse`,
+ * which has the same shape for the same reason.
+ */
 export interface MarketplaceListResponse {
   success: boolean;
-  data: {
-    items: MarketplaceItem[];
-    hasNext: boolean;
-    nextCursor: string | null;
-  };
+  data: MarketplaceItem[];
+  meta: { hasNext: boolean; nextCursor: string | null };
 }
 
 export interface MarketplaceFeaturedResponse {

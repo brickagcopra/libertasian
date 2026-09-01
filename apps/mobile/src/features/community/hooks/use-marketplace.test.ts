@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from '@testing-library/react-native';
+import { act, renderHook, waitFor } from '@testing-library/react-native';
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { apiClient } from '../../../lib/api-client';
@@ -32,32 +32,43 @@ function createWrapper() {
   };
 }
 
+/**
+ * THE WIRE SHAPE, not the one the old type invented.
+ *
+ * The controller returns `{ success, data: result.items, meta: { hasNext,
+ * nextCursor } }` — `data` is the ARRAY. This fixture used to nest
+ * `data: { items, hasNext, nextCursor }`, matching the (wrong) response type
+ * rather than the server, so the suite passed while all three browse lists
+ * rendered empty in the app.
+ *
+ * `meta` also keeps `apiClient` from unwrapping the envelope, which is why
+ * these mocks stay wrapped while `mockFeaturedResponse.data` below does not.
+ */
+function item(id: string) {
+  return {
+    id,
+    contentType: 'flashcard_set' as const,
+    title: 'Criminal Law Set',
+    description: null,
+    barSubject: 'criminal_law',
+    topic: null,
+    avgRating: 4.5,
+    ratingCount: 10,
+    itemCount: 25,
+    creator: {
+      id: 'user-1',
+      fullName: 'Juan',
+      expertVerification: null,
+    },
+    createdAt: '2026-03-01T00:00:00Z',
+    updatedAt: '2026-03-01T00:00:00Z',
+  };
+}
+
 const mockListResponse = {
   success: true,
-  data: {
-    items: [
-      {
-        id: 'item-1',
-        contentType: 'flashcard_set' as const,
-        title: 'Criminal Law Set',
-        description: null,
-        barSubject: 'criminal_law',
-        topic: null,
-        avgRating: 4.5,
-        ratingCount: 10,
-        itemCount: 25,
-        creator: {
-          id: 'user-1',
-          fullName: 'Juan',
-          expertVerification: null,
-        },
-        createdAt: '2026-03-01T00:00:00Z',
-        updatedAt: '2026-03-01T00:00:00Z',
-      },
-    ],
-    hasNext: false,
-    nextCursor: null,
-  },
+  data: [item('item-1')],
+  meta: { hasNext: false, nextCursor: null },
 };
 
 const mockFeaturedResponse = {
@@ -102,7 +113,11 @@ describe('useMarketplaceFlashcardSets', () => {
       '/community/marketplace/flashcard-sets',
       { params: { limit: '20' } },
     );
-    expect(result.current.data).toEqual(mockListResponse);
+    // `select` flattens pages: the screens read `data.items`, never `data.data`.
+    expect(result.current.data).toEqual({
+      items: [item('item-1')],
+      hasNext: false,
+    });
   });
 
   it('passes search and filter params', async () => {
@@ -236,5 +251,76 @@ describe('useContributorProfile', () => {
 
     expect(result.current.fetchStatus).toBe('idle');
     expect(mockGet).not.toHaveBeenCalled();
+  });
+});
+
+describe('marketplace paging reads meta, not data', () => {
+  it('exposes the items array — the bug that emptied all three lists', async () => {
+    mockGet.mockResolvedValueOnce(mockListResponse);
+
+    const { result } = renderHook(() => useMarketplaceDigests(), {
+      wrapper: createWrapper(),
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    // Before the fix the hook returned the raw envelope and the screens read
+    // `data.data.items`, which is `undefined` because `data` IS the array.
+    expect(result.current.data?.items).toHaveLength(1);
+    expect(result.current.data?.items[0]?.id).toBe('item-1');
+  });
+
+  it('reports hasNext from meta and does not page when the server says there is nothing more', async () => {
+    mockGet.mockResolvedValueOnce(mockListResponse);
+
+    const { result } = renderHook(() => useMarketplaceDigests(), {
+      wrapper: createWrapper(),
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data?.hasNext).toBe(false);
+    expect(result.current.hasNextPage).toBe(false);
+  });
+
+  it('follows meta.nextCursor to fetch the next page and concatenates it', async () => {
+    mockGet
+      .mockResolvedValueOnce({
+        success: true,
+        data: [item('item-1')],
+        meta: { hasNext: true, nextCursor: 'cursor-1' },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: [item('item-2')],
+        meta: { hasNext: false, nextCursor: null },
+      });
+
+    const { result } = renderHook(() => useMarketplaceDigests(), {
+      wrapper: createWrapper(),
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.hasNextPage).toBe(true);
+
+    await act(async () => {
+      await result.current.fetchNextPage();
+    });
+
+    await waitFor(() =>
+      expect(result.current.data?.items).toHaveLength(2),
+    );
+
+    // The cursor the server sent under `meta` is what drives page 2. Nothing
+    // read it before this change, so these lists were capped at one page even
+    // once `data` was read correctly.
+    expect(mockGet).toHaveBeenNthCalledWith(
+      2,
+      '/community/marketplace/digests',
+      { params: { limit: '20', cursor: 'cursor-1' } },
+    );
+    expect(result.current.data?.items.map((i) => i.id)).toEqual([
+      'item-1',
+      'item-2',
+    ]);
+    expect(result.current.data?.hasNext).toBe(false);
   });
 });

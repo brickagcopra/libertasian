@@ -3,6 +3,8 @@ import {
   Controller,
   Get,
   Ip,
+  Param,
+  ParseUUIDPipe,
   Post,
   Query,
   UseGuards,
@@ -51,6 +53,13 @@ export class ClassificationController {
   async getStats() {
     const stats = await this.classificationService.getReviewStats();
     return { success: true, data: stats };
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: "Get one document's classification detail" })
+  async getDetail(@Param('id', ParseUUIDPipe) id: string) {
+    const detail = await this.classificationService.getClassificationDetail(id);
+    return { success: true, data: detail };
   }
 
   @Post('confirm')
