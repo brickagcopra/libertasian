@@ -42,7 +42,8 @@ export default function HearingPrepDetailScreen() {
   const { data: resp, isLoading, error } = useHearingPrep(id ?? '', !!id);
   const deletePrep = useDeleteHearingPrep();
 
-  const prep = resp?.data;
+  // Bare { success, data } envelope — already unwrapped by `apiClient`.
+  const prep = resp;
 
   const handleDelete = useCallback(() => {
     if (!id) return;

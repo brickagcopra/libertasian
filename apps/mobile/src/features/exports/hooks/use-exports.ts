@@ -25,11 +25,9 @@ export function useCreateExport() {
 
   return useMutation({
     mutationFn: async (data: CreateExportRequest) => {
-      const res = await apiClient.post<{
-        success: boolean;
-        data: ExportJobDetail;
-      }>('/exports', data);
-      return res.data;
+      // NO `.data`: `POST /exports` returns a bare { success, data } envelope,
+      // which `apiClient` already strips.
+      return apiClient.post<ExportJobDetail>('/exports', data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: exportKeys.all });
@@ -43,11 +41,8 @@ export function useExportJob(id: string | null) {
   return useQuery({
     queryKey: exportKeys.detail(id ?? ''),
     queryFn: async () => {
-      const res = await apiClient.get<{
-        success: boolean;
-        data: ExportJobDetail;
-      }>(`/exports/${id}`);
-      return res.data;
+      // Bare { success, data } envelope — already unwrapped by `apiClient`.
+      return apiClient.get<ExportJobDetail>(`/exports/${id}`);
     },
     enabled: !!id,
     refetchInterval: (query) => {

@@ -37,7 +37,9 @@ export default function ResearchWorkspaceDetailScreen() {
   const [queryText, setQueryText] = useState('');
   const flatListRef = useRef<FlatList>(null);
 
-  const workspace = wsResp?.data;
+  // Bare { success, data } envelope — already unwrapped by `apiClient`.
+  // (`queriesResp` below keeps its envelope: that route sends `meta`.)
+  const workspace = wsResp;
   const queries = queriesResp?.data ?? [];
 
   const handleDelete = useCallback(() => {

@@ -33,8 +33,13 @@ export function useResearchWorkspaces(params?: WorkspaceFilters) {
 export function useResearchWorkspace(id: string, enabled = true) {
   return useQuery({
     queryKey: ['research-workspace', id],
+    // `GET /research-workspaces/:id` is a bare { success, data } envelope,
+    // already stripped by `apiClient` — unlike the list and `/queries` routes
+    // below, which carry `meta` and so keep theirs.
     queryFn: () =>
-      apiClient.get<WorkspaceDetailResponse>(`/research-workspaces/${id}`),
+      apiClient.get<WorkspaceDetailResponse['data']>(
+        `/research-workspaces/${id}`,
+      ),
     enabled: enabled && id.length > 0,
     staleTime: 5 * 60 * 1000,
   });

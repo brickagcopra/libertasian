@@ -41,7 +41,8 @@ export default function TimelineDetailScreen() {
   const { data: resp, isLoading, error } = useTimeline(id ?? '', !!id);
   const deleteTimeline = useDeleteTimeline();
 
-  const timeline = resp?.data;
+  // Bare { success, data } envelope — already unwrapped by `apiClient`.
+  const timeline = resp;
 
   const handleDelete = useCallback(() => {
     if (!id) return;

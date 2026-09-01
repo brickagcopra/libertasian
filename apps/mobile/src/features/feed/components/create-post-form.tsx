@@ -58,7 +58,8 @@ export function CreatePostForm({ editPostId, initialText = '', initialVisibility
   const { pickedImage, isPickerLoading, pickImage, takePhoto, clearImage } = useImagePicker();
 
   const isEditing = !!editPostId;
-  const processingStatus = mediaStatus.data?.data?.processingStatus ?? null;
+  // Bare { success, data } envelope — already unwrapped by `apiClient`.
+  const processingStatus = mediaStatus.data?.processingStatus ?? null;
   const isMediaReady = !mediaId || processingStatus === 'ready';
   const isMediaFailed = processingStatus === 'failed' || processingStatus === 'quarantined';
   const canSubmit = textContent.trim().length > 0 && isMediaReady && !isMediaFailed;
@@ -77,7 +78,7 @@ export function CreatePostForm({ editPostId, initialText = '', initialVisibility
         },
         {
           onSuccess: (res) => {
-            setMediaId(res.data.mediaId);
+            setMediaId(res.mediaId);
           },
           onError: () => {
             Alert.alert('Upload Failed', 'Failed to upload image. Please try again.');
@@ -101,7 +102,7 @@ export function CreatePostForm({ editPostId, initialText = '', initialVisibility
         },
         {
           onSuccess: (res) => {
-            setMediaId(res.data.mediaId);
+            setMediaId(res.mediaId);
           },
           onError: () => {
             Alert.alert('Upload Failed', 'Failed to upload image. Please try again.');

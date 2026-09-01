@@ -41,7 +41,6 @@ describe('ComparisonDetailScreen', () => {
   it('renders completed comparison with dimensions', () => {
     mockUseComparison.mockReturnValue({
       data: {
-        data: {
           id: 'c-1',
           comparisonType: 'full',
           status: 'completed',
@@ -71,7 +70,6 @@ describe('ComparisonDetailScreen', () => {
             overallAnalysis: 'Overall analysis text',
           },
         },
-      },
       isLoading: false,
       error: null,
     });
@@ -83,7 +81,6 @@ describe('ComparisonDetailScreen', () => {
   it('shows generating state', () => {
     mockUseComparison.mockReturnValue({
       data: {
-        data: {
           id: 'c-1',
           comparisonType: 'full',
           status: 'generating',
@@ -97,7 +94,6 @@ describe('ComparisonDetailScreen', () => {
           organizationId: 'org-1',
           resultJson: null,
         },
-      },
       isLoading: false,
       error: null,
     });

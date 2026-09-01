@@ -251,10 +251,12 @@ export default function DigestsTab() {
                   legalDocumentId: doc.id,
                   digestType: 'case_digest',
                 });
-                const digestId =
-                  result && typeof result === 'object' && 'data' in result
-                    ? (result as unknown as { data: { id: string } }).data.id
-                    : result?.id;
+                // `POST /digests/generate` returns a bare { success, data }
+                // envelope, already stripped by `apiClient` — the result IS the
+                // digest. Only this screen's `: result?.id` fallback kept the
+                // navigation alive; search.tsx and reader/[id].tsx fell through
+                // to `undefined` and silently did nothing.
+                const digestId = result?.id;
                 if (digestId) router.push(`/digest/${digestId}`);
               } catch (err) {
                 if (err instanceof ApiClientError && err.statusCode === 402) {

@@ -21,7 +21,8 @@ beforeEach(() => jest.clearAllMocks());
 
 describe('useFlashcardReviewStats', () => {
   it('fetches review stats for a set', async () => {
-    mockGet.mockResolvedValueOnce({ success: true, data: { totalCards: 25, dueCards: 5 } });
+    // apiClient returns the UNWRAPPED body — unwrapEnvelope already ran.
+    mockGet.mockResolvedValueOnce({ totalCards: 25, dueCards: 5 });
     const { result } = renderHook(() => useFlashcardReviewStats('set-1'), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(mockGet).toHaveBeenCalledWith('/study/flashcard-sets/set-1/review-stats');
@@ -42,7 +43,7 @@ describe('useFlashcardReviewStats', () => {
 
 describe('useSubmitFlashcardReview', () => {
   it('posts review to correct endpoint', async () => {
-    mockPost.mockResolvedValueOnce({ success: true, data: { id: 'r1', quality: 4 } });
+    mockPost.mockResolvedValueOnce({ id: 'r1', quality: 4 });
     const { result } = renderHook(() => useSubmitFlashcardReview(), { wrapper: createWrapper() });
     await act(async () => {
       result.current.mutate({ flashcardId: 'c1', input: { response: 'good' } });

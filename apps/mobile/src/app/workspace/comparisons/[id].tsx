@@ -32,7 +32,8 @@ export default function ComparisonDetailScreen() {
   const { data: resp, isLoading, error } = useComparison(id ?? '', !!id);
   const deleteComparison = useDeleteComparison();
 
-  const comparison = resp?.data;
+  // Bare { success, data } envelope — already unwrapped by `apiClient`.
+  const comparison = resp;
 
   const handleDelete = useCallback(() => {
     if (!id) return;

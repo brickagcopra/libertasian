@@ -12,7 +12,7 @@ export function useGenerateDigest() {
 
   return useMutation({
     mutationFn: async ({ uploadId, digestType }: GenerateDigestParams) => {
-      return apiClient.post<GenerateDigestResponse>(
+      return apiClient.post<GenerateDigestResponse['data']>(
         `/uploads/${uploadId}/generate-digest`,
         digestType ? { digestType } : undefined,
       );

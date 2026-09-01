@@ -16,7 +16,11 @@ interface UploadScanParams {
   onProgress?: (progress: number) => void;
 }
 
-async function uploadCameraScan(params: UploadScanParams): Promise<UploadResponse> {
+// Resolves with the UNWRAPPED payload: `POST /uploads/camera-scan` returns a
+// bare { success, data } envelope and `uploadMultipart` already strips it.
+async function uploadCameraScan(
+  params: UploadScanParams,
+): Promise<UploadResponse['data']> {
   const { pages, captureMode, privacyLevel, onProgress } = params;
 
   const formData = new FormData();
@@ -34,7 +38,7 @@ async function uploadCameraScan(params: UploadScanParams): Promise<UploadRespons
     } as unknown as Blob);
   }
 
-  return apiClient.uploadMultipart<UploadResponse>(
+  return apiClient.uploadMultipart<UploadResponse['data']>(
     '/uploads/camera-scan',
     formData,
     { onProgress },

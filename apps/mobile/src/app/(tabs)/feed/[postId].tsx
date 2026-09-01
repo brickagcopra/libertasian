@@ -16,7 +16,8 @@ export default function PostDetailScreen() {
   const [showOptions, setShowOptions] = useState(false);
   const [showReport, setShowReport] = useState(false);
 
-  const post = data?.data;
+  // Bare { success, data } envelope — already unwrapped by `apiClient`.
+  const post = data;
 
   const timeFormatted = useMemo(() => {
     if (!post) return '';

@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../../../lib/api-client';
 import type {
   MemoListResponse,
-  MemoDetailResponse,
   MemoDetail,
   MemoListItem,
   MemoFilters,
@@ -27,12 +26,16 @@ export function useMemos(filters: MemoFilters = {}) {
 export function useMemo(id: string, enabled = true) {
   return useQuery({
     queryKey: ['memo', id],
-    queryFn: () => apiClient.get<MemoDetailResponse>(`/memos/${id}`),
+    queryFn: () => apiClient.get<MemoDetail>(`/memos/${id}`),
     enabled: enabled && id.length > 0,
     staleTime: 5 * 60 * 1000,
     refetchInterval: (query) => {
-      const resp = query.state.data as MemoDetailResponse | undefined;
-      const memo = resp?.data;
+      // NO second `.data`: `GET /memos/:id` returns a bare
+      // { success, data } envelope, which `apiClient` already strips, so
+      // `query.state.data` IS the detail object. Reading `.data` off it gave
+      // `undefined` and the status check below could never be true — the poll
+      // stopped immediately and a still-generating record never refreshed.
+      const memo = query.state.data as MemoDetail | undefined;
       if (memo && (memo.status === 'pending' || memo.status === 'generating')) {
         return 3000;
       }

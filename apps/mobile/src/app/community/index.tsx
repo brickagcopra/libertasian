@@ -51,7 +51,8 @@ export default function CommunityScreen() {
     refetch,
   } = useMarketplaceFeatured();
 
-  const featured = featuredRes?.data;
+  // Bare { success, data } envelope — already unwrapped by `apiClient`.
+  const featured = featuredRes;
   const navigate = useTabBarNav();
   const clearance = useTabBarClearance();
 

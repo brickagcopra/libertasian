@@ -105,10 +105,10 @@ export default function SearchRoute() {
                 legalDocumentId: documentId,
                 digestType: 'case_digest',
               });
-              const digestId =
-                result && typeof result === 'object' && 'data' in result
-                  ? (result as { data: { id: string } }).data.id
-                  : undefined;
+              // `POST /digests/generate` returns a bare { success, data }
+              // envelope, already stripped by `apiClient` — the result IS the
+              // digest. The old `'data' in result` probe was never true.
+              const digestId = result?.id;
               if (digestId) router.push(`/digest/${digestId}`);
             } catch {
               Alert.alert('Error', 'Failed to generate digest. Please try again.');

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../../../lib/api-client';
-import type { ApiResponse, PaginatedResponse } from '../types';
+import type { PaginatedResponse } from '../types';
 
 // ---- Types ----
 
@@ -57,10 +57,9 @@ export function useClassificationStats() {
   return useQuery({
     queryKey: ['admin', 'classification', 'stats'],
     queryFn: async () => {
-      const res = await apiClient.get<ApiResponse<ClassificationStats>>(
-        '/admin/classification/stats',
-      );
-      return res.data;
+      // NO `.data`: `GET /admin/classification/stats` returns a bare
+      // { success, data } envelope, which `apiClient` already strips.
+      return apiClient.get<ClassificationStats>('/admin/classification/stats');
     },
     staleTime: 2 * 60 * 1000,
   });
@@ -70,10 +69,13 @@ export function useClassificationDetail(id: string) {
   return useQuery({
     queryKey: ['admin', 'classification', 'detail', id],
     queryFn: async () => {
-      const res = await apiClient.get<ApiResponse<ClassificationDetail>>(
-        `/admin/classification/${id}`,
-      );
-      return res.data;
+      // Bare { success, data } envelope — already unwrapped by `apiClient`.
+      //
+      // NOTE: the API has no `GET /admin/classification/:id` route today
+      // (`ClassificationController` exposes only review-queue, stats, confirm,
+      // reject and override), so this request 404s regardless of the shape.
+      // Left as-is here; adding the route is a separate API change.
+      return apiClient.get<ClassificationDetail>(`/admin/classification/${id}`);
     },
     enabled: id.length > 0,
     staleTime: 5 * 60 * 1000,

@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../../../lib/api-client';
-import type { ApiResponse } from '../types';
 
 // ---- Types ----
 
@@ -35,10 +34,9 @@ export function useDerivativeStats() {
   return useQuery({
     queryKey: ['admin', 'derivatives', 'stats'],
     queryFn: async () => {
-      const res = await apiClient.get<ApiResponse<DerivativeStats>>(
-        '/admin/digests/review-stats',
-      );
-      return res.data;
+      // NO `.data`: `GET /admin/digests/review-stats` returns a bare
+      // { success, data } envelope, which `apiClient` already strips.
+      return apiClient.get<DerivativeStats>('/admin/digests/review-stats');
     },
     staleTime: 2 * 60 * 1000,
   });
@@ -54,10 +52,13 @@ export function useRecentGenerationJobs(filters: GenerationJobFilters = {}) {
   return useQuery({
     queryKey: ['admin', 'derivatives', 'jobs', filters],
     queryFn: async () => {
+      // `.data` IS correct here: `GET /digests` returns { success, data, meta },
+      // and the `meta` sibling stops `apiClient` unwrapping it. The generic
+      // now names the real shape instead of inventing cursor/hasNext siblings.
       const res = await apiClient.get<{
+        success: boolean;
         data: GenerationJob[];
-        cursor: string | null;
-        hasNext: boolean;
+        meta: { cursor: string | null; hasNext: boolean };
       }>('/digests', { params });
       return res.data;
     },
@@ -73,11 +74,8 @@ export function useTriggerDigestGeneration() {
       legalDocumentId: string;
       digestType: string;
     }) => {
-      const res = await apiClient.post<ApiResponse<GenerationJob>>(
-        '/digests/generate',
-        data,
-      );
-      return res.data;
+      // Bare { success, data } envelope — already unwrapped by `apiClient`.
+      return apiClient.post<GenerationJob>('/digests/generate', data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({

@@ -98,10 +98,13 @@ export default function ScanResultScreen() {
   }, [uploadId, attachMutation]);
 
   const handleViewDigest = useCallback(() => {
-    if (digestMutation.data?.data?.digestId) {
+    // NO second `.data`: every `/uploads/:id/generate-*` route returns a bare
+    // { success, data } envelope, already stripped by `apiClient`. The extra
+    // hop made `digestId` undefined, so "View digest" silently did nothing.
+    if (digestMutation.data?.digestId) {
       router.push({
         pathname: '/digest/[id]',
-        params: { id: digestMutation.data.data.digestId },
+        params: { id: digestMutation.data.digestId },
       });
     }
   }, [digestMutation.data]);
@@ -154,10 +157,10 @@ export default function ScanResultScreen() {
         digestError={digestMutation.error?.message ?? null}
         onGenerateFlashcards={handleGenerateFlashcards}
         isGeneratingFlashcards={flashcardMutation.isPending}
-        flashcardResult={flashcardMutation.data?.data ?? null}
+        flashcardResult={flashcardMutation.data ?? null}
         onGenerateOutline={handleGenerateOutline}
         isGeneratingOutline={outlineMutation.isPending}
-        outlineResult={outlineMutation.data?.data ?? null}
+        outlineResult={outlineMutation.data ?? null}
         onAttachToMatter={handleAttachToMatter}
         isAttaching={attachMutation.isPending}
       />

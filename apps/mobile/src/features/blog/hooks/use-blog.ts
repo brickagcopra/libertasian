@@ -44,7 +44,7 @@ export function useBlogPost(slug: string) {
   return useQuery({
     queryKey: blogKeys.post(slug),
     queryFn: () =>
-      apiClient.get<BlogPostResponse>(`/blog/${slug}`, { skipAuth: true }),
+      apiClient.get<BlogPostResponse['data']>(`/blog/${slug}`, { skipAuth: true }),
     enabled: !!slug,
     staleTime: 5 * 60 * 1000,
   });
@@ -54,7 +54,7 @@ export function useBlogTags() {
   return useQuery({
     queryKey: blogKeys.tags,
     queryFn: () =>
-      apiClient.get<BlogTagsResponse>('/blog/tags', { skipAuth: true }),
+      apiClient.get<BlogTagsResponse['data']>('/blog/tags', { skipAuth: true }),
     staleTime: 10 * 60 * 1000,
   });
 }

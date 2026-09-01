@@ -21,7 +21,8 @@ beforeEach(() => jest.clearAllMocks());
 
 describe('useStudyStats', () => {
   it('fetches study stats', async () => {
-    mockGet.mockResolvedValueOnce({ success: true, data: { currentStreak: 5, totalMinutes: 120 } });
+    // apiClient returns the UNWRAPPED body — unwrapEnvelope already ran.
+    mockGet.mockResolvedValueOnce({ currentStreak: 5, totalMinutes: 120 });
     const { result } = renderHook(() => useStudyStats(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(mockGet).toHaveBeenCalledWith('/study/stats');
@@ -37,7 +38,7 @@ describe('useStudyStats', () => {
 
 describe('useStartStudySession', () => {
   it('starts a session', async () => {
-    mockPost.mockResolvedValueOnce({ success: true, data: { id: 's1', barSubject: 'civil_law' } });
+    mockPost.mockResolvedValueOnce({ id: 's1', barSubject: 'civil_law' });
     const { result } = renderHook(() => useStartStudySession(), { wrapper: createWrapper() });
     await act(async () => { result.current.mutate({ entityType: 'flashcard_set', entityId: 'set-1', barSubject: 'civil_law' }); });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -47,7 +48,7 @@ describe('useStartStudySession', () => {
 
 describe('useEndStudySession', () => {
   it('ends a session', async () => {
-    mockPost.mockResolvedValueOnce({ success: true, data: { id: 's1', durationMinutes: 15 } });
+    mockPost.mockResolvedValueOnce({ id: 's1', durationMinutes: 15 });
     const { result } = renderHook(() => useEndStudySession(), { wrapper: createWrapper() });
     await act(async () => { result.current.mutate({ sessionId: 's1', input: { itemsStudied: 10 } }); });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));

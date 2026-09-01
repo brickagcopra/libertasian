@@ -64,7 +64,9 @@ export function AdProvider({ page, userType, children }: AdProviderProps) {
   const { data } = useActiveAds(page, userType);
   const recordEvent = useRecordAdEvent();
 
-  const campaigns = data?.data ?? [];
+  // `GET /ads/active` is a bare { success, data } envelope — already
+  // unwrapped by `apiClient`, so no ad ever rendered.
+  const campaigns = data ?? [];
   const [dismissed, setDismissed] = useState<Set<string>>(getDismissedIds);
   const impressedRef = useRef<Set<string>>(new Set());
   const sessionId = useMemo(() => getSessionId(), []);

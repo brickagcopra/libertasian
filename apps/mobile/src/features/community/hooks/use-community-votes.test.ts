@@ -52,7 +52,8 @@ beforeEach(() => {
 
 describe('useMyVote', () => {
   it('fetches user vote from the correct endpoint', async () => {
-    mockGet.mockResolvedValueOnce({ success: true, data: mockVoteResponse.data });
+    // apiClient returns the UNWRAPPED body — unwrapEnvelope already ran.
+    mockGet.mockResolvedValueOnce(mockVoteResponse.data);
 
     const { result } = renderHook(
       () => useMyVote('digest', 'd-1'),
@@ -65,7 +66,7 @@ describe('useMyVote', () => {
   });
 
   it('returns null vote data when no vote exists', async () => {
-    mockGet.mockResolvedValueOnce({ success: true, data: null });
+    mockGet.mockResolvedValueOnce(null);
 
     const { result } = renderHook(
       () => useMyVote('digest', 'd-2'),
@@ -73,7 +74,7 @@ describe('useMyVote', () => {
     );
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data?.data).toBeNull();
+    expect(result.current.data).toBeNull();
   });
 
   it('is disabled when entityId is empty', () => {

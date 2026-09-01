@@ -56,7 +56,7 @@ export function useMarketplaceFeatured() {
   return useQuery({
     queryKey: ['marketplace-featured'],
     queryFn: () =>
-      apiClient.get<MarketplaceFeaturedResponse>(
+      apiClient.get<MarketplaceFeaturedResponse['data']>(
         '/community/marketplace/featured',
       ),
     staleTime: 5 * 60 * 1000,
@@ -67,7 +67,7 @@ export function useContributorProfile(userId: string) {
   return useQuery({
     queryKey: ['contributor-profile', userId],
     queryFn: () =>
-      apiClient.get<ContributorProfileResponse>(
+      apiClient.get<ContributorProfileResponse['data']>(
         `/community/contributors/${userId}`,
       ),
     enabled: !!userId,

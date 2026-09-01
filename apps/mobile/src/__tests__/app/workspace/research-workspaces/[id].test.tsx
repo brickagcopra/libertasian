@@ -64,7 +64,6 @@ describe('ResearchWorkspaceDetailScreen', () => {
   it('renders workspace title and chat interface', () => {
     mockUseResearchWorkspace.mockReturnValue({
       data: {
-        data: {
           id: 'rw-1',
           title: 'Negligence Research',
           description: 'Exploring standards',
@@ -75,7 +74,6 @@ describe('ResearchWorkspaceDetailScreen', () => {
           userId: 'u-1',
           organizationId: 'org-1',
         },
-      },
       isLoading: false,
       error: null,
     });
@@ -109,7 +107,6 @@ describe('ResearchWorkspaceDetailScreen', () => {
   it('shows empty chat state', () => {
     mockUseResearchWorkspace.mockReturnValue({
       data: {
-        data: {
           id: 'rw-1',
           title: 'New Workspace',
           description: '',
@@ -120,7 +117,6 @@ describe('ResearchWorkspaceDetailScreen', () => {
           userId: 'u-1',
           organizationId: 'org-1',
         },
-      },
       isLoading: false,
       error: null,
     });

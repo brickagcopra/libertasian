@@ -20,7 +20,8 @@ beforeEach(() => jest.clearAllMocks());
 
 describe('useUploadStatus', () => {
   it('fetches upload status', async () => {
-    mockGet.mockResolvedValueOnce({ data: { processingStatus: 'completed', ocrStatus: 'completed' } });
+    // apiClient returns the UNWRAPPED body — unwrapEnvelope already ran.
+    mockGet.mockResolvedValueOnce({ processingStatus: 'completed', ocrStatus: 'completed' });
     const { result } = renderHook(() => useUploadStatus('u1'), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(mockGet).toHaveBeenCalledWith('/uploads/u1/status');
@@ -40,7 +41,7 @@ describe('useUploadStatus', () => {
 
 describe('useUploadDetail', () => {
   it('fetches upload detail', async () => {
-    mockGet.mockResolvedValueOnce({ data: { id: 'u1', originalFilename: 'scan.jpg', processingStatus: 'completed' } });
+    mockGet.mockResolvedValueOnce({ id: 'u1', originalFilename: 'scan.jpg', processingStatus: 'completed' });
     const { result } = renderHook(() => useUploadDetail('u1'), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(mockGet).toHaveBeenCalledWith('/uploads/u1');

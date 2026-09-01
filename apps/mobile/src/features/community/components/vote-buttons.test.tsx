@@ -43,10 +43,13 @@ function createWrapper() {
 const mockMutate = jest.fn();
 
 function setupMocks(myVoteType: 'up' | 'down' | null = null) {
+  // `useMyVote` resolves with the UNWRAPPED vote: `apiClient` already strips
+  // the { success, data } envelope that GET /community/votes/mine/:type/:id
+  // returns.
   mockUseMyVote.mockReturnValue({
     data: myVoteType
-      ? { success: true, data: { id: 'v-1', userId: 'u-1', entityType: 'digest', entityId: 'd-1', voteType: myVoteType, createdAt: '', updatedAt: '' } }
-      : { success: true, data: null },
+      ? { id: 'v-1', userId: 'u-1', entityType: 'digest', entityId: 'd-1', voteType: myVoteType, createdAt: '', updatedAt: '' }
+      : null,
     isLoading: false,
     isSuccess: true,
   } as ReturnType<typeof voteHooks.useMyVote>);

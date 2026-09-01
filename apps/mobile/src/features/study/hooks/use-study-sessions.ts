@@ -11,11 +11,9 @@ export function useStudyStats() {
   return useQuery({
     queryKey: ['study-stats'],
     queryFn: async () => {
-      const res = await apiClient.get<{
-        success: boolean;
-        data: StudyStats;
-      }>('/study/stats');
-      return res.data;
+      // NO `.data`: every `/study/*` endpoint below returns a bare
+      // { success, data } envelope, which `apiClient` already strips.
+      return apiClient.get<StudyStats>('/study/stats');
     },
   });
 }
@@ -23,11 +21,7 @@ export function useStudyStats() {
 export function useStartStudySession() {
   return useMutation({
     mutationFn: async (input: StartStudySessionInput) => {
-      const res = await apiClient.post<{
-        success: boolean;
-        data: StudySession;
-      }>('/study/sessions/start', input);
-      return res.data;
+      return apiClient.post<StudySession>('/study/sessions/start', input);
     },
   });
 }
@@ -43,11 +37,10 @@ export function useEndStudySession() {
       sessionId: string;
       input: EndStudySessionInput;
     }) => {
-      const res = await apiClient.post<{
-        success: boolean;
-        data: StudySession;
-      }>(`/study/sessions/${sessionId}/end`, input);
-      return res.data;
+      return apiClient.post<StudySession>(
+        `/study/sessions/${sessionId}/end`,
+        input,
+      );
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['study-stats'] });

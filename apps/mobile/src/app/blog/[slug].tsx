@@ -43,7 +43,8 @@ export default function BlogPostScreen() {
   const { data, isLoading, error } = useBlogPost(slug ?? '');
   const { width } = useWindowDimensions();
 
-  const post = data?.data;
+  // Bare { success, data } envelope — already unwrapped by `apiClient`.
+  const post = data;
 
   const publishedDate = useMemo(() => {
     if (!post?.publishedAt) return '';

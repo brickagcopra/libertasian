@@ -31,7 +31,7 @@ export function useMyRating(entityType: CommunityEntityType, entityId: string) {
   return useQuery({
     queryKey: ['my-rating', entityType, entityId],
     queryFn: () =>
-      apiClient.get<MyRatingResponse>(
+      apiClient.get<MyRatingResponse['data']>(
         `/community/ratings/mine/${entityType}/${entityId}`,
       ),
     enabled: !!entityId,

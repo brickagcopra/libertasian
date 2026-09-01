@@ -4,7 +4,8 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
-  StyleSheet,  Alert,
+  StyleSheet,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -90,7 +91,9 @@ export default function UploadScreen() {
       },
       {
         onSuccess: (response) => {
-          setUploadId(response.data.id);
+          // `POST /uploads/camera-scan` returns a bare { success, data }
+          // envelope, already stripped by `uploadMultipart`.
+          setUploadId(response.id);
           setCurrentStep('quality_check');
         },
         onError: (error) => {

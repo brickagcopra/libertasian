@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../../../lib/api-client';
 import type {
   TimelineListResponse,
-  TimelineDetailResponse,
+  CaseTimelineDetail,
   CaseTimelineListItem,
   TimelineFilters,
   GenerateTimelineInput,
@@ -27,12 +27,16 @@ export function useTimeline(id: string, enabled = true) {
   return useQuery({
     queryKey: ['timeline', id],
     queryFn: () =>
-      apiClient.get<TimelineDetailResponse>(`/timelines/${id}`),
+      apiClient.get<CaseTimelineDetail>(`/timelines/${id}`),
     enabled: enabled && id.length > 0,
     staleTime: 5 * 60 * 1000,
     refetchInterval: (query) => {
-      const resp = query.state.data as TimelineDetailResponse | undefined;
-      const timeline = resp?.data;
+      // NO second `.data`: `GET /timelines/:id` returns a bare
+      // { success, data } envelope, which `apiClient` already strips, so
+      // `query.state.data` IS the detail object. Reading `.data` off it gave
+      // `undefined` and the status check below could never be true — the poll
+      // stopped immediately and a still-generating record never refreshed.
+      const timeline = query.state.data as CaseTimelineDetail | undefined;
       if (
         timeline &&
         (timeline.status === 'pending' || timeline.status === 'generating')
