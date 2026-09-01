@@ -6,7 +6,9 @@ import React, {
   useMemo,
   useState,
 } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { authStorage } from '../storage/auth-storage';
+import { clearAccountScopedStorage } from '../storage/mmkv';
 import { apiClient } from '../lib/api-client';
 import { unregisterPushToken } from '../lib/push-notifications';
 import type { AuthUser } from '../features/auth/types';
@@ -25,6 +27,10 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  // AuthProvider is mounted inside QueryClientProvider in `app/_layout.tsx`,
+  // so this always resolves. Any test that renders AuthProvider must supply a
+  // QueryClientProvider too.
+  const queryClient = useQueryClient();
 
   const signOut = useCallback(async () => {
     try {
@@ -39,18 +45,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         });
       }
     } finally {
+      // Order matters. Tokens and per-account device state go first, then the
+      // user, then the React Query cache. Clearing the cache before
+      // `setUser(null)` would make still-mounted queries refetch with no token
+      // and 401 on the way out.
       await authStorage.clearTokens();
+      clearAccountScopedStorage();
       setUser(null);
+      queryClient.clear();
     }
-  }, []);
+  }, [queryClient]);
 
   const signIn = useCallback(
     async (accessToken: string, refreshToken: string, authUser: AuthUser) => {
+      // Clear FIRST, before the new session exists. A sign-in that follows a
+      // sign-out on the same launch would otherwise answer `['profile']` from
+      // the previous account's cached `/users/me` (it is fresh for 5 minutes),
+      // and `app/settings/index.tsx` prefers that cached profile over the
+      // context user. Clearing afterwards would instead throw away anything the
+      // new session had already fetched.
+      clearAccountScopedStorage();
+      queryClient.clear();
       await authStorage.setAccessToken(accessToken);
       await authStorage.setRefreshToken(refreshToken);
       setUser(authUser);
     },
-    [],
+    [queryClient],
   );
 
   // Wire the API client's 401 handler to trigger sign out

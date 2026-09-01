@@ -29,6 +29,7 @@ export {
 } from './components/purchase-surface';
 export {
   usePurchaseOptions,
+  RESTORE_FAILED_NOTICE,
   RESTORE_NOTHING_NOTICE,
   UNCONFIRMED_NOTICE,
   type PurchaseOptions,

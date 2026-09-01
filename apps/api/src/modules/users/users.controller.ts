@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Patch, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Header, Patch, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { JwtPayload } from '@libertasian/types';
 
@@ -24,8 +24,25 @@ export class UsersController {
     private readonly prisma: PrismaService,
   ) {}
 
+  /**
+   * `Cache-Control: no-store` + `Vary: X-Platform`.
+   *
+   * The body varies by `x-platform` but the response only ever carried
+   * `Vary: Origin`, so any shared cache — and the RN fetch layer's own — is
+   * free to hand one platform's answer to another, or one ACCOUNT's answer to
+   * the next one signed in on the same device. Added per route rather than as
+   * a global interceptor: `site-content.controller.ts` and
+   * `feed.controller.ts` set their own `Cache-Control` deliberately, and a
+   * blanket rule would clobber them.
+   *
+   * `Origin` is repeated in the value on purpose. `@Header` SETS the header,
+   * and `enableCors` already put `Vary: Origin` there; naming only
+   * `X-Platform` would silently drop it.
+   */
   @Get('me')
   @UseGuards(JwtAuthGuard)
+  @Header('Cache-Control', 'no-store')
+  @Header('Vary', 'Origin, X-Platform')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current user profile' })
   async getMe(@CurrentUser() payload: JwtPayload) {

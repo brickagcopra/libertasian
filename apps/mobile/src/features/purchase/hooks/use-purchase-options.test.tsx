@@ -5,6 +5,7 @@ import { createElement, type ReactNode } from 'react';
 import { apiClient } from '@/lib/api-client';
 
 import {
+  RESTORE_FAILED_NOTICE,
   RESTORE_NOTHING_NOTICE,
   UNCONFIRMED_NOTICE,
   usePurchaseOptions,
@@ -206,5 +207,40 @@ describe('usePurchaseOptions', () => {
     // Names no other account and no plan — §7's rule for the "already in use"
     // case, applied to every unconfirmed restore.
     expect(RESTORE_NOTHING_NOTICE).not.toMatch(/pro|edu|plan|account is/i);
+  });
+
+  /**
+   * The catch used to set RESTORE_NOTHING_NOTICE, so a store that could not be
+   * reached at all was reported as a store account with nothing on it — which
+   * tells an entitled user their purchase does not exist.
+   *
+   * The prod tell: `reconcile()` POSTs `/store/sync` unconditionally after a
+   * restore, and a full day of nginx logs contains no `/store/sync` request at
+   * all. Every restore was throwing before it got that far, wearing the empty
+   * result's message.
+   */
+  it('reports a thrown restore as a failure, NOT as an empty store account', async () => {
+    mockRestorePurchases.mockRejectedValue(new Error('store unreachable'));
+    const { result } = await renderReady();
+
+    await act(async () => result.current.restore());
+
+    await waitFor(() => expect(result.current.notice).toBe(RESTORE_FAILED_NOTICE));
+    expect(result.current.notice).not.toBe(RESTORE_NOTHING_NOTICE);
+    // It never reached the server, so it must not claim anything about the
+    // store account.
+    expect(post).not.toHaveBeenCalled();
+    await waitFor(() => expect(result.current.busy).toBe(false));
+  });
+
+  it('says nothing at all when the user dismisses the restore sheet', async () => {
+    // Same rule as `purchase()`: a cancellation is not a failure.
+    mockRestorePurchases.mockRejectedValue({ userCancelled: true });
+    const { result } = await renderReady();
+
+    await act(async () => result.current.restore());
+
+    await waitFor(() => expect(result.current.busy).toBe(false));
+    expect(result.current.notice).toBeNull();
   });
 });
