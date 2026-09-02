@@ -133,6 +133,7 @@ model User {
   derivativeArtifactsCreated DerivativeArtifact[]      @relation("DerivativeCreatedBy")
   derivativeJobsTriggered    DerivativeGenerationJob[] @relation("DerivativeJobTriggeredBy")
   createdBackfillBatches     BackfillBatch[]           @relation("BackfillBatchCreatedBy")
+  vectorBackfillRuns         VectorBackfillRun[]       @relation("VectorBackfillRunTriggeredBy")
   // Golden sets (PR 4.1)
   goldenSetReviews           GoldenSetEntry[]          @relation("GoldenSetReviewer")
   // Bar exam answer reviews (Phase 3a)
@@ -4420,4 +4421,96 @@ model StoreWebhookEvent {
   @@index([organizationId, receivedAt(sort: Desc)], map: "idx_store_webhook_events_org_received")
   @@index([appUserId], map: "idx_store_webhook_events_app_user")
   @@map("store_webhook_events")
+}
+
+// ==========================================================================
+// Vector Index Backfill (feat/vector-index-backfill)
+// ==========================================================================
+
+/// One execution of the vector-index gap backfill.
+///
+/// Exists because the previous answer to "did the vector index get populated?"
+/// was a `.catch(warn)` in `SearchService.indexLegalDocument` and nothing else.
+/// Prod on 2026-09-02 had 16,182 vector chunks against 90,008 keyword chunks —
+/// 18.6% — with every one of them a `decision`, and no record anywhere of when
+/// or why the rest went missing. A run row is that record.
+model VectorBackfillRun {
+  id     String @id @default(uuid()) @db.Uuid
+  /// BullMQ job id, once enqueued.
+  jobId  String? @map("job_id") @db.VarChar(64)
+  /// queued | running | paused | completed | failed | cancelled
+  status String @default("queued") @db.VarChar(20)
+  /// Enumerate and report the gap, embed nothing.
+  dryRun Boolean @default(false) @map("dry_run")
+  /// Restrict to these document types. Empty = the full priority order.
+  documentTypes String[] @default([]) @map("document_types")
+  batchSize     Int      @default(64) @map("batch_size")
+  batchDelayMs  Int      @default(0) @map("batch_delay_ms")
+  /// Optional ceiling on documents touched, for a bounded first run.
+  maxDocuments  Int?     @map("max_documents")
+
+  documentsTotal     Int @default(0) @map("documents_total")
+  documentsProcessed Int @default(0) @map("documents_processed")
+  documentsIndexed   Int @default(0) @map("documents_indexed")
+  documentsSkipped   Int @default(0) @map("documents_skipped")
+  documentsFailed    Int @default(0) @map("documents_failed")
+  chunksTotal        Int @default(0) @map("chunks_total")
+  chunksIndexed      Int @default(0) @map("chunks_indexed")
+  chunksFailed       Int @default(0) @map("chunks_failed")
+  batchesCompleted   Int @default(0) @map("batches_completed")
+  batchesFailed      Int @default(0) @map("batches_failed")
+
+  /// pause | cancel. The running job re-reads this between batches, which is
+  /// how a ~4h run is stopped without killing the worker mid-bulk-write.
+  controlSignal String? @map("control_signal") @db.VarChar(10)
+  /// Measured gap per document_type at enumeration time.
+  gapByType     Json    @default("{}") @map("gap_by_type")
+  message       String? @db.Text
+  failureReason String? @map("failure_reason") @db.Text
+
+  triggeredByUserId String? @map("triggered_by_user_id") @db.Uuid
+  organizationId    String? @map("organization_id") @db.Uuid
+
+  startedAt      DateTime? @map("started_at") @db.Timestamptz
+  finishedAt     DateTime? @map("finished_at") @db.Timestamptz
+  lastProgressAt DateTime? @map("last_progress_at") @db.Timestamptz
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Relations
+  triggeredByUser  User?                          @relation("VectorBackfillRunTriggeredBy", fields: [triggeredByUserId], references: [id])
+  documentStatuses VectorBackfillDocumentStatus[]
+
+  @@index([status, createdAt(sort: Desc)], map: "idx_vector_backfill_runs_status")
+  @@map("vector_backfill_runs")
+}
+
+/// Per-document outcome for one run: indexed, skipped-with-reason, or
+/// failed-with-reason. Reporting outcomes is the point of the backfill, not a
+/// nicety — an aggregate "N indexed" cannot tell an editor which statute is
+/// still absent from kNN.
+model VectorBackfillDocumentStatus {
+  id              String @id @default(uuid()) @db.Uuid
+  runId           String @map("run_id") @db.Uuid
+  legalDocumentId String @map("legal_document_id") @db.Uuid
+  documentType    String @map("document_type") @db.VarChar(30)
+  /// indexed | skipped | failed
+  status          String @db.VarChar(20)
+  /// Why, for `skipped` and `failed`. Always populated for those two.
+  reason          String? @db.VarChar(300)
+
+  /// Chunks this run considered missing for the document (the gap, not the total).
+  chunksAttempted Int @default(0) @map("chunks_attempted")
+  chunksIndexed   Int @default(0) @map("chunks_indexed")
+  chunksFailed    Int @default(0) @map("chunks_failed")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  run VectorBackfillRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, legalDocumentId], map: "uq_vector_backfill_doc_status")
+  @@index([runId, status], map: "idx_vector_backfill_doc_status_run")
+  @@index([legalDocumentId], map: "idx_vector_backfill_doc_status_doc")
+  @@map("vector_backfill_document_status")
 }

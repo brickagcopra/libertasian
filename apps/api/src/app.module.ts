@@ -38,6 +38,7 @@ import { ResearchWorkspacesModule } from './modules/research-workspaces/research
 import { TimelinesModule } from './modules/timelines/timelines.module';
 import { OrganizationsModule } from './modules/organizations/organizations.module';
 import { SearchModule } from './modules/search/search.module';
+import { VectorBackfillModule } from './modules/vector-backfill/vector-backfill.module';
 import { SourcesModule } from './modules/sources/sources.module';
 import { StudyModule } from './modules/study/study.module';
 import { SubjectsModule } from './modules/subjects/subjects.module';
@@ -402,6 +403,7 @@ import { RequestPlatformMiddleware } from './common/middleware/request-platform.
     KnowledgeGraphModule,
     MemosModule,
     SearchModule,
+    VectorBackfillModule,
     SourcesModule,
     BookmarksModule,
     CaseComparisonsModule,

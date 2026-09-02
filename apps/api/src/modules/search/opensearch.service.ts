@@ -1101,13 +1101,58 @@ export class OpenSearchService implements OnModuleInit {
   }
 
   /**
+   * Which of these `_id`s already exist in the vector index.
+   *
+   * Uses `_mget` with `_source: false` so the response carries only ids and a
+   * `found` flag — no embeddings come back over the wire, which matters when
+   * the caller is diffing ~90k ids against the index.
+   *
+   * Propagates transport errors rather than reporting an empty set: "nothing
+   * exists" would make a gap enumeration claim the whole corpus is missing and
+   * re-embed hours of work that is already indexed.
+   */
+  async findExistingVectorIds(
+    ids: readonly string[],
+    targetIndex = VECTOR_INDEX,
+  ): Promise<Set<string>> {
+    const found = new Set<string>();
+    if (ids.length === 0) return found;
+
+    const chunkSize = 1000;
+    for (let i = 0; i < ids.length; i += chunkSize) {
+      const chunk = ids.slice(i, i + chunkSize) as string[];
+      const response = await this.client.mget({
+        index: targetIndex,
+        body: { ids: chunk },
+        _source: false,
+      });
+      const docs = (response.body.docs ?? []) as { _id: string; found?: boolean }[];
+      for (const doc of docs) {
+        if (doc.found) found.add(doc._id);
+      }
+    }
+    return found;
+  }
+
+  /**
    * Bulk index vector documents into the vector index.
+   *
+   * Returns the failed `_id`s alongside the counts. Without them a caller can
+   * only say "3 of 64 failed" and has to guess which document to mark — the
+   * backfill records a per-document outcome, so an aggregate count is not
+   * enough to be honest about what actually landed.
    */
   async bulkIndexVectorDocuments(
     docs: VectorDocumentPayload[],
     targetIndex = VECTOR_INDEX,
-  ) {
-    if (docs.length === 0) return { indexed: 0, errors: 0 };
+  ): Promise<{
+    indexed: number;
+    errors: number;
+    failedIds: string[];
+    /** First error reason seen, for the log line and the persisted status row. */
+    firstErrorReason?: string;
+  }> {
+    if (docs.length === 0) return { indexed: 0, errors: 0, failedIds: [] };
 
     const body: Record<string, unknown>[] = [];
     for (const doc of docs) {
@@ -1118,12 +1163,34 @@ export class OpenSearchService implements OnModuleInit {
 
     try {
       const response = await this.client.bulk({ body, refresh: 'false' });
-      let errorCount = 0;
+      const failedIds: string[] = [];
+      let firstErrorReason: string | undefined;
       if (response.body.errors) {
         const items = response.body.items as Record<string, Record<string, unknown>>[];
-        errorCount = items.filter((item) => item['index']?.['error']).length;
+        for (const item of items) {
+          const entry = item['index'];
+          const error = entry?.['error'] as Record<string, unknown> | undefined;
+          if (!error) continue;
+          const id = entry?.['_id'];
+          if (typeof id === 'string') failedIds.push(id);
+          firstErrorReason ??=
+            (typeof error['reason'] === 'string' ? error['reason'] : undefined) ??
+            (typeof error['type'] === 'string' ? error['type'] : undefined) ??
+            'unknown bulk error';
+        }
       }
-      return { indexed: docs.length - errorCount, errors: errorCount };
+      if (failedIds.length > 0) {
+        this.logger.warn(
+          `Bulk vector index: ${docs.length - failedIds.length}/${docs.length} succeeded, ` +
+            `${failedIds.length} errors (first: ${firstErrorReason})`,
+        );
+      }
+      return {
+        indexed: docs.length - failedIds.length,
+        errors: failedIds.length,
+        failedIds,
+        ...(firstErrorReason ? { firstErrorReason } : {}),
+      };
     } catch (error) {
       this.logger.error('Bulk vector index failed', error);
       throw error;

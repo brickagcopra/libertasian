@@ -7,6 +7,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { MfaGuard } from '../../common/guards/mfa.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { TenantGuard } from '../../common/guards/tenant.guard';
+import { SearchService } from './search.service';
 import { SuppressedDocsService } from './suppressed-docs.service';
 
 /**
@@ -24,7 +25,10 @@ import { SuppressedDocsService } from './suppressed-docs.service';
 @Throttle({ default: { ttl: 60_000, limit: 100 } })
 @ApiBearerAuth()
 export class AdminDiagnosticsController {
-  constructor(private readonly suppressedDocs: SuppressedDocsService) {}
+  constructor(
+    private readonly suppressedDocs: SuppressedDocsService,
+    private readonly searchService: SearchService,
+  ) {}
 
   @Get('suppressed-docs')
   @ApiOperation({
@@ -36,6 +40,20 @@ export class AdminDiagnosticsController {
   async getSuppressedDocsCount() {
     const count = await this.suppressedDocs.getCount();
     return { success: true, data: { suppressedDocCount: count } };
+  }
+
+  @Get('vector-index')
+  @ApiOperation({
+    summary: 'Live vector-indexing failure counters for this API process',
+    description:
+      'The vector index sat at 18.6% of the keyword index because ' +
+      'indexLegalDocument swallowed every vector failure into a .catch(warn) ' +
+      'and a bare `continue`. These counters make the live path observable. ' +
+      'They are in-process and reset on restart — for the absolute gap use ' +
+      'GET /admin/vector-backfill/gap, which measures it against OpenSearch.',
+  })
+  getVectorIndexHealth() {
+    return { success: true, data: this.searchService.getVectorIndexStats() };
   }
 
   @Post('suppressed-docs/refresh')
