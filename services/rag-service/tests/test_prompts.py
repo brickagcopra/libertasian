@@ -111,12 +111,47 @@ class TestPartialAnswerInstruction:
             assert f"\n{n}. " in f"\n{prompt}"
 
 
+class TestBareTopicQueries:
+    """v1.4: the query's FORM is never a reason to abstain.
+
+    v1.3 fixed coverage — a partial answer beats the sentinel. It did not fix
+    query form: the one-word query "constitution" still abstained with
+    retrieval filtered to the 1987 Constitution itself, so nothing about the
+    passages' content justified the refusal. The model was declining because
+    the query did not look like a question.
+    """
+
+    @pytest.mark.parametrize(
+        "prompt",
+        [SYSTEM_PROMPT, STREAMING_SYSTEM_PROMPT],
+        ids=["system", "streaming"],
+    )
+    def test_bare_topic_is_answerable(self, prompt: str) -> None:
+        assert "A query may be a bare topic, keyword or phrase rather than a question" in prompt
+        assert (
+            "Treat such a query as a request to explain what the SOURCE PASSAGES "
+            "say about that topic" in prompt
+        )
+
+    @pytest.mark.parametrize(
+        "prompt",
+        [SYSTEM_PROMPT, STREAMING_SYSTEM_PROMPT],
+        ids=["system", "streaming"],
+    )
+    def test_query_form_is_never_grounds_to_abstain(self, prompt: str) -> None:
+        assert (
+            "The form, length or breadth of the query is never itself a reason "
+            f"to emit {INSUFFICIENT_SOURCES_SENTINEL}; only the passages' content is." in prompt
+        )
+
+
 class TestPromptVersion:
     def test_version_matches_instruction_3(self) -> None:
         """CLAUDE.md requires prompt_template_version be recorded per inference.
 
         A changed instruction under an unchanged version makes `model_runs`
         unauditable — two different prompts recorded as the same template. v1.3
-        is the partial-answer rewrite of instruction 3.
+        was the partial-answer rewrite of instruction 3; v1.4 adds the
+        bare-topic clause to the same instruction.
         """
-        assert PROMPT_VERSION == "answer-v1.3"
+        assert PROMPT_VERSION == "answer-v1.4"

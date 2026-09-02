@@ -115,6 +115,20 @@ jobs:
         working-directory: services/rag-service
         run: uv run pytest tests/test_index_field_contract.py -q
 
+      # Same failure class one level down: not a field name the mapping does
+      # not have, but a `document_type` VALUE the corpus does not have. The
+      # CODAL_REFERENCE boost in `core/retrieval.py` shipped boosting
+      # statute/code/rule; a terms aggregation on prod (2026-09-02) returns
+      # zero documents for all three, so the boost had been a silent no-op
+      # since it was written, and the same dead value in
+      # `citations/case_codal_suggestions.py` made a Constitution suggestion
+      # unreachable. Neither is an error at query time — OpenSearch matches
+      # nothing and says nothing. These tests pin the measured vocabulary so
+      # reintroducing a phantom value fails here.
+      - name: Assert document_type values exist in the corpus
+        working-directory: services/rag-service
+        run: uv run pytest tests/test_retrieval.py tests/test_case_codal_suggestions.py -q
+
       # The rag-service <-> reranker-service API contract. Same reasoning as
       # the OpenSearch one: `core/reranking.py` builds and parses plain dicts,
       # reranker-service declares Pydantic models in a different package, and

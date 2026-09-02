@@ -22,6 +22,7 @@ import httpx
 import pytest
 
 from src.core.retrieval import (
+    _CODAL_TYPE_BOOSTS,
     _get_boosted_fields,
     _hit_to_passage,
     _rrf_fuse,
@@ -34,6 +35,31 @@ from src.core.retrieval import (
 )
 from src.core.schemas import Passage, SearchResult
 from src.core.types import QueryIntent
+
+
+# The codal `document_type` values that exist in `legal_documents_keyword`,
+# measured from a live terms aggregation on prod on 2026-09-02. Pinned here
+# rather than imported from the source so this file is an independent statement
+# of what the corpus contains: the point of the test is to FAIL if someone
+# reintroduces a value the corpus does not have.
+#
+# Re-run the aggregation before widening this set.
+_MEASURED_CODAL_DOCUMENT_TYPES = frozenset(
+    {
+        "constitution",
+        "codal",
+        "republic_act",
+        "rules_of_court",
+        "presidential_decree",
+        "executive_order",
+    }
+)
+
+# Values proven absent on the same run — and the three the CODAL_REFERENCE
+# boost shipped with, which is why it had been a no-op since it was written.
+# Named explicitly so a regression reads as "this value does not exist" rather
+# than "not in the set".
+_ABSENT_DOCUMENT_TYPES = frozenset({"statute", "code", "rule"})
 
 
 # ---------------------------------------------------------------------------
@@ -1121,9 +1147,9 @@ class TestBlankPassagesAreDropped:
 class TestBm25Search:
     """Test BM25 search OpenSearch query construction."""
 
-    @pytest.mark.asyncio
-    async def test_codal_intent_adds_document_type_filter(self) -> None:
-        """CODAL_REFERENCE intent should inject document_type boost."""
+    @staticmethod
+    async def _codal_should_doc_types() -> list[str]:
+        """Return the document_type values the CODAL_REFERENCE should-block boosts."""
         from src.core.retrieval import _bm25_search
 
         captured_body: dict[str, Any] = {}
@@ -1135,14 +1161,31 @@ class TestBm25Search:
         with patch("src.core.retrieval.opensearch_search", side_effect=_capture_search):
             await _bm25_search("Article 1191 Civil Code", QueryIntent.CODAL_REFERENCE)
 
-        # Should have a bool query with should clauses for statute/code/rule
         query = captured_body.get("query", {})
         assert "bool" in query
         should_clauses = query["bool"].get("should", [])
-        doc_types = [c["term"]["document_type"]["value"] for c in should_clauses if "term" in c]
-        assert "statute" in doc_types
-        assert "code" in doc_types
-        assert "rule" in doc_types
+        return [c["term"]["document_type"]["value"] for c in should_clauses if "term" in c]
+
+    @pytest.mark.asyncio
+    async def test_codal_intent_adds_document_type_filter(self) -> None:
+        """CODAL_REFERENCE intent should inject a document_type boost."""
+        doc_types = await self._codal_should_doc_types()
+
+        assert doc_types
+        assert "constitution" in doc_types
+
+    @pytest.mark.asyncio
+    async def test_codal_boost_only_names_types_the_corpus_has(self) -> None:
+        """A boost on an absent document_type is dead weight, not a tuning knob.
+
+        The shipped block boosted statute/code/rule, none of which exist in
+        `legal_documents_keyword` — so a codal query got no codal boost at all
+        and the Constitution could never be lifted above case law.
+        """
+        doc_types = await self._codal_should_doc_types()
+
+        assert not (set(doc_types) & _ABSENT_DOCUMENT_TYPES)
+        assert set(doc_types) <= _MEASURED_CODAL_DOCUMENT_TYPES
 
     @pytest.mark.asyncio
     async def test_non_codal_uses_multi_match(self) -> None:
@@ -1534,7 +1577,9 @@ class TestBm25DocumentScope:
 
         query = captured["query"]
         assert query["bool"]["filter"] == [{"term": {"document_id": "doc-42"}}]
-        assert len(query["bool"]["should"]) == 3
+        # The boost survives the scoping; its size is _CODAL_TYPE_BOOSTS's
+        # business, so assert it is intact rather than pinning a count here.
+        assert len(query["bool"]["should"]) == len(_CODAL_TYPE_BOOSTS)
 
     @pytest.mark.asyncio
     async def test_no_filter_terms_leaves_body_unchanged(self) -> None:

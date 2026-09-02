@@ -183,8 +183,15 @@ async def _search_codal_candidates(case_excerpt: str) -> list[dict[str, Any]]:
                 "filter": [
                     {
                         "terms": {
+                            # Values measured against `legal_documents_keyword`
+                            # on 2026-09-02. "statute" was dropped: a terms
+                            # aggregation returns ZERO documents for it, so it
+                            # only ever widened the filter on paper.
+                            # "constitution" was added — without it this filter
+                            # excludes the 1987 Constitution, and a codal
+                            # suggestion for it was impossible to produce.
                             "document_type": [
-                                "statute",
+                                "constitution",
                                 "republic_act",
                                 "presidential_decree",
                                 "executive_order",

@@ -31,6 +31,28 @@ _AUTHORITY_BOOST: dict[str, float] = {
     "private": 0.8,
 }
 
+# document_type boosts applied to CODAL_REFERENCE queries in `_bm25_search`.
+#
+# These are the values that actually EXIST in `legal_documents_keyword`. The
+# block used to boost "statute", "code" and "rule"; a terms aggregation over
+# the live index on 2026-09-02 returned ZERO documents for all three, so it
+# had been a no-op since it was written — a codal query got no codal boost at
+# all, and the Constitution (by far the largest codal body in the corpus)
+# could never be lifted above case law. Measured document_type counts on the
+# same run: decision (case law, not boosted here), constitution, codal,
+# republic_act, rules_of_court, presidential_decree, executive_order.
+#
+# Before changing this list, re-run the aggregation. A boost naming a value
+# the corpus does not have is silently dead weight, not a tuning knob.
+_CODAL_TYPE_BOOSTS: dict[str, float] = {
+    "constitution": 3.0,
+    "codal": 2.0,
+    "republic_act": 2.0,
+    "rules_of_court": 1.5,
+    "presidential_decree": 1.5,
+    "executive_order": 1.5,
+}
+
 # Index names
 _KEYWORD_INDEX = "legal_documents_keyword"
 _VECTOR_INDEX = "legal_documents_vector"
@@ -409,9 +431,8 @@ async def _bm25_search(
             "bool": {
                 "must": [body["query"]],
                 "should": [
-                    {"term": {"document_type": {"value": "statute", "boost": 2.0}}},
-                    {"term": {"document_type": {"value": "code", "boost": 2.0}}},
-                    {"term": {"document_type": {"value": "rule", "boost": 1.5}}},
+                    {"term": {"document_type": {"value": value, "boost": boost}}}
+                    for value, boost in _CODAL_TYPE_BOOSTS.items()
                 ],
             },
         }

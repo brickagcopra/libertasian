@@ -19,7 +19,7 @@ from src.answer.schemas import (
     AnswerSource,
     ConversationTurn,
 )
-from src.answer.prompts import INSUFFICIENT_SOURCES_SENTINEL
+from src.answer.prompts import INSUFFICIENT_SOURCES_SENTINEL, PROMPT_VERSION
 from src.answer.service import (
     _confidence_to_level,
     _is_insufficient_sentinel,
@@ -262,7 +262,9 @@ class TestGenerateAnswer:
         assert response.abstained is False
         assert response.abstention_reason is None
         assert response.model_name == "test-model-v1"
-        assert response.prompt_template_version == "answer-v1.3"
+        # The version the response records is whatever the prompt module
+        # declares; `test_prompts` is where the literal is pinned.
+        assert response.prompt_template_version == PROMPT_VERSION
 
     @pytest.mark.asyncio
     async def test_answer_includes_sources_when_requested(self) -> None:
