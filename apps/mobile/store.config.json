@@ -48,6 +48,25 @@
 //      - the `advisory` age-rating block below is commented out because
 //        eas-cli rejects the legacy schema it uses. The age rating is
 //        answered by hand in the ASC questionnaire; a push does not carry it.
+//
+// 4. The Subscriptions paragraph and the three link lines at the end of
+//    `description` are a REJECTION FIX, not decoration. App Review rejected
+//    iOS 1.0.1 (build 29) under Guideline 3.1.2 on 2026-09-02 (submission
+//    fa02a61a-b2c3-44d1-ac95-4409dfac3227) because the App Store product
+//    page carried no functional Terms of Use (EULA) link. 3.1.2 requires the
+//    product page itself to state the subscription terms and link a EULA;
+//    the in-app Terms screen does not satisfy it. Apple exposes a dedicated
+//    EULA field only for a CUSTOM agreement, so the standard EULA has to be
+//    linked from the Description - which is why these lines live here and
+//    must NOT be trimmed for length. `Terms of Use (EULA)` points at Apple's
+//    standard EULA; `Service terms` points at ours, which is an addition to
+//    it, not a replacement. No price appears in this copy on purpose: prices
+//    are shown in the app before purchase, and hardcoding them here would
+//    go stale per-storefront.
+//
+//    This text is applied to App Store Connect BY HAND (2026-09-02).
+//    Do not run `eas metadata:push` to apply it - see item 3: a push would
+//    clear the demo-account Sign-In fields the reviewer needs.
 {
   "configVersion": 0,
   "apple": {
@@ -58,7 +77,7 @@
       "en-US": {
         "title": "LIBERTASIAN",
         "subtitle": "Philippine legal research",
-        "description": "LIBERTASIAN is a Philippine legal research library for law students, bar reviewees, and practitioners.\n\n• Past Bar Exams — 97 sittings, 1,500+ questions from 1953–2024 with AI-generated ALAC answers.\n• Case Digests — Philippine Supreme Court cases with facts, issues, ruling, doctrine, and provenance, generated from authoritative sources only.\n• Codal Reader — Republic Acts, the 1987 Constitution, and the Rules of Court, organized by bar subject with cross-references.\n• AI Study Assistant — chat and Q&A grounded in what you are reading. Sourced answers only; the model abstains rather than fabricate.\n• Camera Scan-to-Digest — point your camera at a pleading or case printout and get a structured digest with citations back to the source.\n• Offline codal cache and cross-device sync between mobile and web.\n\nPrivate by default. Your uploads, scans, and notes stay scoped to your organization. Nothing you upload is ever used to train our models or shared without your explicit consent.\n\nLIBERTASIAN provides AI-powered legal research tools for informational purposes only. AI outputs are not legal advice and do not create an attorney-client relationship. Always consult a qualified Philippine lawyer for legal matters.",
+        "description": "LIBERTASIAN is a Philippine legal research library for law students, bar reviewees, and practitioners.\n\n• Past Bar Exams — 97 sittings, 1,500+ questions from 1953–2024 with AI-generated ALAC answers.\n• Case Digests — Philippine Supreme Court cases with facts, issues, ruling, doctrine, and provenance, generated from authoritative sources only.\n• Codal Reader — Republic Acts, the 1987 Constitution, and the Rules of Court, organized by bar subject with cross-references.\n• AI Study Assistant — chat and Q&A grounded in what you are reading. Sourced answers only; the model abstains rather than fabricate.\n• Camera Scan-to-Digest — point your camera at a pleading or case printout and get a structured digest with citations back to the source.\n• Offline codal cache and cross-device sync between mobile and web.\n\nPrivate by default. Your uploads, scans, and notes stay scoped to your organization. Nothing you upload is ever used to train our models or shared without your explicit consent.\n\nLIBERTASIAN provides AI-powered legal research tools for informational purposes only. AI outputs are not legal advice and do not create an attorney-client relationship. Always consult a qualified Philippine lawyer for legal matters.\n\nSubscriptions\nLIBERTASIAN Pro and LIBERTASIAN Edu are offered as monthly or annual auto-renewable subscriptions. The price of each option is shown in the app before you subscribe. Payment is charged to your Apple Account at confirmation of purchase. Your subscription renews automatically unless auto-renew is turned off at least 24 hours before the end of the current period, and your account is charged for renewal within 24 hours of the end of that period. You can manage your subscription or turn off auto-renew in your Apple Account settings after purchase.\n\nTerms of Use (EULA): https://www.apple.com/legal/internet-services/itunes/dev/stdeula/\nService terms: https://libertasian.com/terms\nPrivacy Policy: https://libertasian.com/privacy",
         "keywords": [
           "Philippine law",
           "bar exam",

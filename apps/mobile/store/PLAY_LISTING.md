@@ -50,9 +50,17 @@ WHO IT IS FOR
 
 DISCLAIMER
 LIBERTASIAN provides AI-powered legal research tools for informational purposes only. AI outputs are not legal advice and do not create an attorney-client relationship. Always consult a qualified Philippine lawyer for legal matters. The practice of law in the Philippines is reserved for members of the Philippine Bar.
+
+SUBSCRIPTIONS
+LIBERTASIAN Pro and LIBERTASIAN Edu are offered as monthly or annual auto-renewable subscriptions. The price of each option is shown in the app before you subscribe. Payment is charged to your Google Play account at confirmation of purchase. Your subscription renews automatically unless auto-renew is turned off at least 24 hours before the end of the current period, and your account is charged for renewal within 24 hours of the end of that period. You can manage your subscription or turn off auto-renew in your Google Play account settings after purchase.
+
+Service terms: https://libertasian.com/terms
+Privacy Policy: https://libertasian.com/privacy
 ```
 
 (Play Console limit: 4000 chars — current: well under. Pure ASCII for safe paste.)
+
+The SUBSCRIPTIONS block mirrors the one appended to the App Store description after App Review rejected iOS 1.0.1 (build 29) under Guideline 3.1.2 for a missing Terms of Use (EULA) link (submission fa02a61a-b2c3-44d1-ac95-4409dfac3227, 2026-09-02). Play has no EULA field and no equivalent rejection, so the Apple stdeula line is dropped and only our own terms and privacy links are kept; the paragraph says "Google Play account settings" where Apple says "Apple Account settings". Keep it: it is what stops the Play listing earning a Subscriptions policy note of its own. Do not put prices here — they are shown in the app before purchase.
 
 ---
 
