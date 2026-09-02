@@ -23,6 +23,22 @@ import { RegisterDto, LoginDto } from './dto';
 import { LoginEventService, type LoginEventType } from './login-event.service';
 import { LoginThrottleService } from './login-throttle.service';
 
+/**
+ * The user object every authenticated response carries.
+ *
+ * `GET /users/me` populates the org fields from the JWT payload; the sign-in
+ * paths populate them from the membership row they just resolved. Both must
+ * produce the SAME shape — mobile's auth context is filled by whichever call
+ * lands first, and a missing `organizationId` there leaves RevenueCat
+ * unconfigured for the whole session. `auth-user-contract.spec.ts` pins the
+ * two together.
+ */
+export type AuthUser = ReturnType<UsersService['sanitize']> & {
+  organizationId: string | null;
+  organizationRole: UserRole | null;
+  isPlatformAdmin: boolean;
+};
+
 const BCRYPT_COST = 12;
 
 @Injectable()
@@ -74,12 +90,39 @@ export class AuthService {
     }
   }
 
+  /**
+   * Single builder for the authenticated-user payload returned by every
+   * sign-in path (register / login / MFA challenge / Google / Apple).
+   *
+   * Before this existed, each site returned `sanitize(user) + isPlatformAdmin`
+   * and dropped `organizationId` / `organizationRole`, which `GET /users/me`
+   * did include. Mobile seeds its auth context from the sign-in response, so
+   * `organizationId` was `undefined` for the whole session and the purchase
+   * screen never configured RevenueCat.
+   *
+   * `membership` is null only where no active membership has been resolved
+   * yet (the MFA challenge step) — the fields are then explicitly null rather
+   * than absent, so the client can tell "not known" from "not sent".
+   */
+  private buildAuthUser(
+    user: Parameters<UsersService['sanitize']>[0],
+    membership: { organizationId: string; role: string } | null,
+    isPlatformAdmin: boolean,
+  ): AuthUser {
+    return {
+      ...this.usersService.sanitize(user),
+      organizationRole: (membership?.role as UserRole | undefined) ?? null,
+      organizationId: membership?.organizationId ?? null,
+      isPlatformAdmin,
+    };
+  }
+
   // ---- Registration ----
 
   async register(
     dto: RegisterDto,
     req: Request | null = null,
-  ): Promise<{ user: ReturnType<UsersService['sanitize']> & { isPlatformAdmin: boolean } }> {
+  ): Promise<{ user: AuthUser }> {
     const existing = await this.usersService.findByEmail(dto.email);
     if (existing) {
       throw new ConflictException('Email already registered');
@@ -166,7 +209,8 @@ export class AuthService {
       : false;
 
     return {
-      user: { ...this.usersService.sanitize(user), isPlatformAdmin },
+      // role is the literal used in the organizationMember.create above.
+      user: this.buildAuthUser(user, { organizationId: org.id, role: 'owner' }, isPlatformAdmin),
     };
   }
 
@@ -178,7 +222,7 @@ export class AuthService {
     req: Request | null = null,
   ): Promise<{
     tokens: TokenPair;
-    user: ReturnType<UsersService['sanitize']> & { isPlatformAdmin: boolean };
+    user: AuthUser;
     mfaRequired: boolean;
   }> {
     const ip = this.clientIp(req);
@@ -218,15 +262,28 @@ export class AuthService {
       throw new UnauthorizedException('Invalid email or password');
     }
 
+    // Get user's primary organization membership.
+    //
+    // Resolved BEFORE the MFA branch so the challenge response can carry the
+    // org fields too — the mobile client seeds its auth context from whatever
+    // user object a sign-in returns, and a challenge that omits
+    // organizationId leaves it undefined. The `!membership` rejection stays
+    // below, where it has always been, so an MFA-enabled user with no active
+    // membership still gets the challenge before the 401 (unchanged).
+    const membership = await this.prisma.organizationMember.findFirst({
+      where: { userId: user.id, status: 'active' },
+      orderBy: { createdAt: 'asc' },
+    });
+
     // Check MFA if enabled
     if (user.mfaEnabled && user.mfaSecret) {
       if (!dto.mfaCode) {
-        // MFA challenge — no membership resolved yet, so omit the admin flag
-        // entirely. The web client only persists user after a non-MFA login
-        // anyway, and the next call (with mfaCode) returns the full payload.
+        // MFA challenge — the admin flag is NOT computed here (it needs a
+        // verified second factor); it stays the false literal and the next
+        // call (with mfaCode) returns the full payload.
         return {
           tokens: { accessToken: '', refreshToken: '' },
-          user: { ...this.usersService.sanitize(user), isPlatformAdmin: false },
+          user: this.buildAuthUser(user, membership, false),
           mfaRequired: true,
         };
       }
@@ -240,12 +297,6 @@ export class AuthService {
         throw new UnauthorizedException('Invalid MFA code');
       }
     }
-
-    // Get user's primary organization membership
-    const membership = await this.prisma.organizationMember.findFirst({
-      where: { userId: user.id, status: 'active' },
-      orderBy: { createdAt: 'asc' },
-    });
 
     if (!membership) {
       throw new UnauthorizedException('No active organization membership');
@@ -271,7 +322,7 @@ export class AuthService {
 
     return {
       tokens,
-      user: { ...this.usersService.sanitize(user), isPlatformAdmin },
+      user: this.buildAuthUser(user, membership, isPlatformAdmin),
       mfaRequired: false,
     };
   }
@@ -284,7 +335,7 @@ export class AuthService {
     req: Request | null = null,
   ): Promise<{
     tokens: TokenPair;
-    user: ReturnType<UsersService['sanitize']> & { isPlatformAdmin: boolean };
+    user: AuthUser;
     isNewUser: boolean;
   }> {
     // 1. Try to find user by Google ID
@@ -342,7 +393,7 @@ export class AuthService {
 
     return {
       tokens,
-      user: { ...this.usersService.sanitize(user), isPlatformAdmin },
+      user: this.buildAuthUser(user, membership, isPlatformAdmin),
       isNewUser,
     };
   }
@@ -355,7 +406,7 @@ export class AuthService {
     req: Request | null = null,
   ): Promise<{
     tokens: TokenPair;
-    user: ReturnType<UsersService['sanitize']> & { isPlatformAdmin: boolean };
+    user: AuthUser;
     isNewUser: boolean;
   }> {
     // 1. Try to find user by Apple ID (the identity token's stable `sub`)
@@ -427,7 +478,7 @@ export class AuthService {
 
     return {
       tokens,
-      user: { ...this.usersService.sanitize(user), isPlatformAdmin },
+      user: this.buildAuthUser(user, membership, isPlatformAdmin),
       isNewUser,
     };
   }
