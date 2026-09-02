@@ -1,5 +1,5 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
-import { Test, TestingModule } from '@nestjs/testing';
+import { Test, TestingModule, TestingModuleBuilder } from '@nestjs/testing';
 import cookieParser from 'cookie-parser';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const request = require('supertest') as typeof import('supertest');
@@ -24,15 +24,19 @@ export function disableRateLimiting(): void {
  * Requires a running PostgreSQL and Redis instance.
  * Rate limiting is disabled to prevent 429 errors during test runs.
  */
-export async function createTestApp(): Promise<INestApplication> {
+export async function createTestApp(
+  configure?: (builder: TestingModuleBuilder) => TestingModuleBuilder,
+): Promise<INestApplication> {
   // Disable rate limiting by mocking canActivate on the throttler guard prototype.
   // This is more reliable than overrideProvider(APP_GUARD) which doesn't work
   // with NestJS multi-provider tokens.
   disableRateLimiting();
 
-  const moduleFixture: TestingModule = await Test.createTestingModule({
-    imports: [AppModule],
-  }).compile();
+  // `configure` lets a suite swap a provider (e.g. SocialTokenService, whose
+  // real implementation needs live Google/Apple JWKS) without reimplementing
+  // the app wiring below.
+  const builder = Test.createTestingModule({ imports: [AppModule] });
+  const moduleFixture: TestingModule = await (configure ? configure(builder) : builder).compile();
 
   const app = moduleFixture.createNestApplication();
 

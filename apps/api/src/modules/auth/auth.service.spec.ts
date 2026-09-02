@@ -380,9 +380,14 @@ describe('AuthService', () => {
       );
 
       // Verify result — register attaches isPlatformAdmin=false for a fresh
-      // user (no admin:* permissions on the just-created membership).
+      // user (no admin:* permissions on the just-created membership), plus the
+      // org fields of the personal workspace it just provisioned. Mobile seeds
+      // its auth context from this response; without organizationId the
+      // purchase screen never configures RevenueCat.
       expect(result.user).toEqual({
         ...usersService.sanitize(mockUser),
+        organizationId: mockOrganization.id,
+        organizationRole: 'owner',
         isPlatformAdmin: false,
       });
     });
@@ -438,16 +443,22 @@ describe('AuthService', () => {
         updatedAt: mfaUser.updatedAt,
       });
       (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+      prismaService.organizationMember.findFirst.mockResolvedValue(
+        mockMembership as unknown as ReturnType<typeof prismaService.organizationMember.findFirst>,
+      );
 
       const result = await service.login(loginDto, deviceFingerprint);
 
       expect(result.mfaRequired).toBe(true);
       expect(result.tokens.accessToken).toBe('');
       expect(result.tokens.refreshToken).toBe('');
-      // MFA challenge response omits the admin flag (no membership resolved
-      // yet) — always false until the second login call with mfaCode.
+      // The challenge response still carries the org fields — the client may
+      // seed its auth context from it — but the admin flag stays false until
+      // the second login call with mfaCode verifies the second factor.
       expect(result.user).toEqual({
         ...usersService.sanitize(mfaUser),
+        organizationId: mockMembership.organizationId,
+        organizationRole: mockMembership.role,
         isPlatformAdmin: false,
       });
     });
@@ -478,6 +489,8 @@ describe('AuthService', () => {
       expect(result.tokens.refreshToken).toEqual(expect.any(String));
       expect(result.user).toEqual({
         ...usersService.sanitize(mockUser),
+        organizationId: mockMembership.organizationId,
+        organizationRole: mockMembership.role,
         isPlatformAdmin: false,
       });
 
@@ -920,6 +933,27 @@ describe('AuthService', () => {
       await expect(service.loginWithGoogle(googleProfile, deviceFingerprint)).rejects.toThrow(UnauthorizedException);
       await expect(service.loginWithGoogle(googleProfile, deviceFingerprint)).rejects.toThrow('Account is suspended or deactivated');
     });
+
+    it('returns organizationId and organizationRole from the active membership', async () => {
+      const googleUser = { ...mockUser, googleId: googleProfile.googleId, emailVerified: true };
+
+      usersService.findByGoogleId.mockResolvedValue(googleUser as unknown as ReturnType<UsersService['findByGoogleId']>);
+      usersService.sanitize.mockReturnValue({ id: googleUser.id, email: googleUser.email });
+      prismaService.organizationMember.findFirst.mockResolvedValue(
+        mockMembership as unknown as ReturnType<typeof prismaService.organizationMember.findFirst>,
+      );
+      jwtService.sign.mockReturnValue('access-token-jwt');
+      prismaService.refreshToken.create.mockResolvedValue(
+        {} as unknown as ReturnType<typeof prismaService.refreshToken.create>,
+      );
+
+      const result = await service.loginWithGoogle(googleProfile, deviceFingerprint);
+
+      // Must match the membership the JWT was minted from — mobile reads these
+      // off the sign-in response to configure RevenueCat.
+      expect(result.user.organizationId).toBe(mockMembership.organizationId);
+      expect(result.user.organizationRole).toBe(mockMembership.role);
+    });
   });
 
   describe('loginWithApple', () => {
@@ -1060,6 +1094,19 @@ describe('AuthService', () => {
       await expect(service.loginWithApple(appleProfile, deviceFingerprint)).rejects.toThrow(
         'Account is suspended or deactivated',
       );
+    });
+
+    it('returns organizationId and organizationRole from the active membership', async () => {
+      const appleUser = { ...mockUser, appleId: appleProfile.appleId, emailVerified: true };
+
+      usersService.findByAppleId.mockResolvedValue(appleUser as unknown as ReturnType<UsersService['findByAppleId']>);
+      usersService.sanitize.mockReturnValue({ id: appleUser.id, email: appleUser.email });
+      stubTokenIssuance();
+
+      const result = await service.loginWithApple(appleProfile, deviceFingerprint);
+
+      expect(result.user.organizationId).toBe(mockMembership.organizationId);
+      expect(result.user.organizationRole).toBe(mockMembership.role);
     });
   });
 
