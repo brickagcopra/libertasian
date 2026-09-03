@@ -20,6 +20,7 @@ const mockClient = {
   search: jest.fn(),
   delete: jest.fn(),
   deleteByQuery: jest.fn(),
+  mget: jest.fn(),
   count: jest.fn(),
   reindex: jest.fn(),
   indices: {
@@ -826,9 +827,20 @@ describe('OpenSearchService', () => {
   // ---- bulkIndexVectorDocuments ----
 
   describe('bulkIndexVectorDocuments', () => {
+    const vectorDoc = (id: string, sectionId?: string) => ({
+      document_id: id,
+      ...(sectionId ? { section_id: sectionId } : {}),
+      document_type: 'case',
+      is_official: true,
+      is_published: true,
+      embedding_vector: [0.1],
+      text_snippet: 'snippet',
+      title: 'Test',
+    });
+
     it('should return zeros for empty array', async () => {
       const result = await service.bulkIndexVectorDocuments([]);
-      expect(result).toEqual({ indexed: 0, errors: 0 });
+      expect(result).toEqual({ indexed: 0, errors: 0, failedIds: [] });
     });
 
     it('should bulk index vector documents', async () => {
@@ -836,19 +848,86 @@ describe('OpenSearchService', () => {
         body: { errors: false, items: [] },
       });
 
-      const result = await service.bulkIndexVectorDocuments([
-        {
-          document_id: 'doc-1',
-          document_type: 'case',
-          is_official: true,
-          is_published: true,
-          embedding_vector: [0.1],
-          text_snippet: 'snippet',
-          title: 'Test',
+      const result = await service.bulkIndexVectorDocuments([vectorDoc('doc-1')]);
+
+      expect(result).toEqual({ indexed: 1, errors: 0, failedIds: [] });
+    });
+
+    // The backfill records a per-document outcome, so an aggregate error count
+    // is not enough — it has to know WHICH chunk was rejected.
+    it('names the rejected ids and the first reason', async () => {
+      mockClient.bulk.mockResolvedValue({
+        body: {
+          errors: true,
+          items: [
+            { index: { _id: 'sec-1' } },
+            {
+              index: {
+                _id: 'sec-2',
+                error: { type: 'mapper_parsing_exception', reason: 'bad vector width' },
+              },
+            },
+          ],
         },
+      });
+
+      const result = await service.bulkIndexVectorDocuments([
+        vectorDoc('doc-1', 'sec-1'),
+        vectorDoc('doc-1', 'sec-2'),
       ]);
 
-      expect(result).toEqual({ indexed: 1, errors: 0 });
+      expect(result.indexed).toBe(1);
+      expect(result.errors).toBe(1);
+      expect(result.failedIds).toEqual(['sec-2']);
+      expect(result.firstErrorReason).toBe('bad vector width');
+    });
+  });
+
+  // ---- findExistingVectorIds ----
+
+  describe('findExistingVectorIds', () => {
+    it('returns only the ids the index reports as found', async () => {
+      mockClient.mget = jest.fn().mockResolvedValue({
+        body: {
+          docs: [
+            { _id: 'sec-1', found: true },
+            { _id: 'sec-2', found: false },
+            { _id: 'doc-1', found: true },
+          ],
+        },
+      });
+
+      const found = await service.findExistingVectorIds(['sec-1', 'sec-2', 'doc-1']);
+
+      expect([...found].sort()).toEqual(['doc-1', 'sec-1']);
+      expect(mockClient.mget).toHaveBeenCalledWith(
+        expect.objectContaining({ _source: false }),
+      );
+    });
+
+    it('short-circuits on an empty id list', async () => {
+      mockClient.mget = jest.fn();
+      const found = await service.findExistingVectorIds([]);
+      expect(found.size).toBe(0);
+      expect(mockClient.mget).not.toHaveBeenCalled();
+    });
+
+    it('chunks large id lists rather than sending one enormous mget', async () => {
+      mockClient.mget = jest.fn().mockResolvedValue({ body: { docs: [] } });
+      const ids = Array.from({ length: 2_500 }, (_, i) => `id-${i}`);
+
+      await service.findExistingVectorIds(ids);
+
+      expect(mockClient.mget).toHaveBeenCalledTimes(3);
+    });
+
+    // Reporting "nothing exists" on a transport error would make a gap
+    // enumeration claim the whole corpus is missing and re-embed hours of work.
+    it('propagates a transport error instead of reporting an empty index', async () => {
+      mockClient.mget = jest.fn().mockRejectedValue(new Error('ECONNREFUSED'));
+      await expect(service.findExistingVectorIds(['sec-1'])).rejects.toThrow(
+        'ECONNREFUSED',
+      );
     });
   });
 

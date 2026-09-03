@@ -23,6 +23,12 @@ import {
   type SuggestionItem,
   type VectorDocumentPayload,
 } from './opensearch.service';
+import {
+  buildVectorEmbeddingInputs,
+  joinSectionText,
+  toVectorDocumentPayload,
+  toVectorPayloadBase,
+} from './vector-embedding-inputs';
 import { PonenteDirectoryService } from './ponente-directory.service';
 import {
   DEFAULT_RANKING_WEIGHTS,
@@ -40,8 +46,14 @@ const SEARCH_CACHE_TTL = 300;
 /** Per CLAUDE.md: RRF constant k=60 (standard value) */
 const RRF_K = 60;
 
-/** Max text length to send for embedding (truncate long texts) */
-const MAX_EMBEDDING_TEXT_LENGTH = 16_000;
+/**
+ * Embedding batch size for the LIVE indexing path. The embedding service caps a
+ * request at 256 texts; a single document rarely approaches that, so this is a
+ * ceiling rather than a target. The BACKFILL uses its own, much smaller batch
+ * (default 64) because it is throughput-shaping a multi-hour run on a box
+ * shared with TTS — see VECTOR_BACKFILL_DEFAULT_BATCH_SIZE.
+ */
+const LIVE_EMBEDDING_BATCH_SIZE = 256;
 
 /**
  * Sorted set of recent zero-result queries, surfaced on the admin search
@@ -1000,10 +1012,7 @@ export class SearchService {
     };
 
     // Combine full text for document-level operations
-    const fullText = document.sections
-      .map((s) => s.plainText)
-      .filter(Boolean)
-      .join('\n\n');
+    const fullText = joinSectionText(document.sections);
 
     // Index in keyword index
     await this.openSearch.indexDocument({
@@ -1023,12 +1032,19 @@ export class SearchService {
       });
     }
 
-    // Index vector embeddings (non-blocking, best-effort)
-    this.indexVectorEmbeddings(document, basePayload, fullText).catch((err) =>
-      this.logger.warn(
-        `Vector indexing failed for ${documentId}: ${(err as Error).message}`,
-      ),
-    );
+    // Index vector embeddings (non-blocking, best-effort).
+    //
+    // Still best-effort — a slow embedding service must not block a document
+    // reaching keyword search — but no longer SILENT. A bare `.catch(warn)` on
+    // this call is why the vector index sat at 18.6% of the keyword index
+    // (prod 2026-09-02) with nothing anywhere reporting a number. The counters
+    // are surfaced at GET /admin/diagnostics/vector-index.
+    this.indexVectorEmbeddings(document, basePayload, fullText).catch((err) => {
+      this.recordVectorFailure(
+        documentId,
+        `unhandled: ${(err as Error).message}`,
+      );
+    });
 
     this.logger.log(
       `Indexed document ${documentId} with ${document.sections.length} sections`,
@@ -1036,8 +1052,49 @@ export class SearchService {
   }
 
   /**
+   * Running tally of what the LIVE vector-indexing path has done since boot.
+   *
+   * Not persisted and not a substitute for the backfill's per-document status
+   * rows — it is the cheapest possible answer to "is the silent path silently
+   * failing again?", which nothing could answer before. Reset on restart, which
+   * is fine: the question is about a trend, and `VectorBackfillService` measures
+   * the absolute gap whenever anyone wants the real number.
+   */
+  private readonly vectorIndexStats = {
+    documentsAttempted: 0,
+    documentsSucceeded: 0,
+    documentsFailed: 0,
+    chunksIndexed: 0,
+    chunksFailed: 0,
+    /** Batches where the embedding service returned null (was a bare `continue`). */
+    embeddingBatchFailures: 0,
+    lastFailureAt: null as string | null,
+    lastFailureReason: null as string | null,
+    lastFailureDocumentId: null as string | null,
+  };
+
+  /** Live vector-indexing counters, for GET /admin/diagnostics/vector-index. */
+  getVectorIndexStats(): Readonly<typeof this.vectorIndexStats> {
+    return { ...this.vectorIndexStats };
+  }
+
+  private recordVectorFailure(documentId: string, reason: string) {
+    this.vectorIndexStats.documentsFailed++;
+    this.vectorIndexStats.lastFailureAt = new Date().toISOString();
+    this.vectorIndexStats.lastFailureReason = reason;
+    this.vectorIndexStats.lastFailureDocumentId = documentId;
+    this.logger.warn(
+      `Vector indexing failed for ${documentId}: ${reason} ` +
+        `(live vector failures since boot: ${this.vectorIndexStats.documentsFailed})`,
+    );
+  }
+
+  /**
    * Generate embeddings and index into the vector index.
    * Embeds document-level + section-level texts.
+   *
+   * The text/id rules live in `vector-embedding-inputs.ts` and are shared with
+   * the backfill — see the header there for why they are not inlined here.
    */
   private async indexVectorEmbeddings(
     document: {
@@ -1049,58 +1106,55 @@ export class SearchService {
     basePayload: IndexDocumentPayload,
     fullText: string,
   ) {
-    // Prepare texts for batch embedding
-    const textsToEmbed: { id: string; sectionId?: string; text: string; snippet: string }[] = [];
+    const inputs = buildVectorEmbeddingInputs(document, fullText);
+    if (inputs.length === 0) return;
 
-    // Document-level embedding (title + truncated text)
-    if (fullText.length > 0) {
-      const docText = `${document.title}\n\n${fullText}`.slice(0, MAX_EMBEDDING_TEXT_LENGTH);
-      textsToEmbed.push({
-        id: document.id,
-        text: docText,
-        snippet: fullText.slice(0, 500),
-      });
+    this.vectorIndexStats.documentsAttempted++;
+    let chunksIndexed = 0;
+    let chunksFailed = 0;
+    let firstReason: string | null = null;
+
+    for (let i = 0; i < inputs.length; i += LIVE_EMBEDDING_BATCH_SIZE) {
+      const batch = inputs.slice(i, i + LIVE_EMBEDDING_BATCH_SIZE);
+      const embeddings = await this.embeddingClient.embedBatch(
+        batch.map((t) => t.text),
+      );
+
+      // This used to be a bare `continue`: the embedding service could be down
+      // for a week and every document would still report as "indexed".
+      if (!embeddings) {
+        this.vectorIndexStats.embeddingBatchFailures++;
+        chunksFailed += batch.length;
+        firstReason ??= 'embedding service returned no embeddings';
+        continue;
+      }
+
+      const vectorDocs: VectorDocumentPayload[] = batch.map((input, idx) =>
+        toVectorDocumentPayload(
+          input,
+          toVectorPayloadBase(basePayload),
+          embeddings[idx]!,
+        ),
+      );
+
+      const result = await this.openSearch.bulkIndexVectorDocuments(vectorDocs);
+      chunksIndexed += result.indexed;
+      chunksFailed += result.errors;
+      if (result.errors > 0) {
+        firstReason ??= result.firstErrorReason ?? 'bulk index error';
+      }
     }
 
-    // Section-level embeddings
-    for (const section of document.sections) {
-      if (!section.plainText || section.plainText.length < 50) continue;
-      const sectionText = section.plainText.slice(0, MAX_EMBEDDING_TEXT_LENGTH);
-      textsToEmbed.push({
-        id: document.id,
-        sectionId: section.id,
-        text: sectionText,
-        snippet: section.plainText.slice(0, 500),
-      });
-    }
+    this.vectorIndexStats.chunksIndexed += chunksIndexed;
+    this.vectorIndexStats.chunksFailed += chunksFailed;
 
-    if (textsToEmbed.length === 0) return;
-
-    // Batch embed (max 256 per call)
-    const batchSize = 256;
-    for (let i = 0; i < textsToEmbed.length; i += batchSize) {
-      const batch = textsToEmbed.slice(i, i + batchSize);
-      const texts = batch.map((t) => t.text);
-
-      const embeddings = await this.embeddingClient.embedBatch(texts);
-      if (!embeddings) continue;
-
-      const vectorDocs: VectorDocumentPayload[] = batch.map((t, idx) => ({
-        document_id: t.id,
-        section_id: t.sectionId,
-        document_type: basePayload.document_type,
-        court: basePayload.court,
-        source_trust_level: basePayload.source_trust_level,
-        is_official: basePayload.is_official,
-        is_published: basePayload.is_published,
-        decision_date: basePayload.decision_date,
-        embedding_vector: embeddings[idx]!,
-        text_snippet: t.snippet,
-        title: basePayload.title,
-        citation_text: basePayload.citation_text,
-      }));
-
-      await this.openSearch.bulkIndexVectorDocuments(vectorDocs);
+    if (chunksFailed > 0) {
+      this.recordVectorFailure(
+        document.id,
+        `${chunksFailed}/${inputs.length} chunks failed — ${firstReason}`,
+      );
+    } else {
+      this.vectorIndexStats.documentsSucceeded++;
     }
   }
 
