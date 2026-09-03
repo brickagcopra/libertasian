@@ -115,6 +115,17 @@ jobs:
             -t libertasian-${{ matrix.service }}:scan \
             .
 
+      # `timeout` and `skip-dirs` are both load-bearing — do not delete them.
+      # Trivy's own default timeout is 5m, and this step never set the action's
+      # `timeout` input, so the reranker-service scan died at "context deadline
+      # exceeded" before it ever printed a findings table.
+      # `/opt/models` is the ~1.1GB of cross-encoder weights Dockerfile.reranker
+      # bakes in (HF_HOME). Trivy's analyzer walks every file in the image, and
+      # model weights contain no OS or language packages, so that walk is most
+      # of the runtime and yields zero security signal. Skipping it globally is
+      # deliberate: the path doesn't exist in the other seven images, where the
+      # skip is simply a no-op. Never skip /app/.venv or any site-packages path
+      # — that is the Python dependency set this scan exists to check.
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@0.35.0
         with:
@@ -123,6 +134,8 @@ jobs:
           output: trivy-${{ matrix.service }}.sarif
           severity: CRITICAL,HIGH
           exit-code: 0
+          timeout: '20m'
+          skip-dirs: '/opt/models'
 
       # Upload requires repo-level Code Scanning to be enabled. Until then
       # the step fails with "Resource not accessible by integration"; the
