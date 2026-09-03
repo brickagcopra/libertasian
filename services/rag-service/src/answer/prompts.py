@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-PROMPT_VERSION = "answer-v1.3"
+PROMPT_VERSION = "answer-v1.4"
 
 # The machine-detectable non-answer marker.
 #
@@ -29,6 +29,15 @@ PROMPT_VERSION = "answer-v1.3"
 # expected output and reserves the sentinel for passages with NOTHING relevant
 # in them — which answers "constitution" at confidence 0.89 while estafa,
 # amparo and bill-of-rights still correctly abstain.
+#
+# v1.3 covered coverage but not query FORM. The bare one-word query
+# "constitution" still abstained even when retrieval was filtered to the 1987
+# Constitution itself — the passages were the topic, so nothing about their
+# content justified the sentinel; the model was refusing because the query did
+# not look like a question. v1.4 says so explicitly: a bare topic, keyword or
+# phrase is a request to explain what the passages say about it, and the shape
+# of the query is never itself grounds to abstain. Measured on prod (org
+# 0ead67bb, 12-query set): 6/12 answered before, 10/12 with this clause alone.
 INSUFFICIENT_SOURCES_SENTINEL = "INSUFFICIENT_SOURCES"
 
 # Instruction 3, shared verbatim by both system prompts so the streaming and
@@ -42,7 +51,12 @@ Only when the SOURCE PASSAGES contain NOTHING relevant to the question at all --
 not merely incomplete, partial or tangential coverage -- your entire response \
 MUST be exactly this single line and nothing else:
 INSUFFICIENT_SOURCES
-Emitting that line when the passages support even a partial answer is an error."""
+Emitting that line when the passages support even a partial answer is an error.
+A query may be a bare topic, keyword or phrase rather than a question (for \
+example "constitution", "separation of powers", "estafa"). Treat such a query \
+as a request to explain what the SOURCE PASSAGES say about that topic, and \
+answer it the same way. The form, length or breadth of the query is never \
+itself a reason to emit INSUFFICIENT_SOURCES; only the passages' content is."""
 
 SYSTEM_PROMPT = """\
 You are a Philippine legal research assistant for the LIBERTASIAN platform.
