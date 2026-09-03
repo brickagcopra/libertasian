@@ -29,11 +29,17 @@ export {
 } from './components/purchase-surface';
 export {
   usePurchaseOptions,
+  PURCHASE_CONFIRMED_NOTICE,
+  PURCHASE_FAILED_NOTICE,
+  RESTORE_CONFIRMED_NOTICE,
   RESTORE_FAILED_NOTICE,
   RESTORE_NOTHING_NOTICE,
-  UNCONFIRMED_NOTICE,
   type PurchaseOptions,
 } from './hooks/use-purchase-options';
 export { useOfferings, packageFor, offeringKeys, type OfferingsResult } from './hooks/use-offerings';
-export { configurePurchases, getPurchases } from './lib/purchases-sdk';
+export {
+  configurePurchases,
+  getPurchases,
+  hasActiveEntitlement,
+} from './lib/purchases-sdk';
 export { syncPurchasesWithServer, type StoreSyncOutcome } from './lib/store-sync';

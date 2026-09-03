@@ -5,9 +5,11 @@ import { createElement, type ReactNode } from 'react';
 import { apiClient } from '@/lib/api-client';
 
 import {
+  PURCHASE_CONFIRMED_NOTICE,
+  PURCHASE_FAILED_NOTICE,
+  RESTORE_CONFIRMED_NOTICE,
   RESTORE_FAILED_NOTICE,
   RESTORE_NOTHING_NOTICE,
-  UNCONFIRMED_NOTICE,
   usePurchaseOptions,
 } from './use-purchase-options';
 
@@ -17,6 +19,12 @@ const mockConfigurePurchases = jest.fn();
 const mockPurchasePackage = jest.fn();
 const mockRestorePurchases = jest.fn();
 const mockGetOfferings = jest.fn();
+const mockGetCustomerInfo = jest.fn();
+
+/** A `CustomerInfo` the store considers entitled. */
+const ENTITLED = { entitlements: { active: { pro: { isActive: true } } } };
+/** A `CustomerInfo` the store considers to own nothing. */
+const NOT_ENTITLED = { entitlements: { active: {} } };
 
 jest.mock('../lib/purchases-sdk', () => ({
   __esModule: true,
@@ -25,9 +33,15 @@ jest.mock('../lib/purchases-sdk', () => ({
     getOfferings: mockGetOfferings,
     purchasePackage: mockPurchasePackage,
     restorePurchases: mockRestorePurchases,
+    getCustomerInfo: mockGetCustomerInfo,
   }),
   isUserCancelled: (error: unknown) =>
     typeof error === 'object' && error !== null && 'userCancelled' in error,
+  // NOT mocked away. This is the predicate the whole fix turns on, so the hook
+  // must be exercised against the real one — a stub here would let a broken
+  // `hasActiveEntitlement` pass every case below.
+  hasActiveEntitlement: (info: unknown) =>
+    jest.requireActual('../lib/purchases-sdk').hasActiveEntitlement(info),
 }));
 
 jest.mock('@/providers/auth-provider', () => ({
@@ -72,8 +86,11 @@ describe('usePurchaseOptions', () => {
     mockGetOfferings.mockResolvedValue({
       current: { availablePackages: [pkg(MONTHLY)] },
     });
-    mockPurchasePackage.mockResolvedValue({ customerInfo: {} });
-    mockRestorePurchases.mockResolvedValue({});
+    // The store's own view is the default happy path: a purchase that went
+    // through leaves an active entitlement on `customerInfo`.
+    mockPurchasePackage.mockResolvedValue({ customerInfo: ENTITLED });
+    mockRestorePurchases.mockResolvedValue(ENTITLED);
+    mockGetCustomerInfo.mockResolvedValue(NOT_ENTITLED);
     // Resolve with the UNWRAPPED body, never `{ success, data }`. `apiClient`
     // strips the envelope itself (`unwrapEnvelope`), so a mock that returns the
     // wrapped shape describes a response this code never sees. These mocks used
@@ -135,37 +152,162 @@ describe('usePurchaseOptions', () => {
     // D12 — the server is asked to PULL. Nothing about the entitlement is sent.
     expect(post).toHaveBeenCalledWith('/store/sync');
     expect(post.mock.calls[0]).toHaveLength(1);
-    await waitFor(() => expect(result.current.notice).toBeNull());
+    await waitFor(() =>
+      expect(result.current.notice).toBe(PURCHASE_CONFIRMED_NOTICE),
+    );
   });
 
-  // ---- The conduit_unconfigured path: today's normal case ----
+  // ---- 2.1(b): the App Review transcript ----
 
-  it('treats conduit_unconfigured as a neutral notice, not a failure', async () => {
-    // This is what `/store/sync` answers on EVERY deployment today. The store
-    // took the money and the entitlement is owed; telling the user something
-    // broke would send them to file a refund for a purchase that worked.
-    post.mockResolvedValue({ status: 'noop', detail: 'conduit_unconfigured' });
+  /**
+   * THE REJECTION, reproduced exactly.
+   *
+   * App Review buys in the sandbox. The API ignores sandbox events in
+   * production on purpose (D10 — `checkEnvironment`, and `syncFromStore`'s
+   * `wantedEnvironment` filter), so `POST /store/sync` answers
+   * `{status:'noop',detail:'in_sync'}` for a purchase that WORKED. The screen
+   * read that as "we could not confirm that yet" and showed it after the money
+   * was taken; Apple rejected the build on that line.
+   *
+   * The store is now the authority on completion. This case fails against the
+   * old code.
+   */
+  it('confirms the purchase when the store says so and the server answers in_sync', async () => {
+    post.mockResolvedValue({ status: 'noop', detail: 'in_sync' });
     const { result } = await renderReady();
 
     await act(async () => result.current.purchase(MONTHLY));
 
-    await waitFor(() => expect(result.current.notice).toBe(UNCONFIRMED_NOTICE));
-    // Neutral, and it points at the recovery the guidelines require anyway.
-    expect(UNCONFIRMED_NOTICE).toMatch(/Restore Purchases/);
-    expect(UNCONFIRMED_NOTICE).not.toMatch(/error|fail|sorry|problem/i);
+    await waitFor(() =>
+      expect(result.current.notice).toBe(PURCHASE_CONFIRMED_NOTICE),
+    );
+    // The reviewer must not be able to read failure into it, in any wording.
+    expect(result.current.notice).not.toMatch(/could not|error|fail|sorry|problem/i);
+    // And the server was still asked — it remains the authority on entitlement.
+    expect(post).toHaveBeenCalledWith('/store/sync');
   });
 
-  it('treats an unreachable server the same neutral way', async () => {
+  it('confirms on a sandbox purchase whatever the platform', async () => {
+    // Play test-track purchases are reported as sandbox too, so nothing here
+    // may key off `Platform.OS`. Same server answer, same outcome.
+    post.mockResolvedValue({ status: 'noop', detail: 'in_sync' });
+    const { result } = await renderReady();
+
+    await act(async () => result.current.purchase(MONTHLY));
+
+    await waitFor(() =>
+      expect(result.current.notice).toBe(PURCHASE_CONFIRMED_NOTICE),
+    );
+  });
+
+  it('confirms the purchase even when the server cannot be reached', async () => {
+    // The store took the money and reports the entitlement. A server the client
+    // could not reach says nothing about that.
     post.mockRejectedValue(new Error('network down'));
     const { result } = await renderReady();
 
     await act(async () => result.current.purchase(MONTHLY));
 
-    await waitFor(() => expect(result.current.notice).toBe(UNCONFIRMED_NOTICE));
+    await waitFor(() =>
+      expect(result.current.notice).toBe(PURCHASE_CONFIRMED_NOTICE),
+    );
+  });
+
+  it('confirms on the SERVER answer when the store reports nothing', async () => {
+    // The other direction: no active entitlement on `customerInfo` yet, but the
+    // server reconciled one. Either authority saying yes is enough.
+    mockPurchasePackage.mockResolvedValue({ customerInfo: NOT_ENTITLED });
+    post.mockResolvedValue({ status: 'processed' });
+    const { result } = await renderReady();
+
+    await act(async () => result.current.purchase(MONTHLY));
+
+    await waitFor(() =>
+      expect(result.current.notice).toBe(PURCHASE_CONFIRMED_NOTICE),
+    );
+  });
+
+  it('reports a failure only when NEITHER the store nor the server has it', async () => {
+    mockPurchasePackage.mockResolvedValue({ customerInfo: NOT_ENTITLED });
+    post.mockResolvedValue({ status: 'noop', detail: 'in_sync' });
+    const { result } = await renderReady();
+
+    await act(async () => result.current.purchase(MONTHLY));
+
+    await waitFor(() =>
+      expect(result.current.notice).toBe(PURCHASE_FAILED_NOTICE),
+    );
+  });
+
+  it('survives a customerInfo with no entitlements block at all', async () => {
+    // `CustomerInfo` crosses a native bridge; a partial object must read as
+    // "not entitled", never throw. The old mock returned exactly this.
+    mockPurchasePackage.mockResolvedValue({ customerInfo: {} });
+    post.mockResolvedValue({ status: 'noop', detail: 'in_sync' });
+    const { result } = await renderReady();
+
+    await act(async () => result.current.purchase(MONTHLY));
+
+    await waitFor(() =>
+      expect(result.current.notice).toBe(PURCHASE_FAILED_NOTICE),
+    );
+  });
+
+  // ---- A rejection is not proof of failure ----
+
+  /**
+   * Tapping a plan you already own makes the SDK throw
+   * PRODUCT_ALREADY_PURCHASED. The old code rendered that as the unconfirmed
+   * line; rendering it as a failure would be worse. We ask the STORE who owns
+   * this instead — never the error code, never its message text, both of which
+   * differ per platform and per SDK version.
+   */
+  it('confirms when the purchase throws but the store reports an entitlement', async () => {
+    mockPurchasePackage.mockRejectedValue(new Error('PRODUCT_ALREADY_PURCHASED'));
+    mockGetCustomerInfo.mockResolvedValue(ENTITLED);
+    post.mockResolvedValue({ status: 'noop', detail: 'in_sync' });
+    const { result } = await renderReady();
+
+    await act(async () => result.current.purchase(MONTHLY));
+
+    await waitFor(() =>
+      expect(result.current.notice).toBe(PURCHASE_CONFIRMED_NOTICE),
+    );
+    expect(mockGetCustomerInfo).toHaveBeenCalledTimes(1);
+    // Still reconciled, so the entitlement the server serves catches up.
+    expect(post).toHaveBeenCalledWith('/store/sync');
+  });
+
+  it('reports a failure when the purchase throws and the store has nothing', async () => {
+    mockPurchasePackage.mockRejectedValue(new Error('store down'));
+    mockGetCustomerInfo.mockResolvedValue(NOT_ENTITLED);
+    const { result } = await renderReady();
+
+    await act(async () => result.current.purchase(MONTHLY));
+
+    await waitFor(() =>
+      expect(result.current.notice).toBe(PURCHASE_FAILED_NOTICE),
+    );
+  });
+
+  it('reports a failure when even getCustomerInfo throws', async () => {
+    // Nothing left to ask. It must fall through to the failure line, not crash
+    // the screen with an unhandled rejection.
+    mockPurchasePackage.mockRejectedValue(new Error('store down'));
+    mockGetCustomerInfo.mockRejectedValue(new Error('bridge gone'));
+    const { result } = await renderReady();
+
+    await act(async () => result.current.purchase(MONTHLY));
+
+    await waitFor(() =>
+      expect(result.current.notice).toBe(PURCHASE_FAILED_NOTICE),
+    );
+    await waitFor(() => expect(result.current.busy).toBe(false));
   });
 
   it('says nothing at all when the user dismisses the store sheet', async () => {
-    // A cancelled purchase is not a failure and gets no message.
+    // A cancelled purchase is not a failure and gets no message — and it must
+    // not go asking the store about an entitlement nobody tried to buy.
     mockPurchasePackage.mockRejectedValue({ userCancelled: true });
     const { result } = await renderReady();
 
@@ -173,6 +315,7 @@ describe('usePurchaseOptions', () => {
 
     await waitFor(() => expect(result.current.busy).toBe(false));
     expect(result.current.notice).toBeNull();
+    expect(mockGetCustomerInfo).not.toHaveBeenCalled();
   });
 
   it('clears busy even when the purchase throws', async () => {
@@ -194,18 +337,39 @@ describe('usePurchaseOptions', () => {
 
     expect(mockRestorePurchases).toHaveBeenCalledTimes(1);
     expect(post).toHaveBeenCalledWith('/store/sync');
-    await waitFor(() => expect(result.current.notice).toBeNull());
+    await waitFor(() =>
+      expect(result.current.notice).toBe(RESTORE_CONFIRMED_NOTICE),
+    );
   });
 
-  it('says nothing was restored, neutrally, when the server cannot confirm', async () => {
-    post.mockResolvedValue({ status: 'noop', detail: 'conduit_unconfigured' });
+  /**
+   * The restore half of the 2.1(b) transcript. A reviewer who taps Restore
+   * after buying gets the same sandbox-ignoring `in_sync` answer, and used to
+   * be told there was nothing on their store account — about a purchase they
+   * had just made. Fails against the old code.
+   */
+  it('confirms the restore when the store has it and the server answers in_sync', async () => {
+    post.mockResolvedValue({ status: 'noop', detail: 'in_sync' });
+    const { result } = await renderReady();
+
+    await act(async () => result.current.restore());
+
+    await waitFor(() =>
+      expect(result.current.notice).toBe(RESTORE_CONFIRMED_NOTICE),
+    );
+    expect(result.current.notice).not.toMatch(/could not|error|fail|sorry|problem/i);
+  });
+
+  it('says nothing was restored, neutrally, when neither side has anything', async () => {
+    mockRestorePurchases.mockResolvedValue(NOT_ENTITLED);
+    post.mockResolvedValue({ status: 'noop', detail: 'in_sync' });
     const { result } = await renderReady();
 
     await act(async () => result.current.restore());
 
     await waitFor(() => expect(result.current.notice).toBe(RESTORE_NOTHING_NOTICE));
     // Names no other account and no plan — §7's rule for the "already in use"
-    // case, applied to every unconfirmed restore.
+    // case, applied to every empty restore.
     expect(RESTORE_NOTHING_NOTICE).not.toMatch(/pro|edu|plan|account is/i);
   });
 

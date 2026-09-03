@@ -31,6 +31,35 @@ interface PurchasesModule {
   getOfferings(): Promise<{ current: PurchasesOffering | null }>;
   purchasePackage(pkg: PurchasesPackage): Promise<{ customerInfo: CustomerInfo }>;
   restorePurchases(): Promise<CustomerInfo>;
+  /**
+   * The store's own answer to "what does this account own right now?".
+   *
+   * Needed because `purchasePackage()` REJECTS on outcomes that are not
+   * failures — most importantly `PRODUCT_ALREADY_PURCHASED`, raised when a user
+   * taps a plan the store already sold them. Asking the store afterwards is how
+   * we tell "this did not go through" apart from "this was already yours",
+   * without pattern-matching error codes or message text.
+   */
+  getCustomerInfo(): Promise<CustomerInfo>;
+}
+
+/**
+ * Does the store consider this account entitled?
+ *
+ * The store, not our server, is the authority on whether a purchase COMPLETED —
+ * App Review buys in the sandbox, and the API deliberately ignores sandbox
+ * events in production (D10), so `/store/sync` answers `in_sync` for a purchase
+ * that genuinely succeeded. Deciding completion from the server's answer is what
+ * showed "we could not confirm that" on a working purchase and drew the 2.1(b)
+ * rejection. The server remains the authority on the ENTITLEMENT itself.
+ *
+ * Total on purpose: `CustomerInfo` arrives from a native bridge, and a partial
+ * or absent object must read as "not entitled", never throw.
+ */
+export function hasActiveEntitlement(
+  info: CustomerInfo | null | undefined,
+): boolean {
+  return Object.keys(info?.entitlements?.active ?? {}).length > 0;
 }
 
 /** Thrown by the SDK when the user dismisses the store sheet. Not a failure. */
