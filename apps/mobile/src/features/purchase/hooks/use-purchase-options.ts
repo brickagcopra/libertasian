@@ -9,26 +9,40 @@ import { packageFor, useOfferings } from './use-offerings';
 import {
   configurePurchases,
   getPurchases,
+  hasActiveEntitlement,
   isUserCancelled,
 } from '../lib/purchases-sdk';
 import { syncPurchasesWithServer } from '../lib/store-sync';
 import type { PurchasePlanOption, StoreProductId } from '../products';
 
 /**
- * The one line shown when the store took the purchase but the server has not
- * confirmed the entitlement yet.
+ * Shown when the purchase COMPLETED — as judged by the store.
  *
- * Deliberately NOT a failure toast. The money is already taken and the
- * entitlement is already owed; the webhook or the nightly reconciliation will
- * deliver it. Telling the user something went wrong would send them to file a
- * refund for a purchase that succeeded.
+ * App Review buys in the sandbox, and the API deliberately ignores sandbox
+ * events in production (D10: `checkEnvironment`, and `syncFromStore`'s
+ * `wantedEnvironment` filter), so `POST /store/sync` answers
+ * `{status:'noop',detail:'in_sync'}` for a purchase that genuinely went
+ * through. The screen used to read that as "we could not confirm that yet" and
+ * showed it after money changed hands; App Review rejected build 2.1(b) on
+ * exactly that line.
  *
- * This is today's normal path, not an edge case: the server has no conduit
- * credential configured, so `/store/sync` answers `conduit_unconfigured` every
- * time.
+ * So the STORE decides whether a purchase completed, and the SERVER keeps
+ * deciding what the account is entitled to. `reconcile()` still runs and still
+ * refreshes the quota query — it just no longer gets a vote on whether the user
+ * is told their purchase worked.
  */
-export const UNCONFIRMED_NOTICE =
-  'We could not confirm that yet. Try Restore Purchases in a moment.';
+export const PURCHASE_CONFIRMED_NOTICE = 'Your subscription is active. Thank you.';
+
+/**
+ * Shown only when neither authority can find the purchase: the store reports no
+ * active entitlement AND the server did not reconcile one. That is a purchase
+ * that did not happen, and saying so is correct.
+ */
+export const PURCHASE_FAILED_NOTICE =
+  'We could not complete that purchase. Please try again.';
+
+/** The restore found something — at the store, at the server, or both. */
+export const RESTORE_CONFIRMED_NOTICE = 'Your purchases have been restored.';
 
 export const RESTORE_NOTHING_NOTICE =
   'There was nothing to restore on this store account.';
@@ -61,13 +75,17 @@ export interface PurchaseOptions {
  *
  * The order of operations on a purchase is the important part:
  *
- *   1. buy through the SDK — the STORE is what takes the money;
+ *   1. buy through the SDK — the STORE is what takes the money, and its
+ *      `customerInfo` is what decides whether the purchase completed;
  *   2. ask OUR server to reconcile (`POST /store/sync`), which pulls the
  *      conduit's own view rather than trusting anything this client says (D12);
  *   3. invalidate the quota query, because `/quotas/usage` is what drives every
  *      gated surface in the app.
  *
- * Step 2 failing does not undo step 1 and is never surfaced as a failure.
+ * Step 2 failing does not undo step 1 and is never surfaced as a failure. It is
+ * the routine answer, not an edge case: sandbox purchases (App Review's, and
+ * Play's test track) are ignored by the API on purpose, so a working review
+ * build reconciles to `in_sync` every time.
  */
 export function usePurchaseOptions(): PurchaseOptions {
   const { user } = useAuth();
@@ -127,12 +145,35 @@ export function usePurchaseOptions(): PurchaseOptions {
       setNotice(null);
       void (async () => {
         try {
-          await purchases.purchasePackage(pkg);
-          const confirmed = await reconcile();
-          setNotice(confirmed ? null : UNCONFIRMED_NOTICE);
+          const { customerInfo } = await purchases.purchasePackage(pkg);
+          const storeOk = hasActiveEntitlement(customerInfo);
+          const serverOk = await reconcile();
+          setNotice(
+            storeOk || serverOk ? PURCHASE_CONFIRMED_NOTICE : PURCHASE_FAILED_NOTICE,
+          );
         } catch (error) {
           // Dismissing the store sheet is not a failure and gets no message.
-          if (!isUserCancelled(error)) setNotice(UNCONFIRMED_NOTICE);
+          if (isUserCancelled(error)) return;
+
+          // A rejection is not proof the purchase failed. The SDK throws
+          // PRODUCT_ALREADY_PURCHASED when a user taps a plan the store already
+          // sold them, and other recoverable states besides. Ask the store who
+          // it thinks owns this rather than reading the error — codes and
+          // message text differ per platform and per SDK version, and a string
+          // match here is how "you already own this" becomes a scary toast.
+          let entitled = false;
+          try {
+            entitled = hasActiveEntitlement(await purchases.getCustomerInfo());
+          } catch {
+            // Nothing left to ask. Fall through to the failure line.
+          }
+
+          if (entitled) {
+            await reconcile();
+            setNotice(PURCHASE_CONFIRMED_NOTICE);
+          } else {
+            setNotice(PURCHASE_FAILED_NOTICE);
+          }
         } finally {
           setBusy(false);
         }
@@ -149,9 +190,12 @@ export function usePurchaseOptions(): PurchaseOptions {
     setNotice(null);
     void (async () => {
       try {
-        await purchases.restorePurchases();
-        const confirmed = await reconcile();
-        setNotice(confirmed ? null : RESTORE_NOTHING_NOTICE);
+        const info = await purchases.restorePurchases();
+        const storeOk = hasActiveEntitlement(info);
+        const serverOk = await reconcile();
+        setNotice(
+          storeOk || serverOk ? RESTORE_CONFIRMED_NOTICE : RESTORE_NOTHING_NOTICE,
+        );
       } catch (error) {
         // Dismissing the store sheet is not a failure and gets no message —
         // same rule as `purchase()`.
