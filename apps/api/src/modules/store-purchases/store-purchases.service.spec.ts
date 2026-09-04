@@ -98,6 +98,11 @@ describe('StorePurchasesService', () => {
   let storeProvider: { slug: string; fetchSubscriberSnapshot: jest.Mock };
   let nodeEnv: string;
   /**
+   * D10a — the App Review sandbox allowlist. EMPTY for every test but the D10a
+   * block, so the D10 assertions above are also asserting the safe default.
+   */
+  let reviewOrgIds: string;
+  /**
    * The conduit credential. Truthy by default so the §9 tests exercise the pull
    * itself; one test empties it to assert the unconfigured-deployment guard.
    */
@@ -109,6 +114,7 @@ describe('StorePurchasesService', () => {
   beforeEach(async () => {
     nodeEnv = 'production';
     revenueCatApiKey = 'sk_test_configured';
+    reviewOrgIds = '';
 
     prisma = {
       organization: { findUnique: jest.fn().mockResolvedValue({ id: ORG_ID }) },
@@ -178,6 +184,9 @@ describe('StorePurchasesService', () => {
             get: jest.fn((key: string) => {
               if (key === 'NODE_ENV') return nodeEnv;
               if (key === 'REVENUECAT_API_KEY') return revenueCatApiKey;
+              if (key === 'STORE_SANDBOX_REVIEW_ORG_IDS') return reviewOrgIds;
+              // Absent, so `reviewSandboxGrantMs` falls back to its 24h default
+              // — the same shape a deployment that sets only the org list has.
               return undefined;
             }),
           },
@@ -339,6 +348,158 @@ describe('StorePurchasesService', () => {
       nodeEnv = 'development';
       const result = await service.handleStoreEvent(evt({ environment: 'sandbox' }));
       expect(result.status).toBe('processed');
+    });
+  });
+
+  // ======================================================================
+  // D10a — the App Review exemption to D10
+  // ======================================================================
+
+  /**
+   * App Review transacts in the store SANDBOX against the PRODUCTION API, so
+   * under plain D10 the reviewer's purchase succeeds at the store and unlocks
+   * nothing on the server — the Guideline 2.1 rejection of iOS 1.0.1 (30).
+   *
+   * D10a is an exemption to a security rule, so these tests pin its EDGES as
+   * hard as its behaviour: it is off unless an org is explicitly allowlisted,
+   * it grants but never revokes, and the grant does not carry the sandbox's own
+   * minutes-away expiry.
+   */
+  describe('D10a — App Review sandbox exemption', () => {
+    /** A sandbox entitlement that the STORE will expire in five minutes. */
+    const soon = () => new Date(Date.now() + 5 * 60 * 1000);
+    const GRANT_MS = 24 * 60 * 60 * 1000;
+
+    it('leaves plain D10 in force for an org that is NOT allowlisted', async () => {
+      nodeEnv = 'production';
+      reviewOrgIds = `${OTHER_ORG_ID}`;
+
+      const result = await service.handleStoreEvent(
+        evt({ environment: 'sandbox', expiresAt: soon() }),
+      );
+
+      // The exemption is opt-in per org. A populated list must not leak to
+      // anyone outside it.
+      expect(result).toEqual({ received: true, status: 'ignored_sandbox' });
+      expect(prisma.subscription.create).not.toHaveBeenCalled();
+    });
+
+    it('honours a sandbox INITIAL_PURCHASE for an allowlisted org, floored to the grant window', async () => {
+      nodeEnv = 'production';
+      reviewOrgIds = ORG_ID;
+      const before = Date.now();
+
+      const result = await service.handleStoreEvent(
+        evt({ environment: 'sandbox', expiresAt: soon() }),
+      );
+
+      expect(result.status).toBe('processed');
+      expect(prisma.subscription.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ planCode: 'pro' }),
+        }),
+      );
+
+      // The store's own expiry was five minutes out. Honouring it verbatim
+      // would end the reviewer's access mid-review, so the period end is
+      // floored to now + the 24h grant window instead.
+      const created = prisma.subscription.create.mock.calls[0][0] as {
+        data: { currentPeriodEnd: Date };
+      };
+      expect(created.data.currentPeriodEnd.getTime()).toBeGreaterThanOrEqual(
+        before + GRANT_MS,
+      );
+    });
+
+    it('still ignores a sandbox EXPIRATION for an allowlisted org — grants only', async () => {
+      nodeEnv = 'production';
+      reviewOrgIds = ORG_ID;
+      withStoreSubscription(SubscriptionState.ACTIVE);
+
+      const result = await service.handleStoreEvent(
+        evt({
+          type: 'purchase.expired',
+          environment: 'sandbox',
+          providerEventName: 'EXPIRATION',
+        }),
+      );
+
+      // A sandbox subscription dies within ~30 minutes and fires this event on
+      // its own. Letting it through would revoke the reviewer's access in the
+      // middle of the review — the build-23 rejection shape.
+      expect(result.status).toBe('ignored_sandbox');
+      expect(lifecycle.executeTransition).not.toHaveBeenCalled();
+    });
+
+    it('grants from a sandbox-only snapshot on the pull path, with the floored expiry', async () => {
+      nodeEnv = 'production';
+      reviewOrgIds = ORG_ID;
+      const before = Date.now();
+      storeProvider.fetchSubscriberSnapshot.mockResolvedValue({
+        appUserId: ORG_ID,
+        entitlements: [
+          {
+            id: 'pro',
+            productId: 'com.libertasian.pro.monthly',
+            store: 'app_store',
+            expiresAt: soon(),
+            willRenew: true,
+            periodType: 'NORMAL',
+            environment: 'sandbox',
+          },
+        ],
+      });
+
+      const result = await service.syncFromStore(ORG_ID);
+
+      // THIS is the path that actually lands the reviewer's entitlement:
+      // RevenueCat reports a repeat sandbox purchase by the same Apple ID as
+      // RENEWAL, which `resolveRenewal` refuses to create a row from, so the
+      // webhook no-ops and the client's POST /store/sync does the work.
+      expect(result.status).toBe('processed');
+      expect(prisma.subscription.create).toHaveBeenCalled();
+      const created = prisma.subscription.create.mock.calls[0][0] as {
+        data: { currentPeriodEnd: Date };
+      };
+      expect(created.data.currentPeriodEnd.getTime()).toBeGreaterThanOrEqual(
+        before + GRANT_MS,
+      );
+    });
+
+    it('does NOT revoke an allowlisted org when the snapshot has gone empty', async () => {
+      nodeEnv = 'production';
+      reviewOrgIds = ORG_ID;
+      withStoreSubscription(SubscriptionState.ACTIVE);
+      storeProvider.fetchSubscriberSnapshot.mockResolvedValue({
+        appUserId: ORG_ID,
+        entitlements: [],
+      });
+
+      const result = await service.syncFromStore(ORG_ID);
+
+      // The sandbox subscription lapses at the store within half an hour, so
+      // the nightly sweep, an app-foreground sync or a restore tap would each
+      // see an empty snapshot. None of them may take the grant away.
+      expect(result.status).not.toBe('processed');
+      expect(lifecycle.executeTransition).not.toHaveBeenCalled();
+    });
+
+    it('still revokes a NON-allowlisted org when the snapshot has gone empty', async () => {
+      nodeEnv = 'production';
+      reviewOrgIds = OTHER_ORG_ID;
+      withStoreSubscription(SubscriptionState.ACTIVE);
+      storeProvider.fetchSubscriberSnapshot.mockResolvedValue({
+        appUserId: ORG_ID,
+        entitlements: [],
+      });
+
+      const result = await service.syncFromStore(ORG_ID);
+
+      // The reconciliation pull keeps its teeth for everyone else.
+      expect(result.status).toBe('processed');
+      expect(lifecycle.executeTransition).toHaveBeenCalledWith(
+        expect.objectContaining({ action: SubscriptionAction.CANCEL_IMMEDIATELY }),
+      );
     });
   });
 

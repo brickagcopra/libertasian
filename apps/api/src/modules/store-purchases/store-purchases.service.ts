@@ -9,6 +9,10 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 
+import {
+  isStoreReviewSandboxOrg,
+  reviewSandboxGrantMs,
+} from '../../common/config/store-review-sandbox';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { PAYMENT_PROVIDERS } from '../billing/payment-provider.interface';
@@ -32,6 +36,7 @@ import {
   STORE_PROVIDERS,
   STORE_PURCHASE_PROVIDER,
   type NormalizedStoreEvent,
+  type StoreEventType,
   type StorePurchaseProvider,
 } from './store-purchase-provider.interface';
 
@@ -46,6 +51,23 @@ const TRIAL_EXPIRY_BACKSTOP_MS = 24 * 60 * 60 * 1000;
 
 /** How long a store transaction is presumed to run when the event omits an expiry. */
 const DEFAULT_PERIOD_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * D10a — the ONLY sandbox event types an allowlisted App Review org honours.
+ *
+ * Grants only. Everything else — EXPIRATION, CANCELLATION, BILLING_ISSUE,
+ * REFUND, PAUSE, TRANSFER — stays `ignored_sandbox` exactly as for every other
+ * org, because a sandbox subscription expires within about half an hour and
+ * letting that revocation through would strip the reviewer's access in the
+ * middle of the review. That is the build-23 rejection shape.
+ */
+const REVIEW_SANDBOX_GRANT_EVENTS: ReadonlySet<StoreEventType> = new Set<StoreEventType>([
+  'purchase.initial',
+  'purchase.renewed',
+  'purchase.uncancelled',
+  'purchase.refund_reversed',
+  'purchase.extended',
+]);
 
 export interface StoreEventOutcome {
   received: true;
@@ -134,7 +156,9 @@ export class StorePurchasesService {
     organizationId: string | null,
   ): Promise<StoreEventOutcome> {
     // ---- D10: sandbox never grants production entitlement ----
-    const sandboxOutcome = this.checkEnvironment(event);
+    // ---- D10a: unless this is an allowlisted App Review org, which buys in
+    //      sandbox against production and must be able to review the flow ----
+    const sandboxOutcome = this.checkEnvironment(event, organizationId);
     if (sandboxOutcome) return sandboxOutcome;
 
     if (!organizationId) {
@@ -147,24 +171,29 @@ export class StorePurchasesService {
       return { received: true, status: 'unresolved_org' };
     }
 
+    // D10a — a review-org sandbox grant carries the STORE's expiry, which is
+    // minutes away. Everything below acts on the floored copy instead; for
+    // every other org this returns `event` unchanged.
+    const effective = this.floorReviewSandboxExpiry(event, organizationId);
+
     // TRANSFER is the one event the §4 resolver cannot decide on its own: it is
     // about TWO orgs, and `resolveStoreEvent` is a function of ONE org's current
     // state. Routing it here rather than through `applyResolution` also means an
     // unresolvable `app_user_id` does not bail out a transfer whose
     // `transferred_to` we CAN resolve — handleTransfer resolves both ends itself.
-    if (event.type === 'purchase.transferred') {
-      return this.handleTransfer(event);
+    if (effective.type === 'purchase.transferred') {
+      return this.handleTransfer(effective);
     }
 
     const subscription = await this.findStoreSubscription(organizationId);
     const resolution = resolveStoreEvent({
-      type: event.type,
+      type: effective.type,
       currentState: subscription ? (subscription.status as SubscriptionState) : null,
-      periodType: event.periodType,
-      cancelReason: event.cancelReason,
+      periodType: effective.periodType,
+      cancelReason: effective.cancelReason,
     });
 
-    return this.applyResolution(resolution, event, organizationId, subscription);
+    return this.applyResolution(resolution, effective, organizationId, subscription);
   }
 
   /**
@@ -177,10 +206,26 @@ export class StorePurchasesService {
    * never accept. Outside production the mirror rule applies, so a stray
    * production event cannot move a staging subscription either.
    */
-  private checkEnvironment(event: NormalizedStoreEvent): StoreEventOutcome | null {
+  private checkEnvironment(
+    event: NormalizedStoreEvent,
+    organizationId: string | null,
+  ): StoreEventOutcome | null {
     const isProduction = this.config.get<string>('NODE_ENV') === 'production';
 
     if (isProduction && event.environment === 'sandbox') {
+      // D10a — the App Review exemption. GRANTS ONLY: a sandbox subscription
+      // renews every few minutes and expires within about half an hour, so
+      // honouring its revocations would revoke the reviewer's own access in
+      // the middle of the review.
+      if (
+        isStoreReviewSandboxOrg(this.config, organizationId) &&
+        REVIEW_SANDBOX_GRANT_EVENTS.has(event.type)
+      ) {
+        this.logger.warn(
+          `Sandbox store event ${event.providerEventName} ${event.eventId} HONOURED for App Review org ${organizationId} (D10a)`,
+        );
+        return null;
+      }
       this.logger.warn(
         `Sandbox store event ${event.providerEventName} ${event.eventId} received in production — recorded, not applied`,
       );
@@ -193,6 +238,30 @@ export class StorePurchasesService {
       return { received: true, status: 'ignored_production' };
     }
     return null;
+  }
+
+  /**
+   * D10a — floor a review-org sandbox expiry to the configured grant window.
+   * Returns `event` untouched for every non-sandbox event and every org that is
+   * not on the allowlist.
+   */
+  private floorReviewSandboxExpiry(
+    event: NormalizedStoreEvent,
+    organizationId: string,
+  ): NormalizedStoreEvent {
+    if (
+      event.environment !== 'sandbox' ||
+      !isStoreReviewSandboxOrg(this.config, organizationId)
+    ) {
+      return event;
+    }
+    return { ...event, expiresAt: this.reviewSandboxFloor(event.expiresAt) };
+  }
+
+  /** The later of the store's own expiry and now + the grant window. */
+  private reviewSandboxFloor(expiresAt: Date | null): Date {
+    const floor = new Date(Date.now() + reviewSandboxGrantMs(this.config));
+    return expiresAt && expiresAt.getTime() > floor.getTime() ? expiresAt : floor;
   }
 
   // ======================================================================
@@ -721,13 +790,24 @@ export class StorePurchasesService {
 
     const snapshot = await this.storeProvider.fetchSubscriberSnapshot(organizationId);
     const isProduction = this.config.get<string>('NODE_ENV') === 'production';
-    const wantedEnvironment = isProduction ? 'production' : 'sandbox';
+    const reviewSandbox = isStoreReviewSandboxOrg(this.config, organizationId);
+    const wantedEnvironments: ('production' | 'sandbox')[] = isProduction
+      ? reviewSandbox
+        ? ['production', 'sandbox']
+        : ['production']
+      : ['sandbox'];
 
     // D10 applies to the pull path too, or a sandbox tester's restore would
     // grant production entitlement through the back door.
+    //
+    // D10a: an allowlisted App Review org is the exception, and THIS is the
+    // path that actually grants its purchase. RevenueCat reports a repeat
+    // sandbox purchase by the same Apple ID as RENEWAL, and `resolveRenewal`
+    // refuses to create a row from a RENEWAL with no existing subscription —
+    // so the webhook no-ops and the client's POST /store/sync is what lands it.
     const active = snapshot.entitlements.find(
       (entitlement) =>
-        entitlement.environment === wantedEnvironment &&
+        wantedEnvironments.includes(entitlement.environment) &&
         resolveStoreProduct(entitlement.productId) !== null &&
         (entitlement.expiresAt === null || entitlement.expiresAt.getTime() > Date.now()),
     );
@@ -743,7 +823,10 @@ export class StorePurchasesService {
         type: 'purchase.initial',
         productId: active.productId,
         store: active.store,
-        expiresAt: active.expiresAt,
+        // D10a — never the sandbox's own minutes-away expiry for a review org.
+        expiresAt: reviewSandbox
+          ? this.reviewSandboxFloor(active.expiresAt)
+          : active.expiresAt,
         periodType: active.periodType === 'TRIAL' ? 'TRIAL' : 'NORMAL',
       });
       const resolution = resolveStoreEvent({
@@ -757,7 +840,12 @@ export class StorePurchasesService {
     }
 
     // The store says "not entitled" and we still grant → replay the expiry.
-    if (!active && isAccessible && subscription) {
+    //
+    // D10a — NEVER for a review org. Its entitlement came from a sandbox
+    // purchase the store expires within ~30 minutes, so the nightly sweep, an
+    // app-foreground sync or a restore tap would all revoke the reviewer's
+    // access mid-review. The grant lapses on its own at the floored period end.
+    if (!active && isAccessible && subscription && !reviewSandbox) {
       const synthetic = this.syntheticEvent(organizationId, {
         type: 'purchase.expired',
         productId: subscription.planCode,
