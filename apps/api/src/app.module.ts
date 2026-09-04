@@ -159,6 +159,15 @@ import { RequestPlatformMiddleware } from './common/middleware/request-platform.
         // each ONLY once that platform's products are live and approved.
         STORE_PURCHASE_AVAILABLE_IOS: Joi.boolean().default(false),
         STORE_PURCHASE_AVAILABLE_ANDROID: Joi.boolean().default(false),
+        // D10a — organizations whose SANDBOX store purchases are honoured in
+        // production. App Review buys in sandbox against this API; with D10
+        // applied unconditionally its purchase unlocks nothing. Comma-separated
+        // org uuids, EMPTY BY DEFAULT: an unset value restores plain D10, so a
+        // TestFlight tester with a sandbox Apple ID can never buy free Pro.
+        STORE_SANDBOX_REVIEW_ORG_IDS: Joi.string().allow('').default(''),
+        // How long such a grant lasts. A sandbox subscription dies in ~30
+        // minutes; honouring that would revoke the reviewer mid-review.
+        STORE_SANDBOX_REVIEW_GRANT_HOURS: Joi.number().min(1).max(720).default(24),
         // Store purchases (IAP) — which conduit StorePurchasesModule binds to
         // STORE_PURCHASE_PROVIDER. Unlike PAYMENT_PROVIDER this is NOT an
         // exclusive-or with the web gateway: both run at the same time, for

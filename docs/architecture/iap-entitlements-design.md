@@ -702,6 +702,57 @@ doing nothing is the only safe response — a non-2xx would make RevenueCat retr
 thing we will never accept. Two lines of guard that remove an entire class of "free
 pro on prod" incident.
 
+### D10a — the App Review exemption
+
+**Decision.** D10 holds for every caller except an org named in
+`STORE_SANDBOX_REVIEW_ORG_IDS`, a comma-separated allowlist that is **empty by
+default**. For an allowlisted org, a `SANDBOX` event received while
+`NODE_ENV === 'production'` is honoured — but **grants only**, and with the period
+end floored to `now + STORE_SANDBOX_REVIEW_GRANT_HOURS` (default 24h) rather than
+the store's own expiry.
+
+**Why.** App Review always transacts in the store **sandbox**, against our
+**production** API. Under plain D10 the reviewer buys a subscription, the store
+confirms it, the client says "Your subscription is active", and the server keeps the
+org on `free` — every paid surface still paywalled after a real purchase. That is a
+paid-for purchase that unlocks nothing, i.e. Guideline 3.1.1 / 2.1 territory, and it
+is what rejected iOS 1.0.1 (30).
+
+**Grants only, never revocations.** Only `INITIAL_PURCHASE`, `RENEWAL`,
+`UNCANCELLATION`, `REFUND_REVERSED` and `SUBSCRIPTION_EXTENDED` are exempted.
+`EXPIRATION`, `CANCELLATION`, `BILLING_ISSUE`, `REFUND`, `PAUSE` and `TRANSFER` stay
+`ignored_sandbox` exactly as for every other org. A sandbox subscription renews every
+few minutes and dies after roughly half an hour, so letting its revocations through
+would strip the reviewer's access in the middle of the review — the build-23
+rejection shape, reintroduced by the fix for build 30.
+
+**Why the store's own expiry is unusable.** It is minutes away for the same reason.
+Honouring `expiresAt` verbatim would end the grant before the reviewer finished
+looking at it, so the grant is floored to a fixed window instead: long enough for a
+review session, short enough to be an obviously temporary artefact. The floor is the
+*later* of the two, so a genuine longer expiry is never shortened.
+
+**`POST /store/sync` is the path that actually grants.** RevenueCat reports a repeat
+sandbox purchase by the same Apple ID as `RENEWAL`, and `resolveRenewal` refuses to
+create a subscription row from a `RENEWAL` with no existing subscription — so the
+webhook legitimately no-ops and the client's sync call is what lands the entitlement.
+The pull path therefore accepts sandbox entitlements for an allowlisted org, and —
+symmetrically with the grants-only rule — **never revokes** one, because the nightly
+sweep, an app-foreground sync and a restore tap would all see the lapsed sandbox
+entitlement and take the grant away. It lapses on its own at the floored period end.
+
+**Operationally this is not a deployment setting.** It is set to the App Review demo
+org for the duration of a review round and cleared afterwards. An empty value
+restores plain D10 exactly, so a deployment seeded from `.env.example` — or one that
+never heard of the variable — cannot hand free Pro to a TestFlight tester with a
+sandbox Apple ID.
+
+**If you disagree:** the alternative is a separate review-only deployment with
+`NODE_ENV !== 'production'`, where D10 already lets sandbox through. That is cleaner
+in principle, but App Review hits the production API by definition — the binary they
+test is the one pointed at prod — so it would require shipping a different build to
+review than to users, which is its own Guideline 2.3 problem.
+
 ---
 
 ## 5. The org grant rule
