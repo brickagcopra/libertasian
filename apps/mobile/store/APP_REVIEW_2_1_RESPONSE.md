@@ -49,7 +49,7 @@ shot on a physical device.
 ## (a) App Review Information → Notes
 
 Paste into **App Store Connect → App Review Information → Notes**, replacing the existing text.
-Limit 4000 characters; this text is **3,968**. Everything between the fences, nothing else.
+Limit 4000 characters; this text is **3,964**. Everything between the fences, nothing else.
 **NOT yet on ASC.** An earlier revision of this block was pushed via
 `PATCH /v1/appStoreReviewDetails/48204d2a-…`, but that revision still told Apple the app sells
 nothing. What is live on ASC right now is the OLD, now-false text. This block must be pasted
@@ -68,11 +68,11 @@ has one.
 > **The budget got tighter in 1.0.1, twice.** Rewriting the payments answer (item 5) and the
 > regional answer (item 6) for in-app purchase pushed the block to 4,112 — 112 over. Adding
 > the purchase-location sentence to item 4 (where App Review most often asks "where is the
-> IAP", since the demo account is already entitled and sees no purchase entry points on the
-> guarded surfaces) pushed it to 4,124. Items 1, 2, 4, 5, 6 and 7 were tightened to pay for
-> both — item 3 is untouched vetted listing copy. It now sits at **3,968, leaving 32
-> characters of headroom**. Re-count after any edit; the limit is hard and ASC truncates
-> silently.
+> IAP", since the demo account is on the free tier and sees the purchase entry point on every
+> guarded surface) pushed it to 4,124. Items 1, 2, 4, 5, 6 and 7 were tightened to pay for
+> both — item 3 is untouched vetted listing copy. Rewriting item 4 for the free-tier demo
+> account then took the block from 3,968 to **3,964, leaving 36 characters of headroom**.
+> Re-count after any edit; the limit is hard and ASC truncates silently.
 
 <!-- ASC-NOTES-BEGIN -->
 ```
@@ -103,7 +103,7 @@ DISCLAIMER
 LIBERTASIAN provides AI-powered legal research tools for informational purposes only. AI outputs are not legal advice and do not create an attorney-client relationship. Always consult a qualified Philippine lawyer for legal matters. The practice of law in the Philippines is reserved for members of the Philippine Bar.
 
 4) ACCESS AND SAMPLE FILES
-Demo account brickagcopra5871+test@gmail.com, password in the Sign-In Information fields above. Two-factor authentication is DISABLED. It carries a complimentary Pro entitlement and owns its org, so every feature is already unlocked with no setup; the purchase flow is reached from Settings > Manage account access, which stays visible regardless of entitlement so Restore Purchases is always reachable. No sample files are needed; the corpus is served from our backend. Searching "constitution" returns a sourced answer with 8 citations; Camera Scan works on any printed page. Please do not delete this account; later reviews depend on its entitlement.
+Demo account brickagcopra5871+test@gmail.com, password in the Sign-In Information fields above. Two-factor authentication is DISABLED. Please use THIS account for the purchase check. It is deliberately on the FREE tier so the purchase flow can be exercised end to end: Past Bar Exams, Camera Scan, study tools and digest generation show a paywall with a purchase entry point, while codal reading, case digests, search and AI answers stay free. The purchase screen is Settings > Manage account access; it stays visible at every entitlement level so Restore Purchases is always reachable. No sample files are needed. Please do not delete this account.
 
 5) THIRD-PARTY AND EXTERNAL SERVICES
 OpenAI (gpt-4o-mini) for AI answers, digests and ALAC bar answers; Sign in with Apple; Google Sign-In; Expo push via APNs. All other infrastructure is self-hosted: PostgreSQL, OpenSearch, MinIO, Tesseract OCR, Kokoro-82M TTS, and our own embedding and reranking services.
@@ -138,7 +138,7 @@ Three points we want to state plainly rather than leave you to infer:
 
 3. Content rights. Our corpus is Philippine government edicts - Supreme Court decisions, Republic Acts, the 1987 Constitution, the Rules of Court, and past Bar Examination questions. Under Republic Act 8293 section 176.1, works of the Government of the Philippines carry no copyright. We republish decision and statute text only, with no third-party annotations or editorial apparatus.
 
-The demo account is brickagcopra5871+test@gmail.com with the password in the Sign-In Information fields. Two-factor authentication is disabled on it, and it is on the Pro tier so every feature is reachable. We would be grateful if it is not deleted, as it carries the complimentary entitlement subsequent reviews rely on.
+The demo account is brickagcopra5871+test@gmail.com with the password in the Sign-In Information fields. Two-factor authentication is disabled on it, and it is on the free tier by design, so that App Review can exercise the purchase flow end to end. We would be grateful if it is not deleted, as these review notes reference it.
 
 Please let us know if anything else would help.
 
