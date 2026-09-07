@@ -1,6 +1,8 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-09-01 (**new, top of the list: PR #454 `fix/auth-response-org-fields` is OPEN and unmerged.** It restores `organizationId`/`organizationRole` to all five sign-in responses, which is what unblocks the RevenueCat SDK on mobile — the purchase screen currently reads "Plans are not available right now" for every user on every build-29 session. **It is server-only and cuts no EAS build:** existing installed clients start working the moment the API deploys, which is the whole reason it was done this way. Nothing else about billing is touched. See the section directly below for what is left. Also newly documented there: **the local dev DB cannot run the e2e suite** — it is 9 migrations behind and every request 500s on a missing `users.apple_id`.)
+> Last updated: 2026-09-07 (**new, top of the list: PRs #462 and #463 are MERGED to `main`, and what is left is a build, a submission and one thing only Apple can do.** The 2.1(b) cause is settled — StoreKit returned no products on the reviewer's device because it had no Sandbox Apple Account signed in, and the client cached that empty answer as a success for five minutes. The client no longer can: an empty result throws and retries, it falls back to asking the store directly, the screen carries a **Try again**, and the SDK is configured and prefetched at app launch instead of at purchase-screen mount. The App Review notes now state the sandbox-account requirement. **What remains is EAS build 31, `eas submit`, and the review itself** — plus one thing we cannot verify from here: whether the reviewer signs in a sandbox account this time. If they do not, the new telemetry (`purchase_surface_unavailable` with a machine reason) is what will tell us, which is the whole reason it exists. See the section directly below.)
+>
+> Previously: 2026-09-01 (**new, top of the list: PR #454 `fix/auth-response-org-fields` is OPEN and unmerged.** It restores `organizationId`/`organizationRole` to all five sign-in responses, which is what unblocks the RevenueCat SDK on mobile — the purchase screen currently reads "Plans are not available right now" for every user on every build-29 session. **It is server-only and cuts no EAS build:** existing installed clients start working the moment the API deploys, which is the whole reason it was done this way. Nothing else about billing is touched. See the section directly below for what is left. Also newly documented there: **the local dev DB cannot run the e2e suite** — it is 9 migrations behind and every request 500s on a missing `users.apple_id`.)
 >
 > Previously: 2026-08-19 (**the Android app is IN REVIEW with Google, and the only thing left that anyone can act on is tester recruiting.** Publishing overview reads **"Changes in review"** — the submitted edit carries Closed testing – Alpha **1.0.0 → Start full rollout** (Philippines), the "Libertasian Testers" email list, the en-US listing, the Education category and every App content declaration. **Managed publishing is OFF, so approval auto-publishes — there is no second click pending.** First review of a brand-new app runs **1–7 days**, with no progress signal; an unchanged "Changes in review" is expected, not a stall. 🛑 **Do not edit anything mid-review** — any save creates a new pending item and can restart the queue. What actually remains: (1) **recruit testers — the list has 7, the rule needs 12 opted in *continuously* for 14 days, target 15+ for headroom; the tracker still reads 0 opted in and day 0**, and Google's review sits in FRONT of that clock, so recruit in parallel rather than after; (2) **after approval, flip `submit.production.android.releaseStatus` in `apps/mobile/eas.json` back to `"completed"`**, or every future submit silently stops at draft. Three gates that were never in any checklist are now documented in `store/PLAY_SUBMISSION_RUNBOOK.md`: **Advertising ID** (step 0, blocks any Android-13+ rollout), **signing-key registration** (step 0b, hard-blocks Save on the release), and the `releaseStatus` default. `store/DATA_SAFETY.md` is now aligned to what is actually declared, with the reasoning in-doc.)
 >
@@ -29,6 +31,35 @@
 > Previously: 2026-07-26 (search Phases A–C3 all merged: #306 #307 #308 #310 #311 #312; C3 squashed to `025e538`, deployed and live-verified on prod. Remaining search work is a client UI for `scope` and C4 fusion behind the reranker — but see the reachability note first: only 13,017 of 99,994 derivatives match any visibility branch. Also new: #313 fixed the confidence scorer, #315 gated the re-score script, and the re-score itself is CLOSED as not worth running — 7 rows of 29,471 move. What replaces it is a product decision about what the 0.70 editorial bar should mean; see the top section.)
 
 Verification rules used for this prune: every PR reference checked with `gh pr view <n> --json state,mergedAt`; every branch reference checked against `git branch -r --no-merged origin/main` after `git fetch --prune`. Items that could not be verified were MOVED to "Needs verification", not deleted.
+
+---
+
+## iOS 2.1(b): the client fix is merged, the build and the resubmission are not (2026-09-07)
+
+Full context: COMPLETED_TASKS.md, the 2026-09-07 entry. PRs **#462** and **#463**
+are merged to `main`.
+
+- [ ] **Cut EAS build 31 and submit it.** `eas build --platform ios --profile
+      production`, then `eas submit`. `app.json` stays at 1.0.1;
+      `appVersionSource` is remote, so EAS stamps the build number — read it back
+      from `eas build:view` rather than assuming.
+- [ ] **Bundle-prove the fix compiled in before submitting.** Hermes bytecode does
+      not grep. Re-export plain JS with `expo export:embed` and grep that for the
+      Try again label, the bootstrap hook's identifier and the telemetry event
+      names. Remember the `ACCOUNT_SCOPED_KEYS` lesson: values built from a const
+      object minify to **property refs, not string literals**, so check for the
+      form that actually survives minification.
+- [ ] **Watch the telemetry after review, not the App Store Connect status.** The
+      one thing this fix cannot control is whether the reviewer's device has a
+      Sandbox Apple Account. If the rejection repeats,
+      `purchase_surface_unavailable` now carries a machine reason and the raw
+      product ids the store named — `products_empty` means StoreKit still
+      returned nothing, `no_matching_packages` means it returned ids we do not
+      sell. Those are different bugs with different fixes, and until now we could
+      not tell them apart.
+- [ ] **Re-check Restore Purchases on the review build.** Unchanged by these PRs,
+      and still worth a look on a build where the SDK is actually configured at
+      launch.
 
 ---
 

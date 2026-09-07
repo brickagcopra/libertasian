@@ -46,6 +46,14 @@ jest.mock('@/features/entitlements/use-freemium-surfaces', () => ({
   useFreemiumSurfacesSync: (isAuthenticated: boolean) =>
     mockUseFreemiumSurfacesSync(isAuthenticated),
 }));
+// And the store warm-up, for the same reason plus one more: the real hook
+// calls `useQueryClient()`, and the `@tanstack/react-query` stub above is a
+// two-export shim with no provider behind it.
+const mockUsePurchasesBootstrap = jest.fn();
+jest.mock('@/features/purchase', () => ({
+  usePurchasesBootstrap: (organizationId: string | null) =>
+    mockUsePurchasesBootstrap(organizationId),
+}));
 
 jest.mock('@expo-google-fonts/inter', () => ({
   useFonts: () => [true],
@@ -223,6 +231,38 @@ describe('AuthNavigationGuard', () => {
     // place. If this stops being mounted, `useFreemiumSurfaces()` falls back to
     // its last persisted value forever.
     expect(mockUseFreemiumSurfacesSync).toHaveBeenCalledWith(true);
+  });
+
+  it('warms the store with the organization id, once, from here', () => {
+    // App Review's 2.1(b) rejection was a cold StoreKit cache: the SDK's first
+    // conversation with the store began when the user opened the screen that
+    // needed prices. If this stops being mounted, that window comes back.
+    mockUseAuth.mockReturnValue({
+      isAuthenticated: true,
+      isLoading: false,
+      user: { id: 'u1', organizationId: 'org-1', onboardingCompletedAt: '2026-01-01' },
+    });
+    mockUseSegments.mockReturnValue(['(tabs)']);
+
+    render(<RootLayout />);
+
+    // D11 — the App User ID IS the organization id, not the user id.
+    expect(mockUsePurchasesBootstrap).toHaveBeenCalledWith('org-1');
+  });
+
+  it('warms nothing while signed out', () => {
+    mockUseAuth.mockReturnValue({
+      isAuthenticated: false,
+      isLoading: false,
+      user: null,
+    });
+    mockUseSegments.mockReturnValue(['(auth)']);
+
+    render(<RootLayout />);
+
+    // Not undefined: there is no App User ID before there is a session, and D11
+    // makes an anonymous one actively wrong.
+    expect(mockUsePurchasesBootstrap).toHaveBeenCalledWith(null);
   });
 
   it('does not perform any navigation while loading', () => {

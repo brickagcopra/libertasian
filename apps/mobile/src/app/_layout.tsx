@@ -25,6 +25,7 @@ import { ErrorBoundary } from '../components/ErrorBoundary';
 import { AuthProvider, useAuth } from '../providers/auth-provider';
 import { ThemeProvider } from '../providers/theme-provider';
 import { useFreemiumSurfacesSync } from '../features/entitlements/use-freemium-surfaces';
+import { usePurchasesBootstrap } from '@/features/purchase';
 import { useNotificationSocket } from '../features/workspace/hooks/use-notifications';
 import { usePushNotifications } from '../features/workspace/hooks/use-push-notifications';
 import { ensureAudioMode } from '../features/audio/lib/audio-session';
@@ -43,6 +44,12 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
   // Mounted here, once, for the same reason as the two hooks above: exactly one
   // component should hold the query while any number read the result.
   useFreemiumSurfacesSync(isAuthenticated);
+
+  // Warms the store SDK and its product cache as soon as there is a session,
+  // rather than at the instant someone opens a screen that needs prices. Same
+  // rationale again: exactly one component holds it. Renders nothing, routes
+  // nowhere, no-ops while signed out.
+  usePurchasesBootstrap(user?.organizationId ?? null);
 
   useEffect(() => {
     if (isLoading) return;

@@ -109,9 +109,21 @@ const inPurchaseSurface = (file: string): boolean =>
  *
  * A purchase surface reachable from an unguarded screen is a paywall on an
  * unguarded screen, so this list is the review signal: its diff is the whole
- * question. One entry today — the Settings row.
+ * question.
+ *
+ * SET EQUALITY, not list equality — the assertion sorts both sides. `walk()`
+ * returns whatever `readdirSync` returns, which is NTFS collation on Windows
+ * and directory order on Linux; the two disagree about where `_layout.tsx`
+ * sits among its siblings. With one entry per directory that never showed, and
+ * with two in `app/` it would be a CI flake in the one gate that must not
+ * flake. WHICH files import the surface is the question this test exists to
+ * ask; the order they were walked in is not.
  */
 const PERMITTED_PURCHASE_ENTRY_POINTS: readonly string[] = [
+  // SDK warm-up at launch, NOT a purchase door: `usePurchasesBootstrap`
+  // configures the store and prefetches its products so the purchase screen is
+  // not the first thing to ask. It renders nothing and routes nowhere.
+  'app/_layout.tsx',
   // The Settings row — the door a user opens deliberately.
   'app/settings/index.tsx',
   // D14 option B: when a surface is visible but unentitled AND a store purchase
@@ -256,7 +268,7 @@ describe('freemium surfaces name nothing purchasable', () => {
         /@\/(features|app)\/purchase/.test(readFileSync(join(MOBILE_SRC, file), 'utf8')),
       );
 
-    expect(importers).toEqual(PERMITTED_PURCHASE_ENTRY_POINTS);
+    expect([...importers].sort()).toEqual([...PERMITTED_PURCHASE_ENTRY_POINTS].sort());
   });
 
   it('exempts the purchase surface by LOCATION and nothing else', () => {
