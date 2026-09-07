@@ -2,6 +2,7 @@ import type {
   CustomerInfo,
   PurchasesOffering,
   PurchasesPackage,
+  PurchasesStoreProduct,
 } from 'react-native-purchases';
 
 import { getRevenueCatKey } from '../purchase-env';
@@ -30,6 +31,39 @@ interface PurchasesModule {
   logOut(): Promise<CustomerInfo>;
   getOfferings(): Promise<{ current: PurchasesOffering | null }>;
   purchasePackage(pkg: PurchasesPackage): Promise<{ customerInfo: CustomerInfo }>;
+  /**
+   * Ask the STORE directly for these product ids, bypassing the offering.
+   *
+   * `Purchases.getProducts(productIdentifiers: string[], type?: PURCHASE_TYPE |
+   * PRODUCT_CATEGORY): Promise<PurchasesStoreProduct[]>` in
+   * react-native-purchases@9.15.2 (`dist/purchases.d.ts`). The second argument
+   * defaults to a subscription category on both platforms and we never pass it
+   * — narrowing the arity here is deliberate, so no caller can ask for a
+   * category we do not sell.
+   *
+   * WHY IT IS HERE: a RevenueCat offering is only as good as the store fetch
+   * behind it. When StoreKit returns nothing — the App Review 2.1(b) case —
+   * `getOfferings()` hands back an offering with no usable packages, or none at
+   * all, and the screen has no second question to ask. This is that question.
+   */
+  getProducts(productIdentifiers: string[]): Promise<PurchasesStoreProduct[]>;
+  /**
+   * Buy a raw store product, for the path where we never got a package.
+   *
+   * `Purchases.purchaseStoreProduct(product: PurchasesStoreProduct,
+   * googleProductChangeInfo?: GoogleProductChangeInfo | null,
+   * googleIsPersonalizedPrice?: boolean | null): Promise<MakePurchaseResult>`
+   * in react-native-purchases@9.15.2. `MakePurchaseResult` is
+   * `{ productIdentifier, customerInfo, transaction }`; only `customerInfo` is
+   * declared here because only `customerInfo` decides whether the purchase
+   * completed, exactly as with `purchasePackage`.
+   *
+   * The two optional Google arguments are upgrade/downgrade plumbing for a
+   * product change we do not perform, so they are left off the narrowed type.
+   */
+  purchaseStoreProduct(
+    product: PurchasesStoreProduct,
+  ): Promise<{ customerInfo: CustomerInfo }>;
   restorePurchases(): Promise<CustomerInfo>;
   /**
    * The store's own answer to "what does this account own right now?".
@@ -152,4 +186,9 @@ export function resetPurchasesConfiguration(): void {
   configuredFor = null;
 }
 
-export type { CustomerInfo, PurchasesOffering, PurchasesPackage };
+export type {
+  CustomerInfo,
+  PurchasesOffering,
+  PurchasesPackage,
+  PurchasesStoreProduct,
+};

@@ -1,3 +1,6 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
+
 import { fireEvent, render, screen } from '@testing-library/react-native';
 
 import { ThemeProvider } from '@/providers/theme-provider';
@@ -30,6 +33,7 @@ function renderSurface(props: Partial<React.ComponentProps<typeof PurchaseSurfac
   const handlers = {
     onPurchase: jest.fn(),
     onRestore: jest.fn(),
+    onRetry: jest.fn(),
     onOpenTerms: jest.fn(),
     onOpenPrivacy: jest.fn(),
   };
@@ -125,5 +129,60 @@ describe('PurchaseSurface', () => {
     expect(
       screen.getByText('We could not confirm that yet. Try Restore Purchases.'),
     ).toBeTruthy();
+  });
+
+  // ---- the unavailable state is no longer terminal ----
+
+  /**
+   * THE 2.1(b) SHAPE. The sentence stays — it is the one line that covers every
+   * store-side reason without explaining how to subscribe some other way — but
+   * it used to be all there was. The offering result was cached as a success
+   * for five minutes, so a user reading it had no action that could change it.
+   * App Review read that as a purchase screen that does not work.
+   */
+  it('keeps its sentence and adds a way out', () => {
+    const handlers = renderSurface({ status: 'unavailable', plans: [] });
+
+    expect(
+      screen.getByText('Plans are not available right now. Please try again later.'),
+    ).toBeTruthy();
+
+    fireEvent.press(screen.getByText('Try again'));
+    expect(handlers.onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers no way out when there is nothing wrong', () => {
+    renderSurface();
+    expect(screen.queryByText('Try again')).toBeNull();
+
+    renderSurface({ status: 'loading', plans: [] });
+    expect(screen.queryByText('Try again')).toBeNull();
+  });
+
+  it('blocks the retry while a purchase or restore is in flight', () => {
+    const handlers = renderSurface({ status: 'unavailable', plans: [], busy: true });
+
+    fireEvent.press(screen.getByText('Try again'));
+    expect(handlers.onRetry).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Guideline 3.1.1 — what got build 23 rejected. The way out must ask the
+   * STORE again, on this screen. A URL, a `Linking` call, or any off-app route
+   * added here would put another way to subscribe on the one screen that may
+   * not have one.
+   */
+  it('sends the user nowhere: no URL, no Linking, no off-app route', () => {
+    // Comments must be free to NAME the rule they are enforcing, so they are
+    // stripped first — exactly as `no-purchase-copy.test.ts` does. What is left
+    // is code, which is what could actually take a user out of the app.
+    const source = readFileSync(join(__dirname, 'purchase-surface.tsx'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+
+    expect(source).not.toMatch(/https?:\/\//);
+    expect(source).not.toMatch(/\bLinking\b/);
+    expect(source).not.toMatch(/libertasian\.com/);
+    expect(source).not.toMatch(/openURL|WebBrowser/);
   });
 });

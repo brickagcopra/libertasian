@@ -29,6 +29,7 @@ export {
 } from './components/purchase-surface';
 export {
   usePurchaseOptions,
+  SDK_CONFIGURE_TIMEOUT_MS,
   PURCHASE_CONFIRMED_NOTICE,
   PURCHASE_FAILED_NOTICE,
   RESTORE_CONFIRMED_NOTICE,
@@ -36,7 +37,16 @@ export {
   RESTORE_NOTHING_NOTICE,
   type PurchaseOptions,
 } from './hooks/use-purchase-options';
-export { useOfferings, packageFor, offeringKeys, type OfferingsResult } from './hooks/use-offerings';
+export {
+  useOfferings,
+  packageFor,
+  productFor,
+  offeringKeys,
+  OfferingsUnavailableError,
+  type OfferingsResult,
+  type OfferingsSource,
+  type OfferingsUnavailableReason,
+} from './hooks/use-offerings';
 export {
   configurePurchases,
   getPurchases,
