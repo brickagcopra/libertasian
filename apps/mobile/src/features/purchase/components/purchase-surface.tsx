@@ -30,6 +30,17 @@ export interface PurchaseSurfaceProps {
   notice?: string | null;
   onPurchase: (productId: StoreProductId) => void;
   onRestore: () => void;
+  /**
+   * Ask the store again.
+   *
+   * REQUIRED, not optional. The `unavailable` state used to be terminal on
+   * screen: the offering result was cached for five minutes, so a user looking
+   * at "Plans are not available right now" had no action that could change it
+   * and no reason to believe waiting would. App Review read that as a purchase
+   * screen that does not work (2.1(b)). An optional prop would let a future
+   * caller re-create the dead end by omitting it.
+   */
+  onRetry: () => void;
   onOpenTerms: () => void;
   onOpenPrivacy: () => void;
 }
@@ -58,6 +69,7 @@ export function PurchaseSurface({
   notice,
   onPurchase,
   onRestore,
+  onRetry,
   onOpenTerms,
   onOpenPrivacy,
 }: PurchaseSurfaceProps) {
@@ -113,6 +125,32 @@ export function PurchaseSurface({
           >
             Plans are not available right now. Please try again later.
           </Text>
+          {/*
+            The way out. Nothing here leaves the app: no URL, no Linking call,
+            no mention of another place to subscribe — guideline 3.1.1, which
+            is what got build 23 rejected. It asks the STORE again, on this
+            screen, and that is the whole of it.
+          */}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ disabled: busy }}
+            disabled={busy}
+            onPress={onRetry}
+            style={{ paddingTop: 14, alignSelf: 'flex-start' }}
+          >
+            <Text
+              style={{
+                fontFamily: theme.sans,
+                fontSize: 15,
+                fontWeight: '600',
+                color: theme.ink,
+                textDecorationLine: 'underline',
+                opacity: busy ? 0.5 : 1,
+              }}
+            >
+              Try again
+            </Text>
+          </Pressable>
         </View>
       ) : null}
 
