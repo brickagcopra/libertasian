@@ -1,6 +1,8 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-09-01 (**PR #454 `fix/auth-response-org-fields` — the RevenueCat SDK was never initialized on mobile, and the cause was a missing field on the server.** `GET /users/me` returned `organizationId`/`organizationRole`; **none of the five auth paths did** — they all returned `sanitize(user) + isPlatformAdmin`, and `sanitize()` has no org fields. Mobile seeds its auth context from the sign-in response, so `organizationId` was `undefined` for the whole session, `usePurchaseOptions` returned before calling `configurePurchases()`, and the purchase screen rendered "Plans are not available right now" while Restore Purchases threw into an unconfigured SDK. Confirmed on prod: RevenueCat has no session for the org from any build-29 device session. Fixed **server-side only, on purpose** — the client is correct as written and changing it would have needed a new iOS build. One private `buildAuthUser()` now builds the shape once at all five sites, matching `/users/me` field for field; `isPlatformAdmin` is untouched at every site. `login()` resolves the membership before the MFA branch so the challenge response carries the fields too, with the `!membership` rejection left where it was. Two new tests, **both verified to fail on the pre-fix code**: a unit contract test pinning the two builders' shapes together, and an e2e asserting `/auth/login`, `/auth/register`, `/auth/google/mobile` and `/auth/apple/mobile` against the active membership. Gates: **4703/4703 unit**, `tsc --noEmit` **0**, auth-surface e2e **131/133** — the 2 failures reproduce identically on `main`.)
+> Last updated: 2026-09-07 (**PRs #462 + #463 — App Review rejected iOS 1.0.1 (30) under 2.1(b), "the plans were unavailable at the time of review", and the cause is now fully diagnosed rather than guessed at.** Prod logs put the reviewer on the purchase screen with `storePurchaseAvailable: true`; RevenueCat's subscriber record for the demo org shows `last_seen` 2026-09-07T04:52:13Z, so the device **did** configure the SDK and **did** reach RevenueCat, which serves that subscriber the `default` offering with all four packages. Paid Apps is Active and the same build renders plans on our own devices. So the failure is one layer down: **StoreKit returned no products on that device** — a cold cache with no Sandbox Apple Account signed in — and the client turned one empty fetch into a permanent dead end. Two causes, both fixed. **#462:** an empty result RESOLVED, so React Query cached it as a success for the full 5-minute `staleTime` and no user action could change it; it now throws a typed `OfferingsUnavailableError` with a machine reason, retries 3x with backoff, falls back to asking the store directly via `getProducts(STORE_PRODUCT_IDS)` when the offering yields nothing, and stops dropping a card over a missing `subscriptionPeriod` (a blank PRICE still drops it — that one is 3.1.2(c)). `sdkReady` was a boolean, so the ordinary async moments before `configurePurchases()` resolved rendered as the same dead-end sentence; it is now `configuring | ready | failed` with a 15s watchdog, and the `unavailable` block gained a **Try again** — no URL, no `Linking`, nothing off-app (3.1.1, which is what got build 23 rejected). New `purchase-telemetry.ts` reports why the surface is empty, because `logger` is dev-only and a release build told us nothing. **#463:** `configurePurchases()` had exactly one caller, so the SDK's first conversation with the store began when the user opened the screen that needed prices; `usePurchasesBootstrap` now configures and prefetches at launch from `AuthNavigationGuard`, and the App Review notes finally state the **Sandbox Apple Account** requirement. Writing the terminal-state tests also deleted a branch added in the same PR as dead code — React Query resets a never-held-data query to `pending` on refetch, so `isPending` already covered it. Gates: **248 suites / 1965 tests**, `tsc --noEmit` **0**. `app.json` stays 1.0.1; EAS `appVersionSource` is remote.)
+>
+> Previously: 2026-09-01 (**PR #454 `fix/auth-response-org-fields` — the RevenueCat SDK was never initialized on mobile, and the cause was a missing field on the server.** `GET /users/me` returned `organizationId`/`organizationRole`; **none of the five auth paths did** — they all returned `sanitize(user) + isPlatformAdmin`, and `sanitize()` has no org fields. Mobile seeds its auth context from the sign-in response, so `organizationId` was `undefined` for the whole session, `usePurchaseOptions` returned before calling `configurePurchases()`, and the purchase screen rendered "Plans are not available right now" while Restore Purchases threw into an unconfigured SDK. Confirmed on prod: RevenueCat has no session for the org from any build-29 device session. Fixed **server-side only, on purpose** — the client is correct as written and changing it would have needed a new iOS build. One private `buildAuthUser()` now builds the shape once at all five sites, matching `/users/me` field for field; `isPlatformAdmin` is untouched at every site. `login()` resolves the membership before the MFA branch so the challenge response carries the fields too, with the `!membership` rejection left where it was. Two new tests, **both verified to fail on the pre-fix code**: a unit contract test pinning the two builders' shapes together, and an e2e asserting `/auth/login`, `/auth/register`, `/auth/google/mobile` and `/auth/apple/mobile` against the active membership. Gates: **4703/4703 unit**, `tsc --noEmit` **0**, auth-surface e2e **131/133** — the 2 failures reproduce identically on `main`.)
 >
 > Previously: 2026-08-19 (**Play closed-testing unblocked — vC11 is on the `alpha` track.** Most of what the submission was believed to be blocked on was already done: Content rating had been re-run and submitted 2026-08-16 with UGC **blocking = yes**, Data safety was **actioned, not draft**, Sign in details carried working reviewer credentials, and Target audience was already **18+**. The single real blocker was a declaration nobody had named — **Advertising ID**, which Play states blocks any release targeting Android 13+; answered **No** (no ads SDK, no Firebase Analytics, zero `AD_ID` references in `apps/mobile`), and App content now reads *"You're all caught up"*. Also fixed: the tester email list **"Libertasian Testers" existed but was never attached** to the alpha track, and the store listing still served the synthetic marketing screenshots including a `06-offline-sync` slide for a feature that does not exist — all three slots replaced with the real `assets/store/screenshots/framed/android-*` captures and re-verified after reload. `eas submit` finally succeeded after adding `"releaseStatus": "draft"` to `eas.json`: Play rejects a COMPLETED release with *"the app is missing the required metadata"* until the first review, which is what killed submissions `1d1d1fe9` (vC9) and `9c08591f` (vC11). Result: **Draft release 1.0.0 / versionCode 11 on Closed testing – Alpha, Philippines, 18,612 devices.** The release was then confirmed and the whole edit **sent for review the same day** — Publishing overview reads **"Changes in review"**, managed publishing is OFF so approval auto-publishes. Saving the release also surfaced a third undocumented gate, **signing-key registration** (*"all keys should be registered to meet the Android Developer Verification requirements"*) — the account-level green banner covers the *package name* only, and the key had to be registered by pasting the **App signing key** SHA-256 fingerprint from the legacy `keymanagement` page. Left: growing the tester list from **7 to 15+**, and flipping `releaseStatus` back to `"completed"` once Play approves.)
 >
@@ -31,6 +33,110 @@
 > Previously: 2026-07-29 (#336 OPEN: a flat 300 s synthesis timeout made a 2,238-char digest — near the corpus average — permanently unsynthesizable, and retrying it identically three times burned 15 min of 8-core CPU. Budget is now length-proportional, failures are classified, and the reason is persisted. A separate CUDA image and bearer auth on the TTS hop open the rented-GPU route for the tier-1 backfill; both are no-ops for prod.)
 >
 > Previously: 2026-07-27 (#322 MERGED `5addc51`: the auto-publish citation gate was unreachable and had stranded 76% of the corpus out of search since 2026-05-30. Dry run over prod confirms 11,561 of 13,093 drafts publish under the corrected rules. #321 opened for the resolver underneath it, #323 for the 1,531 rows still short a `court`.)
+
+---
+
+## 2026-09-07 — the purchase screen turned one empty StoreKit fetch into a permanent dead end
+
+Branches `fix/purchase-storekit-fetch-fallback` (**PR #462**) and
+`fix/purchase-configure-at-launch` (**PR #463**), stacked. Mobile only — no API,
+no `store-sync.ts`, no D10/D10a, no change to the #458 notice constants.
+
+### What the rejection actually was
+
+App Review rejected iOS **1.0.1 (30)** under 2.1(b): *"the plans were
+unavailable at the time of review."* Everything upstream of StoreKit was
+working, and we can prove each link:
+
+- prod logs show the reviewer signed in and received `X-Platform: ios` with
+  `storePurchaseAvailable: true`, then reached the purchase screen;
+- RevenueCat's subscriber record for the demo org carries `last_seen`
+  **2026-09-07T04:52:13Z** — the device configured the SDK and reached
+  RevenueCat;
+- RevenueCat serves that subscriber the `default` offering with **all four**
+  packages;
+- the Paid Apps agreement is **Active**, and the same build renders plans on our
+  own devices.
+
+So **StoreKit returned no products on that device** — a cold product cache with
+no Sandbox Apple Account signed in — and the client had no answer for it.
+
+### #462 — survive an empty store fetch
+
+- **An empty result was cached as a SUCCESS.** `useOfferings` resolved
+  `{ plans: [] }`, which React Query held for the full 5-minute `staleTime`. A
+  user reading *"Plans are not available right now"* had no action that could
+  change it, and returning to the screen changed nothing. It now **throws**
+  `OfferingsUnavailableError` with a machine reason
+  (`no_sdk | offering_null | no_matching_packages | products_empty`) and the raw
+  product ids the store did name. Retries go to **3** with 1s/2s/4s backoff.
+- **A second, independent question.** When the offering yields no usable plan,
+  the store is asked directly with `getProducts(STORE_PRODUCT_IDS)` and plans are
+  built from the raw products; `purchaseStoreProduct()` buys on that path. Both
+  SDK signatures were read off react-native-purchases@9.15.2's own
+  `dist/purchases.d.ts`, not from memory. Both purchase guards stay, now one per
+  path — an id absent from `STORE_PRODUCT_IDS` has nothing to hand the SDK on
+  either.
+- **A missing period no longer drops a card.** `P1M`/`P1Y` stay primary; when the
+  store gives none the duration comes from the product id suffix, which is safe
+  because the id is already narrowed to one of our four and the server's
+  `STORE_PRODUCT_MAP` reads the same suffix. A blank **price** still drops the
+  card — that one is the 3.1.2(c) violation, a missing period is not.
+- **`sdkReady` was a boolean, and that was its own bug.** `configurePurchases()`
+  is async, so the ordinary first moments of every visit rendered as the
+  permanent dead end. Now `configuring | ready | failed`, with `configuring`
+  mapping to `loading` and a **15s watchdog** so it can never spin forever.
+- **A way out.** The `unavailable` block keeps its sentence and gains a
+  **Try again**. No URL, no `Linking`, no price, no off-app route — 3.1.1 is what
+  got build 23 rejected, and a test re-reads the file with comments stripped to
+  prove none of those appear.
+- **Telemetry.** `features/purchase/lib/purchase-telemetry.ts` reports
+  `purchase_surface_unavailable {reason, source, rawProductIds}` (once per reason
+  per mount), `purchase_surface_ready`, `purchase_result`, `restore_result`.
+  `logger` is dev-only, so a release build reported none of this. No PII, no
+  prices. Analytics is lazy-required: `lib/analytics` imports `expo-sqlite` at
+  module scope and this module is reachable from the purchase barrel, which
+  `surface-guard.tsx` imports — a top-level import broke seven unrelated suites.
+
+### #463 — warm the store before anyone needs it
+
+- **`configurePurchases()` had exactly one caller.** The SDK's first conversation
+  with the store began at the instant the user opened the screen that needed
+  prices, so every cold-start cost was spent inside the window where an empty
+  result reads as *"this app cannot sell anything."* New
+  `usePurchasesBootstrap(organizationId)` configures as soon as a session exists
+  (keyed by org id, so an org switch warms the new tenant) and prefetches the
+  offering. Mounted **once** in `AuthNavigationGuard` beside
+  `useFreemiumSurfacesSync`. No-ops signed out; never throws.
+  `useOfferings`' query moved to `offeringsQueryOptions()` and is spread by both
+  callers, so the prefetch writes exactly the entry the screen reads.
+- **`app/_layout.tsx` added to `PERMITTED_PURCHASE_ENTRY_POINTS`** as an SDK
+  warm-up, not a purchase door. The importer assertion now compares **sorted**
+  lists: `walk()` returns `readdirSync` order, which is NTFS collation on Windows
+  and directory order on Linux, and the two disagree about where `_layout.tsx`
+  sits among its siblings — with two entries in `app/` that would be a CI flake
+  in the one gate that must not flake.
+- **App Review notes** now state the **Sandbox Apple Account** requirement
+  (Settings > Developer > Sandbox Apple Account), which is the actual diagnosis.
+  The fenced ASC block is capped at 4,000 characters and was at 3,964; 195 was
+  freed from the simulator list (§2), the self-hosted inventory (§5 — the claim
+  stays, the inventory was colour) and *"No sample files are needed."* (§4).
+  Final **3,972**. Sections 1, 3, 6 and 7 untouched. Measured with a real
+  character count, not `wc -c` — the block holds 9 `•` and 5 `—`, so bytes read
+  28 high and would have looked over the limit.
+- **Terminal-state tests.** Reading an in-flight fetch as `loading` creates a new
+  way to fail: a screen that spins forever shows the reviewer no Try again and is
+  the same rejection with a different screenshot. Five cases pin where the screen
+  comes to REST. They also caught **dead code added in the same PR**: an
+  `offerings.isFetching ? 'loading'` branch that never fires, because React Query
+  resets a query that has never held data back to `pending` when a refetch
+  starts, so `isPending` already covered the failed-prefetch case the branch
+  claimed to cover. Deleted; the behaviour is pinned by the test instead.
+
+### Gates
+
+**248 suites / 1965 tests** pass, `tsc --noEmit` **0 errors**. `app.json` stays
+at **1.0.1** — EAS `appVersionSource` is remote and stamps the build number.
 
 ---
 
