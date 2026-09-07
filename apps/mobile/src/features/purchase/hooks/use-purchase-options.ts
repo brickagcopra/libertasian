@@ -183,7 +183,15 @@ export function usePurchaseOptions(): PurchaseOptions {
           ? 'loading'
           : plans.length > 0
             ? 'ready'
-            : 'unavailable';
+            : // An in-flight fetch with nothing yet is not a VERDICT. This
+              // matters now that `usePurchasesBootstrap` prefetches at launch:
+              // a prefetch that failed leaves an error entry in the cache, and
+              // without this the screen would greet the user with the dead-end
+              // sentence for as long as the remount refetch took. Same for the
+              // refetch `retry()` starts.
+              offerings.isFetching
+              ? 'loading'
+              : 'unavailable';
 
   // Report what the screen actually became, from the same values that decided
   // it. Both calls deduplicate internally, so this is safe on every render.

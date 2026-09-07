@@ -186,88 +186,104 @@ function plansFor(
  * If both come back empty this THROWS. See `OfferingsUnavailableError`.
  */
 export function useOfferings(enabled = true) {
-  return useQuery<OfferingsResult>({
+  return useQuery<OfferingsResult>({ ...offeringsQueryOptions(), enabled });
+}
+
+/**
+ * The query, as data, so more than one caller can run exactly this one.
+ *
+ * `usePurchasesBootstrap` prefetches it at app launch — the store's first
+ * product fetch is the slow, cold one, and the whole point is that it has
+ * already happened by the time anyone opens the purchase screen. A prefetch
+ * that used a DIFFERENT `queryFn`, `staleTime` or retry policy would write a
+ * cache entry the screen then treats as its own, so the shape is defined once
+ * here and spread by both callers rather than repeated.
+ */
+export function offeringsQueryOptions() {
+  return {
     queryKey: offeringKeys.current(),
-    enabled,
-    queryFn: async (): Promise<OfferingsResult> => {
-      const purchases = getPurchases();
-      if (!purchases) throw new OfferingsUnavailableError('no_sdk');
-
-      // ---- path 1: the configured offering ----
-      const { current } = await purchases.getOfferings();
-      const offeringProductIds: string[] = [];
-      const packagesByProductId: Record<string, PurchasesPackage> = {};
-
-      for (const pkg of current?.availablePackages ?? []) {
-        offeringProductIds.push(pkg.product.identifier);
-        if (isStoreProductId(pkg.product.identifier)) {
-          packagesByProductId[pkg.product.identifier] = pkg;
-        }
-      }
-
-      const offeringProducts: Record<string, StoreProductLike> = {};
-      for (const [id, pkg] of Object.entries(packagesByProductId)) {
-        offeringProducts[id] = pkg.product;
-      }
-
-      const offeringPlans = plansFor(offeringProducts);
-      if (offeringPlans.length > 0) {
-        return {
-          plans: offeringPlans,
-          packagesByProductId,
-          productsByProductId: {},
-          source: 'offering',
-        };
-      }
-
-      // ---- path 2: the store, asked directly ----
-      const products = (await purchases.getProducts([...STORE_PRODUCT_IDS])) ?? [];
-
-      const productsByProductId: Record<string, PurchasesStoreProduct> = {};
-      for (const product of products) {
-        if (isStoreProductId(product.identifier)) {
-          productsByProductId[product.identifier] = product;
-        }
-      }
-
-      const productPlans = plansFor(productsByProductId);
-      if (productPlans.length > 0) {
-        return {
-          plans: productPlans,
-          packagesByProductId: {},
-          productsByProductId,
-          source: 'products',
-        };
-      }
-
-      const rawProductIds = [
-        ...new Set([
-          ...offeringProductIds,
-          ...products.map((product) => product.identifier),
-        ]),
-      ];
-
-      throw new OfferingsUnavailableError(
-        unavailableReason({
-          offeringWasNull: !current,
-          offeringProductIds,
-          productCount: products.length,
-        }),
-        rawProductIds,
-      );
-    },
+    queryFn: fetchStoreOfferings,
     // The offering changes only when someone edits it in the dashboard. Long
     // stale time; a wrong price for five minutes is not a risk, and refetching
     // on every mount would hit the store on every screen open. Nothing empty is
-    // ever cached under it any more — that path throws.
+    // ever cached under it — that path throws.
     staleTime: 5 * 60 * 1000,
     // A store fetch is a network call to StoreKit / Play Billing on a device
     // that may have just come off a lock screen, and the observed failure was
     // transient: RevenueCat served all four products correctly at the moment
     // the device saw none. One retry was not enough to ride that out.
     retry: 3,
-    retryDelay: (failureCount) => Math.min(1000 * 2 ** failureCount, 8000),
-  });
+    retryDelay: (failureCount: number) => Math.min(1000 * 2 ** failureCount, 8000),
+  };
+}
+
+/** Ask the store, both ways, and map what comes back. */
+export async function fetchStoreOfferings(): Promise<OfferingsResult> {
+  const purchases = getPurchases();
+  if (!purchases) throw new OfferingsUnavailableError('no_sdk');
+
+  // ---- path 1: the configured offering ----
+  const { current } = await purchases.getOfferings();
+  const offeringProductIds: string[] = [];
+  const packagesByProductId: Record<string, PurchasesPackage> = {};
+
+  for (const pkg of current?.availablePackages ?? []) {
+    offeringProductIds.push(pkg.product.identifier);
+    if (isStoreProductId(pkg.product.identifier)) {
+      packagesByProductId[pkg.product.identifier] = pkg;
+    }
+  }
+
+  const offeringProducts: Record<string, StoreProductLike> = {};
+  for (const [id, pkg] of Object.entries(packagesByProductId)) {
+    offeringProducts[id] = pkg.product;
+  }
+
+  const offeringPlans = plansFor(offeringProducts);
+  if (offeringPlans.length > 0) {
+    return {
+      plans: offeringPlans,
+      packagesByProductId,
+      productsByProductId: {},
+      source: 'offering',
+    };
+  }
+
+  // ---- path 2: the store, asked directly ----
+  const products = (await purchases.getProducts([...STORE_PRODUCT_IDS])) ?? [];
+
+  const productsByProductId: Record<string, PurchasesStoreProduct> = {};
+  for (const product of products) {
+    if (isStoreProductId(product.identifier)) {
+      productsByProductId[product.identifier] = product;
+    }
+  }
+
+  const productPlans = plansFor(productsByProductId);
+  if (productPlans.length > 0) {
+    return {
+      plans: productPlans,
+      packagesByProductId: {},
+      productsByProductId,
+      source: 'products',
+    };
+  }
+
+  const rawProductIds = [
+    ...new Set([
+      ...offeringProductIds,
+      ...products.map((product) => product.identifier),
+    ]),
+  ];
+
+  throw new OfferingsUnavailableError(
+    unavailableReason({
+      offeringWasNull: !current,
+      offeringProductIds,
+      productCount: products.length,
+    }),
+    rawProductIds,
+  );
 }
 
 /**

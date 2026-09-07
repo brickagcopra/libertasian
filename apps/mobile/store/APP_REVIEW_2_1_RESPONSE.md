@@ -81,7 +81,7 @@ A screen recording is attached to our Resolution Center reply: one continuous ta
 Moderation: any user can report another user's post, block its author, or delete their own. Blocking is symmetric and hides the blocked author from the feed, post detail and comments; blocked users are listed under Settings > Blocked users, where it can be lifted. The recording shows both flows.
 
 2) DEVICES AND OS VERSIONS TESTED
-Physical: iPhone 17 Pro Max on iOS 26.6. Simulators: iPhone 16 Pro Max, iPad Pro 13-inch on iOS 18.
+Physical: iPhone 17 Pro Max on iOS 26.6.
 
 3) CORE FUNCTIONALITY AND INTENDED AUDIENCE
 LIBERTASIAN is a Philippine legal research library for law students, bar reviewees, and practitioners.
@@ -103,10 +103,10 @@ DISCLAIMER
 LIBERTASIAN provides AI-powered legal research tools for informational purposes only. AI outputs are not legal advice and do not create an attorney-client relationship. Always consult a qualified Philippine lawyer for legal matters. The practice of law in the Philippines is reserved for members of the Philippine Bar.
 
 4) ACCESS AND SAMPLE FILES
-Demo account brickagcopra5871+test@gmail.com, password in the Sign-In Information fields above. Two-factor authentication is DISABLED. Please use THIS account for the purchase check. It is deliberately on the FREE tier so the purchase flow can be exercised end to end: Past Bar Exams, Camera Scan, study tools and digest generation show a paywall with a purchase entry point, while codal reading, case digests, search and AI answers stay free. The purchase screen is Settings > Manage account access; it stays visible at every entitlement level so Restore Purchases is always reachable. No sample files are needed. Please do not delete this account.
+Demo account brickagcopra5871+test@gmail.com, password in the Sign-In Information fields above. Two-factor authentication is DISABLED. Please use THIS account for the purchase check. It is deliberately on the FREE tier so the purchase flow can be exercised end to end: Past Bar Exams, Camera Scan, study tools and digest generation show a paywall with a purchase entry point, while codal reading, case digests, search and AI answers stay free. The purchase screen is Settings > Manage account access; it stays visible at every entitlement level so Restore Purchases is always reachable. To exercise the purchase, the device needs a Sandbox Apple Account signed in under Settings > Developer > Sandbox Apple Account; without one the App Store returns no products and the plan list is empty. Please do not delete this account.
 
 5) THIRD-PARTY AND EXTERNAL SERVICES
-OpenAI (gpt-4o-mini) for AI answers, digests and ALAC bar answers; Sign in with Apple; Google Sign-In; Expo push via APNs. All other infrastructure is self-hosted: PostgreSQL, OpenSearch, MinIO, Tesseract OCR, Kokoro-82M TTS, and our own embedding and reranking services.
+OpenAI (gpt-4o-mini) for AI answers, digests and ALAC bar answers; Sign in with Apple; Google Sign-In; Expo push via APNs. All other infrastructure is self-hosted.
 Subscriptions are sold through Apple in-app purchase only. There is no external purchase link, no checkout screen, and no mention of buying on our website anywhere in the app. The purchase screen shows the store's localized prices, Restore Purchases, and in-app Terms and Privacy links.
 
 6) REGIONAL DIFFERENCES

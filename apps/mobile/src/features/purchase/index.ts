@@ -37,8 +37,11 @@ export {
   RESTORE_NOTHING_NOTICE,
   type PurchaseOptions,
 } from './hooks/use-purchase-options';
+export { usePurchasesBootstrap } from './hooks/use-purchases-bootstrap';
 export {
   useOfferings,
+  offeringsQueryOptions,
+  fetchStoreOfferings,
   packageFor,
   productFor,
   offeringKeys,
