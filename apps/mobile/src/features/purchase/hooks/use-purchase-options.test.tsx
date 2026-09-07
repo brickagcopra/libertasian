@@ -6,6 +6,8 @@ import { apiClient } from '@/lib/api-client';
 
 import { mobileAnalytics } from '@/lib/analytics';
 
+import { offeringKeys, offeringsQueryOptions } from './use-offerings';
+
 import {
   PURCHASE_CONFIRMED_NOTICE,
   PURCHASE_FAILED_NOTICE,
@@ -667,5 +669,170 @@ describe('usePurchaseOptions', () => {
     expect(trackedPayloads('purchase_result').map((p) => p.outcome)).toEqual([
       'cancelled',
     ]);
+  });
+
+  // ---- TERMINAL STATES ----
+
+  /**
+   * The failure mode `status === 'loading'` on an empty in-flight fetch could
+   * introduce, asserted directly.
+   *
+   * Reading a fetch-in-progress as `loading` rather than `unavailable` is right
+   * — a prefetch that failed must not greet the user with the dead-end
+   * sentence while the remount refetch is still running. But a screen that
+   * spins FOREVER shows the reviewer no "Try again" button, and that is the
+   * same 2.1(b) rejection with a different screenshot. Every one of these cases
+   * asserts where the screen COMES TO REST, not what it passes through.
+   */
+  describe('terminal states', () => {
+    // A stable client, unlike the shared `wrapper`: these cases seed and
+    // inspect the cache, which a per-render client would throw away.
+    let client: QueryClient;
+
+    function stableWrapper({ children }: { children: ReactNode }) {
+      return createElement(QueryClientProvider, { client }, children);
+    }
+
+    const seeded = {
+      plans: [],
+      packagesByProductId: {},
+      productsByProductId: {},
+      source: 'offering' as const,
+    };
+
+    beforeEach(() => {
+      client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    });
+
+    it('comes to rest on unavailable, NOT loading, once the retries are spent', async () => {
+      mockGetOfferings.mockResolvedValue({ current: null });
+      mockGetProducts.mockResolvedValue([]);
+
+      jest.useFakeTimers();
+      try {
+        const { result } = renderHook(() => usePurchaseOptions(), {
+          wrapper: stableWrapper,
+        });
+        await waitFor(() => expect(result.current.status).toBe('unavailable'), {
+          timeout: 30_000,
+        });
+
+        // And it STAYS there. A spinner is not a state anyone can act on.
+        act(() => {
+          jest.advanceTimersByTime(120_000);
+        });
+        expect(result.current.status).toBe('unavailable');
+        // Which is the state that renders the way out — see
+        // `purchase-surface.test.tsx`, which asserts the button itself.
+        expect(typeof result.current.retry).toBe('function');
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('retry() is not single-use: loading, then unavailable again, then usable again', async () => {
+      mockGetOfferings.mockResolvedValue({ current: null });
+      mockGetProducts.mockResolvedValue([]);
+
+      jest.useFakeTimers();
+      try {
+        const { result } = renderHook(() => usePurchaseOptions(), {
+          wrapper: stableWrapper,
+        });
+        await waitFor(() => expect(result.current.status).toBe('unavailable'), {
+          timeout: 30_000,
+        });
+
+        act(() => result.current.retry());
+        // In flight again — the spinner, not the dead-end sentence.
+        expect(result.current.status).toBe('loading');
+
+        await waitFor(() =>
+          expect(mockConfigurePurchases).toHaveBeenCalledTimes(2),
+        );
+
+        // ...and back to a state with a button on it when it fails again.
+        await waitFor(() => expect(result.current.status).toBe('unavailable'), {
+          timeout: 30_000,
+        });
+
+        // A third press still does something. The button must not wear out.
+        act(() => result.current.retry());
+        expect(result.current.status).toBe('loading');
+        await waitFor(() => expect(result.current.status).toBe('unavailable'), {
+          timeout: 30_000,
+        });
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    /**
+     * The case the `isFetching` branch exists for, pinned so it cannot be
+     * deleted silently.
+     *
+     * `usePurchasesBootstrap` prefetches at launch. When that prefetch fails it
+     * leaves an ERROR entry under this key, and opening the purchase screen
+     * refetches it on mount. Without the branch the screen would open on the
+     * dead-end sentence — the exact copy App Review rejected — for as long as
+     * that refetch took, having asked the store nothing yet.
+     */
+    it('shows the spinner, not the dead end, while a failed prefetch refetches', async () => {
+      mockGetOfferings.mockRejectedValue(new Error('StoreKit unreachable'));
+      await client.prefetchQuery({ ...offeringsQueryOptions(), retry: false });
+      expect(client.getQueryState(offeringKeys.current())?.status).toBe('error');
+
+      // The remount refetch hangs, so the assertion is about the state itself
+      // and not about winning a race with it.
+      mockGetOfferings.mockReturnValue(new Promise(() => {}));
+
+      const { result } = renderHook(() => usePurchaseOptions(), {
+        wrapper: stableWrapper,
+      });
+
+      await waitFor(() => expect(mockGetOfferings).toHaveBeenCalledTimes(2));
+      expect(result.current.status).toBe('loading');
+      expect(result.current.plans).toEqual([]);
+    });
+
+    it('a cached empty result reads as unavailable, never as a spinner', async () => {
+      // Defensive. Nothing writes this shape today — an empty result throws —
+      // but `usePurchasesBootstrap` now writes this cache entry at launch, and
+      // a build that ever put an empty one there must not park the screen on a
+      // spinner with no way out.
+      client.setQueryData(offeringKeys.current(), seeded);
+
+      const { result } = renderHook(() => usePurchaseOptions(), {
+        wrapper: stableWrapper,
+      });
+
+      await waitFor(() => expect(result.current.status).toBe('unavailable'));
+      expect(result.current.plans).toEqual([]);
+    });
+
+    it('a cached READY result is used as-is, without a spinner', async () => {
+      // The other side of the prefetch: the whole point is that the screen has
+      // its answer before it is opened.
+      client.setQueryData(offeringKeys.current(), {
+        ...seeded,
+        plans: [
+          {
+            productId: MONTHLY,
+            title: 'LIBERTASIAN Pro',
+            duration: '1 month',
+            priceString: '₱1,699.00',
+          },
+        ],
+        packagesByProductId: { [MONTHLY]: pkg(MONTHLY) },
+      });
+
+      const { result } = renderHook(() => usePurchaseOptions(), {
+        wrapper: stableWrapper,
+      });
+
+      await waitFor(() => expect(result.current.status).toBe('ready'));
+      // Served from the prefetch; the store was never asked again.
+      expect(mockGetOfferings).not.toHaveBeenCalled();
+    });
   });
 });

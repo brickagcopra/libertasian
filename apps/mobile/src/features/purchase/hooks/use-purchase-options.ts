@@ -179,19 +179,20 @@ export function usePurchaseOptions(): PurchaseOptions {
         'loading'
       : sdkState === 'failed'
         ? 'unavailable'
-        : offerings.isPending
+        : // Covers the retries, and the refetch of a FAILED PREFETCH too:
+          // `usePurchasesBootstrap` now leaves an error entry under this key
+          // when the store cannot be reached at launch, and React Query resets
+          // a never-held-data query to `pending` when that refetch starts. So
+          // opening the screen on a failed prefetch shows the spinner, not the
+          // dead-end sentence — asserted in `terminal states` below, which is
+          // what would catch this if that behaviour ever changed.
+          offerings.isPending
           ? 'loading'
           : plans.length > 0
             ? 'ready'
-            : // An in-flight fetch with nothing yet is not a VERDICT. This
-              // matters now that `usePurchasesBootstrap` prefetches at launch:
-              // a prefetch that failed leaves an error entry in the cache, and
-              // without this the screen would greet the user with the dead-end
-              // sentence for as long as the remount refetch took. Same for the
-              // refetch `retry()` starts.
-              offerings.isFetching
-              ? 'loading'
-              : 'unavailable';
+            : // Nothing to sell and nothing still running. A VERDICT, and the
+              // one state that renders a way out of it.
+              'unavailable';
 
   // Report what the screen actually became, from the same values that decided
   // it. Both calls deduplicate internally, so this is safe on every render.
