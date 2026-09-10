@@ -19,6 +19,21 @@ function withCode(message: string, code?: string): string {
   return code ? `${message} (code ${code})` : message;
 }
 
+/**
+ * Google Play services DEVELOPER_ERROR. Android-only, and permanent for a
+ * given binary: the Play-signed APK's SHA-1 is not registered on the Android
+ * OAuth client. Prod telemetry shows 24 failures and zero successes ever, so
+ * "please try again" is advice that cannot work.
+ */
+const GOOGLE_DEVELOPER_ERROR = '10';
+
+/**
+ * ASAuthorizationError.unknown. 27 prod failures, all in retry bursts, and the
+ * same users succeed once the device is set up — the blocker is their iCloud /
+ * two-factor state, which nothing inside the app can change.
+ */
+const APPLE_REQUEST_UNKNOWN = 'ERR_REQUEST_UNKNOWN';
+
 export default function LoginRoute() {
   const { theme } = useTheme();
   const [pendingEmail, setPendingEmail] = useState<string | null>(null);
@@ -48,6 +63,20 @@ export default function LoginRoute() {
       return;
     }
     if (result.outcome === 'failed') {
+      // Name the dead end instead of inviting a retry that provably never
+      // succeeds. Android only — iOS Google sign-in works and keeps the
+      // generic message. This does NOT fix the cause: the SHA-1 has to be
+      // registered on the Android OAuth client, outside the app.
+      if (Platform.OS === 'android' && result.code === GOOGLE_DEVELOPER_ERROR) {
+        Alert.alert(
+          'Google sign-in unavailable on Android',
+          withCode(
+            "Google sign-in isn't working in this test build. Please sign in with your email and password instead.",
+            result.code,
+          ),
+        );
+        return;
+      }
       Alert.alert(
         'Sign-in failed',
         withCode("We couldn't sign you in with Google. Please try again.", result.code),
@@ -57,7 +86,24 @@ export default function LoginRoute() {
 
   async function handleApple() {
     const result = await signInWithApple();
+    // ERR_REQUEST_CANCELED never lands here — the hook maps it to 'cancelled',
+    // which stays a silent no-op.
     if (result.outcome === 'failed') {
+      // A retry alone is what these users already tried, in bursts. Tell them
+      // the one thing that actually unblocks it, and leave a way through that
+      // does not depend on their device state at all.
+      if (result.code === APPLE_REQUEST_UNKNOWN) {
+        Alert.alert(
+          'Sign-in failed',
+          withCode(
+            "Apple couldn't complete the sign-in. Check that you're signed in to iCloud " +
+              '(Settings > your name) and that two-factor authentication is on for your ' +
+              'Apple ID, then try again. You can also sign in with your email and password.',
+            result.code,
+          ),
+        );
+        return;
+      }
       Alert.alert(
         'Sign-in failed',
         withCode("We couldn't sign you in with Apple. Please try again.", result.code),

@@ -331,7 +331,38 @@ describe('LoginScreen — social sign-in buttons', () => {
     expect(mockPost).not.toHaveBeenCalled();
   });
 
-  it('a native failure surfaces the error code in the alert so a tester can read it back', async () => {
+  it('Android code 10: says Google sign-in cannot work here, not "try again"', async () => {
+    // DEVELOPER_ERROR is permanent for this binary — the Play-signed SHA-1 is
+    // not on the Android OAuth client. 24 prod failures, zero successes ever,
+    // so the generic "Please try again." was advice that could not succeed.
+    const replaced = jest.replaceProperty(Platform, 'OS', 'android');
+    try {
+      mockGoogleSignIn.mockRejectedValue(
+        Object.assign(new Error('DEVELOPER_ERROR'), { code: '10' }),
+      );
+      const { getByText } = render(<LoginScreen />, { wrapper: createWrapper() });
+
+      await act(async () => {
+        fireEvent.press(getByText('Google'));
+      });
+
+      await waitFor(() => {
+        expect(Alert.alert).toHaveBeenCalledWith(
+          'Google sign-in unavailable on Android',
+          expect.stringContaining('(code 10)'),
+        );
+      });
+      const [, body] = (Alert.alert as jest.Mock).mock.calls[0] as [string, string];
+      expect(body).toContain('email and password');
+      expect(body).not.toContain('try again');
+      // The raw native message stays out of the UI.
+      expect(body).not.toContain('DEVELOPER_ERROR');
+    } finally {
+      replaced.restore();
+    }
+  });
+
+  it('iOS Google is untouched by the Android code-10 case: generic alert, code still shown', async () => {
     mockGoogleSignIn.mockRejectedValue(
       Object.assign(new Error('DEVELOPER_ERROR'), { code: '10' }),
     );
@@ -344,7 +375,6 @@ describe('LoginScreen — social sign-in buttons', () => {
     await waitFor(() => {
       expect(Alert.alert).toHaveBeenCalledWith('Sign-in failed', expect.stringContaining('(code 10)'));
     });
-    // The raw native message stays out of the UI.
     const [, body] = (Alert.alert as jest.Mock).mock.calls[0] as [string, string];
     expect(body).not.toContain('DEVELOPER_ERROR');
   });
@@ -426,6 +456,58 @@ describe('LoginScreen — social sign-in buttons', () => {
       );
     });
     expect(mockSignIn).toHaveBeenCalledWith('at-123', 'rt-456', authResponse.user);
+  });
+
+  it('Apple ERR_REQUEST_UNKNOWN: points at iCloud/2FA rather than a bare retry', async () => {
+    // 27 prod failures, all in retry bursts, and the same users succeed once
+    // the device is set up — the blocker is iCloud/2FA state, not the app.
+    mockAppleSignIn.mockRejectedValue(
+      Object.assign(new Error('The operation couldn’t be completed.'), {
+        code: 'ERR_REQUEST_UNKNOWN',
+      }),
+    );
+
+    const { getByText } = render(<LoginScreen />, { wrapper: createWrapper() });
+
+    await act(async () => {
+      fireEvent.press(getByText('Apple'));
+    });
+
+    await waitFor(() => {
+      expect(Alert.alert).toHaveBeenCalledWith(
+        'Sign-in failed',
+        expect.stringContaining('(code ERR_REQUEST_UNKNOWN)'),
+      );
+    });
+    const [, body] = (Alert.alert as jest.Mock).mock.calls[0] as [string, string];
+    expect(body).toContain('iCloud');
+    expect(body).toContain('two-factor authentication');
+    expect(body).toContain('email and password');
+    // The raw native message stays out of the UI.
+    expect(body).not.toContain('couldn’t be completed');
+    expect(mockSignIn).not.toHaveBeenCalled();
+  });
+
+  it('Apple failure with another code keeps the generic message', async () => {
+    mockAppleSignIn.mockRejectedValue(
+      Object.assign(new Error('boom'), { code: 'ERR_REQUEST_FAILED' }),
+    );
+
+    const { getByText } = render(<LoginScreen />, { wrapper: createWrapper() });
+
+    await act(async () => {
+      fireEvent.press(getByText('Apple'));
+    });
+
+    await waitFor(() => {
+      expect(Alert.alert).toHaveBeenCalledWith(
+        'Sign-in failed',
+        expect.stringContaining("We couldn't sign you in with Apple."),
+      );
+    });
+    const [, body] = (Alert.alert as jest.Mock).mock.calls[0] as [string, string];
+    expect(body).toContain('(code ERR_REQUEST_FAILED)');
+    expect(body).not.toContain('iCloud');
   });
 
   it('Apple cancel is silent: no alert, no API call', async () => {
