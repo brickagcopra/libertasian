@@ -226,8 +226,26 @@ describe('DerivativesAdminService', () => {
 
       expect(result.enqueuedCount).toBe(2);
       expect(result.jobIds).toEqual(['job-1', 'job-2']);
-      expect(result.estimatedCostUsd).toBeCloseTo(0.16); // 2 * 0.08
+      expect(result.estimatedCostUsd).toBeCloseTo(0.0034); // 2 * 0.0017 (measured)
       expect(prisma.derivativeGenerationJob.create).toHaveBeenCalledTimes(2);
+    });
+
+    it('quotes the measured per-call cost, not the old 30-57x estimates', async () => {
+      // 30d of model_runs priced at the gpt-4o-mini rate, prod 2026-09-12.
+      // A 50-job case_digest batch is cents, not dollars; the old table
+      // said $4.00 for the same batch and made the preview useless.
+      const docs = Array.from({ length: 50 }, (_, i) => ({ id: `doc-${i}` }));
+      prisma.legalDocument.findMany.mockResolvedValue(docs);
+      prisma.derivativeGenerationJob.create.mockResolvedValue({ id: 'job-x' });
+
+      const result = await service.enqueueGeneration(
+        { derivativeType: 'case_digest', maxCount: 50 },
+        'user-1',
+      );
+
+      expect(result.enqueuedCount).toBe(50);
+      expect(result.estimatedCostUsd).toBeCloseTo(0.085, 4);
+      expect(result.estimatedCostUsd).toBeLessThan(0.2);
     });
 
     it('excludes documents with existing artifacts when regenerateExisting=false', async () => {

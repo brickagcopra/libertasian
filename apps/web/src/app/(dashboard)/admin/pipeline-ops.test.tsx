@@ -222,13 +222,15 @@ describe('Derivatives admin — pipeline ops buttons', () => {
     vi.clearAllMocks();
   });
 
-  it('opens the Fill Missing plan dialog and fires the per-type mutation on dispatch', () => {
+  it('opens the fill-gaps plan dialog and fires the per-type mutation on dispatch', () => {
     renderPage(<DerivativesAdminPage />);
 
-    fireEvent.click(screen.getByRole('button', { name: /fill missing derivatives/i }));
+    fireEvent.click(
+      screen.getByRole('button', { name: /fill gaps in study material/i }),
+    );
     // Plan dialog visible with title heading
     expect(
-      screen.getByRole('heading', { name: /fill missing derivatives/i }),
+      screen.getByRole('heading', { name: /fill gaps in study material/i }),
     ).toBeInTheDocument();
 
     // Primary action label includes the live total (28 missing in our mock).
@@ -249,11 +251,11 @@ describe('Derivatives admin — pipeline ops buttons', () => {
     expect(essay?.limit).toBe(12);
   });
 
-  it('opens the Auto-Promote sweep dialog and fires the mutation on confirm', () => {
+  it('opens the publish-high-confidence dialog and fires the mutation on confirm', () => {
     renderPage(<DerivativesAdminPage />);
 
     fireEvent.click(
-      screen.getByRole('button', { name: /auto-promote sweep now/i }),
+      screen.getByRole('button', { name: /publish high-confidence items/i }),
     );
     fireEvent.click(screen.getByRole('button', { name: /run sweep/i }));
     expect(sweepNow).toHaveBeenCalledTimes(1);
