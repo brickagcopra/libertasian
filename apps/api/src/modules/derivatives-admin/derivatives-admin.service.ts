@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
+import { derivativeCostPerCall } from '../../common/constants/derivative-costs';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AiSettingsService } from '../ai-settings/ai-settings.service';
@@ -17,16 +18,6 @@ import {
 } from './dto';
 
 const DERIVATIVE_TYPES = ENQUEUEABLE_DERIVATIVE_TYPES;
-
-/** Hard-coded average cost per derivative type (USD) for estimation. */
-const DEFAULT_COST_PER_TYPE: Record<string, number> = {
-  case_digest: 0.08,
-  doctrine_extract: 0.04,
-  mcq_question: 0.05,
-  essay_prompt: 0.06,
-  flashcard: 0.03,
-  subject_outline: 0.07,
-};
 
 @Injectable()
 export class DerivativesAdminService {
@@ -555,7 +546,7 @@ export class DerivativesAdminService {
 
     // 5. Create DerivativeGenerationJob rows in 'pending' status
     const jobIds: string[] = [];
-    const costPerUnit = DEFAULT_COST_PER_TYPE[dto.derivativeType] ?? 0.05;
+    const costPerUnit = derivativeCostPerCall(dto.derivativeType);
 
     for (const doc of documents) {
       const job = await this.prisma.derivativeGenerationJob.create({
@@ -628,7 +619,7 @@ export class DerivativesAdminService {
     const selected = subjects.slice(0, maxCount);
 
     const jobIds: string[] = [];
-    const costPerUnit = DEFAULT_COST_PER_TYPE['subject_outline'] ?? 0.07;
+    const costPerUnit = derivativeCostPerCall('subject_outline');
 
     for (const subj of selected) {
       const job = await this.prisma.derivativeGenerationJob.create({

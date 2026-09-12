@@ -3,6 +3,10 @@ import { render, screen, fireEvent, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const mockUseJobDigest = vi.hoisted(() => vi.fn());
+const mockUseEnqueueGeneration = vi.hoisted(() => vi.fn());
+const mockUseBudgetSnapshot = vi.hoisted(() => vi.fn());
+const mockToastError = vi.hoisted(() => vi.fn());
+const mockToastSuccess = vi.hoisted(() => vi.fn());
 const mockUseDerivativeJobs = vi.hoisted(() => vi.fn());
 const mockUseJobMcqs = vi.hoisted(() => vi.fn());
 const mockUseJobFlashcards = vi.hoisted(() => vi.fn());
@@ -15,6 +19,14 @@ vi.mock('@/lib/api-client', () => ({
     patch: vi.fn(),
     delete: vi.fn(),
   },
+}));
+
+vi.mock('sonner', () => ({
+  toast: { error: mockToastError, success: mockToastSuccess },
+}));
+
+vi.mock('@/features/admin/hooks/use-budget', () => ({
+  useBudgetSnapshot: mockUseBudgetSnapshot,
 }));
 
 vi.mock('next/navigation', () => ({
@@ -49,7 +61,7 @@ vi.mock('@/features/admin/hooks/use-derivatives-admin', () => ({
   useDerivativeSettings: () => ({ data: { enabled: true, typesEnabled: {} } }),
   useUpdateDerivativeSettings: () => ({ mutate: vi.fn(), isPending: false }),
   useDerivativeJobs: mockUseDerivativeJobs,
-  useEnqueueGeneration: () => ({ mutate: vi.fn(), isPending: false, data: null }),
+  useEnqueueGeneration: mockUseEnqueueGeneration,
   useRetryDerivativeJob: () => ({ mutate: vi.fn() }),
   useRegenerateArtifact: () => ({ mutate: vi.fn() }),
   useSoftDeleteArtifact: () => ({ mutate: vi.fn() }),
@@ -174,11 +186,23 @@ describe('Derivatives Admin — JobDetailPanel with Digest', () => {
       isLoading: false,
       error: null,
     });
+    mockUseEnqueueGeneration.mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+      data: null,
+    });
+    mockUseBudgetSnapshot.mockReturnValue({ data: null });
   });
 
   it('renders the page without crashing', () => {
     renderWithProviders(<DerivativesAdminPage />);
-    expect(screen.getByText('Derivative Management')).toBeDefined();
+    expect(screen.getByText('Study Material')).toBeDefined();
+  });
+
+  it('uses plain-language labels for the operator actions', () => {
+    renderWithProviders(<DerivativesAdminPage />);
+    expect(screen.getByText('Fill gaps in study material')).toBeDefined();
+    expect(screen.getByText('Publish high-confidence items')).toBeDefined();
   });
 
   it('should show all DFIR+ field headings when digest data is present', () => {
@@ -459,5 +483,122 @@ describe('Derivatives Admin — JobDetailPanel with Outlines', () => {
     expect(
       screen.getAllByRole('button', { name: /^Reject$/ }).length,
     ).toBeGreaterThanOrEqual(1);
+  });
+});
+
+
+// ─── Budget banner ───────────────────────────────────────
+
+function budgetSnapshot(monthSpend: number, monthlyCeiling: number) {
+  return {
+    data: {
+      snapshot: {
+        monthlyCeiling,
+        dailyCeiling: null,
+        monthSpend,
+        daySpend: 0,
+        monthUtilizationPercent:
+          monthlyCeiling > 0 ? (monthSpend / monthlyCeiling) * 100 : 0,
+        dayUtilizationPercent: null,
+        month: '2026-09',
+        day: '2026-09-12',
+      },
+      byScope: [],
+    },
+  };
+}
+
+describe('Derivatives Admin — spend banner', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseJobDigest.mockReturnValue({ data: null, isLoading: false, error: null });
+    mockUseDerivativeJobs.mockReturnValue({ data: { data: [], total: 0 } });
+    mockUseJobMcqs.mockReturnValue({ data: null, isLoading: false, error: null });
+    mockUseJobFlashcards.mockReturnValue({ data: null, isLoading: false, error: null });
+    mockUseJobOutlines.mockReturnValue({ data: null, isLoading: false, error: null });
+    mockUseEnqueueGeneration.mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+      data: null,
+    });
+    mockUseBudgetSnapshot.mockReturnValue({ data: null });
+  });
+
+  it('shows the monthly spend against the ceiling', () => {
+    mockUseBudgetSnapshot.mockReturnValue(budgetSnapshot(12.5, 50));
+    renderWithProviders(<DerivativesAdminPage />);
+    expect(screen.getByText(/\$12\.50 spent of \$50\.00/)).toBeDefined();
+    expect(screen.queryByText(/AI generation is STOPPED/)).toBeNull();
+  });
+
+  it('says generation is STOPPED once spend reaches the ceiling', () => {
+    mockUseBudgetSnapshot.mockReturnValue(budgetSnapshot(50.0012, 50));
+    renderWithProviders(<DerivativesAdminPage />);
+    expect(
+      screen.getByText(
+        /AI generation is STOPPED — the monthly budget is used up\. Raise it in Admin → Budget\./,
+      ),
+    ).toBeDefined();
+  });
+});
+
+// ─── Failure surfacing ───────────────────────────────────
+
+describe('Derivatives Admin — failed actions', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseJobDigest.mockReturnValue({ data: null, isLoading: false, error: null });
+    mockUseJobMcqs.mockReturnValue({ data: null, isLoading: false, error: null });
+    mockUseJobFlashcards.mockReturnValue({ data: null, isLoading: false, error: null });
+    mockUseJobOutlines.mockReturnValue({ data: null, isLoading: false, error: null });
+    mockUseDerivativeJobs.mockReturnValue({ data: { data: [], total: 0 } });
+    mockUseBudgetSnapshot.mockReturnValue({ data: null });
+  });
+
+  it('toasts the error and closes the Confirm Generation dialog', () => {
+    const mutate = vi.fn(
+      (
+        _vars: unknown,
+        opts?: { onError?: (e: unknown) => void },
+      ) => opts?.onError?.(new Error('Query parameter limit exceeded')),
+    );
+    mockUseEnqueueGeneration.mockReturnValue({ mutate, isPending: false, data: null });
+
+    renderWithProviders(<DerivativesAdminPage />);
+
+    fireEvent.click(screen.getByText('Generate Derivatives'));
+    fireEvent.click(screen.getByText('Start Generation'));
+    expect(screen.getByText('Confirm Generation')).toBeDefined();
+
+    fireEvent.click(screen.getByText('Confirm'));
+
+    expect(mutate).toHaveBeenCalled();
+    expect(mockToastError).toHaveBeenCalledWith('Query parameter limit exceeded');
+    // Dialog is gone — a failure must not look like work still in progress.
+    expect(screen.queryByText('Confirm Generation')).toBeNull();
+  });
+
+  it('toasts the started job count on success', () => {
+    const mutate = vi.fn(
+      (
+        _vars: unknown,
+        opts?: { onSuccess?: (d: unknown) => void },
+      ) =>
+        opts?.onSuccess?.({
+          enqueuedCount: 50,
+          estimatedCostUsd: 0.085,
+          jobIds: [],
+        }),
+    );
+    mockUseEnqueueGeneration.mockReturnValue({ mutate, isPending: false, data: null });
+
+    renderWithProviders(<DerivativesAdminPage />);
+    fireEvent.click(screen.getByText('Generate Derivatives'));
+    fireEvent.click(screen.getByText('Start Generation'));
+    fireEvent.click(screen.getByText('Confirm'));
+
+    expect(mockToastSuccess).toHaveBeenCalledWith(
+      'Started 50 jobs (est. $0.0850).',
+    );
   });
 });

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 
 import { CeleryDispatcherService } from '../../common/services/celery-dispatcher.service';
 import { RedisService } from '../../common/services/redis.service';
+import { derivativeCostPerCall } from '../../common/constants/derivative-costs';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AutoPromoteService } from '../internal/auto-promote.service';
 import {
@@ -35,10 +36,9 @@ const CITATIONS_PER_DOC_HIGH = 25;
 // conservative end of that range.
 const SECONDS_PER_CITATION_DOC = 0.4;
 
-// Per-call cost for the cheapest derivative-generation model in the mix.
-// The plan endpoint multiplies this by missingCount as a worst-case;
-// actual spend depends on which model the per-type policy resolves to.
-const DERIVATIVE_COST_PER_CALL_USD = 0.0003;
+// Per-call cost now comes from the measured table in
+// common/constants/derivative-costs (30d of model_runs, prod 2026-09-12)
+// so the plan preview and the Generate panel quote the same number.
 const SECONDS_PER_DERIVATIVE_DOC = 0.4;
 
 const IN_FLIGHT_DERIVATIVE_STATUSES = [
@@ -218,11 +218,12 @@ export class AdminPipelineOpsService {
         type,
         totalCorpusDocs,
       );
+      const costPerCallUsd = derivativeCostPerCall(type);
       perType.push({
         type,
         missingCount,
-        costPerCallUsd: DERIVATIVE_COST_PER_CALL_USD,
-        estimatedCostUsd: missingCount * DERIVATIVE_COST_PER_CALL_USD,
+        costPerCallUsd,
+        estimatedCostUsd: missingCount * costPerCallUsd,
         estimatedMinutes: Math.ceil(
           (missingCount * SECONDS_PER_DERIVATIVE_DOC) / 60,
         ),

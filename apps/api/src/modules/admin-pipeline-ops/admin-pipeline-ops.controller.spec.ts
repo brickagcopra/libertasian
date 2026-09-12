@@ -416,10 +416,21 @@ describe('AdminPipelineOpsController', () => {
       if ('dryRun' in result) {
         expect(result.data.totals.totalMissing).toBe(120); // 40 × 3 types
         expect(result.data.perType).toHaveLength(3);
+        // Per-call cost is now the measured per-type figure (30d of
+        // model_runs, prod 2026-09-12) rather than one flat constant, so
+        // the plan preview and the Generate panel quote the same number.
+        const expectedCost: Record<string, number> = {
+          essay_prompt: 0.0011,
+          mcq_question: 0.0017,
+          flashcard: 0.0009,
+        };
         for (const row of result.data.perType) {
           expect(row.missingCount).toBe(40);
-          expect(row.costPerCallUsd).toBeCloseTo(0.0003, 6);
-          expect(row.estimatedCostUsd).toBeCloseTo(40 * 0.0003, 6);
+          expect(row.costPerCallUsd).toBeCloseTo(expectedCost[row.type]!, 6);
+          expect(row.estimatedCostUsd).toBeCloseTo(
+            40 * expectedCost[row.type]!,
+            6,
+          );
         }
       }
 

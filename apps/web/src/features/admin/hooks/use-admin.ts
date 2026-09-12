@@ -1367,7 +1367,10 @@ export function useBackfillMissingDerivatives() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'corpus-health'] });
-      queryClient.invalidateQueries({ queryKey: ['admin', 'derivative-stats'] });
+      // Must match the key useDerivativeStats registers under
+      // (['admin','derivatives','stats']) or the stat cards keep showing
+      // pre-dispatch numbers until a page reload.
+      queryClient.invalidateQueries({ queryKey: ['admin', 'derivatives'] });
       queryClient.invalidateQueries({
         queryKey: MISSING_DERIVATIVES_PLAN_QUERY_KEY,
       });
@@ -1408,6 +1411,7 @@ export function useTriggerAutoPromoteSweep() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'auto-promote-status'] });
       queryClient.invalidateQueries({ queryKey: ['admin', 'corpus-health'] });
+      queryClient.invalidateQueries({ queryKey: ['admin', 'derivatives'] });
     },
   });
 }
@@ -1422,5 +1426,8 @@ export function useAutoPromoteStatus() {
       }>('/admin/auto-promote/status');
       return res.data;
     },
+    // Matches useDerivativeStats so "Total Promoted" advances on its own
+    // while a sweep runs instead of looking frozen.
+    refetchInterval: 30_000,
   });
 }

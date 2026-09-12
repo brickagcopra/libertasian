@@ -256,7 +256,7 @@ export function MissingDerivativesDialog({
   return (
     <PlanPreviewDialog
       open={open}
-      title="Fill Missing Derivatives"
+      title="Fill gaps in study material"
       description="Per-type backfill across legal_documents that have no live artifact and no in-flight job. Each type carries its own limit."
       isLoadingPlan={isLoadingPlan}
       planError={planError}

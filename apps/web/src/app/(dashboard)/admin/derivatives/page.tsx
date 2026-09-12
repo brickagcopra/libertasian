@@ -2,7 +2,8 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeftIcon, RefreshCwIcon, TrashIcon } from 'lucide-react';
+import { AlertTriangleIcon, ArrowLeftIcon, RefreshCwIcon, TrashIcon } from 'lucide-react';
+import { toast } from 'sonner';
 
 import {
   useDerivativeStats,
@@ -24,6 +25,7 @@ import {
   useAutoPromoteStatus,
   useTriggerAutoPromoteSweep,
 } from '@/features/admin/hooks/use-admin';
+import { useBudgetSnapshot } from '@/features/admin/hooks/use-budget';
 import { MissingDerivativesDialog } from './missing-derivatives-dialog';
 import type {
   DerivativeTypeStats,
@@ -40,7 +42,6 @@ import { FlashcardRenderer } from '@/features/derivatives/renderers/flashcard-re
 import { OutlineRenderer } from '@/features/derivatives/renderers/outline-renderer';
 import type { DerivativeDetail } from '@/features/derivatives/types';
 import { BulkApproveByConfidencePanel } from '@/features/admin/components/bulk-approve-by-confidence-panel';
-import { AnimatedAlert } from '@/components/ui/animated-alert';
 import { AdminCardSkeleton } from '@/components/ui/skeleton';
 import { motion, useReducedMotion } from 'framer-motion';
 import { motionTokens } from '@/lib/motion';
@@ -62,6 +63,11 @@ const TYPE_LABELS: Record<string, string> = {
   flashcard: 'Flashcard',
   subject_outline: 'Subject Outline',
 };
+
+/** Pull a human-readable message off whatever the mutation rejected with. */
+function errorText(err: unknown, fallback: string): string {
+  return err instanceof Error && err.message ? err.message : fallback;
+}
 
 const STATUS_COLORS: Record<string, string> = {
   pending: 'bg-gray-100 text-gray-800',
@@ -110,7 +116,6 @@ export default function DerivativesAdminPage() {
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [confirmGenerate, setConfirmGenerate] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
-  const [actionMsg, setActionMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Pipeline ops
   const [showMissingDialog, setShowMissingDialog] = useState(false);
@@ -125,17 +130,13 @@ export default function DerivativesAdminPage() {
     autoPromoteSweep.mutate(undefined, {
       onSuccess: (data) => {
         setConfirmAutoPromote(false);
-        setActionMsg({
-          type: 'success',
-          text: `Auto-promote sweep: ${data.promoted} promoted / ${data.scanned} scanned.`,
-        });
+        toast.success(
+          `Published ${data.promoted} of ${data.scanned} items checked.`,
+        );
       },
       onError: (err) => {
         setConfirmAutoPromote(false);
-        setActionMsg({
-          type: 'error',
-          text: err instanceof Error ? err.message : 'Sweep failed',
-        });
+        toast.error(errorText(err, 'Could not publish high-confidence items.'));
       },
     });
   };
@@ -147,8 +148,9 @@ export default function DerivativesAdminPage() {
           <Link href="/admin" className="mb-2 inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700">
             <ArrowLeftIcon className="h-4 w-4" /> Back to Admin
           </Link>
-          <h1 className="text-2xl font-bold">Derivative Management</h1>
+          <h1 className="text-2xl font-bold">Study Material</h1>
         </div>
+        <BudgetSpendBanner />
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
             <AdminCardSkeleton key={i} />
@@ -169,6 +171,10 @@ export default function DerivativesAdminPage() {
       onSuccess: () => {
         setPendingEnabled(null);
         setPendingTypes(null);
+        toast.success('Settings saved.');
+      },
+      onError: (err) => {
+        toast.error(errorText(err, 'Could not save settings.'));
       },
     });
   };
@@ -182,7 +188,33 @@ export default function DerivativesAdminPage() {
       maxCount: genMaxCount,
       regenerateExisting: genRegenerate,
     }, {
-      onSuccess: () => setConfirmGenerate(false),
+      onSuccess: (data) => {
+        setConfirmGenerate(false);
+        toast.success(
+          `Started ${data.enqueuedCount} jobs (est. $${data.estimatedCostUsd.toFixed(4)}).`,
+        );
+      },
+      onError: (err) => {
+        // The dialog must close on failure too — leaving it open over a
+        // toast reads as "still working" and invites a second dispatch.
+        setConfirmGenerate(false);
+        toast.error(errorText(err, 'Could not start generation.'));
+      },
+    });
+  };
+
+  const handleRetryJob = (id: string) => {
+    retryJob.mutate(id, {
+      onSuccess: () => toast.success('Job re-queued.'),
+      onError: (err) => toast.error(errorText(err, 'Could not retry this job.')),
+    });
+  };
+
+  const handleRegenerate = (id: string) => {
+    regenerate.mutate(id, {
+      onSuccess: () => toast.success('Regeneration queued.'),
+      onError: (err) =>
+        toast.error(errorText(err, 'Could not queue regeneration.')),
     });
   };
 
@@ -193,14 +225,15 @@ export default function DerivativesAdminPage() {
         <Link href="/admin" className="mb-2 inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700">
           <ArrowLeftIcon className="h-4 w-4" /> Back to Admin
         </Link>
-        <h1 className="text-2xl font-bold">Derivative Management</h1>
+        <h1 className="text-2xl font-bold">Study Material</h1>
         <p className="mt-1 text-sm text-gray-500">
           Manage derivative generation, per-type settings, and monitor jobs
         </p>
       </div>
 
-      {/* Action message */}
-      <AnimatedAlert message={actionMsg} />
+      {/* Spend banner — the single signal that tells an operator whether
+          anything they start here can actually run. */}
+      <BudgetSpendBanner />
 
       {/* Settings Card */}
       <div className="rounded-lg border bg-white p-6 shadow-sm">
@@ -266,7 +299,7 @@ export default function DerivativesAdminPage() {
               onClick={() => setShowMissingDialog(true)}
               className="rounded border border-blue-600 bg-white px-3 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50"
             >
-              Fill Missing Derivatives
+              Fill gaps in study material
             </motion.button>
             <motion.button
               {...tapProps}
@@ -275,7 +308,7 @@ export default function DerivativesAdminPage() {
               disabled={autoPromoteSweep.isPending}
               className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             >
-              {autoPromoteSweep.isPending ? 'Sweeping...' : 'Auto-Promote Sweep Now'}
+              {autoPromoteSweep.isPending ? 'Publishing...' : 'Publish high-confidence items'}
             </motion.button>
           </div>
         </div>
@@ -442,7 +475,7 @@ export default function DerivativesAdminPage() {
               </button>
               {enqueue.data && (
                 <span className="self-center text-sm text-green-700">
-                  Enqueued {enqueue.data.enqueuedCount} jobs (est. ${enqueue.data.estimatedCostUsd.toFixed(2)})
+                  Started {enqueue.data.enqueuedCount} jobs (est. ${enqueue.data.estimatedCostUsd.toFixed(4)})
                 </span>
               )}
             </div>
@@ -485,15 +518,14 @@ export default function DerivativesAdminPage() {
         onSuccess={(data) => {
           setShowMissingDialog(false);
           const breakdown = Object.entries(data.dispatchedByType)
-            .map(([t, n]) => `${t}: ${n}`)
+            .map(([t, n]) => `${TYPE_LABELS[t] ?? t}: ${n}`)
             .join(', ');
-          setActionMsg({
-            type: 'success',
-            text: `Enqueued ${data.totalDispatched} jobs (${breakdown}). Skipped ${data.totalSkipped}.`,
-          });
+          toast.success(
+            `Started ${data.totalDispatched} jobs (${breakdown}). Skipped ${data.totalSkipped}.`,
+          );
         }}
         onError={(text) => {
-          setActionMsg({ type: 'error', text });
+          toast.error(text);
         }}
       />
 
@@ -604,7 +636,7 @@ export default function DerivativesAdminPage() {
                     <div className="flex gap-1">
                       {job.status === 'failed' && (
                         <button
-                          onClick={() => retryJob.mutate(job.id)}
+                          onClick={() => handleRetryJob(job.id)}
                           title="Retry"
                           className="rounded p-1 text-blue-600 hover:bg-blue-50"
                         >
@@ -672,8 +704,8 @@ export default function DerivativesAdminPage() {
           </div>
           <JobDetailPanel
             job={(jobsData?.data ?? []).find((j: DerivativeJob) => j.id === selectedJobId)}
-            onRetry={(id: string) => retryJob.mutate(id)}
-            onRegenerate={(id: string) => regenerate.mutate(id)}
+            onRetry={handleRetryJob}
+            onRegenerate={handleRegenerate}
             onDelete={(id: string) => { setDeleteConfirmId(id); }}
           />
         </div>
@@ -700,11 +732,11 @@ export default function DerivativesAdminPage() {
                   deleteOutput.mutate(deleteConfirmId, {
                     onSuccess: () => {
                       setDeleteConfirmId(null);
-                      setActionMsg({ type: 'success', text: 'Output deleted successfully.' });
+                      toast.success('Output deleted.');
                     },
                     onError: (err) => {
                       setDeleteConfirmId(null);
-                      setActionMsg({ type: 'error', text: err instanceof Error ? err.message : 'Failed to delete' });
+                      toast.error(errorText(err, 'Could not delete this output.'));
                     },
                   });
                 }}
@@ -722,6 +754,71 @@ export default function DerivativesAdminPage() {
 }
 
 // ─── Sub-components ──────────────────────────────────────
+
+/**
+ * Monthly AI spend against the ceiling.
+ *
+ * When the ceiling is reached, rag-service answers every generation call
+ * with a 503 and every job on this page fails silently — the jobs simply
+ * pile up as `failed / http_error_503`. Without this banner nothing on
+ * the page says why, which is exactly how 2026-09-08 through 2026-09-12
+ * were lost.
+ */
+function BudgetSpendBanner() {
+  const { data } = useBudgetSnapshot();
+  if (!data) return null;
+
+  const { monthlyCeiling, monthSpend, month } = data.snapshot;
+  const stopped = monthlyCeiling > 0 && monthSpend >= monthlyCeiling;
+  const remaining = Math.max(0, monthlyCeiling - monthSpend);
+  const pct =
+    monthlyCeiling > 0
+      ? Math.min(100, Math.round((monthSpend / monthlyCeiling) * 100))
+      : 0;
+
+  return (
+    <div
+      role="status"
+      className={`rounded-lg border p-4 ${stopped ? 'border-red-300 bg-red-50' : 'border-gray-200 bg-white'}`}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          {stopped && <AlertTriangleIcon className="h-5 w-5 text-red-600" />}
+          <div>
+            <p className="text-sm font-semibold text-gray-900">
+              AI spend for {month}
+            </p>
+            <p className="text-sm text-gray-600">
+              ${monthSpend.toFixed(2)} spent of ${monthlyCeiling.toFixed(2)}{' '}
+              monthly ceiling
+              {!stopped && ` — $${remaining.toFixed(2)} left`}
+            </p>
+          </div>
+        </div>
+        <Link
+          href="/admin/budget"
+          className="text-sm font-medium text-blue-600 hover:text-blue-800"
+        >
+          Admin → Budget
+        </Link>
+      </div>
+
+      <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-gray-200">
+        <div
+          className={`h-full ${stopped ? 'bg-red-600' : pct >= 80 ? 'bg-amber-500' : 'bg-blue-600'}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+
+      {stopped && (
+        <p className="mt-3 text-sm font-semibold text-red-700">
+          AI generation is STOPPED — the monthly budget is used up. Raise it in
+          Admin → Budget.
+        </p>
+      )}
+    </div>
+  );
+}
 
 const REVIEW_STATUS_COLORS: Record<string, string> = {
   draft: 'bg-gray-100 text-gray-700',
