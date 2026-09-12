@@ -250,10 +250,15 @@ export const DEFAULT_HOMEPAGE_CONTENT: HomepageContent = {
     // Their replacements are counted from the production database (2026-08-05):
     // 97 bar sittings and 68,849 indexed sections. Both are stated at or below
     // the measured figure — never round a claim UP past what you can show.
+    //
+    // The year range is measured too (2026-09-12). The bar corpus spans 13
+    // distinct years — 2006-2018 except 2011, plus 2022 — not 1953–2024, which
+    // claimed 72 years we have never held. A range is a claim like any other:
+    // state the years the corpus actually covers.
     items: [
       { value: '90,000+', label: 'Cases targeted' },
       { value: '1,500+', label: 'Bar exam Qs' },
-      { value: '97', label: 'Bar sittings, 1953–2024' },
+      { value: '97', label: 'Bar sittings, 2006–2022' },
       { value: '68,000+', label: 'Sections indexed' },
     ],
   },
@@ -284,7 +289,7 @@ export const DEFAULT_HOMEPAGE_CONTENT: HomepageContent = {
         number: '01',
         label: 'PAST BAR EXAMS',
         detail:
-          '97 sittings, 1,536 questions from 1953–2024 with AI-generated ALAC answers for paid users.',
+          '97 sittings, 1,536 questions from 2006–2022 with AI-generated ALAC answers for paid users.',
         openByDefault: true,
       },
       {
@@ -297,7 +302,7 @@ export const DEFAULT_HOMEPAGE_CONTENT: HomepageContent = {
         number: '03',
         label: 'CODAL READER',
         detail:
-          'Republic Acts, the 1987 Constitution, and the Rules of Court — organized by bar subject with cross-references.',
+          'The Civil Code, Revised Penal Code, Labor Code, Family Code, Tax Code, the 1987 Constitution, and the Rules of Court — organized by bar subject with cross-references.',
       },
       {
         number: '04',

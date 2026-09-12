@@ -268,7 +268,7 @@ describe('homepage stats — substantiation', () => {
   it('states the replacement figures at or below the measured counts', () => {
     // Measured on prod 2026-08-05: 97 bar sittings, 68,849 sections indexed.
     // A claim may under-state what we can show; it may never over-state it.
-    expect(items).toContainEqual({ value: '97', label: 'Bar sittings, 1953–2024' });
+    expect(items).toContainEqual({ value: '97', label: 'Bar sittings, 2006–2022' });
     expect(items).toContainEqual({ value: '68,000+', label: 'Sections indexed' });
   });
 

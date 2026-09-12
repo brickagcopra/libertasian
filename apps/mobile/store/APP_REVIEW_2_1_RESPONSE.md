@@ -87,9 +87,9 @@ Physical: iPhone 17 Pro Max on iOS 26.6.
 LIBERTASIAN is a Philippine legal research library for law students, bar reviewees, and practitioners.
 
 WHAT'S INSIDE
-• Past Bar Exams — 97 sittings, 1,500+ questions from 1953 to 2024 with AI-generated ALAC answers for paid users.
+• Past Bar Exams — 97 sittings, 1,500+ questions from 2006 to 2022 with AI-generated ALAC answers for paid users.
 • Case Digests — Philippine Supreme Court cases with facts, issues, ruling, doctrine, and provenance, generated from authoritative sources only.
-• Codal Reader — Republic Acts, the 1987 Constitution, and the Rules of Court, organized by bar subject with cross-references.
+• Codal Reader — the Civil Code, Revised Penal Code, Labor Code, Family Code, Tax Code, the 1987 Constitution, and the Rules of Court, organized by bar subject with cross-references.
 • AI Study Assistant — chat and Q&A grounded in what you are reading. Sourced answers only; the model abstains rather than fabricate.
 • Camera Scan-to-Digest — point your camera at a pleading or case printout and get a structured digest with citations back to the source.
 • Offline codal cache and cross-device sync between mobile and web.
@@ -103,7 +103,7 @@ DISCLAIMER
 LIBERTASIAN provides AI-powered legal research tools for informational purposes only. AI outputs are not legal advice and do not create an attorney-client relationship. Always consult a qualified Philippine lawyer for legal matters. The practice of law in the Philippines is reserved for members of the Philippine Bar.
 
 4) ACCESS AND SAMPLE FILES
-Demo account brickagcopra5871+test@gmail.com, password in the Sign-In Information fields above. Two-factor authentication is DISABLED. Please use THIS account for the purchase check. It is deliberately on the FREE tier so the purchase flow can be exercised end to end: Past Bar Exams, Camera Scan, study tools and digest generation show a paywall with a purchase entry point, while codal reading, case digests, search and AI answers stay free. The purchase screen is Settings > Manage account access; it stays visible at every entitlement level so Restore Purchases is always reachable. To exercise the purchase, the device needs a Sandbox Apple Account signed in under Settings > Developer > Sandbox Apple Account; without one the App Store returns no products and the plan list is empty. Please do not delete this account.
+Demo account brickagcopra5871+test@gmail.com, password in the Sign-In Information fields above. Two-factor authentication is DISABLED. Please use THIS account for the purchase check. It is deliberately on the FREE tier so the purchase flow can be exercised end to end: Past Bar Exams, Camera Scan, study tools and digest generation show a paywall with a purchase entry point, while codal reading, search, 3 case digests a month and 3 AI answers a day stay free. The purchase screen is Settings > Manage account access; it stays visible at every entitlement level so Restore Purchases is always reachable. To exercise the purchase, the device needs a Sandbox Apple Account signed in under Settings > Developer > Sandbox Apple Account; without one the App Store returns no products and the plan list is empty. Please do not delete this account.
 
 5) THIRD-PARTY AND EXTERNAL SERVICES
 OpenAI (gpt-4o-mini) for AI answers, digests and ALAC bar answers; Sign in with Apple; Google Sign-In; Expo push via APNs. All other infrastructure is self-hosted.
