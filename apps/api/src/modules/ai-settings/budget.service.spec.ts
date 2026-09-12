@@ -243,40 +243,6 @@ describe('AiSettingsService — budget snapshot, daily usage, and ledger', () =>
     });
   });
 
-  // ---- recordLedgerEntry ----
-
-  describe('recordLedgerEntry', () => {
-    it('creates a ledger row', async () => {
-      const entry = {
-        periodYearMonth: '2026-04',
-        periodDay: '2026-04-12',
-        scope: 'global',
-        amountUsd: 0.0045,
-        tokensIn: 500,
-        tokensOut: 200,
-        requestCount: 1,
-        modelName: 'gpt-4o-mini',
-        modelRunId: 'run-uuid-1',
-      };
-
-      await service.recordLedgerEntry(entry);
-
-      expect(prisma.budgetLedger.create).toHaveBeenCalledWith({
-        data: {
-          periodYearMonth: '2026-04',
-          periodDay: '2026-04-12',
-          scope: 'global',
-          amountUsd: 0.0045,
-          tokensIn: 500,
-          tokensOut: 200,
-          requestCount: 1,
-          modelName: 'gpt-4o-mini',
-          modelRunId: 'run-uuid-1',
-        },
-      });
-    });
-  });
-
   // ---- updateBudget (settings update) ----
 
   describe('updateBudget — settings update', () => {

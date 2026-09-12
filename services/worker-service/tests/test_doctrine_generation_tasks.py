@@ -161,6 +161,19 @@ class TestGenerateDoctrineExtract:
         assert result["artifact_id"] == "artifact-001"
         assert result["doctrine_ids"] == ["doctrine-001"]
         mock_nestjs.write_doctrines.assert_called_once()
+
+        # Doctrine extraction charged budget that only Redis ever saw:
+        # the write DTO accepted a budgetLedgerEntry and this task sent
+        # none, so the two ledgers could not be reconciled.
+        assert mock_rag.extract_doctrines.call_args.kwargs["scope"] == (
+            "doctrine_extract"
+        )
+        ledger = mock_nestjs.write_doctrines.call_args.args[0][
+            "budgetLedgerEntry"
+        ]
+        assert ledger["scope"] == "doctrine_extract"
+        assert ledger["periodDay"].startswith(ledger["periodYearMonth"])
+
         # Verify job was claimed via DB then marked completed via NestJS
         mock_db.claim_derivative_job.assert_called_once_with("job-001")
         calls = mock_nestjs.update_job_status.call_args_list

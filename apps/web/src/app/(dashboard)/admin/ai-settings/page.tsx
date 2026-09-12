@@ -1,13 +1,13 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 
 import {
   useAiSettings,
   useAiUsage,
   useAiUsageHistory,
   useUpdateAiSetting,
-  useUpdateBudget,
   useUpdateIngestionWindow,
   useRunIngestion,
 } from '@/features/admin/hooks/use-ai-settings';
@@ -53,7 +53,6 @@ export default function AiSettingsPage() {
   const { data: usage, isLoading: usageLoading } = useAiUsage();
   const { data: history } = useAiUsageHistory();
   const updateSetting = useUpdateAiSetting();
-  const updateBudget = useUpdateBudget();
   const updateIngestionWindow = useUpdateIngestionWindow();
   const runIngestion = useRunIngestion();
 
@@ -102,12 +101,10 @@ export default function AiSettingsPage() {
         usage={usage}
         history={history}
         budget={budget}
-        dailyBudget={dailyBudget}
         llmEnabled={llmEnabled}
         llmModel={llmModel}
         onUpdateSetting={updateSetting.mutate}
-        onUpdateBudget={updateBudget.mutate}
-        isPending={updateSetting.isPending || updateBudget.isPending}
+        isPending={updateSetting.isPending}
       />
 
       {/* Section 2: Ingestion Window (§7.3) */}
@@ -145,56 +142,24 @@ function UsageBudgetSection({
   usage,
   history,
   budget,
-  dailyBudget,
   llmEnabled,
   llmModel,
   onUpdateSetting,
-  onUpdateBudget,
   isPending,
 }: {
   usage: { estimatedCostUsd: number; budgetUsd: number; tokensIn: number; tokensOut: number; requestCount: number; utilizationPercent: number } | undefined;
   history: { month: string; estimatedCostUsd: number }[] | undefined;
   budget: { amount: number };
-  dailyBudget: { amount: number } | null;
   llmEnabled: { enabled: boolean };
   llmModel: { model: string; provider: string };
   onUpdateSetting: (args: { key: string; value: Record<string, unknown> }) => void;
-  onUpdateBudget: (args: { monthlyBudgetUsd: number; dailyBudgetUsd?: number | null }) => void;
   isPending: boolean;
 }) {
-  const [monthlyInput, setMonthlyInput] = useState(String(budget.amount));
-  const [dailyInput, setDailyInput] = useState(dailyBudget ? String(dailyBudget.amount) : '');
-  const [budgetError, setBudgetError] = useState<string | null>(null);
-
   const costUsd = usage?.estimatedCostUsd ?? 0;
   const budgetUsd = usage?.budgetUsd ?? budget.amount;
   const utilization = budgetUsd > 0 ? (costUsd / budgetUsd) * 100 : 0;
   const barColor = utilization < 60 ? 'bg-green-500' : utilization < 85 ? 'bg-yellow-500' : 'bg-red-500';
   const avgCost = (usage?.requestCount ?? 0) > 0 ? costUsd / usage!.requestCount : 0;
-
-  const handleSaveBudget = () => {
-    setBudgetError(null);
-    const monthly = Number(monthlyInput);
-    if (!Number.isFinite(monthly) || monthly < 0 || monthly > 100000) {
-      setBudgetError('Monthly budget must be a number between 0 and 100,000.');
-      return;
-    }
-
-    let daily: number | null | undefined;
-    const trimmed = dailyInput.trim();
-    if (trimmed === '') {
-      daily = null;
-    } else {
-      const parsed = Number(trimmed);
-      if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100000) {
-        setBudgetError('Daily budget must be a number between 0 and 100,000, or blank.');
-        return;
-      }
-      daily = parsed;
-    }
-
-    onUpdateBudget({ monthlyBudgetUsd: monthly, dailyBudgetUsd: daily });
-  };
 
   return (
     <div className="rounded-lg border bg-white p-6 shadow-sm">
@@ -240,42 +205,20 @@ function UsageBudgetSection({
         </div>
       )}
 
-      {/* Budget inputs (§7.2 — monthly required, daily optional) */}
-      <div className="flex flex-wrap items-end gap-4">
-        <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">Monthly Budget Limit (USD)</label>
-          <input
-            type="number"
-            min={0}
-            max={100000}
-            step={1}
-            value={monthlyInput}
-            onChange={(e) => setMonthlyInput(e.target.value)}
-            className="w-32 rounded-md border px-3 py-1.5 text-sm"
-          />
-        </div>
-        <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">
-            Daily Budget Limit (USD) <span className="text-gray-400">— optional</span>
-          </label>
-          <input
-            type="number"
-            min={0}
-            max={100000}
-            step={1}
-            placeholder="leave blank for no daily cap"
-            value={dailyInput}
-            onChange={(e) => setDailyInput(e.target.value)}
-            className="w-56 rounded-md border px-3 py-1.5 text-sm"
-          />
-        </div>
-        <button
-          onClick={handleSaveBudget}
-          disabled={isPending}
-          className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+      {/* Budgets are set in one place only — see Admin → Budget. Two sets
+          of inputs writing through different endpoints meant "where do I
+          change this?" had two answers and neither showed the other's
+          value. */}
+      <div className="flex flex-wrap items-center gap-4">
+        <Link
+          href="/admin/budget"
+          className="rounded-md border border-blue-600 px-4 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-50"
         >
-          Save Budget
-        </button>
+          Set budgets in Admin → Budget
+        </Link>
+        <span className="text-sm text-gray-500">
+          Overall ceilings and per-category limits live there.
+        </span>
 
         <div className="ml-auto flex items-center gap-3">
           <label className="text-sm font-medium text-gray-700">Enable AI Features</label>
@@ -288,15 +231,6 @@ function UsageBudgetSection({
           </button>
         </div>
       </div>
-      {budgetError && (
-        <p className="mt-2 text-xs text-red-600">{budgetError}</p>
-      )}
-      {dailyBudget && (
-        <p className="mt-2 text-xs text-gray-500">
-          Current daily cap: <span className="font-medium">${dailyBudget.amount.toFixed(2)}</span>. Clear the
-          daily input and click Save to remove the cap.
-        </p>
-      )}
 
       {/* Model selector */}
       <div className="mt-4">

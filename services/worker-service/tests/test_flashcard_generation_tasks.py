@@ -384,11 +384,16 @@ class TestFlashcardGenerationTask:
         payload = write_call.args[0]
         assert "budgetLedgerEntry" in payload
         ledger = payload["budgetLedgerEntry"]
-        assert ledger["scope"] == "flashcard_generation"
+        # Canonical scope, not the old ad-hoc "flashcard_generation".
+        assert ledger["scope"] == "flashcard"
         assert ledger["tokensIn"] == 1200
         assert ledger["tokensOut"] == 600
         assert ledger["modelName"] == "gpt-4o-mini"
         assert ledger["modelRunId"] == "model-run-001"
+        assert ledger["periodDay"].startswith(ledger["periodYearMonth"])
+        assert mock_rag.generate_completion.call_args.kwargs["scope"] == (
+            "flashcard"
+        )
 
     @patch("src.tasks.flashcard_generation_tasks.nestjs_client")
     @patch("src.tasks.flashcard_generation_tasks.rag_client")

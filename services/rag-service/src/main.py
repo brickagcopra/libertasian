@@ -100,12 +100,25 @@ async def budget_exceeded_handler(
     request: Request,  # noqa: ARG001
     exc: BudgetExceededError,
 ) -> JSONResponse:
-    """Return 503 when the monthly LLM budget is exceeded."""
-    logger.warning("LLM budget exceeded: %s", exc)
+    """Return 503 naming which budget ran out.
+
+    The old body said only "temporarily unavailable", which is why an
+    exhausted global cap took four days to identify. `scope` and `period`
+    tell the caller — and the admin panel — exactly which limit to raise.
+    """
+    logger.warning(
+        "LLM budget exceeded (scope=%s, period=%s): %s",
+        exc.scope or "global",
+        exc.period,
+        exc,
+    )
     return JSONResponse(
         status_code=503,
         content={
             "detail": "AI generation is temporarily unavailable. Please try again later.",
+            "code": "budget_exceeded",
+            "scope": exc.scope,
+            "period": exc.period,
         },
     )
 

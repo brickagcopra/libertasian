@@ -28,8 +28,10 @@ from typing import Any
 
 from celery import shared_task
 
+from ..budget_ledger import build_ledger_entry
+from ..budget_scopes import SCOPE_BAR_EXAM_ANSWER
 from ..clients import ingestion_db_client as db
-from ..clients import rag_client
+from ..clients import nestjs_client, rag_client
 from ..prompts.bar_exam_alac_v1 import (
     BAR_EXAM_ALAC_SYSTEM_PROMPT,
     PROMPT_TEMPLATE_VERSION,
@@ -253,6 +255,7 @@ def _generate_one(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             temperature=0.2,
+            scope=SCOPE_BAR_EXAM_ANSWER,
         )
         latency_ms = int((time.monotonic() - start) * 1000)
 
@@ -418,6 +421,27 @@ def _generate_one(
             review_status="pending",
             visibility="private",
         )
+
+        # Bar-exam answers persist straight to Postgres, so there is no
+        # artifact write for the ledger entry to ride along with. Posting
+        # it separately is what stops this category's spend from existing
+        # only in Redis. Non-blocking: a generated answer must not be lost
+        # because the accounting call failed.
+        try:
+            nestjs_client.write_budget_ledger(
+                build_ledger_entry(
+                    scope=SCOPE_BAR_EXAM_ANSWER,
+                    model_name=model_name,
+                    tokens_in=tokens_in,
+                    tokens_out=tokens_out,
+                    model_run_id=model_run_id,
+                )
+            )
+        except Exception:
+            logger.exception(
+                "bar_exam_answer: failed to write budget ledger for question %s",
+                question_id,
+            )
 
         return {
             "question_id": question_id,

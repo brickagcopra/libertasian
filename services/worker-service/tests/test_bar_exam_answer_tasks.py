@@ -113,6 +113,62 @@ class TestGenerateAnswersForQuestions:
             "conclusion",
         }
 
+    @patch("src.tasks.bar_exam_answer_tasks.nestjs_client")
+    @patch("src.tasks.bar_exam_answer_tasks.rag_client")
+    @patch("src.tasks.bar_exam_answer_tasks.db")
+    def test_budget_scope_and_ledger_row(
+        self,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        mock_nestjs: MagicMock,
+    ) -> None:
+        """Bar-exam answers wrote no ledger row at all.
+
+        They persist straight to Postgres with no artifact write to attach
+        the entry to, so the spend existed only in Redis.
+        """
+        mock_db.bar_exam_answer_exists.return_value = False
+        mock_db.get_bar_exam_question_with_context.return_value = FAKE_QUESTION
+        mock_db.create_model_run.return_value = "run-1"
+        mock_db.create_bar_exam_answer.return_value = "ans-1"
+        mock_rag.retrieve_passages.return_value = []
+        mock_rag.generate_completion.return_value = _llm_response()
+
+        generate_answers_for_questions.run(["q-1"])
+
+        assert mock_rag.generate_completion.call_args.kwargs["scope"] == (
+            "bar_exam_answer"
+        )
+        mock_nestjs.write_budget_ledger.assert_called_once()
+        entry = mock_nestjs.write_budget_ledger.call_args.args[0]
+        assert entry["scope"] == "bar_exam_answer"
+        assert entry["tokensIn"] == 1200
+        assert entry["tokensOut"] == 600
+        assert entry["modelRunId"] == "run-1"
+        assert entry["periodDay"].startswith(entry["periodYearMonth"])
+
+    @patch("src.tasks.bar_exam_answer_tasks.nestjs_client")
+    @patch("src.tasks.bar_exam_answer_tasks.rag_client")
+    @patch("src.tasks.bar_exam_answer_tasks.db")
+    def test_ledger_failure_does_not_lose_the_answer(
+        self,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        mock_nestjs: MagicMock,
+    ) -> None:
+        mock_db.bar_exam_answer_exists.return_value = False
+        mock_db.get_bar_exam_question_with_context.return_value = FAKE_QUESTION
+        mock_db.create_model_run.return_value = "run-1"
+        mock_db.create_bar_exam_answer.return_value = "ans-1"
+        mock_rag.retrieve_passages.return_value = []
+        mock_rag.generate_completion.return_value = _llm_response()
+        mock_nestjs.write_budget_ledger.side_effect = RuntimeError("api down")
+
+        result = generate_answers_for_questions.run(["q-1"])
+
+        assert result["generated"] == 1
+        assert result["failed"] == 0
+
     @patch("src.tasks.bar_exam_answer_tasks.rag_client")
     @patch("src.tasks.bar_exam_answer_tasks.db")
     def test_skips_when_answer_already_exists(

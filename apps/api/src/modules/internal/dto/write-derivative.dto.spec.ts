@@ -77,7 +77,7 @@ function outlinePayload(overrides: Record<string, unknown> = {}) {
     ],
     budgetLedgerEntry: {
       periodYearMonth: '2026-04',
-      scope: 'subject_outline_generation',
+      scope: 'subject_outline',
       amountUsd: 0.0,
       tokensIn: 1000,
       tokensOut: 500,
@@ -89,6 +89,50 @@ function outlinePayload(overrides: Record<string, unknown> = {}) {
 }
 
 describe('WriteDerivativeDto validation', () => {
+  it('rejects a budget scope outside BUDGET_SCOPES', () => {
+    // The ad-hoc `*_generation` strings the worker used to send created
+    // categories nothing could enumerate or budget. @IsIn makes a typo a
+    // 400 at the write instead of a silent new bucket.
+    const dto = plainToInstance(
+      WriteDerivativeDto,
+      outlinePayload({
+        budgetLedgerEntry: {
+          periodYearMonth: '2026-09',
+          periodDay: '2026-09-12',
+          scope: 'subject_outline_generation',
+          amountUsd: 0.0034,
+          tokensIn: 1000,
+          tokensOut: 500,
+          modelName: 'gpt-4o-mini',
+          modelRunId: V4_MODEL_RUN,
+        },
+      }),
+    );
+    const errors = validateSync(dto);
+    const ledgerError = errors.find((e) => e.property === 'budgetLedgerEntry');
+    expect(ledgerError).toBeDefined();
+    expect(JSON.stringify(ledgerError)).toContain('scope');
+  });
+
+  it('accepts periodDay alongside periodYearMonth', () => {
+    const dto = plainToInstance(
+      WriteDerivativeDto,
+      outlinePayload({
+        budgetLedgerEntry: {
+          periodYearMonth: '2026-09',
+          periodDay: '2026-09-12',
+          scope: 'subject_outline',
+          amountUsd: 0.0034,
+          tokensIn: 1000,
+          tokensOut: 500,
+          modelName: 'gpt-4o-mini',
+          modelRunId: V4_MODEL_RUN,
+        },
+      }),
+    );
+    expect(validateSync(dto)).toHaveLength(0);
+  });
+
   it('accepts a well-formed flashcard payload', () => {
     const dto = plainToInstance(WriteDerivativeDto, flashcardPayload());
     expect(validateSync(dto)).toHaveLength(0);

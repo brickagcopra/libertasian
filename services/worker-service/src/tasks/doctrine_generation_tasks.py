@@ -21,9 +21,10 @@ from typing import Any
 import httpx
 from celery import shared_task
 
+from ..budget_ledger import build_ledger_entry
+from ..budget_scopes import SCOPE_DOCTRINE_EXTRACT
 from ..clients import ingestion_db_client as db
-from ..clients import nestjs_client
-from ..clients import rag_client
+from ..clients import nestjs_client, rag_client
 from ..scoring import compute_doctrine_confidence_score
 from ..validators.derivative_validators import (
     DerivativeVerdict,
@@ -221,6 +222,7 @@ def generate_doctrine_extract(
         start_time = time.monotonic()
         llm_response = rag_client.extract_doctrines(
             document_id=document_id,
+            scope=SCOPE_DOCTRINE_EXTRACT,
             sections=[
                 {
                     "id": s["id"],
@@ -340,6 +342,14 @@ def generate_doctrine_extract(
             "derivativeGenerationJobId": job_id,
             "doctrines": doctrine_entries,
             "provenanceRecords": provenance_records,
+            # Was missing entirely, same as digests.
+            "budgetLedgerEntry": build_ledger_entry(
+                scope=SCOPE_DOCTRINE_EXTRACT,
+                model_name=model_name,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                model_run_id=model_run_id,
+            ),
         }
 
         # Write to NestJS

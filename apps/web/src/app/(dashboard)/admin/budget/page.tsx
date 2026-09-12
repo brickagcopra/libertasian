@@ -7,15 +7,21 @@ import { ArrowLeftIcon } from 'lucide-react';
 import {
   useBudgetSnapshot,
   useBudgetHistory,
-  useUpdateBudgetSettings,
+  useUpdateBudget,
+  type ScopeBudgetInput,
 } from '@/features/admin/hooks/use-budget';
-import type { LedgerScopeSummary, LedgerMonthSummary } from '@/features/admin/types';
+import { budgetScopeLabel } from '@/features/admin/budget-scopes';
+import type {
+  LedgerScopeSummary,
+  LedgerMonthSummary,
+  ScopeBudgetStatus,
+} from '@/features/admin/types';
 import { AdminCardSkeleton } from '@/components/ui/skeleton';
 
 export default function BudgetPage() {
   const { data, isLoading } = useBudgetSnapshot();
   const { data: history } = useBudgetHistory();
-  const updateSettings = useUpdateBudgetSettings();
+  const updateBudget = useUpdateBudget();
 
   if (isLoading) {
     return (
@@ -37,6 +43,7 @@ export default function BudgetPage() {
 
   const snapshot = data?.snapshot;
   const byScope = data?.byScope ?? [];
+  const scopeBudgets = data?.scopeBudgets ?? [];
 
   return (
     <div className="space-y-8">
@@ -45,7 +52,10 @@ export default function BudgetPage() {
           <ArrowLeftIcon className="h-4 w-4" /> Back to Admin
         </Link>
         <h1 className="text-2xl font-bold">Budget Management</h1>
-        <p className="mt-1 text-sm text-gray-500">Monitor LLM spending and manage budget ceilings</p>
+        <p className="mt-1 text-sm text-gray-500">
+          The one place AI budgets are set — overall and per category. No code
+          change is needed to alter any of them.
+        </p>
       </div>
 
       {/* Gauge Cards */}
@@ -70,8 +80,22 @@ export default function BudgetPage() {
       <BudgetEditor
         monthlyCeiling={snapshot?.monthlyCeiling ?? 0}
         dailyCeiling={snapshot?.dailyCeiling ?? null}
-        onSave={(monthly, daily) => updateSettings.mutate({ monthlyCeilingUsd: monthly, ...(daily !== undefined && { dailyCeilingUsd: daily }) })}
-        isPending={updateSettings.isPending}
+        onSave={(monthly, daily) =>
+          updateBudget.mutate({
+            monthlyBudgetUsd: monthly,
+            ...(daily !== undefined && { dailyBudgetUsd: daily }),
+          })
+        }
+        isPending={updateBudget.isPending}
+      />
+
+      {/* Per-category ceilings */}
+      <CategoryBudgets
+        rows={scopeBudgets}
+        onSave={(scope, budget) =>
+          updateBudget.mutate({ perScope: { [scope]: budget } })
+        }
+        isPending={updateBudget.isPending}
       />
 
       {/* Spend Breakdown by Scope */}
@@ -182,6 +206,7 @@ function BudgetEditor({
           <label className="mb-1 block text-sm font-medium text-gray-700">Monthly Ceiling (USD)</label>
           <input
             type="number"
+            aria-label="Monthly ceiling (USD)"
             min={0}
             step={1}
             value={monthlyInput}
@@ -195,6 +220,7 @@ function BudgetEditor({
           </label>
           <input
             type="number"
+            aria-label="Daily ceiling (USD)"
             min={0}
             step={1}
             placeholder="leave blank for no daily cap"
@@ -206,6 +232,7 @@ function BudgetEditor({
         <button
           onClick={handleSave}
           disabled={isPending}
+          aria-label="Save overall ceilings"
           className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
         >
           Save
@@ -246,6 +273,172 @@ function BudgetEditor({
   );
 }
 
+// ---- Per-category ceilings ----
+
+/**
+ * One row per budget category: monthly limit, optional daily limit, spend
+ * so far, and what is left.
+ *
+ * Spend here is the Redis counter, not the Postgres ledger — Redis is what
+ * rag-service checks, so this is the number that decides whether a
+ * category is running. A row that has hit its ceiling says so in as many
+ * words, because "AI generation stopped and nothing said why" is the exact
+ * failure this page exists to prevent.
+ */
+function CategoryBudgets({
+  rows,
+  onSave,
+  isPending,
+}: {
+  rows: ScopeBudgetStatus[];
+  onSave: (scope: string, budget: ScopeBudgetInput | null) => void;
+  isPending: boolean;
+}) {
+  const [drafts, setDrafts] = useState<
+    Record<string, { monthly: string; daily: string }>
+  >({});
+  const [error, setError] = useState<string | null>(null);
+
+  const draftFor = (row: ScopeBudgetStatus) =>
+    drafts[row.scope] ?? {
+      monthly: row.monthlyUsd > 0 ? String(row.monthlyUsd) : '',
+      daily: row.dailyUsd !== null ? String(row.dailyUsd) : '',
+    };
+
+  const setDraft = (scope: string, patch: { monthly?: string; daily?: string }) => {
+    setDrafts((prev) => {
+      const current = prev[scope] ?? { monthly: '', daily: '' };
+      return { ...prev, [scope]: { ...current, ...patch } };
+    });
+  };
+
+  const handleSave = (row: ScopeBudgetStatus) => {
+    setError(null);
+    const draft = draftFor(row);
+
+    // A blank monthly limit means "no ceiling for this category" — it
+    // falls back to the overall ceiling alone.
+    if (draft.monthly.trim() === '') {
+      onSave(row.scope, null);
+      return;
+    }
+
+    const monthly = Number(draft.monthly);
+    if (!Number.isFinite(monthly) || monthly < 0 || monthly > 100000) {
+      setError('Monthly limit must be a number between 0 and 100,000, or blank.');
+      return;
+    }
+
+    let daily: number | null = null;
+    if (draft.daily.trim() !== '') {
+      const parsed = Number(draft.daily);
+      if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100000) {
+        setError('Daily limit must be a number between 0 and 100,000, or blank.');
+        return;
+      }
+      daily = parsed;
+    }
+
+    onSave(row.scope, { monthlyUsd: monthly, dailyUsd: daily });
+  };
+
+  return (
+    <div className="rounded-lg border bg-white p-6 shadow-sm">
+      <h2 className="text-lg font-semibold">Budget by Category</h2>
+      <p className="mt-1 text-sm text-gray-500">
+        Each category stops on its own ceiling without touching the others.
+        Leave a monthly limit blank for no per-category cap — the overall
+        ceiling above still applies to everything.
+      </p>
+
+      {error && (
+        <p className="mt-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {error}
+        </p>
+      )}
+
+      <div className="mt-4 overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b text-left text-gray-500">
+              <th className="pb-2 pr-4 font-medium">Category</th>
+              <th className="pb-2 pr-4 font-medium">Monthly limit (USD)</th>
+              <th className="pb-2 pr-4 font-medium">Daily limit (USD)</th>
+              <th className="pb-2 pr-4 text-right font-medium">Spent</th>
+              <th className="pb-2 pr-4 text-right font-medium">Remaining</th>
+              <th className="pb-2 font-medium" />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const draft = draftFor(row);
+              return (
+                <tr
+                  key={row.scope}
+                  className={`border-b last:border-0 ${row.stopped ? 'bg-red-50' : ''}`}
+                >
+                  <td className="py-2.5 pr-4 font-medium">
+                    {budgetScopeLabel(row.scope)}
+                    {row.stopped && (
+                      <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">
+                        stopped
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-2.5 pr-4">
+                    <input
+                      type="number"
+                      min={0}
+                      max={100000}
+                      step={1}
+                      placeholder="none"
+                      aria-label={`Monthly limit for ${budgetScopeLabel(row.scope)}`}
+                      value={draft.monthly}
+                      onChange={(e) =>
+                        setDraft(row.scope, { monthly: e.target.value })
+                      }
+                      className="w-28 rounded-md border px-2 py-1 text-sm"
+                    />
+                  </td>
+                  <td className="py-2.5 pr-4">
+                    <input
+                      type="number"
+                      min={0}
+                      max={100000}
+                      step={1}
+                      placeholder="none"
+                      aria-label={`Daily limit for ${budgetScopeLabel(row.scope)}`}
+                      value={draft.daily}
+                      onChange={(e) => setDraft(row.scope, { daily: e.target.value })}
+                      className="w-28 rounded-md border px-2 py-1 text-sm"
+                    />
+                  </td>
+                  <td className="py-2.5 pr-4 text-right font-mono">
+                    ${row.monthSpend.toFixed(4)}
+                  </td>
+                  <td className="py-2.5 pr-4 text-right font-mono">
+                    {row.monthlyUsd > 0 ? `$${row.monthRemaining.toFixed(4)}` : '—'}
+                  </td>
+                  <td className="py-2.5">
+                    <button
+                      onClick={() => handleSave(row)}
+                      disabled={isPending}
+                      aria-label={`Save ${budgetScopeLabel(row.scope)} budget`}
+                      className="rounded-md border border-blue-600 px-3 py-1 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+                    >
+                      Save
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ---- Spend Breakdown by Scope ----
 
 function SpendBreakdown({ byScope }: { byScope: LedgerScopeSummary[] }) {
@@ -269,7 +462,7 @@ function SpendBreakdown({ byScope }: { byScope: LedgerScopeSummary[] }) {
             <tbody>
               {byScope.map((row) => (
                 <tr key={row.scope} className="border-b last:border-0">
-                  <td className="py-2.5 pr-4 font-medium">{formatScope(row.scope)}</td>
+                  <td className="py-2.5 pr-4 font-medium">{budgetScopeLabel(row.scope)}</td>
                   <td className="py-2.5 pr-4 text-right font-mono">${row.totalAmountUsd.toFixed(4)}</td>
                   <td className="py-2.5 pr-4 text-right">{formatNumber(row.totalTokensIn)}</td>
                   <td className="py-2.5 pr-4 text-right">{formatNumber(row.totalTokensOut)}</td>
@@ -330,9 +523,3 @@ function formatNumber(n: number): string {
   return String(n);
 }
 
-function formatScope(scope: string): string {
-  return scope
-    .replace(/_/g, ' ')
-    .replace(/:/g, ': ')
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-}

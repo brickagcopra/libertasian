@@ -25,6 +25,7 @@ def extract_doctrines(
     strategy: str = "auto",
     document_text: str | None = None,
     sections: list[dict[str, Any]] | None = None,
+    scope: str | None = None,
 ) -> dict[str, Any]:
     """Call RAG service to extract doctrines from a document.
 
@@ -33,6 +34,7 @@ def extract_doctrines(
         strategy: Extraction strategy ('auto', 'full_text', 'sections_only').
         document_text: Optional pre-fetched full text.
         sections: Optional pre-fetched sections list.
+        scope: Budget category to charge (see ``src.budget_scopes``).
 
     Returns:
         Dict with doctrines list, strategy_used, model_name, prompt_template_version.
@@ -42,6 +44,8 @@ def extract_doctrines(
         "document_id": document_id,
         "strategy": strategy,
     }
+    if scope is not None:
+        payload["scope"] = scope
     if document_text is not None:
         payload["document_text"] = document_text
     if sections is not None:
@@ -57,6 +61,7 @@ def generate_digest(
     document_id: str,
     sections: list[dict[str, Any]],
     document_type: str = "case",
+    scope: str | None = None,
 ) -> dict[str, Any]:
     """Call RAG service to generate a structured DFIR+ digest.
 
@@ -64,6 +69,7 @@ def generate_digest(
         document_id: UUID of the legal document.
         sections: Document sections with id, section_type, section_label, plain_text, etc.
         document_type: Type of document (case, statute, rule, issuance).
+        scope: Budget category to charge (see ``src.budget_scopes``).
 
     Returns:
         Dict with DFIR+ fields, provenance, confidence_score, model_name, etc.
@@ -74,6 +80,8 @@ def generate_digest(
         "sections": sections,
         "document_type": document_type,
     }
+    if scope is not None:
+        payload["scope"] = scope
 
     with httpx.Client(timeout=settings.rag_request_timeout) as client:
         response = client.post(url, json=payload, headers=_internal_headers())
@@ -186,6 +194,7 @@ def generate_completion(
     system_prompt: str,
     user_prompt: str,
     temperature: float = 0,
+    scope: str | None = None,
 ) -> dict[str, Any]:
     """Call RAG service generic completion endpoint for structured output.
 
@@ -193,6 +202,10 @@ def generate_completion(
         system_prompt: System prompt with instructions.
         user_prompt: User prompt with document content.
         temperature: LLM temperature (0 for deterministic classification).
+        scope: Budget category to charge (see ``src.budget_scopes``). It
+            selects which per-category ceiling rag-service enforces and
+            which usage counters the spend lands on; omitting it falls
+            back to the global ceiling alone.
 
     Returns:
         Dict with content (str or dict), model_name, tokens_in, tokens_out.
@@ -204,6 +217,8 @@ def generate_completion(
         "temperature": temperature,
         "response_format": "json",
     }
+    if scope is not None:
+        payload["scope"] = scope
 
     with httpx.Client(timeout=settings.rag_request_timeout) as client:
         response = client.post(url, json=payload, headers=_internal_headers())

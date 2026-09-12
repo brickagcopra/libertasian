@@ -9,7 +9,9 @@ import {
   Max,
   Min,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class UpdateAiSettingDto {
   @IsObject()
@@ -25,11 +27,32 @@ export class UpdateAiSettingDto {
  * Backs the `/admin/budget` page specified in §7.2 of the corpus-platform
  * target architecture.
  */
-export class UpdateBudgetDto {
+export class ScopeBudgetDto {
   @IsNumber()
   @Min(0)
   @Max(100000)
-  monthlyBudgetUsd!: number;
+  monthlyUsd!: number;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsNumber()
+  @Min(0)
+  @Max(100000)
+  dailyUsd?: number | null;
+}
+
+export class UpdateBudgetDto {
+  /**
+   * Optional so a caller can change only the per-category ceilings.
+   * It used to be required, and the budget controller worked around that
+   * by passing `undefined` through a cast — which wrote
+   * `{ amount: undefined }` and silently removed the global cap.
+   */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100000)
+  monthlyBudgetUsd?: number;
 
   @IsOptional()
   @ValidateIf((_, value) => value !== null)
@@ -37,6 +60,17 @@ export class UpdateBudgetDto {
   @Min(0)
   @Max(100000)
   dailyBudgetUsd?: number | null;
+
+  /**
+   * Per-category ceilings, keyed by BUDGET_SCOPES value. A key mapped to
+   * null clears that category back to "global ceiling only". Keys absent
+   * from the object are left untouched, so the panel can PATCH one row.
+   */
+  @IsOptional()
+  @IsObject()
+  @ValidateNested({ each: true })
+  @Type(() => ScopeBudgetDto)
+  perScope?: Record<string, ScopeBudgetDto | null>;
 }
 
 /**

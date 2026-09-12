@@ -22,6 +22,8 @@ class DigestGenerationRequest(BaseModel):
     document_id: str
     sections: list[DocumentSectionInput]
     document_type: str = "case"
+    # Budget category; defaulted so an older worker keeps working.
+    scope: str | None = None
 
 
 class CitedAuthority(BaseModel):

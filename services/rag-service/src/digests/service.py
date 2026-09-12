@@ -118,6 +118,7 @@ async def generate_digest(
         max_tokens=settings.digest_max_tokens,
         temperature=0.2,
         response_format="json_object",
+        scope=request.scope or "case_digest",
     )
 
     # Step 4: Parse response

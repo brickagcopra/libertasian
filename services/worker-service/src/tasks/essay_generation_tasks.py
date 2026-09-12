@@ -23,6 +23,8 @@ from typing import Any
 import httpx
 from celery import shared_task
 
+from ..budget_ledger import build_ledger_entry
+from ..budget_scopes import SCOPE_ESSAY_PROMPT
 from ..clients import ingestion_db_client as db
 from ..clients import nestjs_client, rag_client
 from ..pricing import cost_for
@@ -157,6 +159,7 @@ def generate_essay_prompt(
             system_prompt=ESSAY_GENERATION_SYSTEM_PROMPT,
             user_prompt=user_prompt,
             temperature=0.2,
+            scope=SCOPE_ESSAY_PROMPT,
         )
         latency_ms = int((time.monotonic() - start_time) * 1000)
 
@@ -308,15 +311,13 @@ def generate_essay_prompt(
             "modelRunId": model_run_id,
             "derivativeGenerationJobId": job_id,
             "provenanceRecords": provenance_records,
-            "budgetLedgerEntry": {
-                "periodYearMonth": _current_period_year_month(),
-                "scope": "essay_prompt_generation",
-                "amountUsd": float(cost_for(model_name, tokens_in, tokens_out)),
-                "tokensIn": tokens_in,
-                "tokensOut": tokens_out,
-                "modelName": model_name,
-                "modelRunId": model_run_id,
-            },
+            "budgetLedgerEntry": build_ledger_entry(
+                scope=SCOPE_ESSAY_PROMPT,
+                model_name=model_name,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                model_run_id=model_run_id,
+            ),
         }
 
         # Step 10: Write to NestJS

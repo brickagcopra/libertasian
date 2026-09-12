@@ -182,6 +182,7 @@ async def generate_answer(request: AnswerRequest) -> AnswerResponse:
         system_prompt=SYSTEM_PROMPT,
         user_prompt=user_prompt,
         max_tokens=settings.answer_max_tokens,
+        scope="ai_answer",
     )
 
     # 7. Explicit non-answer check, before validation — a sentinel response has
@@ -369,6 +370,7 @@ async def stream_answer(request: AnswerRequest) -> AsyncIterator[AnswerChunk]:
             system_prompt=STREAMING_SYSTEM_PROMPT,
             user_prompt=user_prompt,
             max_tokens=settings.answer_max_tokens,
+            scope="ai_answer",
         ):
             full_text += chunk
             if gate_open:

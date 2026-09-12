@@ -769,9 +769,24 @@ export interface LedgerMonthSummary {
   totalRequests: number;
 }
 
+/** Live per-category ceiling + the Redis spend it is enforced against. */
+export interface ScopeBudgetStatus {
+  scope: string;
+  monthlyUsd: number;
+  dailyUsd: number | null;
+  monthSpend: number;
+  daySpend: number;
+  monthRemaining: number;
+  /** True when this category is currently stopped by its own ceiling. */
+  stopped: boolean;
+}
+
 export interface BudgetCurrentResponse {
   snapshot: BudgetSnapshot;
+  /** Postgres ledger view — the accounting record. */
   byScope: LedgerScopeSummary[];
+  /** Redis view — what actually gates generation right now. */
+  scopeBudgets: ScopeBudgetStatus[];
 }
 
 // ---- Golden Sets (PR 4.1) ----

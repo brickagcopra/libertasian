@@ -285,6 +285,22 @@ def write_flashcards(payload: dict[str, Any]) -> dict[str, Any]:
         return response.json()
 
 
+def write_budget_ledger(payload: dict[str, Any]) -> dict[str, Any]:
+    """Write one budget_ledger row via POST /internal/derivatives/write-budget-ledger.
+
+    For generators with no artifact write to attach the entry to — today
+    just bar-exam answers, which persist straight to Postgres.
+    """
+    url = f"{settings.nestjs_api_url}/internal/derivatives/write-budget-ledger"
+    payload = _strip_none(payload)
+
+    with httpx.Client(timeout=60) as client:
+        response = client.post(url, json=payload, headers=_INTERNAL_HEADERS)
+        response.raise_for_status()
+        body: dict[str, Any] = response.json()
+        return body
+
+
 def write_classification(payload: dict[str, Any]) -> dict[str, Any]:
     """Write classification via NestJS POST /internal/derivatives/write-classification.
 

@@ -46,6 +46,7 @@ async def extract_doctrines(request: DoctrineExtractionRequest) -> DoctrineExtra
         max_tokens=settings.doctrine_max_tokens,
         temperature=0.1,
         response_format="json_object",
+        scope=request.scope or "doctrine_extract",
     )
 
     # Parse the LLM output

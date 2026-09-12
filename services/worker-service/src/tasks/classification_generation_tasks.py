@@ -21,10 +21,11 @@ import httpx
 import redis
 from celery import shared_task
 
+from ..budget_ledger import build_ledger_entry
+from ..budget_scopes import SCOPE_SUBJECT_CLASSIFICATION
 from ..clients import classification_db_client as class_db
 from ..clients import ingestion_db_client as db
-from ..clients import nestjs_client
-from ..clients import rag_client
+from ..clients import nestjs_client, rag_client
 from ..config import settings
 
 logger = logging.getLogger(__name__)
@@ -422,6 +423,7 @@ def classify_document_subjects(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             temperature=0,
+            scope=SCOPE_SUBJECT_CLASSIFICATION,
         )
         latency_ms = int((time.time() - start_time) * 1000)
 
@@ -557,6 +559,14 @@ def classify_document_subjects(
             "assignments": content["assignments"],
             "classifierModelRunId": model_run_id,
             "classifiedBy": "ai",
+            # Classification spend used to exist only in Redis.
+            "budgetLedgerEntry": build_ledger_entry(
+                scope=SCOPE_SUBJECT_CLASSIFICATION,
+                model_name=model_name,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                model_run_id=model_run_id,
+            ),
         }
         result = nestjs_client.write_classification(payload)
 
