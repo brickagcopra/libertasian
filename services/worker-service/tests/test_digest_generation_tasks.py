@@ -163,6 +163,48 @@ class TestGenerateCaseDigest:
         assert calls[-1].args[1] == "completed"
 
     @patch("src.tasks.digest_generation_tasks.nestjs_client")
+    @patch("src.tasks.digest_generation_tasks.rag_client")
+    @patch("src.tasks.digest_generation_tasks.db")
+    @patch("src.tasks.digest_generation_tasks.validate_derivative")
+    def test_budget_scope_and_ledger_entry(
+        self,
+        mock_validate: MagicMock,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        mock_nestjs: MagicMock,
+    ) -> None:
+        """Digests charged budget that only Redis ever saw.
+
+        The write DTO has always accepted a budgetLedgerEntry; this task
+        never sent one, so Postgres and Redis disagreed about case-digest
+        spend and the admin panel could not show it per category.
+        """
+        from src.validators.derivative_validators import (
+            DerivativeValidationResult,
+            DerivativeVerdict,
+        )
+
+        mock_db.get_legal_document.return_value = FAKE_DOC
+        mock_db.get_document_sections_for_digest.return_value = FAKE_SECTIONS
+        mock_db.create_model_run.return_value = "model-run-001"
+        mock_rag.generate_digest.return_value = FAKE_RAG_RESPONSE
+        mock_validate.return_value = DerivativeValidationResult(
+            verdict=DerivativeVerdict.PUBLISH, checks=[], reasons=[]
+        )
+        mock_nestjs.write_digest.return_value = {"digestId": "digest-001"}
+        mock_nestjs.update_job_status.return_value = True
+
+        _run_task("job-001", "doc-001")
+
+        assert mock_rag.generate_digest.call_args.kwargs["scope"] == "case_digest"
+
+        payload = mock_nestjs.write_digest.call_args.args[0]
+        entry = payload["budgetLedgerEntry"]
+        assert entry["scope"] == "case_digest"
+        assert entry["periodDay"].startswith(entry["periodYearMonth"])
+        assert entry["modelRunId"] == "model-run-001"
+
+    @patch("src.tasks.digest_generation_tasks.nestjs_client")
     @patch("src.tasks.digest_generation_tasks.db")
     def test_2_eligibility_skip_low_confidence(
         self,

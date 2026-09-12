@@ -22,7 +22,29 @@ class AbstentionError(RagPipelineError):
 
 
 class BudgetExceededError(RagPipelineError):
-    """Raised when the monthly LLM budget limit has been reached."""
+    """Raised when an LLM budget ceiling has been reached.
+
+    Carries which budget stopped the call so the 503 body can name it.
+    A caller that only knows "AI is unavailable" cannot tell an operator
+    which limit to raise — that ambiguity is what turned an exhausted
+    $50 global cap into four days of dead generation with no signal.
+
+    Attributes:
+        scope: Budget category that was exhausted (e.g. ``case_digest``),
+            or ``None`` when the global ceiling was the one hit.
+        period: ``"monthly"`` or ``"daily"``.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        scope: str | None = None,
+        period: str = "monthly",
+    ) -> None:
+        super().__init__(message)
+        self.scope = scope
+        self.period = period
 
 
 class SchemaIntegrityError(RuntimeError):

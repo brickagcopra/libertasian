@@ -10,7 +10,7 @@ import { SkipThrottle } from '@nestjs/throttler';
 
 import { InternalAuthGuard } from './internal-auth.guard';
 import { InternalDerivativesService } from './internal-derivatives.service';
-import { UpdateJobStatusDto, WriteClassificationDto, WriteDerivativeDto, WriteDigestDto, WriteDoctrinesDto, WriteEssayDto, WriteFlashcardsDto, WriteMcqBatchDto } from './dto';
+import { BudgetLedgerEntryDto, UpdateJobStatusDto, WriteClassificationDto, WriteDerivativeDto, WriteDigestDto, WriteDoctrinesDto, WriteEssayDto, WriteFlashcardsDto, WriteMcqBatchDto } from './dto';
 
 /**
  * Internal endpoints for the Python worker-service to write derivative
@@ -54,6 +54,20 @@ export class InternalDerivativesController {
   @Post('write-flashcards')
   async writeFlashcards(@Body() dto: WriteFlashcardsDto) {
     return this.service.writeFlashcards(dto);
+  }
+
+  /**
+   * Standalone budget-ledger write.
+   *
+   * Bar-exam answers are persisted by the worker straight to Postgres —
+   * there is no artifact write for the ledger entry to ride along with —
+   * so they post the entry here instead. Every other generator attaches
+   * it to its own write call, which keeps the two atomic.
+   */
+  @Post('write-budget-ledger')
+  async writeBudgetLedger(@Body() dto: BudgetLedgerEntryDto) {
+    await this.service.recordBudgetLedgerEntry(dto);
+    return { success: true };
   }
 
   @Post('write-classification')

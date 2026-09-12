@@ -32,6 +32,7 @@ class DoctrineExtractionRequest(BaseModel):
     model_config = ConfigDict()
 
     document_id: str
+    scope: str | None = None  # budget category; None = global ceiling only
     strategy: ExtractionStrategy = ExtractionStrategy.AUTO
     document_text: str | None = None  # optional pre-fetched text
     sections: list[dict] | None = None  # optional pre-fetched sections [{id, section_type, plain_text}]

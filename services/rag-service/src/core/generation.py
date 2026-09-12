@@ -68,14 +68,16 @@ def _use_openai() -> bool:
     return bool(settings.openai_api_key)
 
 
-def _current_month_key() -> str:
-    """Return the Redis hash key for the current month's usage."""
-    return f"llm:usage:{datetime.now(UTC).strftime('%Y-%m')}"
+def _current_month_key(scope: str | None = None) -> str:
+    """Redis hash key for this month's usage, global or per-scope."""
+    month = datetime.now(UTC).strftime("%Y-%m")
+    return f"llm:usage:{month}:{scope}" if scope else f"llm:usage:{month}"
 
 
-def _current_day_key() -> str:
-    """Return the Redis hash key for today's usage (UTC day boundary)."""
-    return f"llm:usage:daily:{datetime.now(UTC).strftime('%Y-%m-%d')}"
+def _current_day_key(scope: str | None = None) -> str:
+    """Redis hash key for today's usage (UTC day boundary), global or per-scope."""
+    day = datetime.now(UTC).strftime("%Y-%m-%d")
+    return f"llm:usage:daily:{day}:{scope}" if scope else f"llm:usage:daily:{day}"
 
 
 def _parse_budget(raw: Any) -> float | None:
@@ -92,49 +94,87 @@ def _parse_budget(raw: Any) -> float | None:
 # ---------------------------------------------------------------------------
 # Budget enforcement
 # ---------------------------------------------------------------------------
-async def _check_budget() -> None:
-    """Raise BudgetExceededError if the current spend exceeds an admin limit.
+async def _check_one_budget(
+    redis: Any,
+    *,
+    scope: str | None,
+    monthly_key: str,
+    daily_key: str,
+) -> None:
+    """Enforce one monthly + daily ceiling pair, global or per-scope.
 
-    Two ceilings are enforced, both optional:
-
-    - Monthly (``llm:config:monthly_budget_usd``): required ceiling for most
-      deployments. Tracked in ``llm:usage:{YYYY-MM}``.
-    - Daily (``llm:config:daily_budget_usd``): optional secondary ceiling
-      added by §7.2 of the corpus-platform target architecture. Tracked in
-      ``llm:usage:daily:{YYYY-MM-DD}``. Whichever cap is hit first triggers
-      the hard stop; the error message distinguishes daily from monthly
-      exhaustion so the admin panel can surface the right "Extend budget"
-      flow.
-
-    Budget is enforced via Redis reads — no DB call on the hot path.
+    A missing or non-positive ceiling means "unlimited" for that pair, so a
+    deployment that configures nothing keeps working exactly as before.
     """
-    redis = await _get_redis()
-
-    monthly_budget = _parse_budget(await redis.get("llm:config:monthly_budget_usd"))
-    daily_budget = _parse_budget(await redis.get("llm:config:daily_budget_usd"))
+    monthly_budget = _parse_budget(await redis.get(monthly_key))
+    daily_budget = _parse_budget(await redis.get(daily_key))
 
     if monthly_budget is None and daily_budget is None:
-        return  # No budgets configured — unlimited
+        return
+
+    label = f"{scope} " if scope else ""
 
     if daily_budget is not None:
-        daily_cost_raw = await redis.hget(_current_day_key(), "estimated_cost_usd")
+        daily_cost_raw = await redis.hget(
+            _current_day_key(scope), "estimated_cost_usd"
+        )
         daily_cost = float(daily_cost_raw) if daily_cost_raw else 0.0
         if daily_cost >= daily_budget:
             raise BudgetExceededError(
-                f"Daily LLM budget of ${daily_budget:.2f} exceeded "
-                f"(today's spend: ${daily_cost:.2f})"
+                f"Daily {label}LLM budget of ${daily_budget:.2f} exceeded "
+                f"(today's spend: ${daily_cost:.2f})",
+                scope=scope,
+                period="daily",
             )
 
     if monthly_budget is not None:
         monthly_cost_raw = await redis.hget(
-            _current_month_key(), "estimated_cost_usd"
+            _current_month_key(scope), "estimated_cost_usd"
         )
         monthly_cost = float(monthly_cost_raw) if monthly_cost_raw else 0.0
         if monthly_cost >= monthly_budget:
             raise BudgetExceededError(
-                f"Monthly LLM budget of ${monthly_budget:.2f} exceeded "
-                f"(current spend: ${monthly_cost:.2f})"
+                f"Monthly {label}LLM budget of ${monthly_budget:.2f} exceeded "
+                f"(current spend: ${monthly_cost:.2f})",
+                scope=scope,
+                period="monthly",
             )
+
+
+async def _check_budget(scope: str | None = None) -> None:
+    """Raise BudgetExceededError if spend has reached an admin limit.
+
+    Two layers, each with an optional monthly and daily ceiling:
+
+    - Per-scope (``llm:config:{monthly,daily}_budget_usd:{scope}``),
+      tracked in ``llm:usage:{YYYY-MM}:{scope}`` and
+      ``llm:usage:daily:{YYYY-MM-DD}:{scope}``. Checked FIRST, so an
+      exhausted category reports itself by name instead of hiding behind
+      the global cap — and, more importantly, so one runaway category
+      cannot stop every other kind of generation.
+    - Global (``llm:config:{monthly,daily}_budget_usd``), tracked in
+      ``llm:usage:{YYYY-MM}`` / ``llm:usage:daily:{YYYY-MM-DD}``. Remains
+      the overall ceiling across all categories.
+
+    An unset ceiling means unlimited at that layer. Enforced via Redis
+    reads only — no DB call on the hot path.
+    """
+    redis = await _get_redis()
+
+    if scope:
+        await _check_one_budget(
+            redis,
+            scope=scope,
+            monthly_key=f"llm:config:monthly_budget_usd:{scope}",
+            daily_key=f"llm:config:daily_budget_usd:{scope}",
+        )
+
+    await _check_one_budget(
+        redis,
+        scope=None,
+        monthly_key="llm:config:monthly_budget_usd",
+        daily_key="llm:config:daily_budget_usd",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -144,26 +184,32 @@ async def _track_usage(
     tokens_in: int,
     tokens_out: int,
     model: str,
+    scope: str | None = None,
 ) -> None:
     """Increment monthly and daily aggregate token usage in Redis.
 
-    Writes both ``llm:usage:{YYYY-MM}`` and ``llm:usage:daily:{YYYY-MM-DD}``
-    in a single pipeline. The daily key backs the optional daily-budget
-    killswitch added in §7.2 of the corpus-platform target architecture.
+    Always writes the global ``llm:usage:{YYYY-MM}`` and
+    ``llm:usage:daily:{YYYY-MM-DD}`` counters. When ``scope`` is given it
+    also writes ``llm:usage:{YYYY-MM}:{scope}`` and
+    ``llm:usage:daily:{YYYY-MM-DD}:{scope}`` in the same pipeline, which
+    is what the per-category caps in :func:`_check_budget` read back.
     """
     try:
         redis = await _get_redis()
-        month_key = _current_month_key()
-        day_key = _current_day_key()
 
         input_price, output_price = MODEL_PRICING.get(model, (0.0, 0.0))
         cost = (tokens_in * input_price + tokens_out * output_price) / 1_000_000
 
+        targets: list[tuple[str, int]] = [
+            (_current_month_key(), 90 * 86400),
+            (_current_day_key(), 35 * 86400),
+        ]
+        if scope:
+            targets.append((_current_month_key(scope), 90 * 86400))
+            targets.append((_current_day_key(scope), 35 * 86400))
+
         pipe = redis.pipeline()
-        for key, ttl_seconds in (
-            (month_key, 90 * 86400),
-            (day_key, 35 * 86400),
-        ):
+        for key, ttl_seconds in targets:
             pipe.hincrby(key, "tokens_in", tokens_in)
             pipe.hincrby(key, "tokens_out", tokens_out)
             pipe.hincrby(key, "request_count", 1)
@@ -184,6 +230,7 @@ async def _openai_generate(
     max_tokens: int,
     temperature: float,
     response_format: str | None,
+    scope: str | None = None,
 ) -> str:
     """Generate via OpenAI API (non-streaming)."""
     client = _get_openai_client()
@@ -211,6 +258,7 @@ async def _openai_generate(
             tokens_in=response.usage.prompt_tokens,
             tokens_out=response.usage.completion_tokens,
             model=model,
+            scope=scope,
         )
 
     return content
@@ -221,6 +269,7 @@ async def _openai_stream(
     user_prompt: str,
     max_tokens: int,
     temperature: float,
+    scope: str | None = None,
 ) -> AsyncIterator[str]:
     """Stream via OpenAI API, yielding content chunks."""
     client = _get_openai_client()
@@ -254,7 +303,9 @@ async def _openai_stream(
 
     # Track tokens after stream completes
     if tokens_in or tokens_out:
-        await _track_usage(tokens_in=tokens_in, tokens_out=tokens_out, model=model)
+        await _track_usage(
+            tokens_in=tokens_in, tokens_out=tokens_out, model=model, scope=scope
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -343,6 +394,7 @@ async def generate_completion(
     max_tokens: int | None = None,
     temperature: float = 0.2,
     response_format: str | None = None,
+    scope: str | None = None,
 ) -> str:
     """Call the active LLM backend for a non-streaming chat completion.
 
@@ -352,25 +404,32 @@ async def generate_completion(
         max_tokens: Max tokens for the response. Defaults to config value.
         temperature: Sampling temperature.
         response_format: If "json_object", requests JSON mode.
+        scope: Budget category this call is charged to. Selects the
+            per-category ceiling and usage counters; ``None`` falls back
+            to the global ceiling only.
 
     Returns:
         The generated text content.
 
     Raises:
-        BudgetExceededError: If the monthly LLM budget is exceeded.
+        BudgetExceededError: If a monthly or daily ceiling is exhausted.
         httpx.HTTPStatusError: If the vLLM backend returns an error.
         openai.APIError: If the OpenAI backend returns an error.
     """
     effective_max_tokens = max_tokens or settings.answer_max_tokens
 
+    # Budgets are checked on BOTH backends. The vLLM branch used to skip
+    # this entirely, so a deployment on vLLM had no spending limit at all.
+    await _check_budget(scope)
+
     if _use_openai():
-        await _check_budget()
         return await _openai_generate(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             max_tokens=effective_max_tokens,
             temperature=temperature,
             response_format=response_format,
+            scope=scope,
         )
 
     return await _vllm_generate(
@@ -388,8 +447,12 @@ async def generate_completion_with_usage(
     max_tokens: int | None = None,
     temperature: float = 0.2,
     response_format: str | None = None,
+    scope: str | None = None,
 ) -> dict[str, Any]:
     """Like generate_completion but also returns token usage and model name.
+
+    Args:
+        scope: Budget category this call is charged to.
 
     Returns:
         Dict with keys: content (str), model_name (str),
@@ -397,8 +460,10 @@ async def generate_completion_with_usage(
     """
     effective_max_tokens = max_tokens or settings.answer_max_tokens
 
+    # Checked before branching: the vLLM path below bypassed budgets.
+    await _check_budget(scope)
+
     if _use_openai():
-        await _check_budget()
         client = _get_openai_client()
         model = settings.openai_model
 
@@ -420,7 +485,12 @@ async def generate_completion_with_usage(
         tokens_out = resp.usage.completion_tokens if resp.usage else 0
 
         if resp.usage:
-            await _track_usage(tokens_in=tokens_in, tokens_out=tokens_out, model=model)
+            await _track_usage(
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                model=model,
+                scope=scope,
+            )
 
         return {
             "content": content,
@@ -454,6 +524,12 @@ async def generate_completion_with_usage(
     tokens_in = usage.get("prompt_tokens", 0)
     tokens_out = usage.get("completion_tokens", 0)
 
+    # vLLM spend was never recorded, so its budgets could never trip.
+    if tokens_in or tokens_out:
+        await _track_usage(
+            tokens_in=tokens_in, tokens_out=tokens_out, model=model, scope=scope
+        )
+
     return {
         "content": content,
         "model_name": model,
@@ -467,6 +543,7 @@ async def stream_completion(
     user_prompt: str,
     max_tokens: int | None = None,
     temperature: float = 0.2,
+    scope: str | None = None,
 ) -> AsyncIterator[str]:
     """Stream a chat completion from the active LLM backend.
 
@@ -478,22 +555,26 @@ async def stream_completion(
         user_prompt: User message.
         max_tokens: Max tokens for the response.
         temperature: Sampling temperature.
+        scope: Budget category this call is charged to.
 
     Yields:
         Text content chunks from the streaming response.
 
     Raises:
-        BudgetExceededError: If the monthly LLM budget is exceeded.
+        BudgetExceededError: If a monthly or daily ceiling is exhausted.
     """
     effective_max_tokens = max_tokens or settings.answer_max_tokens
 
+    # Checked before branching: the vLLM stream bypassed budgets.
+    await _check_budget(scope)
+
     if _use_openai():
-        await _check_budget()
         async for chunk in _openai_stream(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             max_tokens=effective_max_tokens,
             temperature=temperature,
+            scope=scope,
         ):
             yield chunk
         return

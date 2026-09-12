@@ -26,6 +26,7 @@ async def generate(request: CompletionGenerationRequest) -> CompletionGeneration
         max_tokens=request.max_tokens,
         temperature=request.temperature,
         response_format=core_format,
+        scope=request.scope,
     )
 
     return CompletionGenerationResponse(

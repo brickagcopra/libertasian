@@ -66,6 +66,9 @@ describe('AiAnswersService', () => {
             modelRun: {
               create: jest.fn().mockResolvedValue({ id: 'mr-1' }),
             },
+            budgetLedger: {
+              create: jest.fn().mockResolvedValue({ id: 'bl-1' }),
+            },
           },
         },
       ],
@@ -96,6 +99,7 @@ describe('AiAnswersService', () => {
         body: JSON.stringify({
           query: 'What is the rule on hearsay evidence?',
           max_passages: 8,
+          scope: 'ai_answer',
         }),
       });
 
@@ -374,7 +378,11 @@ describe('AiAnswersService', () => {
 
       const raw = (mockFetch.mock.calls[0][1] as RequestInit).body as string;
       expect(raw).toBe(
-        JSON.stringify({ query: 'plain query', max_passages: 8 }),
+        JSON.stringify({
+          query: 'plain query',
+          max_passages: 8,
+          scope: 'ai_answer',
+        }),
       );
     });
 
@@ -407,8 +415,46 @@ describe('AiAnswersService', () => {
       const { init } = service.getStreamFetchArgs({ query: 'plain query' });
 
       expect(init.body).toBe(
-        JSON.stringify({ query: 'plain query', max_passages: 8 }),
+        JSON.stringify({
+          query: 'plain query',
+          max_passages: 8,
+          scope: 'ai_answer',
+        }),
       );
+    });
+  });
+
+  describe('budget ledger', () => {
+    it('writes a budget_ledger row priced from the reported tokens', async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => mockRagResponse });
+
+      await service.generateAnswer({ query: 'q' }, 'user-1', 'org-1');
+
+      expect(prismaService.budgetLedger.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          scope: 'ai_answer',
+          tokensIn: mockRagResponse.tokens_in,
+          tokensOut: mockRagResponse.tokens_out,
+          modelName: mockRagResponse.model_name,
+        }),
+      });
+
+      const data = (prismaService.budgetLedger.create as jest.Mock).mock
+        .calls[0][0].data;
+      expect(data.periodYearMonth).toMatch(/^\d{4}-\d{2}$/);
+      expect(data.periodDay).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(typeof data.amountUsd).toBe('number');
+    });
+
+    it('does not throw when the ledger write fails', async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => mockRagResponse });
+      (prismaService.budgetLedger.create as jest.Mock).mockRejectedValueOnce(
+        new Error('db down'),
+      );
+
+      await expect(
+        service.generateAnswer({ query: 'q' }, 'user-1', 'org-1'),
+      ).resolves.toBeDefined();
     });
   });
 });

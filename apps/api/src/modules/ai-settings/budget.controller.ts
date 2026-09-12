@@ -25,13 +25,29 @@ export class BudgetController {
   @ApiOperation({ summary: 'Get current budget snapshot and spend breakdown' })
   async getCurrent() {
     const month = new Date().toISOString().slice(0, 7); // YYYY-MM
-    const [snapshot, byScope] = await Promise.all([
+    const [snapshot, byScope, scopeBudgets] = await Promise.all([
       this.aiSettings.getBudgetSnapshot(),
       this.aiSettings.getLedgerByScope(month),
+      // Live per-category ceilings + Redis spend. `byScope` above is the
+      // Postgres ledger view, which is the accounting record; this is what
+      // actually gates generation.
+      this.aiSettings.getScopeBudgetStatus(),
     ]);
-    return { snapshot, byScope };
+    return { snapshot, byScope, scopeBudgets };
   }
 
+  /**
+   * Kept for the existing callers of PATCH /admin/budget/settings. New
+   * work should use PATCH /admin/ai-settings/budget, which is the single
+   * place budgets are set and the only one that accepts per-category
+   * ceilings.
+   *
+   * The `as` cast this used to carry lied to the type system: omitting
+   * monthlyCeilingUsd produced `{ monthlyBudgetUsd: undefined }`, which
+   * the service upserted as `{ amount: undefined }` — read back as "no
+   * ceiling", i.e. an omitted field silently removed the global cap.
+   * updateBudget now takes both fields as genuinely optional.
+   */
   @Patch('settings')
   @ApiOperation({ summary: 'Update monthly and/or daily budget ceilings' })
   async updateSettings(
@@ -40,9 +56,13 @@ export class BudgetController {
   ) {
     await this.aiSettings.updateBudget(
       {
-        ...(dto.monthlyCeilingUsd !== undefined && { monthlyBudgetUsd: dto.monthlyCeilingUsd }),
-        ...(dto.dailyCeilingUsd !== undefined && { dailyBudgetUsd: dto.dailyCeilingUsd }),
-      } as { monthlyBudgetUsd: number; dailyBudgetUsd?: number | null },
+        ...(dto.monthlyCeilingUsd !== undefined && {
+          monthlyBudgetUsd: dto.monthlyCeilingUsd,
+        }),
+        ...(dto.dailyCeilingUsd !== undefined && {
+          dailyBudgetUsd: dto.dailyCeilingUsd,
+        }),
+      },
       user.sub,
     );
     return { success: true };

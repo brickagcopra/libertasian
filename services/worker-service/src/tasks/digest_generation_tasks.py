@@ -21,9 +21,10 @@ from typing import Any
 import httpx
 from celery import shared_task
 
+from ..budget_ledger import build_ledger_entry
+from ..budget_scopes import SCOPE_CASE_DIGEST
 from ..clients import ingestion_db_client as db
-from ..clients import nestjs_client
-from ..clients import rag_client
+from ..clients import nestjs_client, rag_client
 from ..prompts.case_digest_v1 import (
     PROMPT_TEMPLATE_VERSION,
 )
@@ -128,6 +129,7 @@ def generate_case_digest(
             document_id=document_id,
             sections=sections_with_text,
             document_type=doc.get("document_type", "case"),
+            scope=SCOPE_CASE_DIGEST,
         )
         latency_ms = int((time.monotonic() - start_time) * 1000)
 
@@ -247,6 +249,15 @@ def generate_case_digest(
                 content.get("provenance", []),
             ),
             "provenanceRecords": provenance_records,
+            # Was missing entirely: digests burned budget that Redis saw
+            # and Postgres never did, so the two ledgers disagreed.
+            "budgetLedgerEntry": build_ledger_entry(
+                scope=SCOPE_CASE_DIGEST,
+                model_name=model_name,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                model_run_id=model_run_id,
+            ),
         }
 
         # Write to NestJS

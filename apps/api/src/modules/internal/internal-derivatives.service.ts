@@ -7,7 +7,7 @@ import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { AutoPromoteService } from './auto-promote.service';
-import { WriteDerivativeDto, WriteDigestDto, WriteClassificationDto, WriteDoctrinesDto, WriteMcqBatchDto, WriteEssayDto, WriteFlashcardsDto } from './dto';
+import { BudgetLedgerEntryDto, WriteDerivativeDto, WriteDigestDto, WriteClassificationDto, WriteDoctrinesDto, WriteMcqBatchDto, WriteEssayDto, WriteFlashcardsDto } from './dto';
 import { UpdateJobStatusDto } from './dto';
 
 /**
@@ -588,6 +588,31 @@ export class InternalDerivativesService {
     return { setId: result.set.id, cardIds: result.cardIds };
   }
 
+  /**
+   * Write one `budget_ledger` row, if the caller sent one.
+   *
+   * Shared by every write-path so a new generator cannot forget the
+   * shape. A no-op when the entry is absent, which keeps older workers
+   * working unchanged.
+   */
+  async recordBudgetLedgerEntry(
+    entry: BudgetLedgerEntryDto | undefined,
+  ): Promise<void> {
+    if (!entry) return;
+    await this.prisma.budgetLedger.create({
+      data: {
+        periodYearMonth: entry.periodYearMonth,
+        periodDay: entry.periodDay,
+        scope: entry.scope,
+        amountUsd: entry.amountUsd,
+        tokensIn: entry.tokensIn,
+        tokensOut: entry.tokensOut,
+        modelName: entry.modelName,
+        modelRunId: entry.modelRunId,
+      },
+    });
+  }
+
   async writeClassification(dto: WriteClassificationDto): Promise<{ assignmentIds: string[] }> {
     // 1. Validate: exactly one assignment has isPrimary=true
     const primaries = dto.assignments.filter((a) => a.isPrimary);
@@ -709,6 +734,10 @@ export class InternalDerivativesService {
 
       assignmentIds.push(result.id);
     }
+
+    // Classification wrote no ledger row at all before this, so its spend
+    // showed up in Redis and nowhere in Postgres.
+    await this.recordBudgetLedgerEntry(dto.budgetLedgerEntry);
 
     return { assignmentIds };
   }

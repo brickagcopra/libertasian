@@ -456,10 +456,21 @@ class TestGenerateMcqQuestions:
         write_call = mock_nestjs.write_mcq_batch.call_args
         payload = write_call.args[0]
         assert "budgetLedgerEntry" in payload
-        assert payload["budgetLedgerEntry"]["scope"] == "mcq_generation"
-        assert payload["budgetLedgerEntry"]["tokensIn"] == 2000
-        assert payload["budgetLedgerEntry"]["tokensOut"] == 1500
-        assert payload["budgetLedgerEntry"]["modelName"] == "gpt-4o-mini"
+        entry = payload["budgetLedgerEntry"]
+        # Canonical scope, not the old ad-hoc "mcq_generation" — the API
+        # now rejects anything outside BUDGET_SCOPES.
+        assert entry["scope"] == "mcq_question"
+        assert entry["tokensIn"] == 2000
+        assert entry["tokensOut"] == 1500
+        assert entry["modelName"] == "gpt-4o-mini"
+        # periodDay was never set, so per-category daily rollups were
+        # impossible.
+        assert entry["periodDay"].startswith(entry["periodYearMonth"])
+
+        # The LLM call names the budget it is charged to.
+        assert mock_rag.generate_completion.call_args.kwargs["scope"] == (
+            "mcq_question"
+        )
 
     @patch("src.tasks.mcq_generation_tasks.nestjs_client")
     @patch("src.tasks.mcq_generation_tasks.rag_client")

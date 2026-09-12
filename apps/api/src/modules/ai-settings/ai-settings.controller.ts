@@ -47,16 +47,30 @@ export class AiSettingsController {
     return this.aiSettings.getAllSettings();
   }
 
+  /**
+   * The ONE place budgets are set — global ceilings and per-category
+   * ceilings alike. The admin Budget page routes every change here; no
+   * code change is needed to alter any budget afterwards.
+   */
   @Patch('budget')
   @ApiOperation({
-    summary: 'Update the global LLM budget ceilings (monthly + optional daily)',
+    summary:
+      'Update LLM budget ceilings — global monthly/daily and per-category',
   })
   async updateBudget(
     @Body() dto: UpdateBudgetDto,
     @CurrentUser() user: JwtPayload,
   ) {
     await this.aiSettings.updateBudget(
-      { monthlyBudgetUsd: dto.monthlyBudgetUsd, dailyBudgetUsd: dto.dailyBudgetUsd },
+      {
+        ...(dto.monthlyBudgetUsd !== undefined && {
+          monthlyBudgetUsd: dto.monthlyBudgetUsd,
+        }),
+        ...(dto.dailyBudgetUsd !== undefined && {
+          dailyBudgetUsd: dto.dailyBudgetUsd,
+        }),
+        ...(dto.perScope !== undefined && { perScope: dto.perScope }),
+      },
       user.sub,
     );
     return { success: true };

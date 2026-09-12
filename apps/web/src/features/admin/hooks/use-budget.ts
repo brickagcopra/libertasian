@@ -36,7 +36,44 @@ export function useBudgetHistory() {
   });
 }
 
-/** Update monthly and/or daily budget ceilings. */
+export interface ScopeBudgetInput {
+  monthlyUsd: number;
+  dailyUsd?: number | null;
+}
+
+/**
+ * The ONE budget write path.
+ *
+ * Global ceilings and per-category ceilings both go through
+ * PATCH /admin/ai-settings/budget. Previously the AI Settings page and the
+ * Budget page each had their own inputs writing through different
+ * endpoints, so "where do I change this?" had two answers and neither
+ * showed what the other had done.
+ */
+export function useUpdateBudget() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: {
+      monthlyBudgetUsd?: number;
+      dailyBudgetUsd?: number | null;
+      perScope?: Record<string, ScopeBudgetInput | null>;
+    }) => {
+      const res = await apiClient.patch<ApiEnvelope<void>>(
+        '/admin/ai-settings/budget',
+        input,
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: budgetKeys.current });
+      queryClient.invalidateQueries({ queryKey: budgetKeys.history });
+      queryClient.invalidateQueries({ queryKey: ['ai-settings'] });
+    },
+  });
+}
+
+/** @deprecated Use {@link useUpdateBudget}; kept for existing callers. */
 export function useUpdateBudgetSettings() {
   const queryClient = useQueryClient();
 

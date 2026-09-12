@@ -1,5 +1,11 @@
 import { Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
 
+import {
+  BUDGET_SCOPES,
+  type BudgetScope,
+  canonicalScope,
+  isBudgetScope,
+} from '../../common/constants/budget-scopes';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../common/services/redis.service';
 import { AuditService } from '../audit/audit.service';
@@ -34,6 +40,33 @@ const INGESTION_WINDOW_TZ_KEY = 'ingestion:window:timezone';
 const MONTHLY_BUDGET_SETTING_KEY = 'llm_monthly_budget_usd';
 const DAILY_BUDGET_SETTING_KEY = 'llm_daily_budget_usd';
 const INGESTION_WINDOW_SETTING_KEY = 'ingestion_window';
+
+/**
+ * Per-category ceilings, stored as one JSON row exactly the way
+ * `derivative_generation.types_enabled` is (see
+ * DerivativesAdminService.getDerivativeSettings): a single
+ * `ai_settings` row holding `{ [scope]: { monthlyUsd, dailyUsd } }`.
+ * No schema change, one read, one write.
+ */
+const PER_SCOPE_BUDGET_SETTING_KEY = 'llm_budget_by_scope';
+
+/** Redis key prefixes the RAG service reads for per-category ceilings. */
+const SCOPED_BUDGET_REDIS_PREFIX = 'llm:config:monthly_budget_usd:';
+const SCOPED_DAILY_BUDGET_REDIS_PREFIX = 'llm:config:daily_budget_usd:';
+
+export interface ScopeBudget {
+  monthlyUsd: number;
+  dailyUsd: number | null;
+}
+
+export interface ScopeBudgetStatus extends ScopeBudget {
+  scope: BudgetScope;
+  monthSpend: number;
+  daySpend: number;
+  monthRemaining: number;
+  /** True when this category is currently stopped by its own ceiling. */
+  stopped: boolean;
+}
 
 /** Redis keys to track which threshold alerts have already been sent this month. */
 const ALERT_SENT_PREFIX = 'llm:alert_sent:';
@@ -89,18 +122,6 @@ export interface LedgerScopeSummary {
   totalTokensIn: number;
   totalTokensOut: number;
   totalRequests: number;
-}
-
-export interface CreateLedgerEntryDto {
-  periodYearMonth: string;
-  periodDay?: string;
-  scope: string;
-  amountUsd: number;
-  tokensIn?: number;
-  tokensOut?: number;
-  requestCount?: number;
-  modelName?: string;
-  modelRunId?: string;
 }
 
 @Injectable()
@@ -195,9 +216,12 @@ export class AiSettingsService implements OnModuleInit {
    */
   async syncBudgetToRedis(): Promise<void> {
     try {
-      const [monthlySetting, dailySetting] = await Promise.all([
+      const [monthlySetting, dailySetting, perScopeSetting] = await Promise.all([
         this.prisma.aiSettings.findUnique({ where: { key: MONTHLY_BUDGET_SETTING_KEY } }),
         this.prisma.aiSettings.findUnique({ where: { key: DAILY_BUDGET_SETTING_KEY } }),
+        this.prisma.aiSettings.findUnique({
+          where: { key: PER_SCOPE_BUDGET_SETTING_KEY },
+        }),
       ]);
 
       const monthlyAmount = extractAmount(monthlySetting?.value);
@@ -213,9 +237,93 @@ export class AiSettingsService implements OnModuleInit {
       } else {
         await this.redis.del(DAILY_BUDGET_REDIS_KEY);
       }
+
+      // Fan out the per-category ceilings. Every known scope is visited so
+      // that a scope REMOVED from the setting has its Redis keys deleted —
+      // otherwise a lifted cap would keep stopping that category forever.
+      const perScope = extractScopeBudgets(perScopeSetting?.value);
+      for (const scope of BUDGET_SCOPES) {
+        const monthlyKey = `${SCOPED_BUDGET_REDIS_PREFIX}${scope}`;
+        const dailyKey = `${SCOPED_DAILY_BUDGET_REDIS_PREFIX}${scope}`;
+        const budget = perScope[scope];
+
+        if (budget && budget.monthlyUsd > 0) {
+          await this.redis.set(monthlyKey, String(budget.monthlyUsd));
+        } else {
+          await this.redis.del(monthlyKey);
+        }
+
+        if (budget && budget.dailyUsd !== null && budget.dailyUsd > 0) {
+          await this.redis.set(dailyKey, String(budget.dailyUsd));
+        } else {
+          await this.redis.del(dailyKey);
+        }
+      }
+      this.logger.log(
+        `Per-scope budgets synced to Redis: ${Object.keys(perScope).length} configured`,
+      );
     } catch (err) {
       this.logger.error('Failed to sync budget to Redis', err);
     }
+  }
+
+  /** The stored per-category ceilings, `{}` when none are configured. */
+  async getBudgetByScope(): Promise<Partial<Record<BudgetScope, ScopeBudget>>> {
+    const row = await this.prisma.aiSettings.findUnique({
+      where: { key: PER_SCOPE_BUDGET_SETTING_KEY },
+    });
+    return extractScopeBudgets(row?.value);
+  }
+
+  /**
+   * Live per-category status: configured ceilings alongside the Redis
+   * counters the ceilings are actually enforced against.
+   *
+   * Spend is read from Redis rather than `budget_ledger` on purpose: the
+   * Redis counter is what stops generation, so a panel that showed the
+   * Postgres number could say a category has room while rag-service is
+   * already 503-ing it.
+   */
+  async getScopeBudgetStatus(): Promise<ScopeBudgetStatus[]> {
+    const [configured, month, day] = [
+      await this.getBudgetByScope(),
+      this.currentMonth(),
+      this.currentDay(),
+    ];
+
+    const client = this.redis.getClient();
+    const rows = await Promise.all(
+      BUDGET_SCOPES.map(async (scope) => {
+        const [monthData, dayData] = await Promise.all([
+          client.hgetall(`${USAGE_KEY_PREFIX}${month}:${scope}`),
+          client.hgetall(`${DAILY_USAGE_KEY_PREFIX}${day}:${scope}`),
+        ]);
+        const budget = configured[scope] ?? { monthlyUsd: 0, dailyUsd: null };
+        const monthSpend = parseFloat(monthData['estimated_cost_usd'] || '0');
+        const daySpend = parseFloat(dayData['estimated_cost_usd'] || '0');
+        const stoppedMonthly =
+          budget.monthlyUsd > 0 && monthSpend >= budget.monthlyUsd;
+        const stoppedDaily =
+          budget.dailyUsd !== null &&
+          budget.dailyUsd > 0 &&
+          daySpend >= budget.dailyUsd;
+
+        return {
+          scope,
+          monthlyUsd: budget.monthlyUsd,
+          dailyUsd: budget.dailyUsd,
+          monthSpend: Math.round(monthSpend * 10000) / 10000,
+          daySpend: Math.round(daySpend * 10000) / 10000,
+          monthRemaining:
+            budget.monthlyUsd > 0
+              ? Math.max(0, Math.round((budget.monthlyUsd - monthSpend) * 10000) / 10000)
+              : 0,
+          stopped: stoppedMonthly || stoppedDaily,
+        };
+      }),
+    );
+
+    return rows;
   }
 
   /**
@@ -259,7 +367,11 @@ export class AiSettingsService implements OnModuleInit {
    * writes an audit log entry capturing the diff of the changed fields.
    */
   async updateBudget(
-    input: { monthlyBudgetUsd: number; dailyBudgetUsd?: number | null },
+    input: {
+      monthlyBudgetUsd?: number;
+      dailyBudgetUsd?: number | null;
+      perScope?: Partial<Record<BudgetScope, ScopeBudget | null>>;
+    },
     userId: string,
   ): Promise<void> {
     const [monthlyExisting, dailyExisting] = await Promise.all([
@@ -270,18 +382,24 @@ export class AiSettingsService implements OnModuleInit {
     const previousMonthly = extractAmount(monthlyExisting?.value);
     const previousDaily = extractAmount(dailyExisting?.value);
 
-    await this.prisma.aiSettings.upsert({
-      where: { key: MONTHLY_BUDGET_SETTING_KEY },
-      update: {
-        value: { amount: input.monthlyBudgetUsd, currency: 'USD' } as object,
-        updatedBy: userId,
-      },
-      create: {
-        key: MONTHLY_BUDGET_SETTING_KEY,
-        value: { amount: input.monthlyBudgetUsd, currency: 'USD' } as object,
-        updatedBy: userId,
-      },
-    });
+    // Only write the monthly row when the caller actually sent a number.
+    // The budget controller could omit it, and the unconditional upsert
+    // then stored `{ amount: undefined }` — which extractAmount reads back
+    // as null, i.e. "no ceiling", silently removing the global cap.
+    if (input.monthlyBudgetUsd !== undefined) {
+      await this.prisma.aiSettings.upsert({
+        where: { key: MONTHLY_BUDGET_SETTING_KEY },
+        update: {
+          value: { amount: input.monthlyBudgetUsd, currency: 'USD' } as object,
+          updatedBy: userId,
+        },
+        create: {
+          key: MONTHLY_BUDGET_SETTING_KEY,
+          value: { amount: input.monthlyBudgetUsd, currency: 'USD' } as object,
+          updatedBy: userId,
+        },
+      });
+    }
 
     if (input.dailyBudgetUsd === undefined) {
       // Leave daily unchanged.
@@ -306,6 +424,40 @@ export class AiSettingsService implements OnModuleInit {
       });
     }
 
+    let previousPerScope: Partial<Record<BudgetScope, ScopeBudget>> | null = null;
+    if (input.perScope !== undefined) {
+      previousPerScope = await this.getBudgetByScope();
+      const merged: Partial<Record<BudgetScope, ScopeBudget>> = {
+        ...previousPerScope,
+      };
+      for (const [scope, budget] of Object.entries(input.perScope)) {
+        if (!isBudgetScope(scope)) continue;
+        if (budget === null || budget === undefined) {
+          // Explicit clear — the category goes back to "global ceiling
+          // only", and syncBudgetToRedis drops its Redis keys.
+          delete merged[scope];
+        } else {
+          merged[scope] = {
+            monthlyUsd: budget.monthlyUsd,
+            dailyUsd: budget.dailyUsd ?? null,
+          };
+        }
+      }
+
+      await this.prisma.aiSettings.upsert({
+        where: { key: PER_SCOPE_BUDGET_SETTING_KEY },
+        update: { value: merged as object, updatedBy: userId },
+        create: {
+          key: PER_SCOPE_BUDGET_SETTING_KEY,
+          value: merged as object,
+          updatedBy: userId,
+        },
+      });
+      await this.redis.del(
+        `${SETTINGS_CACHE_PREFIX}${PER_SCOPE_BUDGET_SETTING_KEY}`,
+      );
+    }
+
     await this.redis.del(`${SETTINGS_CACHE_PREFIX}${MONTHLY_BUDGET_SETTING_KEY}`);
     await this.redis.del(`${SETTINGS_CACHE_PREFIX}${DAILY_BUDGET_SETTING_KEY}`);
 
@@ -319,7 +471,14 @@ export class AiSettingsService implements OnModuleInit {
       entityId: MONTHLY_BUDGET_SETTING_KEY,
       metadata: {
         changed: 'budget',
-        monthly: { old: previousMonthly, new: input.monthlyBudgetUsd },
+        monthly:
+          input.monthlyBudgetUsd === undefined
+            ? { old: previousMonthly, new: previousMonthly, unchanged: true }
+            : { old: previousMonthly, new: input.monthlyBudgetUsd },
+        perScope:
+          input.perScope === undefined
+            ? { unchanged: true }
+            : { old: previousPerScope, new: input.perScope },
         daily:
           input.dailyBudgetUsd === undefined
             ? { old: previousDaily, new: previousDaily, unchanged: true }
@@ -651,30 +810,29 @@ export class AiSettingsService implements OnModuleInit {
       ORDER BY SUM(amount_usd) DESC
     `;
 
-    return rows.map((r) => ({
-      scope: r.scope,
-      totalAmountUsd: parseFloat(r.total_amount_usd),
-      totalTokensIn: Number(r.total_tokens_in),
-      totalTokensOut: Number(r.total_tokens_out),
-      totalRequests: Number(r.total_requests),
-    }));
-  }
+    // Fold the pre-canonical scope strings (`mcq_generation`, ...) into
+    // the category they belong to, so one category does not appear as two
+    // rows in the panel. The stored rows are left as written — this PR
+    // ships no data migration.
+    const folded = new Map<string, LedgerScopeSummary>();
+    for (const r of rows) {
+      const scope = canonicalScope(r.scope);
+      const existing = folded.get(scope);
+      const next: LedgerScopeSummary = {
+        scope,
+        totalAmountUsd:
+          (existing?.totalAmountUsd ?? 0) + parseFloat(r.total_amount_usd),
+        totalTokensIn: (existing?.totalTokensIn ?? 0) + Number(r.total_tokens_in),
+        totalTokensOut:
+          (existing?.totalTokensOut ?? 0) + Number(r.total_tokens_out),
+        totalRequests: (existing?.totalRequests ?? 0) + Number(r.total_requests),
+      };
+      folded.set(scope, next);
+    }
 
-  /** Record a single ledger entry. */
-  async recordLedgerEntry(entry: CreateLedgerEntryDto) {
-    return this.prisma.budgetLedger.create({
-      data: {
-        periodYearMonth: entry.periodYearMonth,
-        periodDay: entry.periodDay,
-        scope: entry.scope,
-        amountUsd: entry.amountUsd,
-        tokensIn: entry.tokensIn ?? 0,
-        tokensOut: entry.tokensOut ?? 0,
-        requestCount: entry.requestCount ?? 1,
-        modelName: entry.modelName,
-        modelRunId: entry.modelRunId,
-      },
-    });
+    return [...folded.values()].sort(
+      (a, b) => b.totalAmountUsd - a.totalAmountUsd,
+    );
   }
 
   private currentMonth(): string {
@@ -686,6 +844,35 @@ export class AiSettingsService implements OnModuleInit {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   }
+}
+
+/**
+ * Read `{ [scope]: { monthlyUsd, dailyUsd } }` out of the stored JSON.
+ *
+ * Unknown scopes and malformed entries are dropped rather than thrown on:
+ * a hand-edited settings row must not be able to take the whole budget
+ * sync down, which would leave every ceiling stale in Redis.
+ */
+function extractScopeBudgets(
+  value: unknown,
+): Partial<Record<BudgetScope, ScopeBudget>> {
+  const out: Partial<Record<BudgetScope, ScopeBudget>> = {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return out;
+
+  for (const [scope, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (!isBudgetScope(scope)) continue;
+    if (!raw || typeof raw !== 'object') continue;
+    const entry = raw as Record<string, unknown>;
+    const monthly = entry['monthlyUsd'];
+    if (typeof monthly !== 'number' || !Number.isFinite(monthly)) continue;
+    const daily = entry['dailyUsd'];
+    out[scope] = {
+      monthlyUsd: monthly,
+      dailyUsd:
+        typeof daily === 'number' && Number.isFinite(daily) ? daily : null,
+    };
+  }
+  return out;
 }
 
 /** Extract an `{amount: number}` value from a stored AiSettings JSON blob. */

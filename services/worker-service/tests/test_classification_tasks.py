@@ -244,6 +244,16 @@ class TestClassifyDocumentSubjects:
         assert call_payload["legalDocumentId"] == document_id
         assert call_payload["classifiedBy"] == "ai"
 
+        # Classification wrote no ledger row at all before this, so its
+        # spend existed in Redis and nowhere in Postgres.
+        assert mock_rag.generate_completion.call_args.kwargs["scope"] == (
+            "subject_classification"
+        )
+        ledger = call_payload["budgetLedgerEntry"]
+        assert ledger["scope"] == "subject_classification"
+        assert ledger["periodDay"].startswith(ledger["periodYearMonth"])
+        assert ledger["modelRunId"] == "model-run-001"
+
     @patch("src.tasks.classification_generation_tasks.nestjs_client")
     @patch("src.tasks.classification_generation_tasks.rag_client")
     @patch("src.tasks.classification_generation_tasks.db")

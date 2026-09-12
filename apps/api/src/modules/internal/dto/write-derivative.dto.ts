@@ -1,6 +1,7 @@
 import {
   IsString,
   IsNotEmpty,
+  IsIn,
   IsOptional,
   IsUUID,
   IsObject,
@@ -9,6 +10,8 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+
+import { BUDGET_SCOPES } from '../../../common/constants/budget-scopes';
 
 export class ProvenanceRecordDto {
   @IsUUID()
@@ -32,8 +35,13 @@ export class BudgetLedgerEntryDto {
   @IsString()
   periodDay?: string;
 
-  @IsString()
-  @IsNotEmpty()
+  /**
+   * Budget category. Constrained to BUDGET_SCOPES so a typo fails at the
+   * write with a 400 instead of quietly creating a category the admin
+   * panel cannot enumerate or budget — which is how `mcq_generation`,
+   * `essay_prompt_generation` and friends came to exist.
+   */
+  @IsIn([...BUDGET_SCOPES])
   scope!: string;
 
   @IsNumber()

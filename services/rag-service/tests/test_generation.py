@@ -17,6 +17,7 @@ import pytest
 
 from src.core.generation import (
     _check_budget,
+    _track_usage,
     generate_completion,
     get_model_info,
     stream_completion,
@@ -40,6 +41,81 @@ def _chat_completion_response(content: str = "Generated text") -> dict[str, Any]
         ],
         "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
     }
+
+
+def _make_mock_redis(
+    *,
+    monthly_budget: str | None = None,
+    daily_budget: str | None = None,
+    monthly_spend: str | None = None,
+    daily_spend: str | None = None,
+    scoped_monthly_budget: dict[str, str] | None = None,
+    scoped_daily_budget: dict[str, str] | None = None,
+    scoped_monthly_spend: dict[str, str] | None = None,
+    scoped_daily_spend: dict[str, str] | None = None,
+) -> AsyncMock:
+    """Build an AsyncMock redis client returning canned budget values.
+
+    Scoped keys carry a ``:{scope}`` suffix on both the config key and the
+    usage key, matching what the API's syncBudgetToRedis fans out.
+    """
+    scoped_monthly_budget = scoped_monthly_budget or {}
+    scoped_daily_budget = scoped_daily_budget or {}
+    scoped_monthly_spend = scoped_monthly_spend or {}
+    scoped_daily_spend = scoped_daily_spend or {}
+
+    async def _get(key: str) -> str | None:
+        if key == "llm:config:monthly_budget_usd":
+            return monthly_budget
+        if key == "llm:config:daily_budget_usd":
+            return daily_budget
+        if key.startswith("llm:config:monthly_budget_usd:"):
+            return scoped_monthly_budget.get(key.rsplit(":", 1)[1])
+        if key.startswith("llm:config:daily_budget_usd:"):
+            return scoped_daily_budget.get(key.rsplit(":", 1)[1])
+        return None
+
+    async def _hget(key: str, field: str) -> str | None:
+        if field != "estimated_cost_usd":
+            return None
+        if key.startswith("llm:usage:daily:"):
+            rest = key[len("llm:usage:daily:") :]
+            # "YYYY-MM-DD" (global) or "YYYY-MM-DD:{scope}"
+            if ":" in rest:
+                return scoped_daily_spend.get(rest.split(":", 1)[1])
+            return daily_spend
+        if key.startswith("llm:usage:"):
+            rest = key[len("llm:usage:") :]
+            if ":" in rest:
+                return scoped_monthly_spend.get(rest.split(":", 1)[1])
+            return monthly_spend
+        return None
+
+    redis = AsyncMock()
+    redis.get = _get
+    redis.hget = _hget
+
+    # _track_usage pipelines its writes; give it something that behaves.
+    pipe = MagicMock()
+    pipe.execute = AsyncMock(return_value=[])
+    redis.pipeline = MagicMock(return_value=pipe)
+    return redis
+
+
+@pytest.fixture(autouse=True)
+def _unlimited_budget_redis():
+    """Stand-in redis for every generation test.
+
+    Budgets are now checked on the vLLM path too (it had no ceiling at
+    all before), so every generation test reaches Redis. This fixture
+    returns no configured ceilings — i.e. unlimited — which is what these
+    tests assumed implicitly. Tests that exercise budgets patch
+    ``_get_redis`` themselves inside the test body, which wins over this.
+    """
+    with patch(
+        "src.core.generation._get_redis", AsyncMock(return_value=_make_mock_redis())
+    ):
+        yield
 
 
 # ===========================================================================
@@ -613,37 +689,6 @@ class TestGetModelInfo:
 # ===========================================================================
 
 
-def _make_mock_redis(
-    *,
-    monthly_budget: str | None = None,
-    daily_budget: str | None = None,
-    monthly_spend: str | None = None,
-    daily_spend: str | None = None,
-) -> AsyncMock:
-    """Build an AsyncMock redis client returning canned budget values."""
-    redis = AsyncMock()
-
-    async def _get(key: str) -> str | None:
-        if key == "llm:config:monthly_budget_usd":
-            return monthly_budget
-        if key == "llm:config:daily_budget_usd":
-            return daily_budget
-        return None
-
-    async def _hget(key: str, field: str) -> str | None:
-        if field != "estimated_cost_usd":
-            return None
-        if key.startswith("llm:usage:daily:"):
-            return daily_spend
-        if key.startswith("llm:usage:"):
-            return monthly_spend
-        return None
-
-    redis.get = _get
-    redis.hget = _hget
-    return redis
-
-
 class TestCheckBudget:
     """Test the dual monthly/daily budget killswitch in _check_budget."""
 
@@ -725,3 +770,133 @@ class TestCheckBudget:
         )
         with patch("src.core.generation._get_redis", AsyncMock(return_value=redis)):
             await _check_budget()  # malformed daily is treated as unset
+
+
+# ===========================================================================
+# Per-scope budgets
+# ===========================================================================
+
+
+class TestPerScopeBudget:
+    """One exhausted category must not stop the others."""
+
+    @pytest.mark.asyncio
+    async def test_exhausted_scope_blocks_only_that_scope(self) -> None:
+        # case_digest has spent its $5; flashcard has spent nothing. The
+        # global ceiling is nowhere near exhausted.
+        redis = _make_mock_redis(
+            monthly_budget="500",
+            monthly_spend="12.00",
+            scoped_monthly_budget={"case_digest": "5", "flashcard": "5"},
+            scoped_monthly_spend={"case_digest": "5.01", "flashcard": "0.10"},
+        )
+
+        with patch("src.core.generation._get_redis", AsyncMock(return_value=redis)):
+            with pytest.raises(BudgetExceededError) as exc_info:
+                await _check_budget("case_digest")
+            # Flashcards keep running.
+            await _check_budget("flashcard")
+
+        assert exc_info.value.scope == "case_digest"
+        assert exc_info.value.period == "monthly"
+        assert "case_digest" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_raising_a_scope_ceiling_resumes_it(self) -> None:
+        spent = {"case_digest": "5.01"}
+        blocked = _make_mock_redis(
+            scoped_monthly_budget={"case_digest": "5"},
+            scoped_monthly_spend=spent,
+        )
+        with patch("src.core.generation._get_redis", AsyncMock(return_value=blocked)):
+            with pytest.raises(BudgetExceededError):
+                await _check_budget("case_digest")
+
+        raised = _make_mock_redis(
+            scoped_monthly_budget={"case_digest": "50"},
+            scoped_monthly_spend=spent,
+        )
+        with patch("src.core.generation._get_redis", AsyncMock(return_value=raised)):
+            await _check_budget("case_digest")  # must not raise
+
+    @pytest.mark.asyncio
+    async def test_global_ceiling_still_stops_everything(self) -> None:
+        # A generous per-scope cap does not buy past the overall ceiling.
+        redis = _make_mock_redis(
+            monthly_budget="50",
+            monthly_spend="50.0012",
+            scoped_monthly_budget={"flashcard": "500"},
+            scoped_monthly_spend={"flashcard": "0.10"},
+        )
+        with patch("src.core.generation._get_redis", AsyncMock(return_value=redis)):
+            with pytest.raises(BudgetExceededError) as exc_info:
+                await _check_budget("flashcard")
+
+        assert exc_info.value.scope is None  # the global cap, not the scope
+        assert exc_info.value.period == "monthly"
+
+    @pytest.mark.asyncio
+    async def test_scope_daily_cap_reports_daily(self) -> None:
+        redis = _make_mock_redis(
+            scoped_daily_budget={"mcq_question": "1"},
+            scoped_daily_spend={"mcq_question": "1.00"},
+        )
+        with patch("src.core.generation._get_redis", AsyncMock(return_value=redis)):
+            with pytest.raises(BudgetExceededError) as exc_info:
+                await _check_budget("mcq_question")
+
+        assert exc_info.value.scope == "mcq_question"
+        assert exc_info.value.period == "daily"
+
+    @pytest.mark.asyncio
+    async def test_no_scope_checks_only_the_global_ceiling(self) -> None:
+        redis = _make_mock_redis(
+            scoped_monthly_budget={"case_digest": "1"},
+            scoped_monthly_spend={"case_digest": "99"},
+        )
+        with patch("src.core.generation._get_redis", AsyncMock(return_value=redis)):
+            await _check_budget()  # must not raise
+
+    @pytest.mark.asyncio
+    async def test_track_usage_writes_scoped_and_global_counters(self) -> None:
+        redis = _make_mock_redis()
+        with patch("src.core.generation._get_redis", AsyncMock(return_value=redis)):
+            await _track_usage(
+                tokens_in=100, tokens_out=50, model="gpt-4o-mini", scope="flashcard"
+            )
+
+        pipe = redis.pipeline.return_value
+        written = {call.args[0] for call in pipe.hincrby.call_args_list}
+        scoped = [k for k in written if k.endswith(":flashcard")]
+        # One scoped month key and one scoped day key, alongside the globals.
+        assert len(scoped) == 2
+        assert len(written) == 4
+
+    @pytest.mark.asyncio
+    async def test_track_usage_without_scope_writes_globals_only(self) -> None:
+        redis = _make_mock_redis()
+        with patch("src.core.generation._get_redis", AsyncMock(return_value=redis)):
+            await _track_usage(tokens_in=10, tokens_out=5, model="gpt-4o-mini")
+
+        pipe = redis.pipeline.return_value
+        written = {call.args[0] for call in pipe.hincrby.call_args_list}
+        assert len(written) == 2
+
+
+class TestVllmBudgetEnforcement:
+    """The vLLM branch used to bypass budgets entirely."""
+
+    @pytest.mark.asyncio
+    async def test_vllm_generate_completion_respects_the_budget(self) -> None:
+        redis = _make_mock_redis(monthly_budget="50", monthly_spend="50.0012")
+        with patch("src.core.generation._get_redis", AsyncMock(return_value=redis)):
+            with pytest.raises(BudgetExceededError):
+                await generate_completion("System msg", "User msg")
+
+    @pytest.mark.asyncio
+    async def test_vllm_stream_completion_respects_the_budget(self) -> None:
+        redis = _make_mock_redis(monthly_budget="50", monthly_spend="50.0012")
+        with patch("src.core.generation._get_redis", AsyncMock(return_value=redis)):
+            with pytest.raises(BudgetExceededError):
+                async for _ in stream_completion("System msg", "User msg"):
+                    pass

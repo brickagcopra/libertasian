@@ -23,9 +23,10 @@ from typing import Any
 import httpx
 from celery import shared_task
 
+from ..budget_ledger import build_ledger_entry
+from ..budget_scopes import SCOPE_SUBJECT_OUTLINE
 from ..clients import ingestion_db_client as db
-from ..clients import nestjs_client
-from ..clients import rag_client
+from ..clients import nestjs_client, rag_client
 from ..pricing import cost_for
 from ..prompts.subject_outline_generation_v1 import (
     PROMPT_TEMPLATE_VERSION,
@@ -207,6 +208,7 @@ def generate_subject_outline(
             system_prompt=SUBJECT_OUTLINE_GENERATION_SYSTEM_PROMPT,
             user_prompt=user_prompt,
             temperature=0,
+            scope=SCOPE_SUBJECT_OUTLINE,
         )
         latency_ms = int((time.monotonic() - start_time) * 1000)
 
@@ -334,15 +336,13 @@ def generate_subject_outline(
             "confidenceScore": confidence_score,
             "modelRunId": model_run_id,
             "provenanceRecords": provenance_records,
-            "budgetLedgerEntry": {
-                "periodYearMonth": _current_period_year_month(),
-                "scope": "subject_outline_generation",
-                "amountUsd": float(cost_for(model_name, tokens_in, tokens_out)),
-                "tokensIn": tokens_in,
-                "tokensOut": tokens_out,
-                "modelName": model_name,
-                "modelRunId": model_run_id,
-            },
+            "budgetLedgerEntry": build_ledger_entry(
+                scope=SCOPE_SUBJECT_OUTLINE,
+                model_name=model_name,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                model_run_id=model_run_id,
+            ),
         }
 
         result = nestjs_client.write_derivative(write_payload)
@@ -408,9 +408,9 @@ def _resolve_primary_subject(
     primary subject assignment in taxonomy ``study_8``, or ``None`` if
     the document has no primary assignment.
     """
-    from ..clients.db_client import get_connection
-
     import psycopg2.extras
+
+    from ..clients.db_client import get_connection
 
     with get_connection() as conn, \
             conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -451,9 +451,9 @@ def _get_document_ids_by_subject(
       this, an outline re-run can pull in secondary-subject docs the
       primary-subject outline already covers.
     """
-    from ..clients.db_client import get_connection
-
     import psycopg2.extras
+
+    from ..clients.db_client import get_connection
 
     with get_connection() as conn, \
             conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:

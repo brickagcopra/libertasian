@@ -26,9 +26,10 @@ from typing import Any
 import httpx
 from celery import shared_task
 
+from ..budget_ledger import build_ledger_entry
+from ..budget_scopes import SCOPE_MCQ_QUESTION
 from ..clients import ingestion_db_client as db
-from ..clients import nestjs_client
-from ..clients import rag_client
+from ..clients import nestjs_client, rag_client
 from ..pricing import cost_for
 from ..prompts.mcq_generation_v1 import (
     MCQ_GENERATION_SYSTEM_PROMPT,
@@ -164,6 +165,7 @@ def generate_mcq_questions(
             system_prompt=MCQ_GENERATION_SYSTEM_PROMPT,
             user_prompt=user_prompt,
             temperature=0.2,
+            scope=SCOPE_MCQ_QUESTION,
         )
         latency_ms = int((time.monotonic() - start_time) * 1000)
 
@@ -311,15 +313,13 @@ def generate_mcq_questions(
             "modelRunId": model_run_id,
             "derivativeGenerationJobId": job_id,
             "questions": passing_questions,
-            "budgetLedgerEntry": {
-                "periodYearMonth": _current_period_year_month(),
-                "scope": "mcq_generation",
-                "amountUsd": float(cost_for(model_name, tokens_in, tokens_out)),
-                "tokensIn": tokens_in,
-                "tokensOut": tokens_out,
-                "modelName": model_name,
-                "modelRunId": model_run_id,
-            },
+            "budgetLedgerEntry": build_ledger_entry(
+                scope=SCOPE_MCQ_QUESTION,
+                model_name=model_name,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                model_run_id=model_run_id,
+            ),
         }
 
         # Write to NestJS

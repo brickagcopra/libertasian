@@ -1,8 +1,22 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+import { costForUsd } from '../../common/constants/model-pricing';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AiAnswerQueryDto } from './dto';
+
+/** Budget category every call on this surface is charged to. */
+const AI_ANSWER_SCOPE = 'ai_answer';
+
+/** UTC month, matching the Redis monthly usage key rag-service writes. */
+function currentPeriodYearMonth(): string {
+  return new Date().toISOString().slice(0, 7);
+}
+
+/** UTC day, matching the Redis daily usage key rag-service writes. */
+function currentPeriodDay(): string {
+  return new Date().toISOString().slice(0, 10);
+}
 
 export interface AiAnswerSource {
   document_id: string;
@@ -69,6 +83,10 @@ export class AiAnswersService {
     return JSON.stringify({
       query: dto.query,
       max_passages: dto.maxPassages ?? 8,
+      // Names the budget this call is charged to. rag-service defaults to
+      // the same value for /answer, but sending it keeps the caller's
+      // intent explicit and survives a future route that does not.
+      scope: AI_ANSWER_SCOPE,
       ...(dto.documentId ? { document_id: dto.documentId } : {}),
       ...(dto.history?.length ? { history: dto.history } : {}),
     });
@@ -102,6 +120,34 @@ export class AiAnswersService {
 
     const result = (await response.json()) as AiAnswerResponse;
     const latencyMs = Date.now() - startTime;
+
+    // Record the spend. AI answers wrote no budget_ledger row at all, so
+    // their cost existed in Redis and nowhere in Postgres — the two
+    // ledgers could not be reconciled for this category. Non-blocking for
+    // the same reason as the model_run below: an accounting failure must
+    // not lose an answer the user already paid for in latency.
+    this.prisma.budgetLedger
+      .create({
+        data: {
+          periodYearMonth: currentPeriodYearMonth(),
+          periodDay: currentPeriodDay(),
+          scope: AI_ANSWER_SCOPE,
+          amountUsd: costForUsd(
+            result.model_name,
+            result.tokens_in ?? 0,
+            result.tokens_out ?? 0,
+          ),
+          tokensIn: result.tokens_in ?? 0,
+          tokensOut: result.tokens_out ?? 0,
+          modelName: result.model_name,
+        },
+      })
+      .catch((err) =>
+        this.logger.warn(
+          'Failed to record AI answer budget ledger entry',
+          (err as Error).message,
+        ),
+      );
 
     // Record model run for auditing (non-blocking)
     this.prisma.modelRun
