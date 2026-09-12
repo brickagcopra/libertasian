@@ -521,7 +521,9 @@ export default function DerivativesAdminPage() {
             .map(([t, n]) => `${TYPE_LABELS[t] ?? t}: ${n}`)
             .join(', ');
           toast.success(
-            `Started ${data.totalDispatched} jobs (${breakdown}). Skipped ${data.totalSkipped}.`,
+            data.totalRemaining > 0
+              ? `Started ${data.totalDispatched} jobs (${breakdown}). ${data.totalRemaining} still to go — run it again to keep draining.`
+              : `Started ${data.totalDispatched} jobs (${breakdown}). Nothing left missing.`,
           );
         }}
         onError={(text) => {

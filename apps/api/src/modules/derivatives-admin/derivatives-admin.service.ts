@@ -504,41 +504,10 @@ export class DerivativesAdminService {
       return this.enqueueSubjectOutlineGeneration(dto, userId);
     }
 
-    // 2. Query matching documents
-    const docWhere: Prisma.LegalDocumentWhereInput = {};
-    if (dto.sourceId) docWhere.sourceId = dto.sourceId;
-    if (dto.court) docWhere.court = dto.court;
-    if (dto.dateFrom || dto.dateTo) {
-      docWhere.decisionDate = {};
-      if (dto.dateFrom) docWhere.decisionDate.gte = new Date(dto.dateFrom);
-      if (dto.dateTo) docWhere.decisionDate.lte = new Date(dto.dateTo);
-    }
-
-    // 3. Exclude documents that already have an artifact of this type
-    if (!dto.regenerateExisting) {
-      const existingDocIds = await this.prisma.derivativeArtifact.findMany({
-        where: {
-          derivativeType: dto.derivativeType,
-          deletedAt: null,
-        },
-        select: { sourceDocumentId: true },
-      });
-      const excludeIds = existingDocIds
-        .map((a) => a.sourceDocumentId)
-        .filter((id): id is string => id !== null);
-      if (excludeIds.length > 0) {
-        docWhere.id = { notIn: excludeIds };
-      }
-    }
-
-    // 4. Limit to maxCount
+    // 2-4. Select eligible documents (filters + exclusion + limit) in one
+    // query. See findEligibleDocumentIds for why this cannot be Prisma DSL.
     const maxCount = dto.maxCount ?? 50;
-    const documents = await this.prisma.legalDocument.findMany({
-      where: docWhere,
-      select: { id: true },
-      take: maxCount,
-      orderBy: { createdAt: 'desc' },
-    });
+    const documents = await this.findEligibleDocumentIds(dto, maxCount);
 
     if (documents.length === 0) {
       return { enqueuedCount: 0, estimatedCostUsd: 0, jobIds: [] };
@@ -583,6 +552,67 @@ export class DerivativesAdminService {
       estimatedCostUsd,
       jobIds,
     };
+  }
+
+  /**
+   * legal_documents that match the operator's filters and have no live
+   * artifact of `dto.derivativeType`, newest first, capped at `maxCount`.
+   *
+   * This has to be raw SQL. The Prisma version built an exclusion list of
+   * every artifact's sourceDocumentId and handed it to `notIn`, which on
+   * prod (~190k artifacts) fails outright:
+   *
+   *   Query parameter limit exceeded ... negation filters prevent the
+   *   query from being split
+   *
+   * so "Start Generation" 500'd on every press. A NOT EXISTS lets Postgres
+   * do the anti-join against idx (source_document_id, derivative_type)
+   * instead of shipping 190k uuids through the driver.
+   *
+   * Optional filters are expressed as `(${param} IS NULL OR col = ${param})`
+   * rather than composed SQL fragments so the whole thing stays one
+   * parameterized tagged template — no interpolation anywhere (CLAUDE.md).
+   */
+  private async findEligibleDocumentIds(
+    dto: EnqueueGenerationDto,
+    maxCount: number,
+  ): Promise<Array<{ id: string }>> {
+    const sourceId = dto.sourceId ?? null;
+    const court = dto.court ?? null;
+    const dateFrom = dto.dateFrom ?? null;
+    const dateTo = dto.dateTo ?? null;
+
+    // Regenerating deliberately re-picks documents that already have an
+    // artifact, so the anti-join is dropped rather than negated.
+    if (dto.regenerateExisting) {
+      return this.prisma.$queryRaw<Array<{ id: string }>>`
+        SELECT ld.id
+        FROM legal_documents ld
+        WHERE (${sourceId}::uuid IS NULL OR ld.source_id = ${sourceId}::uuid)
+          AND (${court}::text IS NULL OR ld.court = ${court}::text)
+          AND (${dateFrom}::date IS NULL OR ld.decision_date >= ${dateFrom}::date)
+          AND (${dateTo}::date IS NULL OR ld.decision_date <= ${dateTo}::date)
+        ORDER BY ld.created_at DESC
+        LIMIT ${maxCount}
+      `;
+    }
+
+    return this.prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT ld.id
+      FROM legal_documents ld
+      WHERE (${sourceId}::uuid IS NULL OR ld.source_id = ${sourceId}::uuid)
+        AND (${court}::text IS NULL OR ld.court = ${court}::text)
+        AND (${dateFrom}::date IS NULL OR ld.decision_date >= ${dateFrom}::date)
+        AND (${dateTo}::date IS NULL OR ld.decision_date <= ${dateTo}::date)
+        AND NOT EXISTS (
+          SELECT 1 FROM derivative_artifacts da
+          WHERE da.source_document_id = ld.id
+            AND da.derivative_type = ${dto.derivativeType}
+            AND da.deleted_at IS NULL
+        )
+      ORDER BY ld.created_at DESC
+      LIMIT ${maxCount}
+    `;
   }
 
   private async enqueueSubjectOutlineGeneration(

@@ -54,7 +54,12 @@ beforeEach(() => {
   });
   mockPost.mockResolvedValue({
     success: true,
-    data: { dispatchedByType: {}, totalDispatched: 3, totalSkipped: 0 },
+    data: {
+      dispatchedByType: {},
+      totalDispatched: 3,
+      remainingByType: {},
+      totalRemaining: 0,
+    },
   });
 });
 
