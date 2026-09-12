@@ -388,9 +388,9 @@ function s6Sync(S, ct) {
 // Screens + platforms.
 // ---------------------------------------------------------------------------
 const SCREENS = [
-  { slug: '01-past-bar-exams', title: 'Past Bar Exams', caption: '1,500+ Philippine Bar questions, 1953 to 2024.', draw: s1PastBar },
+  { slug: '01-past-bar-exams', title: 'Past Bar Exams', caption: '1,500+ Philippine Bar questions, 2006 to 2022.', draw: s1PastBar },
   { slug: '02-case-digests', title: 'Case Digest', caption: 'Supreme Court digests with provenance to the source.', draw: s2CaseDigest },
-  { slug: '03-codal-reader', title: 'Codal Reader', caption: '1987 Constitution, Rules of Court, Republic Acts.', draw: s3Codal },
+  { slug: '03-codal-reader', title: 'Codal Reader', caption: '1987 Constitution, Rules of Court, Civil and Penal Codes.', draw: s3Codal },
   { slug: '04-ai-assistant', title: 'AI Assistant', caption: `Grounded answers with citations ${EMDASH} never fabricated.`, draw: s4Ai },
   { slug: '05-camera-scan', title: 'Scan', caption: 'Scan a printout. Get a structured digest.', draw: s5Camera },
   { slug: '06-offline-sync', title: 'Sync', caption: 'Offline codal cache. Syncs with libertasian.com on web.', draw: s6Sync },

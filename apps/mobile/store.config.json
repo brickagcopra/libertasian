@@ -31,7 +31,8 @@
 //    (2026-09-12), both measured against prod:
 //      - Past Bar Exams said "from 1953-2024". The corpus holds 97 sittings
 //        and 1,536 questions across only 13 distinct years between 2006 and
-//        2022 (nothing from 2019-2021). Now reads "from 2006-2022".
+//        2022 (nothing from 2011, nor from 2019-2021). Now reads
+//        "from 2006-2022".
 //      - Codal Reader said "Republic Acts", plural. The corpus holds exactly
 //        one (the Revised Corporation Code). The bullet now names the codes
 //        actually shipped: Civil Code, Revised Penal Code, Labor Code,
