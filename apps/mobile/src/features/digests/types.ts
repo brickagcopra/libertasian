@@ -23,10 +23,29 @@ export interface Digest {
   barSubjectSecondary: string | null;
 }
 
+/**
+ * GET /digests. The pagination fields live under `meta` — the previous
+ * top-level `cursor` / `hasNext` shape did not exist on the wire, so
+ * nothing could page even if a caller had tried.
+ */
 export interface DigestsResponse {
   data: Digest[];
-  cursor: string | null;
-  hasNext: boolean;
+  meta: {
+    hasNext: boolean;
+    nextCursor?: string | null;
+    limit?: number;
+    previewMode?: boolean;
+    lockedCount?: number;
+    upgradeRequired?: boolean;
+  };
+}
+
+/** Per-subject counts for the digests browse filter. */
+export interface DigestSubjectSummary {
+  code: string;
+  name: string;
+  taxonomyVersion: string;
+  count: number;
 }
 
 /** Legal document surfaced by /digests/search when no digest matches the query. */
@@ -51,6 +70,7 @@ export interface DigestTextSearchResult {
 export interface DigestFilters {
   cursor?: string;
   limit?: number;
+  subjectCode?: string;
   digestType?: string;
   reviewStatus?: string;
   legalDocumentId?: string;

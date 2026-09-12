@@ -19,6 +19,7 @@ import { TabBar, useTabBarClearance } from '@/components/ui/TabBar';
 import { useFreemiumSurfaces } from '@/features/entitlements/use-freemium-surfaces';
 import { useTabBarNav } from '@/features/navigation/use-tab-bar-nav';
 import {
+  useDigestSubjects,
   useDigests,
   useGenerateDigest,
 } from '../../features/digests/hooks/use-digests';
@@ -166,6 +167,7 @@ export default function DigestsTab() {
   const [digestType, setDigestType] = useState<string | undefined>();
   const [reviewStatus, setReviewStatus] = useState<string | undefined>();
   const [sourceOrigin, setSourceOrigin] = useState<string | undefined>();
+  const [subjectCode, setSubjectCode] = useState<string | undefined>();
   const [sortIndex, setSortIndex] = useState(0);
   const [sortModalVisible, setSortModalVisible] = useState(false);
   const [searchInput, setSearchInput] = useState('');
@@ -185,13 +187,25 @@ export default function DigestsTab() {
       digestType,
       reviewStatus,
       sourceOrigin,
+      subjectCode,
       orderBy: SORT_OPTIONS[sortIndex]?.orderBy ?? 'createdAt',
       orderDirection: SORT_OPTIONS[sortIndex]?.orderDirection ?? 'desc',
     }),
-    [digestType, reviewStatus, sourceOrigin, sortIndex],
+    [digestType, reviewStatus, sourceOrigin, subjectCode, sortIndex],
   );
 
-  const { data, isLoading, isFetching, error, refetch } = useDigests(filters);
+  const {
+    data,
+    isLoading,
+    isFetching,
+    error,
+    refetch,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useDigests(filters);
+
+  const { data: subjects } = useDigestSubjects();
 
   // Server-side full-text search path — activated once the user types.
   const {
@@ -202,13 +216,24 @@ export default function DigestsTab() {
 
   const generateDigest = useGenerateDigest();
 
-  const hasActiveFilters = !!(digestType || reviewStatus || sourceOrigin);
+  const hasActiveFilters = !!(
+    digestType ||
+    reviewStatus ||
+    sourceOrigin ||
+    subjectCode
+  );
 
   const clearFilters = useCallback(() => {
     setDigestType(undefined);
     setReviewStatus(undefined);
     setSourceOrigin(undefined);
+    setSubjectCode(undefined);
   }, []);
+
+  // Paging only applies to the browse list; search is its own surface.
+  const handleEndReached = useCallback(() => {
+    if (!isSearching && hasNextPage && !isFetchingNextPage) fetchNextPage();
+  }, [isSearching, hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   const toggleFilter = useCallback(
     (
@@ -403,6 +428,28 @@ export default function DigestsTab() {
         ))}
       </ScrollView>
 
+      {/* Subject chips */}
+      {(subjects?.length ?? 0) > 0 ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.chipRow}
+        >
+          {subjects
+            ?.filter((subject) => subject.count > 0)
+            .map((subject) => (
+              <FilterChip
+                key={subject.code}
+                label={`${subject.name} (${subject.count})`}
+                active={subjectCode === subject.code}
+                onPress={() =>
+                  toggleFilter(subjectCode, subject.code, setSubjectCode)
+                }
+              />
+            ))}
+        </ScrollView>
+      ) : null}
+
       {/* Review Status chips */}
       <ScrollView
         horizontal
@@ -517,10 +564,17 @@ export default function DigestsTab() {
         keyExtractor={keyExtractor}
         contentContainerStyle={[styles.listContent, { paddingBottom: clearance }]}
         keyboardShouldPersistTaps="handled"
+        onEndReached={handleEndReached}
+        onEndReachedThreshold={0.5}
+        ListFooterComponent={
+          isFetchingNextPage ? (
+            <ActivityIndicator style={styles.footerSpinner} color="#1a56db" />
+          ) : null
+        }
         refreshControl={
           isSearching ? undefined : (
             <RefreshControl
-              refreshing={isFetching && !isLoading}
+              refreshing={isFetching && !isLoading && !isFetchingNextPage}
               onRefresh={() => refetch()}
               colors={['#1a56db']}
             />
@@ -587,6 +641,7 @@ export default function DigestsTab() {
 }
 
 const styles = StyleSheet.create({
+  footerSpinner: { paddingVertical: 16 },
   container: { flex: 1, backgroundColor: '#f3f4f6' },
   loadingState: {
     flex: 1,

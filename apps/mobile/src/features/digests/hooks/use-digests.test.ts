@@ -2,7 +2,12 @@ import { renderHook, waitFor, act } from '@testing-library/react-native';
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { apiClient } from '../../../lib/api-client';
-import { useDigests, useDigest, useGenerateDigest } from './use-digests';
+import {
+  useDigests,
+  useDigest,
+  useDigestSubjects,
+  useGenerateDigest,
+} from './use-digests';
 
 jest.mock('../../../lib/api-client', () => ({
   apiClient: { get: jest.fn(), post: jest.fn() },
@@ -37,6 +42,90 @@ describe('useDigests', () => {
     expect(mockGet).toHaveBeenCalledWith('/digests', {
       params: { digestType: 'full', reviewStatus: 'approved', legalDocumentId: 'ld1' },
     });
+  });
+});
+
+describe('useDigests — paging', () => {
+  it('flattens pages so the screen renders one continuous list', async () => {
+    mockGet
+      .mockResolvedValueOnce({
+        data: [{ id: 'd1' }, { id: 'd2' }],
+        meta: { hasNext: true, nextCursor: 'cursor-1' },
+      })
+      .mockResolvedValueOnce({
+        data: [{ id: 'd3' }],
+        meta: { hasNext: false, nextCursor: null },
+      });
+
+    const { result } = renderHook(() => useDigests({ limit: 2 }), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.data.map((d) => d.id)).toEqual(['d1', 'd2']);
+    expect(result.current.hasNextPage).toBe(true);
+
+    await act(async () => {
+      await result.current.fetchNextPage();
+    });
+
+    await waitFor(() =>
+      expect(result.current.data?.data.map((d) => d.id)).toEqual([
+        'd1',
+        'd2',
+        'd3',
+      ]),
+    );
+    // Page 2 carried the cursor the server sent, which nothing read before.
+    expect(mockGet).toHaveBeenLastCalledWith('/digests', {
+      params: { limit: '2', cursor: 'cursor-1' },
+    });
+    expect(result.current.hasNextPage).toBe(false);
+  });
+
+  it('stops paging when the server says hasNext is false', async () => {
+    mockGet.mockResolvedValueOnce({
+      data: [{ id: 'd1' }],
+      meta: { hasNext: false, nextCursor: 'ignored-cursor' },
+    });
+
+    const { result } = renderHook(() => useDigests(), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.hasNextPage).toBe(false);
+  });
+
+  it('passes subjectCode through', async () => {
+    mockGet.mockResolvedValueOnce({ data: [], meta: { hasNext: false } });
+
+    renderHook(() => useDigests({ subjectCode: 'political_law' }), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(mockGet).toHaveBeenCalled());
+    expect(mockGet).toHaveBeenCalledWith('/digests', {
+      params: { subjectCode: 'political_law' },
+    });
+  });
+});
+
+describe('useDigestSubjects', () => {
+  it('reads the summary endpoint for the default taxonomy', async () => {
+    mockGet.mockResolvedValueOnce([
+      { code: 'political_law', name: 'Political Law', taxonomyVersion: 'study_8', count: 9 },
+    ]);
+
+    const { result } = renderHook(() => useDigestSubjects(), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockGet).toHaveBeenCalledWith('/digests/subjects/summary', {
+      params: { taxonomyVersion: 'study_8' },
+    });
+    expect(result.current.data?.[0]?.count).toBe(9);
   });
 });
 

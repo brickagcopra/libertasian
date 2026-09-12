@@ -16,6 +16,7 @@ describe('DigestsService — search + generateOnDemand (PR2)', () => {
   let prisma: {
     digest: {
       findMany: jest.Mock;
+      count: jest.Mock;
     };
     legalDocument: {
       findMany: jest.Mock;
@@ -25,13 +26,15 @@ describe('DigestsService — search + generateOnDemand (PR2)', () => {
       findFirst: jest.Mock;
       create: jest.Mock;
     };
+    subject: { findMany: jest.Mock };
   };
 
   beforeEach(async () => {
     prisma = {
-      digest: { findMany: jest.fn() },
+      digest: { findMany: jest.fn(), count: jest.fn().mockResolvedValue(0) },
       legalDocument: { findMany: jest.fn(), findUnique: jest.fn() },
       derivativeGenerationJob: { findFirst: jest.fn(), create: jest.fn() },
+      subject: { findMany: jest.fn().mockResolvedValue([]) },
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -130,6 +133,100 @@ describe('DigestsService — search + generateOnDemand (PR2)', () => {
   });
 
   // ---- generateOnDemand() ----
+
+  describe('search — subject filter', () => {
+    it('AND-wraps the subject filter so the needle OR survives', async () => {
+      prisma.digest.findMany.mockResolvedValue([]);
+      prisma.legalDocument.findMany.mockResolvedValue([]);
+
+      await service.search({ q: 'ejusdem', subjectCode: 'civil_law' });
+
+      const where = prisma.digest.findMany.mock.calls[0]![0]!.where;
+      // The needle arms are what search IS — clobbering them with the
+      // subject filter would break search outright.
+      expect(where.OR).toHaveLength(4);
+      expect(where.AND).toEqual([
+        {
+          legalDocument: {
+            subjectAssignments: {
+              some: {
+                subject: { code: 'civil_law', taxonomyVersion: 'study_8' },
+              },
+            },
+          },
+        },
+      ]);
+      // The public-editorial gate is untouched.
+      expect(where.visibility).toBe('public_editorial');
+      expect(where.reviewStatus).toBe('approved');
+    });
+
+    it('adds no AND clause when no subject is requested', async () => {
+      prisma.digest.findMany.mockResolvedValue([]);
+      prisma.legalDocument.findMany.mockResolvedValue([]);
+
+      await service.search({ q: 'ejusdem' });
+
+      expect(prisma.digest.findMany.mock.calls[0]![0]!.where.AND).toBeUndefined();
+    });
+
+    it('filters by subject with no needle at all', async () => {
+      prisma.digest.findMany.mockResolvedValue([]);
+
+      await service.search({ subjectCode: 'labor_law' });
+
+      const where = prisma.digest.findMany.mock.calls[0]![0]!.where;
+      expect(where.OR).toBeUndefined();
+      expect(where.AND).toHaveLength(1);
+    });
+  });
+
+  describe('subjectsSummary', () => {
+    it('counts under the digests list visibility rule, not the derivatives one', async () => {
+      prisma.subject.findMany.mockResolvedValue([
+        {
+          id: 'subj-1',
+          code: 'political_law',
+          name: 'Political Law',
+          taxonomyVersion: 'study_8',
+        },
+      ]);
+      prisma.digest.count.mockResolvedValue(412);
+
+      const result = await service.subjectsSummary();
+
+      expect(result).toEqual([
+        {
+          code: 'political_law',
+          name: 'Political Law',
+          taxonomyVersion: 'study_8',
+          count: 412,
+        },
+      ]);
+
+      const where = prisma.digest.count.mock.calls[0]![0]!.where;
+      // Exactly the list's rule. DerivativesService.caseDigestVisibilityWhere()
+      // also accepts 'ai_generated' and would print chip counts larger than
+      // the list they filter.
+      expect(where.reviewStatus).toBe('approved');
+      expect(where.visibility).toBe('public_editorial');
+      expect(where.legalDocument).toEqual({
+        subjectAssignments: { some: { subjectId: 'subj-1' } },
+      });
+    });
+
+    it('reads the requested taxonomy', async () => {
+      prisma.subject.findMany.mockResolvedValue([]);
+
+      await service.subjectsSummary('bar_admin_6');
+
+      expect(prisma.subject.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { taxonomyVersion: 'bar_admin_6' },
+        }),
+      );
+    });
+  });
 
   describe('generateOnDemand', () => {
     it('throws NotFoundException when the legal document does not exist', async () => {

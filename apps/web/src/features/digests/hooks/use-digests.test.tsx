@@ -14,9 +14,11 @@ vi.mock('@/lib/api-client', () => ({
 import { apiClient } from '@/lib/api-client';
 import {
   useDigests,
+  useDigestSubjects,
   useInfiniteDigests,
   useDigest,
   useGenerateDigest,
+  useSearchDigests,
 } from './use-digests';
 
 const mockGet = vi.mocked(apiClient.get);
@@ -262,6 +264,159 @@ describe('useInfiniteDigests', () => {
 });
 
 // ─── useDigest ───────────────────────────────────────────────────────
+
+describe('useInfiniteDigests — subject filter', () => {
+  beforeEach(() => {
+    mockGet.mockReset();
+  });
+
+  it('passes subjectCode through to the API', async () => {
+    mockGet.mockResolvedValue({
+      success: true,
+      data: [],
+      meta: { hasNext: false },
+    });
+
+    const { result } = renderHook(
+      () => useInfiniteDigests({ subjectCode: 'political_law' }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockGet).toHaveBeenCalledWith('/digests', {
+      params: { limit: '20', subjectCode: 'political_law' },
+    });
+  });
+});
+
+// ─── useSearchDigests ────────────────────────────────────────────────
+
+describe('useSearchDigests', () => {
+  beforeEach(() => {
+    mockGet.mockReset();
+  });
+
+  it('pages on the search envelope\'s own hasMore/cursor fields', async () => {
+    // The search envelope is NOT the list envelope: it carries hasMore /
+    // cursor at the top level, not meta.hasNext / meta.nextCursor. Paging
+    // off the wrong pair silently stops after one page.
+    mockGet
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          results: [{ id: 's1' }],
+          hasMore: true,
+          cursor: 'cursor-1',
+          matchedDocuments: [],
+        },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          results: [{ id: 's2' }],
+          hasMore: false,
+          cursor: null,
+          matchedDocuments: [],
+        },
+      });
+
+    const { result } = renderHook(() => useSearchDigests('estafa'), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.hasNextPage).toBe(true);
+
+    await act(async () => {
+      await result.current.fetchNextPage();
+    });
+
+    await waitFor(() =>
+      expect(
+        result.current.data?.pages.flatMap((p) => p.results).map((r) => r.id),
+      ).toEqual(['s1', 's2']),
+    );
+    expect(mockGet).toHaveBeenLastCalledWith('/digests/search', {
+      params: { limit: '20', q: 'estafa', cursor: 'cursor-1' },
+    });
+    expect(result.current.hasNextPage).toBe(false);
+  });
+
+  it('does not page when hasMore is false even if a cursor is present', async () => {
+    mockGet.mockResolvedValue({
+      success: true,
+      data: {
+        results: [{ id: 's1' }],
+        hasMore: false,
+        cursor: 'stale-cursor',
+        matchedDocuments: [],
+      },
+    });
+
+    const { result } = renderHook(() => useSearchDigests('estafa'), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.hasNextPage).toBe(false);
+  });
+
+  it('passes subjectCode through', async () => {
+    mockGet.mockResolvedValue({
+      success: true,
+      data: { results: [], hasMore: false, cursor: null, matchedDocuments: [] },
+    });
+
+    const { result } = renderHook(
+      () => useSearchDigests('estafa', true, { subjectCode: 'civil_law' }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockGet).toHaveBeenCalledWith('/digests/search', {
+      params: { limit: '20', q: 'estafa', subjectCode: 'civil_law' },
+    });
+  });
+
+  it('stays idle for an empty query', () => {
+    const { result } = renderHook(() => useSearchDigests('   '), {
+      wrapper: createWrapper(),
+    });
+
+    expect(result.current.fetchStatus).toBe('idle');
+    expect(mockGet).not.toHaveBeenCalled();
+  });
+});
+
+describe('useDigestSubjects', () => {
+  beforeEach(() => {
+    mockGet.mockReset();
+  });
+
+  it('reads the summary endpoint and unwraps the envelope', async () => {
+    mockGet.mockResolvedValue({
+      success: true,
+      data: [
+        {
+          code: 'political_law',
+          name: 'Political Law',
+          taxonomyVersion: 'study_8',
+          count: 42,
+        },
+      ],
+    });
+
+    const { result } = renderHook(() => useDigestSubjects(), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockGet).toHaveBeenCalledWith('/digests/subjects/summary', {
+      params: { taxonomyVersion: 'study_8' },
+    });
+    expect(result.current.data?.[0]?.count).toBe(42);
+  });
+});
 
 describe('useDigest', () => {
   beforeEach(() => {

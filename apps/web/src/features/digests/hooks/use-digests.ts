@@ -83,6 +83,7 @@ export function useInfiniteDigests(params?: {
   digestType?: string;
   reviewStatus?: string;
   legalDocumentId?: string;
+  subjectCode?: string;
 }) {
   return useInfiniteQuery({
     queryKey: ['digests', 'infinite', params],
@@ -92,6 +93,7 @@ export function useInfiniteDigests(params?: {
       if (params?.reviewStatus) queryParams['reviewStatus'] = params.reviewStatus;
       if (params?.legalDocumentId)
         queryParams['legalDocumentId'] = params.legalDocumentId;
+      if (params?.subjectCode) queryParams['subjectCode'] = params.subjectCode;
       if (pageParam) queryParams['cursor'] = pageParam;
       const res = await apiClient.get<DigestsListResponse>('/digests', {
         params: queryParams,
@@ -146,18 +148,57 @@ export interface DigestSearchResponse {
   upgradeRequired?: boolean;
 }
 
-export function useSearchDigests(query: string, enabled: boolean = true) {
+export interface DigestSubjectSummary {
+  code: string;
+  name: string;
+  taxonomyVersion: string;
+  count: number;
+}
+
+/** Per-subject counts for the browse filter chips. */
+export function useDigestSubjects(taxonomyVersion = 'study_8') {
   return useQuery({
-    queryKey: ['digests', 'search', query],
+    queryKey: ['digests', 'subjects', taxonomyVersion],
     queryFn: async () => {
-      const params: Record<string, string> = { limit: '20' };
-      if (query) params['q'] = query;
+      const res = await apiClient.get<{
+        success: boolean;
+        data: DigestSubjectSummary[];
+      }>('/digests/subjects/summary', { params: { taxonomyVersion } });
+      return res.data;
+    },
+    staleTime: 5 * 60_000,
+  });
+}
+
+/**
+ * Paginated search.
+ *
+ * The search envelope uses its OWN field names — `hasMore` / `cursor`,
+ * not the list's `meta.hasNext` / `meta.nextCursor`. They are deliberately
+ * read as-is here rather than normalised, so this hook cannot silently
+ * paginate off the wrong field if one contract moves.
+ */
+export function useSearchDigests(
+  query: string,
+  enabled: boolean = true,
+  params?: { subjectCode?: string },
+) {
+  return useInfiniteQuery({
+    queryKey: ['digests', 'search', query, params?.subjectCode],
+    queryFn: async ({ pageParam }) => {
+      const qp: Record<string, string> = { limit: '20' };
+      if (query) qp['q'] = query;
+      if (params?.subjectCode) qp['subjectCode'] = params.subjectCode;
+      if (pageParam) qp['cursor'] = pageParam;
       const res = await apiClient.get<{
         success: boolean;
         data: DigestSearchResponse;
-      }>('/digests/search', { params });
+      }>('/digests/search', { params: qp });
       return res.data;
     },
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) =>
+      lastPage.hasMore ? (lastPage.cursor ?? undefined) : undefined,
     enabled: enabled && query.trim().length > 0,
   });
 }
