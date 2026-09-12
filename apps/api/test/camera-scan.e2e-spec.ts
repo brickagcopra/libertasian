@@ -40,7 +40,8 @@ describe('Camera Scan & Uploads (E2E)', () => {
    * POST /uploads (document upload) is plan-gated (documentUploadsPerMonth:
    * pro+ only), so tests that upload documents need a pro user to get past
    * the quota gate. Camera-scan tests keep free users (free plan includes
-   * cameraScansPerMonth: 3).
+   * cameraScansPerMonth: 1), and each of them registers its own user, so one
+   * scan per test stays inside the allowance.
    */
   async function createProUser(email: string) {
     const user = await createAuthenticatedUser(app, { email });

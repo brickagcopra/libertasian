@@ -91,18 +91,27 @@ const FREE_TIER: FreemiumSurfaces = {
  * `DocumentsController` and `SearchController` gate on — so the client hides
  * exactly what the server refuses, with no reasoning of its own in between.
  *
- * FALLBACK: the `cameraScansPerMonth` / `digestsPerMonth` pair, used ONLY when
- * `previewOnly` is absent from the response. It is not a second opinion; it is
- * what a build talks to when it outlives its API. Store rollouts are gradual
- * and builds live on devices for months, so a shipped client will meet an API
- * without the field. Treating a missing field as "entitled" would put Scan and
- * Study in front of a free account on every older deployment.
+ * FALLBACK: NOT ENTITLED. When `previewOnly` is absent from the response there
+ * is nothing to read it off, so the answer is `false` and the paid surfaces
+ * stay hidden. It is not a second opinion; it is what a build talks to when it
+ * outlives its API. Store rollouts are gradual and builds live on devices for
+ * months, so a shipped client will meet an API without the field, and treating
+ * a missing field as "entitled" would put Scan and Study in front of a free
+ * account on every older deployment.
  *
- * The fallback is an INFERENCE and it is wrong in a case the flag gets right:
- * both quotas are 0 on today's free tier and positive on every paid one, but a
- * plan with generation quotas and no corpus entitlement would read as entitled.
- * That is precisely why the flag exists — never promote the fallback back to
- * primary because it happens to agree on the current plan table.
+ * This USED TO infer entitlement from `cameraScansPerMonth` / `digestsPerMonth`
+ * both being non-zero. That inference died with the free tier's own numbers:
+ * free now grants 1 camera scan and 1 digest generation per month — positive,
+ * so that a free account which exhausts them gets 429 quota_exceeded and never
+ * the 402 App Review reads as a paywall — and the old rule would read every
+ * free account as entitled and render Scan, Study, Bar Exams, Digest Generation
+ * and Workspace with no purchase prompt anywhere.
+ *
+ * The general lesson, which is why no replacement inference is offered: quota
+ * numbers describe HOW MUCH of a metered action an account may perform, and
+ * they never described WHICH CORPORA it may read. `previewOnly` is the only
+ * value that answers the second question, and an old API that cannot answer it
+ * gets the safe answer, not a guess.
  */
 export function surfacesFromQuotas(
   quotas: Record<string, { limit: number }>,
@@ -111,15 +120,22 @@ export function surfacesFromQuotas(
   return isEntitled(quotas, previewOnly) ? ALL_VISIBLE : FREE_TIER;
 }
 
-/** The entitlement decision on its own, shared by both readings above. */
+/**
+ * The entitlement decision on its own, shared by both readings above.
+ *
+ * `quotas` stays in the signature: the callers pass one response object, and
+ * removing the parameter would only move the same destructuring up into them.
+ * Nothing here reads it, and nothing should — see the note on the fallback in
+ * {@link surfacesFromQuotas}.
+ */
 function isEntitled(
-  quotas: Record<string, { limit: number }>,
+  _quotas: Record<string, { limit: number }>,
   previewOnly?: boolean,
 ): boolean {
   if (typeof previewOnly === 'boolean') return !previewOnly;
 
-  const limitOf = (key: string): number => quotas[key]?.limit ?? 0;
-  return limitOf('cameraScansPerMonth') !== 0 || limitOf('digestsPerMonth') !== 0;
+  // No `previewOnly` in the response: an API older than this build. Hide.
+  return false;
 }
 
 /**

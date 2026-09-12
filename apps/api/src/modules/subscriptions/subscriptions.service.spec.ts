@@ -330,14 +330,14 @@ describe('SubscriptionsService', () => {
   describe('getDefaultEntitlements', () => {
     it('should return free tier defaults', () => {
       const ent = service.getDefaultEntitlements('free');
-      // Positive quotas on purpose: exhausting one returns 429 quota_exceeded,
-      // not the 402 that App Review reads as a paywall.
-      expect(ent.aiAnswers).toBe(15);
+      // EVERY quota the free tier grants is positive on purpose: exhausting one
+      // returns 429 quota_exceeded, where a 0 limit returns the 402 App Review
+      // reads as a paywall. One generation a month is a real allowance, not a
+      // placeholder for a hidden feature.
+      expect(ent.aiAnswers).toBe(3);
       expect(ent.searchQueries).toBe(50);
-      // Generation features are hidden from the free client entirely, so a
-      // 0 limit here is unreachable by tapping around.
-      expect(ent.digestsPerMonth).toBe(0);
-      expect(ent.cameraScansPerMonth).toBe(0);
+      expect(ent.digestsPerMonth).toBe(1);
+      expect(ent.cameraScansPerMonth).toBe(1);
       expect(ent.maxMatters).toBe(0);
       // The statutory corpus is free to read, including offline.
       expect(ent.offlineReading).toBe(true);
@@ -397,7 +397,7 @@ describe('SubscriptionsService', () => {
 
     it('should fallback to free for unknown plan code', () => {
       const ent = service.getDefaultEntitlements('platinum');
-      expect(ent.aiAnswers).toBe(15);
+      expect(ent.aiAnswers).toBe(3);
       expect(ent.searchQueries).toBe(50);
     });
 
@@ -439,7 +439,7 @@ describe('SubscriptionsService', () => {
       (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(null);
 
       const ent = await service.getEntitlements('org-1');
-      expect(ent.aiAnswers).toBe(15);
+      expect(ent.aiAnswers).toBe(3);
       expect(ent.searchQueries).toBe(50);
       expect(featureFlagService.isEnabled).toHaveBeenCalledWith(
         'billing.db_plans',
@@ -655,7 +655,7 @@ describe('SubscriptionsService', () => {
         const ent = await service.getEntitlements('org-1');
 
         expect(ent.previewOnly).toBe(true);
-        expect(ent.aiAnswers).toBe(15);
+        expect(ent.aiAnswers).toBe(3);
       }
     });
   });

@@ -244,17 +244,22 @@ export class SubscriptionsService {
         // digest read cap is enforced by selection (3 rotating ids) rather
         // than by a quota counter.
         //
-        // aiAnswers (15) and searchQueries (50) are deliberately LEFT AS
-        // POSITIVE QUOTAS. A quota that exists returns 429 quota_exceeded when
-        // exhausted; a 0 limit returns 402 subscription_required, and 402 is
-        // the status App Review reads as a paywall. Camera scans and digest
-        // GENERATION are 0 because those features are hidden from the free
-        // client entirely, so the 402 is unreachable by tapping around.
+        // EVERY quota the free tier grants is POSITIVE — aiAnswers 3,
+        // searchQueries 50, digestsPerMonth 1, cameraScansPerMonth 1. That is
+        // the point: a quota that exists returns 429 quota_exceeded when
+        // exhausted, while a 0 limit returns 402 subscription_required, and 402
+        // is the status App Review reads as a paywall. Giving the generation
+        // features a real allowance of one per month means a free account that
+        // runs out has always hit a usage limit, never a demand for payment.
+        //
+        // The remaining 0s below are for surfaces the free tier does not have
+        // at all (matters, memos, uploads, workspaces, API keys) and are gated
+        // before any quota counter is consulted.
         return {
-          aiAnswers: 15,
+          aiAnswers: 3,
           searchQueries: 50,
-          digestsPerMonth: 0,
-          cameraScansPerMonth: 0,
+          digestsPerMonth: 1,
+          cameraScansPerMonth: 1,
           maxMatters: 0,
           offlineReading: true,
           teamCollaboration: false,

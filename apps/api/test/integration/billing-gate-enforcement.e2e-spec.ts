@@ -245,8 +245,8 @@ describe('Billing Gate Enforcement — Integration', () => {
         .set('Authorization', `Bearer ${user.accessToken}`);
 
       if (res.status === 200) {
-        // Free base = 15 AI answers + 50 bonus = 65
-        expect(res.body.data.aiAnswers).toBe(65);
+        // Free base = 3 AI answers + 50 bonus = 53
+        expect(res.body.data.aiAnswers).toBe(53);
       }
     });
 
@@ -506,8 +506,8 @@ describe('Billing Gate Enforcement — Integration', () => {
         .set('Authorization', `Bearer ${user.accessToken}`);
 
       if (res.status === 200) {
-        // Should be base free value (15), not 15 + 100
-        expect(res.body.data.aiAnswers).toBe(15);
+        // Should be base free value (3), not 3 + 100
+        expect(res.body.data.aiAnswers).toBe(3);
       }
     });
 
@@ -548,7 +548,7 @@ describe('Billing Gate Enforcement — Integration', () => {
         .set('Authorization', `Bearer ${user.accessToken}`);
 
       if (res.status === 200) {
-        expect(res.body.data.aiAnswers).toBe(15);
+        expect(res.body.data.aiAnswers).toBe(3);
       }
     });
   });

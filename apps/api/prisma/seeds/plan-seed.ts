@@ -63,10 +63,10 @@ export const PLAN_SEEDS: PlanSeedData[] = [
       { billingInterval: 'annual', amount: 0 },
     ],
     entitlements: [
-      { key: 'aiAnswers', valueType: 'numeric', numericValue: 15, description: '15 AI answer credits' },
+      { key: 'aiAnswers', valueType: 'numeric', numericValue: 3, description: '3 AI answer credits' },
       { key: 'searchQueries', valueType: 'numeric', numericValue: 50, description: 'Search queries (50/day)' },
-      { key: 'digestsPerMonth', valueType: 'numeric', numericValue: 0, description: 'Case digest generation' },
-      { key: 'cameraScansPerMonth', valueType: 'numeric', numericValue: 0, description: 'Camera scan digests' },
+      { key: 'digestsPerMonth', valueType: 'numeric', numericValue: 1, description: 'Case digests (1/month)' },
+      { key: 'cameraScansPerMonth', valueType: 'numeric', numericValue: 1, description: 'Camera scans (1/month, OCR preview only)' },
       { key: 'maxMatters', valueType: 'numeric', numericValue: 0, description: 'Active matters' },
       { key: 'offlineReading', valueType: 'boolean', booleanValue: true, description: 'Offline reading of the free statutory corpus' },
       { key: 'teamCollaboration', valueType: 'boolean', booleanValue: false, description: 'Team collaboration' },

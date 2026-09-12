@@ -319,6 +319,11 @@ describe('PricingPageClient', () => {
           // table-— → MUST NOT appear on the card
           { id: 'b-false', key: 'teamCollaboration', valueType: 'boolean', numericValue: null, booleanValue: false, description: 'Team collaboration features' },
           { id: 'n-zero', key: 'auditLogs', valueType: 'numeric', numericValue: 0, booleanValue: null, description: 'Audit log access' },
+          // A quota of ONE is a real allowance, not a near-absent value. The
+          // free tier's camera scan and digest generation are both exactly
+          // this, and dropping them from the card would advertise less than
+          // the API grants.
+          { id: 'n-one', key: 'cameraScansPerMonth', valueType: 'numeric', numericValue: 1, booleanValue: null, description: 'Camera scans (1/month, OCR preview only)' },
         ],
       }),
     ];
@@ -343,6 +348,11 @@ describe('PricingPageClient', () => {
     // (b) none of the "table-—" descriptions appear on the card
     expect(screen.queryByText('Team collaboration features')).not.toBeInTheDocument();
     expect(screen.queryByText('Audit log access')).not.toBeInTheDocument();
+    // (c) a numeric 1 is kept, and its description carries the "1/month" the
+    // reader needs — only 0 means "not included".
+    expect(
+      screen.getByText('Camera scans (1/month, OCR preview only)'),
+    ).toBeInTheDocument();
   });
 });
 
@@ -536,13 +546,27 @@ describe('PricingPageClient — freemium comparison table', () => {
     ['Statutory corpus (Constitution, codals, Rules of Court)', 'Full'],
     ['Supreme Court decisions', false],
     ['Case digests (read)', '3'],
-    ['Case digest generation', false],
+    // One generation per month, shared between POST /digests/generate and the
+    // scan → digest route. Positive and not 0 so that spending it is a 429,
+    // never the 402 that reads as a paywall.
+    ['Case digest generation', '1/month'],
     ['Bar exam questions', false],
     ['Offline mobile reading', true],
-    ['AI answers', '15 credits'],
-    ['Camera scan digests', false],
+    ['AI answers', '3 credits'],
+    ['Camera scan digests', '1/month'],
   ])('free column for "%s" is %s', (name, expected) => {
     expect(rowFor(name as string).free).toBe(expected);
+  });
+
+  it('states the free numbers the API actually grants', () => {
+    // These four are `getDefaultEntitlements('free')` and the free rows in
+    // prisma/seeds/plan-seed.ts. The table is the public claim about them, and
+    // it has been wrong before — it advertised a camera scan the plan did not
+    // grant, and 15 AI answers after the plan dropped to 3.
+    expect(rowFor('AI answers').free).toBe('3 credits');
+    expect(rowFor('Camera scan digests').free).toBe('1/month');
+    expect(rowFor('Case digest generation').free).toBe('1/month');
+    expect(rowFor('Offline mobile reading').free).toBe(true);
   });
 
   it('gives every paid tier what the free tier is refused', () => {
@@ -551,8 +575,6 @@ describe('PricingPageClient — freemium comparison table', () => {
     for (const name of [
       'Supreme Court decisions',
       'Bar exam questions',
-      'Case digest generation',
-      'Camera scan digests',
     ]) {
       const row = rowFor(name);
       expect({ name, edu: row.edu !== false, pro: row.pro !== false }).toEqual({
@@ -609,13 +631,21 @@ describe('free plan card copy matches the comparison table', () => {
     );
   });
 
-  it('drops the two claims the freemium tier made false', () => {
-    // "Browse public legal corpus" promised decisions and bar exams;
-    // "OCR preview" promised a camera scan the free plan no longer has.
+  it('drops the corpus claim the freemium tier made false', () => {
+    // "Browse public legal corpus" promised decisions and bar exams, which are
+    // gated. The camera-scan bullet is BACK, and correctly: free grants one
+    // scan a month (OCR text only), so claiming it is now accurate — what the
+    // card must not do is claim it without a number.
     expect(freePlan.features).not.toContain('Browse public legal corpus');
     for (const feature of freePlan.features) {
-      expect(feature).not.toMatch(/OCR|scan/i);
+      if (/scan/i.test(feature)) expect(feature).toMatch(/1\/month/);
     }
+  });
+
+  it('states the free quotas the API grants, not stale ones', () => {
+    expect(freePlan.features).toContain('3 AI answer credits');
+    expect(freePlan.features).toContain('Case digest generation (1/month)');
+    expect(freePlan.features).toContain('Camera scan (1/month, OCR preview only)');
   });
 
   it('claims nothing the comparison table marks as not included on free', () => {

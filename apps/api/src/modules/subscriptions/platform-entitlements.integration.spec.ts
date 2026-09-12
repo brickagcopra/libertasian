@@ -19,7 +19,7 @@ import { UsageQuotaService } from './usage-quota.service';
  * #443 made the paywall GUARD platform-aware. This file covers the gap it left:
  * every quota path resolved entitlements platform-blind, so a gated free-tier
  * iOS user would still have drawn PRO-SIZED quotas (50 AI answers instead of
- * the free tier's 15). The build-26 reviewer would have seen a free account
+ * the free tier's 3). The build-26 reviewer would have seen a free account
  * with pro limits.
  *
  * Nothing here threads a `platform` argument. That is the point: the value
@@ -117,7 +117,7 @@ describe('platform-aware entitlements (integration)', () => {
         { provide: AuditService, useValue: { log: jest.fn() } },
         {
           provide: FeatureFlagService,
-          // DB plans OFF, so the hardcoded free defaults apply (aiAnswers 15).
+          // DB plans OFF, so the hardcoded free defaults apply (aiAnswers 3).
           useValue: { isEnabled: jest.fn().mockResolvedValue(false) },
         },
         { provide: PlansService, useValue: { resolveEntitlements: jest.fn() } },
@@ -168,9 +168,10 @@ describe('platform-aware entitlements (integration)', () => {
       entitlements.resolveEffectiveEntitlements('org-1'),
     );
 
-    // 15, NOT 50. Before this change the guard would have gated this user
-    // while the quota layer still handed them the pro allowance.
-    expect(ent.aiAnswers).toBe(15);
+    // The free allowance (3), NOT the pro-sized 50. Before this change the
+    // guard would have gated this user while the quota layer still handed them
+    // the pro allowance.
+    expect(ent.aiAnswers).toBe(3);
     expect(ent.searchQueries).toBe(50);
   });
 
@@ -229,7 +230,7 @@ describe('platform-aware entitlements (integration)', () => {
       quota.checkAndIncrement('org-1', 'user-1', 'aiAnswers'),
     );
 
-    expect(onIos.limit).toBe(15);
+    expect(onIos.limit).toBe(3);
   });
 
   it('gives the same call the pro limit when the request has no platform', async () => {
@@ -264,7 +265,7 @@ describe('platform-aware entitlements (integration)', () => {
       'cache:entitlements:org-1:ios',
       'cache:entitlements:org-1:none',
     ]);
-    expect(JSON.parse(redisStore.get('cache:entitlements:org-1:ios')!).aiAnswers).toBe(15);
+    expect(JSON.parse(redisStore.get('cache:entitlements:org-1:ios')!).aiAnswers).toBe(3);
     expect(JSON.parse(redisStore.get('cache:entitlements:org-1:none')!).aiAnswers).toBe(50);
   });
 
@@ -284,7 +285,7 @@ describe('platform-aware entitlements (integration)', () => {
       ),
     ]);
 
-    expect(ios.aiAnswers).toBe(15);
+    expect(ios.aiAnswers).toBe(3);
     expect(headerless.aiAnswers).toBe(50);
   });
 
