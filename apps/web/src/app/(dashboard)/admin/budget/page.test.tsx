@@ -175,3 +175,48 @@ describe('Admin → Budget — per-category ceilings', () => {
     );
   });
 });
+
+describe('Admin → Budget — budget-stop banner', () => {
+  function withSnapshot(monthSpend: number, monthlyCeiling: number) {
+    mockUseBudgetSnapshot.mockReturnValue({
+      isLoading: false,
+      data: {
+        snapshot: {
+          monthlyCeiling,
+          dailyCeiling: null,
+          monthSpend,
+          daySpend: 0,
+          monthUtilizationPercent: (monthSpend / (monthlyCeiling || 1)) * 100,
+          dayUtilizationPercent: null,
+          month: '2026-09',
+          day: '2026-09-12',
+        },
+        byScope: [],
+        scopeBudgets: [],
+      },
+    });
+  }
+
+  it('says generation is stopped once spend reaches the ceiling', () => {
+    withSnapshot(50, 50);
+    renderPage();
+
+    const banner = screen.getByRole('alert');
+    expect(banner.textContent).toContain('AI generation is stopped');
+    expect(banner.textContent).toContain('$50.00');
+  });
+
+  it('stays quiet while there is budget left', () => {
+    withSnapshot(12, 50);
+    renderPage();
+
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('stays quiet when no ceiling is set — $0 means unlimited, not stopped', () => {
+    withSnapshot(0, 0);
+    renderPage();
+
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+});

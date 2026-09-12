@@ -132,6 +132,13 @@ class AnswerResponse(BaseModel):
     )
     model_name: str = Field(default="")
     prompt_template_version: str = Field(default="")
+    # Token usage surfaced so the NestJS gateway can price the `ai_answer`
+    # budget_ledger row. Without it every AI-answer row was written with
+    # amount_usd 0 / tokens 0, so the one category users actually drive
+    # cost nothing on paper. ``0`` for backends that don't expose usage
+    # metadata, and for abstentions taken before generation ran.
+    tokens_in: int = Field(default=0, description="Prompt tokens consumed.")
+    tokens_out: int = Field(default=0, description="Completion tokens produced.")
     passages_used: int = Field(default=0, description="Number of passages packed into context.")
     passages_available: int = Field(
         default=0, description="Total passages retrieved before packing."

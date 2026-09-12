@@ -139,7 +139,7 @@ export class AiSettingsService implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    await this.syncBudgetToRedis();
+    await this.syncBudgetToRedis({ reportDrift: true });
     await this.syncIngestionWindowToRedis();
   }
 
@@ -213,8 +213,17 @@ export class AiSettingsService implements OnModuleInit {
    * Sync both the monthly and daily budget ceilings from the DB to the Redis
    * keys the RAG service reads. If the daily setting row is missing or its
    * amount is null, the daily Redis key is DELETED (meaning "no daily cap").
+   *
+   * `reportDrift` (boot only) logs a warning when the Redis value this sync
+   * is about to overwrite disagrees with the DB. Postgres is the system of
+   * record, so a ceiling set straight into Redis is silently reverted on the
+   * next restart — the cap an operator believed was in place just stops
+   * existing, with nothing in the logs saying so. It is off for the
+   * post-update sync, where a difference is the write we just made.
    */
-  async syncBudgetToRedis(): Promise<void> {
+  async syncBudgetToRedis(
+    opts: { reportDrift?: boolean } = {},
+  ): Promise<void> {
     try {
       const [monthlySetting, dailySetting, perScopeSetting] = await Promise.all([
         this.prisma.aiSettings.findUnique({ where: { key: MONTHLY_BUDGET_SETTING_KEY } }),
@@ -225,12 +234,22 @@ export class AiSettingsService implements OnModuleInit {
       ]);
 
       const monthlyAmount = extractAmount(monthlySetting?.value);
+      if (opts.reportDrift) {
+        await this.warnOnBudgetDrift(BUDGET_REDIS_KEY, 'monthly', monthlyAmount);
+      }
       if (monthlyAmount !== null) {
         await this.redis.set(BUDGET_REDIS_KEY, String(monthlyAmount));
         this.logger.log(`Monthly budget synced to Redis: $${monthlyAmount}`);
       }
 
       const dailyAmount = extractAmount(dailySetting?.value);
+      if (opts.reportDrift) {
+        await this.warnOnBudgetDrift(
+          DAILY_BUDGET_REDIS_KEY,
+          'daily',
+          dailyAmount,
+        );
+      }
       if (dailyAmount !== null) {
         await this.redis.set(DAILY_BUDGET_REDIS_KEY, String(dailyAmount));
         this.logger.log(`Daily budget synced to Redis: $${dailyAmount}`);
@@ -264,6 +283,38 @@ export class AiSettingsService implements OnModuleInit {
       );
     } catch (err) {
       this.logger.error('Failed to sync budget to Redis', err);
+    }
+  }
+
+  /**
+   * Say out loud that a Redis ceiling is about to be overwritten with a
+   * different DB value. Never throws: a drift report must not be able to
+   * stop the boot sync it is reporting on.
+   */
+  private async warnOnBudgetDrift(
+    redisKey: string,
+    label: 'monthly' | 'daily',
+    dbAmount: number | null,
+  ): Promise<void> {
+    try {
+      const raw = await this.redis.get(redisKey);
+      const live = raw === null || raw === '' ? null : Number(raw);
+      if (live === dbAmount) return;
+
+      const fmt = (v: number | null) => (v === null ? '(unset)' : `$${v}`);
+      this.logger.warn(
+        `Budget drift on boot: the Redis ${label} ceiling (${fmt(live)}) ` +
+          `disagrees with the database (${fmt(dbAmount)}); the database ` +
+          'wins and this sync has just resolved it. A ceiling written ' +
+          'straight into Redis does not survive a restart — set budgets ' +
+          'via PATCH /admin/budget/settings (or PATCH ' +
+          '/admin/ai-settings/budget, which also accepts per-category ' +
+          'ceilings).',
+      );
+    } catch (err) {
+      this.logger.debug(
+        `Could not read ${redisKey} for drift detection: ${(err as Error).message}`,
+      );
     }
   }
 

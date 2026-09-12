@@ -21,7 +21,11 @@ from ..config import settings
 from ..core.abstention import check_abstention, generate_abstention_response
 from ..core.clients import embed_query
 from ..core.context import pack_context
-from ..core.generation import generate_completion, get_model_info, stream_completion
+from ..core.generation import (
+    generate_completion_with_usage,
+    get_model_info,
+    stream_completion,
+)
 from ..core.intent import classify_intent
 from ..core.reranking import rerank_passages
 from ..core.retrieval import hybrid_retrieve
@@ -178,12 +182,18 @@ async def generate_answer(request: AnswerRequest) -> AnswerResponse:
 
     # 6. LLM generation
     user_prompt = _build_user_prompt(request, context_bundle.formatted_context, query)
-    generated_text = await generate_completion(
+    # `_with_usage` rather than `generate_completion`: the plain call returns
+    # text only, so the gateway priced every ai_answer ledger row at $0 with
+    # zero tokens. Usage is the whole point of that row.
+    generation = await generate_completion_with_usage(
         system_prompt=SYSTEM_PROMPT,
         user_prompt=user_prompt,
         max_tokens=settings.answer_max_tokens,
         scope="ai_answer",
     )
+    generated_text: str = generation["content"]
+    tokens_in: int = generation["tokens_in"]
+    tokens_out: int = generation["tokens_out"]
 
     # 7. Explicit non-answer check, before validation — a sentinel response has
     # nothing to validate, and scoring it would produce a confidence number for
@@ -202,6 +212,8 @@ async def generate_answer(request: AnswerRequest) -> AnswerResponse:
             abstention_reason=_SENTINEL_ABSTENTION_REASON,
             model_name=model_info["model_name"],
             prompt_template_version=PROMPT_VERSION,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
             passages_used=context_bundle.passages_included,
             passages_available=context_bundle.passages_total,
             degraded=bool(degraded_legs),
@@ -243,6 +255,8 @@ async def generate_answer(request: AnswerRequest) -> AnswerResponse:
             abstention_reason=AbstentionReason.VALIDATION_FAILED,
             model_name=model_info["model_name"],
             prompt_template_version=PROMPT_VERSION,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
             passages_used=context_bundle.passages_included,
             passages_available=context_bundle.passages_total,
             degraded=bool(degraded_legs),
@@ -275,6 +289,8 @@ async def generate_answer(request: AnswerRequest) -> AnswerResponse:
         abstention_reason=None,
         model_name=model_info["model_name"],
         prompt_template_version=PROMPT_VERSION,
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
         passages_used=context_bundle.passages_included,
         passages_available=context_bundle.passages_total,
         degraded=bool(degraded_legs),
