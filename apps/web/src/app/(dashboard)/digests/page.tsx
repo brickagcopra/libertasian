@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   DIGEST_TYPE_VALUES,
@@ -11,6 +11,7 @@ import {
 } from '@libertasian/types';
 
 import {
+  useDigestSubjects,
   useInfiniteDigests,
   useGenerateOnDemand,
   useSearchDigests,
@@ -84,6 +85,7 @@ function formatResetAt(resetAt: string | undefined): string {
 export default function DigestsPage() {
   const [digestType, setDigestType] = useState('all');
   const [reviewStatus, setReviewStatus] = useState('all');
+  const [subjectCode, setSubjectCode] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [toast, setToast] = useState<
@@ -107,14 +109,23 @@ export default function DigestsPage() {
   } = useInfiniteDigests({
     digestType: digestType !== 'all' ? digestType : undefined,
     reviewStatus: reviewStatus !== 'all' ? reviewStatus : undefined,
+    subjectCode: subjectCode ?? undefined,
   });
 
-  // Server-side search path — activated once the user types.
+  // Server-side search path — activated once the user types. Paginated on
+  // the search envelope's own field names (hasMore / cursor).
   const {
     data: searchData,
     isLoading: searchLoading,
     error: searchError,
-  } = useSearchDigests(searchQuery, searchQuery.length > 0);
+    fetchNextPage: fetchNextSearchPage,
+    hasNextPage: hasNextSearchPage,
+    isFetchingNextPage: isFetchingNextSearchPage,
+  } = useSearchDigests(searchQuery, searchQuery.length > 0, {
+    subjectCode: subjectCode ?? undefined,
+  });
+
+  const { data: subjects } = useDigestSubjects();
 
   const generateOnDemand = useGenerateOnDemand();
 
@@ -123,19 +134,55 @@ export default function DigestsPage() {
   const error = isSearching ? searchError : browseError;
 
   const browseMeta = browseData?.pages[0]?.meta;
-  const digests = isSearching
-    ? (searchData?.results ?? [])
-    : (browseData?.pages.flatMap((p) => p.data) ?? []);
+  const searchFirstPage = searchData?.pages[0];
+  // Memoised: captureQueue depends on this array, and a fresh array on
+  // every render would re-create the callback (and the queue) each time.
+  const digests = useMemo(
+    () =>
+      isSearching
+        ? (searchData?.pages.flatMap((p) => p.results) ?? [])
+        : (browseData?.pages.flatMap((p) => p.data) ?? []),
+    [isSearching, searchData, browseData],
+  );
+  // matchedDocuments is an empty-result affordance, so only the first page
+  // can carry one.
   const matchedDocuments: MatchedDocument[] = isSearching
-    ? (searchData?.matchedDocuments ?? [])
+    ? (searchFirstPage?.matchedDocuments ?? [])
     : [];
 
   const previewMode = isSearching
-    ? searchData?.previewMode === true
+    ? searchFirstPage?.previewMode === true
     : browseMeta?.previewMode === true;
   const lockedCount = isSearching
-    ? (searchData?.lockedCount ?? 0)
+    ? (searchFirstPage?.lockedCount ?? 0)
     : (browseMeta?.lockedCount ?? 0);
+
+  const canLoadMore = isSearching ? hasNextSearchPage : hasNextPage;
+  const isLoadingMore = isSearching ? isFetchingNextSearchPage : isFetchingNextPage;
+  const loadMore = isSearching ? fetchNextSearchPage : fetchNextPage;
+
+  // Infinite scroll. A 200px rootMargin fetches the next page just before
+  // the reader reaches the bottom, so 13k digests read as one list. The
+  // "Load more" button below stays as a fallback for keyboard users and
+  // for browsers where the observer never fires.
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel || !canLoadMore) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting && canLoadMore && !isLoadingMore) {
+          loadMore();
+        }
+      },
+      { rootMargin: '200px' },
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [canLoadMore, isLoadingMore, loadMore]);
 
   const setQueue = usePlayQueueStore((s) => s.setQueue);
 
@@ -149,6 +196,8 @@ export default function DigestsPage() {
       setQueue({ ids, cursor: null, filters: null });
       return;
     }
+    // The LAST loaded page's cursor is where playback continues from;
+    // reading page[0] would rewind the queue to the top of the list.
     const pages = browseData?.pages ?? [];
     const lastMeta = pages[pages.length - 1]?.meta;
     const cursor = lastMeta?.hasNext ? (lastMeta.nextCursor ?? null) : null;
@@ -158,9 +207,18 @@ export default function DigestsPage() {
       filters: {
         digestType: digestType !== 'all' ? digestType : undefined,
         reviewStatus: reviewStatus !== 'all' ? reviewStatus : undefined,
+        subjectCode: subjectCode ?? undefined,
       },
     });
-  }, [digests, isSearching, browseData, digestType, reviewStatus, setQueue]);
+  }, [
+    digests,
+    isSearching,
+    browseData,
+    digestType,
+    reviewStatus,
+    subjectCode,
+    setQueue,
+  ]);
 
   const handleGenerate = async (doc: MatchedDocument) => {
     setToast(null);
@@ -224,6 +282,34 @@ export default function DigestsPage() {
           aria-label="Search digests"
         />
       </div>
+
+      {/* Subject chips — narrow both browse and search to one subject. */}
+      {(subjects?.length ?? 0) > 0 && (
+        <div className="flex flex-wrap gap-2" aria-label="Filter by subject">
+          <Button
+            size="sm"
+            variant={subjectCode === null ? 'default' : 'outline'}
+            onClick={() => setSubjectCode(null)}
+          >
+            All subjects
+          </Button>
+          {subjects
+            ?.filter((s) => s.count > 0)
+            .map((s) => (
+              <Button
+                key={s.code}
+                size="sm"
+                variant={subjectCode === s.code ? 'default' : 'outline'}
+                onClick={() =>
+                  setSubjectCode(subjectCode === s.code ? null : s.code)
+                }
+              >
+                {s.name}
+                <span className="ml-1.5 text-xs opacity-70">{s.count}</span>
+              </Button>
+            ))}
+        </div>
+      )}
 
       {/* Filters — only meaningful when browsing, not while actively searching */}
       {!isSearching && (
@@ -352,16 +438,19 @@ export default function DigestsPage() {
           />
         )}
 
-        {!isSearching && hasNextPage && (
-          <div className="flex justify-center pt-2">
-            <Button
-              variant="outline"
-              onClick={() => fetchNextPage()}
-              disabled={isFetchingNextPage}
-            >
-              {isFetchingNextPage ? 'Loading…' : 'Load more'}
-            </Button>
-          </div>
+        {canLoadMore && (
+          <>
+            <div ref={sentinelRef} aria-hidden data-testid="digests-sentinel" />
+            <div className="flex justify-center pt-2">
+              <Button
+                variant="outline"
+                onClick={() => loadMore()}
+                disabled={isLoadingMore}
+              >
+                {isLoadingMore ? 'Loading…' : 'Load more'}
+              </Button>
+            </div>
+          </>
         )}
       </div>
     </div>

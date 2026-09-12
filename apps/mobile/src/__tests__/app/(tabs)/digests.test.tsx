@@ -5,8 +5,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 // Mock dependencies
 const mockUseDigests = jest.fn();
 const mockUseGenerateDigest = jest.fn();
+const mockUseDigestSubjects = jest.fn();
 jest.mock('@/features/digests/hooks/use-digests', () => ({
   useDigests: (...args: unknown[]) => mockUseDigests(...args),
+  useDigestSubjects: (...args: unknown[]) => mockUseDigestSubjects(...args),
   useGenerateDigest: (...args: unknown[]) => mockUseGenerateDigest(...args),
 }));
 
@@ -61,6 +63,7 @@ describe('DigestsTab', () => {
       mutateAsync: jest.fn(),
       isPending: false,
     });
+    mockUseDigestSubjects.mockReturnValue({ data: [] });
   });
 
   it('shows loading state', () => {
@@ -227,6 +230,129 @@ describe('DigestsTab', () => {
 
     expect(queryByText('case digest')).toBeTruthy();
     expect(queryByText('ai generated')).toBeTruthy();
+  });
+
+  describe('paging', () => {
+    function listResult(overrides: Record<string, unknown> = {}) {
+      return {
+        data: { data: [{ id: 'd1', title: 'A', digestType: 'case_digest', reviewStatus: 'approved', confidenceScore: null, facts: null, sourceOrigin: 'official_pipeline', createdAt: '2024-06-15T00:00:00Z' }] },
+        isLoading: false,
+        isFetching: false,
+        refetch: jest.fn(),
+        fetchNextPage: jest.fn(),
+        hasNextPage: true,
+        isFetchingNextPage: false,
+        ...overrides,
+      };
+    }
+
+    it('fetches the next page when the list reaches its end', () => {
+      const fetchNextPage = jest.fn();
+      mockUseDigests.mockReturnValue(listResult({ fetchNextPage }));
+
+      const { UNSAFE_getByType } = render(<DigestsTab />, {
+        wrapper: createWrapper(),
+      });
+
+      const { FlatList } = require('react-native');
+      const list = UNSAFE_getByType(FlatList);
+      expect(list.props.onEndReachedThreshold).toBe(0.5);
+
+      act(() => {
+        list.props.onEndReached();
+      });
+
+      expect(fetchNextPage).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not re-fetch while a page is already in flight', () => {
+      const fetchNextPage = jest.fn();
+      mockUseDigests.mockReturnValue(
+        listResult({ fetchNextPage, isFetchingNextPage: true }),
+      );
+
+      const { UNSAFE_getByType } = render(<DigestsTab />, {
+        wrapper: createWrapper(),
+      });
+      const { FlatList } = require('react-native');
+
+      act(() => {
+        UNSAFE_getByType(FlatList).props.onEndReached();
+      });
+
+      expect(fetchNextPage).not.toHaveBeenCalled();
+    });
+
+    it('does not page past the end', () => {
+      const fetchNextPage = jest.fn();
+      mockUseDigests.mockReturnValue(
+        listResult({ fetchNextPage, hasNextPage: false }),
+      );
+
+      const { UNSAFE_getByType } = render(<DigestsTab />, {
+        wrapper: createWrapper(),
+      });
+      const { FlatList } = require('react-native');
+
+      act(() => {
+        UNSAFE_getByType(FlatList).props.onEndReached();
+      });
+
+      expect(fetchNextPage).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('subject filter', () => {
+    beforeEach(() => {
+      mockUseDigests.mockReturnValue({
+        data: { data: [] },
+        isLoading: false,
+        isFetching: false,
+        refetch: jest.fn(),
+        fetchNextPage: jest.fn(),
+        hasNextPage: false,
+        isFetchingNextPage: false,
+      });
+      mockUseDigestSubjects.mockReturnValue({
+        data: [
+          { code: 'political_law', name: 'Political Law', taxonomyVersion: 'study_8', count: 42 },
+          { code: 'labor_law', name: 'Labor Law', taxonomyVersion: 'study_8', count: 0 },
+        ],
+      });
+    });
+
+    it('renders a chip per subject that has digests, with its count', () => {
+      const { queryByText } = render(<DigestsTab />, {
+        wrapper: createWrapper(),
+      });
+
+      expect(queryByText('Political Law (42)')).toBeTruthy();
+      // A subject with nothing behind it is not offered.
+      expect(queryByText('Labor Law (0)')).toBeNull();
+    });
+
+    it('passes the tapped subject into the list query', () => {
+      const { getByText } = render(<DigestsTab />, { wrapper: createWrapper() });
+
+      fireEvent.press(getByText('Political Law (42)'));
+
+      const filters = mockUseDigests.mock.calls[
+        mockUseDigests.mock.calls.length - 1
+      ][0] as Record<string, unknown>;
+      expect(filters['subjectCode']).toBe('political_law');
+    });
+
+    it('clears the subject when the active chip is tapped again', () => {
+      const { getByText } = render(<DigestsTab />, { wrapper: createWrapper() });
+
+      fireEvent.press(getByText('Political Law (42)'));
+      fireEvent.press(getByText('Political Law (42)'));
+
+      const filters = mockUseDigests.mock.calls[
+        mockUseDigests.mock.calls.length - 1
+      ][0] as Record<string, unknown>;
+      expect(filters['subjectCode']).toBeUndefined();
+    });
   });
 
   describe('full-text search', () => {

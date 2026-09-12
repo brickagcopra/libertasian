@@ -187,6 +187,9 @@ export function useContinuousDigestPlayback(currentId: string): ContinuousPlayba
           const params: Record<string, string> = { limit: '20', cursor };
           if (filters?.digestType) params['digestType'] = filters.digestType;
           if (filters?.reviewStatus) params['reviewStatus'] = filters.reviewStatus;
+          // Must forward the subject too, or continuous playback drifts out
+          // of the subject the reader was browsing after the first page.
+          if (filters?.subjectCode) params['subjectCode'] = filters.subjectCode;
           const res = await apiClient.get<DigestsListResponse>('/digests', {
             params,
           });

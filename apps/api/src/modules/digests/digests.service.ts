@@ -45,6 +45,13 @@ export const FREE_DIGEST_COUNT = 3;
 
 const FREE_DIGEST_CACHE_PREFIX = 'cache:digest-free-ids';
 
+/** Redis prefix + TTL for the per-subject digest counts (5 min). */
+const SUBJECT_SUMMARY_CACHE_PREFIX = 'cache:digests:subjects';
+const SUBJECT_SUMMARY_TTL_SECONDS = 300;
+
+/** Taxonomy the digests browse filter uses unless told otherwise. */
+const DEFAULT_TAXONOMY_VERSION = 'study_8';
+
 /** Seed used for callers with no user identity (anonymous / service reads). */
 const ANONYMOUS_DIGEST_SEED = 'anonymous';
 
@@ -348,6 +355,18 @@ export class DigestsService {
     };
 
     // Apply filters
+    //
+    // The subject filter MUST be AND-wrapped: `where.OR` above carries the
+    // three visibility arms, and assigning a second `OR` (or merging into
+    // it) would either widen the visibility rule — a data leak — or drop
+    // arms the caller is entitled to.
+    const subjectFilter = subjectAssignmentFilter(
+      query.subjectCode,
+      query.taxonomyVersion,
+    );
+    if (subjectFilter) {
+      where.AND = [subjectFilter];
+    }
     if (query.legalDocumentId) {
       where.legalDocumentId = query.legalDocumentId;
     }
@@ -1378,6 +1397,8 @@ export class DigestsService {
       q?: string;
       cursor?: string;
       limit?: number;
+      subjectCode?: string;
+      taxonomyVersion?: string;
     },
     previewOnly = false,
     userId: string | null = null,
@@ -1445,6 +1466,16 @@ export class DigestsService {
         { legalDocument: { grNo: { contains: needle, mode: 'insensitive' } } },
         { legalDocument: { citationText: { contains: needle, mode: 'insensitive' } } },
       ];
+    }
+
+    // AND-wrapped for the same reason as in list(): `where.OR` here is the
+    // needle, and clobbering it would break search outright.
+    const searchSubjectFilter = subjectAssignmentFilter(
+      query.subjectCode,
+      query.taxonomyVersion,
+    );
+    if (searchSubjectFilter) {
+      where.AND = [searchSubjectFilter];
     }
 
     // CARVE-OUT: public_editorial cross-org read; forTenant() would filter out cross-org rows
@@ -1569,4 +1600,117 @@ export class DigestsService {
 
     return { jobId: job.id, status: job.status };
   }
+
+  /**
+   * Per-subject counts for the digests browse filter.
+   *
+   * Counted under the SAME visibility rule the digests list uses -
+   * `visibility = 'public_editorial' AND reviewStatus = 'approved'`.
+   *
+   * Deliberately NOT `DerivativesService.caseDigestVisibilityWhere()`,
+   * which also accepts `reviewStatus = 'ai_generated'`: reusing it here
+   * would print chip counts larger than the list they filter, and an
+   * operator chasing the difference would find nothing wrong with either
+   * query.
+   */
+  async subjectsSummary(
+    taxonomyVersion = 'study_8',
+  ): Promise<
+    Array<{
+      code: string;
+      name: string;
+      taxonomyVersion: string;
+      count: number;
+    }>
+  > {
+    const cacheKey = `${SUBJECT_SUMMARY_CACHE_PREFIX}:${taxonomyVersion}`;
+    if (this.redis) {
+      try {
+        const cached = await this.redis.get(cacheKey);
+        if (cached) {
+          return JSON.parse(cached) as Array<{
+            code: string;
+            name: string;
+            taxonomyVersion: string;
+            count: number;
+          }>;
+        }
+      } catch (err) {
+        this.logger.warn(
+          `Digest subject summary cache read failed: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    const subjects = await this.prisma.subject.findMany({
+      where: { taxonomyVersion },
+      orderBy: [{ displayOrder: 'asc' }, { name: 'asc' }],
+      select: { id: true, code: true, name: true, taxonomyVersion: true },
+    });
+
+    const counts = await Promise.all(
+      subjects.map((subject) =>
+        // CARVE-OUT: public_editorial cross-org read; forTenant() would filter out cross-org rows
+        this.prisma.digest.count({
+          where: {
+            visibility: 'public_editorial',
+            reviewStatus: 'approved',
+            legalDocument: {
+              subjectAssignments: { some: { subjectId: subject.id } },
+            },
+          },
+        }),
+      ),
+    );
+
+    const result = subjects.map((subject, i) => ({
+      code: subject.code,
+      name: subject.name,
+      taxonomyVersion: subject.taxonomyVersion,
+      count: counts[i] ?? 0,
+    }));
+
+    if (this.redis) {
+      try {
+        await this.redis.set(
+          cacheKey,
+          JSON.stringify(result),
+          SUBJECT_SUMMARY_TTL_SECONDS,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Digest subject summary cache write failed: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    return result;
+  }
+}
+
+/**
+ * `{ legalDocument: { subjectAssignments: { some: { subject: {...} } } } }`
+ * for a subject-code filter, or null when no subject was requested.
+ *
+ * Returned as a standalone clause so callers can AND it onto a `where`
+ * that already owns its `OR` (visibility arms in list(), the search
+ * needle in search()).
+ */
+function subjectAssignmentFilter(
+  subjectCode: string | undefined,
+  taxonomyVersion: string | undefined,
+): Prisma.DigestWhereInput | null {
+  if (!subjectCode) return null;
+  return {
+    legalDocument: {
+      subjectAssignments: {
+        some: {
+          subject: {
+            code: subjectCode,
+            taxonomyVersion: taxonomyVersion ?? DEFAULT_TAXONOMY_VERSION,
+          },
+        },
+      },
+    },
+  };
 }

@@ -299,6 +299,24 @@ export class DigestsController {
     };
   }
 
+  /**
+   * Declared BEFORE `@Get(':id')` — Nest matches routes in declaration
+   * order, so a later registration would be shadowed by the id route and
+   * this would 400 on ParseUUIDPipe instead of answering.
+   */
+  @Get('subjects/summary')
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  @ApiOperation({
+    summary:
+      'Per-subject counts of approved public-editorial digests, for the browse filter',
+  })
+  async subjectsSummary(@Query('taxonomyVersion') taxonomyVersion?: string) {
+    const summary = await this.digestsService.subjectsSummary(
+      taxonomyVersion === 'bar_admin_6' ? 'bar_admin_6' : 'study_8',
+    );
+    return { success: true, data: summary };
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get a digest by ID' })
   async findById(

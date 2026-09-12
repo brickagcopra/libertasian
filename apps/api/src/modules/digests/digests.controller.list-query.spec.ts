@@ -30,6 +30,15 @@ describe('DigestsController — list query whitelisting (HTTP)', () => {
       items: [],
       meta: { hasNext: false, nextCursor: undefined, limit: 20 },
     }),
+    search: jest.fn().mockResolvedValue({
+      results: [],
+      hasMore: false,
+      cursor: null,
+      matchedDocuments: [],
+    }),
+    subjectsSummary: jest.fn().mockResolvedValue([
+      { code: 'political_law', name: 'Political Law', taxonomyVersion: 'study_8', count: 12 },
+    ]),
   };
 
   beforeAll(async () => {
@@ -82,6 +91,8 @@ describe('DigestsController — list query whitelisting (HTTP)', () => {
 
   beforeEach(() => {
     digestsService.list.mockClear();
+    digestsService.search.mockClear();
+    digestsService.subjectsSummary.mockClear();
   });
 
   it('returns 200 for GET /digests?orderBy=createdAt&orderDirection=desc', async () => {
@@ -110,5 +121,62 @@ describe('DigestsController — list query whitelisting (HTTP)', () => {
       .get('/digests')
       .query({ totallyUnknownParam: '1' })
       .expect(400);
+  });
+
+  it('passes subjectCode + taxonomyVersion through to list()', async () => {
+    await request(app.getHttpServer())
+      .get('/digests')
+      .query({ subjectCode: 'political_law', taxonomyVersion: 'bar_admin_6' })
+      .expect(200);
+
+    expect(digestsService.list).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      expect.objectContaining({
+        subjectCode: 'political_law',
+        taxonomyVersion: 'bar_admin_6',
+      }),
+      false,
+    );
+  });
+
+  it('passes subjectCode through to search()', async () => {
+    await request(app.getHttpServer())
+      .get('/digests/search')
+      .query({ q: 'ejusdem', subjectCode: 'civil_law' })
+      .expect(200);
+
+    expect(digestsService.search).toHaveBeenCalledWith(
+      expect.objectContaining({ q: 'ejusdem', subjectCode: 'civil_law' }),
+      false,
+      expect.any(String),
+    );
+  });
+
+  it('rejects an unknown taxonomyVersion with 400', async () => {
+    await request(app.getHttpServer())
+      .get('/digests')
+      .query({ taxonomyVersion: 'study_99' })
+      .expect(400);
+  });
+
+  it('serves GET /digests/subjects/summary without hitting the :id route', async () => {
+    // Declaration order matters: if this route were registered after
+    // @Get(':id'), ParseUUIDPipe would answer 400 for "subjects".
+    const res = await request(app.getHttpServer())
+      .get('/digests/subjects/summary')
+      .expect(200);
+
+    expect(res.body.data[0].code).toBe('political_law');
+    expect(digestsService.subjectsSummary).toHaveBeenCalledWith('study_8');
+  });
+
+  it('honours taxonomyVersion on the summary route', async () => {
+    await request(app.getHttpServer())
+      .get('/digests/subjects/summary')
+      .query({ taxonomyVersion: 'bar_admin_6' })
+      .expect(200);
+
+    expect(digestsService.subjectsSummary).toHaveBeenCalledWith('bar_admin_6');
   });
 });

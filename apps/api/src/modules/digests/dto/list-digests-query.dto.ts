@@ -1,4 +1,13 @@
-import { IsIn, IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator';
+import {
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 
@@ -12,6 +21,8 @@ export const DIGEST_TYPE_VALUES = [
   'reviewer_note',
   'study_digest',
 ] as const;
+
+export const TAXONOMY_VERSION_VALUES = ['study_8', 'bar_admin_6'] as const;
 
 export const REVIEW_STATUS_VALUES = [
   'draft',
@@ -71,6 +82,23 @@ export class ListDigestsQueryDto {
   @IsIn(['private', 'org', 'public_editorial'])
   @IsOptional()
   visibility?: string;
+
+  @ApiPropertyOptional({
+    description: 'Subject code to filter by (e.g., "political_law")',
+  })
+  @IsString()
+  @IsOptional()
+  @MaxLength(40)
+  subjectCode?: string;
+
+  @ApiPropertyOptional({
+    description: 'Taxonomy version for subject code lookup',
+    enum: [...TAXONOMY_VERSION_VALUES],
+    default: 'study_8',
+  })
+  @IsIn([...TAXONOMY_VERSION_VALUES])
+  @IsOptional()
+  taxonomyVersion?: string;
 
   @ApiPropertyOptional({
     description: 'Sort field',

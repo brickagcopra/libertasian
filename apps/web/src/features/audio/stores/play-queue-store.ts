@@ -17,6 +17,7 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 export interface DigestQueueFilters {
   digestType?: string;
   reviewStatus?: string;
+  subjectCode?: string;
 }
 
 interface PlayQueueState {

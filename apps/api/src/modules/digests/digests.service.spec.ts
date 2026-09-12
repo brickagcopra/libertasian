@@ -475,6 +475,63 @@ describe('DigestsService', () => {
       );
     });
 
+    it('AND-wraps the subject filter so the visibility arms survive', async () => {
+      prismaService.digest.findMany.mockResolvedValue([]);
+
+      await service.list('user-1', 'org-1', {
+        ...listQuery,
+        subjectCode: 'political_law',
+      });
+
+      const call = prismaService.digest.findMany.mock.calls[0]![0]!;
+      // The three visibility arms are untouched. Assigning the subject
+      // filter to `where.OR` instead would widen them into a data leak.
+      expect(call.where.OR).toEqual([
+        { userId: 'user-1', visibility: 'private' },
+        { organizationId: 'org-1', visibility: 'org' },
+        { visibility: 'public_editorial', reviewStatus: 'approved' },
+      ]);
+      expect(call.where.AND).toEqual([
+        {
+          legalDocument: {
+            subjectAssignments: {
+              some: {
+                subject: {
+                  code: 'political_law',
+                  taxonomyVersion: 'study_8',
+                },
+              },
+            },
+          },
+        },
+      ]);
+    });
+
+    it('honours an explicit taxonomyVersion on the subject filter', async () => {
+      prismaService.digest.findMany.mockResolvedValue([]);
+
+      await service.list('user-1', 'org-1', {
+        ...listQuery,
+        subjectCode: 'political_law',
+        taxonomyVersion: 'bar_admin_6',
+      });
+
+      const call = prismaService.digest.findMany.mock.calls[0]![0]!;
+      expect(
+        call.where.AND[0].legalDocument.subjectAssignments.some.subject
+          .taxonomyVersion,
+      ).toBe('bar_admin_6');
+    });
+
+    it('adds no AND clause when no subject is requested', async () => {
+      prismaService.digest.findMany.mockResolvedValue([]);
+
+      await service.list('user-1', 'org-1', listQuery);
+
+      const call = prismaService.digest.findMany.mock.calls[0]![0]!;
+      expect(call.where.AND).toBeUndefined();
+    });
+
     it('should return paginated results with hasNext false', async () => {
       const mockDigests = [
         { ...mockDigest, id: 'digest-1', legalDocument: mockLegalDocument },
@@ -1442,6 +1499,34 @@ describe('DigestsService', () => {
 
         expect(result.meta).not.toHaveProperty('previewMode');
         expect(prismaService.$queryRaw).not.toHaveBeenCalled();
+      });
+
+      it('a subject filter cannot escape preview mode', async () => {
+        // The preview arm returns before any filter is read. A free caller
+        // asking for a subject must still get their same three ids and
+        // hasNext:false — not a filtered, paginable slice of the corpus.
+        prismaService.digest.count.mockResolvedValue(13_259);
+        prismaService.digest.findMany.mockResolvedValue(freeDigests);
+
+        const result = await service.list(
+          'user-1',
+          'org-1',
+          { subjectCode: 'political_law', limit: 50 },
+          true,
+        );
+
+        expect(result.items).toHaveLength(3);
+        expect(result.meta).toMatchObject({
+          previewMode: true,
+          hasNext: false,
+          upgradeRequired: true,
+        });
+
+        const call = prismaService.digest.findMany.mock.calls[0]![0]!;
+        expect(call.where).toEqual({
+          id: { in: ['digest-free-1', 'digest-free-2', 'digest-free-3'] },
+        });
+        expect(call.where.AND).toBeUndefined();
       });
     });
 
