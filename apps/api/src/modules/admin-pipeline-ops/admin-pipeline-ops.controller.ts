@@ -160,7 +160,8 @@ export class AdminPipelineOpsController {
         limit: maxLimit(perTypeLimits),
         dispatchedByType: data.dispatchedByType,
         totalDispatched: data.totalDispatched,
-        totalSkipped: data.totalSkipped,
+        remainingByType: data.remainingByType,
+        totalRemaining: data.totalRemaining,
       },
     });
 

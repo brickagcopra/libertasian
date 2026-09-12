@@ -4,6 +4,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const dispatchCitations = vi.hoisted(() => vi.fn());
 const fillMissing = vi.hoisted(() => vi.fn());
+const mockToastSuccess = vi.hoisted(() => vi.fn());
+const mockToastError = vi.hoisted(() => vi.fn());
+
+vi.mock('sonner', () => ({
+  toast: { success: mockToastSuccess, error: mockToastError },
+}));
 const sweepNow = vi.hoisted(() => vi.fn());
 
 vi.mock('@/lib/api-client', () => ({
@@ -249,6 +255,61 @@ describe('Derivatives admin — pipeline ops buttons', () => {
     // Limits seeded from missingCount when below 200.
     const essay = call.perTypeLimits.find((p) => p.type === 'essay_prompt');
     expect(essay?.limit).toBe(12);
+  });
+
+  it('reports what is left rather than a fake skip count', () => {
+    // The old copy read "Skipped 600" off a scan-window number that meant
+    // nothing. It now reports the real corpus-wide remainder.
+    fillMissing.mockImplementation(
+      (
+        _vars: unknown,
+        opts?: { onSuccess?: (d: unknown) => void },
+      ) =>
+        opts?.onSuccess?.({
+          dispatchedByType: { essay_prompt: 12 },
+          totalDispatched: 12,
+          remainingByType: { essay_prompt: 604 },
+          totalRemaining: 604,
+        }),
+    );
+
+    renderPage(<DerivativesAdminPage />);
+    fireEvent.click(
+      screen.getByRole('button', { name: /fill gaps in study material/i }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: /^Dispatch 28 jobs/i }));
+
+    expect(mockToastSuccess).toHaveBeenCalledWith(
+      expect.stringContaining('604 still to go'),
+    );
+    expect(mockToastSuccess).not.toHaveBeenCalledWith(
+      expect.stringContaining('Skipped'),
+    );
+  });
+
+  it('says nothing is left when the gap is fully drained', () => {
+    fillMissing.mockImplementation(
+      (
+        _vars: unknown,
+        opts?: { onSuccess?: (d: unknown) => void },
+      ) =>
+        opts?.onSuccess?.({
+          dispatchedByType: { essay_prompt: 12 },
+          totalDispatched: 12,
+          remainingByType: { essay_prompt: 0 },
+          totalRemaining: 0,
+        }),
+    );
+
+    renderPage(<DerivativesAdminPage />);
+    fireEvent.click(
+      screen.getByRole('button', { name: /fill gaps in study material/i }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: /^Dispatch 28 jobs/i }));
+
+    expect(mockToastSuccess).toHaveBeenCalledWith(
+      expect.stringContaining('Nothing left missing'),
+    );
   });
 
   it('opens the publish-high-confidence dialog and fires the mutation on confirm', () => {

@@ -200,7 +200,13 @@ export interface BackfillCitationsResponse {
 export interface BackfillMissingDerivativesResponse {
   dispatchedByType: Record<string, number>;
   totalDispatched: number;
-  totalSkipped: number;
+  /**
+   * What is still missing per type after this dispatch. Replaces the old
+   * `totalSkipped`, which counted the scan window rather than anything
+   * actually passed over.
+   */
+  remainingByType: Record<string, number>;
+  totalRemaining: number;
 }
 
 export interface CitationsBackfillPlanResponse {

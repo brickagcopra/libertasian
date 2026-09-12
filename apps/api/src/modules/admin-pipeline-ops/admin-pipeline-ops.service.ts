@@ -86,7 +86,18 @@ export interface MissingDerivativesPlan {
 export interface BackfillMissingDerivativesResult {
   dispatchedByType: Record<BackfillMissingDerivativeType, number>;
   totalDispatched: number;
-  totalSkipped: number;
+  /**
+   * Documents still missing each derivative after this dispatch - i.e.
+   * work deliberately left for the next run because the per-type limit
+   * was smaller than the gap.
+   *
+   * This replaces `totalSkipped`, which reported the size of the scan
+   * window minus what was dispatched. With the old newest-N scan that
+   * number said "Skipped 600" on a corpus where nothing had been skipped
+   * and 600 older documents were simply unreachable.
+   */
+  remainingByType: Record<BackfillMissingDerivativeType, number>;
+  totalRemaining: number;
 }
 
 export interface AutoPromoteSweepResult {
@@ -266,8 +277,10 @@ export class AdminPipelineOpsService {
    * For each entry in perTypeLimits, find legal_documents that have no
    * derivative_artifact for that type (deletedAt IS NULL) and INSERT a
    * pending derivative_generation_jobs row per doc. Per-type limits let
-   * the operator prioritize (e.g. essays 500, mcqs 100). Skip count
-   * tracks docs that already had an artifact and were not enqueued.
+   * the operator prioritize (e.g. essays 500, mcqs 100). The remaining
+   * count is what is still missing after the dispatch - the work this
+   * run deliberately left behind because the limit was smaller than the
+   * gap.
    */
   async backfillMissingDerivatives(
     perTypeLimits: ReadonlyArray<{
@@ -280,19 +293,18 @@ export class AdminPipelineOpsService {
       BACKFILL_MISSING_DERIVATIVE_TYPES.map((t) => [t, 0]),
     ) as Record<BackfillMissingDerivativeType, number>;
 
+    const remainingByType = Object.fromEntries(
+      BACKFILL_MISSING_DERIVATIVE_TYPES.map((t) => [t, 0]),
+    ) as Record<BackfillMissingDerivativeType, number>;
+
     let totalDispatched = 0;
-    let totalSkipped = 0;
+    let totalRemaining = 0;
 
     for (const { type: derivativeType, limit } of perTypeLimits) {
-      const candidates = await this.findDocsMissingDerivative(
-        derivativeType,
-        limit,
-      );
-      const scanned = candidates.scanned;
-      const docs = candidates.docs;
+      const docs = await this.findDocsMissingDerivative(derivativeType, limit);
 
       if (docs.length === 0) {
-        totalSkipped += scanned;
+        // Nothing eligible anywhere in the corpus - this type has no gap.
         continue;
       }
 
@@ -314,7 +326,19 @@ export class AdminPipelineOpsService {
 
       dispatchedByType[derivativeType] = docs.length;
       totalDispatched += docs.length;
-      totalSkipped += scanned - docs.length;
+
+      // Only worth a second count when this run filled its limit;
+      // otherwise everything eligible was drained and nothing is left.
+      // The rows just inserted are in-flight, so the recount already
+      // excludes them.
+      if (docs.length >= limit) {
+        const remaining = await this.countDocsMissingDerivativeAcrossCorpus(
+          derivativeType,
+          await this.prisma.legalDocument.count(),
+        );
+        remainingByType[derivativeType] = remaining;
+        totalRemaining += remaining;
+      }
     }
 
     if (totalDispatched > 0) {
@@ -330,7 +354,25 @@ export class AdminPipelineOpsService {
       }
     }
 
-    return { dispatchedByType, totalDispatched, totalSkipped };
+    if (totalDispatched > 0) {
+      // The 60s plan cache still holds the pre-dispatch gap counts;
+      // leaving it shows an operator who just queued 200 jobs the same
+      // "missing" numbers they started from.
+      try {
+        await this.redis.del(DERIVATIVES_PLAN_CACHE_KEY);
+      } catch (err) {
+        this.logger.warn(
+          `Failed to invalidate ${DERIVATIVES_PLAN_CACHE_KEY}; the preview may be up to ${PLAN_CACHE_TTL_SECONDS}s stale: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    return {
+      dispatchedByType,
+      totalDispatched,
+      remainingByType,
+      totalRemaining,
+    };
   }
 
   async runAutoPromoteSweep(): Promise<AutoPromoteSweepResult> {
@@ -381,9 +423,15 @@ export class AdminPipelineOpsService {
   }
 
   /**
-   * Total docs in the corpus that have neither a live artifact of this
-   * type nor an in-flight job for it. Two cheap lookups + a Set diff
-   * keeps this Prisma-DSL only (no raw SQL).
+   * Count of documents across the WHOLE corpus with neither a live
+   * artifact of this type nor an in-flight job for it.
+   *
+   * Shares its NOT EXISTS shape with findDocsMissingDerivative so the
+   * preview number and the number a dispatch can actually reach cannot
+   * drift. The previous Prisma version pulled every distinct
+   * sourceDocumentId for the type into memory (~190k artifacts on prod)
+   * and subtracted set sizes, which also over-counted whenever an
+   * artifact pointed at a document that no longer exists.
    */
   private async countDocsMissingDerivativeAcrossCorpus(
     derivativeType: BackfillMissingDerivativeType,
@@ -391,85 +439,63 @@ export class AdminPipelineOpsService {
   ): Promise<number> {
     if (totalCorpusDocs === 0) return 0;
 
-    const [withArtifact, inFlight] = await Promise.all([
-      this.prisma.derivativeArtifact.findMany({
-        where: {
-          derivativeType,
-          deletedAt: null,
-          sourceDocumentId: { not: null },
-        },
-        select: { sourceDocumentId: true },
-        distinct: ['sourceDocumentId'],
-      }),
-      this.prisma.derivativeGenerationJob.findMany({
-        where: {
-          derivativeType,
-          status: { in: [...IN_FLIGHT_DERIVATIVE_STATUSES] },
-          sourceDocumentId: { not: null },
-        },
-        select: { sourceDocumentId: true },
-        distinct: ['sourceDocumentId'],
-      }),
-    ]);
-
-    const taken = new Set<string>();
-    for (const row of withArtifact) {
-      if (row.sourceDocumentId) taken.add(row.sourceDocumentId);
-    }
-    for (const row of inFlight) {
-      if (row.sourceDocumentId) taken.add(row.sourceDocumentId);
-    }
-
-    return Math.max(0, totalCorpusDocs - taken.size);
+    const rows = await this.prisma.$queryRaw<Array<{ missing: bigint }>>`
+      SELECT COUNT(*)::bigint AS missing
+      FROM legal_documents ld
+      WHERE NOT EXISTS (
+          SELECT 1 FROM derivative_artifacts da
+          WHERE da.source_document_id = ld.id
+            AND da.derivative_type = ${derivativeType}
+            AND da.deleted_at IS NULL
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM derivative_generation_jobs j
+          WHERE j.source_document_id = ld.id
+            AND j.derivative_type = ${derivativeType}
+            AND j.status = ANY(${[...IN_FLIGHT_DERIVATIVE_STATUSES]}::text[])
+        )
+    `;
+    return Number(rows[0]?.missing ?? 0);
   }
 
+  /**
+   * The next `limit` documents that still need `derivativeType`, oldest
+   * first.
+   *
+   * The previous implementation read the newest `limit` documents and
+   * then filtered them, so once the newest 200 were all covered it
+   * reported "Enqueued 0 / Skipped 600" on every press and older gaps
+   * were permanently unreachable. Selecting the eligible rows directly -
+   * over the whole corpus, ordered created_at ASC - drains the backlog
+   * oldest-first instead, and a run returning fewer than `limit` rows
+   * genuinely means the gap is that small.
+   *
+   * Exclusions are unchanged: a live artifact of this type, or a job in
+   * IN_FLIGHT_DERIVATIVE_STATUSES. failed/completed jobs stay
+   * re-enqueueable exactly as before.
+   */
   private async findDocsMissingDerivative(
     derivativeType: BackfillMissingDerivativeType,
     limit: number,
-  ): Promise<{ docs: Array<{ id: string }>; scanned: number }> {
-    // Most-recent-first so a re-fire keeps catching freshly-ingested
-    // documents before chewing through the whole backlog.
-    const recent = await this.prisma.legalDocument.findMany({
-      take: limit,
-      orderBy: { createdAt: 'desc' },
-      select: { id: true },
-    });
-    if (recent.length === 0) {
-      return { docs: [], scanned: 0 };
-    }
-
-    const ids = recent.map((d) => d.id);
-    const existing = await this.prisma.derivativeArtifact.findMany({
-      where: {
-        derivativeType,
-        sourceDocumentId: { in: ids },
-        deletedAt: null,
-      },
-      select: { sourceDocumentId: true },
-    });
-    const taken = new Set(
-      existing
-        .map((a) => a.sourceDocumentId)
-        .filter((v): v is string => v !== null),
-    );
-
-    // Also exclude docs that already have a pending/running job for this
-    // type — a re-fire shouldn't double-enqueue work the worker is about
-    // to claim.
-    const inFlight = await this.prisma.derivativeGenerationJob.findMany({
-      where: {
-        derivativeType,
-        sourceDocumentId: { in: ids },
-        status: { in: [...IN_FLIGHT_DERIVATIVE_STATUSES] },
-      },
-      select: { sourceDocumentId: true },
-    });
-    for (const j of inFlight) {
-      if (j.sourceDocumentId) taken.add(j.sourceDocumentId);
-    }
-
-    const docs = recent.filter((d) => !taken.has(d.id));
-    return { docs, scanned: recent.length };
+  ): Promise<Array<{ id: string }>> {
+    return this.prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT ld.id
+      FROM legal_documents ld
+      WHERE NOT EXISTS (
+          SELECT 1 FROM derivative_artifacts da
+          WHERE da.source_document_id = ld.id
+            AND da.derivative_type = ${derivativeType}
+            AND da.deleted_at IS NULL
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM derivative_generation_jobs j
+          WHERE j.source_document_id = ld.id
+            AND j.derivative_type = ${derivativeType}
+            AND j.status = ANY(${[...IN_FLIGHT_DERIVATIVE_STATUSES]}::text[])
+        )
+      ORDER BY ld.created_at ASC
+      LIMIT ${limit}
+    `;
   }
 
   private async tryReadCache<T>(key: string): Promise<T | null> {

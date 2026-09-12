@@ -31,7 +31,15 @@ function makePrisma() {
     subject: {
       findMany: jest.fn().mockResolvedValue([]),
     },
+    // Document eligibility is raw SQL: the Prisma `notIn` version blew the
+    // driver's parameter limit on prod's ~190k artifacts.
+    $queryRaw: jest.fn().mockResolvedValue([]),
   };
+}
+
+/** The SQL text a $queryRaw tagged template produced, for assertions. */
+function rawSql(call: unknown[]): string {
+  return (call[0] as TemplateStringsArray).join('?');
 }
 
 function makeAiSettings() {
@@ -211,10 +219,7 @@ describe('DerivativesAdminService', () => {
     });
 
     it('creates pending jobs for matching documents', async () => {
-      prisma.legalDocument.findMany.mockResolvedValue([
-        { id: 'doc-1' },
-        { id: 'doc-2' },
-      ]);
+      prisma.$queryRaw.mockResolvedValue([{ id: 'doc-1' }, { id: 'doc-2' }]);
       prisma.derivativeGenerationJob.create
         .mockResolvedValueOnce({ id: 'job-1' })
         .mockResolvedValueOnce({ id: 'job-2' });
@@ -235,7 +240,7 @@ describe('DerivativesAdminService', () => {
       // A 50-job case_digest batch is cents, not dollars; the old table
       // said $4.00 for the same batch and made the preview useless.
       const docs = Array.from({ length: 50 }, (_, i) => ({ id: `doc-${i}` }));
-      prisma.legalDocument.findMany.mockResolvedValue(docs);
+      prisma.$queryRaw.mockResolvedValue(docs);
       prisma.derivativeGenerationJob.create.mockResolvedValue({ id: 'job-x' });
 
       const result = await service.enqueueGeneration(
@@ -248,11 +253,12 @@ describe('DerivativesAdminService', () => {
       expect(result.estimatedCostUsd).toBeLessThan(0.2);
     });
 
-    it('excludes documents with existing artifacts when regenerateExisting=false', async () => {
-      prisma.derivativeArtifact.findMany.mockResolvedValue([
-        { sourceDocumentId: 'doc-1' },
-      ]);
-      prisma.legalDocument.findMany.mockResolvedValue([{ id: 'doc-2' }]);
+    it('excludes documents with existing artifacts via NOT EXISTS, not notIn', async () => {
+      // The prod failure this replaces: the old code read every artifact's
+      // sourceDocumentId and passed the list to `notIn`, which dies with
+      // "Query parameter limit exceeded ... negation filters prevent the
+      // query from being split" — so Start Generation 500'd every time.
+      prisma.$queryRaw.mockResolvedValue([{ id: 'doc-2' }]);
       prisma.derivativeGenerationJob.create.mockResolvedValue({ id: 'job-1' });
 
       await service.enqueueGeneration(
@@ -260,19 +266,66 @@ describe('DerivativesAdminService', () => {
         'user-1',
       );
 
-      // Should query artifacts to find exclusions
-      expect(prisma.derivativeArtifact.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
-            derivativeType: 'case_digest',
-            deletedAt: null,
-          }),
-        }),
+      // No id list is ever materialised.
+      expect(prisma.derivativeArtifact.findMany).not.toHaveBeenCalled();
+      expect(prisma.legalDocument.findMany).not.toHaveBeenCalled();
+
+      const sql = rawSql(prisma.$queryRaw.mock.calls[0]!);
+      expect(sql).toContain('NOT EXISTS');
+      expect(sql).toContain('FROM derivative_artifacts da');
+      expect(sql).toContain('da.deleted_at IS NULL');
+      expect(sql).not.toContain('NOT IN');
+      // derivative_type is a bound parameter, never interpolated.
+      expect(prisma.$queryRaw.mock.calls[0]).toContain('case_digest');
+    });
+
+    it('drops the NOT EXISTS clause when regenerateExisting=true', async () => {
+      prisma.$queryRaw.mockResolvedValue([{ id: 'doc-1' }]);
+      prisma.derivativeGenerationJob.create.mockResolvedValue({ id: 'job-1' });
+
+      await service.enqueueGeneration(
+        { derivativeType: 'case_digest', regenerateExisting: true },
+        'user-1',
       );
+
+      const sql = rawSql(prisma.$queryRaw.mock.calls[0]!);
+      expect(sql).not.toContain('NOT EXISTS');
+      expect(sql).toContain('FROM legal_documents ld');
+    });
+
+    it('applies sourceId / court / decisionDate filters as bound parameters', async () => {
+      prisma.$queryRaw.mockResolvedValue([{ id: 'doc-1' }]);
+      prisma.derivativeGenerationJob.create.mockResolvedValue({ id: 'job-1' });
+
+      await service.enqueueGeneration(
+        {
+          derivativeType: 'case_digest',
+          sourceId: '11111111-1111-1111-1111-111111111111',
+          court: 'Supreme Court',
+          dateFrom: '2020-01-01',
+          dateTo: '2020-12-31',
+          maxCount: 7,
+        },
+        'user-1',
+      );
+
+      const call = prisma.$queryRaw.mock.calls[0]!;
+      const sql = rawSql(call);
+      expect(sql).toContain('ld.source_id');
+      expect(sql).toContain('ld.court');
+      expect(sql).toContain('ld.decision_date >=');
+      expect(sql).toContain('ld.decision_date <=');
+      // Values arrive as parameters; none of them appear in the SQL text.
+      expect(sql).not.toContain('Supreme Court');
+      expect(call).toContain('11111111-1111-1111-1111-111111111111');
+      expect(call).toContain('Supreme Court');
+      expect(call).toContain('2020-01-01');
+      expect(call).toContain('2020-12-31');
+      expect(call).toContain(7);
     });
 
     it('respects maxCount limit', async () => {
-      prisma.legalDocument.findMany.mockResolvedValue([{ id: 'doc-1' }]);
+      prisma.$queryRaw.mockResolvedValue([{ id: 'doc-1' }]);
       prisma.derivativeGenerationJob.create.mockResolvedValue({ id: 'job-1' });
 
       await service.enqueueGeneration(
@@ -280,11 +333,10 @@ describe('DerivativesAdminService', () => {
         'user-1',
       );
 
-      expect(prisma.legalDocument.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          take: 5,
-        }),
-      );
+      const call = prisma.$queryRaw.mock.calls[0]!;
+      expect(rawSql(call)).toContain('LIMIT');
+      // LIMIT is the last bound parameter.
+      expect(call[call.length - 1]).toBe(5);
     });
 
     it('rejects if generation is globally disabled', async () => {

@@ -35,7 +35,16 @@ describe('AdminPipelineOpsController', () => {
     legalDocument: { findMany: jest.Mock; count: jest.Mock };
     citation: { groupBy: jest.Mock };
     auditLog: { findFirst: jest.Mock; count: jest.Mock };
+    $queryRaw: jest.Mock;
   };
+
+  /**
+   * Eligible documents, per derivative type, as the NOT EXISTS query
+   * would return them (already filtered, oldest first).
+   */
+  let eligibleDocs: Record<string, Array<{ id: string }>>;
+  /** Corpus-wide gap per derivative type, as the COUNT query returns it. */
+  let missingCounts: Record<string, number>;
 
   const adminUser: JwtPayload = {
     sub: '00000000-0000-0000-0000-0000000000aa',
@@ -85,7 +94,30 @@ describe('AdminPipelineOpsController', () => {
         findFirst: jest.fn().mockResolvedValue(null),
         count: jest.fn().mockResolvedValue(0),
       },
+      // Both derivative-gap queries are raw SQL now: Prisma's `notIn` /
+      // Set-diff versions could not express an anti-join without shipping
+      // every artifact id through the driver. Dispatch the mock on the SQL
+      // text the tagged template produces.
+      $queryRaw: jest.fn(
+        (strings: TemplateStringsArray, ...values: unknown[]) => {
+          const sql = strings.join('?');
+          const derivativeType = values[0] as string;
+
+          if (sql.includes('COUNT(*)')) {
+            return Promise.resolve([
+              { missing: BigInt(missingCounts[derivativeType] ?? 0) },
+            ]);
+          }
+
+          const limit = values[3] as number;
+          const docs = eligibleDocs[derivativeType] ?? [];
+          return Promise.resolve(docs.slice(0, limit));
+        },
+      ),
     };
+
+    eligibleDocs = {};
+    missingCounts = {};
 
     const config = {
       get: jest.fn((key: string, fallback: unknown) => {
@@ -250,23 +282,10 @@ describe('AdminPipelineOpsController', () => {
   });
 
   describe('POST /admin/derivatives/backfill-missing', () => {
-    it('skips docs that already have an artifact and enqueues only missing ones', async () => {
-      // 4 candidate docs, 2 already have an artifact for essay_prompt.
-      prisma.legalDocument.findMany.mockResolvedValue([
-        { id: 'doc-1' },
-        { id: 'doc-2' },
-        { id: 'doc-3' },
-        { id: 'doc-4' },
-      ]);
-      prisma.derivativeArtifact.findMany.mockImplementation(({ where }) => {
-        if (where.derivativeType === 'essay_prompt') {
-          return Promise.resolve([
-            { sourceDocumentId: 'doc-1' },
-            { sourceDocumentId: 'doc-3' },
-          ]);
-        }
-        return Promise.resolve([]);
-      });
+    it('enqueues exactly the documents the eligibility query returns', async () => {
+      // doc-1 and doc-3 already have an essay_prompt artifact, so the
+      // NOT EXISTS query never returns them.
+      eligibleDocs['essay_prompt'] = [{ id: 'doc-2' }, { id: 'doc-4' }];
 
       const result = await controller.backfillMissingDerivatives(
         { types: ['essay_prompt'], limit: 4 },
@@ -277,9 +296,14 @@ describe('AdminPipelineOpsController', () => {
       expect('dryRun' in result).toBe(false);
       if (!('dryRun' in result)) {
         expect(result.data.totalDispatched).toBe(2);
-        expect(result.data.totalSkipped).toBe(2);
+        // Fewer rows came back than the limit, so the gap is drained.
+        expect(result.data.totalRemaining).toBe(0);
+        expect(result.data.remainingByType['essay_prompt']).toBe(0);
         expect(result.data.dispatchedByType['essay_prompt']).toBe(2);
       }
+
+      // The old newest-N scan is gone: no Prisma document scan at all.
+      expect(prisma.legalDocument.findMany).not.toHaveBeenCalled();
 
       // create called only for the two missing docs
       expect(prisma.derivativeGenerationJob.create).toHaveBeenCalledTimes(2);
@@ -307,10 +331,87 @@ describe('AdminPipelineOpsController', () => {
             types: ['essay_prompt'],
             limit: 4,
             totalDispatched: 2,
-            totalSkipped: 2,
+            totalRemaining: 0,
           }),
         }),
       );
+    });
+
+    it('selects eligible docs across the whole corpus, oldest first', async () => {
+      // The regression: with the newest 200 already covered, the old
+      // implementation reported "Enqueued 0 / Skipped 600" forever and the
+      // older backlog was unreachable. The query must not have a scan
+      // window at all, and it must drain oldest-first.
+      eligibleDocs['essay_prompt'] = [{ id: 'old-doc' }];
+
+      await controller.backfillMissingDerivatives(
+        { types: ['essay_prompt'], limit: 200 },
+        adminUser,
+        ip,
+      );
+
+      const call = prisma.$queryRaw.mock.calls.find((c) =>
+        (c[0] as TemplateStringsArray).join('?').includes('SELECT ld.id'),
+      );
+      expect(call).toBeDefined();
+      const sql = (call![0] as TemplateStringsArray).join('?');
+      expect(sql).toContain('ORDER BY ld.created_at ASC');
+      expect(sql).toContain('FROM derivative_artifacts da');
+      expect(sql).toContain('FROM derivative_generation_jobs j');
+      expect(sql).not.toContain('NOT IN');
+      // type, type, in-flight statuses, limit
+      expect(call![1]).toBe('essay_prompt');
+      expect(call![3]).toEqual([
+        'pending',
+        'dispatched',
+        'running',
+        'validating',
+      ]);
+      expect(call![4]).toBe(200);
+    });
+
+    it('reports what is still missing when the run fills its limit', async () => {
+      prisma.legalDocument.count.mockResolvedValue(50_000);
+      eligibleDocs['flashcard'] = [{ id: 'a' }, { id: 'b' }];
+      missingCounts['flashcard'] = 4_312;
+
+      const result = await controller.backfillMissingDerivatives(
+        { types: ['flashcard'], limit: 2 },
+        adminUser,
+        ip,
+      );
+
+      if (!('dryRun' in result)) {
+        expect(result.data.totalDispatched).toBe(2);
+        // Not a scan-window artefact: this is the real corpus-wide gap
+        // left for the next run.
+        expect(result.data.remainingByType['flashcard']).toBe(4_312);
+        expect(result.data.totalRemaining).toBe(4_312);
+      }
+    });
+
+    it('drops the plan cache after a dispatch so the preview is not stale', async () => {
+      eligibleDocs['mcq_question'] = [{ id: 'doc-9' }];
+
+      await controller.backfillMissingDerivatives(
+        { types: ['mcq_question'], limit: 10 },
+        adminUser,
+        ip,
+      );
+
+      expect(redis.del).toHaveBeenCalledWith(
+        'cache:admin:missing-derivatives-plan',
+      );
+    });
+
+    it('leaves the plan cache alone when nothing was dispatched', async () => {
+      await controller.backfillMissingDerivatives(
+        { types: ['mcq_question'], limit: 10 },
+        adminUser,
+        ip,
+      );
+
+      expect(redis.del).not.toHaveBeenCalled();
     });
 
     it('defaults to all three types when types is omitted', async () => {
@@ -330,13 +431,12 @@ describe('AdminPipelineOpsController', () => {
     });
 
     it('accepts perTypeLimits with explicit per-type caps', async () => {
-      prisma.legalDocument.findMany.mockImplementation(({ take }) =>
-        Promise.resolve(
-          Array.from({ length: take as number }, (_, i) => ({
-            id: `doc-${i}`,
-          })),
-        ),
-      );
+      eligibleDocs['essay_prompt'] = Array.from({ length: 20 }, (_, i) => ({
+        id: `essay-doc-${i}`,
+      }));
+      eligibleDocs['mcq_question'] = Array.from({ length: 20 }, (_, i) => ({
+        id: `mcq-doc-${i}`,
+      }));
 
       await controller.backfillMissingDerivatives(
         {
@@ -349,11 +449,16 @@ describe('AdminPipelineOpsController', () => {
         ip,
       );
 
-      // Each per-type entry should hit findMany once with its own take.
-      const findManyCalls = prisma.legalDocument.findMany.mock.calls;
-      expect(findManyCalls.length).toBe(2);
-      expect(findManyCalls[0][0].take).toBe(5);
-      expect(findManyCalls[1][0].take).toBe(2);
+      // Each per-type entry runs its own eligibility query with its own
+      // LIMIT — the last bound parameter of the SELECT.
+      const selectCalls = prisma.$queryRaw.mock.calls.filter((c) =>
+        (c[0] as TemplateStringsArray).join('?').includes('SELECT ld.id'),
+      );
+      expect(selectCalls.length).toBe(2);
+      expect(selectCalls[0]![1]).toBe('essay_prompt');
+      expect(selectCalls[0]![4]).toBe(5);
+      expect(selectCalls[1]![1]).toBe('mcq_question');
+      expect(selectCalls[1]![4]).toBe(2);
 
       // Audit metadata reflects the per-type shape.
       const auditCall = auditService.log.mock.calls[0]![0];
@@ -403,8 +508,9 @@ describe('AdminPipelineOpsController', () => {
       prisma.legalDocument.count.mockResolvedValue(40);
       // No artifacts and no in-flight jobs → all 40 docs are missing for
       // every type.
-      prisma.derivativeArtifact.findMany.mockResolvedValue([]);
-      prisma.derivativeGenerationJob.findMany.mockResolvedValue([]);
+      missingCounts['essay_prompt'] = 40;
+      missingCounts['mcq_question'] = 40;
+      missingCounts['flashcard'] = 40;
 
       const result = await controller.backfillMissingDerivatives(
         { dryRun: true },
@@ -443,17 +549,11 @@ describe('AdminPipelineOpsController', () => {
   describe('GET /admin/derivatives/backfill-missing/plan', () => {
     it('returns per-type missing counts and totals', async () => {
       prisma.legalDocument.count.mockResolvedValue(20);
-      prisma.derivativeArtifact.findMany.mockImplementation(({ where }) => {
-        if (where.derivativeType === 'essay_prompt') {
-          // 5 docs already have essay_prompt artifacts.
-          return Promise.resolve(
-            Array.from({ length: 5 }, (_, i) => ({
-              sourceDocumentId: `doc-${i}`,
-            })),
-          );
-        }
-        return Promise.resolve([]);
-      });
+      // 5 of the 20 docs already have an essay_prompt artifact; the other
+      // two types have none.
+      missingCounts['essay_prompt'] = 15;
+      missingCounts['mcq_question'] = 20;
+      missingCounts['flashcard'] = 20;
       prisma.auditLog.findFirst.mockResolvedValue({
         createdAt: new Date('2026-04-26T11:00:00.000Z'),
         actorUserId: 'user-abc',
