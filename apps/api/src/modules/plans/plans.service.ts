@@ -411,9 +411,12 @@ export class PlansService {
       throw new NotFoundException(`Plan not found: ${id}`);
     }
 
-    // Check if any active subscriptions use this plan
+    // Count by planCode, not planId. planCode is the authoritative link
+    // (every resolver reads it); subscriptions.plan_id is a nullable
+    // convenience relation that many live rows do not carry, so a planId
+    // count under-reports and would let an in-use plan be archived.
     const activeSubCount = await this.prisma.subscription.count({
-      where: { planId: id, status: 'active' },
+      where: { planCode: existing.code, status: 'active' },
     });
     if (activeSubCount > 0) {
       throw new BadRequestException(

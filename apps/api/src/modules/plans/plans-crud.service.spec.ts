@@ -330,6 +330,37 @@ describe('PlansService — CRUD Operations', () => {
 
       await expect(service.archive('plan-1')).rejects.toThrow(BadRequestException);
     });
+
+    // Regression: prod has 41 of 57 subscriptions with plan_id IS NULL (33 of
+    // them active), because the plans table was re-seeded with fresh UUIDs.
+    // A guard that counts by planId sees zero of those rows and happily
+    // archives a plan that thousands of accounts are actively subscribed to.
+    // planCode is the authoritative link, so the guard must count by code.
+    it('refuses to archive when an active subscription carries only planCode (planId NULL)', async () => {
+      const activeSubs = [
+        { id: 'sub-1', planCode: 'pro', planId: null, status: 'active' },
+        { id: 'sub-2', planCode: 'free', planId: null, status: 'active' },
+        { id: 'sub-3', planCode: 'pro', planId: null, status: 'canceled' },
+      ];
+      (prisma.plan.findUnique as jest.Mock).mockResolvedValue(mockPlan);
+      // Count against a real row set instead of a canned number, so the guard
+      // is judged on the `where` clause it actually builds.
+      (prisma.subscription.count as jest.Mock).mockImplementation(
+        ({ where }: { where: Record<string, unknown> }) =>
+          Promise.resolve(
+            activeSubs.filter((sub) =>
+              Object.entries(where).every(
+                ([field, value]) => sub[field as keyof typeof sub] === value,
+              ),
+            ).length,
+          ),
+      );
+
+      await expect(service.archive('plan-1')).rejects.toThrow(
+        /Cannot archive plan with 1 active subscription/,
+      );
+      expect(prisma.plan.update).not.toHaveBeenCalled();
+    });
   });
 
   // ---- createPrice ----

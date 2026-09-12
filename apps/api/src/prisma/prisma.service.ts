@@ -2,6 +2,7 @@ import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/commo
 import { PrismaClient } from '@prisma/client';
 
 import { handlePrismaQueryEvent } from './query-profiler';
+import { linkSubscriptionPlanId } from './subscription-plan-link';
 
 const isDev = process.env['NODE_ENV'] === 'development';
 
@@ -10,6 +11,11 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   private readonly logger = new Logger(PrismaService.name);
 
   private static readonly TENANT_CLIENT_CACHE_MAX = 1024;
+
+  /** TTL for the plan code -> plan id memo used when back-filling plan_id. */
+  private static readonly PLAN_ID_CACHE_TTL_MS = 60_000;
+  private readonly planIdCache = new Map<string, { planId: string | null; expiresAt: number }>();
+
   private readonly tenantClientCache = new Map<
     string,
     ReturnType<PrismaService['buildTenantClient']>
@@ -36,6 +42,73 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         });
       this.logger.log('Query profiling enabled (development mode)');
     }
+
+    this.installSubscriptionPlanLink();
+  }
+
+  /**
+   * Single chokepoint that populates `subscriptions.plan_id` from the
+   * authoritative `plan_code` on create/upsert, so the twelve call sites that
+   * write only `planCode` do not have to. See ./subscription-plan-link.ts.
+   *
+   * Prisma 6 has no `$use` middleware, and `$extends` returns a NEW client
+   * rather than mutating this one, so the extended delegate is spliced back
+   * onto this instance:
+   *  - `subscription` covers every `prisma.subscription.*` call site;
+   *  - `$transaction` is swapped for the extended client's so that writes made
+   *    through an interactive transaction's `tx.subscription` are covered too
+   *    (billing.service.ts:509 and store-purchases.service.ts:692 do exactly
+   *    that). Only the Subscription delegate is extended, so this changes no
+   *    other model's behaviour.
+   */
+  private installSubscriptionPlanLink(): void {
+    const handler = linkSubscriptionPlanId(
+      (planCode) => this.lookupPlanIdByCode(planCode),
+      { warn: (message: string) => this.logger.warn(message) },
+    );
+
+    const extended = this.$extends({
+      query: {
+        subscription: {
+          create: handler,
+          createMany: handler,
+          createManyAndReturn: handler,
+          upsert: handler,
+        },
+      },
+    });
+
+    Object.defineProperty(this, 'subscription', {
+      get: () => extended.subscription,
+      configurable: true,
+    });
+    Object.defineProperty(this, '$transaction', {
+      value: extended.$transaction.bind(extended),
+      configurable: true,
+      writable: true,
+    });
+  }
+
+  /**
+   * Plan codes map to stable ids, but the plans table has been re-seeded
+   * before — hence a short TTL rather than a permanent memo. Both hits and
+   * misses are cached so an unknown code cannot hammer the database.
+   */
+  private async lookupPlanIdByCode(planCode: string): Promise<string | null> {
+    const now = Date.now();
+    const cached = this.planIdCache.get(planCode);
+    if (cached && cached.expiresAt > now) return cached.planId;
+
+    const plan = await this.plan.findUnique({
+      where: { code: planCode },
+      select: { id: true },
+    });
+    const planId = plan?.id ?? null;
+    this.planIdCache.set(planCode, {
+      planId,
+      expiresAt: now + PrismaService.PLAN_ID_CACHE_TTL_MS,
+    });
+    return planId;
   }
 
   async onModuleInit() {

@@ -323,10 +323,21 @@ model OrganizationMember {
   @@map("organization_members")
 }
 
+// planCode is AUTHORITATIVE. Every entitlement/quota resolver, guard and
+// archive check reads plan_code; plan_id is a nullable convenience relation
+// kept in sync for display, joins and reporting only.
+// Never filter subscriptions through the `plan` relation (`where: { plan: {...} }`)
+// — that silently drops every row whose plan_id is still NULL. Filter on
+// planCode and use the relation only for `include`/`select`.
+// plan_id is populated automatically for new rows by the Prisma extension in
+// PrismaService (see linkSubscriptionPlanId); it is best-effort and may be
+// NULL if the code has no plans row.
 model Subscription {
   id                     String    @id @default(uuid()) @db.Uuid
   organizationId         String    @map("organization_id") @db.Uuid
+  /// Authoritative plan link — read by every resolver.
   planCode               String    @map("plan_code") @db.VarChar(50)
+  /// Convenience relation for display/reporting. Nullable; never filter on it.
   planId                 String?   @map("plan_id") @db.Uuid
   status                 String    @default("active") @db.VarChar(20)
   billingPeriod          String    @default("monthly") @map("billing_period") @db.VarChar(20)
