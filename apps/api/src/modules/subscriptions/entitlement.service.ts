@@ -1,10 +1,20 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../common/services/redis.service';
 import type { ClientPlatform } from '../../common/config/store-availability';
 import { getRequestPlatform } from '../../common/context/request-context';
 import { AuditService } from '../audit/audit.service';
+import {
+  CANONICAL_ENTITLEMENT_KEYS,
+  isCanonicalEntitlementKey,
+} from './entitlement-keys';
 import {
   SubscriptionsService,
   type SubscriptionEntitlements,
@@ -50,6 +60,73 @@ export interface ActiveBonus {
   reason: string;
   sourceType: string;
   expiresAt: string | null;
+}
+
+/**
+ * Which of the three layers decides a key when the paywall is enforced.
+ *
+ * Structural, not inferred from the resolved number: `EntitlementService`
+ * applies overrides last and `SubscriptionsService` merges stored values over
+ * plan defaults, so the winner is determined by which layers carry the key —
+ * not by which value happens to match. Two layers holding the same number must
+ * still report the higher one as the winner, or clearing it would look safe
+ * when it is not.
+ */
+export type EntitlementLayer = 'plan' | 'subscription' | 'override';
+
+/** 'web' is the wire spelling of the `null` (no in-app store) platform. */
+export type EntitlementPlatform = 'web' | 'ios' | 'android';
+
+export interface EffectiveEntitlementRow {
+  key: string;
+  /** What the plan grants. `null` when the plan defines no such key. */
+  planValue: unknown;
+  /** What `subscriptions.entitlements_json` stores. `null` when absent. */
+  storedValue: unknown;
+  /** True when the key is PRESENT in entitlements_json (a stored `null`/0 is not "absent"). */
+  hasStoredValue: boolean;
+  activeOverrides: ActiveBonus[];
+  /** What a client on this platform actually resolves to, right now. */
+  effectiveValue: unknown;
+  winningLayer: EntitlementLayer;
+  /** A stored value that disagrees with the plan — the /pricing-vs-reality bug. */
+  conflictsWithPlan: boolean;
+}
+
+export interface EffectiveEntitlementReport {
+  subscriptionId: string;
+  organizationId: string;
+  planCode: string;
+  platform: EntitlementPlatform;
+  /**
+   * False when this platform cannot buy anything, in which case
+   * `getEntitlements` short-circuits to the not-enforced fallback and NONE of
+   * the three layers is consulted. `winningLayer` then describes what would win
+   * if it were enforced; `effectiveValue` still shows what the user gets today.
+   */
+  paywallEnforced: boolean;
+  /**
+   * False when this subscription row is not the one the org currently resolves
+   * against (a cancelled row, or an older row outranked by a newer one). The
+   * effective column then belongs to `resolvedSubscriptionId`, not to this row.
+   */
+  isResolvedSubscription: boolean;
+  resolvedSubscriptionId: string | null;
+  keys: EffectiveEntitlementRow[];
+}
+
+export interface StoredEntitlementKeyStats {
+  /** How many subscriptions store ANY value for this key. */
+  count: number;
+  /** Distinct stored values, most common first — the prune button needs a value. */
+  values: { value: unknown; count: number }[];
+}
+
+export interface PruneEntitlementsJsonResult {
+  key: string;
+  valueEquals: unknown;
+  affectedCount: number;
+  subscriptionIds: string[];
 }
 
 export interface GrantBonusParams {
@@ -331,6 +408,356 @@ export class EntitlementService {
   ): Promise<number> {
     const entitlements = await this.resolveEffectiveEntitlements(organizationId);
     return (entitlements as Record<string, unknown>)[quotaType] as number ?? 0;
+  }
+
+  // ---- Admin: effective entitlements report ----
+
+  /**
+   * Per-key breakdown of the three layers that decide a quota, for one
+   * subscription and one client platform.
+   *
+   * The effective column comes from `resolveEffectiveEntitlements` — the same
+   * call the request path makes — and is NOT recomputed here. Re-deriving
+   * precedence for the panel is how a panel starts lying: the moment the two
+   * implementations disagree, the screen an admin trusts stops describing what
+   * a user gets. Everything else in a row (plan, stored, overrides) is raw
+   * input, shown so the admin can see WHICH layer produced that number.
+   */
+  async getEffectiveEntitlementReport(
+    subscriptionId: string,
+    platform: ClientPlatform | null,
+  ): Promise<EffectiveEntitlementReport> {
+    const subscription = await this.prisma.subscription.findUnique({
+      where: { id: subscriptionId },
+      select: {
+        id: true,
+        organizationId: true,
+        planCode: true,
+        entitlementsJson: true,
+      },
+    });
+
+    if (!subscription) {
+      throw new NotFoundException(`Subscription ${subscriptionId} not found`);
+    }
+
+    const organizationId = subscription.organizationId;
+
+    const [planDefaults, overrides, effective, resolvedSub] = await Promise.all([
+      this.subscriptions.resolvePlanDefaults(
+        organizationId,
+        subscription.planCode,
+      ),
+      this.getActiveBonuses(organizationId),
+      this.resolveEffectiveEntitlements(organizationId, platform),
+      this.subscriptions.getActiveSubscription(organizationId),
+    ]);
+
+    const stored = this.readStoredEntitlements(subscription.entitlementsJson);
+    const planRecord = planDefaults as Record<string, unknown>;
+    const effectiveRecord = effective as Record<string, unknown>;
+
+    const overridesByKey = new Map<string, ActiveBonus[]>();
+    for (const override of overrides) {
+      const list = overridesByKey.get(override.entitlementKey) ?? [];
+      list.push(override);
+      overridesByKey.set(override.entitlementKey, list);
+    }
+
+    // Canonical keys first, then anything a layer actually carries that the
+    // canonical list does not know about — a legacy or misspelled stored key is
+    // exactly what an admin needs to SEE in order to clear it.
+    const keyOrder: string[] = [...CANONICAL_ENTITLEMENT_KEYS];
+    for (const key of [
+      ...Object.keys(planRecord),
+      ...Object.keys(stored),
+      ...overridesByKey.keys(),
+    ]) {
+      if (!keyOrder.includes(key)) keyOrder.push(key);
+    }
+
+    const keys: EffectiveEntitlementRow[] = keyOrder.map((key) => {
+      const hasStoredValue = Object.prototype.hasOwnProperty.call(stored, key);
+      const storedValue = hasStoredValue ? stored[key] : null;
+      const planValue = Object.prototype.hasOwnProperty.call(planRecord, key)
+        ? planRecord[key]
+        : null;
+      const activeOverrides = overridesByKey.get(key) ?? [];
+
+      const winningLayer: EntitlementLayer =
+        activeOverrides.length > 0
+          ? 'override'
+          : hasStoredValue
+            ? 'subscription'
+            : 'plan';
+
+      return {
+        key,
+        planValue,
+        storedValue,
+        hasStoredValue,
+        activeOverrides,
+        effectiveValue: Object.prototype.hasOwnProperty.call(
+          effectiveRecord,
+          key,
+        )
+          ? effectiveRecord[key]
+          : null,
+        winningLayer,
+        // Only a value that is actually STORED can contradict the plan. A key
+        // the plan does not define is not a contradiction, it is an extension.
+        conflictsWithPlan:
+          hasStoredValue && planValue !== null && storedValue !== planValue,
+      };
+    });
+
+    return {
+      subscriptionId: subscription.id,
+      organizationId,
+      planCode: subscription.planCode,
+      platform: platform ?? 'web',
+      paywallEnforced: this.subscriptions.isPaywallEnforcedFor(platform),
+      isResolvedSubscription: resolvedSub?.id === subscription.id,
+      resolvedSubscriptionId: resolvedSub?.id ?? null,
+      keys,
+    };
+  }
+
+  // ---- Admin: entitlements_json writes ----
+
+  /**
+   * Set (or replace) keys in one subscription's `entitlements_json`.
+   *
+   * A MERGE, not a replace of the whole object: an admin fixing `aiAnswers`
+   * must not silently drop a complimentary `maxMatters` sitting in the same
+   * blob. Removing a key is `clearSubscriptionEntitlement`, which is explicit.
+   */
+  async setSubscriptionEntitlements(
+    subscriptionId: string,
+    values: Record<string, unknown>,
+    actorUserId: string,
+  ) {
+    const unknownKeys = Object.keys(values).filter(
+      (key) => !isCanonicalEntitlementKey(key),
+    );
+    if (unknownKeys.length > 0) {
+      throw new BadRequestException(
+        `Unknown entitlement key(s): ${unknownKeys.join(', ')}`,
+      );
+    }
+
+    const subscription = await this.prisma.subscription.findUnique({
+      where: { id: subscriptionId },
+      select: { id: true, organizationId: true, entitlementsJson: true },
+    });
+    if (!subscription) {
+      throw new NotFoundException(`Subscription ${subscriptionId} not found`);
+    }
+
+    const before = this.readStoredEntitlements(subscription.entitlementsJson);
+    const after = { ...before, ...values };
+
+    const updated = await this.prisma.subscription.update({
+      where: { id: subscriptionId },
+      data: { entitlementsJson: after as Prisma.InputJsonValue },
+    });
+
+    await this.invalidateEntitlementCache(subscription.organizationId);
+
+    await this.audit.log({
+      organizationId: subscription.organizationId,
+      actorUserId,
+      actorType: 'admin',
+      action: 'subscription.entitlements_json_set',
+      entityType: 'subscription',
+      entityId: subscriptionId,
+      metadata: { keys: Object.keys(values), before, after },
+    });
+
+    return updated;
+  }
+
+  /**
+   * Remove ONE key from a subscription's `entitlements_json`, so the key falls
+   * back to whatever the plan grants.
+   *
+   * Not validated against the canonical list on purpose — see
+   * CANONICAL_ENTITLEMENT_KEYS. A key that is already stored is always
+   * removable; refusing to clear junk would strand it permanently.
+   */
+  async clearSubscriptionEntitlement(
+    subscriptionId: string,
+    key: string,
+    actorUserId: string,
+  ) {
+    const subscription = await this.prisma.subscription.findUnique({
+      where: { id: subscriptionId },
+      select: { id: true, organizationId: true, entitlementsJson: true },
+    });
+    if (!subscription) {
+      throw new NotFoundException(`Subscription ${subscriptionId} not found`);
+    }
+
+    const before = this.readStoredEntitlements(subscription.entitlementsJson);
+    if (!Object.prototype.hasOwnProperty.call(before, key)) {
+      throw new NotFoundException(
+        `Subscription ${subscriptionId} stores no entitlement "${key}"`,
+      );
+    }
+
+    const after = { ...before };
+    delete after[key];
+
+    const updated = await this.prisma.subscription.update({
+      where: { id: subscriptionId },
+      data: { entitlementsJson: after as Prisma.InputJsonValue },
+    });
+
+    await this.invalidateEntitlementCache(subscription.organizationId);
+
+    await this.audit.log({
+      organizationId: subscription.organizationId,
+      actorUserId,
+      actorType: 'admin',
+      action: 'subscription.entitlements_json_clear',
+      entityType: 'subscription',
+      entityId: subscriptionId,
+      metadata: { key, clearedValue: before[key] ?? null, before, after },
+    });
+
+    return updated;
+  }
+
+  /**
+   * Clear `key` from EVERY subscription whose stored value for it equals
+   * `valueEquals`.
+   *
+   * Exact-value matched, never "clear this key everywhere". The 9 free rows
+   * carrying `aiAnswers: 0` from the paid era are junk; a row deliberately
+   * storing `aiAnswers: 500` as a complimentary grant is not, and the two are
+   * only distinguishable by value.
+   *
+   * One audit row per subscription. A single summary row would make the blast
+   * radius of a bulk edit unauditable per tenant.
+   */
+  async pruneSubscriptionEntitlementKey(
+    key: string,
+    valueEquals: unknown,
+    actorUserId: string,
+  ): Promise<PruneEntitlementsJsonResult> {
+    // `key` is matched against stored data, so it is NOT restricted to the
+    // canonical list — the junk worth pruning is precisely what may not be on
+    // it. It is still length-capped by the DTO.
+    //
+    // Read every row and match in JS rather than pushing `key` into a Prisma
+    // JSON `path` filter. The filter's null semantics (JSON null vs absent vs
+    // DB null) differ from the `hasOwnProperty` + `===` test below, and a bulk
+    // clear that selects a slightly different set than it reports is worse than
+    // a scan. `subscriptions` is a per-org table in the low thousands and this
+    // runs on an admin button press, not a request path.
+    const candidates = await this.prisma.subscription.findMany({
+      select: { id: true, organizationId: true, entitlementsJson: true },
+    });
+
+    const affected: string[] = [];
+
+    for (const candidate of candidates) {
+      const before = this.readStoredEntitlements(candidate.entitlementsJson);
+      if (!Object.prototype.hasOwnProperty.call(before, key)) continue;
+      // Strict equality: 0 must not match false, and 15 must not match '15'.
+      if (before[key] !== valueEquals) continue;
+
+      const after = { ...before };
+      delete after[key];
+
+      await this.prisma.subscription.update({
+        where: { id: candidate.id },
+        data: { entitlementsJson: after as Prisma.InputJsonValue },
+      });
+
+      await this.invalidateEntitlementCache(candidate.organizationId);
+
+      await this.audit.log({
+        organizationId: candidate.organizationId,
+        actorUserId,
+        actorType: 'admin',
+        action: 'subscription.entitlements_json_prune',
+        entityType: 'subscription',
+        entityId: candidate.id,
+        metadata: { key, clearedValue: valueEquals, before, after },
+      });
+
+      affected.push(candidate.id);
+    }
+
+    return {
+      key,
+      valueEquals,
+      affectedCount: affected.length,
+      subscriptionIds: affected,
+    };
+  }
+
+  /**
+   * How many subscriptions store their own value for each entitlement key,
+   * and what those values are.
+   *
+   * Drives the "N subscriptions override this key" line on the plan editor —
+   * the screen where the contradiction between what /pricing advertises and
+   * what accounts actually resolve to becomes visible at all.
+   *
+   * `planCode` narrows to the subscriptions the plan being edited governs; a
+   * stored `aiAnswers: 0` on a pro row says nothing about the free plan.
+   */
+  async countStoredEntitlementKeys(
+    planCode?: string,
+  ): Promise<Record<string, StoredEntitlementKeyStats>> {
+    const rows = await this.prisma.subscription.findMany({
+      where: planCode ? { planCode } : {},
+      select: { entitlementsJson: true },
+    });
+
+    const byKey = new Map<
+      string,
+      Map<string, { value: unknown; count: number }>
+    >();
+
+    for (const row of rows) {
+      const stored = this.readStoredEntitlements(row.entitlementsJson);
+      for (const [key, value] of Object.entries(stored)) {
+        const values = byKey.get(key) ?? new Map();
+        // Bucketed by JSON spelling so 0 and false stay distinct.
+        const bucketKey = JSON.stringify(value ?? null);
+        const bucket = values.get(bucketKey) ?? { value, count: 0 };
+        bucket.count += 1;
+        values.set(bucketKey, bucket);
+        byKey.set(key, values);
+      }
+    }
+
+    const result: Record<string, StoredEntitlementKeyStats> = {};
+    for (const [key, values] of byKey) {
+      const buckets = [...values.values()].sort((a, b) => b.count - a.count);
+      result[key] = {
+        count: buckets.reduce((sum, b) => sum + b.count, 0),
+        values: buckets,
+      };
+    }
+    return result;
+  }
+
+  /**
+   * Read `entitlements_json` as a plain object.
+   *
+   * The column is `Json` and defaults to `{}`, but Prisma types it wide enough
+   * to be an array, a scalar or JSON null. Anything that is not an object is
+   * treated as "stores nothing" rather than spread into a row of numeric keys.
+   */
+  private readStoredEntitlements(value: unknown): Record<string, unknown> {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      return {};
+    }
+    return { ...(value as Record<string, unknown>) };
   }
 
   /**

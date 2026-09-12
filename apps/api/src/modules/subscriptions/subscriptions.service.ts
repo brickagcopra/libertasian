@@ -172,27 +172,7 @@ export class SubscriptionsService {
     const sub = await this.getActiveSubscription(organizationId);
     const planCode = sub?.planCode ?? 'free';
 
-    // Check if DB-driven plans are enabled
-    const useDbPlans = await this.featureFlagService.isEnabled(
-      'billing.db_plans',
-      organizationId,
-      planCode,
-    );
-
-    let defaults: SubscriptionEntitlements;
-    if (useDbPlans) {
-      try {
-        defaults = await this.plansService.resolveEntitlements(planCode);
-      } catch {
-        // Fall back to hardcoded if plan not found in DB
-        this.logger.warn(
-          `DB plan resolution failed for "${planCode}", falling back to hardcoded defaults`,
-        );
-        defaults = this.getDefaultEntitlements(planCode);
-      }
-    } else {
-      defaults = this.getDefaultEntitlements(planCode);
-    }
+    const defaults = await this.resolvePlanDefaults(organizationId, planCode);
 
     if (!sub) {
       return defaults;
@@ -201,6 +181,54 @@ export class SubscriptionsService {
     // Merge stored per-subscription overrides on top of defaults
     const stored = (sub.entitlementsJson ?? {}) as Record<string, unknown>;
     return { ...defaults, ...stored };
+  }
+
+  /**
+   * Resolve the PLAN layer alone — DB `plan_entitlements` when
+   * `billing.db_plans` is on, the hardcoded table otherwise.
+   *
+   * Extracted from `getEntitlements` so the admin "effective entitlements"
+   * report can show what the plan grants WITHOUT re-deciding the DB-vs-hardcoded
+   * question on its own. Two copies of that decision would drift, and a panel
+   * that reports a plan value the resolver never used is worse than no panel.
+   * This is a pure extraction: `getEntitlements` still merges stored overrides
+   * on top exactly as before.
+   */
+  async resolvePlanDefaults(
+    organizationId: string,
+    planCode: string,
+  ): Promise<SubscriptionEntitlements> {
+    const useDbPlans = await this.featureFlagService.isEnabled(
+      'billing.db_plans',
+      organizationId,
+      planCode,
+    );
+
+    if (!useDbPlans) {
+      return this.getDefaultEntitlements(planCode);
+    }
+
+    try {
+      return await this.plansService.resolveEntitlements(planCode);
+    } catch {
+      // Fall back to hardcoded if plan not found in DB
+      this.logger.warn(
+        `DB plan resolution failed for "${planCode}", falling back to hardcoded defaults`,
+      );
+      return this.getDefaultEntitlements(planCode);
+    }
+  }
+
+  /**
+   * Whether the paywall is enforced for a given client platform.
+   *
+   * Exposed so the admin panel can say WHY an effective value does not match
+   * any of the three layers: on a platform that cannot buy, `getEntitlements`
+   * short-circuits to the not-enforced fallback above and neither the plan nor
+   * the stored overrides are consulted at all.
+   */
+  isPaywallEnforcedFor(platform: ClientPlatform | null): boolean {
+    return isPaywallEnforcedForRequest(this.configService, platform);
   }
 
   /**

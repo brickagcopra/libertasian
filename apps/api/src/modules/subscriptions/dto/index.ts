@@ -16,3 +16,9 @@ export { ExtendTrialDto } from './extend-trial.dto';
 export { ChangeBillingPeriodDto } from './change-billing-period.dto';
 export { ListLifecycleEventsQueryDto } from './list-lifecycle-events-query.dto';
 export { BulkRetryLifecycleEventsDto } from './bulk-retry-lifecycle-events.dto';
+export { SetSubscriptionEntitlementsDto } from './set-subscription-entitlements.dto';
+export { PruneEntitlementsJsonDto } from './prune-entitlements-json.dto';
+export {
+  EffectiveEntitlementsQueryDto,
+  EffectiveEntitlementsPlatform,
+} from './effective-entitlements-query.dto';

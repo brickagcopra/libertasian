@@ -59,6 +59,11 @@ describe('SubscriptionAdminController', () => {
             grantBonus: jest.fn(),
             revokeBonus: jest.fn(),
             getOverrideHistory: jest.fn(),
+            getEffectiveEntitlementReport: jest.fn(),
+            setSubscriptionEntitlements: jest.fn(),
+            clearSubscriptionEntitlement: jest.fn(),
+            pruneSubscriptionEntitlementKey: jest.fn(),
+            countStoredEntitlementKeys: jest.fn(),
           },
         },
         {
@@ -503,6 +508,118 @@ describe('SubscriptionAdminController', () => {
       expect(entitlementService.getOverrideHistory).toHaveBeenCalledWith(
         'org-1',
         { limit: 20, cursor: 'ov-5' },
+      );
+    });
+  });
+
+  // ---- Effective entitlements ----
+
+  describe('getEffectiveEntitlements', () => {
+    const SUB = '11111111-1111-4111-8111-111111111111';
+
+    it('maps platform=web onto the null platform the resolver uses', async () => {
+      entitlementService.getEffectiveEntitlementReport.mockResolvedValue({
+        keys: [],
+      } as any);
+
+      await controller.getEffectiveEntitlements(SUB, { platform: 'web' } as any);
+
+      expect(
+        entitlementService.getEffectiveEntitlementReport,
+      ).toHaveBeenCalledWith(SUB, null);
+    });
+
+    it('defaults to the null platform when none is given', async () => {
+      entitlementService.getEffectiveEntitlementReport.mockResolvedValue({
+        keys: [],
+      } as any);
+
+      await controller.getEffectiveEntitlements(SUB, {} as any);
+
+      expect(
+        entitlementService.getEffectiveEntitlementReport,
+      ).toHaveBeenCalledWith(SUB, null);
+    });
+
+    it.each(['ios', 'android'])('passes %s through', async (platform) => {
+      entitlementService.getEffectiveEntitlementReport.mockResolvedValue({
+        keys: [],
+      } as any);
+
+      await controller.getEffectiveEntitlements(SUB, { platform } as any);
+
+      expect(
+        entitlementService.getEffectiveEntitlementReport,
+      ).toHaveBeenCalledWith(SUB, platform);
+    });
+
+    it('wraps the report in the standard success envelope', async () => {
+      const report = { subscriptionId: SUB, keys: [] };
+      entitlementService.getEffectiveEntitlementReport.mockResolvedValue(
+        report as any,
+      );
+
+      const result = await controller.getEffectiveEntitlements(SUB, {} as any);
+
+      expect(result).toEqual({ success: true, data: report });
+    });
+  });
+
+  // ---- entitlements_json writes ----
+
+  describe('entitlements_json endpoints', () => {
+    const SUB = '11111111-1111-4111-8111-111111111111';
+
+    it('sets keys as the acting admin', async () => {
+      entitlementService.setSubscriptionEntitlements.mockResolvedValue({} as any);
+
+      await controller.setEntitlementsJson(
+        SUB,
+        { values: { aiAnswers: 15 } } as any,
+        mockAdmin,
+      );
+
+      expect(
+        entitlementService.setSubscriptionEntitlements,
+      ).toHaveBeenCalledWith(SUB, { aiAnswers: 15 }, 'admin-1');
+    });
+
+    it('clears one key as the acting admin', async () => {
+      entitlementService.clearSubscriptionEntitlement.mockResolvedValue({} as any);
+
+      await controller.clearEntitlementsJsonKey(SUB, 'aiAnswers', mockAdmin);
+
+      expect(
+        entitlementService.clearSubscriptionEntitlement,
+      ).toHaveBeenCalledWith(SUB, 'aiAnswers', 'admin-1');
+    });
+
+    it('prunes by exact value and returns the affected count', async () => {
+      entitlementService.pruneSubscriptionEntitlementKey.mockResolvedValue({
+        key: 'aiAnswers',
+        valueEquals: 0,
+        affectedCount: 9,
+        subscriptionIds: ['s1'],
+      } as any);
+
+      const result = await controller.pruneEntitlementsJson(
+        { key: 'aiAnswers', valueEquals: 0 } as any,
+        mockAdmin,
+      );
+
+      expect(
+        entitlementService.pruneSubscriptionEntitlementKey,
+      ).toHaveBeenCalledWith('aiAnswers', 0, 'admin-1');
+      expect(result.data.affectedCount).toBe(9);
+    });
+
+    it('scopes stored-key counts to a plan code when given', async () => {
+      entitlementService.countStoredEntitlementKeys.mockResolvedValue({} as any);
+
+      await controller.getStoredEntitlementKeyCounts('free');
+
+      expect(entitlementService.countStoredEntitlementKeys).toHaveBeenCalledWith(
+        'free',
       );
     });
   });

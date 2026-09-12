@@ -43,6 +43,7 @@ import type {
   PlanPriceDetail,
   PlanEntitlementDetail,
 } from '@/features/billing/types';
+import { PlanEntitlementOverrideCell } from '@/features/billing/components/plan-entitlement-override-cell';
 import { ApiClientError } from '@/lib/api-client';
 
 import { Button } from '@/components/ui/button';
@@ -775,6 +776,7 @@ export default function AdminPlanDetailPage() {
                     <TableHead>Key</TableHead>
                     <TableHead>Type</TableHead>
                     <TableHead>Value</TableHead>
+                    <TableHead>Stored overrides</TableHead>
                     <TableHead>Description</TableHead>
                     <TableHead className="w-24" />
                   </TableRow>
@@ -782,7 +784,7 @@ export default function AdminPlanDetailPage() {
                 <TableBody>
                   {plan.entitlements.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
+                      <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
                         No entitlements configured. Add one.
                       </TableCell>
                     </TableRow>
@@ -801,6 +803,19 @@ export default function AdminPlanDetailPage() {
                                 ? 'Yes'
                                 : 'No'
                               : 'Unlimited'}
+                        </TableCell>
+                        <TableCell>
+                          <PlanEntitlementOverrideCell
+                            planCode={plan.code}
+                            entitlementKey={ent.key}
+                            planValue={
+                              ent.valueType === 'numeric'
+                                ? (ent.numericValue ?? 0)
+                                : ent.valueType === 'boolean'
+                                  ? (ent.booleanValue ?? false)
+                                  : -1
+                            }
+                          />
                         </TableCell>
                         <TableCell className="max-w-[200px] truncate text-sm text-muted-foreground">
                           {ent.description || '—'}

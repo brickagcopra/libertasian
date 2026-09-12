@@ -1467,3 +1467,110 @@ export interface ListLifecycleEventsQuery {
 export interface BulkRetryResult {
   count: number;
 }
+
+// ─── Effective Entitlements (admin) ──────────────────────
+
+/**
+ * The three layers that decide a quota, in precedence order.
+ * Mirrors `EntitlementLayer` in apps/api.
+ */
+export type EntitlementLayer = 'plan' | 'subscription' | 'override';
+
+/** 'web' is the wire spelling of the no-in-app-store platform. */
+export type EntitlementPlatform = 'web' | 'ios' | 'android';
+
+export const ENTITLEMENT_PLATFORMS: {
+  value: EntitlementPlatform;
+  label: string;
+}[] = [
+  { value: 'web', label: 'Web' },
+  { value: 'ios', label: 'iOS' },
+  { value: 'android', label: 'Android' },
+];
+
+export const ENTITLEMENT_LAYER_LABELS: Record<EntitlementLayer, string> = {
+  plan: 'Plan',
+  subscription: 'Subscription',
+  override: 'Override',
+};
+
+export interface EffectiveEntitlementOverride {
+  id: string;
+  entitlementKey: string;
+  overrideType: string;
+  numericValue: number | null;
+  booleanValue: boolean | null;
+  reason: string;
+  sourceType: string;
+  expiresAt: string | null;
+}
+
+export interface EffectiveEntitlementRow {
+  key: string;
+  planValue: number | boolean | null;
+  storedValue: number | boolean | null;
+  hasStoredValue: boolean;
+  activeOverrides: EffectiveEntitlementOverride[];
+  effectiveValue: number | boolean | null;
+  winningLayer: EntitlementLayer;
+  conflictsWithPlan: boolean;
+}
+
+export interface EffectiveEntitlementReport {
+  subscriptionId: string;
+  organizationId: string;
+  planCode: string;
+  platform: EntitlementPlatform;
+  /** False when this platform cannot buy — no layer is consulted at all. */
+  paywallEnforced: boolean;
+  /** False when the org resolves against a different subscription row. */
+  isResolvedSubscription: boolean;
+  resolvedSubscriptionId: string | null;
+  keys: EffectiveEntitlementRow[];
+}
+
+export interface EffectiveEntitlementsResponse {
+  success: boolean;
+  data: EffectiveEntitlementReport;
+}
+
+export interface StoredEntitlementKeyStats {
+  count: number;
+  values: { value: number | boolean | null; count: number }[];
+}
+
+export interface StoredEntitlementKeyCountsResponse {
+  success: boolean;
+  data: Record<string, StoredEntitlementKeyStats>;
+}
+
+export interface PruneEntitlementsJsonInput {
+  key: string;
+  valueEquals: number | boolean | string;
+}
+
+export interface PruneEntitlementsJsonResult {
+  key: string;
+  valueEquals: number | boolean | string;
+  affectedCount: number;
+  subscriptionIds: string[];
+}
+
+export interface PruneEntitlementsJsonResponse {
+  success: boolean;
+  data: PruneEntitlementsJsonResult;
+}
+
+export interface SetEntitlementsJsonInput {
+  values: Record<string, number | boolean>;
+}
+
+/** Render an entitlement value the way the resolver means it. */
+export function formatEntitlementValue(
+  value: number | boolean | null | undefined,
+): string {
+  if (value === null || value === undefined) return '—';
+  if (typeof value === 'boolean') return value ? 'yes' : 'no';
+  if (value === -1) return 'unlimited';
+  return String(value);
+}
