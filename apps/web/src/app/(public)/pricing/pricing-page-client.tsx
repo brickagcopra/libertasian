@@ -1077,7 +1077,7 @@ export const STATIC_COMPARISON_FEATURES = [
       { name: 'Supreme Court decisions', free: false, edu: true, pro: true, team: true, enterprise: true },
       { name: 'Bar exam questions', free: false, edu: true, pro: true, team: true, enterprise: true },
       { name: 'Search queries', free: '50/day', edu: 'Unlimited', pro: 'Unlimited', team: 'Unlimited', enterprise: 'Unlimited' },
-      { name: 'AI answers', free: '15 credits', edu: 'Plan-based', pro: 'Unlimited', team: 'Unlimited', enterprise: 'Unlimited' },
+      { name: 'AI answers', free: '3 credits', edu: 'Plan-based', pro: 'Unlimited', team: 'Unlimited', enterprise: 'Unlimited' },
       { name: 'Answer modes (ALAC/IRAC/Bar)', free: false, edu: true, pro: true, team: true, enterprise: true },
     ],
   },
@@ -1088,8 +1088,12 @@ export const STATIC_COMPARISON_FEATURES = [
       // free tier has one and not the other. The read cap is exactly three,
       // chosen per user and rotating monthly (digests.service.ts).
       { name: 'Case digests (read)', free: '3', edu: 'Unlimited', pro: 'Unlimited', team: 'Unlimited', enterprise: 'Unlimited' },
-      { name: 'Case digest generation', free: false, edu: 'Plan-based', pro: 'Unlimited', team: 'Unlimited', enterprise: 'Unlimited' },
-      { name: 'Camera scan digests', free: false, edu: '10/month', pro: 'Unlimited', team: 'Unlimited', enterprise: 'Unlimited' },
+      // One generation per month on free, shared between POST /digests/generate
+      // and the scan → digest route. Positive and not 0 on purpose: a quota
+      // that exists returns 429 when spent, where a 0 limit returns the 402
+      // that reads as a paywall.
+      { name: 'Case digest generation', free: '1/month', edu: 'Plan-based', pro: 'Unlimited', team: 'Unlimited', enterprise: 'Unlimited' },
+      { name: 'Camera scan digests', free: '1/month', edu: '10/month', pro: 'Unlimited', team: 'Unlimited', enterprise: 'Unlimited' },
       { name: 'Document uploads', free: false, edu: false, pro: true, team: true, enterprise: true },
       { name: 'Memo drafting', free: false, edu: false, pro: true, team: true, enterprise: true },
     ],

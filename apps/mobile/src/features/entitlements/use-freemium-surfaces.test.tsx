@@ -74,7 +74,7 @@ describe('surfacesFromQuotas', () => {
       ).toEqual(ALL_VISIBLE);
     });
 
-    it('falls back to the quota pair only when the field is absent', () => {
+    it('resolves to NOT ENTITLED when the field is absent, whatever the quotas say', () => {
       // A shipped build outliving the API version that added previewOnly.
       // Treating the missing field as "entitled" would put Scan and Study in
       // front of a free account on every older deployment.
@@ -87,13 +87,32 @@ describe('surfacesFromQuotas', () => {
       expect(
         surfacesFromQuotas({
           cameraScansPerMonth: quota(10),
-          digestsPerMonth: quota(0),
+          digestsPerMonth: quota(30),
         }).scan,
-      ).toBe(true);
+      ).toBe(false);
     });
   });
 
-  it('hides every paid surface when both generation quotas are 0', () => {
+  /**
+   * THE case the fallback now has to get right. Free resolves to aiAnswers 3 /
+   * cameraScansPerMonth 1 / digestsPerMonth 1 — every quota positive on
+   * purpose, so that exhausting one returns 429 quota_exceeded and never the
+   * 402 App Review reads as a paywall. The old
+   * `cameraScansPerMonth !== 0 || digestsPerMonth !== 0` inference read exactly
+   * that shape as ENTITLED and would hand a free account Scan, Study, Bar
+   * Exams, Digest Generation and Workspace with no purchase prompt anywhere.
+   */
+  it('hides every paid surface for a free account whose quotas are positive', () => {
+    expect(
+      surfacesFromQuotas({
+        aiAnswers: quota(3),
+        cameraScansPerMonth: quota(1),
+        digestsPerMonth: quota(1),
+      }),
+    ).toEqual(FREE_TIER);
+  });
+
+  it('hides every paid surface when the quotas are 0 and previewOnly is absent', () => {
     expect(
       surfacesFromQuotas({
         cameraScansPerMonth: quota(0),
@@ -106,22 +125,31 @@ describe('surfacesFromQuotas', () => {
     ['a finite scan allowance', { cameraScansPerMonth: quota(10), digestsPerMonth: quota(0) }],
     ['a finite digest allowance', { cameraScansPerMonth: quota(0), digestsPerMonth: quota(30) }],
     ['unlimited', { cameraScansPerMonth: quota(-1), digestsPerMonth: quota(-1) }],
-  ])('shows every paid surface for %s', (_label, quotas) => {
-    expect(surfacesFromQuotas(quotas)).toEqual(ALL_VISIBLE);
+  ])('never grants a surface on the strength of %s alone', (_label, quotas) => {
+    // Quota size says HOW MUCH of a metered action an account may perform. It
+    // never said which corpora it may READ, and the two stopped coinciding the
+    // moment the free tier got quotas of its own.
+    expect(surfacesFromQuotas(quotas)).toEqual(FREE_TIER);
+    expect(surfacesFromQuotas(quotas, true)).toEqual(FREE_TIER);
+    expect(surfacesFromQuotas(quotas, false)).toEqual(ALL_VISIBLE);
   });
 
-  it('follows a bonus or admin override without a client change', () => {
+  it('does not turn a surface on because a bonus raised a quota', () => {
     // /quotas/usage limits come from resolveEffectiveEntitlements, so a granted
-    // bonus raises the limit and the surfaces come back on their own.
+    // bonus does raise the limit — but a bonus buys more of a metered action,
+    // not access to the paid corpora. Only previewOnly moves this.
     expect(
       surfacesFromQuotas({
-        cameraScansPerMonth: quota(5), // 0 base + 5 bonus
-        digestsPerMonth: quota(0),
+        cameraScansPerMonth: quota(5), // 1 base + 4 bonus
+        digestsPerMonth: quota(1),
       }).scan,
+    ).toBe(false);
+    expect(
+      surfacesFromQuotas({ cameraScansPerMonth: quota(5) }, false).scan,
     ).toBe(true);
   });
 
-  it('treats a missing quota key as 0 rather than as entitlement', () => {
+  it('treats an empty quota map as no entitlement', () => {
     expect(surfacesFromQuotas({})).toEqual(FREE_TIER);
   });
 
@@ -146,10 +174,11 @@ describe('surfacesFromQuotas', () => {
     );
 
     it.each(['digestGeneration', 'workspace'] as const)(
-      'resolves %s through the previewOnly fallback path too',
+      'hides %s whenever previewOnly is absent, positive quotas included',
       (surface) => {
-        // No previewOnly field at all — the quota-pair inference. A build that
-        // outlives its API must still hide these, not default them on.
+        // No previewOnly field at all — a build that outlives its API must
+        // hide these, and a free tier with real allowances must not read as a
+        // reason to show them.
         expect(
           surfacesFromQuotas({
             cameraScansPerMonth: quota(0),
@@ -158,10 +187,10 @@ describe('surfacesFromQuotas', () => {
         ).toBe(false);
         expect(
           surfacesFromQuotas({
-            cameraScansPerMonth: quota(0),
-            digestsPerMonth: quota(30),
+            cameraScansPerMonth: quota(1),
+            digestsPerMonth: quota(1),
           })[surface],
-        ).toBe(true);
+        ).toBe(false);
       },
     );
 
@@ -255,7 +284,10 @@ describe('useFreemiumSurfacesSync', () => {
   it('writes the free-tier answer too — a downgrade must take the tabs away', () => {
     storage.set(STORAGE_KEYS.ENTITLED_SURFACES, JSON.stringify(ALL_VISIBLE));
     mockUseQuotaUsage.mockReturnValue({
-      data: { quotas: { cameraScansPerMonth: quota(0), digestsPerMonth: quota(0) } },
+      data: {
+        quotas: { cameraScansPerMonth: quota(1), digestsPerMonth: quota(1) },
+        previewOnly: true,
+      },
     });
 
     renderHook(() => useFreemiumSurfacesSync(true));
@@ -282,7 +314,12 @@ describe('useFreemiumSurfacesSync', () => {
   // ======================================================================
 
   describe('storePurchaseAvailable', () => {
-    const freeQuotas = { cameraScansPerMonth: quota(0), digestsPerMonth: quota(0) };
+    // The live free tier: positive quotas, no access to the paid corpora.
+    const freeQuotas = {
+      aiAnswers: quota(3),
+      cameraScansPerMonth: quota(1),
+      digestsPerMonth: quota(1),
+    };
 
     it('WITH THE FLAG FALSE, behaves exactly as before', () => {
       // THE safety property of mechanism C: the first IAP build must behave

@@ -19,11 +19,12 @@ describe('EntitlementService — admin entitlements surface', () => {
   const ORG = 'org-1';
   const SUB = 'sub-1';
 
-  // The live free plan: /pricing advertises 15 AI answers.
+  // The live free plan: /pricing advertises 3 AI answers and one digest a
+  // month, and `getDefaultEntitlements('free')` grants exactly that.
   const PLAN_DEFAULTS = {
-    aiAnswers: 15,
+    aiAnswers: 3,
     searchQueries: 50,
-    digestsPerMonth: 0,
+    digestsPerMonth: 1,
     offlineReading: true,
   };
 
@@ -161,7 +162,7 @@ describe('EntitlementService — admin entitlements surface', () => {
       const row = rowFor(report, 'aiAnswers');
 
       expect(row.winningLayer).toBe('plan');
-      expect(row.planValue).toBe(15);
+      expect(row.planValue).toBe(3);
       expect(row.storedValue).toBeNull();
       expect(row.hasStoredValue).toBe(false);
     });
@@ -204,10 +205,10 @@ describe('EntitlementService — admin entitlements surface', () => {
     });
 
     it("stays 'subscription' when the stored value equals the plan value", async () => {
-      // Structural, not value-inferred: clearing a stored 15 is still a change
+      // Structural, not value-inferred: clearing a stored 3 is still a change
       // of which layer answers, and the panel must not imply otherwise.
       prisma.subscription.findUnique.mockResolvedValue(
-        subRow({ aiAnswers: 15 }),
+        subRow({ aiAnswers: 3 }),
       );
 
       const report = await service.getEffectiveEntitlementReport(SUB, null);
@@ -221,7 +222,7 @@ describe('EntitlementService — admin entitlements surface', () => {
   // ---- conflictsWithPlan ----
 
   describe('conflictsWithPlan', () => {
-    it('fires on the live bug: plan grants 15, subscription stores 0', async () => {
+    it('fires on the live bug: plan grants 3, subscription stores 0', async () => {
       prisma.subscription.findUnique.mockResolvedValue(
         subRow({ aiAnswers: 0, searchQueries: 50, digestsPerMonth: 3 }),
       );
@@ -230,7 +231,7 @@ describe('EntitlementService — admin entitlements surface', () => {
 
       const ai = rowFor(report, 'aiAnswers');
       expect(ai.conflictsWithPlan).toBe(true);
-      expect(ai.planValue).toBe(15);
+      expect(ai.planValue).toBe(3);
       expect(ai.storedValue).toBe(0);
 
       // Same blob, same value as the plan — not a conflict.

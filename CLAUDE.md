@@ -424,7 +424,7 @@ async streamAnswer(@Query() dto: AnswerQueryDto): Observable<MessageEvent> {
 - All scans default to `privacy_level = 'private'`. UI must show explicit toggle for `'editorial_candidate'` with a confirmation dialog explaining that editors may review the content.
 - Quality score < 0.4: warn user, suggest retake. Quality score < 0.2: reject with guidance.
 - OCR runs server-side (authoritative). On-device OCR preview is optional and labeled "preview — may differ from final."
-- Free users: return OCR text only. Block digest generation with upgrade prompt. Enforce at API level, not just UI.
+- Free users: one digest generation per month (`digestsPerMonth: 1`), and the counter is shared — `POST /digests/generate-on-demand` and the scan → digest route both draw on it, so the month's single generation goes to whichever is used first. The scan itself returns OCR text. Enforce at API level, not just UI, and refuse with a QUOTA error (429 / `quota_exceeded`): every free quota is positive precisely so exhaustion never answers 402 `subscription_required`. (`POST /uploads/:id/generate-digest` additionally carries an `@RequiredSubscription('edu')` tier gate, so today a free account is stopped there before its quota is consulted.)
 
 ---
 

@@ -35,7 +35,7 @@ export const FAQ_ENTRIES: FaqEntry[] = [
     keywords: ['price', 'pricing', 'plan', 'plans', 'cost', 'free', 'pro', 'subscription', 'upgrade', 'billing'],
     question: 'Plans & pricing',
     answer:
-      'There are two plans: Free gives you about 15 AI answers and 50 searches a day, while Pro raises that to roughly 200 AI answers a day with unlimited search. See the full breakdown at /pricing.',
+      'There are two plans: Free gives you 3 AI answers and 50 searches a day, plus one case digest and one camera scan a month, while Pro raises that to roughly 200 AI answers a day with unlimited search. See the full breakdown at /pricing.',
   },
   {
     id: 'search',

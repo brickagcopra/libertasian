@@ -470,16 +470,24 @@ export const PLANS: PlanInfo[] = [
     monthlyPrice: 0,
     annualPrice: 0,
     // Must match STATIC_COMPARISON_FEATURES on the pricing page, which in turn
-    // matches what the API gates. Two claims changed with the freemium tier:
-    // "Browse public legal corpus" promised the paid half of the corpus
-    // (decisions and bar exams are gated), and "OCR preview" promised a camera
-    // scan the free plan no longer has — cameraScansPerMonth is 0.
+    // matches what the API gates — `getDefaultEntitlements('free')` in
+    // subscriptions.service.ts and the free rows in prisma/seeds/plan-seed.ts.
+    // "Browse public legal corpus" was dropped because it promised the paid
+    // half of the corpus (decisions and bar exams are gated).
+    //
+    // Camera scans and digest GENERATION are listed again, at one per month
+    // each: every free quota is positive on purpose, so that exhausting one
+    // returns 429 quota_exceeded rather than the 402 that reads as a paywall.
+    // The scan still returns OCR text only — the digest it can produce is the
+    // same one allowance as `POST /digests/generate`, not a second one.
     features: [
       'Full statutory corpus — Constitution, codals, Rules of Court',
       'Offline mobile reading',
       '3 case digests to read',
-      '15 AI answer credits',
+      '3 AI answer credits',
       '50 search queries per day',
+      'Case digest generation (1/month)',
+      'Camera scan (1/month, OCR preview only)',
     ],
   },
   {

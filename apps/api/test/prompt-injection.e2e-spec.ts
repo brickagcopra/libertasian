@@ -213,7 +213,7 @@ describe('Prompt Injection & AI Security (E2E)', () => {
 
   describe('AI quota enforcement', () => {
     it('should enforce quota limits and return 403 when exceeded', async () => {
-      // Free plan: 15 AI answers per day
+      // Free plan: 3 AI answers per day
       // We won't exhaust the quota in test but verify the structure
       const res = await request(app.getHttpServer())
         .post('/api/v1/ai-answers')
