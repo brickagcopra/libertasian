@@ -79,15 +79,22 @@ class TestParseLegalDocument:
         assert "REPUBLIC" in result
 
     def test_fallback_to_largest_div(self):
+        # The `* 10` needs an explicit `+` on both sides. Adjacent string
+        # literals form ONE atom before `*` applies, so without the opening
+        # `+` the repetition would swallow "<html><body>" and the short div
+        # and emit them ten times, and without the closing `+` the trailing
+        # "</div>" is an adjacent literal after a binary operator, which is
+        # the SyntaxError that stopped this file compiling in 5c5596b.
         html = (
             "<html><body>"
             "<div>Short.</div>"
-            "<div>This is a much longer div that should be selected as the main content. "
+            "<div>"
+            + "This is a much longer div that should be selected as the main content. "
             "It contains substantial legal text about a court decision regarding "
             "the constitutionality of a certain law. The petitioner argues that "
             "the respondent violated their rights under the constitution. "
             "The court hereby rules in favor of the petitioner. " * 10
-            "</div>"
+            + "</div>"
             "</body></html>"
         )
         result = parse_legal_document(html)
