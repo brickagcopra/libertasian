@@ -27,6 +27,7 @@ import type {
   ListSubscriptionMigrationsQuery,
   ListEntitlementOverridesQuery,
 } from '@/features/billing/types';
+import { EffectiveEntitlementsPanel } from '@/features/billing/components/effective-entitlements-panel';
 import { ApiClientError } from '@/lib/api-client';
 
 import { Button } from '@/components/ui/button';
@@ -752,6 +753,11 @@ export default function AdminSubscriptionDetailPage() {
 
         {/* ─── Entitlements Tab ───────────────────────────── */}
         <TabsContent value="entitlements" className="space-y-4">
+          <EffectiveEntitlementsPanel subscriptionId={id} />
+
+          <div className="flex items-center justify-between pt-2">
+            <h3 className="text-sm font-semibold">Entitlement overrides</h3>
+          </div>
           <div className="flex justify-end">
             <Button
               size="sm"

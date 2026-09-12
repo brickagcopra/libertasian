@@ -38,7 +38,25 @@ import {
   ForceCancelSubscriptionDto,
   ExtendTrialDto,
   ChangeBillingPeriodDto,
+  SetSubscriptionEntitlementsDto,
+  PruneEntitlementsJsonDto,
+  EffectiveEntitlementsQueryDto,
+  EffectiveEntitlementsPlatform,
 } from './dto';
+import type { ClientPlatform } from '../../common/config/store-availability';
+
+/**
+ * 'web' is how the panel spells the `null` platform the resolver uses for any
+ * client without an in-app store. Mapped here, once, so no caller downstream
+ * has to remember that 'web' is not a `ClientPlatform`.
+ */
+function toClientPlatform(
+  platform: EffectiveEntitlementsPlatform | undefined,
+): ClientPlatform | null {
+  if (platform === EffectiveEntitlementsPlatform.IOS) return 'ios';
+  if (platform === EffectiveEntitlementsPlatform.ANDROID) return 'android';
+  return null;
+}
 
 @ApiTags('Admin — Subscriptions')
 @Controller('admin/subscriptions')
@@ -293,6 +311,94 @@ export class SubscriptionAdminController {
       metadata: { ip: req.ip },
     });
 
+    return { success: true, data: result };
+  }
+
+  // ---- Effective Entitlements (read) ----
+
+  @Get(':id/entitlements/effective')
+  @ApiOperation({
+    summary:
+      'Per-key breakdown of plan / subscription / override layers and what they resolve to',
+  })
+  @RequiredPermissions('admin:billing')
+  async getEffectiveEntitlements(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: EffectiveEntitlementsQueryDto,
+  ) {
+    const report = await this.entitlementService.getEffectiveEntitlementReport(
+      id,
+      toClientPlatform(query.platform),
+    );
+    return { success: true, data: report };
+  }
+
+  // ---- Stored (per-subscription) Entitlement Overrides ----
+
+  @Patch(':id/entitlements-json')
+  @ApiOperation({
+    summary: 'Set or replace keys in this subscription\'s entitlements_json',
+  })
+  @RequiredPermissions('admin:billing')
+  async setEntitlementsJson(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SetSubscriptionEntitlementsDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const result = await this.entitlementService.setSubscriptionEntitlements(
+      id,
+      dto.values,
+      user.sub,
+    );
+    return { success: true, data: result };
+  }
+
+  @Delete(':id/entitlements-json/:key')
+  @ApiOperation({
+    summary:
+      'Clear one key from this subscription\'s entitlements_json, so it falls back to the plan',
+  })
+  @RequiredPermissions('admin:billing')
+  async clearEntitlementsJsonKey(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('key') key: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const result = await this.entitlementService.clearSubscriptionEntitlement(
+      id,
+      key,
+      user.sub,
+    );
+    return { success: true, data: result };
+  }
+
+  @Post('entitlements-json/prune')
+  @ApiOperation({
+    summary:
+      'Clear an entitlements_json key from every subscription whose stored value matches exactly',
+  })
+  @RequiredPermissions('admin:billing')
+  async pruneEntitlementsJson(
+    @Body() dto: PruneEntitlementsJsonDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const result = await this.entitlementService.pruneSubscriptionEntitlementKey(
+      dto.key,
+      dto.valueEquals,
+      user.sub,
+    );
+    return { success: true, data: result };
+  }
+
+  @Get('entitlements-json/stored-key-counts')
+  @ApiOperation({
+    summary:
+      'How many subscriptions store each entitlement key, and with what values',
+  })
+  @RequiredPermissions('admin:billing')
+  async getStoredEntitlementKeyCounts(@Query('planCode') planCode?: string) {
+    const result =
+      await this.entitlementService.countStoredEntitlementKeys(planCode);
     return { success: true, data: result };
   }
 

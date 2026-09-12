@@ -5,19 +5,17 @@ import { RedisService } from '../../common/services/redis.service';
 import type { ClientPlatform } from '../../common/config/store-availability';
 import type { SubscriptionEntitlements } from './subscriptions.service';
 import { EntitlementService } from './entitlement.service';
+import { ALL_QUOTA_TYPES, type QuotaType } from './entitlement-keys';
 
-export type QuotaType =
-  | 'aiAnswers'
-  | 'searchQueries'
-  | 'digestsPerMonth'
-  | 'cameraScansPerMonth'
-  | 'memoDraftingPerMonth'
-  | 'pleadingAssistancePerMonth'
-  | 'caseComparisonPerMonth'
-  | 'timelineGenerationPerMonth'
-  | 'hearingPrepPerMonth'
-  | 'contradictionDetectionPerMonth'
-  | 'documentUploadsPerMonth';
+// Re-exported so the many existing `from './usage-quota.service'` imports of
+// the quota vocabulary keep working; the definitions live in
+// `entitlement-keys.ts` to keep this module out of an import cycle.
+export {
+  ALL_QUOTA_TYPES,
+  CANONICAL_ENTITLEMENT_KEYS,
+  isCanonicalEntitlementKey,
+} from './entitlement-keys';
+export type { QuotaType } from './entitlement-keys';
 
 export interface QuotaCheckResult {
   allowed: boolean;
@@ -37,20 +35,6 @@ export interface UsageSummaryV2 {
   billingPeriodStart: string | null;
   billingPeriodEnd: string | null;
 }
-
-const ALL_QUOTA_TYPES: QuotaType[] = [
-  'aiAnswers',
-  'searchQueries',
-  'digestsPerMonth',
-  'cameraScansPerMonth',
-  'memoDraftingPerMonth',
-  'pleadingAssistancePerMonth',
-  'caseComparisonPerMonth',
-  'timelineGenerationPerMonth',
-  'hearingPrepPerMonth',
-  'contradictionDetectionPerMonth',
-  'documentUploadsPerMonth',
-];
 
 @Injectable()
 export class UsageQuotaService {

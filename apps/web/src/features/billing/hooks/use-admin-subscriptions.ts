@@ -21,6 +21,15 @@ import type {
   RevokeComplimentaryInput,
   GrantEntitlementOverrideInput,
   RevokeEntitlementOverrideInput,
+  EffectiveEntitlementReport,
+  EffectiveEntitlementsResponse,
+  EntitlementPlatform,
+  StoredEntitlementKeyStats,
+  StoredEntitlementKeyCountsResponse,
+  SetEntitlementsJsonInput,
+  PruneEntitlementsJsonInput,
+  PruneEntitlementsJsonResult,
+  PruneEntitlementsJsonResponse,
 } from '../types';
 
 // ─── Query Keys ──────────────────────────────────────────
@@ -37,6 +46,11 @@ export const adminSubscriptionKeys = {
     [...adminSubscriptionKeys.all, 'migrations', id, params ?? {}] as const,
   entitlementOverrides: (params: ListEntitlementOverridesQuery) =>
     [...adminSubscriptionKeys.all, 'entitlement-overrides', params] as const,
+  // The platform is part of the key on purpose — see useEffectiveEntitlements.
+  effectiveEntitlements: (id: string, platform: EntitlementPlatform) =>
+    [...adminSubscriptionKeys.all, 'effective-entitlements', id, platform] as const,
+  storedEntitlementKeyCounts: (planCode?: string) =>
+    [...adminSubscriptionKeys.all, 'stored-entitlement-key-counts', planCode ?? null] as const,
 };
 
 // ─── Queries ─────────────────────────────────────────────
@@ -235,6 +249,102 @@ export function useRevokeEntitlementOverride() {
         `/admin/subscriptions/entitlements/override/${id}`,
         data,
       );
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: adminSubscriptionKeys.all });
+    },
+  });
+}
+
+// ─── Effective Entitlements ─────────────────────────────
+
+/**
+ * The three-layer breakdown for one subscription, resolved AS a client on
+ * `platform`.
+ *
+ * The platform is part of the query key, not just the URL: entitlements are
+ * platform-dependent, so a cache keyed on the subscription alone would serve
+ * the iOS answer to a web admin (or the reverse) and the switcher would appear
+ * to do nothing.
+ */
+export function useEffectiveEntitlements(
+  subscriptionId: string,
+  platform: EntitlementPlatform,
+) {
+  return useQuery({
+    queryKey: adminSubscriptionKeys.effectiveEntitlements(
+      subscriptionId,
+      platform,
+    ),
+    queryFn: async (): Promise<EffectiveEntitlementReport> => {
+      const res = await apiClient.get<EffectiveEntitlementsResponse>(
+        `/admin/subscriptions/${subscriptionId}/entitlements/effective?platform=${platform}`,
+      );
+      return res.data;
+    },
+    enabled: !!subscriptionId,
+    staleTime: 30 * 1000,
+  });
+}
+
+/** How many subscriptions store their own value for each entitlement key. */
+export function useStoredEntitlementKeyCounts(planCode?: string) {
+  return useQuery({
+    queryKey: adminSubscriptionKeys.storedEntitlementKeyCounts(planCode),
+    queryFn: async (): Promise<Record<string, StoredEntitlementKeyStats>> => {
+      const qs = planCode ? `?planCode=${encodeURIComponent(planCode)}` : '';
+      const res = await apiClient.get<StoredEntitlementKeyCountsResponse>(
+        `/admin/subscriptions/entitlements-json/stored-key-counts${qs}`,
+      );
+      return res.data;
+    },
+    staleTime: 60 * 1000,
+  });
+}
+
+export function useSetEntitlementsJson() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      data,
+    }: {
+      id: string;
+      data: SetEntitlementsJsonInput;
+    }) => {
+      return apiClient.patch(`/admin/subscriptions/${id}/entitlements-json`, data);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: adminSubscriptionKeys.all });
+    },
+  });
+}
+
+export function useClearEntitlementsJsonKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, key }: { id: string; key: string }) => {
+      return apiClient.delete(
+        `/admin/subscriptions/${id}/entitlements-json/${encodeURIComponent(key)}`,
+      );
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: adminSubscriptionKeys.all });
+    },
+  });
+}
+
+export function usePruneEntitlementsJson() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (
+      data: PruneEntitlementsJsonInput,
+    ): Promise<PruneEntitlementsJsonResult> => {
+      const res = await apiClient.post<PruneEntitlementsJsonResponse>(
+        '/admin/subscriptions/entitlements-json/prune',
+        data,
+      );
+      return res.data;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: adminSubscriptionKeys.all });
