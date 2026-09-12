@@ -33,7 +33,7 @@ export class BudgetController {
       // actually gates generation.
       this.aiSettings.getScopeBudgetStatus(),
     ]);
-    return { snapshot, byScope, scopeBudgets };
+    return { success: true, data: { snapshot, byScope, scopeBudgets } };
   }
 
   /**
@@ -72,6 +72,9 @@ export class BudgetController {
   @ApiOperation({ summary: 'Get monthly ledger history' })
   async getHistory(@Query('months') months?: string) {
     const n = months ? parseInt(months, 10) : 12;
-    return this.aiSettings.getLedgerHistory(Math.min(Math.max(n, 1), 24));
+    const data = await this.aiSettings.getLedgerHistory(
+      Math.min(Math.max(n, 1), 24),
+    );
+    return { success: true, data };
   }
 }

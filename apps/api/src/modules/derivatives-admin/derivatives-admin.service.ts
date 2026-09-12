@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
+import { canonicalScope } from '../../common/constants/budget-scopes';
 import { derivativeCostPerCall } from '../../common/constants/derivative-costs';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -56,17 +57,29 @@ export class DerivativesAdminService {
       _count: { id: true },
     });
 
-    // Current month spend by scope from budget ledger
+    // Current month spend by scope from budget ledger.
+    //
+    // No `scope: { startsWith: 'derivative_type:' }` filter: nothing has
+    // ever written a scope with that prefix, so the filter matched zero
+    // rows and every `spendThisMonth` was structurally $0 while the real
+    // ledger held e.g. $35.65 under `mcq_generation`. Read every scope for
+    // the month and fold the legacy generator names into their canonical
+    // category (`mcq_generation` → `mcq_question`) before summing, so one
+    // category is not split across two spellings.
     const now = new Date();
     const periodYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     const ledgerEntries = await this.prisma.budgetLedger.groupBy({
       by: ['scope'],
       _sum: { amountUsd: true },
-      where: {
-        periodYearMonth,
-        scope: { startsWith: 'derivative_type:' },
-      },
+      where: { periodYearMonth },
     });
+
+    const spendByType = new Map<string, number>();
+    for (const entry of ledgerEntries) {
+      const category = canonicalScope(entry.scope);
+      const amount = entry._sum.amountUsd ? Number(entry._sum.amountUsd) : 0;
+      spendByType.set(category, (spendByType.get(category) ?? 0) + amount);
+    }
 
     // Read settings
     const settings = await this.getDerivativeSettings();
@@ -75,7 +88,6 @@ export class DerivativesAdminService {
     const byType = DERIVATIVE_TYPES.map((dt) => {
       const artifacts = artifactCounts.find((a) => a.derivativeType === dt);
       const jobs = jobCounts.filter((j) => j.derivativeType === dt);
-      const spend = ledgerEntries.find((l) => l.scope === `derivative_type:${dt}`);
 
       return {
         derivativeType: dt,
@@ -83,9 +95,7 @@ export class DerivativesAdminService {
         pendingJobs: jobs.find((j) => j.status === 'pending')?._count.id ?? 0,
         failedJobs: jobs.find((j) => j.status === 'failed')?._count.id ?? 0,
         completedJobs: jobs.find((j) => j.status === 'completed')?._count.id ?? 0,
-        spendThisMonth: spend?._sum.amountUsd
-          ? Number(spend._sum.amountUsd)
-          : 0,
+        spendThisMonth: spendByType.get(dt) ?? 0,
       };
     });
 

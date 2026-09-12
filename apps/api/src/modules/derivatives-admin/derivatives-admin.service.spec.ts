@@ -95,18 +95,68 @@ describe('DerivativesAdminService', () => {
       expect(essay?.totalArtifacts).toBe(0);
     });
 
-    it('includes spend from budget ledger', async () => {
+    // The ledger scopes below are the ones prod actually holds. The stat
+    // used to filter on `scope: { startsWith: 'derivative_type:' }`, a
+    // prefix nothing has ever written, so every spendThisMonth read $0
+    // while the ledger held $35.65 of MCQ generation.
+    it('sums spend under the real prod scope names', async () => {
       prisma.budgetLedger.groupBy.mockResolvedValue([
+        { scope: 'mcq_generation', _sum: { amountUsd: new Prisma.Decimal('35.65') } },
         {
-          scope: 'derivative_type:case_digest',
-          _sum: { amountUsd: new Prisma.Decimal('1.50') },
+          scope: 'essay_prompt_generation',
+          _sum: { amountUsd: new Prisma.Decimal('21.39') },
         },
+        {
+          scope: 'subject_outline_generation',
+          _sum: { amountUsd: new Prisma.Decimal('2.00') },
+        },
+        { scope: 'ai_answer', _sum: { amountUsd: new Prisma.Decimal('0.41') } },
+      ]);
+
+      const result = await service.getStats();
+
+      const spendFor = (t: string) =>
+        result.byType.find((r) => r.derivativeType === t)?.spendThisMonth;
+
+      // Legacy generator names fold into their canonical category.
+      expect(spendFor('mcq_question')).toBe(35.65);
+      expect(spendFor('essay_prompt')).toBe(21.39);
+      expect(spendFor('subject_outline')).toBe(2);
+      // `ai_answer` is not a derivative type — it must not land anywhere.
+      expect(result.byType.every((r) => r.derivativeType !== 'ai_answer')).toBe(true);
+      // A type with no ledger rows reads 0, not undefined.
+      expect(spendFor('flashcard')).toBe(0);
+    });
+
+    it('reads canonical scope names directly', async () => {
+      prisma.budgetLedger.groupBy.mockResolvedValue([
+        { scope: 'case_digest', _sum: { amountUsd: new Prisma.Decimal('1.50') } },
       ]);
 
       const result = await service.getStats();
 
       const digest = result.byType.find((t) => t.derivativeType === 'case_digest');
       expect(digest?.spendThisMonth).toBe(1.5);
+    });
+
+    it('adds a legacy scope and its canonical twin into one number', async () => {
+      prisma.budgetLedger.groupBy.mockResolvedValue([
+        { scope: 'mcq_generation', _sum: { amountUsd: new Prisma.Decimal('35.65') } },
+        { scope: 'mcq_question', _sum: { amountUsd: new Prisma.Decimal('4.35') } },
+      ]);
+
+      const result = await service.getStats();
+
+      const mcq = result.byType.find((t) => t.derivativeType === 'mcq_question');
+      expect(mcq?.spendThisMonth).toBeCloseTo(40, 10);
+    });
+
+    it('does not filter the ledger by a scope prefix', async () => {
+      await service.getStats();
+
+      const where = prisma.budgetLedger.groupBy.mock.calls[0][0].where;
+      expect(where.scope).toBeUndefined();
+      expect(where.periodYearMonth).toMatch(/^\d{4}-\d{2}$/);
     });
 
     it('reads enabled settings', async () => {

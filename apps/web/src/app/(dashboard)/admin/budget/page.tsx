@@ -45,6 +45,13 @@ export default function BudgetPage() {
   const byScope = data?.byScope ?? [];
   const scopeBudgets = data?.scopeBudgets ?? [];
 
+  // A hit overall ceiling stops every category at once, and until now it
+  // did so in silence: the gauge went red and nothing said generation had
+  // actually halted.
+  const monthlyCeiling = snapshot?.monthlyCeiling ?? 0;
+  const monthSpend = snapshot?.monthSpend ?? 0;
+  const monthlyStopped = monthlyCeiling > 0 && monthSpend >= monthlyCeiling;
+
   return (
     <div className="space-y-8">
       <div>
@@ -57,6 +64,22 @@ export default function BudgetPage() {
           change is needed to alter any of them.
         </p>
       </div>
+
+      {monthlyStopped && (
+        <div
+          role="alert"
+          className="rounded-lg border border-red-300 bg-red-50 p-4"
+        >
+          <h2 className="text-sm font-semibold text-red-800">
+            AI generation is stopped — the monthly budget is spent
+          </h2>
+          <p className="mt-1 text-sm text-red-700">
+            ${monthSpend.toFixed(2)} of the ${monthlyCeiling.toFixed(2)}{' '}
+            monthly ceiling is used. Every category is blocked until the
+            ceiling is raised below or the month rolls over.
+          </p>
+        </div>
+      )}
 
       {/* Gauge Cards */}
       <div className="grid gap-6 sm:grid-cols-2">

@@ -39,6 +39,28 @@ from src.core.schemas import (
 from src.core.types import AbstentionReason, ConfidenceLevel, QueryIntent
 
 
+# Default token counts for the mocked generation call. Non-zero on purpose:
+# `generate_completion_with_usage` exists here so the gateway can price the
+# `ai_answer` budget_ledger row, and a fixture that returned 0 would make the
+# $0-row regression invisible.
+_MOCK_TOKENS_IN = 1234
+_MOCK_TOKENS_OUT = 567
+
+
+def _generation(
+    content: str,
+    tokens_in: int = _MOCK_TOKENS_IN,
+    tokens_out: int = _MOCK_TOKENS_OUT,
+) -> dict[str, Any]:
+    """What `generate_completion_with_usage` returns."""
+    return {
+        "content": content,
+        "model_name": "test-model-v1",
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -229,7 +251,7 @@ class TestGenerateAnswer:
         self.mock_retrieve = AsyncMock(return_value=_make_search_result())
         self.mock_rerank = AsyncMock(return_value=_outcome(_make_passages_list()))
         self.mock_generate = AsyncMock(
-            return_value="The court held... [SOURCE doc-0001]"
+            return_value=_generation("The court held... [SOURCE doc-0001]")
         )
         self.mock_validate = AsyncMock(return_value=_make_validation_result())
         self.mock_model_info = MagicMock(
@@ -239,7 +261,7 @@ class TestGenerateAnswer:
         self.patches = [
             patch("src.answer.service.hybrid_retrieve", self.mock_retrieve),
             patch("src.answer.service.rerank_passages", self.mock_rerank),
-            patch("src.answer.service.generate_completion", self.mock_generate),
+            patch("src.answer.service.generate_completion_with_usage", self.mock_generate),
             patch("src.answer.service.validate_citations", self.mock_validate),
             patch("src.answer.service.get_model_info", self.mock_model_info),
         ]
@@ -265,6 +287,34 @@ class TestGenerateAnswer:
         # The version the response records is whatever the prompt module
         # declares; `test_prompts` is where the literal is pinned.
         assert response.prompt_template_version == PROMPT_VERSION
+
+    @pytest.mark.asyncio
+    async def test_answer_reports_token_usage(self) -> None:
+        """/answer must report what the call cost.
+
+        The NestJS gateway prices the `ai_answer` budget_ledger row from
+        these two fields. The pipeline used to call `generate_completion`,
+        which returns text only, so every ai_answer row landed in Postgres
+        with amount_usd 0 and tokens 0 — the one AI category users drive
+        directly was free on paper and could not be reconciled against the
+        Redis counter that actually gates it.
+        """
+        request = AnswerRequest(query="What is the doctrine of last clear chance?")
+        response = await generate_answer(request)
+
+        assert response.tokens_in == _MOCK_TOKENS_IN
+        assert response.tokens_out == _MOCK_TOKENS_OUT
+        assert response.tokens_in > 0
+        assert response.tokens_out > 0
+
+    @pytest.mark.asyncio
+    async def test_generation_is_charged_to_the_ai_answer_scope(self) -> None:
+        """The budget scope is part of the call, not a detail of it."""
+        await generate_answer(
+            AnswerRequest(query="What is the doctrine of last clear chance?")
+        )
+
+        assert self.mock_generate.call_args.kwargs["scope"] == "ai_answer"
 
     @pytest.mark.asyncio
     async def test_answer_includes_sources_when_requested(self) -> None:
@@ -401,7 +451,7 @@ class TestGenerateAnswerAbstention:
     @pytest.mark.asyncio
     async def test_abstention_does_not_call_generation(self) -> None:
         """When abstaining, LLM generation and validation should NOT be called."""
-        with patch("src.answer.service.generate_completion") as mock_gen, \
+        with patch("src.answer.service.generate_completion_with_usage") as mock_gen, \
              patch("src.answer.service.validate_citations") as mock_val:
             request = AnswerRequest(query="Some impossible query")
             await generate_answer(request)
@@ -428,7 +478,7 @@ class TestDegradedReporting:
         self.mock_retrieve = AsyncMock(return_value=_make_search_result())
         self.mock_rerank = AsyncMock(return_value=_outcome(_make_passages_list()))
         self.mock_generate = AsyncMock(
-            return_value="The court held... [SOURCE doc-0001]"
+            return_value=_generation("The court held... [SOURCE doc-0001]")
         )
         self.mock_validate = AsyncMock(return_value=_make_validation_result())
         self.mock_model_info = MagicMock(
@@ -441,7 +491,7 @@ class TestDegradedReporting:
         self.patches = [
             patch("src.answer.service.hybrid_retrieve", self.mock_retrieve),
             patch("src.answer.service.rerank_passages", self.mock_rerank),
-            patch("src.answer.service.generate_completion", self.mock_generate),
+            patch("src.answer.service.generate_completion_with_usage", self.mock_generate),
             patch("src.answer.service.validate_citations", self.mock_validate),
             patch("src.answer.service.get_model_info", self.mock_model_info),
             patch("src.answer.service.stream_completion", _mock_stream),
@@ -761,7 +811,7 @@ class TestDocumentScopedRetrieval:
     def _setup_mocks(self) -> None:
         self.mock_retrieve = AsyncMock(return_value=_make_search_result())
         self.mock_rerank = AsyncMock(return_value=_outcome(_make_passages_list()))
-        self.mock_generate = AsyncMock(return_value="Held... [SOURCE doc-0001]")
+        self.mock_generate = AsyncMock(return_value=_generation("Held... [SOURCE doc-0001]"))
         self.mock_validate = AsyncMock(return_value=_make_validation_result())
         self.mock_model_info = MagicMock(
             return_value={"model_name": "test-model-v1", "model_version": "1.0"}
@@ -770,7 +820,7 @@ class TestDocumentScopedRetrieval:
         self.patches = [
             patch("src.answer.service.hybrid_retrieve", self.mock_retrieve),
             patch("src.answer.service.rerank_passages", self.mock_rerank),
-            patch("src.answer.service.generate_completion", self.mock_generate),
+            patch("src.answer.service.generate_completion_with_usage", self.mock_generate),
             patch("src.answer.service.validate_citations", self.mock_validate),
             patch("src.answer.service.get_model_info", self.mock_model_info),
         ]
@@ -894,7 +944,7 @@ class TestScopedPassageFloor:
             )
         )
         self.mock_rerank = AsyncMock(return_value=_outcome(single))
-        self.mock_generate = AsyncMock(return_value="It does. [SOURCE doc-42]")
+        self.mock_generate = AsyncMock(return_value=_generation("It does. [SOURCE doc-42]"))
         self.mock_validate = AsyncMock(return_value=_make_validation_result())
         self.mock_model_info = MagicMock(
             return_value={"model_name": "test-model-v1", "model_version": "1.0"}
@@ -904,7 +954,7 @@ class TestScopedPassageFloor:
         self.patches = [
             patch("src.answer.service.hybrid_retrieve", self.mock_retrieve),
             patch("src.answer.service.rerank_passages", self.mock_rerank),
-            patch("src.answer.service.generate_completion", self.mock_generate),
+            patch("src.answer.service.generate_completion_with_usage", self.mock_generate),
             patch("src.answer.service.validate_citations", self.mock_validate),
             patch("src.answer.service.get_model_info", self.mock_model_info),
         ]
@@ -1002,7 +1052,9 @@ class TestCitationGrounding:
             )
         )
         self.mock_rerank = AsyncMock(return_value=_outcome(_make_passages_list()))
-        self.mock_generate = AsyncMock(return_value="Unsupported prose with no citations.")
+        self.mock_generate = AsyncMock(
+            return_value=_generation("Unsupported prose with no citations.")
+        )
         self.mock_validate = AsyncMock(
             return_value=ValidationResult(
                 is_valid=False,
@@ -1020,7 +1072,7 @@ class TestCitationGrounding:
         self.patches = [
             patch("src.answer.service.hybrid_retrieve", self.mock_retrieve),
             patch("src.answer.service.rerank_passages", self.mock_rerank),
-            patch("src.answer.service.generate_completion", self.mock_generate),
+            patch("src.answer.service.generate_completion_with_usage", self.mock_generate),
             patch("src.answer.service.validate_citations", self.mock_validate),
             patch("src.answer.service.get_model_info", self.mock_model_info),
             patch("src.answer.service.pack_context", return_value=_make_context_bundle()),
@@ -1151,7 +1203,7 @@ class TestQueryEmbeddingIsWired:
     def _setup_mocks(self) -> None:
         self.mock_retrieve = AsyncMock(return_value=_make_search_result())
         self.mock_rerank = AsyncMock(return_value=_outcome(_make_passages_list()))
-        self.mock_generate = AsyncMock(return_value="Held... [SOURCE doc-0001]")
+        self.mock_generate = AsyncMock(return_value=_generation("Held... [SOURCE doc-0001]"))
         self.mock_validate = AsyncMock(return_value=_make_validation_result())
         self.mock_model_info = MagicMock(
             return_value={"model_name": "test-model-v1", "model_version": "1.0"}
@@ -1161,7 +1213,7 @@ class TestQueryEmbeddingIsWired:
         self.patches = [
             patch("src.answer.service.hybrid_retrieve", self.mock_retrieve),
             patch("src.answer.service.rerank_passages", self.mock_rerank),
-            patch("src.answer.service.generate_completion", self.mock_generate),
+            patch("src.answer.service.generate_completion_with_usage", self.mock_generate),
             patch("src.answer.service.validate_citations", self.mock_validate),
             patch("src.answer.service.get_model_info", self.mock_model_info),
             patch("src.answer.service.embed_query", self.mock_embed),
@@ -1294,7 +1346,9 @@ class TestInsufficientSentinelNonStreaming:
     def _setup_mocks(self) -> None:
         self.mock_retrieve = AsyncMock(return_value=_make_search_result())
         self.mock_rerank = AsyncMock(return_value=_outcome(_make_passages_list()))
-        self.mock_generate = AsyncMock(return_value=INSUFFICIENT_SOURCES_SENTINEL)
+        self.mock_generate = AsyncMock(
+            return_value=_generation(INSUFFICIENT_SOURCES_SENTINEL)
+        )
         self.mock_validate = AsyncMock(return_value=_make_validation_result())
         self.mock_model_info = MagicMock(
             return_value={"model_name": "test-model-v1", "model_version": "1.0"}
@@ -1303,7 +1357,7 @@ class TestInsufficientSentinelNonStreaming:
         self.patches = [
             patch("src.answer.service.hybrid_retrieve", self.mock_retrieve),
             patch("src.answer.service.rerank_passages", self.mock_rerank),
-            patch("src.answer.service.generate_completion", self.mock_generate),
+            patch("src.answer.service.generate_completion_with_usage", self.mock_generate),
             patch("src.answer.service.validate_citations", self.mock_validate),
             patch("src.answer.service.get_model_info", self.mock_model_info),
             patch("src.answer.service.pack_context", return_value=_make_context_bundle()),
@@ -1343,6 +1397,14 @@ class TestInsufficientSentinelNonStreaming:
         await generate_answer(AnswerRequest(query="What is estafa?"))
 
         self.mock_validate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_sentinel_abstention_still_reports_its_tokens(self) -> None:
+        """A refusal costs money. Generation ran, so the ledger must see it."""
+        response = await generate_answer(AnswerRequest(query="What is estafa?"))
+
+        assert response.tokens_in == _MOCK_TOKENS_IN
+        assert response.tokens_out == _MOCK_TOKENS_OUT
 
     @pytest.mark.asyncio
     async def test_scoped_sentinel_uses_scoped_copy(self) -> None:

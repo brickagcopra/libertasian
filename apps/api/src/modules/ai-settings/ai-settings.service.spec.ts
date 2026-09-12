@@ -85,6 +85,66 @@ describe('AiSettingsService — budget and ingestion window sync', () => {
     });
   });
 
+  describe('syncBudgetToRedis — boot drift reporting', () => {
+    /**
+     * Postgres is the record, so a ceiling poked straight into Redis is
+     * reverted on the next restart. It used to be reverted in silence: the
+     * cap an operator believed was in force simply stopped existing.
+     */
+    it('warns with both values when Redis and the DB disagree', async () => {
+      const warn = jest
+        .spyOn(service['logger'], 'warn')
+        .mockImplementation(() => undefined);
+      prisma.aiSettings.findUnique
+        .mockResolvedValueOnce({ key: 'llm_monthly_budget_usd', value: { amount: 200 } })
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null);
+      redis.get.mockResolvedValue('999');
+
+      await service.syncBudgetToRedis({ reportDrift: true });
+
+      expect(warn).toHaveBeenCalled();
+      const message = String(warn.mock.calls[0]?.[0]);
+      expect(message).toContain('$999');
+      expect(message).toContain('$200');
+      expect(message).toContain('PATCH /admin/budget/settings');
+      // The DB value still wins.
+      expect(redis.set).toHaveBeenCalledWith('llm:config:monthly_budget_usd', '200');
+    });
+
+    it('stays quiet when Redis already matches the DB', async () => {
+      const warn = jest
+        .spyOn(service['logger'], 'warn')
+        .mockImplementation(() => undefined);
+      prisma.aiSettings.findUnique
+        .mockResolvedValueOnce({ key: 'llm_monthly_budget_usd', value: { amount: 200 } })
+        .mockResolvedValueOnce({ key: 'llm_daily_budget_usd', value: { amount: 15 } })
+        .mockResolvedValueOnce(null);
+      redis.get.mockImplementation((key: string) =>
+        Promise.resolve(key === 'llm:config:monthly_budget_usd' ? '200' : '15'),
+      );
+
+      await service.syncBudgetToRedis({ reportDrift: true });
+
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('does not report drift on the post-update sync', async () => {
+      const warn = jest
+        .spyOn(service['logger'], 'warn')
+        .mockImplementation(() => undefined);
+      prisma.aiSettings.findUnique
+        .mockResolvedValueOnce({ key: 'llm_monthly_budget_usd', value: { amount: 200 } })
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null);
+      redis.get.mockResolvedValue('999');
+
+      await service.syncBudgetToRedis();
+
+      expect(warn).not.toHaveBeenCalled();
+    });
+  });
+
   describe('syncBudgetToRedis — per-category ceilings', () => {
     /** monthly row, daily row, then the per-scope row. */
     function settingsRows(perScope: unknown) {

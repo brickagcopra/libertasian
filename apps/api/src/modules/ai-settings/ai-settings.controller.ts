@@ -44,7 +44,7 @@ export class AiSettingsController {
   @Get()
   @ApiOperation({ summary: 'Get all AI settings' })
   async getAll() {
-    return this.aiSettings.getAllSettings();
+    return { success: true, data: await this.aiSettings.getAllSettings() };
   }
 
   /**
@@ -92,7 +92,7 @@ export class AiSettingsController {
   @Get(':key')
   @ApiOperation({ summary: 'Get a single AI setting by key' })
   async getOne(@Param('key') key: string) {
-    return this.aiSettings.getSetting(key);
+    return { success: true, data: await this.aiSettings.getSetting(key) };
   }
 
   @Patch(':key')
@@ -109,14 +109,17 @@ export class AiSettingsController {
   @Get('usage/current')
   @ApiOperation({ summary: 'Get current month LLM usage and budget status' })
   async getUsageCurrent() {
-    return this.aiSettings.getUsageSummary();
+    return { success: true, data: await this.aiSettings.getUsageSummary() };
   }
 
   @Get('usage/history')
   @ApiOperation({ summary: 'Get LLM usage history for the last N months' })
   async getUsageHistory(@Query('months') months?: string) {
     const n = months ? parseInt(months, 10) : 12;
-    return this.aiSettings.getUsageHistory(Math.min(Math.max(n, 1), 24));
+    const data = await this.aiSettings.getUsageHistory(
+      Math.min(Math.max(n, 1), 24),
+    );
+    return { success: true, data };
   }
 
   @Post('usage/reset')
