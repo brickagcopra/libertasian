@@ -93,6 +93,8 @@ export interface GenerationJobCounts {
   generated: number;
   generatedUngrounded: number;
   skippedExisting: number;
+  /** Regenerated, but the new answer wasn't better — the old one was kept. */
+  keptExisting: number;
   failed: number;
 }
 

@@ -124,6 +124,29 @@ class TestItemOutcomeMapping:
             "skipped_existing"
         )
 
+    def test_kept_existing_is_its_own_terminal_status_not_a_failure(self) -> None:
+        """A regeneration ran and lost to the answer already on the row.
+
+        Nothing needs retrying, so it is not `failed`; no new answer was
+        written, so it is not `generated` either. The recorded answer_id and
+        confidence are the KEPT row's, so the item keeps describing the answer
+        that actually exists.
+        """
+        outcome = _item_outcome(
+            {
+                "question_id": "q-1",
+                "status": "kept_existing",
+                "reason": "new_confidence_lower",
+                "answer_id": "ans-1",
+                "confidence": 0.2,
+                "existing_confidence": 0.8,
+            },
+        )
+        assert outcome["status"] == "kept_existing"
+        assert outcome["answer_id"] == "ans-1"
+        assert outcome["confidence"] == 0.8
+        assert "error_code" not in outcome
+
     def test_unknown_status_is_recorded_not_swallowed(self) -> None:
         outcome = _item_outcome({"status": "something_new"})
         assert outcome["status"] == "failed"

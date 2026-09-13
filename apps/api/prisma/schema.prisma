@@ -4086,7 +4086,11 @@ model BarExamAnswerGenerationItem {
   jobId      String @map("job_id") @db.Uuid
   questionId String @map("question_id") @db.Uuid
   /// queued | running | generated | generated_ungrounded | skipped_existing |
-  /// failed
+  /// kept_existing | failed
+  ///
+  /// `kept_existing`: a regeneration ran for this question but the new answer
+  /// was not at least as good as the pending one it would have replaced, so
+  /// the old answer was kept. Not a failure — there is nothing to retry.
   status String @default("queued") @db.VarChar(30)
   /// For `failed`: the per-question status the generator returned
   /// (llm_invalid_json | llm_malformed | llm_abstained | question_not_found |

@@ -693,11 +693,32 @@ describe('AdminBarExamAnswersController', () => {
         generated: 2,
         generatedUngrounded: 0,
         skippedExisting: 0,
+        keptExisting: 0,
         failed: 1,
       });
       expect(job.done).toBe(3);
       // running + nothing moved for 20 minutes = stalled.
       expect(job.stalled).toBe(true);
+    });
+
+    it('counts kept_existing items as done, not as failures', async () => {
+      // A regeneration that ran and lost to the answer already on the row.
+      // Nothing needs retrying, so a progress card that left it out of `done`
+      // would show a run stuck below 100% forever.
+      const now = new Date();
+      prisma.barExamAnswerGenerationJob.findMany.mockResolvedValue([
+        fakeJobRow({ total: 3 }),
+      ]);
+      prisma.barExamAnswerGenerationItem.groupBy.mockResolvedValue([
+        { jobId: JOB_ID, status: 'generated', _count: { _all: 1 }, _max: { updatedAt: now } },
+        { jobId: JOB_ID, status: 'kept_existing', _count: { _all: 2 }, _max: { updatedAt: now } },
+      ]);
+
+      const job = (await controller.listJobs({})).data.items[0]!;
+
+      expect(job.counts.keptExisting).toBe(2);
+      expect(job.counts.failed).toBe(0);
+      expect(job.done).toBe(3);
     });
 
     it('job detail returns failed items joined to year / subject / question', async () => {

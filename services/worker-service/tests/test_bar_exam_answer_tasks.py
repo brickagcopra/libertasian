@@ -9,12 +9,16 @@ Covers:
 - missing-fields output: marked llm_malformed, no row written
 - abstain flag: marked llm_abstained, no row written
 - batch resilience: one bad question doesn't stop the loop
+- force_regenerate: replaces a pending row in place only when the new
+  answer scores at least as well; every other outcome keeps the old row
 """
 
 from __future__ import annotations
 
 from typing import Any
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from src.tasks import bar_exam_answer_tasks
 from src.tasks.bar_exam_answer_tasks import (
@@ -324,6 +328,7 @@ class TestGenerateAnswersForQuestions:
         assert result == {
             "requested": 0,
             "skipped_existing": 0,
+            "kept_existing": 0,
             "generated": 0,
             "failed": 0,
             "results": [],
@@ -657,56 +662,75 @@ class TestCitationFilteringAndScoring:
 
 
 class TestForceRegenerate:
+    """Regeneration must never be able to leave a question worse off.
+
+    The old flow deleted the pending row before generating. A prod pilot over
+    42 low-scoring answers (22 better under v3, 18 equal, 1 lower, 1 outright
+    failure) says ~5% of a ~500-answer regeneration run would have been lost
+    or downgraded that way. So nothing is deleted: the new answer has to earn
+    the row by scoring at least as well as the one already there.
+    """
+
+    def _setup_generation(
+        self,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        cited: list[str] | None = None,
+        resolved: dict[str, str] | None = None,
+    ) -> None:
+        mock_db.get_bar_exam_question_with_context.return_value = FAKE_QUESTION
+        mock_db.create_model_run.return_value = "run-2"
+        mock_db.create_bar_exam_answer.return_value = "ans-2"
+        mock_db.replace_pending_bar_exam_answer.return_value = "ans-1"
+        mock_db.resolve_section_ids.return_value = resolved or {}
+        mock_rag.retrieve_passages.return_value = SAMPLE_PASSAGES
+        mock_rag.generate_completion.return_value = _llm_response(
+            {**VALID_LLM_CONTENT, "citedSectionIds": cited or []}
+        )
+
+    # 1. No existing row: an ordinary first generation.
+
     @patch("src.tasks.bar_exam_answer_tasks.rag_client")
     @patch("src.tasks.bar_exam_answer_tasks.db")
-    def test_force_regenerate_deletes_pending_then_writes_new_row(
+    def test_no_existing_row_inserts_exactly_as_a_normal_generation(
         self,
         mock_db: MagicMock,
         mock_rag: MagicMock,
         monkeypatch,
     ) -> None:
-        # Toggle retrieval off so this test focuses on the regenerate path.
-        monkeypatch.setattr(
-            bar_exam_answer_tasks, "BAR_EXAM_RAG_ENABLED", False
-        )
-        # The pending row is deleted before the exists-check runs, so the
-        # second branch sees an empty table.
-        mock_db.delete_pending_bar_exam_answer.return_value = 1
-        mock_db.bar_exam_answer_exists.return_value = False
-        mock_db.get_bar_exam_question_with_context.return_value = FAKE_QUESTION
-        mock_db.create_model_run.return_value = "run-2"
-        mock_db.create_bar_exam_answer.return_value = "ans-2"
-        mock_rag.generate_completion.return_value = _llm_response()
+        monkeypatch.setattr(bar_exam_answer_tasks, "BAR_EXAM_RAG_ENABLED", False)
+        mock_db.get_bar_exam_answer_state.return_value = None
+        self._setup_generation(mock_db, mock_rag)
 
         result = generate_answers_for_questions.run(
             ["q-1"], force_regenerate=True
         )
 
         assert result["generated"] == 1
-        mock_db.delete_pending_bar_exam_answer.assert_called_once()
-        del_args = mock_db.delete_pending_bar_exam_answer.call_args
-        assert del_args.args[0] == "q-1"
-        assert del_args.kwargs.get("answer_type") == "ai_generated"
         mock_db.create_bar_exam_answer.assert_called_once()
+        mock_db.replace_pending_bar_exam_answer.assert_not_called()
+        assert result["results"][0]["answer_id"] == "ans-2"
 
+    # 2. A reviewed row: skipped without an LLM call.
+
+    @pytest.mark.parametrize("review_status", ["approved", "rejected"])
     @patch("src.tasks.bar_exam_answer_tasks.rag_client")
     @patch("src.tasks.bar_exam_answer_tasks.db")
-    def test_force_regenerate_skips_when_approved_row_blocks_delete(
+    def test_reviewed_row_is_skipped_without_spending_a_token(
         self,
         mock_db: MagicMock,
         mock_rag: MagicMock,
+        review_status: str,
         monkeypatch,
     ) -> None:
-        # The DB helper restricts to review_status='pending', so for an
-        # approved row it returns 0 — the existing row stays in place and
-        # the exists-check skips generation. The task code itself never
-        # short-circuits the delete call; the SQL clause is what protects
-        # approved rows.
-        monkeypatch.setattr(
-            bar_exam_answer_tasks, "BAR_EXAM_RAG_ENABLED", False
-        )
-        mock_db.delete_pending_bar_exam_answer.return_value = 0
-        mock_db.bar_exam_answer_exists.return_value = True
+        """An editor already ruled on this answer, so regeneration is not ours
+        to do — and it must not cost anything to find that out."""
+        monkeypatch.setattr(bar_exam_answer_tasks, "BAR_EXAM_RAG_ENABLED", False)
+        mock_db.get_bar_exam_answer_state.return_value = {
+            "id": "ans-1",
+            "review_status": review_status,
+            "confidence": 0.3,
+        }
 
         result = generate_answers_for_questions.run(
             ["q-approved"], force_regenerate=True
@@ -714,9 +738,325 @@ class TestForceRegenerate:
 
         assert result["skipped_existing"] == 1
         assert result["generated"] == 0
-        # The delete was attempted, but the SQL WHERE clause meant 0 rows
-        # were removed — approved rows are physically untouchable.
-        mock_db.delete_pending_bar_exam_answer.assert_called_once()
         mock_rag.generate_completion.assert_not_called()
-        mock_db.create_bar_exam_answer.assert_not_called()
         mock_db.create_model_run.assert_not_called()
+        mock_db.replace_pending_bar_exam_answer.assert_not_called()
+        mock_db.create_bar_exam_answer.assert_not_called()
+
+    # 3a. Generation failed or abstained: the old row is untouched.
+
+    @patch("src.tasks.bar_exam_answer_tasks.rag_client")
+    @patch("src.tasks.bar_exam_answer_tasks.db")
+    def test_a_failed_regeneration_leaves_the_pending_row_alone(
+        self,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        monkeypatch,
+    ) -> None:
+        """This is the case the old flow lost outright: the draft was already
+        deleted by the time the model returned garbage."""
+        monkeypatch.setattr(bar_exam_answer_tasks, "BAR_EXAM_RAG_ENABLED", False)
+        mock_db.get_bar_exam_answer_state.return_value = {
+            "id": "ans-1",
+            "review_status": "pending",
+            "confidence": 0.5,
+        }
+        mock_db.get_bar_exam_question_with_context.return_value = FAKE_QUESTION
+        mock_rag.generate_completion.return_value = _llm_response("not json")
+
+        result = generate_answers_for_questions.run(
+            ["q-1"], force_regenerate=True
+        )
+
+        assert result["failed"] == 1
+        assert result["results"][0]["status"] == "llm_invalid_json"
+        mock_db.replace_pending_bar_exam_answer.assert_not_called()
+        mock_db.create_bar_exam_answer.assert_not_called()
+
+    @patch("src.tasks.bar_exam_answer_tasks.rag_client")
+    @patch("src.tasks.bar_exam_answer_tasks.db")
+    def test_an_abstention_leaves_the_pending_row_alone(
+        self,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        monkeypatch,
+    ) -> None:
+        monkeypatch.setattr(bar_exam_answer_tasks, "BAR_EXAM_RAG_ENABLED", False)
+        mock_db.get_bar_exam_answer_state.return_value = {
+            "id": "ans-1",
+            "review_status": "pending",
+            "confidence": 0.5,
+        }
+        mock_db.get_bar_exam_question_with_context.return_value = FAKE_QUESTION
+        mock_rag.generate_completion.return_value = _llm_response(
+            {"abstain": True, "abstainReason": "insufficient sources"}
+        )
+
+        result = generate_answers_for_questions.run(
+            ["q-1"], force_regenerate=True
+        )
+
+        assert result["results"][0]["status"] == "llm_abstained"
+        mock_db.replace_pending_bar_exam_answer.assert_not_called()
+        mock_db.create_bar_exam_answer.assert_not_called()
+
+    # 3b. The new answer is ungrounded and the old one was scored.
+
+    @patch("src.tasks.bar_exam_answer_tasks.nestjs_client")
+    @patch("src.tasks.bar_exam_answer_tasks.rag_client")
+    @patch("src.tasks.bar_exam_answer_tasks.db")
+    def test_an_ungrounded_regeneration_never_replaces_a_scored_answer(
+        self,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        mock_nestjs: MagicMock,
+        monkeypatch,
+    ) -> None:
+        """Retrieval returned nothing, so the new answer is priors-only and
+        carries NULL confidence. NULL is 'never scored', not 'scored zero' —
+        it cannot compare favourably against 0.25."""
+        monkeypatch.setattr(bar_exam_answer_tasks, "BAR_EXAM_RAG_ENABLED", False)
+        mock_db.get_bar_exam_answer_state.return_value = {
+            "id": "ans-1",
+            "review_status": "pending",
+            "confidence": 0.25,
+        }
+        self._setup_generation(mock_db, mock_rag)
+
+        result = generate_answers_for_questions.run(
+            ["q-1"], force_regenerate=True
+        )
+
+        item = result["results"][0]
+        assert result["kept_existing"] == 1
+        assert result["failed"] == 0
+        assert item["status"] == "kept_existing"
+        assert item["reason"] == "new_answer_ungrounded"
+        assert item["confidence"] is None
+        assert item["existing_confidence"] == 0.25
+        assert item["answer_id"] == "ans-1"
+        mock_db.replace_pending_bar_exam_answer.assert_not_called()
+        mock_db.create_bar_exam_answer.assert_not_called()
+        # The tokens were spent, so both records of the spend are still made.
+        mock_db.create_model_run.assert_called_once()
+        mock_nestjs.write_budget_ledger.assert_called_once()
+
+    # 3c. The new answer scores lower.
+
+    @patch("src.tasks.bar_exam_answer_tasks.rag_client")
+    @patch("src.tasks.bar_exam_answer_tasks.db")
+    def test_a_lower_scoring_regeneration_is_discarded(
+        self,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        monkeypatch,
+    ) -> None:
+        monkeypatch.setattr(bar_exam_answer_tasks, "BAR_EXAM_RAG_ENABLED", True)
+        mock_db.get_bar_exam_answer_state.return_value = {
+            "id": "ans-1",
+            "review_status": "pending",
+            "confidence": 0.9,
+        }
+        # One valid citation out of one document: a real but modest score.
+        self._setup_generation(
+            mock_db, mock_rag, cited=[SEC_1], resolved={SEC_1: DOC_1}
+        )
+
+        result = generate_answers_for_questions.run(
+            ["q-1"], force_regenerate=True
+        )
+
+        item = result["results"][0]
+        assert item["status"] == "kept_existing"
+        assert item["reason"] == "new_confidence_lower"
+        assert item["confidence"] is not None
+        assert item["confidence"] < 0.9
+        assert item["existing_confidence"] == 0.9
+        mock_db.replace_pending_bar_exam_answer.assert_not_called()
+
+    # 3d. The new answer is at least as good, or the old one was unscored.
+
+    @patch("src.tasks.bar_exam_answer_tasks.rag_client")
+    @patch("src.tasks.bar_exam_answer_tasks.db")
+    def test_a_better_regeneration_updates_the_row_in_place(
+        self,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        monkeypatch,
+    ) -> None:
+        """UPDATE, not delete+insert: the unique index on (question,
+        answer_type) forbids two rows, and the stable answer id is what item
+        rows and audit entries already point at."""
+        monkeypatch.setattr(bar_exam_answer_tasks, "BAR_EXAM_RAG_ENABLED", True)
+        mock_db.get_bar_exam_answer_state.return_value = {
+            "id": "ans-1",
+            "review_status": "pending",
+            "confidence": 0.1,
+        }
+        self._setup_generation(
+            mock_db, mock_rag, cited=[SEC_1], resolved={SEC_1: DOC_1}
+        )
+
+        result = generate_answers_for_questions.run(
+            ["q-1"], force_regenerate=True
+        )
+
+        assert result["generated"] == 1
+        assert result["kept_existing"] == 0
+        mock_db.create_bar_exam_answer.assert_not_called()
+        mock_db.replace_pending_bar_exam_answer.assert_called_once()
+        call = mock_db.replace_pending_bar_exam_answer.call_args
+        assert call.args[0] == "q-1"
+        assert call.kwargs["answer_type"] == "ai_generated"
+        assert call.kwargs["model_run_id"] == "run-2"
+        assert call.kwargs["confidence"] is not None
+        assert result["results"][0]["answer_id"] == "ans-1"
+
+    @patch("src.tasks.bar_exam_answer_tasks.rag_client")
+    @patch("src.tasks.bar_exam_answer_tasks.db")
+    def test_an_equal_score_still_replaces(
+        self,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        monkeypatch,
+    ) -> None:
+        """18 of the 42 pilot questions came back exactly equal. Equal means
+        'regenerated under the newer prompt at no loss', which is what the run
+        is for — so it replaces."""
+        monkeypatch.setattr(bar_exam_answer_tasks, "BAR_EXAM_RAG_ENABLED", True)
+        # Generate once with no existing row to learn the score this fixture
+        # produces, then re-run with that exact score already on the row.
+        self._setup_generation(
+            mock_db, mock_rag, cited=[SEC_1], resolved={SEC_1: DOC_1}
+        )
+        mock_db.get_bar_exam_answer_state.return_value = None
+        first = generate_answers_for_questions.run(
+            ["q-1"], force_regenerate=True
+        )
+        score = first["results"][0]["confidence"]
+        assert score is not None
+
+        mock_db.reset_mock()
+        self._setup_generation(
+            mock_db, mock_rag, cited=[SEC_1], resolved={SEC_1: DOC_1}
+        )
+        mock_db.get_bar_exam_answer_state.return_value = {
+            "id": "ans-1",
+            "review_status": "pending",
+            "confidence": score,
+        }
+
+        result = generate_answers_for_questions.run(
+            ["q-1"], force_regenerate=True
+        )
+
+        assert result["generated"] == 1
+        mock_db.replace_pending_bar_exam_answer.assert_called_once()
+
+    @patch("src.tasks.bar_exam_answer_tasks.rag_client")
+    @patch("src.tasks.bar_exam_answer_tasks.db")
+    def test_an_unscored_old_answer_is_always_replaceable(
+        self,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        monkeypatch,
+    ) -> None:
+        """The old row is a v1 priors-only draft (confidence NULL). There is
+        nothing to compare it against, and a scored answer is the improvement
+        the run exists for — so it replaces, even at 0.0."""
+        monkeypatch.setattr(bar_exam_answer_tasks, "BAR_EXAM_RAG_ENABLED", True)
+        mock_db.get_bar_exam_answer_state.return_value = {
+            "id": "ans-1",
+            "review_status": "pending",
+            "confidence": None,
+        }
+        self._setup_generation(mock_db, mock_rag, cited=[], resolved={})
+
+        result = generate_answers_for_questions.run(
+            ["q-1"], force_regenerate=True
+        )
+
+        assert result["generated"] == 1
+        kwargs = mock_db.replace_pending_bar_exam_answer.call_args.kwargs
+        assert kwargs["confidence"] == 0.0
+
+    # 4. The zero-rows race.
+
+    @patch("src.tasks.bar_exam_answer_tasks.nestjs_client")
+    @patch("src.tasks.bar_exam_answer_tasks.rag_client")
+    @patch("src.tasks.bar_exam_answer_tasks.db")
+    def test_a_review_landing_mid_generation_wins(
+        self,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        mock_nestjs: MagicMock,
+        monkeypatch,
+    ) -> None:
+        """The UPDATE is restricted to review_status='pending'. An editor who
+        approved or rejected the draft while the model was running makes it
+        match 0 rows — their decision stands, and the run reports that rather
+        than a write it did not make."""
+        monkeypatch.setattr(bar_exam_answer_tasks, "BAR_EXAM_RAG_ENABLED", True)
+        mock_db.get_bar_exam_answer_state.return_value = {
+            "id": "ans-1",
+            "review_status": "pending",
+            "confidence": 0.1,
+        }
+        self._setup_generation(
+            mock_db, mock_rag, cited=[SEC_1], resolved={SEC_1: DOC_1}
+        )
+        mock_db.replace_pending_bar_exam_answer.return_value = None
+
+        result = generate_answers_for_questions.run(
+            ["q-1"], force_regenerate=True
+        )
+
+        item = result["results"][0]
+        assert result["kept_existing"] == 1
+        assert result["generated"] == 0
+        assert item["status"] == "kept_existing"
+        assert item["reason"] == "reviewed_during_regeneration"
+        assert item["answer_id"] == "ans-1"
+        assert item["existing_confidence"] == 0.1
+        mock_db.create_bar_exam_answer.assert_not_called()
+        # The LLM ran, so the ledger is written on this path too.
+        mock_nestjs.write_budget_ledger.assert_called_once()
+
+    # force_regenerate=False is untouched.
+
+    @patch("src.tasks.bar_exam_answer_tasks.rag_client")
+    @patch("src.tasks.bar_exam_answer_tasks.db")
+    def test_without_the_flag_an_existing_row_is_skipped_and_never_read(
+        self,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        monkeypatch,
+    ) -> None:
+        monkeypatch.setattr(bar_exam_answer_tasks, "BAR_EXAM_RAG_ENABLED", False)
+        mock_db.bar_exam_answer_exists.return_value = True
+
+        result = generate_answers_for_questions.run(["q-1"])
+
+        assert result["skipped_existing"] == 1
+        mock_db.get_bar_exam_answer_state.assert_not_called()
+        mock_db.replace_pending_bar_exam_answer.assert_not_called()
+        mock_rag.generate_completion.assert_not_called()
+
+    @patch("src.tasks.bar_exam_answer_tasks.rag_client")
+    @patch("src.tasks.bar_exam_answer_tasks.db")
+    def test_without_the_flag_a_missing_row_still_inserts(
+        self,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        monkeypatch,
+    ) -> None:
+        monkeypatch.setattr(bar_exam_answer_tasks, "BAR_EXAM_RAG_ENABLED", False)
+        mock_db.bar_exam_answer_exists.return_value = False
+        self._setup_generation(mock_db, mock_rag)
+
+        result = generate_answers_for_questions.run(["q-1"])
+
+        assert result["generated"] == 1
+        mock_db.create_bar_exam_answer.assert_called_once()
+        mock_db.get_bar_exam_answer_state.assert_not_called()
+        mock_db.replace_pending_bar_exam_answer.assert_not_called()

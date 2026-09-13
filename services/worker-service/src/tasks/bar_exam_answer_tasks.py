@@ -185,13 +185,14 @@ def generate_answers_for_questions(
         {
           "requested": int,
           "skipped_existing": int,
+          "kept_existing": int,
           "generated": int,
           "failed": int,
           "results": [{question_id, status, ...}, ...],
         }
     ``status`` is one of: ``generated``, ``skipped_existing``,
-    ``question_not_found``, ``llm_invalid_json``, ``llm_malformed``,
-    ``llm_abstained``, ``error``.
+    ``kept_existing``, ``question_not_found``, ``llm_invalid_json``,
+    ``llm_malformed``, ``llm_abstained``, ``error``.
 
     There is no cap on ``question_ids``. The cap used to be 50 at both this
     task and the API, which meant re-dispatching the same filter re-picked the
@@ -204,12 +205,14 @@ def generate_answers_for_questions(
         return {
             "requested": 0,
             "skipped_existing": 0,
+            "kept_existing": 0,
             "generated": 0,
             "failed": 0,
             "results": [],
         }
 
     skipped = 0
+    kept = 0
     generated = 0
     failed = 0
     results: list[dict[str, Any]] = []
@@ -222,12 +225,17 @@ def generate_answers_for_questions(
             generated += 1
         elif status == "skipped_existing":
             skipped += 1
+        elif status == "kept_existing":
+            # Not a failure: the question still has an answer, and the one it
+            # has is the better of the two.
+            kept += 1
         else:
             failed += 1
 
     return {
         "requested": len(question_ids),
         "skipped_existing": skipped,
+        "kept_existing": kept,
         "generated": generated,
         "failed": failed,
         "results": results,
@@ -245,20 +253,36 @@ def _generate_one(
     surrounding loop keeps going and the result dict records what
     happened.
 
-    ``force_regenerate`` first deletes the row IF it is still pending,
-    then proceeds to the usual exists-skip / generate path. The delete
-    WHERE clause restricts to ``review_status='pending'``, so approved or
-    rejected rows are physically untouchable — they fall through to the
-    skip path below.
+    ``force_regenerate`` regenerates over a row that is still pending
+    review. It does NOT delete first: a prod pilot over 42 low-scoring
+    answers came back 22 better, 18 equal, 1 worse and 1 outright failure,
+    so a delete-first flow throws away ~5% of the drafts it touches with
+    nothing to put in their place. Instead the old row is read up front (id,
+    review_status, confidence), the new answer is generated, and the old row
+    is replaced only if the new answer is at least as good — in place, with
+    one UPDATE, so the answer id survives. Every other outcome (generation
+    failed, model abstained, new answer ungrounded or lower-scoring, editor
+    reviewed the row mid-run) leaves the old row exactly as it was.
+
+    Approved and rejected rows are never regenerated: they take the
+    ``skipped_existing`` path before any LLM call.
     """
+    existing: dict[str, Any] | None = None
     try:
         if force_regenerate:
-            db.delete_pending_bar_exam_answer(
+            existing = db.get_bar_exam_answer_state(
                 question_id,
                 answer_type="ai_generated",
             )
-
-        if db.bar_exam_answer_exists(question_id, answer_type="ai_generated"):
+            if (
+                existing is not None
+                and str(existing.get("review_status")) != "pending"
+            ):
+                return {
+                    "question_id": question_id,
+                    "status": "skipped_existing",
+                }
+        elif db.bar_exam_answer_exists(question_id, answer_type="ai_generated"):
             return {
                 "question_id": question_id,
                 "status": "skipped_existing",
@@ -490,22 +514,95 @@ def _generate_one(
             latency_ms=latency_ms,
         )
 
-        answer_id = db.create_bar_exam_answer(
-            bar_exam_question_id=question_id,
-            answer_text=answer_text,
-            structured_answer=structured,
-            answer_type="ai_generated",
-            model_run_id=model_run_id,
-            confidence=confidence,
-            review_status="pending",
-            visibility="private",
-        )
+        # Replace-or-keep. `existing` is set only on the force_regenerate
+        # path and only for a row that was still pending, so `None` here is
+        # the ordinary first-generation insert.
+        old_confidence = existing.get("confidence") if existing else None
+        keep_reason: str | None = None
+        if existing is not None:
+            if confidence is None and old_confidence is not None:
+                # A regeneration that fell back to priors-only (retrieval
+                # returned nothing) is not an improvement on a scored answer,
+                # however it reads: NULL means "never scored on the grounded
+                # terms", not "scored zero".
+                keep_reason = "new_answer_ungrounded"
+            elif (
+                confidence is not None
+                and old_confidence is not None
+                and float(confidence) < float(old_confidence)
+            ):
+                keep_reason = "new_confidence_lower"
+
+        answer_id: str | None = None
+        if existing is None:
+            answer_id = db.create_bar_exam_answer(
+                bar_exam_question_id=question_id,
+                answer_text=answer_text,
+                structured_answer=structured,
+                answer_type="ai_generated",
+                model_run_id=model_run_id,
+                confidence=confidence,
+                review_status="pending",
+                visibility="private",
+            )
+        elif keep_reason is None:
+            answer_id = db.replace_pending_bar_exam_answer(
+                question_id,
+                answer_text=answer_text,
+                structured_answer=structured,
+                answer_type="ai_generated",
+                model_run_id=model_run_id,
+                confidence=confidence,
+            )
+            if answer_id is None:
+                # An editor approved or rejected the draft while the model was
+                # running. Their decision wins over a generation that started
+                # before it.
+                keep_reason = "reviewed_during_regeneration"
+
+        if keep_reason is not None:
+            logger.info(
+                "bar_exam_answer: kept existing answer for question %s "
+                "(%s; existing=%s new=%s)",
+                question_id,
+                keep_reason,
+                old_confidence,
+                confidence,
+            )
+            outcome: dict[str, Any] = {
+                "question_id": question_id,
+                "status": "kept_existing",
+                "reason": keep_reason,
+                "answer_id": str(existing["id"]) if existing else None,
+                "model_run_id": model_run_id,
+                "confidence": confidence,
+                "existing_confidence": old_confidence,
+            }
+        else:
+            outcome = {
+                "question_id": question_id,
+                "status": "generated",
+                "answer_id": answer_id,
+                "model_run_id": model_run_id,
+                "confidence": confidence,
+                "cited_section_ids": list(
+                    structured.get("citedSectionIds") or []
+                ),
+                "dropped_section_ids": dropped_ids,
+            }
+            if existing is not None:
+                # A replacement, not an insert: the id is the old row's, and
+                # the score it beat is worth having in the run's results.
+                outcome["existing_confidence"] = old_confidence
 
         # Bar-exam answers persist straight to Postgres, so there is no
         # artifact write for the ledger entry to ride along with. Posting
         # it separately is what stops this category's spend from existing
         # only in Redis. Non-blocking: a generated answer must not be lost
-        # because the accounting call failed.
+        # because the accounting call failed. It runs on the kept_existing
+        # branches too — the tokens were spent whether or not the answer was
+        # kept, and a discarded regeneration that never reached the ledger is
+        # spend the budget guard cannot see.
         try:
             nestjs_client.write_budget_ledger(
                 build_ledger_entry(
@@ -522,15 +619,7 @@ def _generate_one(
                 question_id,
             )
 
-        return {
-            "question_id": question_id,
-            "status": "generated",
-            "answer_id": answer_id,
-            "model_run_id": model_run_id,
-            "confidence": confidence,
-            "cited_section_ids": list(structured.get("citedSectionIds") or []),
-            "dropped_section_ids": dropped_ids,
-        }
+        return outcome
 
     except BudgetExceededError:
         # Not a per-question failure — the ceiling is global (or per-scope)
@@ -574,6 +663,11 @@ def _item_outcome(result: dict[str, Any]) -> dict[str, Any]:
     Collapsing them would hide the ungrounded share of a run behind a green
     progress bar — and an ungrounded row is exactly the one an editor most
     needs to look at.
+
+    ``kept_existing`` is a third: a regeneration ran, cost tokens, and lost to
+    the answer already on the row. It is not a failure — nothing needs
+    retrying — and it is not ``generated`` either, or a regeneration run would
+    report progress it did not make.
     """
     status = result.get("status")
 
@@ -587,6 +681,16 @@ def _item_outcome(result: dict[str, Any]) -> dict[str, Any]:
 
     if status == "skipped_existing":
         return {"status": "skipped_existing"}
+
+    # A regeneration that ran but did not win. The answer_id and confidence
+    # recorded are the KEPT row's, not the discarded candidate's, so the item
+    # row keeps describing the answer that actually exists.
+    if status == "kept_existing":
+        return {
+            "status": "kept_existing",
+            "answer_id": result.get("answer_id"),
+            "confidence": result.get("existing_confidence"),
+        }
 
     if status in _FAILURE_STATUSES:
         # `reason` is the abstention reason; `error` the exception message.
@@ -646,7 +750,8 @@ def run_answer_generation_job(self: Any, job_id: str) -> dict[str, Any]:
 
     Idempotent by construction: each item is claimed with ``FOR UPDATE SKIP
     LOCKED``, and ``_generate_one`` still skips questions that already have an
-    ``ai_generated`` row, so a redelivered chunk cannot double-write.
+    ``ai_generated`` row (and, when regenerating, replaces one in place rather
+    than inserting), so a redelivered chunk cannot double-write.
     """
     job = db.get_bar_exam_generation_job(job_id)
     if job is None:
@@ -662,9 +767,10 @@ def run_answer_generation_job(self: Any, job_id: str) -> dict[str, Any]:
         return {"job_id": job_id, "status": str(job["status"]), "processed": 0}
 
     # Set by the API when the dispatch asked to replace answers that are
-    # still pending review. `_generate_one`'s delete is restricted to
-    # `review_status = 'pending'`, so an approved or rejected answer survives
-    # this flag no matter what the job row says.
+    # still pending review. `_generate_one` only ever replaces a row whose
+    # review_status is 'pending', and only with a new answer that scores at
+    # least as well, so neither an approved answer nor a better pending draft
+    # can be lost to this flag no matter what the job row says.
     filters = job.get("filters_json")
     force_regenerate = bool(
         isinstance(filters, dict) and filters.get("regeneratePending"),

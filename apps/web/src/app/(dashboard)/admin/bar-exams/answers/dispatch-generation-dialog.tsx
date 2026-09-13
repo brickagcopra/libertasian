@@ -211,8 +211,9 @@ export function DispatchGenerationDialog({
               <span>
                 Also regenerate answers still pending review
                 <span className="block text-xs text-muted-foreground">
-                  Replaces the existing pending answer. Approved and rejected
-                  answers are never touched.
+                  Replaces the existing pending answer only if the new one
+                  scores at least as well; otherwise the existing answer is
+                  kept. Approved and rejected answers are never touched.
                 </span>
               </span>
             </label>

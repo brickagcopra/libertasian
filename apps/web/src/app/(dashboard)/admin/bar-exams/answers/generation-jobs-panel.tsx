@@ -138,7 +138,9 @@ export function GenerationJobsPanel({
                   {job.done}/{job.total} done ({pct}%) · {job.counts.generated}{' '}
                   grounded · {job.counts.generatedUngrounded} ungrounded ·{' '}
                   {job.counts.skippedExisting} already answered ·{' '}
-                  {job.counts.failed} failed · {job.counts.queued} queued
+                  {job.counts.keptExisting} kept existing (new answer
+                  wasn&apos;t better) · {job.counts.failed} failed ·{' '}
+                  {job.counts.queued} queued
                 </p>
               </div>
 
