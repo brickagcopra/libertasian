@@ -12,6 +12,15 @@ import type {
   AnalyticsDailyAggregateRow,
 } from '@libertasian/types';
 
+/**
+ * Every admin analytics controller method returns `{ success: true, data }`,
+ * and `apiClient` returns the response body verbatim — so each queryFn must
+ * unwrap `.data` itself. Typing the call as the inner shape without
+ * unwrapping type-checks but hands consumers the envelope, which is how the
+ * dashboard rendered a grid of zeros against a 200 response.
+ */
+type ApiEnvelope<T> = { success: boolean; data: T };
+
 // ─── Query Keys ─────────────────────────────────────────────
 
 export const analyticsKeys = {
@@ -69,10 +78,12 @@ export function extractMetric(
 export function useAnalyticsOverview(query?: AnalyticsDashboardQuery) {
   return useQuery({
     queryKey: analyticsKeys.overview(query),
-    queryFn: () =>
-      apiClient.get<AnalyticsOverviewResponse>('/admin/analytics/overview', {
+    queryFn: async () => {
+      const res = await apiClient.get<ApiEnvelope<AnalyticsOverviewResponse>>('/admin/analytics/overview', {
         params: buildQueryParams(query),
-      }),
+      });
+      return res.data;
+    },
     staleTime: 5 * 60 * 1000,
   });
 }
@@ -81,10 +92,12 @@ export function useAnalyticsOverview(query?: AnalyticsDashboardQuery) {
 export function useAnalyticsSearchMetrics(query?: AnalyticsDashboardQuery) {
   return useQuery({
     queryKey: analyticsKeys.search(query),
-    queryFn: () =>
-      apiClient.get<AnalyticsOverviewResponse>('/admin/analytics/search', {
+    queryFn: async () => {
+      const res = await apiClient.get<ApiEnvelope<AnalyticsOverviewResponse>>('/admin/analytics/search', {
         params: buildQueryParams(query),
-      }),
+      });
+      return res.data;
+    },
     staleTime: 5 * 60 * 1000,
   });
 }
@@ -93,10 +106,12 @@ export function useAnalyticsSearchMetrics(query?: AnalyticsDashboardQuery) {
 export function useAnalyticsAiMetrics(query?: AnalyticsDashboardQuery) {
   return useQuery({
     queryKey: analyticsKeys.ai(query),
-    queryFn: () =>
-      apiClient.get<AnalyticsOverviewResponse>('/admin/analytics/ai', {
+    queryFn: async () => {
+      const res = await apiClient.get<ApiEnvelope<AnalyticsOverviewResponse>>('/admin/analytics/ai', {
         params: buildQueryParams(query),
-      }),
+      });
+      return res.data;
+    },
     staleTime: 5 * 60 * 1000,
   });
 }
@@ -105,10 +120,12 @@ export function useAnalyticsAiMetrics(query?: AnalyticsDashboardQuery) {
 export function useAnalyticsRevenueMetrics(query?: AnalyticsDashboardQuery) {
   return useQuery({
     queryKey: analyticsKeys.revenue(query),
-    queryFn: () =>
-      apiClient.get<AnalyticsOverviewResponse>('/admin/analytics/revenue', {
+    queryFn: async () => {
+      const res = await apiClient.get<ApiEnvelope<AnalyticsOverviewResponse>>('/admin/analytics/revenue', {
         params: buildQueryParams(query),
-      }),
+      });
+      return res.data;
+    },
     staleTime: 5 * 60 * 1000,
   });
 }
@@ -120,10 +137,12 @@ export function useAnalyticsFunnel(
 ) {
   return useQuery({
     queryKey: analyticsKeys.funnel(funnelName, query),
-    queryFn: () =>
-      apiClient.get<AnalyticsFunnelResponse>(`/admin/analytics/funnels/${funnelName}`, {
+    queryFn: async () => {
+      const res = await apiClient.get<ApiEnvelope<AnalyticsFunnelResponse>>(`/admin/analytics/funnels/${funnelName}`, {
         params: buildQueryParams(query),
-      }),
+      });
+      return res.data;
+    },
     staleTime: 5 * 60 * 1000,
   });
 }
@@ -132,10 +151,12 @@ export function useAnalyticsFunnel(
 export function useAnalyticsRetention(query?: AnalyticsDashboardQuery) {
   return useQuery({
     queryKey: analyticsKeys.retention(query),
-    queryFn: () =>
-      apiClient.get<AnalyticsRetentionResponse>('/admin/analytics/retention', {
+    queryFn: async () => {
+      const res = await apiClient.get<ApiEnvelope<AnalyticsRetentionResponse>>('/admin/analytics/retention', {
         params: buildQueryParams(query),
-      }),
+      });
+      return res.data;
+    },
     staleTime: 5 * 60 * 1000,
   });
 }
@@ -144,10 +165,12 @@ export function useAnalyticsRetention(query?: AnalyticsDashboardQuery) {
 export function useAnalyticsScanMetrics(query?: AnalyticsDashboardQuery) {
   return useQuery({
     queryKey: analyticsKeys.scans(query),
-    queryFn: () =>
-      apiClient.get<AnalyticsOverviewResponse>('/admin/analytics/scans', {
+    queryFn: async () => {
+      const res = await apiClient.get<ApiEnvelope<AnalyticsOverviewResponse>>('/admin/analytics/scans', {
         params: buildQueryParams(query),
-      }),
+      });
+      return res.data;
+    },
     staleTime: 5 * 60 * 1000,
   });
 }
@@ -156,10 +179,12 @@ export function useAnalyticsScanMetrics(query?: AnalyticsDashboardQuery) {
 export function useAnalyticsStudyMetrics(query?: AnalyticsDashboardQuery) {
   return useQuery({
     queryKey: analyticsKeys.study(query),
-    queryFn: () =>
-      apiClient.get<AnalyticsOverviewResponse>('/admin/analytics/study', {
+    queryFn: async () => {
+      const res = await apiClient.get<ApiEnvelope<AnalyticsOverviewResponse>>('/admin/analytics/study', {
         params: buildQueryParams(query),
-      }),
+      });
+      return res.data;
+    },
     staleTime: 5 * 60 * 1000,
   });
 }
@@ -168,10 +193,12 @@ export function useAnalyticsStudyMetrics(query?: AnalyticsDashboardQuery) {
 export function useAnalyticsIngestionMetrics(query?: AnalyticsDashboardQuery) {
   return useQuery({
     queryKey: analyticsKeys.ingestion(query),
-    queryFn: () =>
-      apiClient.get<AnalyticsOverviewResponse>('/admin/analytics/ingestion', {
+    queryFn: async () => {
+      const res = await apiClient.get<ApiEnvelope<AnalyticsOverviewResponse>>('/admin/analytics/ingestion', {
         params: buildQueryParams(query),
-      }),
+      });
+      return res.data;
+    },
     staleTime: 5 * 60 * 1000,
   });
 }

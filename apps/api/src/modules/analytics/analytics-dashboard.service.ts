@@ -8,6 +8,23 @@ import { DashboardQueryDto } from './dto';
 const CACHE_PREFIX = 'cache:analytics:dashboard:';
 const CACHE_TTL_SECONDS = 300; // 5 minutes
 
+/**
+ * A daily-aggregate row as the dashboard serves it: identical to the Prisma
+ * model except `metricValue`, which is narrowed from `bigint` to `number` so
+ * the row survives `JSON.stringify`. Mirrors `AnalyticsDailyAggregateRow`
+ * in `@libertasian/types`, which the web client already types as `number`.
+ */
+export interface DailyAggregateRow {
+  id: string;
+  date: Date;
+  metricName: string;
+  dimension: string | null;
+  metricValue: number;
+  uniqueUsers: number;
+  organizationId: string | null;
+  createdAt: Date;
+}
+
 @Injectable()
 export class AnalyticsDashboardService {
   private readonly logger = new Logger(AnalyticsDashboardService.name);
@@ -47,12 +64,29 @@ export class AnalyticsDashboardService {
   // Query aggregates helper
   // -----------------------------------------------------------------------
 
+  /**
+   * Read daily aggregates and return them as plain, JSON-safe objects.
+   *
+   * `AnalyticsDailyAggregate.metricValue` is a Prisma `BigInt`, and
+   * `JSON.stringify` throws `TypeError: Do not know how to serialize a BigInt`
+   * on it. Every dashboard endpoint and the Redis cache write in
+   * `getCachedOrFetch` stringify whatever this helper returns, so the
+   * conversion belongs here — once, at the single point where BigInt enters
+   * the service — rather than at each of the ten call sites.
+   *
+   * Deliberately NOT solved by patching `BigInt.prototype.toJSON`: that
+   * mutates a prototype shared with every other module in the process,
+   * coerces silently, and would hide the next field that hits this.
+   *
+   * Metric values are counts and rates that fit comfortably in a double;
+   * `Number()` is lossless below 2^53.
+   */
   private async queryAggregates(
     metricNames: string[],
     dateRange: { from: Date; to: Date },
     organizationId?: string,
-  ) {
-    return this.prisma.analyticsDailyAggregate.findMany({
+  ): Promise<DailyAggregateRow[]> {
+    const rows = await this.prisma.analyticsDailyAggregate.findMany({
       where: {
         metricName: { in: metricNames },
         date: { gte: dateRange.from, lte: dateRange.to },
@@ -60,6 +94,17 @@ export class AnalyticsDashboardService {
       },
       orderBy: { date: 'asc' },
     });
+
+    return rows.map((row) => ({
+      id: row.id,
+      date: row.date,
+      metricName: row.metricName,
+      dimension: row.dimension,
+      metricValue: Number(row.metricValue),
+      uniqueUsers: row.uniqueUsers,
+      organizationId: row.organizationId,
+      createdAt: row.createdAt,
+    }));
   }
 
   // -----------------------------------------------------------------------

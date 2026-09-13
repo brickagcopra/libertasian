@@ -8,6 +8,7 @@ import {
   CreditCard,
   Activity,
   CalendarDays,
+  AlertTriangle,
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 
@@ -21,6 +22,8 @@ import {
 import { KpiCard, DateRangeFilter, FunnelChart } from '@/components/analytics';
 import { AdminCardSkeleton } from '@/components/ui/skeleton';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
 
 const LineChart = dynamic(
   () => import('@/components/charts/line-chart').then((mod) => mod.LineChart),
@@ -31,13 +34,25 @@ function formatNumber(value: number): string {
   return new Intl.NumberFormat('en-PH').format(value);
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Unknown error';
+}
+
 export default function AnalyticsOverviewPage() {
   const [query, setQuery] = useState<AnalyticsDashboardQuery>({});
-  const { data: overview, isLoading: loadingOverview } = useAnalyticsOverview(query);
-  const { data: funnel, isLoading: loadingFunnel } = useAnalyticsFunnel(
-    'signup_to_activation',
-    query,
-  );
+  const {
+    data: overview,
+    isLoading: loadingOverview,
+    isError: overviewFailed,
+    error: overviewError,
+    refetch: refetchOverview,
+  } = useAnalyticsOverview(query);
+  const {
+    data: funnel,
+    isLoading: loadingFunnel,
+    isError: funnelFailed,
+    error: funnelError,
+  } = useAnalyticsFunnel('signup_to_activation', query);
 
   const metrics = overview?.metrics ?? [];
 
@@ -73,13 +88,32 @@ export default function AnalyticsOverviewPage() {
 
       <DateRangeFilter query={query} onChange={setQuery} showGranularity />
 
+      {overviewFailed && (
+        <Alert variant="destructive">
+          <AlertTriangle />
+          <AlertTitle>Could not load analytics</AlertTitle>
+          <AlertDescription>
+            <p>{errorMessage(overviewError)}</p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-2"
+              onClick={() => void refetchOverview()}
+            >
+              Retry
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
+
       {loadingOverview ? (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
             <AdminCardSkeleton key={i} />
           ))}
         </div>
-      ) : (
+      ) : overviewFailed ? null : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           <KpiCard
             label="DAU"
@@ -135,6 +169,10 @@ export default function AnalyticsOverviewPage() {
           <CardContent>
             {loadingOverview ? (
               <div className="h-[300px] animate-pulse rounded bg-muted" />
+            ) : overviewFailed ? (
+              <p className="py-8 text-center text-sm text-destructive">
+                Failed to load — see the error above.
+              </p>
             ) : dauTrend.length > 0 ? (
               <LineChart data={dauTrend} width={550} height={300} />
             ) : (
@@ -151,6 +189,10 @@ export default function AnalyticsOverviewPage() {
           <CardContent>
             {loadingOverview ? (
               <div className="h-[300px] animate-pulse rounded bg-muted" />
+            ) : overviewFailed ? (
+              <p className="py-8 text-center text-sm text-destructive">
+                Failed to load — see the error above.
+              </p>
             ) : searchTrend.length > 0 ? (
               <LineChart data={searchTrend} width={550} height={300} />
             ) : (
@@ -170,6 +212,10 @@ export default function AnalyticsOverviewPage() {
         <CardContent>
           {loadingFunnel ? (
             <div className="h-64 animate-pulse rounded bg-muted" />
+          ) : funnelFailed ? (
+            <p className="py-8 text-center text-sm text-destructive">
+              Could not load funnel data: {errorMessage(funnelError)}
+            </p>
           ) : funnel?.steps && funnel.steps.length > 0 ? (
             <FunnelChart steps={funnel.steps} />
           ) : (
