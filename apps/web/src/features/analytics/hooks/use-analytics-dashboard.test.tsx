@@ -247,3 +247,109 @@ describe('useAnalyticsIngestionMetrics', () => {
     });
   });
 });
+
+describe('envelope unwrapping', () => {
+  beforeEach(() => mockGet.mockReset());
+
+  /**
+   * The controllers return `{ success: true, data }` and `apiClient` returns
+   * the response body verbatim, so each queryFn must unwrap `.data` itself.
+   * Without that, `overview.metrics` is `undefined` on a perfectly good 200
+   * and the dashboard renders a grid of zeros — the exact shipped bug. These
+   * tests feed the real envelope through and assert on the hook's `data`.
+   */
+
+  const metricHooks = [
+    ['useAnalyticsOverview', useAnalyticsOverview],
+    ['useAnalyticsSearchMetrics', useAnalyticsSearchMetrics],
+    ['useAnalyticsAiMetrics', useAnalyticsAiMetrics],
+    ['useAnalyticsRevenueMetrics', useAnalyticsRevenueMetrics],
+    ['useAnalyticsScanMetrics', useAnalyticsScanMetrics],
+    ['useAnalyticsStudyMetrics', useAnalyticsStudyMetrics],
+    ['useAnalyticsIngestionMetrics', useAnalyticsIngestionMetrics],
+  ] as const;
+
+  it.each(metricHooks)('%s exposes metrics, not the envelope', async (_name, hook) => {
+    mockGet.mockResolvedValueOnce(makeOverviewResponse());
+    const { result } = renderHook(() => hook(), { wrapper: createWrapper() });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).not.toHaveProperty('success');
+    expect(result.current.data?.metrics).toHaveLength(3);
+    expect(result.current.data?.metrics[0]).toMatchObject({
+      metricName: 'dau',
+      metricValue: 120,
+    });
+  });
+
+  it('overview metrics feed extractMetric the way page.tsx uses them', async () => {
+    // page.tsx: `const metrics = overview?.metrics ?? []` then extractMetric.
+    // Against the un-unwrapped shape this silently fell back to [] → zeros.
+    mockGet.mockResolvedValueOnce(makeOverviewResponse());
+    const { result } = renderHook(() => useAnalyticsOverview(), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const metrics = result.current.data?.metrics ?? [];
+    expect(metrics).not.toHaveLength(0);
+    expect(extractMetric(metrics, 'dau', 'latest')).toBe(120);
+    expect(extractMetric(metrics, 'searches', 'sum')).toBe(500);
+  });
+
+  it('useAnalyticsFunnel exposes steps — page.tsx reads funnel?.steps', async () => {
+    const steps = [
+      { stepName: 'signup', stepOrder: 1, enteredCount: 100, completedCount: 80 },
+      { stepName: 'first_search', stepOrder: 2, enteredCount: 80, completedCount: 55 },
+    ];
+    mockGet.mockResolvedValueOnce({
+      success: true,
+      data: { funnelName: 'signup_to_activation', steps },
+    });
+
+    const { result } = renderHook(
+      () => useAnalyticsFunnel('signup_to_activation' as const),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).not.toHaveProperty('success');
+    expect(result.current.data?.steps).toHaveLength(2);
+    expect(result.current.data?.steps[0]).toMatchObject({ stepName: 'signup' });
+  });
+
+  it('useAnalyticsRetention exposes cohorts', async () => {
+    mockGet.mockResolvedValueOnce({
+      success: true,
+      data: {
+        cohorts: [{ cohortWeek: '2026-03-01', retentionWeek: 0, userCount: 100 }],
+      },
+    });
+
+    const { result } = renderHook(() => useAnalyticsRetention(), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).not.toHaveProperty('success');
+    expect(result.current.data?.cohorts).toHaveLength(1);
+  });
+
+  it('surfaces isError when the request rejects', async () => {
+    // page.tsx renders an error banner off this; without it a failed fetch
+    // is indistinguishable from a genuinely empty corpus.
+    mockGet.mockRejectedValueOnce(new Error('Forbidden'));
+
+    const { result } = renderHook(() => useAnalyticsOverview(), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.data).toBeUndefined();
+    expect(result.current.error).toBeInstanceOf(Error);
+  });
+});

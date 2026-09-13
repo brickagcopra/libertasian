@@ -4,6 +4,47 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../common/services/redis.service';
 import { AnalyticsDashboardService } from './analytics-dashboard.service';
 
+/**
+ * Prisma returns `AnalyticsDailyAggregate.metricValue` as a real `bigint`
+ * (the column is `BigInt` in schema.prisma). This fixture used to declare it
+ * as a JS number, so the suite never exercised `JSON.stringify` against a
+ * BigInt and a ten-route 500 shipped green. Keep these literals `n`-suffixed.
+ */
+function aggregateRows() {
+  return [
+    {
+      id: 'agg-1',
+      metricName: 'dau',
+      date: new Date('2026-04-01'),
+      dimension: null,
+      metricValue: 500n,
+      uniqueUsers: 500,
+      organizationId: null,
+      createdAt: new Date('2026-04-02'),
+    },
+    {
+      id: 'agg-2',
+      metricName: 'searches',
+      date: new Date('2026-04-01'),
+      dimension: null,
+      metricValue: 1200n,
+      uniqueUsers: 0,
+      organizationId: null,
+      createdAt: new Date('2026-04-02'),
+    },
+    {
+      id: 'agg-3',
+      metricName: 'ai_answers',
+      date: new Date('2026-04-01'),
+      dimension: null,
+      metricValue: 300n,
+      uniqueUsers: 0,
+      organizationId: null,
+      createdAt: new Date('2026-04-02'),
+    },
+  ];
+}
+
 describe('AnalyticsDashboardService', () => {
   let service: AnalyticsDashboardService;
   let prisma: jest.Mocked<PrismaService>;
@@ -57,11 +98,9 @@ describe('AnalyticsDashboardService', () => {
 
   describe('getOverview', () => {
     it('should return overview metrics with date range', async () => {
-      (prisma.analyticsDailyAggregate.findMany as jest.Mock).mockResolvedValueOnce([
-        { metricName: 'dau', date: '2026-04-01', metricValue: 500, uniqueUsers: 500 },
-        { metricName: 'searches', date: '2026-04-01', metricValue: 1200, uniqueUsers: 0 },
-        { metricName: 'ai_answers', date: '2026-04-01', metricValue: 300, uniqueUsers: 0 },
-      ]);
+      (prisma.analyticsDailyAggregate.findMany as jest.Mock).mockResolvedValueOnce(
+        aggregateRows(),
+      );
 
       const result = await service.getOverview({});
       expect(result).toHaveProperty('metrics');
@@ -245,6 +284,98 @@ describe('AnalyticsDashboardService', () => {
       await service.getOverview({});
       const call = (prisma.analyticsDailyAggregate.findMany as jest.Mock).mock.calls[0][0];
       expect(call.orderBy).toEqual({ date: 'asc' });
+    });
+  });
+
+  // =========================================================================
+  // BigInt serialization
+  //
+  // metricValue is a Prisma BigInt. JSON.stringify throws
+  // "TypeError: Do not know how to serialize a BigInt" on one, which 500s
+  // every route below AND the Redis cache write in getCachedOrFetch.
+  // queryAggregates converts once, at the single point where BigInt enters
+  // the service; these tests hold that line.
+  // =========================================================================
+
+  describe('BigInt serialization', () => {
+    /** Every endpoint that reads analytics_daily_aggregates. */
+    const aggregateEndpoints: Array<[string, () => Promise<{ metrics: unknown[] }>]> = [
+      ['overview', () => service.getOverview({})],
+      ['engagement', () => service.getEngagement({})],
+      ['search', () => service.getSearchMetrics({})],
+      ['ai', () => service.getAiMetrics({})],
+      ['digests', () => service.getDigestMetrics({})],
+      ['scans', () => service.getScanMetrics({})],
+      ['study', () => service.getStudyMetrics({})],
+      ['workspace', () => service.getWorkspaceMetrics({})],
+      ['revenue', () => service.getRevenueMetrics({})],
+      ['ingestion', () => service.getIngestionMetrics({})],
+    ];
+
+    beforeEach(() => {
+      (prisma.analyticsDailyAggregate.findMany as jest.Mock).mockResolvedValue(
+        aggregateRows(),
+      );
+    });
+
+    it('the fixture actually carries BigInt values', () => {
+      // Guards the guard: if these stop being bigint, every assertion below
+      // passes vacuously — which is exactly how the original bug shipped.
+      expect(aggregateRows().every((r) => typeof r.metricValue === 'bigint')).toBe(true);
+    });
+
+    it.each(aggregateEndpoints)(
+      '%s returns metricValue as a number, not a bigint',
+      async (_name, call) => {
+        const result = await call();
+
+        expect(result.metrics).toHaveLength(3);
+        for (const row of result.metrics as Array<{ metricValue: unknown }>) {
+          expect(typeof row.metricValue).toBe('number');
+        }
+      },
+    );
+
+    it.each(aggregateEndpoints)('%s survives JSON.stringify', async (_name, call) => {
+      const result = await call();
+      expect(() => JSON.stringify(result)).not.toThrow();
+    });
+
+    it('preserves the numeric value through the conversion', async () => {
+      const result = await service.getOverview({});
+      const values = (result.metrics as Array<{ metricName: string; metricValue: number }>)
+        .map((r) => [r.metricName, r.metricValue] as const);
+      expect(values).toEqual([
+        ['dau', 500],
+        ['searches', 1200],
+        ['ai_answers', 300],
+      ]);
+    });
+
+    it('writes a serializable payload to the Redis cache', async () => {
+      // getCachedOrFetch stringifies before SET — the BigInt threw here too,
+      // so a green route with a poisoned cache write is not good enough.
+      await service.getOverview({});
+
+      const [, payload] = (redis.set as jest.Mock).mock.calls[0];
+      expect(typeof payload).toBe('string');
+      const parsed = JSON.parse(payload as string) as {
+        metrics: Array<{ metricValue: unknown }>;
+      };
+      expect(parsed.metrics.map((r) => r.metricValue)).toEqual([500, 1200, 300]);
+    });
+
+    it('carries the full row through, not just the converted field', async () => {
+      const result = await service.getOverview({});
+      expect(result.metrics[0]).toEqual(
+        expect.objectContaining({
+          id: 'agg-1',
+          metricName: 'dau',
+          dimension: null,
+          uniqueUsers: 500,
+          organizationId: null,
+        }),
+      );
     });
   });
 });
