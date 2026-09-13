@@ -21,6 +21,7 @@ import {
   useAnalyticsStudyMetrics,
   useAnalyticsIngestionMetrics,
   extractMetric,
+  selectMetricRows,
   analyticsKeys,
 } from './use-analytics-dashboard';
 
@@ -70,6 +71,61 @@ describe('extractMetric', () => {
 
   it('returns 0 for empty array', () => {
     expect(extractMetric([], 'dau')).toBe(0);
+  });
+
+  it('ignores dimensioned rows so the KPI card is not double-counted', () => {
+    // What the aggregator actually writes for one day: the total, plus one
+    // row per platform. Summing all four rows would report 240 users.
+    const withPlatforms = [
+      { metricName: 'dau', metricValue: 120, date: '2026-03-31', dimension: null },
+      { metricName: 'dau', metricValue: 70, date: '2026-03-31', dimension: 'platform:web' },
+      { metricName: 'dau', metricValue: 30, date: '2026-03-31', dimension: 'platform:ios' },
+      { metricName: 'dau', metricValue: 20, date: '2026-03-31', dimension: 'platform:android' },
+    ];
+
+    expect(extractMetric(withPlatforms, 'dau')).toBe(120);
+    expect(extractMetric(withPlatforms, 'dau', 'sum')).toBe(120);
+  });
+
+  it('does not pick a dimensioned row as "latest"', () => {
+    const rows = [
+      { metricName: 'dau', metricValue: 120, date: '2026-03-30', dimension: null },
+      { metricName: 'dau', metricValue: 9, date: '2026-03-31', dimension: 'platform:ios' },
+    ];
+
+    expect(extractMetric(rows, 'dau')).toBe(120);
+  });
+
+  it('returns 0 when a metric has only dimensioned rows', () => {
+    const rows = [
+      { metricName: 'dau', metricValue: 9, date: '2026-03-31', dimension: 'platform:ios' },
+    ];
+
+    expect(extractMetric(rows, 'dau')).toBe(0);
+  });
+});
+
+describe('selectMetricRows', () => {
+  const rows = [
+    { metricName: 'dau', metricValue: 120, date: '2026-03-31', dimension: null },
+    { metricName: 'dau', metricValue: 30, date: '2026-03-31', dimension: 'platform:ios' },
+    { metricName: 'dau', metricValue: 100, date: '2026-03-30', dimension: null },
+    { metricName: 'searches', metricValue: 500, date: '2026-03-31', dimension: null },
+  ];
+
+  it('keeps one point per day for a trend chart', () => {
+    const dau = selectMetricRows(rows, 'dau');
+    expect(dau).toHaveLength(2);
+    expect(dau.map((r) => r.metricValue)).toEqual([120, 100]);
+  });
+
+  it('treats a row with no dimension field as the undimensioned total', () => {
+    expect(selectMetricRows([{ metricName: 'dau', metricValue: 7, date: '2026-03-31' }], 'dau'))
+      .toHaveLength(1);
+  });
+
+  it('returns an empty array for an unknown metric', () => {
+    expect(selectMetricRows(rows, 'nonexistent')).toEqual([]);
   });
 });
 

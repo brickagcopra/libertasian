@@ -52,15 +52,32 @@ function buildQueryParams(query?: AnalyticsDashboardQuery): Record<string, strin
 }
 
 /**
+ * Rows for one metric, excluding every dimensioned breakdown of it.
+ *
+ * The aggregator writes a metric twice: an undimensioned row that is the
+ * total, and one row per dimension (`platform:ios`, `device:web`, …). Those
+ * are different slices of the same population, not additional population — a
+ * filter on `metricName` alone both multiplies the points on a trend chart and
+ * double-counts the total on a KPI card.
+ */
+export function selectMetricRows(
+  metrics: AnalyticsDailyAggregateRow[],
+  metricName: string,
+): AnalyticsDailyAggregateRow[] {
+  return metrics.filter((r) => r.metricName === metricName && r.dimension == null);
+}
+
+/**
  * Extract the latest value (or sum) for a given metric name
- * from a AnalyticsDailyAggregateRow[] array.
+ * from a AnalyticsDailyAggregateRow[] array. Dimensioned rows are ignored;
+ * see selectMetricRows.
  */
 export function extractMetric(
   metrics: AnalyticsDailyAggregateRow[],
   metricName: string,
   aggregation: 'latest' | 'sum' = 'latest',
 ): number {
-  const rows = metrics.filter((r) => r.metricName === metricName);
+  const rows = selectMetricRows(metrics, metricName);
   if (rows.length === 0) return 0;
 
   if (aggregation === 'sum') {
