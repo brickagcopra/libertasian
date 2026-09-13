@@ -457,6 +457,10 @@ services:
       WORKER_S3_SECRET_KEY: ${S3_SECRET_KEY}
       WORKER_S3_BUCKET_UPLOADS: libertasian-uploads
       WORKER_S3_BUCKET_CORPUS: libertasian-corpus
+      # Grounded bar exam prompt template: v2 (flat) or v3 (grouped by
+      # authority). Defaults to v2 so a deploy of the v3 template changes
+      # nothing until this is flipped deliberately.
+      BAR_EXAM_PROMPT_VERSION: ${BAR_EXAM_PROMPT_VERSION:-v2}
     depends_on:
       redis:
         condition: service_healthy
@@ -513,6 +517,10 @@ services:
       WORKER_S3_SECRET_KEY: ${S3_SECRET_KEY}
       WORKER_S3_BUCKET_UPLOADS: libertasian-uploads
       WORKER_S3_BUCKET_CORPUS: libertasian-corpus
+      # Grounded bar exam prompt template: v2 (flat) or v3 (grouped by
+      # authority). Defaults to v2 so a deploy of the v3 template changes
+      # nothing until this is flipped deliberately.
+      BAR_EXAM_PROMPT_VERSION: ${BAR_EXAM_PROMPT_VERSION:-v2}
     depends_on:
       redis:
         condition: service_healthy
