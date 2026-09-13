@@ -79,15 +79,23 @@ class TestParseLegalDocument:
         assert "REPUBLIC" in result
 
     def test_fallback_to_largest_div(self):
-        html = (
-            "<html><body>"
-            "<div>Short.</div>"
-            "<div>This is a much longer div that should be selected as the main content. "
+        # The `* 10` used to sit between two implicitly concatenated literals,
+        # which is a SyntaxError — and it aborted collection for the whole
+        # worker suite, not just this file. Note the repeat could never have
+        # meant what it looks like either: adjacent literals concatenate
+        # before `*` binds, so it would have multiplied the entire run from
+        # "<html><body>" onwards. Repeat the paragraph explicitly instead.
+        paragraph = (
+            "This is a much longer div that should be selected as the main content. "
             "It contains substantial legal text about a court decision regarding "
             "the constitutionality of a certain law. The petitioner argues that "
             "the respondent violated their rights under the constitution. "
-            "The court hereby rules in favor of the petitioner. " * 10
-            "</div>"
+            "The court hereby rules in favor of the petitioner. "
+        )
+        html = (
+            "<html><body>"
+            "<div>Short.</div>"
+            f"<div>{paragraph * 10}</div>"
             "</body></html>"
         )
         result = parse_legal_document(html)
