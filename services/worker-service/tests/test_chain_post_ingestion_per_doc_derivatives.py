@@ -4,6 +4,16 @@
 DB enqueue helper + each .delay() are mocked at function level. Existing
 chain dispatches (doctrine/digest/citation/etc.) are mocked too so the
 test focuses on the new behaviour and stays runnable without Redis.
+
+That last part is load-bearing and was quietly untrue: the fixture patched
+         patch("src.tasks.citation_tasks.extract_citations_for_document"), \
+         patch("src.tasks.citation_tasks.resolve_citations_task"), \
+#84 had already added to the chain one commit series before this file was
+written. On a machine with no broker its ``.delay()`` raised, the chain's
+outer try/except swallowed the error as a warning, and every per-doc
+derivative assertion below failed on a connection refusal that had nothing to
+do with the behaviour under test. Every task the chain dispatches must be
+patched here.
 """
 
 from __future__ import annotations
@@ -22,6 +32,7 @@ def patched_chain() -> Any:
     """Patch every dispatched task + the new enqueue helper."""
     with patch("src.tasks.ingestion_tasks.db") as mock_db, \
          patch("src.tasks.ingestion_tasks.validate_and_publish") as mock_val, \
+         patch("src.tasks.citation_tasks.extract_citations_for_document"), \
          patch("src.tasks.citation_tasks.resolve_citations_task"), \
          patch("src.tasks.doctrine_tasks.extract_doctrines_task"), \
          patch("src.tasks.digest_tasks.generate_ingestion_digest"), \
