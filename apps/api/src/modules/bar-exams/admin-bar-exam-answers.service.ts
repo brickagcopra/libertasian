@@ -122,6 +122,13 @@ export interface GenerationJobCounts {
   generated: number;
   generatedUngrounded: number;
   skippedExisting: number;
+  /**
+   * A regeneration ran for the question but the new answer was not at least
+   * as good as the pending one, so the worker kept the existing answer. A
+   * terminal, non-failure outcome: it counts towards `done` and there is
+   * nothing to retry.
+   */
+  keptExisting: number;
   failed: number;
 }
 
@@ -927,12 +934,14 @@ export class AdminBarExamAnswersService {
       generated: counts['generated'] ?? 0,
       generatedUngrounded: counts['generated_ungrounded'] ?? 0,
       skippedExisting: counts['skipped_existing'] ?? 0,
+      keptExisting: counts['kept_existing'] ?? 0,
       failed: counts['failed'] ?? 0,
     };
     const done =
       normalized.generated +
       normalized.generatedUngrounded +
       normalized.skippedExisting +
+      normalized.keptExisting +
       normalized.failed;
 
     const stalled =

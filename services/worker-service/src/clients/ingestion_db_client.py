@@ -1697,35 +1697,93 @@ def bar_exam_answer_exists(
         return cur.fetchone() is not None
 
 
-def delete_pending_bar_exam_answer(
+def get_bar_exam_answer_state(
     question_id: str,
     answer_type: str = "ai_generated",
-) -> int:
-    """Delete a bar_exam_answers row only if its review_status is 'pending'.
+) -> dict[str, Any] | None:
+    """Return ``{id, review_status, confidence}`` for an existing answer row.
 
-    The WHERE clause makes deletion of approved / rejected rows physically
-    impossible — that invariant is what lets the admin "force regenerate"
-    flow operate safely without an extra application-level guard. Returns
-    the number of rows actually deleted (0 or 1).
+    Regeneration needs all three before it spends a token: whether a row
+    exists at all, whether an editor has already ruled on it, and what the
+    old answer scored — the last one is what lets a worse regeneration be
+    discarded instead of overwriting a better draft. ``None`` means no row.
     """
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """SELECT id, review_status, confidence
+                   FROM bar_exam_answers
+                   WHERE bar_exam_question_id = %s
+                     AND answer_type = %s
+                   LIMIT 1""",
+            (question_id, answer_type),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def replace_pending_bar_exam_answer(
+    question_id: str,
+    answer_text: str,
+    structured_answer: dict[str, Any] | None,
+    answer_type: str = "ai_generated",
+    model_run_id: str | None = None,
+    confidence: float | None = None,
+) -> str | None:
+    """Overwrite a still-pending answer in place. Returns its id, or None.
+
+    One UPDATE, never delete-then-insert: ``bar_exam_answers`` has a unique
+    index on (bar_exam_question_id, answer_type), so the replacement cannot
+    coexist with the row it replaces, and deleting first loses the draft
+    outright when generation fails. Updating also keeps the answer id stable,
+    so generation items and audit rows already pointing at it stay valid.
+
+    ``review_status = 'pending'`` in the WHERE clause is the race guard: if an
+    editor approved or rejected this row while the model was running, no row
+    matches, ``None`` comes back, and the caller keeps their decision. The
+    review columns are deliberately not touched — a replaced draft is still
+    a pending draft.
+    """
+    structured_json = (
+        json.dumps(structured_answer) if structured_answer is not None else None
+    )
     with get_connection() as conn, conn.cursor() as cur:
         cur.execute(
-            """DELETE FROM bar_exam_answers
+            """UPDATE bar_exam_answers
+                   SET answer_text = %s,
+                       structured_answer_json = %s,
+                       model_run_id = %s,
+                       confidence = %s,
+                       updated_at = NOW()
                    WHERE bar_exam_question_id = %s
                      AND answer_type = %s
                      AND review_status = 'pending'
                    RETURNING id""",
-            (question_id, answer_type),
+            (
+                answer_text,
+                structured_json,
+                model_run_id,
+                confidence,
+                question_id,
+                answer_type,
+            ),
         )
-        rows = cur.fetchall()
-    deleted = len(rows)
-    if deleted:
+        row = cur.fetchone()
+    if row is None:
         logger.info(
-            "Deleted pending bar exam answer for question %s (type=%s)",
+            "No pending bar exam answer to replace for question %s (type=%s)",
             question_id,
             answer_type,
         )
-    return deleted
+        return None
+    answer_id = str(row[0])
+    logger.info(
+        "Replaced pending bar exam answer %s for question %s (type=%s)",
+        answer_id,
+        question_id,
+        answer_type,
+    )
+    return answer_id
 
 
 def create_bar_exam_answer(
