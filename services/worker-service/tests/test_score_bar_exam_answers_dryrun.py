@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from src.scripts import pilot_bar_exam_prompt_versions as pilot
 from src.scripts import score_bar_exam_answers_dryrun as dry
 
 SEC_A = "aaaaaaaa-0000-4000-8000-000000000001"
@@ -67,8 +68,16 @@ def _row(
 
 
 class TestCannotWrite:
-    def test_source_contains_no_write_path(self):
-        source = Path(dry.__file__).read_text(encoding="utf-8")
+    """Both prod-pointed bar exam scripts are read-only, and stay that way.
+
+    The pilot is covered here rather than in its own file because this is the
+    guarantee that makes either script safe to run against prod, and one list
+    of forbidden verbs is harder to let drift than two.
+    """
+
+    @pytest.mark.parametrize("module", [dry, pilot])
+    def test_source_contains_no_write_path(self, module):
+        source = Path(module.__file__).read_text(encoding="utf-8")
         code = re.sub(r'""".*?"""', "", source, flags=re.DOTALL)
         for forbidden in (
             "UPDATE ",
@@ -77,7 +86,9 @@ class TestCannotWrite:
             "commit(",
             "--apply",
         ):
-            assert forbidden not in code, f"write path present: {forbidden}"
+            assert forbidden not in code, (
+                f"write path present in {module.__name__}: {forbidden}"
+            )
 
 
 class TestScoreRow:
