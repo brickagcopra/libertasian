@@ -13,7 +13,8 @@ import { CeleryDispatcherService } from '../../common/services/celery-dispatcher
 import { PrismaService } from '../../prisma/prisma.service';
 import type {
   AdminAnswerReviewStatusFilter,
-  BulkReviewBarExamAnswersDto,
+  BulkApproveBarExamAnswersDto,
+  BulkRejectBarExamAnswersDto,
   DispatchAnswerGenerationDto,
 } from './dto';
 import { MIN_BULK_CONFIDENCE } from './dto';
@@ -391,8 +392,7 @@ export class AdminBarExamAnswersService {
   // ─── Bulk review ───────────────────────────────────────────────────────
 
   /**
-   * Approve or reject many pending answers at once, by explicit id list or by
-   * filter.
+   * Approve many pending answers at once, by explicit id list or by filter.
    *
    * Filter mode is the dangerous one — nobody reads the individual rows — so
    * it carries two non-negotiable constraints: `minConfidence >= 0.70`, and
@@ -400,9 +400,8 @@ export class AdminBarExamAnswersService {
    * scored on the grounded terms; sweeping it in with `>= 0.70` would treat
    * "unmeasured" as "measured well".
    */
-  async bulkReview(
-    action: 'approve' | 'reject',
-    dto: BulkReviewBarExamAnswersDto,
+  async bulkApprove(
+    dto: BulkApproveBarExamAnswersDto,
     reviewerUserId: string,
   ): Promise<{ result: BulkReviewResult; matchedIds: string[] }> {
     const hasIds = Boolean(dto.ids && dto.ids.length > 0);
@@ -429,6 +428,37 @@ export class AdminBarExamAnswersService {
       }
     }
 
+    return this.applyBulkReview('approve', where, dto.dryRun, reviewerUserId);
+  }
+
+  /**
+   * Reject many pending answers by explicit id list.
+   *
+   * There is no filter mode. Approving by filter is bounded by a confidence
+   * floor the scoring contract already calls publishable; nothing plays that
+   * role for rejection, and the only shape the shared filter could take —
+   * "reject everything at or above 0.70" — is not an operation anyone wants.
+   * The DTO has no `filter` property at all, so a request carrying one is a
+   * 400 from the global pipe rather than something this method has to refuse.
+   */
+  async bulkReject(
+    dto: BulkRejectBarExamAnswersDto,
+    reviewerUserId: string,
+  ): Promise<{ result: BulkReviewResult; matchedIds: string[] }> {
+    const where: Prisma.BarExamAnswerWhereInput = {
+      reviewStatus: 'pending',
+      id: { in: dto.ids },
+    };
+    return this.applyBulkReview('reject', where, dto.dryRun, reviewerUserId);
+  }
+
+  /** Shared read → count → chunked write for both bulk paths. */
+  private async applyBulkReview(
+    action: 'approve' | 'reject',
+    where: Prisma.BarExamAnswerWhereInput,
+    dryRun: boolean | undefined,
+    reviewerUserId: string,
+  ): Promise<{ result: BulkReviewResult; matchedIds: string[] }> {
     const matched = await this.prisma.barExamAnswer.findMany({
       where,
       select: {
@@ -447,7 +477,7 @@ export class AdminBarExamAnswersService {
       })),
     );
 
-    if (dto.dryRun) {
+    if (dryRun) {
       return {
         result: {
           dryRun: true,

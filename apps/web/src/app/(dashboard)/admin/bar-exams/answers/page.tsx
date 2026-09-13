@@ -12,7 +12,8 @@ import {
   useBarExamAnswerGenerationJob,
   useBarExamAnswerGenerationJobs,
   useBarExamAnswers,
-  useBulkReviewBarExamAnswers,
+  useBulkApproveBarExamAnswers,
+  useBulkRejectBarExamAnswers,
   useCancelGenerationJob,
   useDispatchAnswerGeneration,
   useInvalidateBarExamAnswerViews,
@@ -86,8 +87,10 @@ export default function BarExamAnswersAdminPage() {
   const dispatch = useDispatchAnswerGeneration();
   const cancelJob = useCancelGenerationJob();
   const retryJob = useRetryGenerationJobFailures();
-  const bulkApprove = useBulkReviewBarExamAnswers('approve');
-  const bulkReject = useBulkReviewBarExamAnswers('reject');
+  const bulkApprove = useBulkApproveBarExamAnswers();
+  // Reject is ids-only, here and at the API: there is no confidence filter
+  // that makes discarding unread rows safe.
+  const bulkReject = useBulkRejectBarExamAnswers();
 
   // When a job stops being active, the corpus changed underneath the coverage
   // grid and the review queue. Refresh both once, on the transition.
@@ -157,16 +160,17 @@ export default function BarExamAnswersAdminPage() {
   };
 
   const runBulkOnSelection = (action: 'approve' | 'reject') => {
-    const mutation = action === 'approve' ? bulkApprove : bulkReject;
-    mutation.mutate(
-      { ids: selectedOnPage },
-      {
-        onSuccess: () => {
-          setSelectedIds([]);
-          setBulkConfirm(null);
-        },
+    const handlers = {
+      onSuccess: () => {
+        setSelectedIds([]);
+        setBulkConfirm(null);
       },
-    );
+    };
+    if (action === 'approve') {
+      bulkApprove.mutate({ ids: selectedOnPage }, handlers);
+    } else {
+      bulkReject.mutate({ ids: selectedOnPage }, handlers);
+    }
   };
 
   const handleConfidencePreview = (filter: BulkConfidenceFilter) => {

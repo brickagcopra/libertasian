@@ -35,7 +35,8 @@ import {
   type ListResult,
 } from './admin-bar-exam-answers.service';
 import {
-  BulkReviewBarExamAnswersDto,
+  BulkApproveBarExamAnswersDto,
+  BulkRejectBarExamAnswersDto,
   DispatchAnswerGenerationDto,
   GenerationJobDetailQueryDto,
   ListBarExamAnswersQueryDto,
@@ -254,11 +255,18 @@ export class AdminBarExamAnswersController {
       'requires minConfidence >= 0.70 and never includes unscored rows.',
   })
   async bulkApprove(
-    @Body() dto: BulkReviewBarExamAnswersDto,
+    @Body() dto: BulkApproveBarExamAnswersDto,
     @CurrentUser() user: JwtPayload,
     @Ip() ip: string,
   ): Promise<{ success: true; data: BulkReviewResult }> {
-    return this.runBulk('approve', dto, user, ip);
+    const outcome = await this.service.bulkApprove(dto, user.sub);
+    return this.finishBulk('approve', outcome, user, ip, {
+      mode: dto.ids?.length ? 'ids' : 'filter',
+      minConfidence: dto.filter?.minConfidence ?? null,
+      year: dto.filter?.year ?? null,
+      subjectCode: dto.filter?.subjectCode ?? null,
+      reason: dto.reason ?? null,
+    });
   }
 
   @Post('bulk-reject')
@@ -266,15 +274,17 @@ export class AdminBarExamAnswersController {
   @Throttle({ default: { ttl: 60_000, limit: 10 } })
   @ApiOperation({
     summary:
-      'Reject many pending answers by id list or by filter. Rejected rows ' +
-      'keep visibility "private".',
+      'Reject many pending answers by explicit id list. There is no filter ' +
+      'mode — a request carrying a "filter" key is a 400. Rejected rows keep ' +
+      'visibility "private".',
   })
   async bulkReject(
-    @Body() dto: BulkReviewBarExamAnswersDto,
+    @Body() dto: BulkRejectBarExamAnswersDto,
     @CurrentUser() user: JwtPayload,
     @Ip() ip: string,
   ): Promise<{ success: true; data: BulkReviewResult }> {
-    return this.runBulk('reject', dto, user, ip);
+    const outcome = await this.service.bulkReject(dto, user.sub);
+    return this.finishBulk('reject', outcome, user, ip, { mode: 'ids' });
   }
 
   @Post('dispatch-generation')
@@ -320,24 +330,21 @@ export class AdminBarExamAnswersController {
   }
 
   /**
-   * Shared body of bulk-approve / bulk-reject.
+   * Shared audit tail of bulk-approve / bulk-reject.
    *
    * One audit entry per row, all sharing a `bulkOperationId`: the audit log
    * is per-entity by design (`entity_id` is the answer), and a single summary
    * row would make "who approved this answer" unanswerable for every row in
    * the batch. The shared id is what stitches them back into one action.
    */
-  private async runBulk(
+  private async finishBulk(
     action: 'approve' | 'reject',
-    dto: BulkReviewBarExamAnswersDto,
+    outcome: { result: BulkReviewResult; matchedIds: string[] },
     user: JwtPayload,
     ip: string,
+    scope: Record<string, unknown>,
   ): Promise<{ success: true; data: BulkReviewResult }> {
-    const { result, matchedIds } = await this.service.bulkReview(
-      action,
-      dto,
-      user.sub,
-    );
+    const { result, matchedIds } = outcome;
 
     if (!result.dryRun && matchedIds.length > 0) {
       const entries = matchedIds.map((id) => ({
@@ -353,11 +360,7 @@ export class AdminBarExamAnswersController {
         metadata: {
           ip,
           bulkOperationId: result.bulkOperationId,
-          mode: dto.ids?.length ? 'ids' : 'filter',
-          minConfidence: dto.filter?.minConfidence ?? null,
-          year: dto.filter?.year ?? null,
-          subjectCode: dto.filter?.subjectCode ?? null,
-          reason: dto.reason ?? null,
+          ...scope,
         },
       }));
       for (const wave of chunked(entries, AUDIT_CONCURRENCY)) {

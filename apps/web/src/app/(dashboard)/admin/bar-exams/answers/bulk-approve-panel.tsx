@@ -69,7 +69,11 @@ export function BulkApprovePanel({
 
   return (
     <Card>
-      <CardContent className="p-4">
+      <CardContent
+        role="group"
+        aria-label="Bulk approve by confidence"
+        className="p-4"
+      >
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
           Bulk approve by confidence
         </h2>

@@ -222,7 +222,8 @@ export class GenerationJobDetailQueryDto {
 }
 
 /**
- * Filter half of a bulk approve/reject request.
+ * Filter half of a bulk approve request. Approve-only: see
+ * {@link BulkRejectBarExamAnswersDto} for why reject takes no filter.
  *
  * ``minConfidence`` is required here and floored at
  * {@link MIN_BULK_CONFIDENCE}: approving by filter is the one path where an
@@ -259,12 +260,12 @@ export class BulkReviewFilterDto {
 }
 
 /**
- * POST /admin/bar-exams/answers/bulk-approve | bulk-reject.
+ * POST /admin/bar-exams/answers/bulk-approve.
  *
  * Exactly one of ``ids`` or ``filter``. Only ``pending`` rows are ever
  * touched, in either mode.
  */
-export class BulkReviewBarExamAnswersDto {
+export class BulkApproveBarExamAnswersDto {
   @ApiPropertyOptional({ type: [String], maxItems: 500 })
   @IsOptional()
   @IsArray()
@@ -295,4 +296,33 @@ export class BulkReviewBarExamAnswersDto {
   @IsString()
   @MaxLength(500)
   reason?: string;
+}
+
+/**
+ * POST /admin/bar-exams/answers/bulk-reject — explicit ids only.
+ *
+ * Rejection by filter is deliberately not offered. Approving by filter is at
+ * least bounded by a confidence floor the scoring contract already calls
+ * publishable; there is no equivalent signal that makes a row safe to reject
+ * sight-unseen, and "reject everything at or above 0.70" — the only shape the
+ * shared filter could take — is not an operation anyone wants. There is no
+ * ``filter`` property here at all, so the global pipe's
+ * ``forbidNonWhitelisted`` turns one into a 400 rather than something the
+ * service has to remember to refuse.
+ */
+export class BulkRejectBarExamAnswersDto {
+  @ApiProperty({ type: [String], maxItems: 500 })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(500)
+  @IsUUID('all', { each: true })
+  ids!: string[];
+
+  @ApiPropertyOptional({
+    description: 'Count the matching rows and write nothing.',
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  dryRun?: boolean;
 }

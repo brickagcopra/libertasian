@@ -56,8 +56,14 @@ vi.mock('@/features/admin/hooks/use-admin-bar-exam-answers', async () => {
       isPending: false,
       variables: undefined,
     }),
-    useBulkReviewBarExamAnswers: (action: 'approve' | 'reject') => ({
-      mutate: action === 'approve' ? mockBulkApproveMutate : mockBulkRejectMutate,
+    useBulkApproveBarExamAnswers: () => ({
+      mutate: mockBulkApproveMutate,
+      isPending: false,
+      isError: false,
+      error: null,
+    }),
+    useBulkRejectBarExamAnswers: () => ({
+      mutate: mockBulkRejectMutate,
       isPending: false,
       isError: false,
       error: null,
@@ -240,6 +246,41 @@ describe('BarExamAnswersAdminPage', () => {
       { ids: ['a1', 'a2'] },
       expect.anything(),
     );
+  });
+
+  it('the reject path sends explicit ids, never a filter', () => {
+    renderPage();
+
+    fireEvent.click(
+      screen.getByLabelText('Select answer for 2018 Q1', { selector: 'input' }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Reject 1' }));
+    fireEvent.click(
+      within(
+        screen.getByRole('dialog', { name: /Confirm bulk review/i }),
+      ).getByRole('button', { name: 'Confirm' }),
+    );
+
+    expect(mockBulkRejectMutate).toHaveBeenCalledWith(
+      { ids: ['a1'] },
+      expect.anything(),
+    );
+    const [rejectInput] = mockBulkRejectMutate.mock.calls[0]!;
+    expect(rejectInput).not.toHaveProperty('filter');
+  });
+
+  it('the bulk-by-confidence panel only ever approves', () => {
+    // Rejection by filter does not exist at the API, and must not be offered
+    // here either — the panel's only action is Approve.
+    renderPage();
+
+    const panel = screen.getByRole('group', {
+      name: /Bulk approve by confidence/i,
+    });
+    expect(within(panel).queryByRole('button', { name: /Reject/i })).toBeNull();
+    expect(
+      within(panel).getByRole('button', { name: /Check count/i }),
+    ).toBeInTheDocument();
   });
 
   it('renders the coverage grid and opens a prefilled dispatch from a cell', () => {

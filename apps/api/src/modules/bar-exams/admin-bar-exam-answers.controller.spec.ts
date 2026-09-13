@@ -3,6 +3,7 @@ import {
   ConflictException,
   ExecutionContext,
   NotFoundException,
+  ValidationPipe,
 } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { GUARDS_METADATA } from '@nestjs/common/constants';
@@ -17,6 +18,15 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AdminBarExamAnswersController } from './admin-bar-exam-answers.controller';
 import { AdminBarExamAnswersService } from './admin-bar-exam-answers.service';
+import { BulkRejectBarExamAnswersDto } from './dto';
+
+/** The global pipe from main.ts, so DTO-level rejections are tested for real. */
+const globalPipe = new ValidationPipe({
+  whitelist: true,
+  forbidNonWhitelisted: true,
+  transform: true,
+  transformOptions: { enableImplicitConversion: false },
+});
 
 const passingGuard: { canActivate: (ctx: ExecutionContext) => boolean } = {
   canActivate: jest.fn().mockReturnValue(true),
@@ -31,9 +41,13 @@ const ADMIN_USER: JwtPayload = {
   organizationId: '00000000-0000-0000-0000-0000000000bb',
 } as JwtPayload;
 
-const ANSWER_ID = '11111111-1111-1111-1111-111111111111';
-const QUESTION_ID = '22222222-2222-2222-2222-222222222222';
-const JOB_ID = '66666666-6666-6666-6666-666666666666';
+// Structurally valid v4 UUIDs — version nibble 4, variant nibble 8. The DTOs
+// are validated with @IsUUID('all'), which rejects the lazier 1111-…-1111
+// shape, so fixtures that a real request could not carry would make the
+// pipe-level tests below meaningless.
+const ANSWER_ID = '11111111-1111-4111-8111-111111111111';
+const QUESTION_ID = '22222222-2222-4222-8222-222222222222';
+const JOB_ID = '66666666-6666-4666-8666-666666666666';
 
 function fakeAnswerRow(
   overrides: Partial<{
@@ -837,23 +851,75 @@ describe('AdminBarExamAnswersController', () => {
       expect(auditService.log).not.toHaveBeenCalled();
     });
 
-    it('bulk reject keeps visibility private', async () => {
+    it('bulk reject by ids keeps visibility private and skips non-pending rows', async () => {
       prisma.barExamAnswer.findMany.mockResolvedValue(matchedRows);
       prisma.barExamAnswer.updateMany.mockResolvedValue({ count: 2 });
 
-      await controller.bulkReject({ ids: [ANSWER_ID] }, ADMIN_USER, '127.0.0.1');
+      const result = await controller.bulkReject(
+        { ids: [ANSWER_ID, QUESTION_ID] },
+        ADMIN_USER,
+        '127.0.0.1',
+      );
 
+      // Non-pending rows are excluded twice: once when the set is read, and
+      // again in the write, so a row reviewed by someone else in between is
+      // skipped rather than overwritten.
+      expect(prisma.barExamAnswer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            reviewStatus: 'pending',
+            id: { in: [ANSWER_ID, QUESTION_ID] },
+          },
+        }),
+      );
       expect(prisma.barExamAnswer.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
+          where: { id: { in: ['a1', 'a2'] }, reviewStatus: 'pending' },
           data: expect.objectContaining({
             reviewStatus: 'rejected',
             visibility: 'private',
           }),
         }),
       );
+      expect(result.data.updated).toBe(2);
       expect(auditService.log).toHaveBeenCalledWith(
-        expect.objectContaining({ action: 'admin_bulk_rejected_bar_exam_answer' }),
+        expect.objectContaining({
+          action: 'admin_bulk_rejected_bar_exam_answer',
+          metadata: expect.objectContaining({ mode: 'ids' }),
+        }),
       );
+    });
+
+    it('bulk reject has no filter mode — a filter body is a 400', async () => {
+      // Rejecting by filter would mean discarding rows nobody looked at, with
+      // no equivalent of the 0.70 floor to bound it. The DTO has no `filter`
+      // property, so the global pipe's forbidNonWhitelisted is what refuses
+      // it — the service never gets the chance to.
+      await expect(
+        globalPipe.transform(
+          { ids: [ANSWER_ID], filter: { minConfidence: 0.8 } },
+          { type: 'body', metatype: BulkRejectBarExamAnswersDto },
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      // The same body without the filter key passes validation.
+      await expect(
+        globalPipe.transform(
+          { ids: [ANSWER_ID], dryRun: true },
+          { type: 'body', metatype: BulkRejectBarExamAnswersDto },
+        ),
+      ).resolves.toEqual(
+        expect.objectContaining({ ids: [ANSWER_ID], dryRun: true }),
+      );
+    });
+
+    it('bulk reject requires at least one id', async () => {
+      await expect(
+        globalPipe.transform(
+          { ids: [] },
+          { type: 'body', metatype: BulkRejectBarExamAnswersDto },
+        ),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 });

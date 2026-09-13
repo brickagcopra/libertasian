@@ -143,11 +143,22 @@ export interface CoverageResult {
   totals: CoverageTotals;
 }
 
-export interface BulkReviewInput {
+/** Approve accepts either an explicit id list or a confidence filter. */
+export interface BulkApproveInput {
   ids?: string[];
   filter?: { year?: number; subjectCode?: string; minConfidence: number };
   dryRun?: boolean;
   reason?: string;
+}
+
+/**
+ * Reject takes explicit ids only — the API has no filter mode for it, and
+ * typing it this way keeps "reject everything above 0.70" unexpressible here
+ * too rather than relying on a 400 to catch it.
+ */
+export interface BulkRejectInput {
+  ids: string[];
+  dryRun?: boolean;
 }
 
 export interface BulkReviewResult {
@@ -373,14 +384,32 @@ export function useRetryGenerationJobFailures() {
   });
 }
 
-export function useBulkReviewBarExamAnswers(action: 'approve' | 'reject') {
+export function useBulkApproveBarExamAnswers() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: BulkReviewInput) => {
+    mutationFn: async (input: BulkApproveInput) => {
       const res = await apiClient.post<{
         success: boolean;
         data: BulkReviewResult;
-      }>(`/admin/bar-exams/answers/bulk-${action}`, input);
+      }>('/admin/bar-exams/answers/bulk-approve', input);
+      return res.data;
+    },
+    onSuccess: (data) => {
+      if (data.dryRun) return;
+      qc.invalidateQueries({ queryKey: ANSWERS_KEY });
+      qc.invalidateQueries({ queryKey: COVERAGE_KEY });
+    },
+  });
+}
+
+export function useBulkRejectBarExamAnswers() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: BulkRejectInput) => {
+      const res = await apiClient.post<{
+        success: boolean;
+        data: BulkReviewResult;
+      }>('/admin/bar-exams/answers/bulk-reject', input);
       return res.data;
     },
     onSuccess: (data) => {
