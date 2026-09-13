@@ -4,6 +4,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import {
   AnalyticsAggregationService,
   classifyPlatformFromUserAgent,
+  CATCH_UP_WINDOW_DAYS,
+  CATCH_UP_MAX_DAYS_PER_RUN,
 } from './analytics-aggregation.service';
 
 describe('AnalyticsAggregationService', () => {
@@ -11,10 +13,13 @@ describe('AnalyticsAggregationService', () => {
   let prisma: {
     analyticsEvent: { count: jest.Mock; groupBy: jest.Mock; findMany: jest.Mock };
     analyticsSession: { count: jest.Mock; aggregate: jest.Mock; groupBy: jest.Mock };
+    analyticsDailyAggregate: { findMany: jest.Mock };
     loginEvent: { findMany: jest.Mock };
-    analyticsFunnelStep: { create: jest.Mock };
+    analyticsFunnelStep: { create: jest.Mock; deleteMany: jest.Mock; createMany: jest.Mock };
     digest: { count: jest.Mock };
     $executeRaw: jest.Mock;
+    $queryRaw: jest.Mock;
+    $transaction: jest.Mock;
   };
 
   // Helpers to access private methods via service instance.
@@ -46,16 +51,25 @@ describe('AnalyticsAggregationService', () => {
               aggregate: jest.fn().mockResolvedValue({ _avg: { durationSeconds: null } }),
               groupBy: jest.fn().mockResolvedValue([]),
             },
+            analyticsDailyAggregate: {
+              findMany: jest.fn().mockResolvedValue([]),
+            },
             loginEvent: {
               findMany: jest.fn().mockResolvedValue([]),
             },
             analyticsFunnelStep: {
               create: jest.fn().mockResolvedValue({ id: 'funnel-1' }),
+              deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+              createMany: jest.fn().mockResolvedValue({ count: 5 }),
             },
             digest: {
               count: jest.fn().mockResolvedValue(0),
             },
             $executeRaw: jest.fn().mockResolvedValue(undefined),
+            $queryRaw: jest.fn().mockResolvedValue([]),
+            // The real client executes the array; the mock only needs to
+            // resolve the promises so delete-then-insert actually runs.
+            $transaction: jest.fn((ops: unknown) => Promise.all(ops as Promise<unknown>[])),
           },
         },
       ],
@@ -77,10 +91,15 @@ describe('AnalyticsAggregationService', () => {
     });
 
     it('should propagate errors from metric computation', async () => {
+      // The catch-up runs first and deliberately swallows a per-date failure so
+      // one bad day cannot block the backlog — stub it out so this asserts what
+      // it says it does: yesterday's own sweep still propagates.
+      jest.spyOn(service, 'catchUpMissingDays').mockResolvedValue([]);
       (prisma.analyticsEvent.groupBy as jest.Mock).mockRejectedValueOnce(
         new Error('Database error'),
       );
       await expect(service.aggregateDailyMetrics()).rejects.toThrow('Database error');
+      jest.restoreAllMocks();
     });
   });
 
@@ -635,8 +654,12 @@ describe('AnalyticsAggregationService', () => {
 
       await callPrivate('computeFunnels', yesterday);
 
-      // Should create 10 funnel step records (5 for scan + 5 for search)
-      expect(prisma.analyticsFunnelStep.create).toHaveBeenCalledTimes(10);
+      // 10 funnel step rows (5 for scan + 5 for search), now written as two
+      // createMany batches rather than ten creates — see "funnel writes".
+      const written = (prisma.analyticsFunnelStep.createMany as jest.Mock).mock.calls.flatMap(
+        (call) => (call[0] as { data: unknown[] }).data,
+      );
+      expect(written).toHaveLength(10);
     });
 
     it('should create funnel steps with correct step order', async () => {
@@ -645,12 +668,11 @@ describe('AnalyticsAggregationService', () => {
       await callPrivate('computeFunnels', yesterday);
 
       // Verify scan funnel step names and order
-      const scanCalls = (prisma.analyticsFunnelStep.create as jest.Mock).mock.calls
-        .filter((call: Array<{ data: { funnelName: string } }>) => call[0]!.data.funnelName === 'scan_to_digest')
-        .map((call: Array<{ data: { stepName: string; stepOrder: number } }>) => ({
-          name: call[0]!.data.stepName,
-          order: call[0]!.data.stepOrder,
-        }));
+      type FunnelRow = { funnelName: string; stepName: string; stepOrder: number };
+      const scanCalls = (prisma.analyticsFunnelStep.createMany as jest.Mock).mock.calls
+        .flatMap((call) => (call[0] as { data: FunnelRow[] }).data)
+        .filter((row) => row.funnelName === 'scan_to_digest')
+        .map((row) => ({ name: row.stepName, order: row.stepOrder }));
 
       expect(scanCalls).toEqual([
         { name: 'scan_started', order: 1 },
@@ -718,6 +740,428 @@ describe('AnalyticsAggregationService', () => {
 
       expect(gte.toISOString()).toBe('2026-04-02T00:00:00.000Z');
       expect(lt.toISOString()).toBe('2026-04-03T00:00:00.000Z');
+    });
+  });
+  // =========================================================================
+  // Self-healing catch-up
+  // =========================================================================
+
+  describe('catchUpMissingDays', () => {
+    const NOW = new Date('2026-09-14T06:30:00.000Z');
+
+    /** `YYYY-MM-DD` for each of the `count` days ending yesterday. */
+    function trailingDates(count: number, now = NOW): string[] {
+      const out: string[] = [];
+      for (let i = count; i >= 1; i -= 1) {
+        const d = new Date(now);
+        d.setUTCHours(0, 0, 0, 0);
+        d.setUTCDate(d.getUTCDate() - i);
+        out.push(d.toISOString().split('T')[0]!);
+      }
+      return out;
+    }
+
+    /** Mock the aggregates table as holding a row for exactly these dates. */
+    function aggregatedDates(dates: string[]): void {
+      (prisma.analyticsDailyAggregate.findMany as jest.Mock).mockResolvedValue(
+        dates.map((d) => ({ date: new Date(`${d}T00:00:00.000Z`) })),
+      );
+    }
+
+    it('fills a deliberately missing day in the middle of a full window', async () => {
+      // Every day in the window is aggregated except one — the exact shape a
+      // deploy restart straddling the cron's fire minute leaves behind.
+      const all = trailingDates(CATCH_UP_WINDOW_DAYS);
+      const gap = all[Math.floor(all.length / 2)]!;
+      aggregatedDates(all.filter((d) => d !== gap));
+
+      const filled = await service.catchUpMissingDays(NOW);
+
+      expect(filled).toEqual([gap]);
+    });
+
+    it('actually aggregates the missing date, not just reports it', async () => {
+      const all = trailingDates(CATCH_UP_WINDOW_DAYS);
+      const gap = all[10]!;
+      aggregatedDates(all.filter((d) => d !== gap));
+
+      const spy = jest.spyOn(service, 'aggregateForDate').mockResolvedValue(undefined);
+      await service.catchUpMissingDays(NOW);
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      const [passed] = spy.mock.calls[0]!;
+      expect((passed as Date).toISOString().split('T')[0]).toBe(gap);
+      spy.mockRestore();
+    });
+
+    it('is idempotent — a second run finds nothing left to fill', async () => {
+      const all = trailingDates(CATCH_UP_WINDOW_DAYS);
+      const gap = all[5]!;
+      aggregatedDates(all.filter((d) => d !== gap));
+
+      const first = await service.catchUpMissingDays(NOW);
+      expect(first).toEqual([gap]);
+
+      // The fill wrote rows for that date, so the gap query now returns it.
+      aggregatedDates(all);
+      const second = await service.catchUpMissingDays(NOW);
+      expect(second).toEqual([]);
+    });
+
+    it('does no work when the window is complete', async () => {
+      aggregatedDates(trailingDates(CATCH_UP_WINDOW_DAYS));
+
+      const spy = jest.spyOn(service, 'aggregateForDate');
+      const filled = await service.catchUpMissingDays(NOW);
+
+      expect(filled).toEqual([]);
+      expect(spy).not.toHaveBeenCalled();
+      spy.mockRestore();
+    });
+
+    it('caps the work per run and leaves the rest for the next one', async () => {
+      // Cold table: every day in the window is missing.
+      aggregatedDates([]);
+
+      const spy = jest.spyOn(service, 'aggregateForDate').mockResolvedValue(undefined);
+      const filled = await service.catchUpMissingDays(NOW);
+
+      expect(filled).toHaveLength(CATCH_UP_MAX_DAYS_PER_RUN);
+      expect(spy).toHaveBeenCalledTimes(CATCH_UP_MAX_DAYS_PER_RUN);
+      spy.mockRestore();
+    });
+
+    it('fills oldest-first so a backlog drains in order', async () => {
+      aggregatedDates([]);
+      jest.spyOn(service, 'aggregateForDate').mockResolvedValue(undefined);
+
+      const filled = await service.catchUpMissingDays(NOW);
+
+      expect(filled).toEqual([...filled].sort());
+      expect(filled[0]).toBe(trailingDates(CATCH_UP_WINDOW_DAYS)[0]);
+    });
+
+    it('never touches today — the day is still open', async () => {
+      aggregatedDates([]);
+      jest.spyOn(service, 'aggregateForDate').mockResolvedValue(undefined);
+
+      const filled = await service.catchUpMissingDays(NOW);
+      const today = NOW.toISOString().split('T')[0]!;
+
+      expect(filled).not.toContain(today);
+      const call = (prisma.analyticsDailyAggregate.findMany as jest.Mock).mock.calls[0][0];
+      expect((call.where.date.lte as Date).toISOString().split('T')[0]).toBe('2026-09-13');
+    });
+
+    it('keeps going after one date fails', async () => {
+      aggregatedDates([]);
+      const spy = jest
+        .spyOn(service, 'aggregateForDate')
+        .mockRejectedValueOnce(new Error('transient'))
+        .mockResolvedValue(undefined);
+
+      const filled = await service.catchUpMissingDays(NOW);
+
+      expect(spy).toHaveBeenCalledTimes(CATCH_UP_MAX_DAYS_PER_RUN);
+      expect(filled).toHaveLength(CATCH_UP_MAX_DAYS_PER_RUN - 1);
+      spy.mockRestore();
+    });
+  });
+
+  describe('onModuleInit', () => {
+    it('runs the catch-up on boot', async () => {
+      const spy = jest.spyOn(service, 'catchUpMissingDays').mockResolvedValue([]);
+      await service.onModuleInit();
+      expect(spy).toHaveBeenCalled();
+      spy.mockRestore();
+    });
+
+    it('never fails app startup when the catch-up throws', async () => {
+      const spy = jest
+        .spyOn(service, 'catchUpMissingDays')
+        .mockRejectedValue(new Error('database down'));
+
+      await expect(service.onModuleInit()).resolves.toBeUndefined();
+      spy.mockRestore();
+    });
+  });
+
+  describe('aggregateDailyMetrics', () => {
+    it('reconciles missing days before computing yesterday', async () => {
+      const order: string[] = [];
+      const catchUp = jest
+        .spyOn(service, 'catchUpMissingDays')
+        .mockImplementation(async () => {
+          order.push('catchUp');
+          return [];
+        });
+      const sweep = jest.spyOn(service, 'aggregateForDate').mockImplementation(async () => {
+        order.push('aggregateForDate');
+      });
+
+      await service.aggregateDailyMetrics();
+
+      expect(order).toEqual(['catchUp', 'aggregateForDate']);
+      catchUp.mockRestore();
+      sweep.mockRestore();
+    });
+  });
+
+  describe('aggregateForDate', () => {
+    it('runs the same full sweep the cron does', async () => {
+      // The catch-up and the cron share this method precisely so a backfilled
+      // day cannot end up with a subset of the metrics. If a new compute* is
+      // added to one path only, this list is where it shows up.
+      const SWEEP = [
+        'computeEngagementMetrics',
+        'computeSurfaceMetrics',
+        'computeSearchMetrics',
+        'computeAiMetrics',
+        'computeDigestMetrics',
+        'computeScanMetrics',
+        'computeStudyMetrics',
+        'computeWorkspaceMetrics',
+        'computeRevenueMetrics',
+        'computeIngestionMetrics',
+        'computeFunnels',
+      ];
+
+      // The compute* methods are private, so the spies go on the instance as a
+      // plain record of async functions rather than through the class type.
+      const target = service as unknown as Record<string, () => Promise<void>>;
+      const calls: string[] = [];
+      const originals = new Map<string, () => Promise<void>>();
+
+      for (const name of SWEEP) {
+        expect(typeof target[name]).toBe('function');
+        originals.set(name, target[name]!);
+        target[name] = async () => {
+          calls.push(name);
+        };
+      }
+
+      try {
+        await service.aggregateForDate(yesterday);
+      } finally {
+        for (const [name, fn] of originals) target[name] = fn;
+      }
+
+      expect(calls).toEqual(SWEEP);
+    });
+  });
+
+  // =========================================================================
+  // Cron schedules — timezone must be explicit
+  // =========================================================================
+
+  describe('cron timezones', () => {
+    /**
+     * `@nestjs/schedule` evaluates a cron expression in the PROCESS timezone,
+     * and the API container sets `TZ=Asia/Manila`. A schedule whose comment
+     * says UTC and whose decorator omits `timeZone` fires eight hours away
+     * from where everyone believes it does — which is how the daily
+     * aggregation came to run at 18:00 UTC. Read the decorator metadata rather
+     * than trusting the comment.
+     */
+    const SCHEDULE_CRON_OPTIONS = 'SCHEDULE_CRON_OPTIONS';
+
+    function cronOptions(method: string): Record<string, unknown> {
+      const fn = (service as unknown as Record<string, unknown>)[method];
+      return Reflect.getMetadata(SCHEDULE_CRON_OPTIONS, fn as object) as Record<string, unknown>;
+    }
+
+    it.each([['aggregateDailyMetrics'], ['ensurePartitions']])(
+      '%s pins timeZone to UTC',
+      (method) => {
+        expect(cronOptions(method)).toMatchObject({ timeZone: 'UTC' });
+      },
+    );
+  });
+
+  // =========================================================================
+  // Surface metrics
+  // =========================================================================
+
+  describe('computeSurfaceMetrics', () => {
+    function surfaceRows(rows: Array<[string, number, number]>) {
+      (prisma.$queryRaw as jest.Mock).mockResolvedValueOnce(
+        rows.map(([surface, views, uniqueUsers]) => ({
+          surface,
+          views: BigInt(views),
+          unique_users: BigInt(uniqueUsers),
+        })),
+      );
+    }
+
+    /** The (metricName, dimension, value, uniqueUsers) tuples upserted. */
+    function upserts(): Array<[string, string | null, number, number]> {
+      return (prisma.$executeRaw as jest.Mock).mock.calls
+        .map((call) => call as unknown[])
+        .filter((call) => Array.isArray(call[0]))
+        .map((call) => {
+          // upsertAggregate binds: date, metricName, dimension, value, users, org
+          const [, , metricName, dimension, value, users] = call;
+          return [
+            metricName as string,
+            dimension as string | null,
+            Number(value),
+            users as number,
+          ];
+        });
+    }
+
+    it('writes one row per surface dimension', async () => {
+      surfaceRows([
+        ['digests', 42, 7],
+        ['bar_exams', 31, 5],
+        ['library', 12, 4],
+      ]);
+      (prisma.analyticsEvent.groupBy as jest.Mock).mockResolvedValueOnce([
+        { userId: 'u1' },
+        { userId: 'u2' },
+        { userId: 'u3' },
+        { userId: 'u4' },
+        { userId: 'u5' },
+        { userId: 'u6' },
+        { userId: 'u7' },
+        { userId: 'u8' },
+        { userId: 'u9' },
+      ]);
+
+      await callPrivate('computeSurfaceMetrics', yesterday);
+
+      const surfaceUpserts = upserts().filter(([metric]) => metric === 'surface_views');
+      expect(surfaceUpserts).toEqual([
+        ['surface_views', 'surface:digests', 42, 7],
+        ['surface_views', 'surface:bar_exams', 31, 5],
+        ['surface_views', 'surface:library', 12, 4],
+        // Undimensioned total: views sum to the parts, unique users do NOT —
+        // one person visits several surfaces in a day.
+        ['surface_views', null, 85, 9],
+      ]);
+    });
+
+    it('counts unique users per surface, not just views', async () => {
+      surfaceRows([['digests', 40, 3]]);
+
+      await callPrivate('computeSurfaceMetrics', yesterday);
+
+      const [row] = upserts().filter(([, dimension]) => dimension === 'surface:digests');
+      expect(row).toEqual(['surface_views', 'surface:digests', 40, 3]);
+    });
+
+    it('keeps an unmapped surface as other rather than dropping the views', async () => {
+      surfaceRows([['other', 9, 2]]);
+
+      await callPrivate('computeSurfaceMetrics', yesterday);
+
+      expect(upserts()).toContainEqual(['surface_views', 'surface:other', 9, 2]);
+    });
+
+    it('still writes a zero total on a day with no page views', async () => {
+      surfaceRows([]);
+
+      await callPrivate('computeSurfaceMetrics', yesterday);
+
+      expect(upserts()).toEqual([['surface_views', null, 0, 0]]);
+    });
+
+    it('scopes the raw query to the UTC day and to page_viewed', async () => {
+      surfaceRows([]);
+      await callPrivate('computeSurfaceMetrics', yesterday);
+
+      const [strings, dayStart, dayEnd] = (prisma.$queryRaw as jest.Mock).mock.calls[0];
+      const sql = (strings as string[]).join('?');
+      expect(sql).toContain("event_name = 'page_viewed'");
+      expect(sql).toContain("properties->>'surface'");
+      // Bound parameters, never interpolated.
+      expect((dayStart as Date).toISOString()).toBe('2026-04-02T00:00:00.000Z');
+      expect((dayEnd as Date).toISOString()).toBe('2026-04-03T00:00:00.000Z');
+    });
+  });
+
+  // =========================================================================
+  // Sessions platform split
+  // =========================================================================
+
+  describe('sessions platform dimension', () => {
+    it('writes all three platform rows including zeros', async () => {
+      (prisma.analyticsSession.groupBy as jest.Mock).mockResolvedValueOnce([
+        { deviceType: 'ios', _count: 12 },
+        { deviceType: 'web', _count: 30 },
+      ]);
+
+      await callPrivate('computeEngagementMetrics', yesterday);
+
+      const rows = (prisma.$executeRaw as jest.Mock).mock.calls
+        .filter((call) => Array.isArray(call[0]))
+        .map((call) => [call[2] as string, call[3] as string | null, Number(call[4])])
+        .filter(([metric, dimension]) => metric === 'sessions' && String(dimension ?? '').startsWith('platform:'));
+
+      expect(rows).toEqual([
+        ['sessions', 'platform:ios', 12],
+        // A genuine zero, written rather than omitted, so the dashboard can
+        // tell "no Android sessions" from "no Android row".
+        ['sessions', 'platform:android', 0],
+        ['sessions', 'platform:web', 30],
+      ]);
+    });
+
+    it('keeps the device dimension for values outside the three platforms', async () => {
+      (prisma.analyticsSession.groupBy as jest.Mock).mockResolvedValueOnce([
+        { deviceType: 'tablet', _count: 4 },
+      ]);
+
+      await callPrivate('computeEngagementMetrics', yesterday);
+
+      const dimensions = (prisma.$executeRaw as jest.Mock).mock.calls
+        .filter((call) => Array.isArray(call[0]))
+        .map((call) => call[3] as string | null);
+
+      expect(dimensions).toContain('device:tablet');
+      expect(dimensions).not.toContain('platform:tablet');
+    });
+  });
+
+  // =========================================================================
+  // Funnel idempotency
+  // =========================================================================
+
+  describe('funnel writes', () => {
+    it('replaces a date rather than appending a second set of rows', async () => {
+      // analytics_funnel_steps has no unique key, so the original per-step
+      // `create` doubled the funnel chart on any re-run — and a catch-up
+      // backfill re-runs dates by design.
+      await callPrivate('computeFunnels', yesterday);
+
+      expect(prisma.analyticsFunnelStep.create).not.toHaveBeenCalled();
+      expect(prisma.analyticsFunnelStep.deleteMany).toHaveBeenCalledWith({
+        where: { funnelName: 'scan_to_digest', date: new Date('2026-04-02') },
+      });
+      expect(prisma.analyticsFunnelStep.deleteMany).toHaveBeenCalledWith({
+        where: { funnelName: 'search_to_answer', date: new Date('2026-04-02') },
+      });
+    });
+
+    it('writes the delete and the insert in one transaction', async () => {
+      await callPrivate('computeFunnels', yesterday);
+      expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+    });
+
+    it('produces the same row count on a re-run', async () => {
+      await callPrivate('computeFunnels', yesterday);
+      const first = (prisma.analyticsFunnelStep.createMany as jest.Mock).mock.calls.map(
+        (call) => (call[0] as { data: unknown[] }).data.length,
+      );
+
+      (prisma.analyticsFunnelStep.createMany as jest.Mock).mockClear();
+      await callPrivate('computeFunnels', yesterday);
+      const second = (prisma.analyticsFunnelStep.createMany as jest.Mock).mock.calls.map(
+        (call) => (call[0] as { data: unknown[] }).data.length,
+      );
+
+      expect(second).toEqual(first);
+      expect(first).toEqual([5, 5]);
     });
   });
 });

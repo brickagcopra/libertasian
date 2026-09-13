@@ -54,6 +54,14 @@ jest.mock('@/features/purchase', () => ({
   usePurchasesBootstrap: (organizationId: string | null) =>
     mockUsePurchasesBootstrap(organizationId),
 }));
+// And the navigation instrumentation, for both reasons at once: it is unit
+// tested separately, and the real hook imports `lib/analytics`, which pulls
+// expo-sqlite in at module scope and does not resolve under jest.
+const mockUseAnalyticsNavigationTracking = jest.fn();
+jest.mock('@/features/analytics/use-analytics-navigation', () => ({
+  useAnalyticsNavigationTracking: (isAuthenticated: boolean) =>
+    mockUseAnalyticsNavigationTracking(isAuthenticated),
+}));
 
 jest.mock('@expo-google-fonts/inter', () => ({
   useFonts: () => [true],

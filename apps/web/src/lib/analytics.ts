@@ -1,5 +1,6 @@
 import { apiClient } from '@/lib/api-client';
 import { useAuthStore } from '@/stores/auth-store';
+import { pageViewProperties } from '@/lib/analytics-surfaces';
 import type {
   TrackEventPayload,
   TrackBatchPayload,
@@ -10,6 +11,16 @@ import type {
 } from '@libertasian/types';
 
 const API_BASE_URL = process.env['NEXT_PUBLIC_API_URL'] || 'http://localhost:3001/api/v1';
+
+/**
+ * Every API handler returns `{ success, data }` and web's `apiClient` returns
+ * the response body verbatim — it does NOT unwrap, unlike mobile's client.
+ * Reading `response.sessionId` off the envelope therefore yielded `undefined`
+ * and left `sessionId` null forever, so every event this client has ever sent
+ * was sessionless and `analytics_sessions` held 2 rows. Type the call as the
+ * envelope and unwrap explicitly.
+ */
+type ApiEnvelope<T> = { success: boolean; data: T };
 
 class AnalyticsClient {
   private sessionId: string | null = null;
@@ -52,14 +63,24 @@ class AnalyticsClient {
         entryPath,
         referrer: referrer || undefined,
       };
-      const response = await apiClient.post<StartSessionResponse>(
+      const response = await apiClient.post<ApiEnvelope<StartSessionResponse>>(
         '/analytics/sessions/start/auth',
         payload,
       );
-      this.sessionId = response.sessionId;
+      this.sessionId = response.data?.sessionId ?? null;
     } catch {
       // Silently fail — analytics should never block the app
     }
+  }
+
+  /**
+   * Track a navigation. `path` is the route PATTERN and `surface` the bucket
+   * from the shared route map — see `lib/analytics-surfaces.ts`. Concrete ids
+   * are stripped there, not here, so web and mobile cannot disagree about what
+   * is safe to send.
+   */
+  trackPageView(pathname: string): void {
+    this.track('page_viewed', pageViewProperties(pathname));
   }
 
   /** Send heartbeat with current path. */

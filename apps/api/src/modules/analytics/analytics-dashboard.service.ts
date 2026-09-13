@@ -49,15 +49,50 @@ export class AnalyticsDashboardService {
     return `${CACHE_PREFIX}${parts.filter(Boolean).join(':')}`;
   }
 
-  private async getCachedOrFetch<T>(cacheKey: string, fetcher: () => Promise<T>): Promise<T> {
-    const cached = await this.redis.get(cacheKey);
-    if (cached) {
-      return JSON.parse(cached) as T;
+  /**
+   * Read-through cache with an explicit bypass.
+   *
+   * `refresh` skips the READ and repopulates — it does not disable the cache.
+   * Without it there was no way to see the result of a backfill for up to five
+   * minutes, which on a dashboard whose whole problem was "is this a real zero
+   * or a stale one" is the worst possible failure mode: an operator re-runs the
+   * aggregation, reloads, still sees zeros, and concludes the backfill failed.
+   * `refresh` is deliberately absent from `buildCacheKey`, so a forced refresh
+   * warms the same entry every other reader is already using rather than
+   * creating a parallel one.
+   */
+  private async getCachedOrFetch<T>(
+    cacheKey: string,
+    fetcher: () => Promise<T>,
+    refresh = false,
+  ): Promise<T> {
+    if (!refresh) {
+      const cached = await this.redis.get(cacheKey);
+      if (cached) {
+        return JSON.parse(cached) as T;
+      }
     }
 
     const data = await fetcher();
     await this.redis.set(cacheKey, JSON.stringify(data), CACHE_TTL_SECONDS);
     return data;
+  }
+
+  /**
+   * The most recent date that has any `analytics_daily_aggregates` row, as
+   * `YYYY-MM-DD`, or null when the table is empty.
+   *
+   * This is the one number that separates "nobody used the product yesterday"
+   * from "the aggregation job never ran", and the absence of it is what let a
+   * silently skipped cron (2026-09-12, a deploy restart straddling the fire
+   * minute) read as a legitimate grid of zeros for a day.
+   */
+  async getLastAggregatedAt(): Promise<string | null> {
+    const latest = await this.prisma.analyticsDailyAggregate.aggregate({
+      _max: { date: true },
+    });
+    const date = latest._max.date;
+    return date ? date.toISOString().split('T')[0]! : null;
   }
 
   // -----------------------------------------------------------------------
@@ -113,177 +148,257 @@ export class AnalyticsDashboardService {
 
   async getOverview(query: DashboardQueryDto) {
     const cacheKey = this.buildCacheKey('overview', query);
-    return this.getCachedOrFetch(cacheKey, async () => {
-      const range = this.getDateRange(query);
-      const metrics = await this.queryAggregates(
-        ['dau', 'wau', 'mau', 'ai_answers', 'searches', 'new_subscriptions'],
-        range,
-        query.organizationId,
-      );
-      return { metrics, dateRange: range };
-    });
+    return this.getCachedOrFetch(
+      cacheKey,
+      async () => {
+        const range = this.getDateRange(query);
+        const metrics = await this.queryAggregates(
+          ['dau', 'wau', 'mau', 'ai_answers', 'searches', 'new_subscriptions'],
+          range,
+          query.organizationId,
+        );
+        // Deliberately NOT scoped to the selected range or organization: it
+        // answers "when did the pipeline last run", which is a property of the
+        // pipeline, not of the window being looked at.
+        const lastAggregatedAt = await this.getLastAggregatedAt();
+        return { metrics, dateRange: range, lastAggregatedAt };
+      },
+      query.refresh,
+    );
+  }
+
+  /**
+   * Where users go: `surface_views` per surface, plus the platform split for
+   * DAU and sessions.
+   *
+   * Returns the dimensioned rows as-is — the client picks them apart with
+   * `selectMetricRowsByDimension`. `selectMetricRows` is left alone on purpose:
+   * it returns undimensioned rows only so the KPI cards cannot double-count,
+   * and relaxing it to serve this panel would reintroduce that bug everywhere
+   * else.
+   */
+  async getSurfaceMetrics(query: DashboardQueryDto) {
+    const cacheKey = this.buildCacheKey('surfaces', query);
+    return this.getCachedOrFetch(
+      cacheKey,
+      async () => {
+        const range = this.getDateRange(query);
+        const metrics = await this.queryAggregates(
+          ['surface_views', 'dau', 'sessions'],
+          range,
+          query.organizationId,
+        );
+        const lastAggregatedAt = await this.getLastAggregatedAt();
+        return { metrics, dateRange: range, lastAggregatedAt };
+      },
+      query.refresh,
+    );
   }
 
   async getEngagement(query: DashboardQueryDto) {
     const cacheKey = this.buildCacheKey('engagement', query);
-    return this.getCachedOrFetch(cacheKey, async () => {
-      const range = this.getDateRange(query);
-      const metrics = await this.queryAggregates(
-        ['dau', 'wau', 'mau', 'sessions', 'avg_session_duration_seconds', 'avg_events_per_session'],
-        range,
-        query.organizationId,
-      );
-      return { metrics, dateRange: range };
-    });
+    return this.getCachedOrFetch(
+      cacheKey,
+      async () => {
+        const range = this.getDateRange(query);
+        const metrics = await this.queryAggregates(
+          ['dau', 'wau', 'mau', 'sessions', 'avg_session_duration_seconds', 'avg_events_per_session'],
+          range,
+          query.organizationId,
+        );
+        return { metrics, dateRange: range };
+      },
+      query.refresh,
+    );
   }
 
   async getSearchMetrics(query: DashboardQueryDto) {
     const cacheKey = this.buildCacheKey('search', query);
-    return this.getCachedOrFetch(cacheKey, async () => {
-      const range = this.getDateRange(query);
-      const metrics = await this.queryAggregates(
-        [
-          'searches', 'search_zero_result_rate', 'search_click_through_rate',
-          'search_mean_position_clicked', 'ai_answers', 'ai_answer_avg_response_time_ms',
-          'ai_answer_abstention_rate', 'ai_answer_helpful_rate', 'ai_answer_hallucination_reports',
-        ],
-        range,
-        query.organizationId,
-      );
-      return { metrics, dateRange: range };
-    });
+    return this.getCachedOrFetch(
+      cacheKey,
+      async () => {
+        const range = this.getDateRange(query);
+        const metrics = await this.queryAggregates(
+          [
+            'searches', 'search_zero_result_rate', 'search_click_through_rate',
+            'search_mean_position_clicked', 'ai_answers', 'ai_answer_avg_response_time_ms',
+            'ai_answer_abstention_rate', 'ai_answer_helpful_rate', 'ai_answer_hallucination_reports',
+          ],
+          range,
+          query.organizationId,
+        );
+        return { metrics, dateRange: range };
+      },
+      query.refresh,
+    );
   }
 
   async getAiMetrics(query: DashboardQueryDto) {
     const cacheKey = this.buildCacheKey('ai', query);
-    return this.getCachedOrFetch(cacheKey, async () => {
-      const range = this.getDateRange(query);
-      const metrics = await this.queryAggregates(
-        [
-          'ai_answers', 'ai_answer_avg_response_time_ms', 'ai_answer_abstention_rate',
-          'ai_answer_helpful_rate', 'ai_answer_hallucination_reports',
-        ],
-        range,
-        query.organizationId,
-      );
-      return { metrics, dateRange: range };
-    });
+    return this.getCachedOrFetch(
+      cacheKey,
+      async () => {
+        const range = this.getDateRange(query);
+        const metrics = await this.queryAggregates(
+          [
+            'ai_answers', 'ai_answer_avg_response_time_ms', 'ai_answer_abstention_rate',
+            'ai_answer_helpful_rate', 'ai_answer_hallucination_reports',
+          ],
+          range,
+          query.organizationId,
+        );
+        return { metrics, dateRange: range };
+      },
+      query.refresh,
+    );
   }
 
   async getDigestMetrics(query: DashboardQueryDto) {
     const cacheKey = this.buildCacheKey('digests', query);
-    return this.getCachedOrFetch(cacheKey, async () => {
-      const range = this.getDateRange(query);
-      const metrics = await this.queryAggregates(
-        ['digests_generated', 'digests_saved', 'digest_avg_confidence', 'digest_review_queue_depth'],
-        range,
-        query.organizationId,
-      );
-      return { metrics, dateRange: range };
-    });
+    return this.getCachedOrFetch(
+      cacheKey,
+      async () => {
+        const range = this.getDateRange(query);
+        const metrics = await this.queryAggregates(
+          ['digests_generated', 'digests_saved', 'digest_avg_confidence', 'digest_review_queue_depth'],
+          range,
+          query.organizationId,
+        );
+        return { metrics, dateRange: range };
+      },
+      query.refresh,
+    );
   }
 
   async getScanMetrics(query: DashboardQueryDto) {
     const cacheKey = this.buildCacheKey('scans', query);
-    return this.getCachedOrFetch(cacheKey, async () => {
-      const range = this.getDateRange(query);
-      const metrics = await this.queryAggregates(
-        [
-          'scans_started', 'scans_completed', 'scan_success_rate', 'scan_avg_quality',
-          'scan_upgrade_prompts', 'scan_upgrade_conversions',
-        ],
-        range,
-        query.organizationId,
-      );
-      return { metrics, dateRange: range };
-    });
+    return this.getCachedOrFetch(
+      cacheKey,
+      async () => {
+        const range = this.getDateRange(query);
+        const metrics = await this.queryAggregates(
+          [
+            'scans_started', 'scans_completed', 'scan_success_rate', 'scan_avg_quality',
+            'scan_upgrade_prompts', 'scan_upgrade_conversions',
+          ],
+          range,
+          query.organizationId,
+        );
+        return { metrics, dateRange: range };
+      },
+      query.refresh,
+    );
   }
 
   async getStudyMetrics(query: DashboardQueryDto) {
     const cacheKey = this.buildCacheKey('study', query);
-    return this.getCachedOrFetch(cacheKey, async () => {
-      const range = this.getDateRange(query);
-      const metrics = await this.queryAggregates(
-        [
-          'study_sessions', 'flashcard_sessions', 'flashcard_accuracy',
-          'codal_views', 'offline_usage',
-        ],
-        range,
-        query.organizationId,
-      );
-      return { metrics, dateRange: range };
-    });
+    return this.getCachedOrFetch(
+      cacheKey,
+      async () => {
+        const range = this.getDateRange(query);
+        const metrics = await this.queryAggregates(
+          [
+            'study_sessions', 'flashcard_sessions', 'flashcard_accuracy',
+            'codal_views', 'offline_usage',
+          ],
+          range,
+          query.organizationId,
+        );
+        return { metrics, dateRange: range };
+      },
+      query.refresh,
+    );
   }
 
   async getWorkspaceMetrics(query: DashboardQueryDto) {
     const cacheKey = this.buildCacheKey('workspace', query);
-    return this.getCachedOrFetch(cacheKey, async () => {
-      const range = this.getDateRange(query);
-      const metrics = await this.queryAggregates(
-        ['matters_created', 'documents_attached', 'notes_created', 'collaboration_actions'],
-        range,
-        query.organizationId,
-      );
-      return { metrics, dateRange: range };
-    });
+    return this.getCachedOrFetch(
+      cacheKey,
+      async () => {
+        const range = this.getDateRange(query);
+        const metrics = await this.queryAggregates(
+          ['matters_created', 'documents_attached', 'notes_created', 'collaboration_actions'],
+          range,
+          query.organizationId,
+        );
+        return { metrics, dateRange: range };
+      },
+      query.refresh,
+    );
   }
 
   async getRevenueMetrics(query: DashboardQueryDto) {
     const cacheKey = this.buildCacheKey('revenue', query);
-    return this.getCachedOrFetch(cacheKey, async () => {
-      const range = this.getDateRange(query);
-      const metrics = await this.queryAggregates(
-        [
-          'new_subscriptions', 'upgrades', 'cancellations', 'churns',
-          'paywall_conversion_rate',
-        ],
-        range,
-        query.organizationId,
-      );
-      return { metrics, dateRange: range };
-    });
+    return this.getCachedOrFetch(
+      cacheKey,
+      async () => {
+        const range = this.getDateRange(query);
+        const metrics = await this.queryAggregates(
+          [
+            'new_subscriptions', 'upgrades', 'cancellations', 'churns',
+            'paywall_conversion_rate',
+          ],
+          range,
+          query.organizationId,
+        );
+        return { metrics, dateRange: range };
+      },
+      query.refresh,
+    );
   }
 
   async getFunnel(funnelName: string, query: DashboardQueryDto) {
     const cacheKey = this.buildCacheKey(`funnel:${funnelName}`, query);
-    return this.getCachedOrFetch(cacheKey, async () => {
-      const range = this.getDateRange(query);
-      const steps = await this.prisma.analyticsFunnelStep.findMany({
-        where: {
-          funnelName,
-          date: { gte: range.from, lte: range.to },
-        },
-        orderBy: [{ date: 'asc' }, { stepOrder: 'asc' }],
-      });
-      return { funnelName, steps, dateRange: range };
-    });
+    return this.getCachedOrFetch(
+      cacheKey,
+      async () => {
+        const range = this.getDateRange(query);
+        const steps = await this.prisma.analyticsFunnelStep.findMany({
+          where: {
+            funnelName,
+            date: { gte: range.from, lte: range.to },
+          },
+          orderBy: [{ date: 'asc' }, { stepOrder: 'asc' }],
+        });
+        return { funnelName, steps, dateRange: range };
+      },
+      query.refresh,
+    );
   }
 
   async getRetention(query: DashboardQueryDto) {
     const cacheKey = this.buildCacheKey('retention', query);
-    return this.getCachedOrFetch(cacheKey, async () => {
-      const range = this.getDateRange(query);
-      const cohorts = await this.prisma.analyticsRetentionCohort.findMany({
-        where: {
-          cohortWeek: { gte: range.from, lte: range.to },
-        },
-        orderBy: [{ cohortWeek: 'asc' }, { retentionWeek: 'asc' }],
-      });
-      return { cohorts, dateRange: range };
-    });
+    return this.getCachedOrFetch(
+      cacheKey,
+      async () => {
+        const range = this.getDateRange(query);
+        const cohorts = await this.prisma.analyticsRetentionCohort.findMany({
+          where: {
+            cohortWeek: { gte: range.from, lte: range.to },
+          },
+          orderBy: [{ cohortWeek: 'asc' }, { retentionWeek: 'asc' }],
+        });
+        return { cohorts, dateRange: range };
+      },
+      query.refresh,
+    );
   }
 
   async getIngestionMetrics(query: DashboardQueryDto) {
     const cacheKey = this.buildCacheKey('ingestion', query);
-    return this.getCachedOrFetch(cacheKey, async () => {
-      const range = this.getDateRange(query);
-      const metrics = await this.queryAggregates(
-        ['documents_ingested', 'ingestion_errors', 'editorial_reviews', 'avg_review_time_ms'],
-        range,
-        query.organizationId,
-      );
-      return { metrics, dateRange: range };
-    });
+    return this.getCachedOrFetch(
+      cacheKey,
+      async () => {
+        const range = this.getDateRange(query);
+        const metrics = await this.queryAggregates(
+          ['documents_ingested', 'ingestion_errors', 'editorial_reviews', 'avg_review_time_ms'],
+          range,
+          query.organizationId,
+        );
+        return { metrics, dateRange: range };
+      },
+      query.refresh,
+    );
   }
 
   // -----------------------------------------------------------------------

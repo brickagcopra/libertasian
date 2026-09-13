@@ -1,5 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -42,9 +42,43 @@ export const ACTIVE_USER_WINDOWS: readonly { metric: string; days: number }[] = 
 ];
 
 /**
+ * How far back a catch-up run will look for days that were never aggregated.
+ * Matches the dashboard's default 30-day window: a gap older than the window
+ * anybody looks at is not worth the query budget on every boot.
+ */
+export const CATCH_UP_WINDOW_DAYS = 30;
+
+/**
+ * Ceiling on how many missing days one catch-up run will fill. A cold database
+ * has 30 empty days in the window and each day is ~40 aggregate queries, so an
+ * uncapped catch-up would turn a container restart loop into a self-inflicted
+ * load test. Whatever is left over is filled by the next run.
+ */
+export const CATCH_UP_MAX_DAYS_PER_RUN = 7;
+
+/** `YYYY-MM-DD` for a Date, in UTC. */
+function toUtcDateString(date: Date): string {
+  return date.toISOString().split('T')[0]!;
+}
+
+/** Midnight UTC on the given UTC calendar date. */
+function utcMidnight(date: Date): Date {
+  const out = new Date(date);
+  out.setUTCHours(0, 0, 0, 0);
+  return out;
+}
+
+/**
  * Daily aggregation cron job.
- * Runs at 02:00 UTC — computes daily metrics and writes to
- * analytics_daily_aggregates. Also pre-creates monthly partitions.
+ *
+ * Runs at 02:00 UTC daily — the `timeZone: 'UTC'` option on the decorator is
+ * load-bearing, not decoration. `@nestjs/schedule` evaluates a cron expression
+ * in the process timezone, and the API container sets `TZ=Asia/Manila`
+ * (docker-compose.prod.yml) for dev parity, so a bare `'0 2 * * *'` fired at
+ * 02:00 PHT = 18:00 UTC — eight hours away from the comment that used to sit
+ * here, and in the middle of the day it was meant to be aggregating. Every
+ * window in this service is computed in UTC, so the schedule is pinned to UTC
+ * as well.
  *
  * Per LIBERTASIAN-ANALYTICS.md:
  * - Never queries raw events in dashboard endpoints
@@ -52,36 +86,125 @@ export const ACTIVE_USER_WINDOWS: readonly { metric: string; days: number }[] = 
  * - Should complete in <5 minutes for up to 1M daily events
  */
 @Injectable()
-export class AnalyticsAggregationService {
+export class AnalyticsAggregationService implements OnModuleInit {
   private readonly logger = new Logger(AnalyticsAggregationService.name);
 
   constructor(private readonly prisma: PrismaService) {}
 
   // -----------------------------------------------------------------------
-  // Cron entry point — runs at 02:00 UTC daily
+  // Self-healing catch-up
   // -----------------------------------------------------------------------
 
-  @Cron('0 2 * * *', { name: 'aggregate_daily_metrics' })
+  /**
+   * Fill any day in the trailing window that has no aggregate rows, on boot.
+   *
+   * A deploy that restarts the container across the cron's fire minute used to
+   * lose that day permanently — nothing retried it, and the dashboard rendered
+   * the hole as a zero. That is what happened to 2026-09-12. The cron is a
+   * one-shot trigger, so durability has to come from reconciling state rather
+   * than from hoping the process is alive at 02:00.
+   */
+  async onModuleInit(): Promise<void> {
+    try {
+      await this.catchUpMissingDays();
+    } catch (err) {
+      // A boot-time backfill failure must never stop the API from starting.
+      // The next cron run will try again.
+      this.logger.error(`Startup analytics catch-up failed: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * Aggregate every date in the trailing `CATCH_UP_WINDOW_DAYS` that has no
+   * `analytics_daily_aggregates` row at all, oldest first, up to
+   * `CATCH_UP_MAX_DAYS_PER_RUN`.
+   *
+   * "No row at all" is the gap test rather than "no row for metric X": the
+   * per-date work is one sweep of every compute* method, so a date either got
+   * the sweep or it did not. Re-running a date that already has rows is
+   * harmless — every write is an upsert — but not free, so it is skipped.
+   *
+   * Returns the dates it filled, for the caller to log and for tests to assert
+   * idempotency on.
+   */
+  async catchUpMissingDays(now: Date = new Date()): Promise<string[]> {
+    // Yesterday is the newest date that can be complete; today is still open.
+    const newest = utcMidnight(now);
+    newest.setUTCDate(newest.getUTCDate() - 1);
+
+    const oldest = new Date(newest);
+    oldest.setUTCDate(oldest.getUTCDate() - (CATCH_UP_WINDOW_DAYS - 1));
+
+    const candidates: Date[] = [];
+    const cursor = new Date(oldest);
+    while (cursor <= newest) {
+      candidates.push(new Date(cursor));
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+
+    const present = await this.prisma.analyticsDailyAggregate.findMany({
+      where: { date: { gte: oldest, lte: newest } },
+      select: { date: true },
+      distinct: ['date'],
+    });
+    const haveDates = new Set(present.map((row) => toUtcDateString(row.date)));
+
+    const missing = candidates.filter((date) => !haveDates.has(toUtcDateString(date)));
+    if (missing.length === 0) {
+      this.logger.log(
+        `Analytics catch-up: no gaps in the trailing ${CATCH_UP_WINDOW_DAYS} days`,
+      );
+      return [];
+    }
+
+    const toFill = missing.slice(0, CATCH_UP_MAX_DAYS_PER_RUN);
+    const deferred = missing.length - toFill.length;
+    this.logger.warn(
+      `Analytics catch-up: ${missing.length} missing day(s) in the trailing ` +
+        `${CATCH_UP_WINDOW_DAYS} days; filling ${toFill.length}` +
+        (deferred > 0 ? `, deferring ${deferred} to the next run` : ''),
+    );
+
+    const filled: string[] = [];
+    for (const date of toFill) {
+      const dateStr = toUtcDateString(date);
+      try {
+        await this.aggregateForDate(date);
+        filled.push(dateStr);
+      } catch (err) {
+        // One bad day must not block the rest of the backfill.
+        this.logger.error(
+          `Analytics catch-up: failed to fill ${dateStr}: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    this.logger.log(
+      `Analytics catch-up filled ${filled.length} day(s): ${filled.join(', ') || 'none'}`,
+    );
+    return filled;
+  }
+
+  // -----------------------------------------------------------------------
+  // Cron entry point — runs at 02:00 UTC daily (timeZone pinned, see above)
+  // -----------------------------------------------------------------------
+
+  @Cron('0 2 * * *', { name: 'aggregate_daily_metrics', timeZone: 'UTC' })
   async aggregateDailyMetrics(): Promise<void> {
+    // Reconcile first: if a restart, an outage or a failed run lost a day, fix
+    // it before adding today's, so a hole never becomes permanent.
+    await this.catchUpMissingDays();
+
     const yesterday = new Date();
     yesterday.setUTCDate(yesterday.getUTCDate() - 1);
     yesterday.setUTCHours(0, 0, 0, 0);
 
-    const dateStr = yesterday.toISOString().split('T')[0];
+    const dateStr = toUtcDateString(yesterday);
     this.logger.log(`Starting daily aggregation for ${dateStr}`);
     const startTime = Date.now();
 
     try {
-      await this.computeEngagementMetrics(yesterday);
-      await this.computeSearchMetrics(yesterday);
-      await this.computeAiMetrics(yesterday);
-      await this.computeDigestMetrics(yesterday);
-      await this.computeScanMetrics(yesterday);
-      await this.computeStudyMetrics(yesterday);
-      await this.computeWorkspaceMetrics(yesterday);
-      await this.computeRevenueMetrics(yesterday);
-      await this.computeIngestionMetrics(yesterday);
-      await this.computeFunnels(yesterday);
+      await this.aggregateForDate(yesterday);
       await this.ensurePartitions();
 
       const durationMs = Date.now() - startTime;
@@ -92,11 +215,36 @@ export class AnalyticsAggregationService {
     }
   }
 
+  /**
+   * Every metric for one UTC date. The single place that knows the full sweep,
+   * so the cron and the catch-up backfill cannot drift apart — a backfill that
+   * computed a subset would leave a day that looks aggregated and is not.
+   */
+  async aggregateForDate(date: Date): Promise<void> {
+    const day = utcMidnight(date);
+    await this.computeEngagementMetrics(day);
+    await this.computeSurfaceMetrics(day);
+    await this.computeSearchMetrics(day);
+    await this.computeAiMetrics(day);
+    await this.computeDigestMetrics(day);
+    await this.computeScanMetrics(day);
+    await this.computeStudyMetrics(day);
+    await this.computeWorkspaceMetrics(day);
+    await this.computeRevenueMetrics(day);
+    await this.computeIngestionMetrics(day);
+    await this.computeFunnels(day);
+  }
+
   // -----------------------------------------------------------------------
   // Ensure future partitions exist (runs monthly)
   // -----------------------------------------------------------------------
 
-  @Cron('0 0 25 * *', { name: 'ensure_analytics_partitions' })
+  /**
+   * 00:00 UTC on the 25th. `timeZone: 'UTC'` for the same reason as the daily
+   * job: without it this fired at 00:00 PHT on the 25th, which is 16:00 UTC on
+   * the 24th — a different month on the last week of a month.
+   */
+  @Cron('0 0 25 * *', { name: 'ensure_analytics_partitions', timeZone: 'UTC' })
   async ensurePartitions(): Promise<void> {
     try {
       await this.prisma.$executeRaw`SELECT ensure_analytics_partitions()`;
@@ -235,17 +383,116 @@ export class AnalyticsAggregationService {
       await this.upsertAggregate(date, 'avg_session_duration_seconds', Math.round(avgDuration._avg.durationSeconds), 0);
     }
 
-    // Sessions by device type
+    // Sessions by device type, and the same split under `platform:*`.
+    //
+    // Two dimension prefixes on purpose. `device:*` is whatever string the
+    // client sent and keeps working for values outside the three platforms
+    // (older builds, a future `tablet`). `platform:*` is the closed set of
+    // ios/android/web that the dashboard's platform split reads, written for
+    // all three every day including zeros — the same contract as the DAU
+    // platform rows, so a missing row and a genuine zero stay distinguishable.
+    // Both are dimensioned, so neither is ever added into the `sessions` total.
     const sessionsByDevice = await this.prisma.analyticsSession.groupBy({
       by: ['deviceType'],
       _count: true,
       where: { startedAt: { gte: dayStart, lt: dayEnd } },
     });
+
+    const sessionsByPlatform = new Map<AnalyticsPlatform, number>(
+      ANALYTICS_PLATFORMS.map((platform) => [platform, 0]),
+    );
     for (const row of sessionsByDevice) {
       if (row.deviceType) {
         await this.upsertAggregate(date, 'sessions', row._count, 0, `device:${row.deviceType}`);
       }
+      const platform = row.deviceType as AnalyticsPlatform | null;
+      if (platform && sessionsByPlatform.has(platform)) {
+        sessionsByPlatform.set(platform, sessionsByPlatform.get(platform)! + row._count);
+      }
     }
+    for (const platform of ANALYTICS_PLATFORMS) {
+      await this.upsertAggregate(
+        date,
+        'sessions',
+        sessionsByPlatform.get(platform)!,
+        0,
+        `platform:${platform}`,
+      );
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Surface Metrics — where users actually go
+  // -----------------------------------------------------------------------
+
+  /**
+   * `surface_views` — one row per product surface, plus an undimensioned total.
+   *
+   * Source is `page_viewed`, which both clients now fire on every navigation
+   * with `properties.surface` taken from the shared route map (see
+   * apps/web/src/lib/analytics-surfaces.ts and its mobile mirror). Grouping on
+   * the stored surface rather than re-deriving it from `path` here keeps one
+   * definition of "which surface is this" instead of two that can disagree.
+   *
+   * `unique_users` is distinct `user_id` per surface. A page view with no user
+   * id (pre-auth) still counts as a view, so the view count is not gated on
+   * having a user — a surface with traffic and no signed-in users is a real
+   * thing to see, not a row to drop.
+   *
+   * A view whose properties carry no `surface` falls into `other` rather than
+   * being discarded, for the same reason `surfaceForPath` has an `other`
+   * fallback: an unmapped route must read as unmapped, not as unvisited. The
+   * undimensioned total is written separately from the raw event count, so it
+   * agrees with the sum of the surface rows by construction.
+   */
+  private async computeSurfaceMetrics(date: Date): Promise<void> {
+    const dayStart = new Date(date);
+    const dayEnd = new Date(date);
+    dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
+
+    // Prisma's groupBy cannot group on a JSON path, so this is raw SQL. It is a
+    // tagged template, so `dayStart`/`dayEnd` are bound parameters — never
+    // interpolated — and no user-supplied string enters the query at all.
+    const rows = await this.prisma.$queryRaw<
+      { surface: string; views: bigint; unique_users: bigint }[]
+    >`
+      SELECT
+        COALESCE(NULLIF(properties->>'surface', ''), 'other') AS surface,
+        COUNT(*)::bigint AS views,
+        COUNT(DISTINCT user_id)::bigint AS unique_users
+      FROM analytics_events
+      WHERE event_name = 'page_viewed'
+        AND created_at >= ${dayStart}
+        AND created_at < ${dayEnd}
+      GROUP BY 1
+    `;
+
+    let totalViews = 0;
+    for (const row of rows) {
+      const views = Number(row.views);
+      totalViews += views;
+      await this.upsertAggregate(
+        date,
+        'surface_views',
+        views,
+        Number(row.unique_users),
+        `surface:${row.surface}`,
+      );
+    }
+
+    // Unique users across all surfaces is NOT the sum of the per-surface
+    // counts — one user visits several surfaces a day. The total row therefore
+    // carries its own distinct count.
+    const distinctViewers = await this.prisma.analyticsEvent.groupBy({
+      by: ['userId'],
+      where: {
+        eventName: 'page_viewed',
+        createdAt: { gte: dayStart, lt: dayEnd },
+        userId: { not: null },
+      },
+    });
+
+    await this.upsertAggregate(date, 'surface_views', totalViews, distinctViewers.length);
   }
 
   // -----------------------------------------------------------------------
@@ -584,8 +831,41 @@ export class AnalyticsAggregationService {
     await this.computeSearchToAnswerFunnel(date, dayStart, dayEnd);
   }
 
+  /**
+   * Replace one funnel's rows for one date.
+   *
+   * `analytics_funnel_steps` has no unique key, so the original `create` per
+   * step made a second run for the same date append a duplicate set — the
+   * funnel chart would silently double. That was survivable while nothing
+   * re-ran a date; a catch-up backfill re-runs dates by design, so the writes
+   * have to be idempotent. Delete-then-insert scoped to (funnel, date) gives
+   * that without a migration, and runs inside a transaction so a crash between
+   * the two cannot leave the funnel empty.
+   */
+  private async replaceFunnelSteps(
+    funnelName: string,
+    date: Date,
+    steps: { stepName: string; stepOrder: number; count: number }[],
+  ): Promise<void> {
+    const dateOnly = new Date(toUtcDateString(date));
+
+    await this.prisma.$transaction([
+      this.prisma.analyticsFunnelStep.deleteMany({ where: { funnelName, date: dateOnly } }),
+      this.prisma.analyticsFunnelStep.createMany({
+        data: steps.map((step) => ({
+          funnelName,
+          stepName: step.stepName,
+          stepOrder: step.stepOrder,
+          date: dateOnly,
+          enteredCount: step.count,
+          completedCount: step.count,
+          droppedCount: 0,
+        })),
+      }),
+    ]);
+  }
+
   private async computeScanToDigestFunnel(date: Date, dayStart: Date, dayEnd: Date): Promise<void> {
-    const funnelName = 'scan_to_digest';
     const steps = [
       { name: 'scan_started', event: 'scan_started', order: 1 },
       { name: 'scan_captured', event: 'scan_captured', order: 2 },
@@ -594,27 +874,18 @@ export class AnalyticsAggregationService {
       { name: 'scan_saved', event: 'scan_saved', order: 5 },
     ];
 
+    const computed: { stepName: string; stepOrder: number; count: number }[] = [];
     for (const step of steps) {
       const count = await this.prisma.analyticsEvent.count({
         where: { eventName: step.event, createdAt: { gte: dayStart, lt: dayEnd } },
       });
-
-      await this.prisma.analyticsFunnelStep.create({
-        data: {
-          funnelName,
-          stepName: step.name,
-          stepOrder: step.order,
-          date: new Date(date.toISOString().split('T')[0]!),
-          enteredCount: count,
-          completedCount: count,
-          droppedCount: 0,
-        },
-      });
+      computed.push({ stepName: step.name, stepOrder: step.order, count });
     }
+
+    await this.replaceFunnelSteps('scan_to_digest', date, computed);
   }
 
   private async computeSearchToAnswerFunnel(date: Date, dayStart: Date, dayEnd: Date): Promise<void> {
-    const funnelName = 'search_to_answer';
     const steps = [
       { name: 'search_executed', event: 'search_executed', order: 1 },
       { name: 'search_result_clicked', event: 'search_result_clicked', order: 2 },
@@ -623,6 +894,7 @@ export class AnalyticsAggregationService {
       { name: 'ai_answer_helpful', event: 'ai_answer_feedback', order: 5 },
     ];
 
+    const computed: { stepName: string; stepOrder: number; count: number }[] = [];
     for (const step of steps) {
       const whereClause: Record<string, unknown> = {
         eventName: step.event,
@@ -637,18 +909,9 @@ export class AnalyticsAggregationService {
       const count = await this.prisma.analyticsEvent.count({
         where: whereClause,
       });
-
-      await this.prisma.analyticsFunnelStep.create({
-        data: {
-          funnelName,
-          stepName: step.name,
-          stepOrder: step.order,
-          date: new Date(date.toISOString().split('T')[0]!),
-          enteredCount: count,
-          completedCount: count,
-          droppedCount: 0,
-        },
-      });
+      computed.push({ stepName: step.name, stepOrder: step.order, count });
     }
+
+    await this.replaceFunnelSteps('search_to_answer', date, computed);
   }
 }

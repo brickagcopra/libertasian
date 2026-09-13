@@ -58,6 +58,23 @@ export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  /**
+   * One `page_viewed` per navigation, including the first render.
+   *
+   * This provider has watched `pathname` since it was written and never tracked
+   * anything from it — which is why `analytics_events` held 60 rows, all of them
+   * mobile sign-in failures, and the admin dashboard had no way to show which
+   * surfaces anyone used. The App Router keeps this component mounted across
+   * navigations, so a `pathname`-keyed effect is the navigation signal.
+   *
+   * `analytics.trackPageView` derives both properties from the shared route map,
+   * so the concrete id in `/digests/<case id>` never leaves the browser.
+   */
+  useEffect(() => {
+    if (!pathname) return;
+    analytics.trackPageView(pathname);
+  }, [pathname]);
+
   return (
     <AnalyticsContext.Provider value={{ analytics, sessionId: analytics.getSessionId() }}>
       {children}

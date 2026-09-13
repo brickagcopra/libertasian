@@ -5,7 +5,13 @@ import { PrismaService } from '../../prisma/prisma.service';
 
 /**
  * Weekly retention cohort computation.
- * Runs every Sunday at 03:00 UTC.
+ *
+ * Runs every Sunday at 03:00 UTC. `timeZone: 'UTC'` is required for that to be
+ * true: `@nestjs/schedule` reads a cron expression in the process timezone and
+ * the API container sets `TZ=Asia/Manila`, so the bare expression fired at
+ * 03:00 PHT — 19:00 UTC on Saturday, a different ISO week for cohorts whose
+ * boundary is `date_trunc('week', …)` in the database's UTC. The SQL below is
+ * all UTC, so the schedule is pinned to UTC to match.
  *
  * Groups users by signup week (cohort), computes return rates
  * for weeks 0 through 12. A "return" = had >= 1 analytics event that week.
@@ -18,7 +24,7 @@ export class AnalyticsRetentionService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  @Cron('0 3 * * 0', { name: 'compute_retention_cohorts' })
+  @Cron('0 3 * * 0', { name: 'compute_retention_cohorts', timeZone: 'UTC' })
   async computeRetentionCohorts(): Promise<void> {
     this.logger.log('Starting weekly retention cohort computation');
     const startTime = Date.now();

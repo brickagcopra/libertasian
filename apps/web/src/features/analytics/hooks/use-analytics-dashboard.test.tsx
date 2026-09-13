@@ -20,8 +20,11 @@ import {
   useAnalyticsScanMetrics,
   useAnalyticsStudyMetrics,
   useAnalyticsIngestionMetrics,
+  useAnalyticsSurfaces,
+  useAnalyticsRefresh,
   extractMetric,
   selectMetricRows,
+  selectMetricRowsByDimension,
   analyticsKeys,
 } from './use-analytics-dashboard';
 
@@ -407,5 +410,196 @@ describe('envelope unwrapping', () => {
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.data).toBeUndefined();
     expect(result.current.error).toBeInstanceOf(Error);
+  });
+});
+
+describe('selectMetricRowsByDimension', () => {
+  /**
+   * What the aggregator actually writes for one day of surface views: a row per
+   * surface plus an undimensioned total, and the sessions metric carrying two
+   * different dimension prefixes at once.
+   */
+  const rows = [
+    { metricName: 'surface_views', metricValue: 96, uniqueUsers: 11, date: '2026-09-11', dimension: null },
+    { metricName: 'surface_views', metricValue: 42, uniqueUsers: 7, date: '2026-09-11', dimension: 'surface:digests' },
+    { metricName: 'surface_views', metricValue: 31, uniqueUsers: 5, date: '2026-09-11', dimension: 'surface:bar_exams' },
+    { metricName: 'surface_views', metricValue: 40, uniqueUsers: 6, date: '2026-09-10', dimension: 'surface:digests' },
+    { metricName: 'sessions', metricValue: 12, uniqueUsers: 0, date: '2026-09-11', dimension: 'platform:ios' },
+    { metricName: 'sessions', metricValue: 12, uniqueUsers: 0, date: '2026-09-11', dimension: 'device:ios' },
+    { metricName: 'dau', metricValue: 9, uniqueUsers: 9, date: '2026-09-11', dimension: 'platform:web' },
+  ];
+
+  it('groups a metric by the part of the dimension after the prefix', () => {
+    const bySurface = selectMetricRowsByDimension(rows, 'surface_views', 'surface:');
+    expect(Object.keys(bySurface).sort()).toEqual(['bar_exams', 'digests']);
+    expect(bySurface['digests']).toHaveLength(2);
+    expect(bySurface['bar_exams']).toHaveLength(1);
+  });
+
+  it('carries uniqueUsers through, not only the value', () => {
+    const bySurface = selectMetricRowsByDimension(rows, 'surface_views', 'surface:');
+    expect(bySurface['digests']!.map((r) => r.uniqueUsers)).toEqual([7, 6]);
+  });
+
+  it('excludes the undimensioned total', () => {
+    const bySurface = selectMetricRowsByDimension(rows, 'surface_views', 'surface:');
+    const values = Object.values(bySurface).flat().map((r) => r.metricValue);
+    expect(values).not.toContain(96);
+  });
+
+  it('does not mix two prefixes on the same metric', () => {
+    // sessions is written under both platform:* and device:*; adding them would
+    // double-count the same sessions.
+    const byPlatform = selectMetricRowsByDimension(rows, 'sessions', 'platform:');
+    expect(Object.keys(byPlatform)).toEqual(['ios']);
+    expect(byPlatform['ios']).toHaveLength(1);
+  });
+
+  it('returns an empty object for a metric with no dimensioned rows', () => {
+    expect(selectMetricRowsByDimension(rows, 'searches', 'surface:')).toEqual({});
+  });
+
+  it('leaves selectMetricRows untouched — the KPI cards still get totals only', () => {
+    // Relaxing selectMetricRows to serve this panel would put the
+    // double-counting bug back on every card.
+    expect(selectMetricRows(rows, 'surface_views')).toHaveLength(1);
+    expect(selectMetricRows(rows, 'surface_views')[0]!.metricValue).toBe(96);
+  });
+});
+
+describe('useAnalyticsSurfaces', () => {
+  beforeEach(() => mockGet.mockReset());
+
+  it('fetches from /admin/analytics/surfaces', async () => {
+    mockGet.mockResolvedValueOnce({ success: true, data: { metrics: [] } });
+    const { result } = renderHook(() => useAnalyticsSurfaces(), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockGet).toHaveBeenCalledWith('/admin/analytics/surfaces', { params: {} });
+  });
+
+  it('unwraps the envelope and keeps the dimensioned rows', async () => {
+    mockGet.mockResolvedValueOnce({
+      success: true,
+      data: {
+        metrics: [
+          { metricName: 'surface_views', metricValue: 42, uniqueUsers: 7, date: '2026-09-11', dimension: 'surface:digests' },
+        ],
+        lastAggregatedAt: '2026-09-11',
+      },
+    });
+
+    const { result } = renderHook(() => useAnalyticsSurfaces(), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).not.toHaveProperty('success');
+    expect(result.current.data?.metrics[0]).toMatchObject({ dimension: 'surface:digests' });
+    expect(result.current.data?.lastAggregatedAt).toBe('2026-09-11');
+  });
+
+  it('surfaces isError when the request rejects', async () => {
+    mockGet.mockRejectedValueOnce(new Error('Forbidden'));
+    const { result } = renderHook(() => useAnalyticsSurfaces(), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.data).toBeUndefined();
+  });
+});
+
+describe('lastAggregatedAt on the overview', () => {
+  beforeEach(() => mockGet.mockReset());
+
+  it('reaches the consumer', async () => {
+    mockGet.mockResolvedValueOnce({
+      success: true,
+      data: { metrics: [], lastAggregatedAt: '2026-09-11' },
+    });
+
+    const { result } = renderHook(() => useAnalyticsOverview(), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.lastAggregatedAt).toBe('2026-09-11');
+  });
+
+  it('is null, not missing, when nothing has ever been aggregated', async () => {
+    mockGet.mockResolvedValueOnce({
+      success: true,
+      data: { metrics: [], lastAggregatedAt: null },
+    });
+
+    const { result } = renderHook(() => useAnalyticsOverview(), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toHaveProperty('lastAggregatedAt', null);
+  });
+});
+
+describe('useAnalyticsRefresh', () => {
+  beforeEach(() => mockGet.mockReset());
+
+  it('sends refresh=true so the API bypasses its 5-minute cache', async () => {
+    mockGet.mockResolvedValue({ success: true, data: { metrics: [] } });
+
+    const { result } = renderHook(() => useAnalyticsRefresh({ from: '2026-09-01' }), {
+      wrapper: createWrapper(),
+    });
+    await result.current();
+
+    const paths = mockGet.mock.calls.map(([path]) => path);
+    expect(paths).toEqual(
+      expect.arrayContaining(['/admin/analytics/overview', '/admin/analytics/surfaces']),
+    );
+    for (const [, options] of mockGet.mock.calls) {
+      expect((options as { params: Record<string, string> }).params).toMatchObject({
+        from: '2026-09-01',
+        refresh: 'true',
+      });
+    }
+  });
+
+  it('writes into the key the mounted query already reads', async () => {
+    // A refresh that landed under a different key would leave the page on the
+    // stale entry until the TTL expired — the bug, moved.
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    function Wrapper({ children }: { children: ReactNode }) {
+      return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+    }
+
+    mockGet.mockResolvedValue({
+      success: true,
+      data: { metrics: [{ metricName: 'dau', metricValue: 7, date: '2026-09-11' }] },
+    });
+
+    const { result } = renderHook(() => useAnalyticsRefresh(), { wrapper: Wrapper });
+    await result.current();
+
+    expect(queryClient.getQueryData(analyticsKeys.overview())).toMatchObject({
+      metrics: [{ metricName: 'dau', metricValue: 7 }],
+    });
+    expect(queryClient.getQueryData(analyticsKeys.surfaces())).toBeDefined();
+  });
+
+  it('does not send refresh on the ordinary hooks', async () => {
+    mockGet.mockResolvedValueOnce(makeOverviewResponse());
+    const { result } = renderHook(() => useAnalyticsOverview({ from: '2026-09-01' }), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockGet).toHaveBeenCalledWith('/admin/analytics/overview', {
+      params: { from: '2026-09-01' },
+    });
   });
 });

@@ -67,6 +67,12 @@ export interface AnalyticsDashboardQuery {
   granularity?: 'day' | 'week' | 'month';
   dimension?: 'plan' | 'device' | 'subject';
   organizationId?: string;
+  /**
+   * Skip the API's 5-minute response cache and recompute. Not part of the
+   * cache key on the server, so a refresh warms the shared entry rather than
+   * forking a second one.
+   */
+  refresh?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -108,6 +114,33 @@ export interface AnalyticsRetentionCohortRow {
 export interface AnalyticsOverviewResponse {
   metrics: AnalyticsDailyAggregateRow[];
   dateRange: { from: string; to: string };
+  /**
+   * The newest date with any `analytics_daily_aggregates` row (`YYYY-MM-DD`),
+   * or null when nothing has ever been aggregated.
+   *
+   * Optional because the other metric endpoints share this response shape and
+   * do not all carry it. Where it is present it is the only thing that
+   * distinguishes "zero activity" from "the aggregation job never ran" — the
+   * ambiguity that let a cron silently skipped by a deploy restart read as a
+   * legitimate grid of zeros.
+   */
+  lastAggregatedAt?: string | null;
+}
+
+/**
+ * Surface usage and platform split — the payload behind the admin "where users
+ * go" panel.
+ *
+ * `metrics` carries DIMENSIONED rows (`surface:digests`, `platform:ios`, …)
+ * alongside the undimensioned totals. Read them with
+ * `selectMetricRowsByDimension`, never by filtering on `metricName` alone:
+ * dimensioned rows are slices of the same population, so summing them
+ * double-counts.
+ */
+export interface AnalyticsSurfaceResponse {
+  metrics: AnalyticsDailyAggregateRow[];
+  dateRange: { from: string; to: string };
+  lastAggregatedAt?: string | null;
 }
 
 export interface AnalyticsFunnelResponse {

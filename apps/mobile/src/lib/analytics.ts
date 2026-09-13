@@ -4,6 +4,7 @@ import * as SQLite from 'expo-sqlite';
 import NetInfo from '@react-native-community/netinfo';
 
 import { apiClient } from './api-client';
+import { pageViewProperties } from './analytics-surfaces';
 import { mmkvStorage, STORAGE_KEYS } from '../storage/mmkv';
 import type {
   TrackEventPayload,
@@ -79,8 +80,23 @@ class MobileAnalyticsClient {
   private appStateSubscription: { remove: () => void } | null = null;
   private netInfoUnsubscribe: (() => void) | null = null;
 
+  /**
+   * The platform every event and session is stamped with.
+   *
+   * This is what makes the dashboard's platform split real rather than inferred
+   * from a login user agent — `classifyPlatformFromUserAgent` on the API side
+   * has to guess, and guesses "web" for anything it does not recognise. Read
+   * from `Platform.OS` rather than a build constant so a single binary running
+   * on either OS reports the truth.
+   *
+   * `web` is a real third case: Expo Router runs this bundle in a browser for
+   * local debugging, and reporting those sessions as Android would quietly
+   * inflate the Android column.
+   */
   private get deviceType(): AnalyticsDeviceType {
-    return Platform.OS === 'ios' ? 'ios' : 'android';
+    if (Platform.OS === 'ios') return 'ios';
+    if (Platform.OS === 'android') return 'android';
+    return 'web';
   }
 
   getSessionId(): string | null {
@@ -154,6 +170,23 @@ class MobileAnalyticsClient {
   };
 
   // ─── Session Management ──────────────────────────────────────
+
+  /**
+   * Start a session unless one is already live.
+   *
+   * Called on mount and on every foreground. Mobile never started a session at
+   * all before this — nothing called `startSession`, so every mobile event was
+   * sessionless and `analytics_sessions` held 2 rows, both from web. Guarding on
+   * the existing id means a user switching apps a dozen times gets one session
+   * rather than a dozen one-event ones.
+   */
+  async ensureSession(entryPath: string): Promise<void> {
+    if (this.sessionId) {
+      this.setCurrentPath(entryPath);
+      return;
+    }
+    await this.startSession(entryPath);
+  }
 
   async startSession(entryPath: string): Promise<void> {
     this.currentPath = entryPath;
@@ -277,6 +310,21 @@ class MobileAnalyticsClient {
     } else {
       void this.bufferEvent(payload);
     }
+  }
+
+  /**
+   * Track a navigation. `path` is the route PATTERN and `surface` the bucket
+   * from the shared route map — see `lib/analytics-surfaces.ts`, whose locked
+   * region is byte-identical to the web copy. Concrete ids are stripped there,
+   * so the two clients cannot disagree about what is safe to send.
+   *
+   * Also updates the heartbeat path, so the session's exit path stays a pattern
+   * rather than a real route with a case id in it.
+   */
+  trackPageView(path: string): void {
+    const properties = pageViewProperties(path);
+    this.setCurrentPath(properties.path);
+    this.track('page_viewed', properties);
   }
 
   /** Update the current path for heartbeat tracking. */
