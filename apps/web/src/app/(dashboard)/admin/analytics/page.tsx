@@ -18,6 +18,7 @@ import {
   useAnalyticsOverview,
   useAnalyticsFunnel,
   extractMetric,
+  selectMetricRows,
 } from '@/features/analytics/hooks/use-analytics-dashboard';
 import { KpiCard, DateRangeFilter, FunnelChart } from '@/components/analytics';
 import { AdminCardSkeleton } from '@/components/ui/skeleton';
@@ -64,15 +65,13 @@ export default function AnalyticsOverviewPage() {
   const newSubscriptions = extractMetric(metrics, 'new_subscriptions', 'sum');
 
   const dauTrend: LineChartPoint[] = useMemo(() => {
-    return metrics
-      .filter((r) => r.metricName === 'dau')
+    return selectMetricRows(metrics, 'dau')
       .sort((a, b) => a.date.localeCompare(b.date))
       .map((r) => ({ date: new Date(r.date), value: r.metricValue }));
   }, [metrics]);
 
   const searchTrend: LineChartPoint[] = useMemo(() => {
-    return metrics
-      .filter((r) => r.metricName === 'searches')
+    return selectMetricRows(metrics, 'searches')
       .sort((a, b) => a.date.localeCompare(b.date))
       .map((r) => ({ date: new Date(r.date), value: r.metricValue }));
   }, [metrics]);

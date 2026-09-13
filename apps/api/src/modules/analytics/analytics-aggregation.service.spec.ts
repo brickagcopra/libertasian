@@ -1,13 +1,17 @@
 import { Test, TestingModule } from '@nestjs/testing';
 
 import { PrismaService } from '../../prisma/prisma.service';
-import { AnalyticsAggregationService } from './analytics-aggregation.service';
+import {
+  AnalyticsAggregationService,
+  classifyPlatformFromUserAgent,
+} from './analytics-aggregation.service';
 
 describe('AnalyticsAggregationService', () => {
   let service: AnalyticsAggregationService;
   let prisma: {
     analyticsEvent: { count: jest.Mock; groupBy: jest.Mock; findMany: jest.Mock };
     analyticsSession: { count: jest.Mock; aggregate: jest.Mock; groupBy: jest.Mock };
+    loginEvent: { findMany: jest.Mock };
     analyticsFunnelStep: { create: jest.Mock };
     digest: { count: jest.Mock };
     $executeRaw: jest.Mock;
@@ -41,6 +45,9 @@ describe('AnalyticsAggregationService', () => {
               count: jest.fn().mockResolvedValue(0),
               aggregate: jest.fn().mockResolvedValue({ _avg: { durationSeconds: null } }),
               groupBy: jest.fn().mockResolvedValue([]),
+            },
+            loginEvent: {
+              findMany: jest.fn().mockResolvedValue([]),
             },
             analyticsFunnelStep: {
               create: jest.fn().mockResolvedValue({ id: 'funnel-1' }),
@@ -141,6 +148,191 @@ describe('AnalyticsAggregationService', () => {
       expect(prisma.analyticsSession.groupBy).toHaveBeenCalledWith(
         expect.objectContaining({ by: ['deviceType'] }),
       );
+    });
+  });
+
+  // =========================================================================
+  // Active User Metrics (DAU / WAU / MAU)
+  // =========================================================================
+
+  describe('computeActiveUserMetrics', () => {
+    type UpsertCall = [Date, string, number, number, string | undefined];
+
+    /**
+     * Capture the upserts instead of asserting on `$executeRaw`. The upsert is
+     * a tagged template, so its arguments arrive as a strings array plus
+     * positional values — unreadable to assert against, and the reason the
+     * older tests in this file can only check that "some SQL ran".
+     */
+    const spyOnUpsert = () =>
+      jest
+        .spyOn(
+          service as unknown as { upsertAggregate: (...a: unknown[]) => Promise<void> },
+          'upsertAggregate',
+        )
+        .mockResolvedValue(undefined);
+
+    const upsertsFor = (spy: jest.SpyInstance, metric: string): UpsertCall[] =>
+      (spy.mock.calls as unknown as UpsertCall[]).filter((call) => call[1] === metric);
+
+    const totalFor = (spy: jest.SpyInstance, metric: string): UpsertCall | undefined =>
+      upsertsFor(spy, metric).find((call) => call[4] === undefined);
+
+    const dimensionFor = (
+      spy: jest.SpyInstance,
+      metric: string,
+      dimension: string,
+    ): UpsertCall | undefined => upsertsFor(spy, metric).find((call) => call[4] === dimension);
+
+    it('unions login_events and analytics_events without double-counting a user in both', async () => {
+      // user-1 both logged in and emitted an event; user-2 only logged in;
+      // user-3 only emitted an event. The honest answer is 3, not 4.
+      prisma.loginEvent.findMany.mockResolvedValue([
+        { userId: 'user-1', userAgent: 'Mozilla/5.0' },
+        { userId: 'user-2', userAgent: 'Mozilla/5.0' },
+      ]);
+      prisma.analyticsEvent.groupBy.mockResolvedValue([{ userId: 'user-1' }, { userId: 'user-3' }]);
+
+      const spy = spyOnUpsert();
+      await service.computeActiveUserMetrics(yesterday);
+
+      const dau = totalFor(spy, 'dau');
+      expect(dau).toBeDefined();
+      expect(dau![2]).toBe(3);
+      expect(dau![3]).toBe(3);
+    });
+
+    it('counts a user once even when they logged in many times that day', async () => {
+      prisma.loginEvent.findMany.mockResolvedValue([
+        { userId: 'user-1', userAgent: 'okhttp/4.12.0' },
+        { userId: 'user-1', userAgent: 'libertasian/1.0.2 CFNetwork/1494.0.7 Darwin/23.4.0' },
+      ]);
+      prisma.analyticsEvent.groupBy.mockResolvedValue([]);
+
+      const spy = spyOnUpsert();
+      await service.computeActiveUserMetrics(yesterday);
+
+      expect(totalFor(spy, 'dau')![2]).toBe(1);
+    });
+
+    it('still counts event-only users, so the metric grows as instrumentation lands', async () => {
+      prisma.loginEvent.findMany.mockResolvedValue([]);
+      prisma.analyticsEvent.groupBy.mockResolvedValue([
+        { userId: 'user-1' },
+        { userId: 'user-2' },
+      ]);
+
+      const spy = spyOnUpsert();
+      await service.computeActiveUserMetrics(yesterday);
+
+      expect(totalFor(spy, 'dau')![2]).toBe(2);
+    });
+
+    it('writes wau and mau alongside dau', async () => {
+      const spy = spyOnUpsert();
+      await service.computeActiveUserMetrics(yesterday);
+
+      expect(totalFor(spy, 'dau')).toBeDefined();
+      expect(totalFor(spy, 'wau')).toBeDefined();
+      expect(totalFor(spy, 'mau')).toBeDefined();
+    });
+
+    it('uses trailing windows that include the aggregation date', async () => {
+      await service.computeActiveUserMetrics(yesterday); // 2026-04-02
+
+      const windows = prisma.loginEvent.findMany.mock.calls.map(
+        (call: [{ where: { createdAt: { gte: Date; lt: Date } } }]) => call[0].where.createdAt,
+      );
+      expect(windows).toHaveLength(3);
+
+      // The upper bound is exclusive and one day past the aggregation date, so
+      // the aggregation date itself is inside every window.
+      for (const window of windows) {
+        expect(window.lt.toISOString()).toBe('2026-04-03T00:00:00.000Z');
+      }
+      expect(windows[0]!.gte.toISOString()).toBe('2026-04-02T00:00:00.000Z'); // dau: 1 day
+      expect(windows[1]!.gte.toISOString()).toBe('2026-03-27T00:00:00.000Z'); // wau: 7 days
+      expect(windows[2]!.gte.toISOString()).toBe('2026-03-04T00:00:00.000Z'); // mau: 30 days
+    });
+
+    it('queries only successful logins', async () => {
+      await service.computeActiveUserMetrics(yesterday);
+
+      expect(prisma.loginEvent.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ eventType: 'login_success' }),
+        }),
+      );
+    });
+
+    it('splits each metric by platform, derived from the login user agent', async () => {
+      prisma.loginEvent.findMany.mockResolvedValue([
+        { userId: 'ios-user', userAgent: 'libertasian/1.0.2 CFNetwork/1494.0.7 Darwin/23.4.0' },
+        { userId: 'android-user', userAgent: 'okhttp/4.12.0' },
+        { userId: 'web-user', userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/128' },
+        { userId: 'mystery-user', userAgent: null },
+      ]);
+      prisma.analyticsEvent.groupBy.mockResolvedValue([]);
+
+      const spy = spyOnUpsert();
+      await service.computeActiveUserMetrics(yesterday);
+
+      expect(dimensionFor(spy, 'dau', 'platform:ios')![2]).toBe(1);
+      expect(dimensionFor(spy, 'dau', 'platform:android')![2]).toBe(1);
+      // web-user plus the unclassifiable one — an unknown agent falls to web
+      // rather than being dropped.
+      expect(dimensionFor(spy, 'dau', 'platform:web')![2]).toBe(2);
+      expect(totalFor(spy, 'dau')![2]).toBe(4);
+
+      // …and the same split exists for the other two windows.
+      expect(dimensionFor(spy, 'wau', 'platform:ios')![2]).toBe(1);
+      expect(dimensionFor(spy, 'mau', 'platform:android')![2]).toBe(1);
+    });
+
+    it('writes a zero row for a platform with no users rather than omitting it', async () => {
+      prisma.loginEvent.findMany.mockResolvedValue([
+        { userId: 'web-user', userAgent: 'Mozilla/5.0' },
+      ]);
+
+      const spy = spyOnUpsert();
+      await service.computeActiveUserMetrics(yesterday);
+
+      expect(dimensionFor(spy, 'dau', 'platform:ios')![2]).toBe(0);
+      expect(dimensionFor(spy, 'dau', 'platform:android')![2]).toBe(0);
+    });
+
+    it('is reached by the daily engagement pass', async () => {
+      const spy = jest.spyOn(service, 'computeActiveUserMetrics');
+      await callPrivate('computeEngagementMetrics', yesterday);
+      expect(spy).toHaveBeenCalledWith(yesterday);
+    });
+  });
+
+  describe('classifyPlatformFromUserAgent', () => {
+    it.each([
+      ['libertasian/1.0.2 CFNetwork/1494.0.7 Darwin/23.4.0', 'ios'],
+      ['CFNetwork/978.0.7 Darwin/18.6.0', 'ios'],
+      ['okhttp/4.12.0', 'android'],
+      ['libertasian/1.0.2 okhttp/4.12.0', 'android'],
+      ['Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0', 'web'],
+      ['Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605.1.15', 'web'],
+    ])('classifies %s as %s', (userAgent, expected) => {
+      expect(classifyPlatformFromUserAgent(userAgent)).toBe(expected);
+    });
+
+    it('falls back to web for an unknown agent', () => {
+      expect(classifyPlatformFromUserAgent('SomeBot/1.0 (+https://example.test)')).toBe('web');
+    });
+
+    it('falls back to web for a missing agent', () => {
+      expect(classifyPlatformFromUserAgent(null)).toBe('web');
+      expect(classifyPlatformFromUserAgent(undefined)).toBe('web');
+      expect(classifyPlatformFromUserAgent('')).toBe('web');
+    });
+
+    it('is case-insensitive', () => {
+      expect(classifyPlatformFromUserAgent('OkHttp/4.12.0')).toBe('android');
+      expect(classifyPlatformFromUserAgent('cfnetwork/1494 darwin/23')).toBe('ios');
     });
   });
 

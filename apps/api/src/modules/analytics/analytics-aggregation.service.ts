@@ -3,6 +3,44 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 
 import { PrismaService } from '../../prisma/prisma.service';
 
+/** The platform buckets the active-user metrics are split by. */
+export type AnalyticsPlatform = 'ios' | 'android' | 'web';
+
+export const ANALYTICS_PLATFORMS: readonly AnalyticsPlatform[] = ['ios', 'android', 'web'];
+
+/**
+ * Classify a `login_events.user_agent` into a platform bucket.
+ *
+ * Older mobile builds send no `deviceType` on anything, so the login request's
+ * user agent is the only platform signal we have for the existing corpus of
+ * logins. The two mobile HTTP stacks are unambiguous in it:
+ *   - iOS  — `CFNetwork/x Darwin/y` appended by URLSession.
+ *   - Android — `okhttp/x`.
+ * Everything else, including an absent or unrecognised agent, is counted as
+ * web. That is a deliberate bias: a desktop browser is the overwhelmingly
+ * likely source of an agent that is neither of the two above, and silently
+ * dropping unknowns would make the dimensioned rows disagree with the total
+ * for a reason nobody could see on the dashboard.
+ */
+export function classifyPlatformFromUserAgent(
+  userAgent: string | null | undefined,
+): AnalyticsPlatform {
+  const ua = (userAgent ?? '').toLowerCase();
+  if (ua.includes('cfnetwork') || ua.includes('darwin')) return 'ios';
+  if (ua.includes('okhttp')) return 'android';
+  return 'web';
+}
+
+/**
+ * The three active-user windows, in days, counted back from and including the
+ * aggregation date.
+ */
+export const ACTIVE_USER_WINDOWS: readonly { metric: string; days: number }[] = [
+  { metric: 'dau', days: 1 },
+  { metric: 'wau', days: 7 },
+  { metric: 'mau', days: 30 },
+];
+
 /**
  * Daily aggregation cron job.
  * Runs at 02:00 UTC — computes daily metrics and writes to
@@ -95,21 +133,89 @@ export class AnalyticsAggregationService {
   // Engagement Metrics
   // -----------------------------------------------------------------------
 
+  /**
+   * DAU, WAU and MAU — distinct active users over the trailing 1, 7 and 30 day
+   * windows ending on (and including) `date`.
+   *
+   * Each window unions two sources of activity:
+   *
+   *   1. `login_events` where `event_type = 'login_success'`. This is the only
+   *      source that has ever had volume: 104 successful logins from 21
+   *      distinct users in the trailing 30 days as of 2026-09-12.
+   *   2. `analytics_events` with a non-null `user_id` — 60 rows in the table's
+   *      entire history, because no client surface is instrumented yet.
+   *
+   * The union is over user ids, not a sum of two counts, so a user who both
+   * logged in and emitted an event on the same day is counted once. It is a
+   * union rather than a replacement so these numbers keep working — and grow
+   * to the real figure — as instrumentation lands, without a second migration
+   * of this code.
+   *
+   * Each metric is written twice: an undimensioned row that is the total, and
+   * one `platform:*` row per bucket. The platform rows are derived from login
+   * user agents only (see classifyPlatformFromUserAgent), so they do NOT sum
+   * to the total — a user known only from `analytics_events` has no platform
+   * signal at all. Consumers must read the undimensioned row for a total and
+   * never add the dimensioned ones up.
+   */
+  async computeActiveUserMetrics(date: Date): Promise<void> {
+    const dayEnd = new Date(date);
+    dayEnd.setUTCHours(0, 0, 0, 0);
+    dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
+
+    for (const { metric, days } of ACTIVE_USER_WINDOWS) {
+      const windowStart = new Date(dayEnd);
+      windowStart.setUTCDate(windowStart.getUTCDate() - days);
+
+      const logins = await this.prisma.loginEvent.findMany({
+        where: {
+          eventType: 'login_success',
+          createdAt: { gte: windowStart, lt: dayEnd },
+        },
+        select: { userId: true, userAgent: true },
+        distinct: ['userId', 'userAgent'],
+      });
+
+      const events = await this.prisma.analyticsEvent.groupBy({
+        by: ['userId'],
+        where: {
+          createdAt: { gte: windowStart, lt: dayEnd },
+          userId: { not: null },
+        },
+      });
+
+      const activeUsers = new Set<string>();
+      const usersByPlatform = new Map<AnalyticsPlatform, Set<string>>(
+        ANALYTICS_PLATFORMS.map((platform) => [platform, new Set<string>()]),
+      );
+
+      for (const login of logins) {
+        activeUsers.add(login.userId);
+        usersByPlatform.get(classifyPlatformFromUserAgent(login.userAgent))!.add(login.userId);
+      }
+      for (const row of events) {
+        if (row.userId) activeUsers.add(row.userId);
+      }
+
+      const total = activeUsers.size;
+      await this.upsertAggregate(date, metric, total, total);
+
+      // Always write all three platform rows, zeros included: a missing row and
+      // a genuine zero are indistinguishable to the dashboard otherwise.
+      for (const platform of ANALYTICS_PLATFORMS) {
+        const count = usersByPlatform.get(platform)!.size;
+        await this.upsertAggregate(date, metric, count, count, `platform:${platform}`);
+      }
+    }
+  }
+
   private async computeEngagementMetrics(date: Date): Promise<void> {
     const dayStart = new Date(date);
     const dayEnd = new Date(date);
     dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
 
-    // DAU — distinct users with >= 1 event
-    const dauResult = await this.prisma.analyticsEvent.groupBy({
-      by: ['userId'],
-      where: {
-        createdAt: { gte: dayStart, lt: dayEnd },
-        userId: { not: null },
-      },
-    });
-    const dau = dauResult.length;
-    await this.upsertAggregate(date, 'dau', dau, dau);
+    // DAU / WAU / MAU — see computeActiveUserMetrics
+    await this.computeActiveUserMetrics(date);
 
     // Sessions
     const sessionsResult = await this.prisma.analyticsSession.count({
