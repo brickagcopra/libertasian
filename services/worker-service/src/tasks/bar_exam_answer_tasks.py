@@ -5,11 +5,25 @@ Law, Analysis, Conclusion) answer for each given past bar exam question
 and writes the row to ``bar_exam_answers`` with ``review_status='pending'``
 so an admin can vet it before it goes public.
 
+Two entry points:
+
+``generate_answers_for_questions(question_ids)``
+    The original direct task: generate for an explicit list, no bookkeeping.
+
+``run_answer_generation_job(job_id)``
+    The queued path (Phase 3b). Claims up to ``CHUNK_SIZE`` queued items of a
+    ``bar_exam_answer_generation_jobs`` row, runs them, records each outcome on
+    its item row, and re-enqueues itself while queued items remain. Chunking is
+    not an optimisation — Redis's ``visibility_timeout`` defaults to 1h, so a
+    single task covering all 1,375 unanswered questions would be redelivered
+    underneath itself and generate everything twice.
+
 Cost protection:
-  - Hard cap MAX_QUESTIONS_PER_DISPATCH (defense in depth — the API
-    enforces the same cap at request time).
   - Idempotency: skip if a row with the same (question_id, answer_type)
     already exists. Re-dispatch is a no-op for already-generated answers.
+  - Budget: a ``BudgetExceededError`` from rag-service pauses the job
+    (``paused_budget``) with the current item returned to ``queued``, instead
+    of burning through every remaining item marking it failed.
   - NO Celery Beat entry — admin trigger only.
 
 This task is the simplest possible flow: LLM call → parse → write. It does
@@ -32,6 +46,7 @@ from ..budget_ledger import build_ledger_entry
 from ..budget_scopes import SCOPE_BAR_EXAM_ANSWER
 from ..clients import ingestion_db_client as db
 from ..clients import nestjs_client, rag_client
+from ..clients.rag_client import BudgetExceededError
 from ..prompts.bar_exam_alac_v1 import (
     BAR_EXAM_ALAC_SYSTEM_PROMPT,
     PROMPT_TEMPLATE_VERSION,
@@ -59,10 +74,15 @@ from ..scoring_bar_exam import BREADTH_TARGET, score_from_passages
 
 logger = logging.getLogger(__name__)
 
-# Hard cap on questions per admin dispatch — LLM cost protection. The NestJS
-# admin controller enforces the same cap at request time; this is defense in
-# depth so a manually-crafted Celery message can't bypass it either.
-MAX_QUESTIONS_PER_DISPATCH = 50
+# How many items one chunk of ``run_answer_generation_job`` claims before it
+# re-enqueues itself. Sized so a chunk finishes far inside Redis's 1h
+# visibility_timeout even at the slow end of LLM latency.
+CHUNK_SIZE = 20
+
+# An item claimed by a worker that then died stays 'running' forever and the
+# job can never finish. Anything older than this at the start of a chunk goes
+# back to 'queued'.
+STALE_RUNNING_MINUTES = 15
 
 # Retrieval toggle + size. Default-on so deployments pick up grounding without
 # a config flip; set ``BAR_EXAM_RAG_ENABLED=false`` to fall straight back to
@@ -111,6 +131,13 @@ def generate_answers_for_questions(
     ``status`` is one of: ``generated``, ``skipped_existing``,
     ``question_not_found``, ``llm_invalid_json``, ``llm_malformed``,
     ``llm_abstained``, ``error``.
+
+    There is no cap on ``question_ids``. The cap used to be 50 at both this
+    task and the API, which meant re-dispatching the same filter re-picked the
+    same already-answered 50 and generation could never get past them. Bounded
+    work now comes from the job/item chunking in
+    ``run_answer_generation_job``, not from silently dropping the tail of a
+    request.
     """
     if not question_ids:
         return {
@@ -121,23 +148,12 @@ def generate_answers_for_questions(
             "results": [],
         }
 
-    capped_ids = question_ids[:MAX_QUESTIONS_PER_DISPATCH]
-    truncated = len(question_ids) - len(capped_ids)
-    if truncated > 0:
-        logger.warning(
-            "generate_answers_for_questions: requested %d, truncated to %d "
-            "(MAX_QUESTIONS_PER_DISPATCH=%d)",
-            len(question_ids),
-            len(capped_ids),
-            MAX_QUESTIONS_PER_DISPATCH,
-        )
-
     skipped = 0
     generated = 0
     failed = 0
     results: list[dict[str, Any]] = []
 
-    for question_id in capped_ids:
+    for question_id in question_ids:
         result = _generate_one(question_id, force_regenerate=force_regenerate)
         results.append(result)
         status = result["status"]
@@ -150,7 +166,6 @@ def generate_answers_for_questions(
 
     return {
         "requested": len(question_ids),
-        "capped": len(capped_ids),
         "skipped_existing": skipped,
         "generated": generated,
         "failed": failed,
@@ -453,6 +468,13 @@ def _generate_one(
             "dropped_section_ids": dropped_ids,
         }
 
+    except BudgetExceededError:
+        # Not a per-question failure — the ceiling is global (or per-scope)
+        # and the next question would hit it too. Propagate so the caller can
+        # pause the whole run; swallowing it here is how a budget stop turns
+        # into 1,375 rows marked "failed".
+        raise
+
     except Exception as exc:  # noqa: BLE001 — keep batch alive on per-question errors
         logger.exception(
             "bar_exam_answer: unexpected error for question %s",
@@ -463,3 +485,205 @@ def _generate_one(
             "status": "error",
             "error": str(exc),
         }
+
+
+# ─── Phase 3b: queued, chunked, visible generation ────────────────────────
+
+#: Item statuses that count as a per-question failure.
+_FAILURE_STATUSES = frozenset(
+    {
+        "question_not_found",
+        "llm_invalid_json",
+        "llm_malformed",
+        "llm_abstained",
+        "error",
+    },
+)
+
+
+def _item_outcome(result: dict[str, Any]) -> dict[str, Any]:
+    """Map a ``_generate_one`` result onto an item-row update.
+
+    Two kinds of success are kept apart on purpose: ``generated`` is a
+    grounded (v2) answer carrying a confidence, ``generated_ungrounded`` is
+    the priors-only (v1) fallback taken when retrieval returned nothing.
+    Collapsing them would hide the ungrounded share of a run behind a green
+    progress bar — and an ungrounded row is exactly the one an editor most
+    needs to look at.
+    """
+    status = result.get("status")
+
+    if status == "generated":
+        confidence = result.get("confidence")
+        return {
+            "status": "generated" if confidence is not None else "generated_ungrounded",
+            "answer_id": result.get("answer_id"),
+            "confidence": confidence,
+        }
+
+    if status == "skipped_existing":
+        return {"status": "skipped_existing"}
+
+    if status in _FAILURE_STATUSES:
+        # `reason` is the abstention reason; `error` the exception message.
+        # Both are model/driver text, so they are truncated and never carry a
+        # traceback — this string is rendered in the admin UI.
+        message = result.get("error") or result.get("reason")
+        return {
+            "status": "failed",
+            "error_code": str(status),
+            "error_message": str(message)[:500] if message else None,
+        }
+
+    # Unknown status — record it rather than silently counting it a success.
+    return {
+        "status": "failed",
+        "error_code": "unknown_status",
+        "error_message": str(status)[:500],
+    }
+
+
+def _finalize_job(job_id: str) -> str:
+    """Close a job whose queue is empty, and report the status chosen."""
+    counts = db.count_bar_exam_generation_items_by_status(job_id)
+    failed = counts.get("failed", 0)
+    status = "completed_with_failures" if failed else "completed"
+    db.set_bar_exam_generation_job_status(job_id, status, finished=True)
+    logger.info(
+        "bar_exam generation job %s finished as %s (%s)",
+        job_id,
+        status,
+        counts,
+    )
+    return status
+
+
+@shared_task(
+    bind=True,
+    name="bar_exam.run_answer_generation_job",
+    acks_late=True,
+    reject_on_worker_lost=True,
+    max_retries=2,
+    retry_backoff=True,
+    retry_backoff_max=300,
+)
+def run_answer_generation_job(self: Any, job_id: str) -> dict[str, Any]:
+    """Run one chunk of a generation job, then re-enqueue if work remains.
+
+    Chunking is a correctness requirement, not a tuning knob: with
+    ``acks_late=True`` and Redis's default 1h ``visibility_timeout``, a single
+    task covering 1,375 questions would be redelivered to a second worker
+    while the first was still running it, and every answer would be generated
+    twice.
+
+    The job status is re-read before every item so a cancel lands within one
+    question rather than one chunk, and a ``BudgetExceededError`` pauses the
+    job with the current item returned to ``queued`` — resumable, not failed.
+
+    Idempotent by construction: each item is claimed with ``FOR UPDATE SKIP
+    LOCKED``, and ``_generate_one`` still skips questions that already have an
+    ``ai_generated`` row, so a redelivered chunk cannot double-write.
+    """
+    job = db.get_bar_exam_generation_job(job_id)
+    if job is None:
+        logger.warning("bar_exam generation job %s not found", job_id)
+        return {"job_id": job_id, "status": "job_not_found"}
+
+    if job["status"] in db.BAR_EXAM_JOB_TERMINAL_STATUSES:
+        logger.info(
+            "bar_exam generation job %s already %s — nothing to do",
+            job_id,
+            job["status"],
+        )
+        return {"job_id": job_id, "status": str(job["status"]), "processed": 0}
+
+    db.reset_stale_bar_exam_generation_items(job_id, STALE_RUNNING_MINUTES)
+    db.mark_bar_exam_generation_job_running(job_id)
+
+    claimed = db.claim_bar_exam_generation_items(job_id, CHUNK_SIZE)
+    if not claimed:
+        return {
+            "job_id": job_id,
+            "status": _finalize_job(job_id),
+            "processed": 0,
+        }
+
+    processed = 0
+    outcomes: dict[str, int] = {}
+    pending_items = [str(item["id"]) for item in claimed]
+
+    for item in claimed:
+        item_id = str(item["id"])
+        question_id = str(item["question_id"])
+
+        # Re-read before every item: a cancel pressed mid-chunk should stop
+        # the next LLM call, not merely the next chunk.
+        current_status = db.get_bar_exam_generation_job_status(job_id)
+        if current_status == "cancelled":
+            released = db.release_bar_exam_generation_items(pending_items)
+            logger.info(
+                "bar_exam generation job %s cancelled — released %d claimed "
+                "item(s)",
+                job_id,
+                released,
+            )
+            return {
+                "job_id": job_id,
+                "status": "cancelled",
+                "processed": processed,
+                "outcomes": outcomes,
+            }
+
+        try:
+            result = _generate_one(question_id)
+        except BudgetExceededError as exc:
+            db.release_bar_exam_generation_items(pending_items)
+            db.set_bar_exam_generation_job_status(job_id, "paused_budget")
+            logger.warning(
+                "bar_exam generation job %s paused — LLM budget exceeded "
+                "(scope=%s period=%s)",
+                job_id,
+                getattr(exc, "scope", None) or "global",
+                getattr(exc, "period", None),
+            )
+            return {
+                "job_id": job_id,
+                "status": "paused_budget",
+                "processed": processed,
+                "outcomes": outcomes,
+            }
+
+        outcome = _item_outcome(result)
+        db.finish_bar_exam_generation_item(
+            item_id,
+            status=outcome["status"],
+            error_code=outcome.get("error_code"),
+            error_message=outcome.get("error_message"),
+            answer_id=outcome.get("answer_id"),
+            confidence=outcome.get("confidence"),
+        )
+        pending_items.remove(item_id)
+        processed += 1
+        outcomes[outcome["status"]] = outcomes.get(outcome["status"], 0) + 1
+
+    remaining = db.count_bar_exam_generation_items_by_status(job_id).get(
+        "queued",
+        0,
+    )
+    if remaining > 0:
+        run_answer_generation_job.apply_async(kwargs={"job_id": job_id})
+        return {
+            "job_id": job_id,
+            "status": "running",
+            "processed": processed,
+            "remaining": remaining,
+            "outcomes": outcomes,
+        }
+
+    return {
+        "job_id": job_id,
+        "status": _finalize_job(job_id),
+        "processed": processed,
+        "remaining": 0,
+        "outcomes": outcomes,
+    }

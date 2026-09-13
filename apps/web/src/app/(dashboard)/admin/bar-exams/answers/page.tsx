@@ -1,16 +1,27 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Sparkles } from 'lucide-react';
 
 import {
+  isJobActive,
   useApproveBarExamAnswer,
+  useBarExamAnswerCoverage,
   useBarExamAnswerDetail,
+  useBarExamAnswerGenerationJob,
+  useBarExamAnswerGenerationJobs,
   useBarExamAnswers,
+  useBulkApproveBarExamAnswers,
+  useBulkRejectBarExamAnswers,
+  useCancelGenerationJob,
   useDispatchAnswerGeneration,
+  useInvalidateBarExamAnswerViews,
   useRejectBarExamAnswer,
-  type ReviewStatus,
+  useRetryGenerationJobFailures,
+  type BarExamAnswerRow,
+  type BulkReviewResult,
+  type ReviewStatusFilter,
 } from '@/features/admin/hooks/use-admin-bar-exam-answers';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AdminCardSkeleton, AdminListSkeleton } from '@/components/ui/skeleton';
@@ -19,12 +30,16 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 
+import { BulkApprovePanel, type BulkConfidenceFilter } from './bulk-approve-panel';
+import { CoverageGrid } from './coverage-grid';
 import {
   DispatchGenerationDialog,
   type DispatchFormValue,
+  type DispatchPreview,
 } from './dispatch-generation-dialog';
+import { GenerationJobsPanel } from './generation-jobs-panel';
 
-const STATUS_FILTERS: { value: ReviewStatus | 'all'; label: string }[] = [
+const STATUS_FILTERS: { value: ReviewStatusFilter; label: string }[] = [
   { value: 'pending', label: 'Pending' },
   { value: 'approved', label: 'Approved' },
   { value: 'rejected', label: 'Rejected' },
@@ -32,31 +47,150 @@ const STATUS_FILTERS: { value: ReviewStatus | 'all'; label: string }[] = [
 ];
 
 export default function BarExamAnswersAdminPage() {
-  const [statusFilter, setStatusFilter] = useState<ReviewStatus | 'all'>(
-    'pending',
+  const [statusFilter, setStatusFilter] = useState<ReviewStatusFilter>('pending');
+  const [yearFilter, setYearFilter] = useState<number | undefined>(undefined);
+  const [subjectFilter, setSubjectFilter] = useState<string | undefined>(
+    undefined,
   );
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [dispatchOpen, setDispatchOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkConfirm, setBulkConfirm] = useState<'approve' | 'reject' | null>(
+    null,
+  );
 
-  const queryParams =
-    statusFilter === 'all'
-      ? { cursor }
-      : { reviewStatus: statusFilter, cursor };
+  const [dispatchOpen, setDispatchOpen] = useState(false);
+  const [dispatchInitial, setDispatchInitial] = useState<DispatchFormValue>({});
+  const [dispatchPreview, setDispatchPreview] = useState<DispatchPreview | null>(
+    null,
+  );
+  const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
+  const [confidencePreview, setConfidencePreview] =
+    useState<BulkReviewResult | null>(null);
+
+  const queryParams = {
+    // Always sent, 'all' included: 'all' is a real filter value meaning "no
+    // status filter". Sending nothing lands on the API's 'pending' default,
+    // which is exactly what made the All chip show only pending rows.
+    reviewStatus: statusFilter,
+    ...(yearFilter !== undefined ? { year: yearFilter } : {}),
+    ...(subjectFilter ? { subjectCode: subjectFilter } : {}),
+    ...(cursor ? { cursor } : {}),
+  };
   const { data, isLoading, error } = useBarExamAnswers(queryParams);
 
-  const dispatch = useDispatchAnswerGeneration();
+  const coverage = useBarExamAnswerCoverage();
+  const jobs = useBarExamAnswerGenerationJobs();
+  const expandedJob = useBarExamAnswerGenerationJob(expandedJobId);
+  const invalidateViews = useInvalidateBarExamAnswerViews();
 
-  const handleDispatch = (value: DispatchFormValue) => {
+  const dispatch = useDispatchAnswerGeneration();
+  const cancelJob = useCancelGenerationJob();
+  const retryJob = useRetryGenerationJobFailures();
+  const bulkApprove = useBulkApproveBarExamAnswers();
+  // Reject is ids-only, here and at the API: there is no confidence filter
+  // that makes discarding unread rows safe.
+  const bulkReject = useBulkRejectBarExamAnswers();
+
+  // When a job stops being active, the corpus changed underneath the coverage
+  // grid and the review queue. Refresh both once, on the transition.
+  const previousActiveIds = useRef<string[]>([]);
+  useEffect(() => {
+    const activeIds = (jobs.data?.items ?? []).filter(isJobActive).map((j) => j.id);
+    const finished = previousActiveIds.current.filter(
+      (id) => !activeIds.includes(id),
+    );
+    if (finished.length > 0) invalidateViews();
+    previousActiveIds.current = activeIds;
+  }, [jobs.data, invalidateViews]);
+
+  const rows = data?.items ?? [];
+  const pageIds = rows.map((r) => r.id);
+  const selectableIds = rows
+    .filter((r) => r.reviewStatus === 'pending')
+    .map((r) => r.id);
+  const selectedOnPage = selectedIds.filter((id) => pageIds.includes(id));
+  const allSelected =
+    selectableIds.length > 0 && selectableIds.every((id) => selectedIds.includes(id));
+
+  const toggleRow = (id: string) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  };
+
+  const toggleAllOnPage = () => {
+    setSelectedIds((prev) =>
+      allSelected
+        ? prev.filter((id) => !selectableIds.includes(id))
+        : [...new Set([...prev, ...selectableIds])],
+    );
+  };
+
+  const openDispatch = (initial: DispatchFormValue) => {
+    setDispatchInitial(initial);
+    setDispatchPreview(null);
+    dispatch.reset();
+    setDispatchOpen(true);
+  };
+
+  const handlePreview = (value: DispatchFormValue) => {
+    dispatch.mutate(
+      { ...value, dryRun: true },
+      {
+        onSuccess: (result) => {
+          if (result.dryRun) {
+            setDispatchPreview({
+              total: result.total,
+              byYearSubject: result.byYearSubject,
+            });
+          }
+        },
+      },
+    );
+  };
+
+  const handleConfirmDispatch = (value: DispatchFormValue) => {
     dispatch.mutate(value, {
       onSuccess: () => {
         setDispatchOpen(false);
+        setDispatchPreview(null);
       },
     });
   };
 
+  const runBulkOnSelection = (action: 'approve' | 'reject') => {
+    const handlers = {
+      onSuccess: () => {
+        setSelectedIds([]);
+        setBulkConfirm(null);
+      },
+    };
+    if (action === 'approve') {
+      bulkApprove.mutate({ ids: selectedOnPage }, handlers);
+    } else {
+      bulkReject.mutate({ ids: selectedOnPage }, handlers);
+    }
+  };
+
+  const handleConfidencePreview = (filter: BulkConfidenceFilter) => {
+    bulkApprove.mutate(
+      { filter, dryRun: true },
+      { onSuccess: (result) => setConfidencePreview(result) },
+    );
+  };
+
+  const handleConfidenceConfirm = (filter: BulkConfidenceFilter) => {
+    bulkApprove.mutate(
+      { filter },
+      { onSuccess: () => setConfidencePreview(null) },
+    );
+  };
+
+  const totalMissing = coverage.data?.totals.missing ?? 0;
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-24">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Bar Exam Answers</h1>
@@ -66,9 +200,16 @@ export default function BarExamAnswersAdminPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button onClick={() => setDispatchOpen(true)}>
+          <Button onClick={() => openDispatch({})}>
             <Sparkles className="mr-1.5 h-4 w-4" />
             Generate answers
+          </Button>
+          <Button
+            variant="outline"
+            disabled={totalMissing === 0}
+            onClick={() => openDispatch({ allMissing: true })}
+          >
+            Generate all missing ({totalMissing})
           </Button>
           <Button variant="outline" size="sm" asChild>
             <Link href="/admin/bar-exams">
@@ -79,21 +220,72 @@ export default function BarExamAnswersAdminPage() {
         </div>
       </div>
 
-      {dispatch.isSuccess && (
+      {dispatch.isSuccess && dispatch.data && !dispatch.data.dryRun && (
         <Alert>
           <AlertDescription className="text-green-700">
-            Dispatched {dispatch.data.questionCount} question
-            {dispatch.data.questionCount === 1 ? '' : 's'} to the worker (task{' '}
-            <code className="text-xs">{dispatch.data.taskId}</code>).
-            {dispatch.data.truncated &&
-              ' The request was truncated to the 50-question cap.'}{' '}
-            New answers land here as Pending — refresh in a moment.
+            Queued {dispatch.data.total} question
+            {dispatch.data.total === 1 ? '' : 's'} for generation (job{' '}
+            <code className="text-xs">{dispatch.data.jobId}</code>). Progress
+            appears below.
           </AlertDescription>
         </Alert>
       )}
 
+      {coverage.isLoading ? (
+        <AdminCardSkeleton />
+      ) : coverage.data ? (
+        <CoverageGrid
+          coverage={coverage.data}
+          onGenerateMissing={(cell) =>
+            openDispatch({
+              year: cell.year,
+              subjectCode: cell.subjectCode ?? undefined,
+            })
+          }
+          onReviewPending={(cell) => {
+            setStatusFilter('pending');
+            setYearFilter(cell.year);
+            setSubjectFilter(cell.subjectCode ?? undefined);
+            setCursor(undefined);
+          }}
+        />
+      ) : null}
+
+      <GenerationJobsPanel
+        jobs={jobs.data?.items ?? []}
+        expandedJobId={expandedJobId}
+        expandedJob={expandedJob.data}
+        isLoadingExpanded={expandedJob.isLoading}
+        busyJobId={
+          cancelJob.isPending || retryJob.isPending
+            ? (cancelJob.variables ?? retryJob.variables ?? null)
+            : null
+        }
+        onToggleExpand={(id) =>
+          setExpandedJobId((prev) => (prev === id ? null : id))
+        }
+        onCancel={(id) => cancelJob.mutate(id)}
+        onRetryFailed={(id) => retryJob.mutate(id)}
+      />
+
+      <BulkApprovePanel
+        isChecking={bulkApprove.isPending && confidencePreview === null}
+        isApplying={bulkApprove.isPending && confidencePreview !== null}
+        preview={confidencePreview}
+        errorMessage={
+          bulkApprove.isError
+            ? bulkApprove.error instanceof Error
+              ? bulkApprove.error.message
+              : 'Bulk approve failed'
+            : null
+        }
+        onPreview={handleConfidencePreview}
+        onConfirm={handleConfidenceConfirm}
+        onResetPreview={() => setConfidencePreview(null)}
+      />
+
       {/* Filter chips */}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {STATUS_FILTERS.map((f) => (
           <Button
             key={f.value}
@@ -107,6 +299,19 @@ export default function BarExamAnswersAdminPage() {
             {f.label}
           </Button>
         ))}
+        {(yearFilter !== undefined || subjectFilter) && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setYearFilter(undefined);
+              setSubjectFilter(undefined);
+              setCursor(undefined);
+            }}
+          >
+            Clear {yearFilter ?? ''} {subjectFilter ?? ''} filter
+          </Button>
+        )}
       </div>
 
       {error && (
@@ -119,17 +324,31 @@ export default function BarExamAnswersAdminPage() {
 
       {isLoading ? (
         <AdminListSkeleton count={5} />
-      ) : data && data.items.length > 0 ? (
+      ) : rows.length > 0 ? (
         <div className="space-y-3">
-          {data.items.map((row) => (
+          {selectableIds.length > 0 && (
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                aria-label="Select all pending answers on this page"
+                checked={allSelected}
+                onChange={toggleAllOnPage}
+              />
+              Select all pending on this page ({selectableIds.length})
+            </label>
+          )}
+
+          {rows.map((row) => (
             <AnswerRow
               key={row.id}
               row={row}
+              selected={selectedIds.includes(row.id)}
+              onToggleSelect={() => toggleRow(row.id)}
               onView={() => setSelectedId(row.id)}
             />
           ))}
 
-          {data.meta.hasNext && data.meta.nextCursor && (
+          {data?.meta.hasNext && data.meta.nextCursor && (
             <div className="flex justify-center pt-2">
               <Button
                 variant="outline"
@@ -146,9 +365,66 @@ export default function BarExamAnswersAdminPage() {
         </p>
       )}
 
+      {selectedOnPage.length > 0 && (
+        <div className="fixed inset-x-0 bottom-0 z-30 border-t bg-background/95 p-3 shadow-lg backdrop-blur">
+          <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-2">
+            <span className="text-sm">
+              {selectedOnPage.length} selected
+            </span>
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={() => setSelectedIds([])}>
+                Clear
+              </Button>
+              <Button onClick={() => setBulkConfirm('approve')}>
+                Approve {selectedOnPage.length}
+              </Button>
+              <Button variant="outline" onClick={() => setBulkConfirm('reject')}>
+                Reject {selectedOnPage.length}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {bulkConfirm && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/40 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Confirm bulk review"
+            className="w-full max-w-sm rounded-lg border bg-background p-6 shadow-lg"
+          >
+            <h2 className="text-lg font-semibold">
+              {bulkConfirm === 'approve' ? 'Approve' : 'Reject'}{' '}
+              {selectedOnPage.length} answer
+              {selectedOnPage.length === 1 ? '' : 's'}?
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {bulkConfirm === 'approve'
+                ? 'Approved answers become publicly visible editorial content.'
+                : 'Rejected answers stay private.'}
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setBulkConfirm(null)}>
+                Cancel
+              </Button>
+              <Button
+                disabled={bulkApprove.isPending || bulkReject.isPending}
+                onClick={() => runBulkOnSelection(bulkConfirm)}
+              >
+                Confirm
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <DispatchGenerationDialog
         open={dispatchOpen}
-        isDispatching={dispatch.isPending}
+        initialValue={dispatchInitial}
+        isChecking={dispatch.isPending && dispatchPreview === null}
+        isDispatching={dispatch.isPending && dispatchPreview !== null}
+        preview={dispatchPreview}
         errorMessage={
           dispatch.isError
             ? dispatch.error instanceof Error
@@ -156,14 +432,16 @@ export default function BarExamAnswersAdminPage() {
               : 'Dispatch failed'
             : null
         }
-        onCancel={() => setDispatchOpen(false)}
-        onDispatch={handleDispatch}
+        onCancel={() => {
+          setDispatchOpen(false);
+          setDispatchPreview(null);
+        }}
+        onPreview={handlePreview}
+        onConfirm={handleConfirmDispatch}
+        onResetPreview={() => setDispatchPreview(null)}
       />
 
-      <AnswerDetailDrawer
-        id={selectedId}
-        onClose={() => setSelectedId(null)}
-      />
+      <AnswerDetailDrawer id={selectedId} onClose={() => setSelectedId(null)} />
     </div>
   );
 }
@@ -172,15 +450,13 @@ export default function BarExamAnswersAdminPage() {
 
 function AnswerRow({
   row,
+  selected,
+  onToggleSelect,
   onView,
 }: {
-  row: ReturnType<typeof useBarExamAnswers>['data'] extends
-    | { items: infer T }
-    | undefined
-    ? T extends Array<infer U>
-      ? U
-      : never
-    : never;
+  row: BarExamAnswerRow;
+  selected: boolean;
+  onToggleSelect: () => void;
   onView: () => void;
 }) {
   const approve = useApproveBarExamAnswer();
@@ -196,7 +472,16 @@ function AnswerRow({
   return (
     <Card>
       <CardContent className="p-4">
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          {isPending && (
+            <input
+              type="checkbox"
+              className="mt-1"
+              aria-label={`Select answer for ${row.question.sittingYear} Q${row.question.questionNumber}`}
+              checked={selected}
+              onChange={onToggleSelect}
+            />
+          )}
           <button onClick={onView} className="flex-1 text-left">
             <div className="flex flex-wrap items-center gap-2">
               <Badge className={statusColor[row.reviewStatus] ?? ''}>
@@ -209,9 +494,13 @@ function AnswerRow({
                   : ''}
               </Badge>
               <Badge variant="outline">Q{row.question.questionNumber}</Badge>
-              {row.confidence !== null && (
+              {row.confidence !== null ? (
                 <Badge variant="outline">
                   conf {(row.confidence * 100).toFixed(0)}%
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="text-muted-foreground">
+                  unscored
                 </Badge>
               )}
               {row.modelRun && (
@@ -220,9 +509,7 @@ function AnswerRow({
                 </span>
               )}
             </div>
-            <p className="mt-2 text-sm line-clamp-2">
-              {row.question.excerpt}
-            </p>
+            <p className="mt-2 text-sm line-clamp-2">{row.question.excerpt}</p>
           </button>
         </div>
 

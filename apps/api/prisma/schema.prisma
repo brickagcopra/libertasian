@@ -138,6 +138,8 @@ model User {
   goldenSetReviews           GoldenSetEntry[]          @relation("GoldenSetReviewer")
   // Bar exam answer reviews (Phase 3a)
   barExamAnswerReviews       BarExamAnswer[]           @relation("BarExamAnswerReviewer")
+  // Bar exam answer generation jobs (Phase 3b)
+  barExamAnswerGenerationJobs BarExamAnswerGenerationJob[] @relation("BarExamAnswerGenerationJobTriggeredBy")
 
   @@index([deletedAt], map: "idx_users_deleted_at")
   @@index([deletionRequestedAt], map: "idx_users_deletion_requested_at")
@@ -3976,8 +3978,9 @@ model BarExamQuestion {
   createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt           DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  barExamSitting BarExamSitting  @relation(fields: [barExamSittingId], references: [id], onDelete: Cascade)
-  answers        BarExamAnswer[]
+  barExamSitting  BarExamSitting                @relation(fields: [barExamSittingId], references: [id], onDelete: Cascade)
+  answers         BarExamAnswer[]
+  generationItems BarExamAnswerGenerationItem[]
 
   @@unique([barExamSittingId, questionNumber])
   @@index([barExamSittingId])
@@ -4020,6 +4023,89 @@ model BarExamAnswer {
   @@unique([barExamQuestionId, answerType])
   @@index([reviewStatus, createdAt])
   @@map("bar_exam_answers")
+}
+
+// ---------------------------------------------------------------------------
+// BarExamAnswerGenerationJob (Phase 3b) — one admin dispatch of ALAC answer
+// generation, made durable and inspectable.
+//
+// Before this table the dispatch was fire-and-forget: the page showed a Celery
+// task id and nothing else, and per-question failures (llm_invalid_json,
+// llm_abstained, …) existed only inside a Celery result nobody read. A job row
+// plus one item row per question is what makes progress, failures and cost
+// pauses visible — and what lets a 1,375-question run be processed in small
+// chunks instead of one task that Redis would redeliver after an hour.
+//
+// Deliberately NO counter columns. Counts are computed with GROUP BY over the
+// items when a job is read, so two workers finishing items concurrently can
+// never race each other into a wrong total.
+// ---------------------------------------------------------------------------
+
+model BarExamAnswerGenerationJob {
+  id String @id @default(uuid()) @db.Uuid
+  /// queued | running | completed | completed_with_failures | cancelled |
+  /// paused_budget
+  status String @default("queued") @db.VarChar(30)
+  /// The filters the admin dispatched with, verbatim, for the audit trail.
+  filtersJson Json @default("{}") @map("filters_json")
+  /// Whether questions that already had an ai_generated answer were excluded
+  /// when the item set was resolved.
+  onlyMissing Boolean @default(true) @map("only_missing")
+  /// Item count at creation time. Items are never added after creation, so
+  /// this is a stable denominator for the progress bar.
+  total Int @default(0)
+
+  triggeredByUserId String? @map("triggered_by_user_id") @db.Uuid
+
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  startedAt  DateTime? @map("started_at") @db.Timestamptz
+  finishedAt DateTime? @map("finished_at") @db.Timestamptz
+
+  triggeredBy User?                         @relation("BarExamAnswerGenerationJobTriggeredBy", fields: [triggeredByUserId], references: [id])
+  items       BarExamAnswerGenerationItem[]
+
+  @@index([status, createdAt])
+  @@index([createdAt])
+  @@map("bar_exam_answer_generation_jobs")
+}
+
+// ---------------------------------------------------------------------------
+// BarExamAnswerGenerationItem — one question inside a generation job.
+//
+// `status` distinguishes the two kinds of success: `generated` is a grounded
+// (v2) answer that carries a confidence, `generated_ungrounded` is a
+// priors-only (v1) answer produced when retrieval returned nothing. Collapsing
+// them would hide the ungrounded share of a run behind a green progress bar.
+//
+// `error_message` is truncated to 500 chars by the worker and never carries a
+// stack trace — this row is rendered in the admin UI.
+// ---------------------------------------------------------------------------
+
+model BarExamAnswerGenerationItem {
+  id         String @id @default(uuid()) @db.Uuid
+  jobId      String @map("job_id") @db.Uuid
+  questionId String @map("question_id") @db.Uuid
+  /// queued | running | generated | generated_ungrounded | skipped_existing |
+  /// failed
+  status String @default("queued") @db.VarChar(30)
+  /// For `failed`: the per-question status the generator returned
+  /// (llm_invalid_json | llm_malformed | llm_abstained | question_not_found |
+  /// error).
+  errorCode    String? @map("error_code") @db.VarChar(40)
+  errorMessage String? @map("error_message") @db.Text
+  answerId     String? @map("answer_id") @db.Uuid
+  confidence   Float?  @db.Real
+  /// How many times this item has been claimed by a worker chunk.
+  attempts  Int      @default(0)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  job      BarExamAnswerGenerationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  question BarExamQuestion            @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, questionId])
+  @@index([jobId, status])
+  @@index([questionId])
+  @@map("bar_exam_answer_generation_items")
 }
 
 // ---------------------------------------------------------------------------

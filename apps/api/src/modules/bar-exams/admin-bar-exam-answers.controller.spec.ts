@@ -1,7 +1,9 @@
 import {
   BadRequestException,
+  ConflictException,
   ExecutionContext,
   NotFoundException,
+  ValidationPipe,
 } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { GUARDS_METADATA } from '@nestjs/common/constants';
@@ -15,10 +17,16 @@ import { CeleryDispatcherService } from '../../common/services/celery-dispatcher
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AdminBarExamAnswersController } from './admin-bar-exam-answers.controller';
-import {
-  AdminBarExamAnswersService,
-  MAX_QUESTIONS_PER_DISPATCH,
-} from './admin-bar-exam-answers.service';
+import { AdminBarExamAnswersService } from './admin-bar-exam-answers.service';
+import { BulkRejectBarExamAnswersDto } from './dto';
+
+/** The global pipe from main.ts, so DTO-level rejections are tested for real. */
+const globalPipe = new ValidationPipe({
+  whitelist: true,
+  forbidNonWhitelisted: true,
+  transform: true,
+  transformOptions: { enableImplicitConversion: false },
+});
 
 const passingGuard: { canActivate: (ctx: ExecutionContext) => boolean } = {
   canActivate: jest.fn().mockReturnValue(true),
@@ -33,8 +41,13 @@ const ADMIN_USER: JwtPayload = {
   organizationId: '00000000-0000-0000-0000-0000000000bb',
 } as JwtPayload;
 
-const ANSWER_ID = '11111111-1111-1111-1111-111111111111';
-const QUESTION_ID = '22222222-2222-2222-2222-222222222222';
+// Structurally valid v4 UUIDs — version nibble 4, variant nibble 8. The DTOs
+// are validated with @IsUUID('all'), which rejects the lazier 1111-…-1111
+// shape, so fixtures that a real request could not carry would make the
+// pipe-level tests below meaningless.
+const ANSWER_ID = '11111111-1111-4111-8111-111111111111';
+const QUESTION_ID = '22222222-2222-4222-8222-222222222222';
+const JOB_ID = '66666666-6666-4666-8666-666666666666';
 
 function fakeAnswerRow(
   overrides: Partial<{
@@ -77,6 +90,25 @@ function fakeAnswerRow(
   };
 }
 
+function fakeQuestionRow(id: string, year = 2018, subject = 'civil_law') {
+  return { id, barExamSitting: { year, subjectStudyCode: subject } };
+}
+
+function fakeJobRow(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: JOB_ID,
+    status: 'running',
+    total: 3,
+    onlyMissing: true,
+    filtersJson: { year: 2018 },
+    triggeredByUserId: ADMIN_USER.sub,
+    createdAt: new Date('2026-09-13T10:00:00Z'),
+    startedAt: new Date('2026-09-13T10:00:05Z'),
+    finishedAt: null,
+    ...overrides,
+  };
+}
+
 describe('AdminBarExamAnswersController', () => {
   let controller: AdminBarExamAnswersController;
   let celery: { sendTask: jest.Mock };
@@ -86,10 +118,24 @@ describe('AdminBarExamAnswersController', () => {
       findMany: jest.Mock;
       findUnique: jest.Mock;
       update: jest.Mock;
+      updateMany: jest.Mock;
     };
-    barExamQuestion: {
+    barExamQuestion: { findMany: jest.Mock };
+    barExamAnswerGenerationJob: {
+      create: jest.Mock;
       findMany: jest.Mock;
+      findUnique: jest.Mock;
+      update: jest.Mock;
     };
+    barExamAnswerGenerationItem: {
+      createMany: jest.Mock;
+      findMany: jest.Mock;
+      groupBy: jest.Mock;
+      updateMany: jest.Mock;
+      count: jest.Mock;
+    };
+    $transaction: jest.Mock;
+    $queryRaw: jest.Mock;
   };
 
   async function buildModule(opts?: { permissionsGuardPasses?: boolean }) {
@@ -100,10 +146,31 @@ describe('AdminBarExamAnswersController', () => {
         findMany: jest.fn().mockResolvedValue([]),
         findUnique: jest.fn(),
         update: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
       barExamQuestion: {
         findMany: jest.fn().mockResolvedValue([]),
       },
+      barExamAnswerGenerationJob: {
+        create: jest.fn().mockResolvedValue({ id: JOB_ID }),
+        findMany: jest.fn().mockResolvedValue([]),
+        findUnique: jest.fn(),
+        update: jest.fn().mockResolvedValue(undefined),
+      },
+      barExamAnswerGenerationItem: {
+        createMany: jest.fn().mockResolvedValue({ count: 0 }),
+        findMany: jest.fn().mockResolvedValue([]),
+        groupBy: jest.fn().mockResolvedValue([]),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        count: jest.fn().mockResolvedValue(0),
+      },
+      $transaction: jest.fn(async (arg: unknown) =>
+        typeof arg === 'function'
+          ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (arg as (tx: unknown) => unknown)(prisma as any)
+          : Promise.all(arg as Promise<unknown>[]),
+      ),
+      $queryRaw: jest.fn().mockResolvedValue([]),
     };
 
     const moduleBuilder = Test.createTestingModule({
@@ -197,6 +264,45 @@ describe('AdminBarExamAnswersController', () => {
       expect(result.data.items).toHaveLength(25);
       expect(result.data.meta.hasNext).toBe(true);
       expect(result.data.meta.nextCursor).toBe(result.data.items[24]!.id);
+    });
+
+    it('reviewStatus="all" applies NO status filter', async () => {
+      // The "All" chip used to send nothing, which the API read as the
+      // default — 'pending'. "All" therefore showed only pending rows.
+      prisma.barExamAnswer.findMany.mockResolvedValue([]);
+
+      await controller.list({ reviewStatus: 'all' });
+
+      const args = prisma.barExamAnswer.findMany.mock.calls[0]![0] as {
+        where: Record<string, unknown>;
+      };
+      expect(args.where).not.toHaveProperty('reviewStatus');
+    });
+
+    it('filters by year, subject and minimum confidence', async () => {
+      prisma.barExamAnswer.findMany.mockResolvedValue([]);
+
+      await controller.list({
+        reviewStatus: 'all',
+        year: 2018,
+        subjectCode: 'criminal_law',
+        minConfidence: 0.7,
+      });
+
+      expect(prisma.barExamAnswer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            confidence: { gte: 0.7 },
+            question: {
+              is: {
+                barExamSitting: {
+                  is: { year: 2018, subjectStudyCode: 'criminal_law' },
+                },
+              },
+            },
+          },
+        }),
+      );
     });
   });
 
@@ -310,87 +416,35 @@ describe('AdminBarExamAnswersController', () => {
   });
 
   describe('POST /dispatch-generation', () => {
-    it('resolves explicit question ids and dispatches the celery task', async () => {
-      const ids = [
-        '33333333-3333-3333-3333-333333333333',
-        '44444444-4444-4444-4444-444444444444',
-      ];
-      prisma.barExamQuestion.findMany.mockResolvedValue(
-        ids.map((id) => ({ id })),
-      );
-
-      const result = await controller.dispatch(
-        { questionIds: ids },
-        ADMIN_USER,
-        '127.0.0.1',
-      );
-
-      expect(prisma.barExamQuestion.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: { in: ids } } }),
-      );
-      expect(celery.sendTask).toHaveBeenCalledWith(
-        'bar_exam.generate_answers_for_questions',
-        { kwargs: { question_ids: ids } },
-      );
-      expect(result.data.questionCount).toBe(2);
-      expect(result.data.truncated).toBe(false);
-      expect(auditService.log).toHaveBeenCalledWith(
-        expect.objectContaining({
-          action: 'admin_dispatched_bar_exam_answer_generation',
-          metadata: expect.objectContaining({
-            questionCount: 2,
-            truncated: false,
-          }),
-        }),
-      );
-    });
-
-    it('resolves by sittingId when no explicit list is given', async () => {
-      const sittingId = '55555555-5555-5555-5555-555555555555';
+    it('excludes questions that already have an ai_generated answer', async () => {
+      // Regression for the bug that made generation unable to get past 50:
+      // the resolver took the first 51 questions by number and never
+      // excluded answered ones, so every re-dispatch of a filter re-picked
+      // the same answered rows and the worker skipped all of them.
       prisma.barExamQuestion.findMany.mockResolvedValue([
-        { id: 'q1' },
-        { id: 'q2' },
-        { id: 'q3' },
+        fakeQuestionRow('q1'),
+        fakeQuestionRow('q2'),
       ]);
 
-      await controller.dispatch({ sittingId }, ADMIN_USER, '127.0.0.1');
+      await controller.dispatch({ year: 2018 }, ADMIN_USER, '127.0.0.1');
 
-      expect(prisma.barExamQuestion.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { barExamSittingId: sittingId } }),
-      );
-      expect(celery.sendTask).toHaveBeenCalledWith(
-        'bar_exam.generate_answers_for_questions',
-        { kwargs: { question_ids: ['q1', 'q2', 'q3'] } },
-      );
+      const args = prisma.barExamQuestion.findMany.mock.calls[0]![0] as {
+        where: Record<string, unknown>;
+        take?: number;
+      };
+      expect(args.where['answers']).toEqual({
+        none: { answerType: 'ai_generated' },
+      });
+      // ...and no cap: the whole matching set is resolved.
+      expect(args.take).toBeUndefined();
     });
 
-    it('resolves by year + subjectCode (nested sitting filter)', async () => {
-      prisma.barExamQuestion.findMany.mockResolvedValue([{ id: 'q1' }]);
-
-      await controller.dispatch(
-        { year: 2018, subjectCode: 'criminal_law' },
-        ADMIN_USER,
-        '127.0.0.1',
-      );
-
-      expect(prisma.barExamQuestion.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: {
-            barExamSitting: {
-              is: { year: 2018, subjectStudyCode: 'criminal_law' },
-            },
-          },
-        }),
-      );
-    });
-
-    it('caps resolved ids at 50 and flags truncation', async () => {
-      // Service requests take=51 to detect overflow.
-      const rows = Array.from(
-        { length: MAX_QUESTIONS_PER_DISPATCH + 1 },
-        (_, i) => ({ id: `q-${i}` }),
-      );
-      prisma.barExamQuestion.findMany.mockResolvedValue(rows);
+    it('creates the job + its items in one transaction and enqueues the worker', async () => {
+      prisma.barExamQuestion.findMany.mockResolvedValue([
+        fakeQuestionRow('q1'),
+        fakeQuestionRow('q2'),
+        fakeQuestionRow('q3', 2019, 'criminal_law'),
+      ]);
 
       const result = await controller.dispatch(
         { year: 2018 },
@@ -398,22 +452,65 @@ describe('AdminBarExamAnswersController', () => {
         '127.0.0.1',
       );
 
-      expect(result.data.questionCount).toBe(MAX_QUESTIONS_PER_DISPATCH);
-      expect(result.data.truncated).toBe(true);
-      const sentKwargs = celery.sendTask.mock.calls[0]![1] as {
-        kwargs: { question_ids: string[] };
-      };
-      expect(sentKwargs.kwargs.question_ids).toHaveLength(
-        MAX_QUESTIONS_PER_DISPATCH,
-      );
-      expect(auditService.log).toHaveBeenCalledWith(
+      expect(prisma.$transaction).toHaveBeenCalled();
+      expect(prisma.barExamAnswerGenerationJob.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          metadata: expect.objectContaining({
-            truncated: true,
-            questionCount: MAX_QUESTIONS_PER_DISPATCH,
+          data: expect.objectContaining({
+            status: 'queued',
+            total: 3,
+            onlyMissing: true,
+            triggeredByUserId: ADMIN_USER.sub,
           }),
         }),
       );
+      expect(prisma.barExamAnswerGenerationItem.createMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: [
+            { jobId: JOB_ID, questionId: 'q1' },
+            { jobId: JOB_ID, questionId: 'q2' },
+            { jobId: JOB_ID, questionId: 'q3' },
+          ],
+        }),
+      );
+      expect(celery.sendTask).toHaveBeenCalledWith(
+        'bar_exam.run_answer_generation_job',
+        { kwargs: { job_id: JOB_ID } },
+      );
+      expect(result.data).toEqual({ dryRun: false, jobId: JOB_ID, total: 3 });
+      expect(auditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'admin_created_bar_exam_answer_generation_job',
+          entityType: 'bar_exam_answer_generation_job',
+          entityId: JOB_ID,
+        }),
+      );
+    });
+
+    it('dryRun counts and breaks down by year × subject, and writes nothing', async () => {
+      prisma.barExamQuestion.findMany.mockResolvedValue([
+        fakeQuestionRow('q1', 2018, 'civil_law'),
+        fakeQuestionRow('q2', 2018, 'civil_law'),
+        fakeQuestionRow('q3', 2019, 'criminal_law'),
+      ]);
+
+      const result = await controller.dispatch(
+        { year: 2018, dryRun: true },
+        ADMIN_USER,
+        '127.0.0.1',
+      );
+
+      expect(result.data).toEqual({
+        dryRun: true,
+        total: 3,
+        byYearSubject: [
+          { year: 2019, subjectCode: 'criminal_law', count: 1 },
+          { year: 2018, subjectCode: 'civil_law', count: 2 },
+        ],
+      });
+      expect(prisma.barExamAnswerGenerationJob.create).not.toHaveBeenCalled();
+      expect(prisma.barExamAnswerGenerationItem.createMany).not.toHaveBeenCalled();
+      expect(celery.sendTask).not.toHaveBeenCalled();
+      expect(auditService.log).not.toHaveBeenCalled();
     });
 
     it('refuses to dispatch when no filters are given', async () => {
@@ -424,12 +521,405 @@ describe('AdminBarExamAnswersController', () => {
       expect(auditService.log).not.toHaveBeenCalled();
     });
 
+    it('allMissing=true is the explicit opt-in for an unfiltered run', async () => {
+      prisma.barExamQuestion.findMany.mockResolvedValue([fakeQuestionRow('q1')]);
+
+      await controller.dispatch({ allMissing: true }, ADMIN_USER, '127.0.0.1');
+
+      const args = prisma.barExamQuestion.findMany.mock.calls[0]![0] as {
+        where: Record<string, unknown>;
+      };
+      // No sitting filter, but the missing-only constraint is forced on:
+      // "all missing" must never mean "all questions".
+      expect(args.where).toEqual({
+        answers: { none: { answerType: 'ai_generated' } },
+      });
+    });
+
     it('errors when filters resolve to zero questions', async () => {
       prisma.barExamQuestion.findMany.mockResolvedValue([]);
       await expect(
         controller.dispatch({ year: 1999 }, ADMIN_USER, '127.0.0.1'),
       ).rejects.toThrow(BadRequestException);
       expect(celery.sendTask).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('generation jobs', () => {
+    it('lists jobs with counts, progress and a stalled flag', async () => {
+      const stale = new Date(Date.now() - 20 * 60 * 1000);
+      prisma.barExamAnswerGenerationJob.findMany.mockResolvedValue([
+        fakeJobRow({ total: 4 }),
+      ]);
+      prisma.barExamAnswerGenerationItem.groupBy.mockResolvedValue([
+        { jobId: JOB_ID, status: 'generated', _count: { _all: 2 }, _max: { updatedAt: stale } },
+        { jobId: JOB_ID, status: 'failed', _count: { _all: 1 }, _max: { updatedAt: stale } },
+        { jobId: JOB_ID, status: 'queued', _count: { _all: 1 }, _max: { updatedAt: stale } },
+      ]);
+
+      const result = await controller.listJobs({});
+
+      const job = result.data.items[0]!;
+      expect(job.counts).toEqual({
+        queued: 1,
+        running: 0,
+        generated: 2,
+        generatedUngrounded: 0,
+        skippedExisting: 0,
+        failed: 1,
+      });
+      expect(job.done).toBe(3);
+      // running + nothing moved for 20 minutes = stalled.
+      expect(job.stalled).toBe(true);
+    });
+
+    it('job detail returns failed items joined to year / subject / question', async () => {
+      prisma.barExamAnswerGenerationJob.findUnique.mockResolvedValue(fakeJobRow());
+      prisma.barExamAnswerGenerationItem.groupBy.mockResolvedValue([
+        {
+          status: 'failed',
+          _count: { _all: 1 },
+          _max: { updatedAt: new Date() },
+        },
+      ]);
+      prisma.barExamAnswerGenerationItem.findMany.mockResolvedValue([
+        {
+          id: 'item-1',
+          questionId: QUESTION_ID,
+          errorCode: 'llm_abstained',
+          errorMessage: 'insufficient sources',
+          attempts: 1,
+          updatedAt: new Date('2026-09-13T10:30:00Z'),
+          question: {
+            questionNumber: 7,
+            barExamSitting: { year: 2018, subjectStudyCode: 'civil_law' },
+          },
+        },
+      ]);
+
+      const result = await controller.getJob(JOB_ID, {});
+
+      expect(result.data.failedItems.items[0]).toEqual(
+        expect.objectContaining({
+          questionNumber: 7,
+          sittingYear: 2018,
+          subjectStudyCode: 'civil_law',
+          errorCode: 'llm_abstained',
+        }),
+      );
+    });
+
+    it('cancel flips the job and audit-logs it', async () => {
+      prisma.barExamAnswerGenerationJob.findUnique
+        .mockResolvedValueOnce({ status: 'running' })
+        .mockResolvedValue(fakeJobRow({ status: 'cancelled' }));
+
+      const result = await controller.cancelJob(JOB_ID, ADMIN_USER, '127.0.0.1');
+
+      expect(prisma.barExamAnswerGenerationJob.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: 'cancelled' }),
+        }),
+      );
+      expect(result.data.status).toBe('cancelled');
+      expect(auditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'admin_cancelled_bar_exam_answer_generation_job',
+        }),
+      );
+    });
+
+    it('cancel refuses a job that already finished', async () => {
+      prisma.barExamAnswerGenerationJob.findUnique.mockResolvedValue({
+        status: 'completed',
+      });
+      await expect(
+        controller.cancelJob(JOB_ID, ADMIN_USER, '127.0.0.1'),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('retry-failed re-queues failed items and re-enqueues the worker', async () => {
+      prisma.barExamAnswerGenerationJob.findUnique
+        .mockResolvedValueOnce({ status: 'completed_with_failures' })
+        .mockResolvedValue(fakeJobRow({ status: 'queued' }));
+      prisma.barExamAnswerGenerationItem.updateMany.mockResolvedValue({ count: 4 });
+      prisma.barExamAnswerGenerationItem.count.mockResolvedValue(4);
+
+      const result = await controller.retryFailed(JOB_ID, ADMIN_USER, '127.0.0.1');
+
+      expect(prisma.barExamAnswerGenerationItem.updateMany).toHaveBeenCalledWith({
+        where: { jobId: JOB_ID, status: 'failed' },
+        data: { status: 'queued', errorCode: null, errorMessage: null },
+      });
+      expect(celery.sendTask).toHaveBeenCalledWith(
+        'bar_exam.run_answer_generation_job',
+        { kwargs: { job_id: JOB_ID } },
+      );
+      expect(result.data.requeued).toBe(4);
+    });
+
+    it('retry-failed resumes a budget-paused job even with no failed items', async () => {
+      // A budget stop returns the item to `queued`, never to `failed`, so
+      // "retry" for a paused job is purely a re-enqueue.
+      prisma.barExamAnswerGenerationJob.findUnique
+        .mockResolvedValueOnce({ status: 'paused_budget' })
+        .mockResolvedValue(fakeJobRow({ status: 'queued' }));
+      prisma.barExamAnswerGenerationItem.updateMany.mockResolvedValue({ count: 0 });
+      prisma.barExamAnswerGenerationItem.count.mockResolvedValue(900);
+
+      const result = await controller.retryFailed(JOB_ID, ADMIN_USER, '127.0.0.1');
+
+      expect(result.data.requeued).toBe(0);
+      expect(celery.sendTask).toHaveBeenCalled();
+    });
+
+    it('retry-failed refuses when nothing is left to run', async () => {
+      prisma.barExamAnswerGenerationJob.findUnique.mockResolvedValueOnce({
+        status: 'completed',
+      });
+      prisma.barExamAnswerGenerationItem.updateMany.mockResolvedValue({ count: 0 });
+      prisma.barExamAnswerGenerationItem.count.mockResolvedValue(0);
+
+      await expect(
+        controller.retryFailed(JOB_ID, ADMIN_USER, '127.0.0.1'),
+      ).rejects.toThrow(ConflictException);
+      expect(celery.sendTask).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('GET /coverage', () => {
+    it('returns per year × subject cells plus overall totals, BigInt-free', async () => {
+      prisma.$queryRaw.mockResolvedValue([
+        {
+          year: 2018,
+          subject_study_code: 'civil_law',
+          total_questions: BigInt(10),
+          missing: BigInt(4),
+          pending: BigInt(3),
+          pending_at_or_above_070: BigInt(2),
+          approved: BigInt(2),
+          rejected: BigInt(1),
+          unscored: BigInt(1),
+        },
+        {
+          year: 2019,
+          subject_study_code: 'criminal_law',
+          total_questions: BigInt(5),
+          missing: BigInt(5),
+          pending: BigInt(0),
+          pending_at_or_above_070: BigInt(0),
+          approved: BigInt(0),
+          rejected: BigInt(0),
+          unscored: BigInt(0),
+        },
+      ]);
+
+      const result = await controller.coverage();
+
+      expect(result.data.cells[0]).toEqual({
+        year: 2018,
+        subjectCode: 'civil_law',
+        totalQuestions: 10,
+        answered: 6,
+        missing: 4,
+        pending: 3,
+        pendingAtOrAbove070: 2,
+        approved: 2,
+        rejected: 1,
+        unscored: 1,
+      });
+      expect(result.data.totals).toEqual({
+        totalQuestions: 15,
+        answered: 6,
+        missing: 9,
+        pending: 3,
+        pendingAtOrAbove070: 2,
+        approved: 2,
+        rejected: 1,
+        unscored: 1,
+      });
+      // Serializable — the admin dashboard went blank once over a raw BigInt.
+      expect(() => JSON.stringify(result.data)).not.toThrow();
+    });
+  });
+
+  describe('bulk approve / reject', () => {
+    const matchedRows = [
+      { id: 'a1', question: { barExamSitting: { year: 2018, subjectStudyCode: 'civil_law' } } },
+      { id: 'a2', question: { barExamSitting: { year: 2018, subjectStudyCode: 'civil_law' } } },
+    ];
+
+    it('id mode approves only pending rows and writes one audit entry per row', async () => {
+      prisma.barExamAnswer.findMany.mockResolvedValue(matchedRows);
+      prisma.barExamAnswer.updateMany.mockResolvedValue({ count: 2 });
+
+      const result = await controller.bulkApprove(
+        { ids: [ANSWER_ID, QUESTION_ID] },
+        ADMIN_USER,
+        '127.0.0.1',
+      );
+
+      expect(prisma.barExamAnswer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            reviewStatus: 'pending',
+            id: { in: [ANSWER_ID, QUESTION_ID] },
+          }),
+        }),
+      );
+      expect(prisma.barExamAnswer.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: { in: ['a1', 'a2'] }, reviewStatus: 'pending' },
+          data: expect.objectContaining({
+            reviewStatus: 'approved',
+            visibility: 'public_editorial',
+          }),
+        }),
+      );
+      expect(result.data.matched).toBe(2);
+      expect(result.data.updated).toBe(2);
+      expect(auditService.log).toHaveBeenCalledTimes(2);
+      const bulkIds = auditService.log.mock.calls.map(
+        (c) => (c[0] as { metadata: { bulkOperationId: string } }).metadata.bulkOperationId,
+      );
+      expect(new Set(bulkIds).size).toBe(1);
+      expect(auditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'admin_bulk_approved_bar_exam_answer' }),
+      );
+    });
+
+    it('filter mode requires confidence >= 0.70 and excludes unscored rows', async () => {
+      prisma.barExamAnswer.findMany.mockResolvedValue(matchedRows);
+      prisma.barExamAnswer.updateMany.mockResolvedValue({ count: 2 });
+
+      await controller.bulkApprove(
+        { filter: { minConfidence: 0.75, year: 2018 } },
+        ADMIN_USER,
+        '127.0.0.1',
+      );
+
+      const args = prisma.barExamAnswer.findMany.mock.calls[0]![0] as {
+        where: Record<string, unknown>;
+      };
+      expect(args.where['reviewStatus']).toBe('pending');
+      // `gte` is NULL-excluding in SQL: an unscored (NULL) row is never a
+      // low-scoring row, and must never be swept into an approval.
+      expect(args.where['confidence']).toEqual({ gte: 0.75 });
+      expect(args.where['question']).toEqual({
+        is: { barExamSitting: { is: { year: 2018 } } },
+      });
+    });
+
+    it('filter mode refuses a minConfidence below 0.70', async () => {
+      await expect(
+        controller.bulkApprove(
+          { filter: { minConfidence: 0.5 } },
+          ADMIN_USER,
+          '127.0.0.1',
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.barExamAnswer.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('refuses a request that supplies both ids and filter', async () => {
+      await expect(
+        controller.bulkApprove(
+          { ids: [ANSWER_ID], filter: { minConfidence: 0.8 } },
+          ADMIN_USER,
+          '127.0.0.1',
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('dryRun reports the count and writes nothing', async () => {
+      prisma.barExamAnswer.findMany.mockResolvedValue(matchedRows);
+
+      const result = await controller.bulkApprove(
+        { filter: { minConfidence: 0.8 }, dryRun: true },
+        ADMIN_USER,
+        '127.0.0.1',
+      );
+
+      expect(result.data).toEqual({
+        dryRun: true,
+        matched: 2,
+        updated: 0,
+        byYearSubject: [{ year: 2018, subjectCode: 'civil_law', count: 2 }],
+        bulkOperationId: null,
+      });
+      expect(prisma.barExamAnswer.updateMany).not.toHaveBeenCalled();
+      expect(auditService.log).not.toHaveBeenCalled();
+    });
+
+    it('bulk reject by ids keeps visibility private and skips non-pending rows', async () => {
+      prisma.barExamAnswer.findMany.mockResolvedValue(matchedRows);
+      prisma.barExamAnswer.updateMany.mockResolvedValue({ count: 2 });
+
+      const result = await controller.bulkReject(
+        { ids: [ANSWER_ID, QUESTION_ID] },
+        ADMIN_USER,
+        '127.0.0.1',
+      );
+
+      // Non-pending rows are excluded twice: once when the set is read, and
+      // again in the write, so a row reviewed by someone else in between is
+      // skipped rather than overwritten.
+      expect(prisma.barExamAnswer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            reviewStatus: 'pending',
+            id: { in: [ANSWER_ID, QUESTION_ID] },
+          },
+        }),
+      );
+      expect(prisma.barExamAnswer.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: { in: ['a1', 'a2'] }, reviewStatus: 'pending' },
+          data: expect.objectContaining({
+            reviewStatus: 'rejected',
+            visibility: 'private',
+          }),
+        }),
+      );
+      expect(result.data.updated).toBe(2);
+      expect(auditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'admin_bulk_rejected_bar_exam_answer',
+          metadata: expect.objectContaining({ mode: 'ids' }),
+        }),
+      );
+    });
+
+    it('bulk reject has no filter mode — a filter body is a 400', async () => {
+      // Rejecting by filter would mean discarding rows nobody looked at, with
+      // no equivalent of the 0.70 floor to bound it. The DTO has no `filter`
+      // property, so the global pipe's forbidNonWhitelisted is what refuses
+      // it — the service never gets the chance to.
+      await expect(
+        globalPipe.transform(
+          { ids: [ANSWER_ID], filter: { minConfidence: 0.8 } },
+          { type: 'body', metatype: BulkRejectBarExamAnswersDto },
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      // The same body without the filter key passes validation.
+      await expect(
+        globalPipe.transform(
+          { ids: [ANSWER_ID], dryRun: true },
+          { type: 'body', metatype: BulkRejectBarExamAnswersDto },
+        ),
+      ).resolves.toEqual(
+        expect.objectContaining({ ids: [ANSWER_ID], dryRun: true }),
+      );
+    });
+
+    it('bulk reject requires at least one id', async () => {
+      await expect(
+        globalPipe.transform(
+          { ids: [] },
+          { type: 'body', metatype: BulkRejectBarExamAnswersDto },
+        ),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 });
