@@ -13,10 +13,14 @@ export interface DispatchFormValue {
   subjectCode?: string;
   sittingId?: string;
   allMissing?: boolean;
+  regeneratePending?: boolean;
+  maxConfidence?: number;
 }
 
 export interface DispatchPreview {
   total: number;
+  missing: number;
+  replacingPending: number;
   byYearSubject: YearSubjectCount[];
 }
 
@@ -60,6 +64,8 @@ export function DispatchGenerationDialog({
   const [subjectCode, setSubjectCode] = useState('');
   const [sittingId, setSittingId] = useState('');
   const [allMissing, setAllMissing] = useState(false);
+  const [regeneratePending, setRegeneratePending] = useState(false);
+  const [maxConfidence, setMaxConfidence] = useState('');
 
   useEffect(() => {
     if (!open) return;
@@ -67,6 +73,12 @@ export function DispatchGenerationDialog({
     setSubjectCode(initialValue?.subjectCode ?? '');
     setSittingId(initialValue?.sittingId ?? '');
     setAllMissing(initialValue?.allMissing ?? false);
+    setRegeneratePending(initialValue?.regeneratePending ?? false);
+    setMaxConfidence(
+      initialValue?.maxConfidence !== undefined
+        ? String(initialValue.maxConfidence)
+        : '',
+    );
   }, [open, initialValue]);
 
   if (!open) return null;
@@ -75,11 +87,22 @@ export function DispatchGenerationDialog({
   const yearInvalid = Boolean(year) && Number.isNaN(yearNum);
   const hasAnyFilter = Boolean(year || subjectCode || sittingId || allMissing);
 
+  const maxConfidenceNum = maxConfidence ? Number(maxConfidence) : undefined;
+  const maxConfidenceInvalid =
+    maxConfidence !== '' &&
+    (Number.isNaN(maxConfidenceNum) ||
+      (maxConfidenceNum as number) < 0 ||
+      (maxConfidenceNum as number) > 1);
+
   const value: DispatchFormValue = {
     year: yearNum,
     subjectCode: subjectCode.trim() || undefined,
     sittingId: sittingId.trim() || undefined,
     allMissing: allMissing || undefined,
+    regeneratePending: regeneratePending || undefined,
+    // Only meaningful alongside regeneratePending — the API rejects it on its
+    // own rather than ignoring it, so never send it by itself.
+    maxConfidence: regeneratePending ? maxConfidenceNum : undefined,
   };
 
   const changeAndInvalidate = (apply: () => void) => {
@@ -89,7 +112,7 @@ export function DispatchGenerationDialog({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!hasAnyFilter || yearInvalid) return;
+    if (!hasAnyFilter || yearInvalid || maxConfidenceInvalid) return;
     if (preview) {
       onConfirm(value);
     } else {
@@ -174,6 +197,57 @@ export function DispatchGenerationDialog({
             </span>
           </label>
 
+          <div className="space-y-2 rounded-md border p-3">
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                id="dispatch-regenerate-pending"
+                type="checkbox"
+                className="mt-0.5"
+                checked={regeneratePending}
+                onChange={(e) =>
+                  changeAndInvalidate(() => setRegeneratePending(e.target.checked))
+                }
+              />
+              <span>
+                Also regenerate answers still pending review
+                <span className="block text-xs text-muted-foreground">
+                  Replaces the existing pending answer. Approved and rejected
+                  answers are never touched.
+                </span>
+              </span>
+            </label>
+
+            {regeneratePending && (
+              <div className="space-y-1.5 pl-6">
+                <Label htmlFor="dispatch-max-confidence">
+                  Only below confidence (optional)
+                </Label>
+                <Input
+                  id="dispatch-max-confidence"
+                  type="number"
+                  step="any"
+                  min={0}
+                  max={1}
+                  className="w-32"
+                  value={maxConfidence}
+                  onChange={(e) =>
+                    changeAndInvalidate(() => setMaxConfidence(e.target.value))
+                  }
+                  placeholder="e.g. 0.70"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Unscored answers are always included — they were never
+                  measured, which is not the same as scoring low.
+                </p>
+                {maxConfidenceInvalid && (
+                  <p className="text-xs text-destructive">
+                    Must be between 0 and 1.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
           {preview && (
             <Alert>
               <AlertDescription>
@@ -181,6 +255,13 @@ export function DispatchGenerationDialog({
                   {preview.total} question{preview.total === 1 ? '' : 's'} will be
                   generated.
                 </strong>
+                {preview.replacingPending > 0 && (
+                  <span className="mt-1 block">
+                    {preview.replacingPending} of them replace an answer still
+                    pending review ({preview.missing} have no answer yet).
+                    Approved and rejected answers are never touched.
+                  </span>
+                )}
                 {preview.byYearSubject.length > 0 && (
                   <span className="mt-1 block max-h-24 overflow-y-auto text-xs text-muted-foreground">
                     {preview.byYearSubject
@@ -212,7 +293,11 @@ export function DispatchGenerationDialog({
               <Button
                 type="submit"
                 disabled={
-                  !hasAnyFilter || isChecking || isDispatching || yearInvalid
+                  !hasAnyFilter ||
+                  isChecking ||
+                  isDispatching ||
+                  yearInvalid ||
+                  maxConfidenceInvalid
                 }
               >
                 {isChecking

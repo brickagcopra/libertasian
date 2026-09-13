@@ -70,6 +70,13 @@ from ..prompts.bar_exam_alac_v2 import (
 from ..prompts.bar_exam_alac_v2 import (
     render_answer_markdown as render_answer_markdown_v2,
 )
+from ..prompts.bar_exam_alac_v3 import BAR_EXAM_ALAC_V3_SYSTEM_PROMPT
+from ..prompts.bar_exam_alac_v3 import (
+    PROMPT_TEMPLATE_VERSION as PROMPT_TEMPLATE_VERSION_V3,
+)
+from ..prompts.bar_exam_alac_v3 import (
+    build_user_prompt as build_user_prompt_v3,
+)
 from ..scoring_bar_exam import BREADTH_TARGET, score_from_passages
 
 logger = logging.getLogger(__name__)
@@ -102,6 +109,60 @@ def _resolve_top_k() -> int:
 
 
 BAR_EXAM_RAG_TOP_K: int = _resolve_top_k()
+
+# Which grounded prompt template runs when retrieval returns passages.
+# Priors-only generation is unaffected — with no passages there is no closed
+# list to cite from, so it stays v1 whatever this says.
+#
+# Default "v2" on purpose: deploying the v3 template must change nothing until
+# someone flips the flag. A generation job is running on prod, and a prompt
+# swap arriving with a deploy would silently split that job's output across
+# two templates mid-run.
+SUPPORTED_GROUNDED_PROMPT_VERSIONS = ("v2", "v3")
+DEFAULT_GROUNDED_PROMPT_VERSION = "v2"
+
+
+def _resolve_prompt_version() -> str:
+    raw = os.getenv("BAR_EXAM_PROMPT_VERSION", DEFAULT_GROUNDED_PROMPT_VERSION)
+    value = (raw or "").strip().lower()
+    if value in SUPPORTED_GROUNDED_PROMPT_VERSIONS:
+        return value
+    logger.warning(
+        "bar_exam_answer: BAR_EXAM_PROMPT_VERSION=%r is not one of %s — "
+        "falling back to %s",
+        raw,
+        SUPPORTED_GROUNDED_PROMPT_VERSIONS,
+        DEFAULT_GROUNDED_PROMPT_VERSION,
+    )
+    return DEFAULT_GROUNDED_PROMPT_VERSION
+
+
+BAR_EXAM_PROMPT_VERSION: str = _resolve_prompt_version()
+
+
+def _grounded_template() -> tuple[str, str, Any]:
+    """``(prompt_template_version, system_prompt, build_user_prompt)``.
+
+    Read through the module global rather than the environment so the value is
+    resolved (and its warning logged) once at import, and so a test can select
+    a template by patching one name.
+
+    The version returned here is the one written to ``model_runs``: whatever
+    ran is what gets recorded, because a stored template version that does not
+    match the prompt that produced the row makes every later comparison
+    between templates meaningless.
+    """
+    if BAR_EXAM_PROMPT_VERSION == "v3":
+        return (
+            PROMPT_TEMPLATE_VERSION_V3,
+            BAR_EXAM_ALAC_V3_SYSTEM_PROMPT,
+            build_user_prompt_v3,
+        )
+    return (
+        PROMPT_TEMPLATE_VERSION_V2,
+        BAR_EXAM_ALAC_V2_SYSTEM_PROMPT,
+        build_user_prompt_v2,
+    )
 
 
 @shared_task(
@@ -242,21 +303,22 @@ def _generate_one(
                     question_id,
                 )
 
-        # v2 is the grounded path: it prints a closed list of citable section
-        # ids and demands citedSectionIds back. It is selected only when
-        # retrieval actually returned something, because with no passages the
-        # closed list is empty and the whole contract is vacuous — a
-        # priors-only answer is still a v1 answer, and the stored
-        # prompt_template_version stays an honest record of which one ran.
-        use_v2 = used_rag
+        # The grounded path (v2 or v3, per BAR_EXAM_PROMPT_VERSION) prints a
+        # closed list of citable section ids and demands citedSectionIds back.
+        # It is selected only when retrieval actually returned something,
+        # because with no passages the closed list is empty and the whole
+        # contract is vacuous — a priors-only answer is still a v1 answer, and
+        # the stored prompt_template_version stays an honest record of which
+        # one ran. v2 and v3 share parse/filter/render, so everything below
+        # this block is version-independent.
+        use_grounded = used_rag
 
-        prompt_version = (
-            PROMPT_TEMPLATE_VERSION_V2 if use_v2 else PROMPT_TEMPLATE_VERSION
-        )
-        system_prompt = (
-            BAR_EXAM_ALAC_V2_SYSTEM_PROMPT if use_v2 else BAR_EXAM_ALAC_SYSTEM_PROMPT
-        )
-        build_prompt = build_user_prompt_v2 if use_v2 else build_user_prompt
+        if use_grounded:
+            prompt_version, system_prompt, build_prompt = _grounded_template()
+        else:
+            prompt_version = PROMPT_TEMPLATE_VERSION
+            system_prompt = BAR_EXAM_ALAC_SYSTEM_PROMPT
+            build_prompt = build_user_prompt
 
         user_prompt = build_prompt(
             question_text=question["question_text"],
@@ -317,7 +379,7 @@ def _generate_one(
                 "reason": reason,
             }
 
-        parse = parse_alac_response_v2 if use_v2 else parse_alac_response
+        parse = parse_alac_response_v2 if use_grounded else parse_alac_response
         structured = parse(content)
         if structured is None:
             logger.warning(
@@ -339,7 +401,7 @@ def _generate_one(
         emitted_ids: list[str] = []
         confidence = None
         dropped_ids = 0
-        if use_v2:
+        if use_grounded:
             emitted_ids = list(structured.get("citedSectionIds") or [])
             retrieved_ids = {
                 str(p["section_id"])
@@ -406,7 +468,9 @@ def _generate_one(
                 scored.available_document_count,
             )
 
-        render = render_answer_markdown_v2 if use_v2 else render_answer_markdown
+        render = (
+            render_answer_markdown_v2 if use_grounded else render_answer_markdown
+        )
         answer_text = render(structured)
 
         # A priors-only (v1) row stores confidence NULL rather than 0.0. The
@@ -597,6 +661,15 @@ def run_answer_generation_job(self: Any, job_id: str) -> dict[str, Any]:
         )
         return {"job_id": job_id, "status": str(job["status"]), "processed": 0}
 
+    # Set by the API when the dispatch asked to replace answers that are
+    # still pending review. `_generate_one`'s delete is restricted to
+    # `review_status = 'pending'`, so an approved or rejected answer survives
+    # this flag no matter what the job row says.
+    filters = job.get("filters_json")
+    force_regenerate = bool(
+        isinstance(filters, dict) and filters.get("regeneratePending"),
+    )
+
     db.reset_stale_bar_exam_generation_items(job_id, STALE_RUNNING_MINUTES)
     db.mark_bar_exam_generation_job_running(job_id)
 
@@ -635,7 +708,7 @@ def run_answer_generation_job(self: Any, job_id: str) -> dict[str, Any]:
             }
 
         try:
-            result = _generate_one(question_id)
+            result = _generate_one(question_id, force_regenerate=force_regenerate)
         except BudgetExceededError as exc:
             db.release_bar_exam_generation_items(pending_items)
             db.set_bar_exam_generation_job_status(job_id, "paused_budget")

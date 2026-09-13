@@ -62,12 +62,20 @@ export interface DispatchAnswerGenerationInput {
   subjectCode?: string;
   onlyMissing?: boolean;
   allMissing?: boolean;
+  /** Also replace answers still pending review. Never approved/rejected. */
+  regeneratePending?: boolean;
+  /** With regeneratePending: only below this score, plus unscored rows. */
+  maxConfidence?: number;
   dryRun?: boolean;
 }
 
 export interface DispatchDryRunResult {
   dryRun: true;
   total: number;
+  /** Questions with no answer at all. */
+  missing: number;
+  /** Questions whose PENDING answer this dispatch would replace. */
+  replacingPending: number;
   byYearSubject: YearSubjectCount[];
 }
 

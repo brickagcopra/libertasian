@@ -90,8 +90,13 @@ function fakeAnswerRow(
   };
 }
 
-function fakeQuestionRow(id: string, year = 2018, subject = 'civil_law') {
-  return { id, barExamSitting: { year, subjectStudyCode: subject } };
+function fakeQuestionRow(
+  id: string,
+  year = 2018,
+  subject = 'civil_law',
+  answers: Array<{ reviewStatus: string }> = [],
+) {
+  return { id, barExamSitting: { year, subjectStudyCode: subject }, answers };
 }
 
 function fakeJobRow(overrides: Partial<Record<string, unknown>> = {}) {
@@ -502,6 +507,8 @@ describe('AdminBarExamAnswersController', () => {
       expect(result.data).toEqual({
         dryRun: true,
         total: 3,
+        missing: 3,
+        replacingPending: 0,
         byYearSubject: [
           { year: 2019, subjectCode: 'criminal_law', count: 1 },
           { year: 2018, subjectCode: 'civil_law', count: 2 },
@@ -540,6 +547,126 @@ describe('AdminBarExamAnswersController', () => {
       prisma.barExamQuestion.findMany.mockResolvedValue([]);
       await expect(
         controller.dispatch({ year: 1999 }, ADMIN_USER, '127.0.0.1'),
+      ).rejects.toThrow(BadRequestException);
+      expect(celery.sendTask).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /dispatch-generation — regeneratePending', () => {
+    it('targets questions with no answer OR a pending one, never approved/rejected', async () => {
+      prisma.barExamQuestion.findMany.mockResolvedValue([
+        fakeQuestionRow('q1'),
+        fakeQuestionRow('q2', 2018, 'civil_law', [{ reviewStatus: 'pending' }]),
+      ]);
+
+      await controller.dispatch(
+        { year: 2018, regeneratePending: true },
+        ADMIN_USER,
+        '127.0.0.1',
+      );
+
+      const args = prisma.barExamQuestion.findMany.mock.calls[0]![0] as {
+        where: Record<string, unknown>;
+      };
+      // The OR REPLACES the onlyMissing clause rather than joining it: an
+      // approved or rejected answer can match neither branch, so it can never
+      // enter the item set at all.
+      expect(args.where['OR']).toEqual([
+        { answers: { none: { answerType: 'ai_generated' } } },
+        {
+          answers: {
+            some: { answerType: 'ai_generated', reviewStatus: 'pending' },
+          },
+        },
+      ]);
+      expect(args.where).not.toHaveProperty('answers');
+    });
+
+    it('maxConfidence includes unscored (NULL) answers', async () => {
+      prisma.barExamQuestion.findMany.mockResolvedValue([fakeQuestionRow('q1')]);
+
+      await controller.dispatch(
+        { year: 2018, regeneratePending: true, maxConfidence: 0.7 },
+        ADMIN_USER,
+        '127.0.0.1',
+      );
+
+      const args = prisma.barExamQuestion.findMany.mock.calls[0]![0] as {
+        where: { OR: Array<Record<string, any>> };
+      };
+      // `confidence < 0.7` alone is NULL-excluding in SQL, which would skip
+      // exactly the priors-only v1 rows most worth regenerating.
+      expect(args.where.OR[1]!['answers'].some).toEqual({
+        answerType: 'ai_generated',
+        reviewStatus: 'pending',
+        OR: [{ confidence: { lt: 0.7 } }, { confidence: null }],
+      });
+    });
+
+    it('dry run counts replaced pending answers apart from missing ones', async () => {
+      prisma.barExamQuestion.findMany.mockResolvedValue([
+        fakeQuestionRow('q1'),
+        fakeQuestionRow('q2', 2018, 'civil_law', [{ reviewStatus: 'pending' }]),
+        fakeQuestionRow('q3', 2018, 'civil_law', [{ reviewStatus: 'pending' }]),
+      ]);
+
+      const result = await controller.dispatch(
+        { year: 2018, regeneratePending: true, dryRun: true },
+        ADMIN_USER,
+        '127.0.0.1',
+      );
+
+      expect(result.data).toEqual(
+        expect.objectContaining({
+          dryRun: true,
+          total: 3,
+          missing: 1,
+          replacingPending: 2,
+        }),
+      );
+      expect(prisma.barExamAnswerGenerationJob.create).not.toHaveBeenCalled();
+    });
+
+    it('stores the flag on the job so the worker can read it back', async () => {
+      prisma.barExamQuestion.findMany.mockResolvedValue([fakeQuestionRow('q1')]);
+
+      await controller.dispatch(
+        { year: 2018, regeneratePending: true, maxConfidence: 0.7 },
+        ADMIN_USER,
+        '127.0.0.1',
+      );
+
+      expect(prisma.barExamAnswerGenerationJob.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            filtersJson: expect.objectContaining({
+              regeneratePending: true,
+              maxConfidence: 0.7,
+            }),
+          }),
+        }),
+      );
+      expect(auditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            filters: expect.objectContaining({
+              regeneratePending: true,
+              maxConfidence: 0.7,
+            }),
+          }),
+        }),
+      );
+    });
+
+    it('refuses maxConfidence without regeneratePending', async () => {
+      // It would otherwise be silently ignored, dispatching a different job
+      // than the one the admin described.
+      await expect(
+        controller.dispatch(
+          { year: 2018, maxConfidence: 0.7 },
+          ADMIN_USER,
+          '127.0.0.1',
+        ),
       ).rejects.toThrow(BadRequestException);
       expect(celery.sendTask).not.toHaveBeenCalled();
     });

@@ -322,6 +322,8 @@ export class AdminBarExamAnswersController {
             subjectCode: dto.subjectCode ?? null,
             onlyMissing: dto.onlyMissing ?? true,
             allMissing: dto.allMissing ?? false,
+            regeneratePending: dto.regeneratePending ?? false,
+            maxConfidence: dto.maxConfidence ?? null,
           },
         },
       });

@@ -142,6 +142,8 @@ export default function BarExamAnswersAdminPage() {
           if (result.dryRun) {
             setDispatchPreview({
               total: result.total,
+              missing: result.missing,
+              replacingPending: result.replacingPending,
               byYearSubject: result.byYearSubject,
             });
           }
