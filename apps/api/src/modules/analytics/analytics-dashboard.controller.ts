@@ -23,7 +23,9 @@ import { DashboardQueryDto } from './dto';
  *
  * All endpoints read from pre-aggregated tables (analytics_daily_aggregates,
  * analytics_funnel_steps, analytics_retention_cohorts) — NOT from raw events.
- * Results are cached in Redis for 5 minutes.
+ * Results are cached in Redis for 5 minutes; `?refresh=true` on any of them
+ * skips the cache read and repopulates, so a backfill is visible immediately
+ * instead of after the TTL expires.
  */
 @ApiTags('Admin Analytics')
 @Controller('admin/analytics')
@@ -37,6 +39,21 @@ export class AnalyticsDashboardController {
   @ApiOperation({ summary: 'Key metrics overview (DAU, WAU, MAU, searches, AI answers, subscribers)' })
   async getOverview(@Query() query: DashboardQueryDto) {
     const data = await this.dashboardService.getOverview(query);
+    return { success: true, data };
+  }
+
+  /**
+   * Surface usage + platform split. Feeds the "where users go" panel.
+   *
+   * Separate from `engagement` rather than folded into it because the rows are
+   * dimensioned (`surface:*`, `platform:*`) and the engagement cards read
+   * undimensioned totals — one payload serving both invites a consumer to sum
+   * the wrong set.
+   */
+  @Get('surfaces')
+  @ApiOperation({ summary: 'Surface usage (views + unique users) and platform split' })
+  async getSurfaceMetrics(@Query() query: DashboardQueryDto) {
+    const data = await this.dashboardService.getSurfaceMetrics(query);
     return { success: true, data };
   }
 

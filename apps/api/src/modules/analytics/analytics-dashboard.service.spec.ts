@@ -59,6 +59,9 @@ describe('AnalyticsDashboardService', () => {
           useValue: {
             analyticsDailyAggregate: {
               findMany: jest.fn().mockResolvedValue([]),
+              // getLastAggregatedAt — the freshness stamp on the overview
+              // payload. Defaults to "nothing has ever been aggregated".
+              aggregate: jest.fn().mockResolvedValue({ _max: { date: null } }),
             },
             analyticsFunnelStep: {
               findMany: jest.fn().mockResolvedValue([]),
@@ -376,6 +379,195 @@ describe('AnalyticsDashboardService', () => {
           organizationId: null,
         }),
       );
+    });
+  });
+  // =========================================================================
+  // Freshness (lastAggregatedAt)
+  // =========================================================================
+
+  describe('getLastAggregatedAt', () => {
+    it('returns the newest aggregated date as YYYY-MM-DD', async () => {
+      (prisma.analyticsDailyAggregate.aggregate as jest.Mock).mockResolvedValueOnce({
+        _max: { date: new Date('2026-09-11T00:00:00.000Z') },
+      });
+
+      await expect(service.getLastAggregatedAt()).resolves.toBe('2026-09-11');
+    });
+
+    it('returns null when nothing has ever been aggregated', async () => {
+      (prisma.analyticsDailyAggregate.aggregate as jest.Mock).mockResolvedValueOnce({
+        _max: { date: null },
+      });
+
+      await expect(service.getLastAggregatedAt()).resolves.toBeNull();
+    });
+  });
+
+  describe('getOverview freshness', () => {
+    it('includes lastAggregatedAt in the payload', async () => {
+      (prisma.analyticsDailyAggregate.aggregate as jest.Mock).mockResolvedValueOnce({
+        _max: { date: new Date('2026-09-11T00:00:00.000Z') },
+      });
+
+      const result = await service.getOverview({});
+      expect(result.lastAggregatedAt).toBe('2026-09-11');
+    });
+
+    it('reports null rather than omitting the field on an empty table', async () => {
+      // A dashboard that cannot tell "zero" from "never ran" is the bug this
+      // field exists for, so the key must be present even when it is null.
+      const result = await service.getOverview({});
+      expect(result).toHaveProperty('lastAggregatedAt', null);
+    });
+
+    it('does not scope the freshness stamp to the selected range', async () => {
+      // It answers "when did the pipeline last run", not "what is in this
+      // window" — a narrow range must not make a healthy pipeline look stale.
+      await service.getOverview({ from: '2026-01-01', to: '2026-01-31' });
+      expect(prisma.analyticsDailyAggregate.aggregate).toHaveBeenCalledWith({
+        _max: { date: true },
+      });
+    });
+
+    it('survives the Redis round-trip', async () => {
+      (prisma.analyticsDailyAggregate.aggregate as jest.Mock).mockResolvedValueOnce({
+        _max: { date: new Date('2026-09-11T00:00:00.000Z') },
+      });
+      await service.getOverview({});
+
+      const [, payload] = (redis.set as jest.Mock).mock.calls[0];
+      expect(JSON.parse(payload as string)).toHaveProperty('lastAggregatedAt', '2026-09-11');
+    });
+  });
+
+  // =========================================================================
+  // Cache bypass (?refresh=true)
+  // =========================================================================
+
+  describe('refresh cache bypass', () => {
+    const cachedPayload = JSON.stringify({
+      metrics: [{ id: 'stale', metricName: 'dau', metricValue: 1 }],
+      dateRange: { from: '2026-04-01', to: '2026-04-30' },
+      lastAggregatedAt: '2026-04-30',
+    });
+
+    it('serves the cached entry by default', async () => {
+      (redis.get as jest.Mock).mockResolvedValueOnce(cachedPayload);
+
+      const result = await service.getOverview({});
+      expect(result.metrics[0]).toMatchObject({ id: 'stale' });
+      expect(prisma.analyticsDailyAggregate.findMany).not.toHaveBeenCalled();
+    });
+
+    it('skips the cache read and recomputes when refresh is true', async () => {
+      (redis.get as jest.Mock).mockResolvedValue(cachedPayload);
+      (prisma.analyticsDailyAggregate.findMany as jest.Mock).mockResolvedValueOnce(
+        aggregateRows(),
+      );
+
+      const result = await service.getOverview({ refresh: true });
+
+      expect(redis.get).not.toHaveBeenCalled();
+      expect(prisma.analyticsDailyAggregate.findMany).toHaveBeenCalled();
+      expect(result.metrics).toHaveLength(3);
+      expect(result.metrics[0]).toMatchObject({ id: 'agg-1' });
+    });
+
+    it('repopulates the same cache key it bypassed', async () => {
+      // A refresh that wrote to a different key would leave every other reader
+      // on the stale entry until the TTL expired — the bug, moved.
+      await service.getOverview({});
+      const [keyWithoutRefresh] = (redis.set as jest.Mock).mock.calls[0];
+
+      (redis.set as jest.Mock).mockClear();
+      await service.getOverview({ refresh: true });
+      const [keyWithRefresh] = (redis.set as jest.Mock).mock.calls[0];
+
+      expect(keyWithRefresh).toBe(keyWithoutRefresh);
+    });
+
+    it('bypasses on every dashboard endpoint, not just the overview', async () => {
+      const endpoints: Array<[string, () => Promise<unknown>]> = [
+        ['engagement', () => service.getEngagement({ refresh: true })],
+        ['search', () => service.getSearchMetrics({ refresh: true })],
+        ['ai', () => service.getAiMetrics({ refresh: true })],
+        ['digests', () => service.getDigestMetrics({ refresh: true })],
+        ['scans', () => service.getScanMetrics({ refresh: true })],
+        ['study', () => service.getStudyMetrics({ refresh: true })],
+        ['workspace', () => service.getWorkspaceMetrics({ refresh: true })],
+        ['revenue', () => service.getRevenueMetrics({ refresh: true })],
+        ['ingestion', () => service.getIngestionMetrics({ refresh: true })],
+        ['surfaces', () => service.getSurfaceMetrics({ refresh: true })],
+        ['retention', () => service.getRetention({ refresh: true })],
+        ['funnel', () => service.getFunnel('scan_to_digest', { refresh: true })],
+      ];
+
+      for (const [, call] of endpoints) {
+        (redis.get as jest.Mock).mockResolvedValue(cachedPayload);
+        await call();
+      }
+
+      expect(redis.get).not.toHaveBeenCalled();
+      expect(redis.set).toHaveBeenCalledTimes(endpoints.length);
+    });
+  });
+
+  // =========================================================================
+  // Surfaces — "where users go"
+  // =========================================================================
+
+  describe('getSurfaceMetrics', () => {
+    it('queries surface_views alongside the platform-split metrics', async () => {
+      await service.getSurfaceMetrics({});
+      expect(prisma.analyticsDailyAggregate.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            metricName: { in: ['surface_views', 'dau', 'sessions'] },
+          }),
+        }),
+      );
+    });
+
+    it('returns the dimensioned rows intact for the client to split', async () => {
+      (prisma.analyticsDailyAggregate.findMany as jest.Mock).mockResolvedValueOnce([
+        {
+          id: 'sv-1',
+          metricName: 'surface_views',
+          date: new Date('2026-09-11'),
+          dimension: 'surface:digests',
+          metricValue: 42n,
+          uniqueUsers: 7,
+          organizationId: null,
+          createdAt: new Date('2026-09-12'),
+        },
+        {
+          id: 'sv-2',
+          metricName: 'surface_views',
+          date: new Date('2026-09-11'),
+          dimension: null,
+          metricValue: 96n,
+          uniqueUsers: 11,
+          organizationId: null,
+          createdAt: new Date('2026-09-12'),
+        },
+      ]);
+
+      const result = await service.getSurfaceMetrics({});
+      expect(result.metrics).toHaveLength(2);
+      expect(result.metrics[0]).toMatchObject({
+        dimension: 'surface:digests',
+        metricValue: 42,
+        uniqueUsers: 7,
+      });
+      expect(result.metrics[1]).toMatchObject({ dimension: null, metricValue: 96 });
+    });
+
+    it('carries the freshness stamp too', async () => {
+      (prisma.analyticsDailyAggregate.aggregate as jest.Mock).mockResolvedValueOnce({
+        _max: { date: new Date('2026-09-11T00:00:00.000Z') },
+      });
+      const result = await service.getSurfaceMetrics({});
+      expect(result.lastAggregatedAt).toBe('2026-09-11');
     });
   });
 });

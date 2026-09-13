@@ -27,6 +27,7 @@ describe('AnalyticsDashboardController', () => {
     getFunnel: jest.Mock;
     getRetention: jest.Mock;
     getIngestionMetrics: jest.Mock;
+    getSurfaceMetrics: jest.Mock;
     getRealtimeStream: jest.Mock;
   };
 
@@ -44,6 +45,7 @@ describe('AnalyticsDashboardController', () => {
       getFunnel: jest.fn().mockResolvedValue({ steps: [] }),
       getRetention: jest.fn().mockResolvedValue({ cohorts: [] }),
       getIngestionMetrics: jest.fn().mockResolvedValue({}),
+      getSurfaceMetrics: jest.fn().mockResolvedValue({ metrics: [] }),
       getRealtimeStream: jest.fn(),
     };
 
@@ -99,6 +101,25 @@ describe('AnalyticsDashboardController', () => {
       const result = await controller.getFunnel('signup', query);
       expect(result.success).toBe(true);
       expect(dashboardService.getFunnel).toHaveBeenCalledWith('signup', query);
+    });
+
+    it('getSurfaceMetrics delegates to service and wraps in the envelope', async () => {
+      const query = { from: '2026-09-01', to: '2026-09-12' } as never;
+      const result = await controller.getSurfaceMetrics(query);
+      expect(result.success).toBe(true);
+      expect(result.data).toEqual({ metrics: [] });
+      expect(dashboardService.getSurfaceMetrics).toHaveBeenCalledWith(query);
+    });
+
+    it('passes refresh straight through rather than dropping it', async () => {
+      // The Refresh button on /admin/analytics is the only way to see a
+      // backfill before the 5-minute TTL expires; a handler that swallowed the
+      // flag would leave the button doing nothing visible.
+      const query = { refresh: true } as never;
+      await controller.getOverview(query);
+      expect(dashboardService.getOverview).toHaveBeenCalledWith(
+        expect.objectContaining({ refresh: true }),
+      );
     });
   });
 });

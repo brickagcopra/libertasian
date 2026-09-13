@@ -25,6 +25,7 @@ import { ErrorBoundary } from '../components/ErrorBoundary';
 import { AuthProvider, useAuth } from '../providers/auth-provider';
 import { ThemeProvider } from '../providers/theme-provider';
 import { useFreemiumSurfacesSync } from '../features/entitlements/use-freemium-surfaces';
+import { useAnalyticsNavigationTracking } from '../features/analytics/use-analytics-navigation';
 import { usePurchasesBootstrap } from '@/features/purchase';
 import { useNotificationSocket } from '../features/workspace/hooks/use-notifications';
 import { usePushNotifications } from '../features/workspace/hooks/use-push-notifications';
@@ -50,6 +51,12 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
   // rationale again: exactly one component holds it. Renders nothing, routes
   // nowhere, no-ops while signed out.
   usePurchasesBootstrap(user?.organizationId ?? null);
+
+  // One page_viewed per route change, plus a session on mount and on every
+  // foreground. Mounted here for the same reason as the hooks above — exactly
+  // one holder — and gated on the session because /analytics/events/auth is
+  // behind JwtAuthGuard.
+  useAnalyticsNavigationTracking(isAuthenticated);
 
   useEffect(() => {
     if (isLoading) return;

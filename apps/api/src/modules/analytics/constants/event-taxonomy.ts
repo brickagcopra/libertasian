@@ -132,6 +132,29 @@ export const EVENT_TAXONOMY: Record<string, EventDefinition> = {
   },
 
   // =======================================================================
+  // Bar Exams
+  // =======================================================================
+  /**
+   * The bar-exam surface was opened. `surface` repeats the surface name from
+   * the shared route map so this event and `page_viewed` aggregate the same
+   * way; nothing identifying the exam, question or answer belongs here.
+   */
+  bar_exam_opened: {
+    category: 'study',
+    requiredProperties: ['surface'],
+  },
+  /**
+   * A single bar-exam question was displayed. Deliberately carries NO question
+   * id: which questions a named user practised is a record of what they were
+   * weak on, and the aggregate ("how much is this surface used") needs only
+   * the count.
+   */
+  bar_exam_question_viewed: {
+    category: 'study',
+    requiredProperties: ['surface'],
+  },
+
+  // =======================================================================
   // Study Mode
   // =======================================================================
   codal_opened: {
@@ -162,6 +185,11 @@ export const EVENT_TAXONOMY: Record<string, EventDefinition> = {
   // =======================================================================
   // Workspace
   // =======================================================================
+  /** The workspace surface was opened — no matter, note or case identifiers. */
+  workspace_opened: {
+    category: 'workspace',
+    requiredProperties: ['surface'],
+  },
   matter_created: {
     category: 'workspace',
     requiredProperties: ['matter_type'],
@@ -249,9 +277,31 @@ export const EVENT_TAXONOMY: Record<string, EventDefinition> = {
   // =======================================================================
   // Navigation & Engagement
   // =======================================================================
+  /**
+   * A client navigated to a route. `path` is the route PATTERN — `/digest/[id]`,
+   * never `/digest/<a real case id>` — and `surface` is the bucket from the
+   * shared route map (see apps/web/src/lib/analytics-surfaces.ts and its mobile
+   * mirror). `surface` is required because the `surface_views` aggregate reads
+   * it: a page view that arrives without one lands in the `other` bucket, which
+   * is a measurement gap rather than a rejection.
+   */
   page_viewed: {
     category: 'navigation',
-    requiredProperties: ['path'],
+    requiredProperties: ['path', 'surface'],
+  },
+  /**
+   * The library surface was opened. No document id: the surface count is what
+   * the dashboard needs, and which authorities a user browsed is exactly the
+   * research record we do not keep.
+   */
+  library_opened: {
+    category: 'navigation',
+    requiredProperties: ['surface'],
+  },
+  /** The feed surface was viewed — no post, case or document ids. */
+  feed_viewed: {
+    category: 'navigation',
+    requiredProperties: ['surface'],
   },
   feature_discovered: {
     category: 'navigation',

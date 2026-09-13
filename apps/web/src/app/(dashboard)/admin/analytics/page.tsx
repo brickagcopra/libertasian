@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useTransition } from 'react';
 import {
   Users,
   Search,
@@ -17,10 +17,18 @@ import type { LineChartPoint } from '@/components/charts/line-chart';
 import {
   useAnalyticsOverview,
   useAnalyticsFunnel,
+  useAnalyticsSurfaces,
+  useAnalyticsRefresh,
   extractMetric,
   selectMetricRows,
 } from '@/features/analytics/hooks/use-analytics-dashboard';
-import { KpiCard, DateRangeFilter, FunnelChart } from '@/components/analytics';
+import {
+  KpiCard,
+  DateRangeFilter,
+  FunnelChart,
+  SurfaceUsagePanel,
+  AggregationFreshness,
+} from '@/components/analytics';
 import { AdminCardSkeleton } from '@/components/ui/skeleton';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
@@ -41,6 +49,7 @@ function errorMessage(error: unknown): string {
 
 export default function AnalyticsOverviewPage() {
   const [query, setQuery] = useState<AnalyticsDashboardQuery>({});
+  const [isRefreshing, startRefresh] = useTransition();
   const {
     data: overview,
     isLoading: loadingOverview,
@@ -54,6 +63,17 @@ export default function AnalyticsOverviewPage() {
     isError: funnelFailed,
     error: funnelError,
   } = useAnalyticsFunnel('signup_to_activation', query);
+  const {
+    data: surfaces,
+    isLoading: loadingSurfaces,
+    isError: surfacesFailed,
+    error: surfacesError,
+  } = useAnalyticsSurfaces(query);
+
+  // Sends ?refresh=true, so the API skips its 5-minute cache read and
+  // repopulates — a plain refetch would be answered from Redis and a freshly
+  // backfilled day would stay invisible.
+  const refreshAnalytics = useAnalyticsRefresh(query);
 
   const metrics = overview?.metrics ?? [];
 
@@ -86,6 +106,12 @@ export default function AnalyticsOverviewPage() {
       </div>
 
       <DateRangeFilter query={query} onChange={setQuery} showGranularity />
+
+      <AggregationFreshness
+        lastAggregatedAt={overview?.lastAggregatedAt ?? null}
+        onRefresh={() => startRefresh(() => void refreshAnalytics())}
+        isRefreshing={isRefreshing}
+      />
 
       {overviewFailed && (
         <Alert variant="destructive">
@@ -200,6 +226,13 @@ export default function AnalyticsOverviewPage() {
           </CardContent>
         </Card>
       </div>
+
+      <SurfaceUsagePanel
+        metrics={surfaces?.metrics ?? []}
+        isLoading={loadingSurfaces}
+        isError={surfacesFailed}
+        error={surfacesError}
+      />
 
       <Card>
         <CardHeader>
