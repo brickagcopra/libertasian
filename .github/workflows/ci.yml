@@ -157,6 +157,34 @@ jobs:
         working-directory: services/reranker-service
         run: uv run mypy --strict src/
 
+  # worker-service unit suite. Deliberately NO `services:` block: the `test`
+  # job below starts Postgres and Redis containers, and a worker test that
+  # secretly needs a live database or broker would pass there and hide the
+  # dependency. Here any such test fails loudly instead. It also has no
+  # `needs:` so it runs in parallel with everything else.
+  worker-tests:
+    name: Test (worker-service)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install worker-service dependencies
+        working-directory: services/worker-service
+        run: uv sync --frozen --all-extras
+
+      - name: Run worker-service tests
+        working-directory: services/worker-service
+        run: uv run pytest -q
+
   build:
     name: Build
     runs-on: ubuntu-latest
