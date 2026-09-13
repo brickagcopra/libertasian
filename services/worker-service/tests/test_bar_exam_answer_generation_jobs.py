@@ -29,8 +29,18 @@ from src.tasks.bar_exam_answer_tasks import (
 JOB_ID = "job-1"
 
 
-def _job(status: str = "queued", total: int = 3) -> dict[str, Any]:
-    return {"id": JOB_ID, "status": status, "total": total, "only_missing": True}
+def _job(
+    status: str = "queued",
+    total: int = 3,
+    filters: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": JOB_ID,
+        "status": status,
+        "total": total,
+        "only_missing": True,
+        "filters_json": filters if filters is not None else {},
+    }
 
 
 def _items(n: int, offset: int = 0) -> list[dict[str, Any]]:
@@ -345,6 +355,68 @@ class TestRunAnswerGenerationJob:
         assert finished_statuses == ["generated"]
         # And the chain stops: nothing re-enqueues into an exhausted budget.
         mock_apply_async.assert_not_called()
+
+    @patch("src.tasks.bar_exam_answer_tasks.run_answer_generation_job.apply_async")
+    @patch("src.tasks.bar_exam_answer_tasks._generate_one")
+    @patch("src.tasks.bar_exam_answer_tasks.db")
+    def test_regenerate_pending_is_read_off_the_job_row(
+        self,
+        mock_db: MagicMock,
+        mock_generate: MagicMock,
+        mock_apply_async: MagicMock,
+    ) -> None:
+        """The flag lives in filters_json, not on every item.
+
+        `_generate_one`'s delete is restricted to review_status='pending', so
+        an approved or rejected answer survives force_regenerate whatever the
+        job row says — but the worker still has to ASK for it, or a
+        regenerate job silently skips every question that already has one.
+        """
+        mock_db.BAR_EXAM_JOB_TERMINAL_STATUSES = frozenset({"completed"})
+        mock_db.get_bar_exam_generation_job.return_value = _job(
+            total=1,
+            filters={"regeneratePending": True, "maxConfidence": 0.7},
+        )
+        mock_db.get_bar_exam_generation_job_status.return_value = "running"
+        mock_db.claim_bar_exam_generation_items.return_value = _items(1)
+        mock_db.count_bar_exam_generation_items_by_status.return_value = {
+            "generated": 1,
+        }
+        mock_generate.return_value = {
+            "status": "generated",
+            "answer_id": "a1",
+            "confidence": 0.9,
+        }
+
+        run_answer_generation_job.run(JOB_ID)
+
+        assert mock_generate.call_args.kwargs["force_regenerate"] is True
+
+    @patch("src.tasks.bar_exam_answer_tasks.run_answer_generation_job.apply_async")
+    @patch("src.tasks.bar_exam_answer_tasks._generate_one")
+    @patch("src.tasks.bar_exam_answer_tasks.db")
+    def test_an_ordinary_job_never_forces_regeneration(
+        self,
+        mock_db: MagicMock,
+        mock_generate: MagicMock,
+        mock_apply_async: MagicMock,
+    ) -> None:
+        mock_db.BAR_EXAM_JOB_TERMINAL_STATUSES = frozenset({"completed"})
+        mock_db.get_bar_exam_generation_job.return_value = _job(total=1)
+        mock_db.get_bar_exam_generation_job_status.return_value = "running"
+        mock_db.claim_bar_exam_generation_items.return_value = _items(1)
+        mock_db.count_bar_exam_generation_items_by_status.return_value = {
+            "generated": 1,
+        }
+        mock_generate.return_value = {
+            "status": "generated",
+            "answer_id": "a1",
+            "confidence": 0.9,
+        }
+
+        run_answer_generation_job.run(JOB_ID)
+
+        assert mock_generate.call_args.kwargs["force_regenerate"] is False
 
     @patch("src.tasks.bar_exam_answer_tasks.run_answer_generation_job.apply_async")
     @patch("src.tasks.bar_exam_answer_tasks._generate_one")

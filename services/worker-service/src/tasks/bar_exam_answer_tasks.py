@@ -661,6 +661,15 @@ def run_answer_generation_job(self: Any, job_id: str) -> dict[str, Any]:
         )
         return {"job_id": job_id, "status": str(job["status"]), "processed": 0}
 
+    # Set by the API when the dispatch asked to replace answers that are
+    # still pending review. `_generate_one`'s delete is restricted to
+    # `review_status = 'pending'`, so an approved or rejected answer survives
+    # this flag no matter what the job row says.
+    filters = job.get("filters_json")
+    force_regenerate = bool(
+        isinstance(filters, dict) and filters.get("regeneratePending"),
+    )
+
     db.reset_stale_bar_exam_generation_items(job_id, STALE_RUNNING_MINUTES)
     db.mark_bar_exam_generation_job_running(job_id)
 
@@ -699,7 +708,7 @@ def run_answer_generation_job(self: Any, job_id: str) -> dict[str, Any]:
             }
 
         try:
-            result = _generate_one(question_id)
+            result = _generate_one(question_id, force_regenerate=force_regenerate)
         except BudgetExceededError as exc:
             db.release_bar_exam_generation_items(pending_items)
             db.set_bar_exam_generation_job_status(job_id, "paused_budget")

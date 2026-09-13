@@ -96,6 +96,15 @@ export interface YearSubjectCount {
 export interface DispatchDryRunResult {
   dryRun: true;
   total: number;
+  /** Questions with no ai_generated answer at all. */
+  missing: number;
+  /**
+   * Questions whose PENDING answer would be replaced. Reported separately
+   * because these are the only questions where a dispatch destroys something
+   * that already exists; a single total would hide that behind a bigger
+   * number than the admin expected.
+   */
+  replacingPending: number;
   byYearSubject: YearSubjectCount[];
 }
 
@@ -185,6 +194,8 @@ interface ResolvedQuestion {
   id: string;
   year: number;
   subjectCode: string | null;
+  /** True when a PENDING ai_generated answer exists and will be replaced. */
+  replacesPending: boolean;
 }
 
 const QUESTION_EXCERPT_LENGTH = 220;
@@ -640,7 +651,14 @@ export class AdminBarExamAnswersService {
     const byYearSubject = groupByYearSubject(resolved);
 
     if (dto.dryRun) {
-      return { dryRun: true, total: resolved.length, byYearSubject };
+      const replacingPending = resolved.filter((q) => q.replacesPending).length;
+      return {
+        dryRun: true,
+        total: resolved.length,
+        missing: resolved.length - replacingPending,
+        replacingPending,
+        byYearSubject,
+      };
     }
 
     if (resolved.length === 0) {
@@ -664,6 +682,11 @@ export class AdminBarExamAnswersService {
             subjectCode: dto.subjectCode ?? null,
             allMissing: dto.allMissing ?? false,
             onlyMissing,
+            // The worker reads this back off the job row: it is what turns
+            // `force_regenerate` on for every item, and the only record of
+            // why an existing answer disappeared.
+            regeneratePending: dto.regeneratePending ?? false,
+            maxConfidence: dto.maxConfidence ?? null,
           },
         },
         select: { id: true },
@@ -958,6 +981,15 @@ export class AdminBarExamAnswersService {
   private async resolveQuestions(
     dto: DispatchAnswerGenerationDto,
   ): Promise<ResolvedQuestion[]> {
+    if (dto.maxConfidence !== undefined && !dto.regeneratePending) {
+      // maxConfidence only ever narrows the set of PENDING answers to
+      // replace. Accepting it alone would silently ignore it and dispatch a
+      // different job than the one the admin described.
+      throw new BadRequestException(
+        'maxConfidence applies only with regeneratePending=true.',
+      );
+    }
+
     const where: Prisma.BarExamQuestionWhereInput = {};
 
     if (dto.questionIds && dto.questionIds.length > 0) {
@@ -977,12 +1009,43 @@ export class AdminBarExamAnswersService {
       }
     }
 
-    // The bug this fixes: the resolver used to take the first 51 questions by
-    // question number and never exclude questions that already had an answer,
-    // so re-dispatching a filter re-picked the same already-answered rows and
-    // the worker skipped every one of them. Generation could not get past the
-    // first 50 of any filter, ever.
-    if (this.effectiveOnlyMissing(dto)) {
+    if (dto.regeneratePending) {
+      // "Missing OR still pending", and nothing else. This clause REPLACES
+      // the onlyMissing one rather than combining with it, which is what
+      // guarantees the spec's hard rule: an approved or rejected answer is
+      // never targeted. The worker's delete is also pending-only, so the two
+      // guards agree — but a resolver that could hand it an approved question
+      // would be relying on that second guard to hold the line.
+      where.OR = [
+        { answers: { none: { answerType: 'ai_generated' } } },
+        {
+          answers: {
+            some: {
+              answerType: 'ai_generated',
+              reviewStatus: 'pending',
+              ...(dto.maxConfidence !== undefined
+                ? {
+                    // An unscored (NULL) answer was never measured on the
+                    // grounded terms, so a score ceiling must not exclude it:
+                    // `confidence < x` alone is NULL-excluding in SQL and
+                    // would quietly skip exactly the v1 rows most worth
+                    // regenerating.
+                    OR: [
+                      { confidence: { lt: dto.maxConfidence } },
+                      { confidence: null },
+                    ],
+                  }
+                : {}),
+            },
+          },
+        },
+      ];
+    } else if (this.effectiveOnlyMissing(dto)) {
+      // The bug this fixes: the resolver used to take the first 51 questions
+      // by question number and never exclude questions that already had an
+      // answer, so re-dispatching a filter re-picked the same already-answered
+      // rows and the worker skipped every one of them. Generation could not
+      // get past the first 50 of any filter, ever.
       where.answers = { none: { answerType: 'ai_generated' } };
     }
 
@@ -991,6 +1054,10 @@ export class AdminBarExamAnswersService {
       select: {
         id: true,
         barExamSitting: { select: { year: true, subjectStudyCode: true } },
+        answers: {
+          where: { answerType: 'ai_generated' },
+          select: { reviewStatus: true },
+        },
       },
       orderBy: [{ barExamSittingId: 'asc' }, { questionNumber: 'asc' }],
     });
@@ -999,6 +1066,9 @@ export class AdminBarExamAnswersService {
       id: r.id,
       year: r.barExamSitting.year,
       subjectCode: r.barExamSitting.subjectStudyCode,
+      replacesPending: (r.answers ?? []).some(
+        (a) => a.reviewStatus === 'pending',
+      ),
     }));
   }
 }

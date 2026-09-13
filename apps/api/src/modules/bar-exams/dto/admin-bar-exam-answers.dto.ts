@@ -181,6 +181,32 @@ export class DispatchAnswerGenerationDto {
 
   @ApiPropertyOptional({
     description:
+      'Also target questions whose ai_generated answer is still PENDING ' +
+      'review — the worker regenerates those in place. Approved and ' +
+      'rejected answers are never targeted, whatever else is set.',
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  regeneratePending?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'With regeneratePending: only replace pending answers scoring BELOW ' +
+      'this, plus unscored (NULL confidence) ones — an unscored answer was ' +
+      'never measured, so it is never excluded by a score ceiling.',
+    minimum: 0,
+    maximum: 1,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(1)
+  maxConfidence?: number;
+
+  @ApiPropertyOptional({
+    description:
       'Resolve and count only. Creates no job and no items; returns the ' +
       'total plus a per-year/subject breakdown.',
     default: false,

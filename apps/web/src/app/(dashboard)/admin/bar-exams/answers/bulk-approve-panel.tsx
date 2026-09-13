@@ -107,7 +107,7 @@ export function BulkApprovePanel({
             <Input
               id="bulk-confidence"
               type="number"
-              step="0.01"
+              step="any"
               min={MIN_BULK_CONFIDENCE}
               max={1}
               className="w-28"

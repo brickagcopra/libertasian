@@ -1792,11 +1792,17 @@ BAR_EXAM_JOB_TERMINAL_STATUSES = frozenset(
 
 
 def get_bar_exam_generation_job(job_id: str) -> dict[str, Any] | None:
-    """Fetch ``{id, status, total, only_missing}`` for a generation job."""
+    """Fetch ``{id, status, total, only_missing, filters_json}`` for a job.
+
+    ``filters_json`` is read because it carries ``regeneratePending``: the API
+    stores that flag on the job rather than on every item, so the worker has
+    to read it back here to know whether an existing pending answer should be
+    replaced or skipped.
+    """
     with get_connection() as conn, \
             conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
-            """SELECT id, status, total, only_missing
+            """SELECT id, status, total, only_missing, filters_json
                FROM bar_exam_answer_generation_jobs
                WHERE id = %s""",
             (job_id,),
