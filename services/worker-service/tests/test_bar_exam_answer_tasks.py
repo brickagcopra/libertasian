@@ -3,7 +3,7 @@
 Covers:
 - happy path: generates + writes row + records model_run
 - idempotency: skips when an ai_generated row already exists
-- 50-cap: requests over MAX_QUESTIONS_PER_DISPATCH are truncated
+- no cap: every requested question is generated (the old 50-cap is gone)
 - not found: missing question returns question_not_found, no LLM call
 - invalid JSON output: marked llm_invalid_json, no row written
 - missing-fields output: marked llm_malformed, no row written
@@ -18,7 +18,6 @@ from unittest.mock import MagicMock, patch
 
 from src.tasks import bar_exam_answer_tasks
 from src.tasks.bar_exam_answer_tasks import (
-    MAX_QUESTIONS_PER_DISPATCH,
     generate_answers_for_questions,
 )
 
@@ -188,13 +187,15 @@ class TestGenerateAnswersForQuestions:
 
     @patch("src.tasks.bar_exam_answer_tasks.rag_client")
     @patch("src.tasks.bar_exam_answer_tasks.db")
-    def test_caps_at_max_questions_per_dispatch(
+    def test_generates_every_requested_question_without_a_cap(
         self,
         mock_db: MagicMock,
         mock_rag: MagicMock,
     ) -> None:
-        # 50 + 5 overflow — the 5 must be dropped before any LLM call.
-        ids = [f"q-{i}" for i in range(MAX_QUESTIONS_PER_DISPATCH + 5)]
+        # The old 50-cap silently dropped the tail of a request, which is how
+        # re-dispatching a filter kept re-picking the same already-answered
+        # first 50. 55 in, 55 generated.
+        ids = [f"q-{i}" for i in range(55)]
         mock_db.bar_exam_answer_exists.return_value = False
         mock_db.get_bar_exam_question_with_context.return_value = FAKE_QUESTION
         mock_db.create_model_run.return_value = "run-1"
@@ -204,11 +205,10 @@ class TestGenerateAnswersForQuestions:
 
         result = generate_answers_for_questions.run(ids)
 
-        assert result["requested"] == MAX_QUESTIONS_PER_DISPATCH + 5
-        assert result["capped"] == MAX_QUESTIONS_PER_DISPATCH
-        assert result["generated"] == MAX_QUESTIONS_PER_DISPATCH
-        # Only the first 50 questions hit the LLM.
-        assert mock_rag.generate_completion.call_count == MAX_QUESTIONS_PER_DISPATCH
+        assert result["requested"] == 55
+        assert result["generated"] == 55
+        assert "capped" not in result
+        assert mock_rag.generate_completion.call_count == 55
 
     @patch("src.tasks.bar_exam_answer_tasks.rag_client")
     @patch("src.tasks.bar_exam_answer_tasks.db")

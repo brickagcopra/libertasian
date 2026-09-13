@@ -1777,3 +1777,209 @@ def create_bar_exam_answer(
         review_status,
     )
     return answer_id
+
+
+# ─── Bar exam answer generation jobs (Phase 3b) ───────────────────────────
+#
+# The job/item tables are written by NestJS (Prisma owns the schema) and
+# advanced by the worker. Counts are never stored on the job row — every
+# reader computes them with GROUP BY over the items, so two chunks finishing
+# concurrently cannot race into a wrong total.
+
+BAR_EXAM_JOB_TERMINAL_STATUSES = frozenset(
+    {"completed", "completed_with_failures", "cancelled"},
+)
+
+
+def get_bar_exam_generation_job(job_id: str) -> dict[str, Any] | None:
+    """Fetch ``{id, status, total, only_missing}`` for a generation job."""
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """SELECT id, status, total, only_missing
+               FROM bar_exam_answer_generation_jobs
+               WHERE id = %s""",
+            (job_id,),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def get_bar_exam_generation_job_status(job_id: str) -> str | None:
+    """Cheap status read — called before every item so a cancel lands fast."""
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT status FROM bar_exam_answer_generation_jobs WHERE id = %s",
+            (job_id,),
+        )
+        row = cur.fetchone()
+        return str(row[0]) if row else None
+
+
+def mark_bar_exam_generation_job_running(job_id: str) -> None:
+    """Flip a queued / paused_budget job to running and stamp started_at.
+
+    ``started_at`` is only set the first time, so a job resumed after a
+    budget pause keeps its original start.
+    """
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """UPDATE bar_exam_answer_generation_jobs
+                   SET status = 'running',
+                       started_at = COALESCE(started_at, NOW())
+                   WHERE id = %s
+                     AND status IN ('queued', 'paused_budget', 'running')""",
+            (job_id,),
+        )
+
+
+def set_bar_exam_generation_job_status(
+    job_id: str,
+    status: str,
+    finished: bool = False,
+) -> None:
+    """Set the job status; stamp ``finished_at`` for terminal transitions."""
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """UPDATE bar_exam_answer_generation_jobs
+                   SET status = %s,
+                       finished_at = CASE WHEN %s THEN NOW() ELSE finished_at END
+                   WHERE id = %s""",
+            (status, finished, job_id),
+        )
+    logger.info(
+        "bar_exam generation job %s -> %s%s",
+        job_id,
+        status,
+        " (finished)" if finished else "",
+    )
+
+
+def reset_stale_bar_exam_generation_items(
+    job_id: str,
+    stale_after_minutes: int = 15,
+) -> int:
+    """Return items stuck in ``running`` to ``queued``.
+
+    A worker killed mid-item leaves its claim behind; without this the item
+    is never retried and the job can never finish. ``attempts`` is left as-is
+    — it counts claims, and the claim did happen.
+    """
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """UPDATE bar_exam_answer_generation_items
+                   SET status = 'queued', updated_at = NOW()
+                   WHERE job_id = %s
+                     AND status = 'running'
+                     AND updated_at < NOW() - (%s * INTERVAL '1 minute')
+                   RETURNING id""",
+            (job_id, stale_after_minutes),
+        )
+        reset = len(cur.fetchall())
+    if reset:
+        logger.warning(
+            "bar_exam generation job %s: reset %d stale running item(s)",
+            job_id,
+            reset,
+        )
+    return reset
+
+
+def claim_bar_exam_generation_items(
+    job_id: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Claim up to ``limit`` queued items for this job.
+
+    ``FOR UPDATE SKIP LOCKED`` inside a CTE is what makes two workers running
+    the same job safe: each takes a disjoint slice instead of both generating
+    an answer for the same question.
+    """
+    if limit <= 0:
+        return []
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """WITH claimed AS (
+                   SELECT id
+                   FROM bar_exam_answer_generation_items
+                   WHERE job_id = %s AND status = 'queued'
+                   ORDER BY id
+                   LIMIT %s
+                   FOR UPDATE SKIP LOCKED
+               )
+               UPDATE bar_exam_answer_generation_items i
+                   SET status = 'running',
+                       attempts = i.attempts + 1,
+                       updated_at = NOW()
+                   FROM claimed
+                   WHERE i.id = claimed.id
+                   RETURNING i.id, i.question_id, i.attempts""",
+            (job_id, limit),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+def finish_bar_exam_generation_item(
+    item_id: str,
+    status: str,
+    error_code: str | None = None,
+    error_message: str | None = None,
+    answer_id: str | None = None,
+    confidence: float | None = None,
+) -> None:
+    """Record the outcome of one item.
+
+    ``error_message`` is truncated to 500 characters here as well as at the
+    call site — this row is rendered in the admin UI, so a runaway driver
+    message must not reach it whichever path wrote it.
+    """
+    trimmed = error_message[:500] if error_message else None
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """UPDATE bar_exam_answer_generation_items
+                   SET status = %s,
+                       error_code = %s,
+                       error_message = %s,
+                       answer_id = %s,
+                       confidence = %s,
+                       updated_at = NOW()
+                   WHERE id = %s""",
+            (status, error_code, trimmed, answer_id, confidence, item_id),
+        )
+
+
+def release_bar_exam_generation_items(item_ids: list[str]) -> int:
+    """Put claimed items back to ``queued`` without recording an outcome.
+
+    Used when a job is cancelled mid-chunk, and when the LLM budget is
+    exhausted: the item never produced a result, so marking it failed would
+    be a lie and would make ``retry-failed`` the only way to resume.
+    """
+    if not item_ids:
+        return 0
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """UPDATE bar_exam_answer_generation_items
+                   SET status = 'queued', updated_at = NOW()
+                   WHERE id = ANY(%s::uuid[])
+                     AND status = 'running'
+                   RETURNING id""",
+            (item_ids,),
+        )
+        return len(cur.fetchall())
+
+
+def count_bar_exam_generation_items_by_status(
+    job_id: str,
+) -> dict[str, int]:
+    """``{status: count}`` over one job's items — the job's only counters."""
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT status, COUNT(*)
+               FROM bar_exam_answer_generation_items
+               WHERE job_id = %s
+               GROUP BY status""",
+            (job_id,),
+        )
+        return {str(row[0]): int(row[1]) for row in cur.fetchall()}

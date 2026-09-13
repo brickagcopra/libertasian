@@ -15,6 +15,60 @@ from ..config import settings
 logger = logging.getLogger(__name__)
 
 
+class BudgetExceededError(httpx.HTTPStatusError):
+    """rag-service refused an LLM call because a budget ceiling is exhausted.
+
+    rag-service reports this as HTTP 503 with ``{"code": "budget_exceeded",
+    "scope": ..., "period": ...}`` (see ``rag-service/src/main.py``'s
+    ``budget_exceeded_handler``). Without this class every caller sees a
+    generic ``HTTPStatusError`` and treats an exhausted budget the same as a
+    crashed service — which, for a long chunked run, means burning through
+    every remaining item marking it failed.
+
+    It subclasses ``httpx.HTTPStatusError`` so the existing ``except
+    httpx.HTTPStatusError`` handlers in the derivative tasks keep catching it
+    unchanged; only callers that want to react specifically need to name it.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        request: httpx.Request,
+        response: httpx.Response,
+        scope: str | None = None,
+        period: str | None = None,
+    ) -> None:
+        super().__init__(message, request=request, response=response)
+        self.scope = scope
+        self.period = period
+
+
+def _raise_for_budget(response: httpx.Response) -> None:
+    """Turn rag-service's budget 503 into :class:`BudgetExceededError`.
+
+    Any other status (including a 503 that is a genuine outage) is left to
+    ``raise_for_status``.
+    """
+    if response.status_code != 503:
+        return
+    try:
+        body = response.json()
+    except ValueError:
+        return
+    if not isinstance(body, dict) or body.get("code") != "budget_exceeded":
+        return
+    scope = body.get("scope")
+    period = body.get("period")
+    raise BudgetExceededError(
+        f"LLM budget exceeded (scope={scope or 'global'}, period={period})",
+        request=response.request,
+        response=response,
+        scope=scope if isinstance(scope, str) else None,
+        period=period if isinstance(period, str) else None,
+    )
+
+
 def _internal_headers() -> dict[str, str]:
     """Return auth headers for internal service-to-service calls."""
     return {"X-Internal-Api-Key": settings.internal_api_key}
@@ -209,6 +263,11 @@ def generate_completion(
 
     Returns:
         Dict with content (str or dict), model_name, tokens_in, tokens_out.
+
+    Raises:
+        BudgetExceededError: rag-service refused the call because a monthly
+            or daily ceiling is exhausted. Callers that run long batches
+            should stop rather than mark every remaining unit failed.
     """
     url = f"{settings.rag_service_url}/completions/generate"
     payload: dict[str, Any] = {
@@ -222,5 +281,6 @@ def generate_completion(
 
     with httpx.Client(timeout=settings.rag_request_timeout) as client:
         response = client.post(url, json=payload, headers=_internal_headers())
+        _raise_for_budget(response)
         response.raise_for_status()
         return response.json()
