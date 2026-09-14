@@ -34,6 +34,20 @@ def mock_in_window():
         yield
 
 
+@pytest.fixture(autouse=True)
+def mock_nestjs_client():
+    """Patch the indexing client for every test in this module.
+
+    autouse because `ingest_sitting` now indexes on every successful write:
+    without it the older tests would issue a real POST at the configured API
+    URL. Defaults to success, so a test that does not mention indexing reads
+    as "indexing worked".
+    """
+    with patch("src.tasks.bar_exam_tasks.nestjs_client") as client:
+        client.trigger_opensearch_index.return_value = True
+        yield client
+
+
 @pytest.fixture()
 def mock_db_for_bar_tasks():
     """Patch the ingestion_db_client module imported by the bar-exam task."""
@@ -626,3 +640,162 @@ class TestChangedQuestionAnswers:
         assert deletes == [], f"a delete ran on a shrinking parse: {deletes}"
         audit = mock_db_for_bar_tasks.create_audit_log.call_args.kwargs["metadata"]
         assert audit["questions_missing_from_parse"] == [23, 24]
+
+
+# ---------------------------------------------------------------------------
+# OpenSearch, on re-ingest. All 105 bar-exam documents are indexed in both
+# legal_documents_keyword and legal_documents_vector (1,748 entries), and the
+# 2015 criminal document is indexed with its INSTRUCTION text — fixing
+# PostgreSQL alone would leave search answering from the wrong rows.
+# ---------------------------------------------------------------------------
+
+
+class TestOpenSearchReindex:
+    def test_a_reused_document_is_re_indexed_with_replace(
+        self,
+        mock_in_window,  # noqa: ARG001
+        mock_db_for_bar_tasks,
+        mock_nestjs_client,
+        mock_lawphil_bar_fetcher_2015_criminal,  # noqa: ARG001
+    ):
+        """Sections were deleted and re-created, so the old entries have to go.
+
+        `indexLegalDocument` upserts the sections that exist now; nothing in
+        it can remove an entry for a section id that no longer exists in
+        PostgreSQL. Only `replace=True` clears them.
+        """
+        document_id = str(uuid.uuid4())
+        mock_db_for_bar_tasks.find_bar_exam_sitting.return_value = _sitting_row(
+            document_id, str(uuid.uuid4()),
+        )
+
+        from src.tasks.bar_exam_tasks import ingest_sitting
+
+        result = ingest_sitting(year=2015, subject_slug="criminalQ")
+
+        assert result["status"] == "completed"
+        assert result["indexed"] is True
+        mock_nestjs_client.trigger_opensearch_index.assert_called_once_with(
+            document_id, replace=True,
+        )
+
+    def test_a_brand_new_document_is_indexed_without_replace(
+        self,
+        mock_in_window,  # noqa: ARG001
+        mock_db_for_bar_tasks,
+        mock_nestjs_client,
+        mock_lawphil_bar_fetcher_2015_criminal,  # noqa: ARG001
+    ):
+        """Nothing stale exists to clear, and a delete-then-index would take
+        the document out of search for the duration for no reason."""
+        new_document_id = str(uuid.uuid4())
+        mock_db_for_bar_tasks.find_bar_exam_sitting.return_value = None
+        mock_db_for_bar_tasks.create_legal_document.return_value = new_document_id
+
+        from src.tasks.bar_exam_tasks import ingest_sitting
+
+        result = ingest_sitting(year=2015, subject_slug="criminalQ")
+
+        assert result["indexed"] is True
+        mock_nestjs_client.trigger_opensearch_index.assert_called_once_with(
+            new_document_id, replace=False,
+        )
+
+    def test_an_aborted_re_ingest_indexes_nothing(
+        self,
+        mock_in_window,  # noqa: ARG001
+        mock_db_for_bar_tasks,
+        mock_nestjs_client,
+        mock_lawphil_bar_fetcher_2015_criminal,  # noqa: ARG001
+    ):
+        """Nothing was written, so there is nothing to re-index — and a
+        `replace` here would delete live entries and re-index the OLD
+        sections, which is strictly worse than doing nothing."""
+        mock_db_for_bar_tasks.find_bar_exam_sitting.return_value = _sitting_row(
+            str(uuid.uuid4()), str(uuid.uuid4()),
+        )
+        mock_db_for_bar_tasks.count_section_references.return_value = {
+            "citations": 2,
+        }
+
+        from src.tasks.bar_exam_tasks import ingest_sitting
+
+        result = ingest_sitting(year=2015, subject_slug="criminalQ")
+
+        assert result["status"] == "sections_referenced"
+        assert "indexed" not in result
+        mock_nestjs_client.trigger_opensearch_index.assert_not_called()
+
+    def test_a_page_that_parses_to_nothing_indexes_nothing(
+        self,
+        mock_in_window,  # noqa: ARG001
+        mock_db_for_bar_tasks,  # noqa: ARG001
+        mock_nestjs_client,
+    ):
+        """No questions were written, so the document is untouched."""
+        with patch("src.tasks.bar_exam_tasks.LawphilBarFetcher") as fetcher_cls:
+            instance = MagicMock()
+            instance.fetch_content.return_value = FetchedContent(
+                url="https://lawphil.net/courts/bm/barQ/2015/criminalQ.html",
+                html="<html><body><p>Not a bar exam page.</p></body></html>",
+                status_code=200,
+                content_type="text/html",
+                fetched_at="2026-09-14T18:00:00+00:00",
+            )
+            fetcher_cls.return_value = instance
+
+            from src.tasks.bar_exam_tasks import ingest_sitting
+
+            result = ingest_sitting(year=2015, subject_slug="criminalQ")
+
+        assert result["status"] == "no_questions"
+        mock_nestjs_client.trigger_opensearch_index.assert_not_called()
+
+    def test_an_indexing_failure_does_not_fail_the_ingest(
+        self,
+        mock_in_window,  # noqa: ARG001
+        mock_db_for_bar_tasks,
+        mock_nestjs_client,
+        mock_lawphil_bar_fetcher_2015_criminal,  # noqa: ARG001
+    ):
+        """The questions are already committed. Losing them to a search-index
+        failure would be the worse outcome by far; the run says `indexed:
+        False` and someone re-triggers it."""
+        mock_db_for_bar_tasks.find_bar_exam_sitting.return_value = _sitting_row(
+            str(uuid.uuid4()), str(uuid.uuid4()),
+        )
+        mock_nestjs_client.trigger_opensearch_index.return_value = False
+
+        from src.tasks.bar_exam_tasks import ingest_sitting
+
+        result = ingest_sitting(year=2015, subject_slug="criminalQ")
+
+        assert result["status"] == "completed"
+        assert result["questions_parsed"] == 22
+        assert result["indexed"] is False
+        audit = mock_db_for_bar_tasks.create_audit_log.call_args.kwargs["metadata"]
+        assert audit["indexed"] is False
+
+    def test_an_indexing_client_exception_does_not_fail_the_ingest(
+        self,
+        mock_in_window,  # noqa: ARG001
+        mock_db_for_bar_tasks,
+        mock_nestjs_client,
+        mock_lawphil_bar_fetcher_2015_criminal,  # noqa: ARG001
+    ):
+        """`trigger_opensearch_index` returns False for HTTP failures, but a
+        misconfigured URL raises instead — that must not undo the ingest
+        either."""
+        mock_db_for_bar_tasks.find_bar_exam_sitting.return_value = _sitting_row(
+            str(uuid.uuid4()), str(uuid.uuid4()),
+        )
+        mock_nestjs_client.trigger_opensearch_index.side_effect = RuntimeError(
+            "invalid API url",
+        )
+
+        from src.tasks.bar_exam_tasks import ingest_sitting
+
+        result = ingest_sitting(year=2015, subject_slug="criminalQ")
+
+        assert result["status"] == "completed"
+        assert result["indexed"] is False

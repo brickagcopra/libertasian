@@ -99,6 +99,55 @@ class TestSuccess:
         assert nestjs_client.trigger_opensearch_index(DOC_ID) is True
 
 
+class TestReplaceFlag:
+    """``replace=True`` is the only difference between the two callers.
+
+    Everything else — the header, the retry envelope, the return contract —
+    is shared, so these tests pin the URL and that the default is untouched.
+    The default path matters: the auto-publish and reindex backfills use it
+    for documents whose sections have not changed, where deleting first would
+    take a live document out of search for no benefit.
+    """
+
+    def test_the_default_sends_no_query_string(self, responder: Any) -> None:
+        seen = responder([_ok()])
+        nestjs_client.trigger_opensearch_index(DOC_ID)
+        assert str(seen[0].url).endswith(f"/search/internal/index/{DOC_ID}")
+        assert seen[0].url.query == b""
+
+    def test_replace_true_asks_for_a_replace(self, responder: Any) -> None:
+        seen = responder([_ok()])
+        assert (
+            nestjs_client.trigger_opensearch_index(DOC_ID, replace=True) is True
+        )
+        assert str(seen[0].url).endswith(
+            f"/search/internal/index/{DOC_ID}?replace=true"
+        )
+
+    def test_replace_false_is_the_default_path(self, responder: Any) -> None:
+        seen = responder([_ok()])
+        nestjs_client.trigger_opensearch_index(DOC_ID, replace=False)
+        assert seen[0].url.query == b""
+
+    def test_the_replace_call_retries_the_same_way(
+        self, responder: Any, sleeps: list[float]
+    ) -> None:
+        seen = responder([_status(429), _ok()])
+        assert (
+            nestjs_client.trigger_opensearch_index(DOC_ID, replace=True) is True
+        )
+        assert len(seen) == 2
+        assert len(sleeps) == 1
+        assert all("replace=true" in str(request.url) for request in seen)
+
+    def test_the_replace_call_still_sends_the_api_key(
+        self, responder: Any
+    ) -> None:
+        seen = responder([_ok()])
+        nestjs_client.trigger_opensearch_index(DOC_ID, replace=True)
+        assert seen[0].headers["X-Internal-Api-Key"] == settings.internal_api_key
+
+
 class TestRetryable:
     def test_429_then_200_succeeds(
         self, responder: Any, sleeps: list[float]

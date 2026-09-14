@@ -81,13 +81,21 @@ def _backoff_delay(attempt: int) -> float:
     return random.uniform(0.0, base * (2 ** (attempt - 1)))
 
 
-def trigger_opensearch_index(document_id: str) -> bool:
+def trigger_opensearch_index(document_id: str, replace: bool = False) -> bool:
     """Call NestJS internal endpoint to index a document in OpenSearch.
 
     Retries up to ``settings.opensearch_index_max_attempts`` times on 429,
     5xx, timeouts and connection errors, with jittered exponential backoff
     (``settings.opensearch_index_retry_base_delay``) and honouring
     ``Retry-After`` when the server sends one. 401 and 404 are not retried.
+
+    ``replace=True`` adds ``?replace=true``, which makes the API delete the
+    document's existing keyword and vector entries before re-indexing it. Use
+    it only when the document's SECTIONS were replaced: the plain index call
+    upserts the sections that exist now and cannot remove entries for sections
+    that no longer do. For an unchanged document it would take it out of
+    search for the duration of the re-index and buy nothing, so it is opt-in
+    and every existing caller keeps the default.
 
     Returns True if indexing was triggered successfully, False after every
     attempt has been spent. Non-blocking to the publish flow — failures are
@@ -97,6 +105,8 @@ def trigger_opensearch_index(document_id: str) -> bool:
     query to diagnose.
     """
     url = f"{settings.nestjs_api_url}/search/internal/index/{document_id}"
+    if replace:
+        url += "?replace=true"
     attempts = max(1, settings.opensearch_index_max_attempts)
     last_outcome = "no attempt made"
 

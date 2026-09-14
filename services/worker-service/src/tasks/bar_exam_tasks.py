@@ -26,6 +26,7 @@ from celery import shared_task
 
 from ..backfill.fetch_window import is_in_fetch_window
 from ..clients import ingestion_db_client as db
+from ..clients import nestjs_client
 from ..fetchers.base import CloudflareBlockedError
 from ..fetchers.lawphil_bar import LawphilBarFetcher
 from ..parsers.lawphil_bar_html import (
@@ -356,11 +357,24 @@ def ingest_sitting(
         source_url=url,
     )
 
+    # Keep OpenSearch in step with what we just wrote. `replace=True` only
+    # for the reuse path, because that is the path that deleted section rows:
+    # `indexLegalDocument` upserts the sections a document has now and has no
+    # way to remove entries for sections that no longer exist, which is how
+    # prod ended up with the 2015 criminal paper searchable under its
+    # instruction text. A brand-new document has nothing stale to clear.
+    #
+    # Best-effort by design: the questions are already committed, and a search
+    # index that lags is a worse outcome to cause than to report. `indexed`
+    # says which happened, in the telemetry and in the audit row.
+    indexed = _index_document(document_id, replace=existing_document_id is not None)
+
     telemetry = {
         "year": year,
         "subject_slug": subject_slug,
         "document_id": document_id,
         "document_reused": existing_document_id is not None,
+        "indexed": indexed,
         "questions_parsed": len(questions),
         "questions_written": written,
         "expected_items": page.expected_items,
@@ -383,6 +397,36 @@ def ingest_sitting(
         "sitting_id": sitting_id,
         **telemetry,
     }
+
+
+def _index_document(document_id: str, replace: bool) -> bool:
+    """Trigger OpenSearch indexing. Never raises into the ingest.
+
+    ``trigger_opensearch_index`` already swallows HTTP failures and returns
+    False; this wrapper exists for the layer below that — a misconfigured API
+    URL or an unexpected client error should not undo an ingest that has
+    already committed its questions.
+    """
+    try:
+        indexed = nestjs_client.trigger_opensearch_index(
+            document_id,
+            replace=replace,
+        )
+    except Exception:
+        logger.exception(
+            "bar_exam.ingest_sitting: OpenSearch index trigger raised for "
+            "document %s",
+            document_id,
+        )
+        return False
+    if not indexed:
+        logger.warning(
+            "bar_exam.ingest_sitting: OpenSearch indexing failed for document "
+            "%s (replace=%s) — questions are written, search is stale",
+            document_id,
+            replace,
+        )
+    return indexed
 
 
 def _handle_changed_questions(
