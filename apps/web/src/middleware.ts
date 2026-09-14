@@ -36,6 +36,10 @@ const PUBLIC_PATHS = [
   '/forgot-password',
   '/reset-password',
   '/verify-email',
+  // The invite link is emailed to someone who may have no account at all. A
+  // redirect to /login here would hide the organization and role they are
+  // being offered, and strip the ?token= the accept call needs.
+  '/accept-invite',
   '/auth/callback',
   '/onboarding',
   // app/icon.svg is served at /icon.svg. Browsers request the favicon with no

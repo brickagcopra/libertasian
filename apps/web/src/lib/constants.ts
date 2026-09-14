@@ -8,6 +8,7 @@ export const ROUTES = {
   FORGOT_PASSWORD: '/forgot-password',
   RESET_PASSWORD: '/reset-password',
   VERIFY_EMAIL: '/verify-email',
+  ACCEPT_INVITE: '/accept-invite',
   AUTH_CALLBACK: '/auth/callback',
   ONBOARDING: '/onboarding',
   SEARCH: '/search',

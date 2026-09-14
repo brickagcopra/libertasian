@@ -23,8 +23,13 @@ function VerifyEmailContent() {
   // with the plan preselected instead of the /search default.
   const plan = searchParams.get('plan');
   const coupon = searchParams.get('coupon');
+  // An explicit ?from= (an organization invite's /accept-invite return path,
+  // carried through /register) wins over the checkout-intent default.
+  const from = searchParams.get('from');
   let signInHref: string = ROUTES.LOGIN;
-  if (plan) {
+  if (from) {
+    signInHref = `${ROUTES.LOGIN}?from=${encodeURIComponent(from)}`;
+  } else if (plan) {
     const billingParams = new URLSearchParams({ plan });
     if (coupon) billingParams.set('coupon', coupon);
     signInHref = `${ROUTES.LOGIN}?from=${encodeURIComponent(

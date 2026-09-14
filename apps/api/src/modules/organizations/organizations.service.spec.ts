@@ -1,3 +1,5 @@
+import * as crypto from 'crypto';
+
 import { Test, TestingModule } from '@nestjs/testing';
 import { ForbiddenException, NotFoundException, ConflictException } from '@nestjs/common';
 import { OrganizationsService } from './organizations.service';
@@ -923,11 +925,14 @@ describe('OrganizationsService', () => {
       const result = await service.inviteMember(organizationId, dto, inviterUserId);
 
       expect(result).toEqual(mockCreatedMember);
+      // An already-registered invitee is added to the org outright, so there is
+      // no pending invite and no token to redeem — only the role is added.
       expect(mockNotificationsService.sendMemberInviteEmail).toHaveBeenCalledWith(
         'newuser@test.com',
         'New User',
         'Test Law Firm',
-        'Inviter User'
+        'Inviter User',
+        'member'
       );
     });
 
@@ -996,11 +1001,25 @@ describe('OrganizationsService', () => {
         pending: true,
         email: 'nonexistent@test.com',
       });
+      // The RAW token must reach the invitee: only its SHA-256 hash is stored,
+      // so this email is the single copy that can ever redeem the invite.
+      // No name is on file either, so the invitee is addressed by their email.
       expect(mockNotificationsService.sendMemberInviteEmail).toHaveBeenCalledWith(
         'nonexistent@test.com',
-        'New User',
+        'nonexistent@test.com',
         'Test Law Firm',
-        'Inviter User'
+        'Inviter User',
+        'member',
+        expect.stringMatching(/^[0-9a-f]{64}$/)
+      );
+
+      // ...and it must be the pre-image of the hash that was persisted.
+      const rawToken = mockNotificationsService.sendMemberInviteEmail.mock
+        .calls[0]?.[5] as string;
+      const persistedHash = mockPrismaService.pendingInvite.create.mock
+        .calls[0]?.[0].data.tokenHash as string;
+      expect(crypto.createHash('sha256').update(rawToken).digest('hex')).toBe(
+        persistedHash,
       );
     });
 

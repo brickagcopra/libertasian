@@ -21,6 +21,13 @@ export default function RegisterPage() {
   const router = useRouter();
   const registerMutation = useRegister();
 
+  // Prefill from ?email= (organization invite link). Read from window rather
+  // than useSearchParams so this page keeps its static, Suspense-free render.
+  const invitedEmail =
+    typeof window !== 'undefined'
+      ? (new URLSearchParams(window.location.search).get('email') ?? '')
+      : '';
+
   const {
     register,
     handleSubmit,
@@ -28,6 +35,7 @@ export default function RegisterPage() {
     setError,
   } = useForm<RegisterFormData>({
     resolver: zodResolver(registerSchema),
+    defaultValues: { email: invitedEmail },
   });
 
   const onSubmit = async (data: RegisterFormData) => {
@@ -47,8 +55,12 @@ export default function RegisterPage() {
       const params = new URLSearchParams({ email: data.email });
       const plan = search.get('plan');
       const coupon = search.get('coupon');
+      // ?from= carries an invite's /accept-invite return path through the same
+      // verify-email → login hand-off the checkout intent already uses.
+      const from = search.get('from');
       if (plan) params.set('plan', plan);
       if (coupon) params.set('coupon', coupon);
+      if (from) params.set('from', from);
       router.push(`${ROUTES.VERIFY_EMAIL}?${params.toString()}`);
     } catch (error) {
       if (error instanceof ApiClientError) {

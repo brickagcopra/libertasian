@@ -195,11 +195,18 @@ export class OrganizationsService {
         this.prisma.user.findUnique({ where: { id: inviterUserId } }),
       ]);
 
+      // The raw token goes out in the email and is never persisted (only its
+      // SHA-256 hash is). Without it the invitee has nothing to POST to
+      // /auth/accept-invite and the pending invite can never be redeemed.
+      // There is no name on file for an unregistered invitee — address them by
+      // the email the inviter typed rather than by a placeholder.
       await this.notificationsService.sendMemberInviteEmail(
         email,
-        'New User',
+        email,
         org?.name ?? 'an organization',
         inviter?.fullName ?? 'A team member',
+        dto.role,
+        token,
       );
 
       this.logger.log(`Pending invite created for unregistered user: ${email.charAt(0)}***`);
@@ -239,11 +246,15 @@ export class OrganizationsService {
       this.prisma.user.findUnique({ where: { id: inviterUserId } }),
     ]);
 
+    // A registered invitee is added to the organization directly above, so
+    // there is no pending invite and no token to redeem — this email is a
+    // notice, and its link goes to the members page rather than /accept-invite.
     await this.notificationsService.sendMemberInviteEmail(
       invitedUser.email,
-      invitedUser.fullName ?? 'Team Member',
+      invitedUser.fullName ?? invitedUser.email,
       org?.name ?? 'an organization',
       inviter?.fullName ?? 'A team member',
+      dto.role,
     );
 
     return member;
@@ -351,6 +362,38 @@ export class OrganizationsService {
   }
 
   // ---- Pending Invites ----
+
+  /**
+   * Read a pending invite by its RAW token, for the /accept-invite landing
+   * page. Unauthenticated: the invitee has to see which organization and role
+   * they are being offered — and, when they have no account yet, which email
+   * to register with — BEFORE they can hold a JWT to POST /auth/accept-invite.
+   *
+   * The token is the bearer secret, so an unknown one is a 404 and nothing is
+   * disclosed without it. `expired`/`accepted` are returned as state rather
+   * than thrown so the page can explain them in plain language instead of
+   * showing a generic error.
+   */
+  async getPendingInviteByToken(token: string) {
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+
+    const invite = await this.prisma.pendingInvite.findUnique({
+      where: { tokenHash },
+      include: { organization: { select: { name: true } } },
+    });
+
+    if (!invite) {
+      throw new NotFoundException('Invite not found');
+    }
+
+    return {
+      email: invite.email,
+      role: invite.role,
+      organizationName: invite.organization.name,
+      expired: new Date() > invite.expiresAt,
+      accepted: invite.acceptedAt !== null,
+    };
+  }
 
   /**
    * Accept a pending invite using the token.

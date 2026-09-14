@@ -1,6 +1,8 @@
 # LIBERTASIAN — Completed Tasks
 
-> Last updated: 2026-09-07 (**PRs #462 + #463 — App Review rejected iOS 1.0.1 (30) under 2.1(b), "the plans were unavailable at the time of review", and the cause is now fully diagnosed rather than guessed at.** Prod logs put the reviewer on the purchase screen with `storePurchaseAvailable: true`; RevenueCat's subscriber record for the demo org shows `last_seen` 2026-09-07T04:52:13Z, so the device **did** configure the SDK and **did** reach RevenueCat, which serves that subscriber the `default` offering with all four packages. Paid Apps is Active and the same build renders plans on our own devices. So the failure is one layer down: **StoreKit returned no products on that device** — a cold cache with no Sandbox Apple Account signed in — and the client turned one empty fetch into a permanent dead end. Two causes, both fixed. **#462:** an empty result RESOLVED, so React Query cached it as a success for the full 5-minute `staleTime` and no user action could change it; it now throws a typed `OfferingsUnavailableError` with a machine reason, retries 3x with backoff, falls back to asking the store directly via `getProducts(STORE_PRODUCT_IDS)` when the offering yields nothing, and stops dropping a card over a missing `subscriptionPeriod` (a blank PRICE still drops it — that one is 3.1.2(c)). `sdkReady` was a boolean, so the ordinary async moments before `configurePurchases()` resolved rendered as the same dead-end sentence; it is now `configuring | ready | failed` with a 15s watchdog, and the `unavailable` block gained a **Try again** — no URL, no `Linking`, nothing off-app (3.1.1, which is what got build 23 rejected). New `purchase-telemetry.ts` reports why the surface is empty, because `logger` is dev-only and a release build told us nothing. **#463:** `configurePurchases()` had exactly one caller, so the SDK's first conversation with the store began when the user opened the screen that needed prices; `usePurchasesBootstrap` now configures and prefetches at launch from `AuthNavigationGuard`, and the App Review notes finally state the **Sandbox Apple Account** requirement. Writing the terminal-state tests also deleted a branch added in the same PR as dead code — React Query resets a never-held-data query to `pending` on refetch, so `isPending` already covered it. Gates: **248 suites / 1965 tests**, `tsc --noEmit` **0**. `app.json` stays 1.0.1; EAS `appVersionSource` is remote.)
+> Last updated: 2026-09-13 (**`fix/email-auth-invite-links` — three transactional emails linked to web routes that do not exist, and all three 307'd to /login, which reads as an expired session rather than a broken link.** One cause: `apps/web/src/app/(auth)/` is a Next.js **route group** and contributes no url segment, so the pages are served at `/reset-password` and `/forgot-password`, not under `/auth/`. **The invite was worse than a bad link — it was never redeemable at all:** `inviteMember` generates a raw token, stores only its SHA-256 hash, and then discarded the raw token instead of emailing it, so `POST /auth/accept-invite` could not be called by anyone. The token is now emailed (a test asserts it is the pre-image of the persisted hash), **`/accept-invite` now exists** and is allowlisted in middleware `PUBLIC_PATHS`, a new public `POST /auth/invite/lookup` lets the page show the org and role before the invitee can hold a JWT, and new invitees reach `/register` with the email prefilled and a `?from=` chain back. A **fourth dead link** — `/dashboard` on the subscription confirmation — was found by the new guard spec, which collects every URL built in `notifications.service.ts` and resolves each against the real `apps/web/src/app` route tree, groups stripped. Mobile is unaffected and was checked: universal links claim `/shared/*` only, so reset emails have never deep-linked into the app. Gates: api **5103/5103**, web **1931/1931**, lint and type-check clean.)
+>
+> Previously: 2026-09-07 (**PRs #462 + #463 — App Review rejected iOS 1.0.1 (30) under 2.1(b), "the plans were unavailable at the time of review", and the cause is now fully diagnosed rather than guessed at.** Prod logs put the reviewer on the purchase screen with `storePurchaseAvailable: true`; RevenueCat's subscriber record for the demo org shows `last_seen` 2026-09-07T04:52:13Z, so the device **did** configure the SDK and **did** reach RevenueCat, which serves that subscriber the `default` offering with all four packages. Paid Apps is Active and the same build renders plans on our own devices. So the failure is one layer down: **StoreKit returned no products on that device** — a cold cache with no Sandbox Apple Account signed in — and the client turned one empty fetch into a permanent dead end. Two causes, both fixed. **#462:** an empty result RESOLVED, so React Query cached it as a success for the full 5-minute `staleTime` and no user action could change it; it now throws a typed `OfferingsUnavailableError` with a machine reason, retries 3x with backoff, falls back to asking the store directly via `getProducts(STORE_PRODUCT_IDS)` when the offering yields nothing, and stops dropping a card over a missing `subscriptionPeriod` (a blank PRICE still drops it — that one is 3.1.2(c)). `sdkReady` was a boolean, so the ordinary async moments before `configurePurchases()` resolved rendered as the same dead-end sentence; it is now `configuring | ready | failed` with a 15s watchdog, and the `unavailable` block gained a **Try again** — no URL, no `Linking`, nothing off-app (3.1.1, which is what got build 23 rejected). New `purchase-telemetry.ts` reports why the surface is empty, because `logger` is dev-only and a release build told us nothing. **#463:** `configurePurchases()` had exactly one caller, so the SDK's first conversation with the store began when the user opened the screen that needed prices; `usePurchasesBootstrap` now configures and prefetches at launch from `AuthNavigationGuard`, and the App Review notes finally state the **Sandbox Apple Account** requirement. Writing the terminal-state tests also deleted a branch added in the same PR as dead code — React Query resets a never-held-data query to `pending` on refetch, so `isPending` already covered it. Gates: **248 suites / 1965 tests**, `tsc --noEmit` **0**. `app.json` stays 1.0.1; EAS `appVersionSource` is remote.)
 >
 > Previously: 2026-09-01 (**PR #454 `fix/auth-response-org-fields` — the RevenueCat SDK was never initialized on mobile, and the cause was a missing field on the server.** `GET /users/me` returned `organizationId`/`organizationRole`; **none of the five auth paths did** — they all returned `sanitize(user) + isPlatformAdmin`, and `sanitize()` has no org fields. Mobile seeds its auth context from the sign-in response, so `organizationId` was `undefined` for the whole session, `usePurchaseOptions` returned before calling `configurePurchases()`, and the purchase screen rendered "Plans are not available right now" while Restore Purchases threw into an unconfigured SDK. Confirmed on prod: RevenueCat has no session for the org from any build-29 device session. Fixed **server-side only, on purpose** — the client is correct as written and changing it would have needed a new iOS build. One private `buildAuthUser()` now builds the shape once at all five sites, matching `/users/me` field for field; `isPlatformAdmin` is untouched at every site. `login()` resolves the membership before the MFA branch so the challenge response carries the fields too, with the `!membership` rejection left where it was. Two new tests, **both verified to fail on the pre-fix code**: a unit contract test pinning the two builders' shapes together, and an e2e asserting `/auth/login`, `/auth/register`, `/auth/google/mobile` and `/auth/apple/mobile` against the active membership. Gates: **4703/4703 unit**, `tsc --noEmit` **0**, auth-surface e2e **131/133** — the 2 failures reproduce identically on `main`.)
 >
@@ -33,6 +35,95 @@
 > Previously: 2026-07-29 (#336 OPEN: a flat 300 s synthesis timeout made a 2,238-char digest — near the corpus average — permanently unsynthesizable, and retrying it identically three times burned 15 min of 8-core CPU. Budget is now length-proportional, failures are classified, and the reason is persisted. A separate CUDA image and bearer auth on the TTS hop open the rented-GPU route for the tier-1 backfill; both are no-ops for prod.)
 >
 > Previously: 2026-07-27 (#322 MERGED `5addc51`: the auto-publish citation gate was unreachable and had stranded 76% of the corpus out of search since 2026-05-30. Dry run over prod confirms 11,561 of 13,093 drafts publish under the corrected rules. #321 opened for the resolver underneath it, #323 for the 1,531 rows still short a `court`.)
+
+---
+
+## 2026-09-13 — three transactional emails linked to routes that were never there
+
+Branch `fix/email-auth-invite-links`. Verified against the live site before any
+code was touched: the password-reset link, the password-changed link and the
+member-invite link all returned **307 → /login**.
+
+### Why three of them, and why they survived
+
+One cause, three symptoms. `apps/web/src/app/(auth)/` is a Next.js **route
+group** — a parenthesised folder contributes **no url segment**. The pages are
+served at `/reset-password` and `/forgot-password`; the emails linked them under
+`/auth/`. Nothing there matches a route, so the middleware's protected-route
+branch redirects to `/login` — which looks like *"my session expired"*, not
+*"this link is broken"*. That is why all three lived in production.
+
+| Email | Linked to | Actually served at |
+|---|---|---|
+| Password reset | `/auth/reset-password?token=` | `/reset-password?token=` |
+| Password changed | `/auth/forgot-password` | `/forgot-password` |
+| Member invite | `/organizations/accept-invite` | *(no such route at all)* |
+| Subscription confirmation | `/dashboard` | *(route group, not a page)* |
+
+The fourth row was not in the report. The new guard spec found it.
+
+### The invite was not a link bug — nothing could ever have accepted it
+
+`organizations.service.inviteMember` generates a 32-byte raw token, stores
+**only its SHA-256 hash**, and then called `sendMemberInviteEmail` without it.
+The raw token is the sole copy that can ever exist, and it was discarded at the
+end of the function. `POST /auth/accept-invite` takes that token. So **no
+pending invite has ever been redeemable**, independent of where the link
+pointed. The url had no `?token=` because there was nothing to put in it.
+
+Fixed end to end:
+
+- the raw token is emailed. A test asserts the emailed token is the **pre-image
+  of the hash that was persisted**, not merely that some 64-hex string went out.
+- **`/accept-invite` now exists** (`apps/web/src/app/(auth)/accept-invite`), and
+  is in the middleware `PUBLIC_PATHS` allowlist — an invitee may have no account
+  at all, so a session gate there would strip the token before the page sees it.
+- **`POST /auth/invite/lookup`** (new, public, under the controller's coarse
+  60/15min per-IP backstop) reads a pending invite by raw token. The page has to
+  show the organization, the role and the invited email *before* the invitee can
+  hold a JWT, which is what `accept-invite` requires. An unknown token 404s, so
+  the bearer token still gates everything; `expired`/`accepted` come back as
+  state rather than as thrown errors so the page can explain them in plain
+  language.
+- invitees with **no account** go to `/register` with the email **prefilled** —
+  the pending invite is keyed to that exact address, so an account registered
+  under a different one cannot redeem it — and a `?from=` chain carries them
+  back here through verify-email and login. That reuses the existing
+  checkout-intent hand-off rather than inventing a second mechanism.
+- an **already-registered** invitee is added to the org outright and has no
+  pending invite, so their notice links `/settings/members` instead.
+- the email now states the **role**, and addresses an unregistered invitee by
+  their **email** rather than "New User".
+
+### The guard
+
+`apps/api/src/modules/notifications/email-links.guard.spec.ts` reads the real
+source of both apps. It collects every `${this.appUrl}/…` template literal in
+`notifications.service.ts` (10 links), walks `apps/web/src/app` into a route
+table with groups stripped and dynamic segments matched structurally, and
+asserts each emailed path resolves. API paths are checked against the NestJS
+controllers instead. It also asserts the three no-session entry points are in
+`PUBLIC_PATHS` — a missing allowlist entry produces the *same* 307 symptom as a
+dead route, so both failure modes are covered.
+
+It is not vacuous: it asserts a floor on links found and routes discovered, it
+refuses to pass on a `${…}` inside a path it cannot analyse, and reverting any
+one link to its dead path was **confirmed to fail it**.
+
+### Mobile
+
+Unaffected, and checked rather than assumed. `apps/mobile` claims only
+`/shared/*` via universal links (`app.json` `associatedDomains` +
+`intentFilters`, and `apps/web/public/.well-known/apple-app-site-association`),
+so a reset email has never deep-linked into the app — it opens the browser. The
+`(auth)/reset-password` screen reads its token from expo-router params and is
+reached in-app or via the `libertasian://` scheme, neither of which any email
+uses.
+
+### Gates
+
+api **5103/5103** (227 suites), web **1931/1931** (209 files), `pnpm lint`
+clean, `pnpm type-check` clean.
 
 ---
 

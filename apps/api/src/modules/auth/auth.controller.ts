@@ -655,6 +655,25 @@ export class AuthController {
 
   // ---- Invite Acceptance ----
 
+  /**
+   * Public invite preview for the /accept-invite landing page.
+   *
+   * The raw token is the bearer secret — an unknown one 404s — so this
+   * discloses nothing the invitee's own email did not already carry. The
+   * invitee needs the organization, the role and (when they have no account
+   * yet) the invited email address BEFORE they can obtain a JWT, which is what
+   * POST accept-invite requires. Token travels in the body, not the URL, to
+   * keep it out of access logs — same as deletion/restore.
+   */
+  @Post('invite/lookup')
+  @ApiOperation({ summary: 'Look up a pending organization invite by token' })
+  async lookupInvite(@Body() dto: AcceptInviteDto) {
+    const invite = await this.organizationsService.getPendingInviteByToken(
+      dto.token,
+    );
+    return { success: true, data: invite };
+  }
+
   @Post('accept-invite')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
