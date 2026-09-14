@@ -108,5 +108,41 @@ describe('middleware — public-path allowlist', () => {
       expect(isRedirectToLogin(res)).toBe(false);
       expect(res.headers.get('location')).toBeNull();
     });
+
+    // The reset link is emailed to ONE account but opened in whatever browser
+    // the person has to hand. Redirecting a signed-in request to /search showed
+    // them somebody else's dashboard and no form at all, so the emailed token
+    // could not be redeemed from any signed-in browser.
+    it('allows /reset-password through when a DIFFERENT account is signed in', () => {
+      const res = middleware(makeRequest('/reset-password', true));
+      expect(res.status).not.toBe(307);
+      expect(res.headers.get('location')).toBeNull();
+    });
+
+    it('allows /reset-password?token= through when authenticated', () => {
+      const res = middleware(makeRequest('/reset-password?token=abc', true));
+      expect(res.status).not.toBe(307);
+      expect(res.headers.get('location')).toBeNull();
+    });
+
+    // /forgot-password is a self-service entry point with nothing
+    // account-specific in the URL, so it keeps the redirect.
+    it('still redirects /forgot-password → /search for authenticated users', () => {
+      const res = middleware(makeRequest('/forgot-password', true));
+      expect(res.status).toBe(307);
+      const target = new URL(res.headers.get('location') as string);
+      expect(target.pathname).toBe('/search');
+    });
+  });
+
+  // Removing /reset-password from AUTH_PAGES must not remove it from the
+  // public allowlist — a signed-out user opening the emailed link is the
+  // ordinary case, and it has to keep returning 200.
+  describe('/reset-password without a session', () => {
+    it('is still public (no /login redirect)', () => {
+      const res = middleware(makeRequest('/reset-password?token=abc'));
+      expect(isRedirectToLogin(res)).toBe(false);
+      expect(res.headers.get('location')).toBeNull();
+    });
   });
 });
