@@ -322,6 +322,41 @@ class TestExpectedItems:
         """"…consisting of 15 items" — same declaration, different sentence."""
         assert parse_page(_load("2022_civil_I.html")).expected_items == 15
 
+    def test_the_real_2015_sentence_parses_despite_its_typos(self) -> None:
+        """The live page's sentence is malformed, verbatim:
+
+            "There are 22 items (I to XXII to be answered within/our (4) hours."
+
+        The parenthetical is never closed and "within four" is typo'd as
+        "within/our". The count is still the examiner's own, so the pattern
+        anchors on "There are 22 items" and reads nothing after it — a regex
+        that required a closed "(I to XXII)" would return None on the one page
+        this whole branch exists for.
+        """
+        html = (
+            "<html><body>"
+            "<p align='justify'>4. There are 22 items (I to XXII to be "
+            "answered within/our (4) hours. Do not explain your answers.</p>"
+            "</body></html>"
+        )
+        assert parse_page(html).expected_items == 22
+
+    @pytest.mark.parametrize(
+        "sentence",
+        [
+            "There are 22 items (I to XXII) to be answered within four hours.",
+            "There are 22 items (I to XXII to be answered within/our (4) hours.",
+            "There are 22 items to be answered within four (4) hours.",
+            "there are 22 items",
+            "There are twenty-two (22) items to be answered.",
+        ],
+    )
+    def test_every_phrasing_of_the_count_sentence_reads_22(
+        self, sentence: str
+    ) -> None:
+        html = f"<html><body><p>{sentence}</p></body></html>"
+        assert parse_page(html).expected_items == 22
+
     def test_it_never_changes_the_parse(self) -> None:
         """A wrong declaration must not add or drop a question."""
         html = (
