@@ -1,6 +1,8 @@
 # LIBERTASIAN — Pending Tasks
 
-> Last updated: 2026-09-07 (**new, top of the list: PRs #462 and #463 are MERGED to `main`, and what is left is a build, a submission and one thing only Apple can do.** The 2.1(b) cause is settled — StoreKit returned no products on the reviewer's device because it had no Sandbox Apple Account signed in, and the client cached that empty answer as a success for five minutes. The client no longer can: an empty result throws and retries, it falls back to asking the store directly, the screen carries a **Try again**, and the SDK is configured and prefetched at app launch instead of at purchase-screen mount. The App Review notes now state the sandbox-account requirement. **What remains is EAS build 31, `eas submit`, and the review itself** — plus one thing we cannot verify from here: whether the reviewer signs in a sandbox account this time. If they do not, the new telemetry (`purchase_surface_unavailable` with a machine reason) is what will tell us, which is the whole reason it exists. See the section directly below.)
+> Last updated: 2026-09-13 (**new, top of the list: `fix/email-auth-invite-links` is merged, and what is left is one thing the test suite structurally cannot do — send a real email and click it.** Four dead links are repaired and organization invites are redeemable for the first time, but **every `pending_invites` row written before this deploy was emailed without its raw token, which exists nowhere else** — only the hash was stored, so those invites cannot be repaired and have to be re-issued. Also open: whether an already-registered invitee should have to accept at all (today they are added to the org outright, with no consent step), and widening the guard spec if a second module ever starts building email links. See the section directly below.)
+>
+> Previously: 2026-09-07 (**new, top of the list: PRs #462 and #463 are MERGED to `main`, and what is left is a build, a submission and one thing only Apple can do.** The 2.1(b) cause is settled — StoreKit returned no products on the reviewer's device because it had no Sandbox Apple Account signed in, and the client cached that empty answer as a success for five minutes. The client no longer can: an empty result throws and retries, it falls back to asking the store directly, the screen carries a **Try again**, and the SDK is configured and prefetched at app launch instead of at purchase-screen mount. The App Review notes now state the sandbox-account requirement. **What remains is EAS build 31, `eas submit`, and the review itself** — plus one thing we cannot verify from here: whether the reviewer signs in a sandbox account this time. If they do not, the new telemetry (`purchase_surface_unavailable` with a machine reason) is what will tell us, which is the whole reason it exists. See the section directly below.)
 >
 > Previously: 2026-09-01 (**new, top of the list: PR #454 `fix/auth-response-org-fields` is OPEN and unmerged.** It restores `organizationId`/`organizationRole` to all five sign-in responses, which is what unblocks the RevenueCat SDK on mobile — the purchase screen currently reads "Plans are not available right now" for every user on every build-29 session. **It is server-only and cuts no EAS build:** existing installed clients start working the moment the API deploys, which is the whole reason it was done this way. Nothing else about billing is touched. See the section directly below for what is left. Also newly documented there: **the local dev DB cannot run the e2e suite** — it is 9 migrations behind and every request 500s on a missing `users.apple_id`.)
 >
@@ -31,6 +33,40 @@
 > Previously: 2026-07-26 (search Phases A–C3 all merged: #306 #307 #308 #310 #311 #312; C3 squashed to `025e538`, deployed and live-verified on prod. Remaining search work is a client UI for `scope` and C4 fusion behind the reranker — but see the reachability note first: only 13,017 of 99,994 derivatives match any visibility branch. Also new: #313 fixed the confidence scorer, #315 gated the re-score script, and the re-score itself is CLOSED as not worth running — 7 rows of 29,471 move. What replaces it is a product decision about what the 0.70 editorial bar should mean; see the top section.)
 
 Verification rules used for this prune: every PR reference checked with `gh pr view <n> --json state,mergedAt`; every branch reference checked against `git branch -r --no-merged origin/main` after `git fetch --prune`. Items that could not be verified were MOVED to "Needs verification", not deleted.
+
+---
+
+## Email links: fixed in code, but nothing has been sent through the repaired flows (2026-09-13)
+
+Full context: COMPLETED_TASKS.md, the 2026-09-13 entry.
+`fix/email-auth-invite-links` repairs four dead links and makes organization
+invites redeemable for the first time. **The guard spec proves the links resolve
+to routes; it does not prove a real email was delivered and clicked.**
+
+- [ ] **Send one of each through prod after deploy** — a password reset, a
+      password change, and an invite to an address with no LIBERTASIAN account.
+      Confirm each lands on a 200 page with its token intact. This is the only
+      check that covers the pieces the guard cannot see: the `APP_URL` env var
+      in the prod environment, and the email client's own link handling.
+- [ ] **Re-send any invite created before this deploy.** Every `pending_invites`
+      row written to date was emailed **without its raw token**, which exists
+      nowhere else — only the SHA-256 hash was stored. Those invites are
+      permanently unredeemable and cannot be repaired; they have to be issued
+      again from `/settings/members`. Count them first
+      (`SELECT count(*) FROM pending_invites WHERE accepted_at IS NULL AND
+      expires_at > now()`) and tell the inviting orgs, rather than leaving
+      invitees waiting on a link that can never work.
+- [ ] **Decide whether an already-registered invitee should have to accept.**
+      Today `inviteMember` adds them to the organization outright — no pending
+      invite, nothing to consent to, and their email is a notice rather than an
+      invitation (it links `/settings/members`). That is out of scope here and
+      was left exactly as it was, but it means a stranger can add you to their
+      org and the "Accept Invitation" button in your mail is a formality. A
+      product call, not a bug.
+- [ ] **Widen the guard if a second module starts building email links.** It
+      reads `notifications.service.ts` only, because that is where every
+      outgoing url is built today. A new email whose link is assembled elsewhere
+      is invisible to it and would fail exactly the way these four did.
 
 ---
 
