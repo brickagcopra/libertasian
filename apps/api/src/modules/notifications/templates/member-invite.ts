@@ -1,7 +1,10 @@
 export function memberInviteTemplate(data: {
+  /** Display name, or the invited email address when no name is known. */
   inviteeName: string;
   organizationName: string;
   inviterName: string;
+  /** Organization role the invite grants, e.g. "admin", "member". */
+  role: string;
   acceptUrl: string;
 }): { subject: string; html: string } {
   return {
@@ -13,7 +16,7 @@ export function memberInviteTemplate(data: {
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
   <h2 style="color: #1a1a1a;">You've been invited!</h2>
   <p>Hi ${escapeHtml(data.inviteeName)},</p>
-  <p><strong>${escapeHtml(data.inviterName)}</strong> has invited you to join <strong>${escapeHtml(data.organizationName)}</strong> on LIBERTASIAN.</p>
+  <p><strong>${escapeHtml(data.inviterName)}</strong> has invited you to join <strong>${escapeHtml(data.organizationName)}</strong> on LIBERTASIAN as <strong>${escapeHtml(data.role)}</strong>.</p>
   <p style="text-align: center; margin: 30px 0;">
     <a href="${escapeHtml(data.acceptUrl)}"
        style="background-color: #2563eb; color: #fff; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">

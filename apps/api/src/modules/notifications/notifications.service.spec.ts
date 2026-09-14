@@ -123,9 +123,29 @@ describe('NotificationsService', () => {
 
       const call = emailQueue.add.mock.calls[0];
       const emailData = call[1] as { html: string };
+      // Exact path: `(auth)` is a Next.js route GROUP, so the web page lives at
+      // /reset-password. An `/auth/` prefix 307s to /login — the live bug.
       expect(emailData.html).toContain(
-        'https://libertasian.com/auth/reset-password?token=rst-token',
+        'https://libertasian.com/reset-password?token=rst-token',
       );
+      expect(emailData.html).not.toContain('/auth/reset-password');
+    });
+  });
+
+  // ---- sendPasswordChangedEmail ----
+
+  describe('sendPasswordChangedEmail', () => {
+    it('links to /forgot-password, not the route-group path /auth/forgot-password', async () => {
+      await service.sendPasswordChangedEmail(
+        'test@example.com',
+        'Test User',
+        '203.0.113.9',
+        new Date('2026-09-13T04:05:06.000Z'),
+      );
+
+      const emailData = emailQueue.add.mock.calls[0][1] as { html: string };
+      expect(emailData.html).toContain('https://libertasian.com/forgot-password');
+      expect(emailData.html).not.toContain('/auth/forgot-password');
     });
   });
 
@@ -138,6 +158,8 @@ describe('NotificationsService', () => {
         'Elena',
         'Santos Law Office',
         'Atty. Reyes',
+        'admin',
+        'raw-invite-token',
       );
 
       expect(emailQueue.add).toHaveBeenCalledTimes(1);
@@ -152,19 +174,84 @@ describe('NotificationsService', () => {
       );
     });
 
-    it('should include accept URL in email body', async () => {
+    it('carries the raw token in the accept URL and points at the real web page', async () => {
       await service.sendMemberInviteEmail(
         'test@example.com',
         'Invitee',
         'Test Firm',
         'Inviter',
+        'member',
+        'raw-invite-token',
       );
 
       const call = emailQueue.add.mock.calls[0];
       const emailData = call[1] as { html: string };
+      // Without the raw token the invitee has nothing to POST to
+      // /auth/accept-invite — only its hash is stored server-side.
       expect(emailData.html).toContain(
-        'https://libertasian.com/organizations/accept-invite',
+        'https://libertasian.com/accept-invite?token=raw-invite-token',
       );
+      // The old URL matched no web route at all and 307'd to /login.
+      expect(emailData.html).not.toContain('/organizations/accept-invite');
+    });
+
+    it('URL-encodes the token', async () => {
+      await service.sendMemberInviteEmail(
+        'test@example.com',
+        'Invitee',
+        'Test Firm',
+        'Inviter',
+        'member',
+        'tok/en+with spaces',
+      );
+
+      const emailData = emailQueue.add.mock.calls[0][1] as { html: string };
+      expect(emailData.html).toContain(
+        'https://libertasian.com/accept-invite?token=tok%2Fen%2Bwith%20spaces',
+      );
+    });
+
+    it('states the role being granted', async () => {
+      await service.sendMemberInviteEmail(
+        'test@example.com',
+        'Invitee',
+        'Test Firm',
+        'Inviter',
+        'admin',
+        'raw-invite-token',
+      );
+
+      const emailData = emailQueue.add.mock.calls[0][1] as { html: string };
+      expect(emailData.html).toContain('<strong>admin</strong>');
+    });
+
+    it('addresses the invitee by email when no name is known', async () => {
+      await service.sendMemberInviteEmail(
+        'nonexistent@test.com',
+        'nonexistent@test.com',
+        'Test Firm',
+        'Inviter',
+        'member',
+        'raw-invite-token',
+      );
+
+      const emailData = emailQueue.add.mock.calls[0][1] as { html: string };
+      expect(emailData.html).toContain('Hi nonexistent@test.com,');
+      expect(emailData.html).not.toContain('New User');
+    });
+
+    it('sends an already-registered invitee to the members page (no token to redeem)', async () => {
+      await service.sendMemberInviteEmail(
+        'member@example.com',
+        'Elena',
+        'Test Firm',
+        'Inviter',
+        'member',
+      );
+
+      const emailData = emailQueue.add.mock.calls[0][1] as { html: string };
+      expect(emailData.html).toContain('https://libertasian.com/settings/members');
+      expect(emailData.html).not.toContain('/accept-invite');
     });
   });
 

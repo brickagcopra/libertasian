@@ -48,7 +48,10 @@ export class NotificationsService {
     fullName: string,
     token: string,
   ): Promise<void> {
-    const resetUrl = `${this.appUrl}/auth/reset-password?token=${token}`;
+    // Web route is /reset-password — apps/web/src/app/(auth)/reset-password.
+    // `(auth)` is a Next.js route GROUP and contributes no URL segment, so an
+    // `/auth/` prefix here 307s to /login and the emailed link is dead.
+    const resetUrl = `${this.appUrl}/reset-password?token=${token}`;
     const { subject, html } = resetPasswordTemplate({ fullName, resetUrl });
 
     await this.enqueue({ to: email, subject, html });
@@ -89,7 +92,7 @@ export class NotificationsService {
     ip: string,
     when: Date,
   ): Promise<void> {
-    const resetUrl = `${this.appUrl}/auth/forgot-password`;
+    const resetUrl = `${this.appUrl}/forgot-password`;
     const { subject, html } = passwordChangedTemplate({
       fullName,
       whenIso: when.toISOString(),
@@ -101,17 +104,36 @@ export class NotificationsService {
     this.logger.log(`Password changed notice enqueued for ${this.redactEmail(email)}`);
   }
 
+  /**
+   * Organization invite.
+   *
+   * `acceptToken` is the RAW pending-invite token (only its SHA-256 hash is
+   * stored). It is the sole copy the invitee will ever see — POST
+   * /auth/accept-invite cannot be called without it, so an invite emailed
+   * without one is unacceptable in the literal sense. It is present only for
+   * invitees who have no account yet; an already-registered invitee is added
+   * to the organization immediately, has no pending invite to accept, and is
+   * pointed at the members page instead.
+   *
+   * The old URL (`/organizations/accept-invite`, tokenless) matched no web
+   * route at all and 307'd to /login.
+   */
   async sendMemberInviteEmail(
     email: string,
     inviteeName: string,
     organizationName: string,
     inviterName: string,
+    role: string,
+    acceptToken?: string,
   ): Promise<void> {
-    const acceptUrl = `${this.appUrl}/organizations/accept-invite`;
+    const acceptUrl = acceptToken
+      ? `${this.appUrl}/accept-invite?token=${encodeURIComponent(acceptToken)}`
+      : `${this.appUrl}/settings/members`;
     const { subject, html } = memberInviteTemplate({
       inviteeName,
       organizationName,
       inviterName,
+      role,
       acceptUrl,
     });
 
@@ -129,7 +151,9 @@ export class NotificationsService {
     features: string[];
     nextBillingDate: string;
   }): Promise<void> {
-    const dashboardUrl = `${this.appUrl}/dashboard`;
+    // /search is the app's signed-in landing route; there is no /dashboard page
+    // ((dashboard) is a route group, not a segment) — see the route guard spec.
+    const dashboardUrl = `${this.appUrl}/search`;
     const { subject, html } = subscriptionConfirmationTemplate({
       userName: params.userName,
       planName: params.planName,

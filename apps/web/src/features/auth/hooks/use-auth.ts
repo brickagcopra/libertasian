@@ -1,6 +1,6 @@
 'use client';
 
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback } from 'react';
 
 import { apiClient, ApiClientError } from '@/lib/api-client';
@@ -132,6 +132,44 @@ export function useResendVerification() {
   return useMutation({
     mutationFn: async (data: { email: string }) => {
       const res = await apiClient.post<{ success: boolean }>('/auth/resend-verification', data);
+      return res;
+    },
+  });
+}
+
+export interface InviteLookup {
+  email: string;
+  role: string;
+  organizationName: string;
+  expired: boolean;
+  accepted: boolean;
+}
+
+/**
+ * Read a pending organization invite by its raw emailed token.
+ * Unauthenticated — the /accept-invite page has to show the organization and
+ * role (and, for a new invitee, the email to register with) before the user
+ * can hold a JWT to accept with.
+ */
+export function useInviteLookup(token: string) {
+  return useQuery({
+    queryKey: ['invite', token],
+    enabled: token.length > 0,
+    retry: false,
+    queryFn: async () => {
+      const res = await apiClient.post<{ success: boolean; data: InviteLookup }>(
+        '/auth/invite/lookup',
+        { token },
+      );
+      return res.data;
+    },
+  });
+}
+
+export function useAcceptInvite() {
+  return useMutation({
+    mutationFn: async (data: { token: string }) => {
+      const res = await apiClient.post<{ success: boolean }>('/auth/accept-invite', data);
       return res;
     },
   });
