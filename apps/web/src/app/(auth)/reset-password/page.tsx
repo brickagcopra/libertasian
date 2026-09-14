@@ -12,16 +12,38 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { resetPasswordSchema, type ResetPasswordFormData } from '@/features/auth/schemas';
-import { useResetPassword } from '@/features/auth/hooks/use-auth';
+import { useLogout, useResetPassword } from '@/features/auth/hooks/use-auth';
 import { ApiClientError } from '@/lib/api-client';
 import { Wordmark } from '@/components/brand/wordmark';
 import { ROUTES } from '@/lib/constants';
+import { useAuthStore } from '@/stores/auth-store';
 
 function ResetPasswordForm() {
   const searchParams = useSearchParams();
   const token = searchParams.get('token') ?? '';
   const resetPassword = useResetPassword();
   const [resetDone, setResetDone] = useState(false);
+
+  // The reset link is emailed to ONE account but opened in whatever browser the
+  // person has to hand — frequently one already signed in as somebody else. The
+  // token alone decides whose password changes (the API takes no session at
+  // all), so this session is never touched: not signed out, not switched, not
+  // signed in. It is surfaced only so nobody assumes the form is about the
+  // account whose name is in the header.
+  const signedInUser = useAuthStore((state) => state.user);
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const logout = useLogout();
+  const hasOtherSession = isAuthenticated && Boolean(signedInUser?.email);
+
+  const sessionNotice = hasOtherSession ? (
+    <Alert>
+      <AlertDescription>
+        You&rsquo;re signed in as <strong>{signedInUser?.email}</strong>. This
+        link resets the password for the account the email was sent to, not
+        necessarily this one.
+      </AlertDescription>
+    </Alert>
+  ) : null;
 
   const {
     register,
@@ -56,6 +78,7 @@ function ResetPasswordForm() {
   if (!token) {
     return (
       <div className="space-y-4">
+        {sessionNotice}
         <Alert>
           <AlertDescription>
             No reset token found. Please use the link from your email.
@@ -71,6 +94,34 @@ function ResetPasswordForm() {
   }
 
   if (resetDone) {
+    // Signed-in case: the reset changed the TOKEN OWNER's password, which may
+    // not be this session's account. Sending them to /login while still signed
+    // in would bounce straight back to /search, so offer an explicit sign-out
+    // instead. Never switch accounts for them.
+    if (hasOtherSession) {
+      return (
+        <div className="space-y-4">
+          <Alert>
+            <AlertDescription>
+              Password reset successfully. You&rsquo;re still signed in as{' '}
+              <strong>{signedInUser?.email}</strong> — that account is
+              unchanged. To use the new password, sign out and sign back in with
+              the account the reset email was sent to.
+            </AlertDescription>
+          </Alert>
+          <div className="text-center">
+            <Button
+              onClick={() => logout.mutate()}
+              disabled={logout.isPending}
+              className="h-12 rounded-full bg-warm-ink text-warm-cream hover:bg-warm-ink/90"
+            >
+              {logout.isPending ? 'Signing out…' : 'Sign out and sign in'}
+            </Button>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="space-y-4">
         <Alert>
@@ -92,6 +143,8 @@ function ResetPasswordForm() {
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+      {sessionNotice}
+
       {errors.root && (
         <Alert variant="destructive">
           <AlertDescription>{errors.root.message}</AlertDescription>

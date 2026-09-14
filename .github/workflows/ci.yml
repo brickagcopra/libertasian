@@ -309,4 +309,4 @@ jobs:
       # genuinely runs and genuinely fails — it is not a soft-fail or a skip.
       # Add spec paths here as suites are repaired.
       - name: Run E2E tests
-        run: pnpm --filter @libertasian/api test:e2e:ci test/account-deletion.e2e-spec.ts
+        run: pnpm --filter @libertasian/api test:e2e:ci test/account-deletion.e2e-spec.ts test/reset-password-ignores-session.e2e-spec.ts

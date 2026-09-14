@@ -78,8 +78,22 @@ function isPublicRoute(pathname: string): boolean {
   return PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 }
 
-/** Auth pages where authenticated users should be redirected to dashboard. */
-const AUTH_PAGES = ['/login', '/register', '/forgot-password', '/reset-password'];
+/**
+ * Auth pages where authenticated users should be redirected to dashboard.
+ *
+ * `/reset-password` is deliberately NOT here. The reset link is emailed to one
+ * specific account, but it is opened in whatever browser the person happens to
+ * be using — often one already signed in as somebody else (a shared laptop, an
+ * admin's own session). Bouncing that request to /search showed them the
+ * signed-in account's dashboard and no reset form at all, so the emailed token
+ * could never be redeemed from any signed-in browser. The page itself says
+ * whose session is open; see apps/web/src/app/(auth)/reset-password.
+ *
+ * The other three stay: they are self-service entry points with nothing
+ * account-specific in the URL, so an already-signed-in user has no business on
+ * them and /search is the right answer.
+ */
+const AUTH_PAGES = ['/login', '/register', '/forgot-password'];
 
 function isAuthPage(pathname: string): boolean {
   return AUTH_PAGES.includes(pathname);
