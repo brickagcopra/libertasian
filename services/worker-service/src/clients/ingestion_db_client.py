@@ -1624,6 +1624,189 @@ def upsert_bar_exam_questions(
     return written
 
 
+#: Every table that can point at a ``legal_document_sections`` row, and the
+#: column it points with. Re-ingesting a bar exam page replaces its sections,
+#: which means deleting rows other tables may reference — Postgres would
+#: either refuse the delete or (where the FK is ON DELETE SET NULL) silently
+#: strip a citation, a bookmark or a digest's provenance of its source.
+#: Checked as a set rather than relying on FK errors so the caller can decline
+#: the whole re-ingest cleanly, before it has written anything.
+SECTION_REFERENCE_TABLES: tuple[tuple[str, str], ...] = (
+    ("citations", "from_section_id"),
+    ("doctrine_extracts", "source_section_id"),
+    ("bookmarks", "legal_document_section_id"),
+    ("annotations", "section_id"),
+    ("provenance_records", "source_section_id"),
+    ("flashcards", "section_id"),
+    ("reviewer_pack_items", "section_id"),
+    ("derivative_artifacts", "source_section_id"),
+)
+
+
+def count_section_references(document_id: str) -> dict[str, int]:
+    """Count rows in other tables referencing this document's sections.
+
+    Returns ``{table_name: count}`` for the tables that have at least one
+    reference; an empty dict means the sections are free to be replaced.
+
+    One statement, one scalar sub-query per table: eight round-trips per
+    sitting would be eight times the latency for the same answer, and the
+    counts must describe a single moment to be meaningful at all.
+    """
+    # Table and column names come from the module-level tuple above, never
+    # from a caller: there is no user input in this f-string, and the only
+    # value in the statement is bound as a parameter.
+    selects = ",\n               ".join(
+        f"(SELECT COUNT(*) FROM {table} t"
+        f" JOIN legal_document_sections s ON s.id = t.{column}"
+        f" WHERE s.legal_document_id = %s) AS {table}"
+        for table, column in SECTION_REFERENCE_TABLES
+    )
+    params = [document_id] * len(SECTION_REFERENCE_TABLES)
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(f"SELECT {selects}", params)
+        row = cur.fetchone()
+    if row is None:
+        return {}
+    return {table: int(row[table]) for table, _ in SECTION_REFERENCE_TABLES
+            if int(row[table]) > 0}
+
+
+def replace_legal_document_sections(
+    legal_document_id: str,
+    sections: list[dict[str, Any]],
+) -> list[str]:
+    """Delete this document's sections and write the given set in one
+    transaction. Returns the new section ids.
+
+    Only safe when nothing references the old rows — call
+    ``count_section_references`` first. The delete and the insert share a
+    connection so a failure mid-write cannot leave a published document with
+    no sections at all.
+    """
+    import uuid
+
+    section_ids: list[str] = []
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM legal_document_sections WHERE legal_document_id = %s",
+            (legal_document_id,),
+        )
+        deleted = cur.rowcount
+        for idx, section in enumerate(sections):
+            section_id = str(uuid.uuid4())
+            section_ids.append(section_id)
+            cur.execute(
+                """INSERT INTO legal_document_sections
+                       (id, legal_document_id, section_type, section_label,
+                        ordering, plain_text, html_text, page_start, page_end,
+                        token_count, created_at)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())""",
+                (
+                    section_id,
+                    legal_document_id,
+                    section.get("section_type", "body"),
+                    section.get("section_label"),
+                    section.get("ordering", idx),
+                    section.get("plain_text"),
+                    section.get("html_text"),
+                    section.get("page_start"),
+                    section.get("page_end"),
+                    section.get("token_count"),
+                ),
+            )
+    logger.info(
+        "Replaced sections for document %s: deleted %d, inserted %d",
+        legal_document_id,
+        deleted,
+        len(section_ids),
+    )
+    return section_ids
+
+
+def get_bar_exam_questions_for_sitting(sitting_id: str) -> list[dict[str, Any]]:
+    """Return ``{id, question_number, question_text}`` for a sitting's questions.
+
+    Read before a re-ingest so the caller can see which questions the new
+    parse actually changes — the upsert itself cannot tell, and an AI answer
+    attached to a question whose text moved underneath it is answering a
+    question that no longer exists.
+    """
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """SELECT id, question_number, question_text
+                   FROM bar_exam_questions
+                   WHERE bar_exam_sitting_id = %s
+                   ORDER BY question_number""",
+            (sitting_id,),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+def get_bar_exam_answer_states(
+    question_ids: list[str],
+    answer_type: str = "ai_generated",
+) -> dict[str, dict[str, Any]]:
+    """``{question_id: {id, review_status, confidence}}`` for the ids given.
+
+    The batch form of ``get_bar_exam_answer_state``: a re-ingest asks this
+    about every changed question at once.
+    """
+    if not question_ids:
+        return {}
+    with get_connection() as conn, \
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """SELECT id, bar_exam_question_id, review_status, confidence
+                   FROM bar_exam_answers
+                   WHERE bar_exam_question_id = ANY(%s::uuid[])
+                     AND answer_type = %s""",
+            (list(question_ids), answer_type),
+        )
+        return {
+            str(row["bar_exam_question_id"]): {
+                "id": str(row["id"]),
+                "review_status": row["review_status"],
+                "confidence": row["confidence"],
+            }
+            for row in cur.fetchall()
+        }
+
+
+def delete_pending_bar_exam_answers(
+    question_ids: list[str],
+    answer_type: str = "ai_generated",
+) -> list[str]:
+    """Delete pending answers for these questions. Returns the question ids hit.
+
+    ``review_status = 'pending'`` in the WHERE clause is the whole safety
+    property: an answer an editor has approved or rejected is a human
+    decision, and a re-parse of the source page is not grounds to delete it.
+    The caller decides what to do about those; the SQL makes sure it cannot
+    accidentally do this.
+    """
+    if not question_ids:
+        return []
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """DELETE FROM bar_exam_answers
+                   WHERE bar_exam_question_id = ANY(%s::uuid[])
+                     AND answer_type = %s
+                     AND review_status = 'pending'
+                   RETURNING bar_exam_question_id""",
+            (list(question_ids), answer_type),
+        )
+        deleted = [str(row[0]) for row in cur.fetchall()]
+    if deleted:
+        logger.info(
+            "Deleted %d pending bar exam answer(s) for changed questions",
+            len(deleted),
+        )
+    return deleted
+
+
 def publish_legal_document_immediately(document_id: str) -> None:
     """Mark a freshly-ingested official-source document as published.
 
