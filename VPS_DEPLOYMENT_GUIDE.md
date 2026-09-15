@@ -114,6 +114,8 @@ All infrastructure files are in the repository:
 | Grafana provisioning | `infrastructure/monitoring/grafana/provisioning/` |
 | DB backup script | `infrastructure/scripts/db-backup.sh` |
 | DB restore script | `infrastructure/scripts/db-restore.sh` |
+| .env reader (shared by both) | `infrastructure/scripts/lib/env-file.sh` |
+| DB backup cron job | `infrastructure/cron/libertasian-db-backup` |
 | CI workflow | `.github/workflows/ci.yml` |
 | Staging deploy | `.github/workflows/deploy-staging.yml` |
 | Production deploy | `.github/workflows/deploy-production.yml` |
@@ -710,8 +712,16 @@ SENTRY_DSN=
 GRAFANA_ADMIN_USER=admin
 GRAFANA_ADMIN_PASSWORD=YOUR_STRONG_GRAFANA_PASSWORD
 
-# Backup
+# Backup — off-site encrypted DB backups to Cloudflare R2 (see Step 7.4)
 BACKUP_ENCRYPTION_KEY=HEX_KEY_FROM_STEP_4_2
+BACKUP_S3_ENDPOINT=https://YOUR_R2_ACCOUNT_ID.r2.cloudflarestorage.com
+BACKUP_S3_BUCKET=libertasian-db-backups
+BACKUP_S3_ACCESS_KEY=YOUR_R2_ACCESS_KEY_ID
+BACKUP_S3_SECRET_KEY=YOUR_R2_SECRET_ACCESS_KEY
+# Optional
+BACKUP_S3_REGION=auto
+BACKUP_EXCLUDE_TABLE_DATA=
+BACKUP_HEALTHCHECK_URL=
 ```
 
 > **Important:** Replace all `YOUR_STRONG_*` placeholders with actual strong passwords. Use `openssl rand -base64 32` to generate random passwords.
@@ -1208,44 +1218,146 @@ ls -la /opt/libertasian/backups/pre-deploy-*
 bash infrastructure/scripts/db-restore.sh /opt/libertasian/backups/pre-deploy-YYYYMMDD-HHMMSS.sql.gz
 ```
 
-### 7.4 — Database Backup Schedule
+### 7.4 — Database Backup Schedule (off-site, encrypted)
 
-Set up automated daily backups:
+**The backup target is Cloudflare R2, not MinIO.** MinIO runs on this VPS's
+disk, so a copy there survives nothing that actually threatens the database —
+disk failure, a bad `DROP`, ransomware, or losing the box. Everything below
+assumes the copy has to leave the server.
+
+The R2 bucket carries a **7-day object lock** (an uploaded object cannot be
+overwritten or deleted inside that window — not by us, not by anyone who takes
+the server) plus lifecycle rules: `daily/` expires after 8 days, `weekly/`
+after 35, `monthly/` after 100. Remote retention is therefore enforced by the
+bucket, not by the script; the script never deletes a remote object and cannot.
+
+**Step 1 — add the backup keys to `/opt/libertasian/.env`:**
 
 ```bash
-# Create cron job
-cat <<'EOF' | sudo tee /etc/cron.d/libertasian-backup
-# Daily database backup at 2 AM, keep last 7, upload to MinIO
-0 2 * * * deploy cd /opt/libertasian && bash infrastructure/scripts/db-backup.sh --upload --keep 7 >> /opt/libertasian/logs/backup.log 2>&1
-EOF
+BACKUP_S3_ENDPOINT=https://YOUR_R2_ACCOUNT_ID.r2.cloudflarestorage.com
+BACKUP_S3_BUCKET=libertasian-db-backups
+BACKUP_S3_ACCESS_KEY=YOUR_R2_ACCESS_KEY_ID
+BACKUP_S3_SECRET_KEY=YOUR_R2_SECRET_ACCESS_KEY
+BACKUP_ENCRYPTION_KEY=HEX_KEY_FROM_STEP_4_2
+
+# Optional
+BACKUP_S3_REGION=auto                            # R2 wants 'auto'; this is the default
+BACKUP_EXCLUDE_TABLE_DATA=backfill_checkpoints   # comma-separated; empty = full dump
+BACKUP_HEALTHCHECK_URL=https://hc-ping.com/UUID  # empty = no pings
 ```
 
-**Manual backup:**
+The R2 API token needs **Object Read & Write on that bucket only**.
+
+> `BACKUP_ENCRYPTION_KEY` *is* the backup. Keep a copy in a password manager,
+> off this server. Lose it and every object in R2 is unreadable ciphertext. It
+> must not change without re-uploading, or older objects stop restoring.
+
+**Step 2 — install the cron job (as root):**
+
+```bash
+sudo install -m 0644 -o root -g root \
+  /opt/libertasian/infrastructure/cron/libertasian-db-backup \
+  /etc/cron.d/libertasian-db-backup
+
+sudo mkdir -p /opt/libertasian/logs
+sudo chown brick:brick /opt/libertasian/logs
+
+# cron.d files must be root-owned, mode 0644 and NOT executable, or cron
+# silently ignores them.
+ls -l /etc/cron.d/libertasian-db-backup
+sudo systemctl status cron --no-pager
+```
+
+The job runs **daily at 02:30 server time as `brick`** and appends to
+`/opt/libertasian/logs/db-backup.log`. Remove the old
+`/etc/cron.d/libertasian-backup` if it was ever installed.
+
+**Step 3 — prove it works, right now:**
 
 ```bash
 cd /opt/libertasian
-bash infrastructure/scripts/db-backup.sh --upload --keep 7
+bash infrastructure/scripts/db-backup.sh              # exit 0 and "Upload complete."
+bash infrastructure/scripts/db-backup.sh --verify-latest
+tail -40 /opt/libertasian/logs/db-backup.log
 ```
 
-The backup script (`infrastructure/scripts/db-backup.sh`):
-- Creates a `pg_dump` in custom format (compact, restorable)
-- Optionally encrypts with AES-256-CBC (if `BACKUP_ENCRYPTION_KEY` is set)
-- Optionally uploads to MinIO/S3
-- Rotates old backups (keeps last N)
+`--verify-latest` downloads the newest `daily/` object, decrypts it and runs
+`pg_restore --list` on it inside the postgres container, printing the number of
+archive items. That is the only check that proves what is in R2 is a restorable
+archive rather than a well-formed pile of bytes. **Run it after any change to
+the script, the key or the bucket.**
+
+**What the backup script does, in order:**
+
+1. Takes an `flock` on `/opt/libertasian/backups/.db-backup.lock`, so a run
+   that overruns 24h can never double up with the next one.
+2. Reads **only** the keys above out of `.env` with `grep`/`cut`. It does not
+   `source` the file: prod's `.env` contains `SMTP_FROM=LIBERTASIAN <no-reply@…>`
+   and that unquoted `<>` is shell redirection, which kills any script that
+   sources it. A missing required key is a hard exit, not a warning.
+3. `docker exec libertasian-postgres pg_dump --format=custom --no-owner
+   --no-privileges`, **streamed straight into `openssl`** — no unencrypted dump
+   is ever written to disk. `pg_dump`'s stderr goes to the log, not `/dev/null`.
+4. Encrypts with `aes-256-cbc -salt -pbkdf2 -iter 100000`, passing the key
+   through the environment (`-pass env:`), never on the command line where `ps`
+   would show it to every user on the box.
+5. Uploads with `docker run --rm amazon/aws-cli:2.27.0` (the server has no
+   `aws` or `mc` binary and does not need one) to
+   `daily/libertasian-YYYYMMDD-HHMMSS.dump.enc`, plus `weekly/` on Sundays and
+   `monthly/` on the 1st — separate uploads, because object lock forbids
+   server-side copying of a locked object.
+6. **Verifies every upload with `s3api head-object`**, comparing
+   `ContentLength` against the local file. It prints `Upload complete.` only
+   after that check passes; anything wrong is a non-zero exit.
+7. Keeps the newest **2** `*.dump.enc` files in `/opt/libertasian/backups/` and
+   touches nothing else in that directory — hand-made artifacts such as
+   `billing-pre-provider-rename-*.sql` and `user-deletes/` are never matched.
+8. If `BACKUP_HEALTHCHECK_URL` is set, pings `…/start` at the beginning, the
+   plain URL on success and `…/fail` on any error. A failed ping never fails
+   the backup. Unset, it does nothing.
 
 ### 7.5 — Database Restore Procedure
 
+**From a local backup:**
+
+```bash
+cd /opt/libertasian
+ls -la backups/
+
+# Interactive — asks for confirmation, type 'yes'
+bash infrastructure/scripts/db-restore.sh backups/libertasian-YYYYMMDD-HHMMSS.dump.enc
+```
+
+**From R2 (the local copies are gone, or the box is):**
+
 ```bash
 cd /opt/libertasian
 
-# List available backups
-ls -la backups/
+# Read the keys without sourcing .env (SMTP_FROM's <> breaks `source`)
+R2_EP=$(grep -m1 '^BACKUP_S3_ENDPOINT=' .env | cut -d= -f2-)
+R2_BUCKET=$(grep -m1 '^BACKUP_S3_BUCKET=' .env | cut -d= -f2-)
+export AWS_ACCESS_KEY_ID=$(grep -m1 '^BACKUP_S3_ACCESS_KEY=' .env | cut -d= -f2-)
+export AWS_SECRET_ACCESS_KEY=$(grep -m1 '^BACKUP_S3_SECRET_KEY=' .env | cut -d= -f2-)
 
-# Restore (interactive — will ask for confirmation)
-bash infrastructure/scripts/db-restore.sh backups/libertasian-YYYYMMDD-HHMMSS.dump
-# Or for encrypted backups:
-bash infrastructure/scripts/db-restore.sh backups/libertasian-YYYYMMDD-HHMMSS.dump.enc
+r2() { docker run --rm \
+  -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY \
+  -e AWS_DEFAULT_REGION=auto \
+  -e AWS_REQUEST_CHECKSUM_CALCULATION=when_required \
+  -e AWS_RESPONSE_CHECKSUM_VALIDATION=when_required \
+  -v /opt/libertasian/backups:/backups \
+  amazon/aws-cli:2.27.0 "$@"; }
+
+r2 s3 ls "s3://$R2_BUCKET/daily/" --endpoint-url "$R2_EP"
+r2 s3 cp "s3://$R2_BUCKET/daily/libertasian-YYYYMMDD-HHMMSS.dump.enc" \
+  /backups/ --endpoint-url "$R2_EP"
+
+bash infrastructure/scripts/db-restore.sh \
+  backups/libertasian-YYYYMMDD-HHMMSS.dump.enc
 ```
+
+`BACKUP_ENCRYPTION_KEY` in `.env` must be the key the object was encrypted
+with. `db-restore.sh` reads it with the same reader `db-backup.sh` uses and
+hands it to `openssl` through the environment, not the command line.
 
 The restore script:
 1. Creates a pre-restore safety backup
@@ -1256,6 +1368,10 @@ The restore script:
 6. Restores from dump
 7. Runs `prisma migrate deploy`
 8. Restarts all services
+
+> It stops and restarts containers by their hard-coded `libertasian-*` names
+> and drops the database named by `POSTGRES_DB`. Do not point it at a machine
+> you are not intending to take offline.
 
 ### 7.6 — Crawler & Worker Management
 
@@ -1474,7 +1590,7 @@ Migrate from Docker Compose to Kubernetes when:
 2. Install Docker (Phase 2)
 3. Clone repository, restore `.env` from secure backup
 4. Pull images from GHCR
-5. Restore database from most recent backup in MinIO/S3
+5. Restore database from the most recent `daily/` object in the R2 backup bucket (Step 7.5)
 6. Start all services
 7. Update DNS to point to new VPS IP
 8. Verify SSL certificates (re-obtain if needed)
@@ -1603,8 +1719,11 @@ Worker crawl failures do not affect the API:
 
 ### Data & Backup
 
-- [ ] Database backup cron configured (daily at 2 AM)
-- [ ] Backup encryption enabled (`BACKUP_ENCRYPTION_KEY` set)
+- [ ] Database backup cron installed (`/etc/cron.d/libertasian-db-backup`, daily 02:30)
+- [ ] Backup encryption enabled (`BACKUP_ENCRYPTION_KEY` set) and the key stored off-server
+- [ ] Off-site target configured (`BACKUP_S3_*` point at R2, not MinIO)
+- [ ] `db-backup.sh` run once by hand: exit 0 and "Upload complete."
+- [ ] `db-backup.sh --verify-latest` run once: lists a non-zero item count
 - [ ] Test restore from backup at least once
 - [ ] MinIO buckets created (`libertasian-uploads`, `libertasian-corpus`)
 - [ ] Persistent volumes for postgres, redis, opensearch, minio, clamav
@@ -1691,6 +1810,13 @@ Worker crawl failures do not affect the API:
 | `GRAFANA_ADMIN_USER` | No | `admin` | Config |
 | `GRAFANA_ADMIN_PASSWORD` | Yes | Strong random | SECRET |
 | `BACKUP_ENCRYPTION_KEY` | Yes | `openssl rand -hex 32` | SECRET |
+| `BACKUP_S3_ENDPOINT` | Yes | `https://<acct>.r2.cloudflarestorage.com` | Config |
+| `BACKUP_S3_BUCKET` | Yes | R2 bucket name | Config |
+| `BACKUP_S3_ACCESS_KEY` | Yes | R2 access key id | SECRET |
+| `BACKUP_S3_SECRET_KEY` | Yes | R2 secret access key | SECRET |
+| `BACKUP_S3_REGION` | No | `auto` | Config |
+| `BACKUP_EXCLUDE_TABLE_DATA` | No | Empty (full dump) | Config |
+| `BACKUP_HEALTHCHECK_URL` | No | Empty (no pings) | Config |
 
 ---
 

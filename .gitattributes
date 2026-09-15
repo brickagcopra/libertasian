@@ -1,0 +1,9 @@
+# Shell scripts must keep LF endings: a CRLF .sh is not executable on the
+# VPS ("bad interpreter") and every `\` line continuation escapes the CR
+# instead of the newline. Windows checkouts get LF for these regardless of
+# core.autocrlf.
+*.sh text eol=lf
+
+# cron.d files are parsed by cron on Linux; a CRLF one is ignored or
+# mis-parsed.
+infrastructure/cron/** text eol=lf

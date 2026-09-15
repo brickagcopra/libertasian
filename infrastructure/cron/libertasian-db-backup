@@ -1,0 +1,21 @@
+# /etc/cron.d/libertasian-db-backup
+#
+# LIBERTASIAN — nightly encrypted off-site database backup.
+#
+# Install (as root, on the VPS):
+#   sudo install -m 0644 -o root -g root \
+#     /opt/libertasian/infrastructure/cron/libertasian-db-backup \
+#     /etc/cron.d/libertasian-db-backup
+#   sudo mkdir -p /opt/libertasian/logs && sudo chown brick:brick /opt/libertasian/logs
+#
+# cron.d files must be owned by root, mode 0644, and must NOT be executable.
+# Check it is being picked up with: sudo systemctl status cron
+#
+# The job takes its own flock, so a run that overruns 24h cannot double up.
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+MAILTO=""
+
+# m h dom mon dow user command
+30 2 * * * brick /opt/libertasian/infrastructure/scripts/db-backup.sh >> /opt/libertasian/logs/db-backup.log 2>&1
