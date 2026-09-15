@@ -6,13 +6,27 @@
 #   ./db-restore.sh /path/to/libertasian-20260321-020000.dump
 #   ./db-restore.sh /path/to/libertasian-20260321-020000.dump.enc   # encrypted
 #
+# Config (POSTGRES_CONTAINER, POSTGRES_USER, POSTGRES_DB, BACKUP_ENCRYPTION_KEY)
+# is read from /opt/libertasian/.env; override the path with ENV_FILE.
+#
 # WARNING: This will DROP and recreate the target database.
 #          Always create a backup of the current database before restoring.
 # ==========================================================================
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=lib/env-file.sh
+source "${SCRIPT_DIR}/lib/env-file.sh"
+
 # ── Configuration ──
+# Same reader db-backup.sh uses: prod's .env cannot be `source`d (SMTP_FROM's
+# unquoted <> is shell redirection), so only these keys are pulled out with
+# grep/cut. A value already set in the environment still wins.
+ENV_FILE="${ENV_FILE:-/opt/libertasian/.env}"
+env_file_load POSTGRES_CONTAINER POSTGRES_USER POSTGRES_DB BACKUP_ENCRYPTION_KEY
+
 CONTAINER_NAME="${POSTGRES_CONTAINER:-libertasian-postgres}"
 DB_USER="${POSTGRES_USER:-libertasian}"
 DB_NAME="${POSTGRES_DB:-libertasian}"
@@ -64,10 +78,13 @@ if [[ "${BACKUP_FILE}" == *.enc ]]; then
 
   echo "[$(date -Iseconds)] Decrypting backup..."
   RESTORE_FILE="${BACKUP_FILE%.enc}"
-  openssl enc -aes-256-cbc -d -salt -pbkdf2 -iter 100000 \
-    -in "${BACKUP_FILE}" \
-    -out "${RESTORE_FILE}" \
-    -pass "pass:${ENCRYPTION_KEY}"
+  # -pass env: keeps the key out of argv, where `ps` showed it to every user
+  # on the box for as long as the decrypt ran.
+  BACKUP_PASSPHRASE="${ENCRYPTION_KEY}" \
+    openssl enc -aes-256-cbc -d -salt -pbkdf2 -iter 100000 \
+      -in "${BACKUP_FILE}" \
+      -out "${RESTORE_FILE}" \
+      -pass env:BACKUP_PASSPHRASE
   echo "[$(date -Iseconds)] Decryption complete."
 fi
 
