@@ -407,12 +407,43 @@ export class SearchController {
    * already committed the publish. The route stays protected by
    * `InternalApiGuard` (X-Internal-Api-Key), same reasoning as the
    * class-level `@SkipThrottle()` on `InternalDerivativesController`.
+   *
+   * `?replace=true` removes the document's existing entries from both indexes
+   * before re-indexing it.
+   *
+   * `indexLegalDocument` upserts the document and the sections it has NOW; it
+   * cannot know about sections that no longer exist, because they are gone
+   * from PostgreSQL by the time it runs. Re-ingesting a bar exam page replaces
+   * its sections (new rows, new ids), so without this the old section entries
+   * stay in the keyword and vector indexes forever — prod has the 2015
+   * criminal paper indexed under its instruction text for exactly this reason.
+   *
+   * Not the default, and deliberately so: the auto-publish and reindex
+   * backfills call this route for documents whose sections have not changed,
+   * where a delete-then-index would take a document OUT of search for the
+   * duration of the re-index for no benefit. Only a caller that knows it
+   * replaced sections asks for it.
    */
   @Post('internal/index/:id')
   @ApiOperation({ summary: 'Index a document (internal service-to-service)' })
   @SkipThrottle()
   @UseGuards(InternalApiGuard)
-  async internalIndexDocument(@Param('id') documentId: string) {
+  async internalIndexDocument(
+    @Param('id') documentId: string,
+    @Query('replace') replace?: string,
+  ) {
+    const shouldReplace = replace === 'true' || replace === '1';
+    if (shouldReplace) {
+      this.logger.log(
+        `Internal re-index request for document ${documentId} (replacing existing entries)`,
+      );
+      await this.searchService.removeFromIndex(documentId);
+      await this.searchService.indexLegalDocument(documentId);
+      return {
+        success: true,
+        data: { message: `Document ${documentId} re-indexed` },
+      };
+    }
     this.logger.log(
       `Internal index request for document ${documentId}`,
     );

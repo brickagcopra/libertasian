@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.fetchers.base import FetchedContent
+from src.parsers.lawphil_bar_html import parse_page as _parse_page
 
 FIXTURES = Path(__file__).parent / "fixtures" / "lawphil_bar"
 
@@ -31,6 +32,20 @@ def mock_in_window():
         "src.tasks.bar_exam_tasks.is_in_fetch_window", return_value=True,
     ):
         yield
+
+
+@pytest.fixture(autouse=True)
+def mock_nestjs_client():
+    """Patch the indexing client for every test in this module.
+
+    autouse because `ingest_sitting` now indexes on every successful write:
+    without it the older tests would issue a real POST at the configured API
+    URL. Defaults to success, so a test that does not mention indexing reads
+    as "indexing worked".
+    """
+    with patch("src.tasks.bar_exam_tasks.nestjs_client") as client:
+        client.trigger_opensearch_index.return_value = True
+        yield client
 
 
 @pytest.fixture()
@@ -50,6 +65,15 @@ def mock_db_for_bar_tasks():
         mock_db.create_legal_document_sections.return_value = [
             str(uuid.uuid4()) for _ in range(20)
         ]
+        mock_db.replace_legal_document_sections.return_value = [
+            str(uuid.uuid4()) for _ in range(20)
+        ]
+        # Default: a re-ingest is safe and changes nothing. Each re-ingest
+        # test states its own situation.
+        mock_db.count_section_references.return_value = {}
+        mock_db.get_bar_exam_questions_for_sitting.return_value = []
+        mock_db.get_bar_exam_answer_states.return_value = {}
+        mock_db.delete_pending_bar_exam_answers.return_value = []
         mock_db.publish_legal_document_immediately.return_value = None
         mock_db.create_bar_exam_sitting.return_value = str(uuid.uuid4())
         mock_db.update_bar_exam_sitting_source_doc.return_value = None
@@ -88,6 +112,47 @@ def mock_lawphil_bar_fetcher_2022_civil():
         )
         MockClass.return_value = instance
         yield instance
+
+
+@pytest.fixture()
+def mock_lawphil_bar_fetcher_2015_criminal():
+    html = _load_fixture("2015_criminal.html")
+    with patch("src.tasks.bar_exam_tasks.LawphilBarFetcher") as MockClass:
+        instance = MagicMock()
+        instance.fetch_content.return_value = FetchedContent(
+            url="https://lawphil.net/courts/bm/barQ/2015/criminalQ.html",
+            html=html,
+            status_code=200,
+            content_type="text/html",
+            fetched_at="2026-09-14T18:00:00+00:00",
+        )
+        MockClass.return_value = instance
+        yield instance
+
+
+#: What the parser makes of the 2015 fixture right now, read once. Tests that
+#: need "the text this question will be upserted with" take it from here
+#: rather than hardcoding a string that the next fixture refresh would
+#: silently turn into an unrelated assertion.
+_PARSED_2015 = {
+    q.question_number: q.question_text
+    for q in _parse_page(_load_fixture("2015_criminal.html")).questions
+}
+_PARSED_Q3 = _PARSED_2015[3]
+
+
+def _sitting_row(document_id: str | None, sitting_id: str) -> dict:
+    return {
+        "id": sitting_id,
+        "year": 2015,
+        "part": None,
+        "subject_study_code": "criminal_law",
+        "subject_bar_admin_code": "criminal",
+        "source_document_id": document_id,
+        "source_url": "https://lawphil.net/courts/bm/barQ/2015/criminalQ.html",
+        "chairperson": None,
+        "taxonomy_version": "study_8",
+    }
 
 
 def test_ingest_sitting_legacy_format_creates_full_row_set(
@@ -283,3 +348,454 @@ def test_backfill_skipped_outside_fetch_window():
         assert result["status"] == "skipped"
         assert result["reason"] == "outside_fetch_window"
         mock_delay.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Re-ingest safety. Prod holds 105 bar-exam documents for 97 external_ids
+# because this task used to INSERT a new published document every run, and
+# five 2015 sittings hold four instruction paragraphs each because the parser
+# could not read their format. Fixing the parser means re-running the ingest
+# over sittings that already have questions and answers, so the re-run itself
+# has to be safe.
+# ---------------------------------------------------------------------------
+
+
+class TestDocumentReuse:
+    def test_a_sitting_with_a_document_reuses_it_instead_of_publishing_a_copy(
+        self,
+        mock_in_window,  # noqa: ARG001
+        mock_db_for_bar_tasks,
+        mock_lawphil_bar_fetcher_2015_criminal,  # noqa: ARG001
+    ):
+        """The duplicate-document bug, pinned.
+
+        A re-parse must add a version to the existing document, not create a
+        second published one carrying the same external_id.
+        """
+        document_id = str(uuid.uuid4())
+        sitting_id = str(uuid.uuid4())
+        mock_db_for_bar_tasks.find_bar_exam_sitting.return_value = _sitting_row(
+            document_id, sitting_id,
+        )
+
+        from src.tasks.bar_exam_tasks import ingest_sitting
+
+        result = ingest_sitting(year=2015, subject_slug="criminalQ")
+
+        assert result["status"] == "completed"
+        assert result["document_id"] == document_id
+        assert result["document_reused"] is True
+        mock_db_for_bar_tasks.create_legal_document.assert_not_called()
+        # A new version row, never an overwrite of an existing one.
+        version_call = mock_db_for_bar_tasks.create_legal_document_version.call_args
+        assert version_call.kwargs["legal_document_id"] == document_id
+        assert version_call.kwargs["parser_version"] == "lawphil-bar-v2"
+        # Sections replaced on the same document, not appended to it.
+        mock_db_for_bar_tasks.replace_legal_document_sections.assert_called_once()
+        mock_db_for_bar_tasks.create_legal_document_sections.assert_not_called()
+        assert (
+            mock_db_for_bar_tasks.replace_legal_document_sections.call_args.args[0]
+            == document_id
+        )
+
+    def test_a_sitting_with_no_document_still_creates_one(
+        self,
+        mock_in_window,  # noqa: ARG001
+        mock_db_for_bar_tasks,
+        mock_lawphil_bar_fetcher_2015_criminal,  # noqa: ARG001
+    ):
+        """A sitting row can predate its document. That is still a create."""
+        sitting_id = str(uuid.uuid4())
+        mock_db_for_bar_tasks.find_bar_exam_sitting.return_value = _sitting_row(
+            None, sitting_id,
+        )
+
+        from src.tasks.bar_exam_tasks import ingest_sitting
+
+        result = ingest_sitting(year=2015, subject_slug="criminalQ")
+
+        assert result["document_reused"] is False
+        mock_db_for_bar_tasks.create_legal_document.assert_called_once()
+        mock_db_for_bar_tasks.create_legal_document_sections.assert_called_once()
+        mock_db_for_bar_tasks.replace_legal_document_sections.assert_not_called()
+
+    def test_the_2015_page_now_ingests_all_22_questions(
+        self,
+        mock_in_window,  # noqa: ARG001
+        mock_db_for_bar_tasks,
+        mock_lawphil_bar_fetcher_2015_criminal,  # noqa: ARG001
+    ):
+        from src.tasks.bar_exam_tasks import ingest_sitting
+
+        result = ingest_sitting(year=2015, subject_slug="criminalQ")
+
+        assert result["questions_parsed"] == 22
+        assert result["expected_items"] == 22
+        assert result["page_format"] == "ordered_list"
+        upsert = mock_db_for_bar_tasks.upsert_bar_exam_questions.call_args
+        assert len(upsert.kwargs["questions"]) == 22
+        # Recorded in the version row as well as the telemetry, so the
+        # document's own history says which parse produced it.
+        extracted = (
+            mock_db_for_bar_tasks.create_legal_document_version.call_args
+            .kwargs["extracted_json"]
+        )
+        assert extracted["questions_parsed"] == 22
+        assert extracted["expected_items"] == 22
+        assert extracted["parser_version"] == "lawphil-bar-v2"
+        audit = mock_db_for_bar_tasks.create_audit_log.call_args.kwargs["metadata"]
+        assert audit["questions_parsed"] == 22
+        assert audit["expected_items"] == 22
+
+
+class TestSectionsReferencedAbort:
+    def test_a_referenced_section_stops_the_whole_re_ingest(
+        self,
+        mock_in_window,  # noqa: ARG001
+        mock_db_for_bar_tasks,
+        mock_lawphil_bar_fetcher_2015_criminal,  # noqa: ARG001
+    ):
+        """Replacing sections another table points at would cut a citation,
+        a bookmark or a digest's provenance loose from its source. The run
+        stops before writing anything at all."""
+        document_id = str(uuid.uuid4())
+        sitting_id = str(uuid.uuid4())
+        mock_db_for_bar_tasks.find_bar_exam_sitting.return_value = _sitting_row(
+            document_id, sitting_id,
+        )
+        mock_db_for_bar_tasks.count_section_references.return_value = {
+            "citations": 3,
+            "provenance_records": 1,
+        }
+
+        from src.tasks.bar_exam_tasks import ingest_sitting
+
+        result = ingest_sitting(year=2015, subject_slug="criminalQ")
+
+        assert result["status"] == "sections_referenced"
+        assert result["section_references"] == {
+            "citations": 3,
+            "provenance_records": 1,
+        }
+        assert result["document_id"] == document_id
+        assert result["sitting_id"] == sitting_id
+        # Nothing written: not the sections, not the questions, not even a
+        # version row on the document's history.
+        mock_db_for_bar_tasks.replace_legal_document_sections.assert_not_called()
+        mock_db_for_bar_tasks.create_legal_document_sections.assert_not_called()
+        mock_db_for_bar_tasks.create_legal_document_version.assert_not_called()
+        mock_db_for_bar_tasks.upsert_bar_exam_questions.assert_not_called()
+        mock_db_for_bar_tasks.delete_pending_bar_exam_answers.assert_not_called()
+        mock_db_for_bar_tasks.publish_legal_document_immediately.assert_not_called()
+        # The abort itself is recorded — a silent no-op would be worse than
+        # the duplicate documents this replaces.
+        audit = mock_db_for_bar_tasks.create_audit_log.call_args.kwargs
+        assert audit["action"] == "bar_exam.sitting_ingest_aborted"
+        assert audit["metadata"]["reason"] == "sections_referenced"
+
+
+class TestChangedQuestionAnswers:
+    """An AI answer answers the text it was generated from."""
+
+    def _existing_questions(self, changed_id: str, unchanged_id: str) -> list:
+        # Question 1's stored text is the instruction paragraph prod holds;
+        # the new parse replaces it, so its answer is answering nothing.
+        # Question 3 is given the text the new parse produces for it, so it
+        # counts as unchanged.
+        return [
+            {
+                "id": changed_id,
+                "question_number": 1,
+                "question_text": "1. This Questionnaire contains eleven (11) pages.",
+            },
+            {
+                "id": unchanged_id,
+                "question_number": 3,
+                "question_text": _PARSED_Q3,
+            },
+        ]
+
+    def test_a_pending_answer_on_changed_text_is_deleted(
+        self,
+        mock_in_window,  # noqa: ARG001
+        mock_db_for_bar_tasks,
+        mock_lawphil_bar_fetcher_2015_criminal,  # noqa: ARG001
+    ):
+        changed_id, unchanged_id = str(uuid.uuid4()), str(uuid.uuid4())
+        mock_db_for_bar_tasks.find_bar_exam_sitting.return_value = _sitting_row(
+            str(uuid.uuid4()), str(uuid.uuid4()),
+        )
+        mock_db_for_bar_tasks.get_bar_exam_questions_for_sitting.return_value = (
+            self._existing_questions(changed_id, unchanged_id)
+        )
+        mock_db_for_bar_tasks.get_bar_exam_answer_states.return_value = {
+            changed_id: {"id": "ans-1", "review_status": "pending"},
+        }
+        mock_db_for_bar_tasks.delete_pending_bar_exam_answers.return_value = [
+            changed_id,
+        ]
+
+        from src.tasks.bar_exam_tasks import ingest_sitting
+
+        result = ingest_sitting(year=2015, subject_slug="criminalQ")
+
+        assert result["questions_changed"] == 1
+        assert result["pending_answers_deleted"] == [changed_id]
+        assert result["reviewed_answer_on_changed_question"] == []
+        # Only the changed question's answer is even considered.
+        states_call = mock_db_for_bar_tasks.get_bar_exam_answer_states.call_args
+        assert states_call.args[0] == [changed_id]
+        delete_call = mock_db_for_bar_tasks.delete_pending_bar_exam_answers.call_args
+        assert delete_call.args[0] == [changed_id]
+
+    @pytest.mark.parametrize("review_status", ["approved", "rejected"])
+    def test_a_reviewed_answer_on_changed_text_is_kept_and_reported(
+        self,
+        mock_in_window,  # noqa: ARG001
+        mock_db_for_bar_tasks,
+        mock_lawphil_bar_fetcher_2015_criminal,  # noqa: ARG001
+        review_status,
+    ):
+        """A human decision outranks a re-parse. The question id is surfaced
+        instead, so an editor can look at an answer whose question moved."""
+        changed_id, unchanged_id = str(uuid.uuid4()), str(uuid.uuid4())
+        mock_db_for_bar_tasks.find_bar_exam_sitting.return_value = _sitting_row(
+            str(uuid.uuid4()), str(uuid.uuid4()),
+        )
+        mock_db_for_bar_tasks.get_bar_exam_questions_for_sitting.return_value = (
+            self._existing_questions(changed_id, unchanged_id)
+        )
+        mock_db_for_bar_tasks.get_bar_exam_answer_states.return_value = {
+            changed_id: {"id": "ans-1", "review_status": review_status},
+        }
+
+        from src.tasks.bar_exam_tasks import ingest_sitting
+
+        result = ingest_sitting(year=2015, subject_slug="criminalQ")
+
+        assert result["reviewed_answer_on_changed_question"] == [changed_id]
+        assert result["pending_answers_deleted"] == []
+        mock_db_for_bar_tasks.delete_pending_bar_exam_answers.assert_not_called()
+        audit = mock_db_for_bar_tasks.create_audit_log.call_args.kwargs["metadata"]
+        assert audit["reviewed_answer_on_changed_question"] == [changed_id]
+
+    def test_an_unchanged_question_keeps_its_pending_answer(
+        self,
+        mock_in_window,  # noqa: ARG001
+        mock_db_for_bar_tasks,
+        mock_lawphil_bar_fetcher_2015_criminal,  # noqa: ARG001
+    ):
+        """Re-running the ingest on an unchanged page must cost nothing."""
+        unchanged_id = str(uuid.uuid4())
+        mock_db_for_bar_tasks.find_bar_exam_sitting.return_value = _sitting_row(
+            str(uuid.uuid4()), str(uuid.uuid4()),
+        )
+        mock_db_for_bar_tasks.get_bar_exam_questions_for_sitting.return_value = [
+            {
+                "id": unchanged_id,
+                "question_number": 3,
+                "question_text": _PARSED_Q3,
+            },
+        ]
+
+        from src.tasks.bar_exam_tasks import ingest_sitting
+
+        result = ingest_sitting(year=2015, subject_slug="criminalQ")
+
+        assert result["questions_changed"] == 0
+        assert result["pending_answers_deleted"] == []
+        mock_db_for_bar_tasks.delete_pending_bar_exam_answers.assert_not_called()
+
+    def test_questions_the_parse_no_longer_covers_are_kept_and_listed(
+        self,
+        mock_in_window,  # noqa: ARG001
+        mock_db_for_bar_tasks,
+        mock_lawphil_bar_fetcher_2015_criminal,  # noqa: ARG001
+    ):
+        """The 22 → 4 regression, run the other way.
+
+        If a future parser finds fewer questions than are stored, the extras
+        stay: deleting them would take their answers with them on the word of
+        the parse that just got worse.
+        """
+        mock_db_for_bar_tasks.find_bar_exam_sitting.return_value = _sitting_row(
+            str(uuid.uuid4()), str(uuid.uuid4()),
+        )
+        mock_db_for_bar_tasks.get_bar_exam_questions_for_sitting.return_value = [
+            {"id": str(uuid.uuid4()), "question_number": number,
+             "question_text": f"stored question {number}"}
+            for number in (22, 23, 24)
+        ]
+
+        from src.tasks.bar_exam_tasks import ingest_sitting
+
+        result = ingest_sitting(year=2015, subject_slug="criminalQ")
+
+        # 23 and 24 are beyond the 22 the page now yields.
+        assert result["questions_missing_from_parse"] == [23, 24]
+        deletes = [
+            call[0] for call in mock_db_for_bar_tasks.mock_calls
+            if call[0].startswith("delete_")
+        ]
+        assert deletes == [], f"a delete ran on a shrinking parse: {deletes}"
+        audit = mock_db_for_bar_tasks.create_audit_log.call_args.kwargs["metadata"]
+        assert audit["questions_missing_from_parse"] == [23, 24]
+
+
+# ---------------------------------------------------------------------------
+# OpenSearch, on re-ingest. All 105 bar-exam documents are indexed in both
+# legal_documents_keyword and legal_documents_vector (1,748 entries), and the
+# 2015 criminal document is indexed with its INSTRUCTION text — fixing
+# PostgreSQL alone would leave search answering from the wrong rows.
+# ---------------------------------------------------------------------------
+
+
+class TestOpenSearchReindex:
+    def test_a_reused_document_is_re_indexed_with_replace(
+        self,
+        mock_in_window,  # noqa: ARG001
+        mock_db_for_bar_tasks,
+        mock_nestjs_client,
+        mock_lawphil_bar_fetcher_2015_criminal,  # noqa: ARG001
+    ):
+        """Sections were deleted and re-created, so the old entries have to go.
+
+        `indexLegalDocument` upserts the sections that exist now; nothing in
+        it can remove an entry for a section id that no longer exists in
+        PostgreSQL. Only `replace=True` clears them.
+        """
+        document_id = str(uuid.uuid4())
+        mock_db_for_bar_tasks.find_bar_exam_sitting.return_value = _sitting_row(
+            document_id, str(uuid.uuid4()),
+        )
+
+        from src.tasks.bar_exam_tasks import ingest_sitting
+
+        result = ingest_sitting(year=2015, subject_slug="criminalQ")
+
+        assert result["status"] == "completed"
+        assert result["indexed"] is True
+        mock_nestjs_client.trigger_opensearch_index.assert_called_once_with(
+            document_id, replace=True,
+        )
+
+    def test_a_brand_new_document_is_indexed_without_replace(
+        self,
+        mock_in_window,  # noqa: ARG001
+        mock_db_for_bar_tasks,
+        mock_nestjs_client,
+        mock_lawphil_bar_fetcher_2015_criminal,  # noqa: ARG001
+    ):
+        """Nothing stale exists to clear, and a delete-then-index would take
+        the document out of search for the duration for no reason."""
+        new_document_id = str(uuid.uuid4())
+        mock_db_for_bar_tasks.find_bar_exam_sitting.return_value = None
+        mock_db_for_bar_tasks.create_legal_document.return_value = new_document_id
+
+        from src.tasks.bar_exam_tasks import ingest_sitting
+
+        result = ingest_sitting(year=2015, subject_slug="criminalQ")
+
+        assert result["indexed"] is True
+        mock_nestjs_client.trigger_opensearch_index.assert_called_once_with(
+            new_document_id, replace=False,
+        )
+
+    def test_an_aborted_re_ingest_indexes_nothing(
+        self,
+        mock_in_window,  # noqa: ARG001
+        mock_db_for_bar_tasks,
+        mock_nestjs_client,
+        mock_lawphil_bar_fetcher_2015_criminal,  # noqa: ARG001
+    ):
+        """Nothing was written, so there is nothing to re-index — and a
+        `replace` here would delete live entries and re-index the OLD
+        sections, which is strictly worse than doing nothing."""
+        mock_db_for_bar_tasks.find_bar_exam_sitting.return_value = _sitting_row(
+            str(uuid.uuid4()), str(uuid.uuid4()),
+        )
+        mock_db_for_bar_tasks.count_section_references.return_value = {
+            "citations": 2,
+        }
+
+        from src.tasks.bar_exam_tasks import ingest_sitting
+
+        result = ingest_sitting(year=2015, subject_slug="criminalQ")
+
+        assert result["status"] == "sections_referenced"
+        assert "indexed" not in result
+        mock_nestjs_client.trigger_opensearch_index.assert_not_called()
+
+    def test_a_page_that_parses_to_nothing_indexes_nothing(
+        self,
+        mock_in_window,  # noqa: ARG001
+        mock_db_for_bar_tasks,  # noqa: ARG001
+        mock_nestjs_client,
+    ):
+        """No questions were written, so the document is untouched."""
+        with patch("src.tasks.bar_exam_tasks.LawphilBarFetcher") as fetcher_cls:
+            instance = MagicMock()
+            instance.fetch_content.return_value = FetchedContent(
+                url="https://lawphil.net/courts/bm/barQ/2015/criminalQ.html",
+                html="<html><body><p>Not a bar exam page.</p></body></html>",
+                status_code=200,
+                content_type="text/html",
+                fetched_at="2026-09-14T18:00:00+00:00",
+            )
+            fetcher_cls.return_value = instance
+
+            from src.tasks.bar_exam_tasks import ingest_sitting
+
+            result = ingest_sitting(year=2015, subject_slug="criminalQ")
+
+        assert result["status"] == "no_questions"
+        mock_nestjs_client.trigger_opensearch_index.assert_not_called()
+
+    def test_an_indexing_failure_does_not_fail_the_ingest(
+        self,
+        mock_in_window,  # noqa: ARG001
+        mock_db_for_bar_tasks,
+        mock_nestjs_client,
+        mock_lawphil_bar_fetcher_2015_criminal,  # noqa: ARG001
+    ):
+        """The questions are already committed. Losing them to a search-index
+        failure would be the worse outcome by far; the run says `indexed:
+        False` and someone re-triggers it."""
+        mock_db_for_bar_tasks.find_bar_exam_sitting.return_value = _sitting_row(
+            str(uuid.uuid4()), str(uuid.uuid4()),
+        )
+        mock_nestjs_client.trigger_opensearch_index.return_value = False
+
+        from src.tasks.bar_exam_tasks import ingest_sitting
+
+        result = ingest_sitting(year=2015, subject_slug="criminalQ")
+
+        assert result["status"] == "completed"
+        assert result["questions_parsed"] == 22
+        assert result["indexed"] is False
+        audit = mock_db_for_bar_tasks.create_audit_log.call_args.kwargs["metadata"]
+        assert audit["indexed"] is False
+
+    def test_an_indexing_client_exception_does_not_fail_the_ingest(
+        self,
+        mock_in_window,  # noqa: ARG001
+        mock_db_for_bar_tasks,
+        mock_nestjs_client,
+        mock_lawphil_bar_fetcher_2015_criminal,  # noqa: ARG001
+    ):
+        """`trigger_opensearch_index` returns False for HTTP failures, but a
+        misconfigured URL raises instead — that must not undo the ingest
+        either."""
+        mock_db_for_bar_tasks.find_bar_exam_sitting.return_value = _sitting_row(
+            str(uuid.uuid4()), str(uuid.uuid4()),
+        )
+        mock_nestjs_client.trigger_opensearch_index.side_effect = RuntimeError(
+            "invalid API url",
+        )
+
+        from src.tasks.bar_exam_tasks import ingest_sitting
+
+        result = ingest_sitting(year=2015, subject_slug="criminalQ")
+
+        assert result["status"] == "completed"
+        assert result["indexed"] is False
