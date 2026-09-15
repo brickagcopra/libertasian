@@ -16,6 +16,7 @@ from src.parsers.lawphil_bar_html import (
     ParsedBarQuestion,
     _collect_content_blocks,
     _count_sub_parts,
+    _instruction_region,
     _parse_numbered_format,
     parse,
     parse_page,
@@ -503,3 +504,70 @@ def test_count_sub_parts_no_marker_inline_roman_enumeration_still_counted() -> N
         "Discuss the validity of each clause."
     )
     assert _count_sub_parts(body, []) == 2
+class TestInstructionRegion:
+    """The structural rule that keeps the preamble out of the question set.
+
+    ``_looks_like_instructions`` matches a fixed list of opening phrases, and
+    the real 2015 page walked straight past two of them ("3. Answer the Essay
+    questions legibly…" is not "answer legibly"; "4. Make sure you do not
+    write your name…" is not "do not write your name"). A phrase list can
+    only ever be as complete as the pages we have already read, so the
+    primary defence is positional: the preamble is whatever sits under the
+    page's own INSTRUCTIONS heading.
+    """
+
+    def test_it_claims_the_whole_2015_preamble(self) -> None:
+        blocks = _collect_content_blocks(
+            BeautifulSoup(_load("2015_criminal.html"), "lxml"),
+        )
+        region = _instruction_region(blocks)
+
+        claimed = [blocks[i].text for i in sorted(region)]
+        assert claimed[0] == "INSTRUCTIONS"
+        # Both paragraphs the phrase list missed, and the chairperson footer
+        # that the last of them used to swallow.
+        assert any(t.startswith("3. Answer the Essay questions") for t in claimed)
+        assert any(t.startswith("4. Make sure you do not write") for t in claimed)
+        assert any("LEONARDO-DE CASTRO" in t for t in claimed)
+        # …and it stops at the <ol>: no question body is claimed.
+        assert not any("How are felonies committed" in t for t in claimed)
+
+    def test_it_stops_where_2022_numbering_restarts(self) -> None:
+        """Instructions 1..10 then questions 1..15 — the restart is the edge."""
+        blocks = _collect_content_blocks(
+            BeautifulSoup(_load("2022_civil_I.html"), "lxml"),
+        )
+        region = _instruction_region(blocks)
+
+        claimed = [blocks[i].text for i in sorted(region)]
+        assert claimed[0] == "INSTRUCTIONS"
+        assert any(t.startswith("10. ") for t in claimed)
+        assert not any(t.startswith("1. Noel is the son") for t in claimed)
+        assert len(parse_page(_load("2022_civil_I.html")).questions) == 15
+
+    def test_a_page_without_the_heading_claims_nothing(self) -> None:
+        blocks = _collect_content_blocks(
+            BeautifulSoup(
+                "<html><body><p>1. Some paragraph long enough to be a body.</p>"
+                "<p>2. Another paragraph long enough to be a body too.</p>"
+                "</body></html>",
+                "lxml",
+            ),
+        )
+        assert _instruction_region(blocks) == set()
+
+    def test_it_refuses_to_swallow_a_page_with_no_question_list(self) -> None:
+        """A heading whose numbered run never terminates would otherwise
+        claim every paragraph and return an empty paper. Claim the heading
+        only and let the lexical net decide.
+        """
+        blocks = _collect_content_blocks(
+            BeautifulSoup(
+                "<html><body><p align='center'><b>INSTRUCTIONS</b></p>"
+                "<p>1. First paragraph, long enough to pass the body check.</p>"
+                "<p>2. Second paragraph, also long enough to pass the check.</p>"
+                "</body></html>",
+                "lxml",
+            ),
+        )
+        assert _instruction_region(blocks) == {0}

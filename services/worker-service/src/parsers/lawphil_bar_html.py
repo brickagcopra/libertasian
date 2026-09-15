@@ -49,8 +49,12 @@ LawPhil hosts two distinct page formats:
    parser, which found no ``<ol>`` content at all and instead took the
    ``1.``/``2.``/``3.``/``4.`` INSTRUCTION paragraphs as its questions —
    which is how five 2015 sittings on prod came to hold four "questions"
-   apiece reading "This Questionnaire contains …". ``_looks_like_instructions``
-   now makes that specific failure impossible rather than merely unlikely.
+   apiece reading "This Questionnaire contains …". ``_instruction_region``
+   now makes that specific failure impossible rather than merely unlikely:
+   the numbered parser excises the preamble by its position under the page's
+   own ``INSTRUCTIONS`` heading, so no wording LawPhil chooses can smuggle an
+   instruction through. ``_looks_like_instructions`` stays behind it as a
+   lexical net for pages that carry no such heading.
 
 All three formats are decoded under windows-1252 (LawPhil's native
 encoding). The caller is responsible for handing us already-decoded text.
@@ -147,6 +151,13 @@ _LIST_SUBPART_RE = re.compile(r"(?:^|[\s;])(?P<letter>[a-j])\)\s", re.IGNORECASE
 # character of the body too, so substituting it away would eat the letter the
 # check is about to read.
 _NUMBERED_PREFIX_RE = re.compile(r"^\d{1,2}\.\s+")
+
+# The examiner's instruction block opens with a centred "INSTRUCTIONS"
+# heading on every LawPhil paper we have (2015 and 2022 alike). That heading
+# is the structural anchor for ``_instruction_region``: everything the parser
+# needs to know about where the preamble starts is in the page's own markup,
+# not in the wording of the sentences underneath it.
+_INSTRUCTIONS_HEADER_RE = re.compile(r"^instructions?\s*:?$", re.IGNORECASE)
 
 # Instruction-block openings. These are the sentences LawPhil puts in the
 # numbered preamble of every paper; none of them can legitimately open a
@@ -601,6 +612,76 @@ def _count_list_sub_parts(body: str, item: Tag) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _instruction_region(blocks: list[_Block]) -> set[int]:
+    """Return the indices of the blocks that make up the examiner's preamble.
+
+    Structural, not lexical. Every LawPhil paper heads its preamble with a
+    centred ``INSTRUCTIONS`` paragraph and then numbers the instructions
+    ``1.``, ``2.``, … — the same shape the numbered *question* format uses,
+    which is exactly why the numbered parser used to mistake one for the
+    other. The region therefore runs from that heading through the
+    strictly-increasing numbered run beneath it (unnumbered paragraphs in
+    between are continuations of the instruction above them) and ends at the
+    first block that cannot belong to it:
+
+    * a non-paragraph block — the ``<ol>`` holding the questions (2015);
+    * a numbered paragraph whose number does not continue the run, i.e. the
+      numbering restarts — the question list beginning (2022: instructions
+      1..10, then questions 1..15).
+
+    Two deliberate refusals to guess:
+
+    * if the heading is not immediately followed by a ``1.`` paragraph there
+      is no numbered instruction run to delimit, so only the heading itself
+      is claimed;
+    * if the run reaches the end of the page without a terminator, the page
+      has no distinguishable question list and claiming every paragraph as
+      instructions would silently empty it — so again only the heading is
+      claimed, and ``_looks_like_instructions`` stays the net.
+
+    Pages with no ``INSTRUCTIONS`` heading yield an empty set and are handled
+    entirely by ``_looks_like_instructions``.
+    """
+    start: int | None = None
+    for index, block in enumerate(blocks):
+        if block.kind == "p" and _INSTRUCTIONS_HEADER_RE.match(block.text):
+            start = index
+            break
+    if start is None:
+        return set()
+
+    region = {start}
+    highest = 0
+    terminated = False
+    for index in range(start + 1, len(blocks)):
+        block = blocks[index]
+        if block.kind != "p":
+            terminated = True
+            break
+        match = _NUMBERED_START_RE.match(block.text)
+        if match is not None:
+            number = int(match.group("num"))
+            if number <= highest:
+                # Numbering restarted — this is the question list, not a
+                # further instruction.
+                terminated = True
+                break
+            highest = number
+        elif highest == 0:
+            # Heading not followed by a numbered instruction run; there is
+            # nothing structural to delimit.
+            return {start}
+        region.add(index)
+
+    if not terminated:
+        logger.warning(
+            "INSTRUCTIONS heading with no question list after it; "
+            "claiming only the heading as instructions",
+        )
+        return {start}
+    return region
+
+
 def _looks_like_instructions(text: str) -> bool:
     """True when ``text`` opens like the examiner's instruction block.
 
@@ -628,9 +709,12 @@ def _parse_numbered_format(blocks: list[_Block]) -> list[ParsedBarQuestion]:
     style paragraphs (class "ji") and "NOTHING FOLLOWS" markers terminate
     accumulation.
 
-    A body that opens like the instruction block is dropped outright — see
-    ``_looks_like_instructions``.
+    The examiner's preamble is excised structurally before the walk begins
+    (``_instruction_region``), so its numbered paragraphs are never candidate
+    questions on any page. ``_looks_like_instructions`` remains as a second
+    net for pages that carry no ``INSTRUCTIONS`` heading to anchor to.
     """
+    instruction_indices = _instruction_region(blocks)
     questions: list[ParsedBarQuestion] = []
     current_number: int | None = None
     current_body: list[str] = []
@@ -666,7 +750,9 @@ def _parse_numbered_format(blocks: list[_Block]) -> list[ParsedBarQuestion]:
         current_body = []
         current_blocks = []
 
-    for block in blocks:
+    for index, block in enumerate(blocks):
+        if index in instruction_indices:
+            continue
         if block.kind != "p":
             continue
         # Skip 2022 instruction paragraphs entirely — they live in class "ji"
