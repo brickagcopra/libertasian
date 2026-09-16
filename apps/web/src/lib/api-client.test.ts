@@ -54,6 +54,7 @@ describe('ApiClient', () => {
     apiClient.configure({
       getAccessToken: () => 'my-token-123',
       onUnauthorized: vi.fn(),
+      refreshAccessToken: vi.fn(),
     });
 
     mockFetch.mockResolvedValueOnce({
@@ -71,14 +72,20 @@ describe('ApiClient', () => {
     apiClient.configure({
       getAccessToken: () => null,
       onUnauthorized: vi.fn(),
+      refreshAccessToken: vi.fn(),
     });
   });
 
-  it('calls onUnauthorized and throws on 401', async () => {
+  it('calls onUnauthorized and throws on 401 when a token was sent', async () => {
+    // A token WAS sent, so this 401 really is an expired session. (The
+    // tokenless case is covered in the `401 without a bearer token` block —
+    // this test used to assert the opposite and that assumption is what
+    // ejected anonymous visitors to /login.)
     const onUnauthorized = vi.fn();
     apiClient.configure({
-      getAccessToken: () => null,
+      getAccessToken: () => 'expired-token',
       onUnauthorized,
+      refreshAccessToken: vi.fn().mockResolvedValue(null),
     });
 
     mockFetch.mockResolvedValueOnce({
@@ -89,12 +96,116 @@ describe('ApiClient', () => {
 
     await expect(apiClient.get('/protected')).rejects.toThrow(ApiClientError);
     expect(onUnauthorized).toHaveBeenCalledTimes(1);
+
+    apiClient.configure({
+      getAccessToken: () => null,
+      onUnauthorized: vi.fn(),
+      refreshAccessToken: vi.fn(),
+    });
+  });
+
+  /**
+   * The lowest chokepoint of the /login-bounce outage. A request that carried
+   * no Authorization header cannot have had a session expire — there was no
+   * session. Treating it as an expiry runs the global logout/redirect handler,
+   * which is what took every anonymous visitor off the public site.
+   */
+  describe('401 without a bearer token', () => {
+    it('does NOT call onUnauthorized', async () => {
+      const onUnauthorized = vi.fn();
+      apiClient.configure({
+        getAccessToken: () => null,
+        onUnauthorized,
+        refreshAccessToken: vi.fn().mockResolvedValue(null),
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: () => Promise.resolve({ message: 'Unauthorized' }),
+      });
+
+      await expect(apiClient.post('/analytics/events/auth', {})).rejects.toThrow(ApiClientError);
+      expect(onUnauthorized).not.toHaveBeenCalled();
+
+      apiClient.configure({
+        getAccessToken: () => null,
+        onUnauthorized: vi.fn(),
+        refreshAccessToken: vi.fn(),
+      });
+    });
+
+    it('still surfaces the 401 to the caller', async () => {
+      apiClient.configure({
+        getAccessToken: () => null,
+        onUnauthorized: vi.fn(),
+        refreshAccessToken: vi.fn().mockResolvedValue(null),
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: () => Promise.resolve({ message: 'Unauthorized' }),
+      });
+
+      let thrown: { statusCode?: number } | null = null;
+      try {
+        await apiClient.get('/protected');
+      } catch (err) {
+        thrown = err as { statusCode?: number };
+      }
+
+      expect(thrown).toBeInstanceOf(ApiClientError);
+      expect(thrown?.statusCode).toBe(401);
+
+      apiClient.configure({
+        getAccessToken: () => null,
+        onUnauthorized: vi.fn(),
+        refreshAccessToken: vi.fn(),
+      });
+    });
+
+    it('still honours a refresh that succeeds (reload race, cookie still valid)', async () => {
+      // On reload the access token is gone from memory but the httpOnly
+      // refresh cookie is not — that tokenless 401 IS recoverable and must
+      // still retry rather than being reported to the caller.
+      const onUnauthorized = vi.fn();
+      const refreshFn = vi.fn().mockResolvedValue('restored-token');
+      apiClient.configure({
+        getAccessToken: () => null,
+        onUnauthorized,
+        refreshAccessToken: refreshFn,
+      });
+
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 401,
+          json: () => Promise.resolve({ message: 'Unauthorized' }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ data: 'ok' }),
+        });
+
+      await expect(apiClient.get('/protected')).resolves.toEqual({ data: 'ok' });
+      expect(refreshFn).toHaveBeenCalledTimes(1);
+      expect(onUnauthorized).not.toHaveBeenCalled();
+
+      apiClient.configure({
+        getAccessToken: () => null,
+        onUnauthorized: vi.fn(),
+        refreshAccessToken: vi.fn(),
+      });
+    });
   });
 
   it('throws ApiClientError with status code on non-ok responses', async () => {
     apiClient.configure({
       getAccessToken: () => null,
       onUnauthorized: vi.fn(),
+      refreshAccessToken: vi.fn(),
     });
 
     mockFetch.mockResolvedValueOnce({

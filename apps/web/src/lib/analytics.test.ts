@@ -93,6 +93,9 @@ describe('AnalyticsClient.startSession', () => {
 
 describe('AnalyticsClient.trackPageView', () => {
   beforeEach(() => {
+    // Explicit: the endpoint `track()` picks depends on this, so it must not
+    // be inherited from whatever the previous describe left on the mock.
+    vi.mocked(useAuthStore.getState).mockReturnValue({ accessToken: 'token' } as never);
     resetSession();
     mockPost.mockReset();
     mockPost.mockResolvedValue({} as never);
@@ -139,5 +142,76 @@ describe('AnalyticsClient.trackPageView', () => {
         properties: { path: '/settings/billing', surface: 'other' },
       }),
     );
+  });
+});
+
+/**
+ * The outage this guards against: `AnalyticsProvider` fires `trackPageView` on
+ * every pathname change INCLUDING the public landing page, `track()` posted
+ * unconditionally to the JWT-guarded `/analytics/events/auth`, and the
+ * resulting 401 reached `onUnauthorized()` — which hard-redirected every
+ * anonymous visitor to /login within seconds of page load.
+ */
+describe('AnalyticsClient endpoint selection', () => {
+  beforeEach(() => {
+    vi.mocked(useAuthStore.getState).mockReturnValue({ accessToken: 'token' } as never);
+    resetSession();
+    mockPost.mockReset();
+    mockPost.mockResolvedValue({} as never);
+  });
+
+  it('posts to the PUBLIC /analytics/events when there is no access token', () => {
+    vi.mocked(useAuthStore.getState).mockReturnValue({ accessToken: null } as never);
+
+    analytics.track('page_viewed', { path: '/', surface: 'other' });
+
+    expect(mockPost).toHaveBeenCalledWith('/analytics/events', expect.any(Object));
+    expect(mockPost).not.toHaveBeenCalledWith('/analytics/events/auth', expect.anything());
+  });
+
+  it('posts to the guarded /analytics/events/auth when a token is present', () => {
+    analytics.track('page_viewed', { path: '/digests', surface: 'digests' });
+
+    expect(mockPost).toHaveBeenCalledWith('/analytics/events/auth', expect.any(Object));
+  });
+
+  it('still records the anonymous page view rather than dropping it', () => {
+    vi.mocked(useAuthStore.getState).mockReturnValue({ accessToken: null } as never);
+
+    analytics.trackPageView('/pricing');
+
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    expect(mockPost).toHaveBeenCalledWith(
+      '/analytics/events',
+      expect.objectContaining({
+        eventName: 'page_viewed',
+        deviceType: 'web',
+        properties: { path: '/pricing', surface: 'other' },
+      }),
+    );
+  });
+
+  it('re-reads the token per call, so a logout mid-session moves the endpoint', () => {
+    analytics.track('a');
+    vi.mocked(useAuthStore.getState).mockReturnValue({ accessToken: null } as never);
+    analytics.track('b');
+
+    expect(mockPost.mock.calls.map((call) => call[0])).toEqual([
+      '/analytics/events/auth',
+      '/analytics/events',
+    ]);
+  });
+
+  it('never posts to a guarded endpoint while unauthenticated', async () => {
+    vi.mocked(useAuthStore.getState).mockReturnValue({ accessToken: null } as never);
+
+    analytics.track('page_viewed', { path: '/', surface: 'other' });
+    analytics.trackBatch([{ eventName: 'queued', deviceType: 'web', properties: {} }]);
+    await analytics.startSession('/', '');
+    analytics.heartbeat('/');
+    analytics.endSession();
+
+    const guarded = mockPost.mock.calls.filter((call) => String(call[0]).endsWith('/auth'));
+    expect(guarded).toEqual([]);
   });
 });

@@ -222,3 +222,96 @@ describe('AuthProvider bootstrap', () => {
     expect(mockSetUser).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * The production outage: an analytics beacon 401'd on the public landing page,
+ * `onUnauthorized` ran, and every anonymous visitor was hard-navigated to
+ * /login seconds after arriving. The old exemption covered only /login and
+ * /register — commit 6a19554 patched the login page and the same bug came
+ * straight back everywhere else. The allowlist now comes from the same module
+ * the Edge middleware reads, and it is NOT mocked here: these tests exercise
+ * the real `isPublicRoute`.
+ */
+describe('AuthProvider onUnauthorized', () => {
+  /** Captured `window.location` replacement so `href =` records instead of navigating. */
+  let location: { pathname: string; href: string };
+
+  function onUnauthorized(): () => void {
+    render(
+      <AuthProvider>
+        <div>Child</div>
+      </AuthProvider>,
+    );
+    const config = mockConfigure.mock.calls[0]?.[0] as { onUnauthorized: () => void };
+    return config.onUnauthorized;
+  }
+
+  function atPath(pathname: string): void {
+    location = { pathname, href: `https://libertasian.com${pathname}` };
+    Object.defineProperty(window, 'location', {
+      value: location,
+      writable: true,
+      configurable: true,
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockState = { isAuthenticated: false, accessToken: null, user: null };
+  });
+
+  const publicPaths = [
+    '/',
+    '/about',
+    '/pricing',
+    '/terms',
+    '/privacy',
+    '/contact',
+    '/refund-policy',
+    '/account-deletion',
+    '/restore-account',
+    '/login',
+    '/register',
+    '/reset-password',
+    '/accept-invite',
+    '/blog/how-to-cite',
+    '/shared/abc123',
+    '/billing/mobile/success',
+  ];
+
+  for (const path of publicPaths) {
+    it(`clears auth state without navigating away from ${path}`, () => {
+      atPath(path);
+      const handler = onUnauthorized();
+
+      handler();
+
+      expect(mockLogout).toHaveBeenCalledTimes(1);
+      expect(location.href).toBe(`https://libertasian.com${path}`);
+    });
+  }
+
+  const protectedPaths = ['/search', '/digests', '/settings/billing', '/admin'];
+
+  for (const path of protectedPaths) {
+    it(`still redirects to /login from the protected route ${path}`, () => {
+      atPath(path);
+      const handler = onUnauthorized();
+
+      handler();
+
+      expect(mockLogout).toHaveBeenCalledTimes(1);
+      expect(location.href).toBe('/login');
+    });
+  }
+
+  it('treats a trailing-slash public path as public', () => {
+    // Next.js can serve /about/ as well as /about; the two must not disagree.
+    atPath('/about/');
+    const handler = onUnauthorized();
+
+    handler();
+
+    expect(location.href).toBe('https://libertasian.com/about/');
+  });
+});
