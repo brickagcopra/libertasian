@@ -68,6 +68,7 @@ class ApiClient {
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
+    const sentWithToken = Boolean(token);
 
     const response = await fetch(url, {
       ...init,
@@ -80,6 +81,14 @@ class ApiClient {
       const newToken = await this.tryRefresh();
       if (newToken) {
         return this.request<T>(endpoint, options, true);
+      }
+      if (!sentWithToken) {
+        // No bearer token went out, so there was no session to expire. This is
+        // an anonymous caller hitting a guarded route (an analytics beacon on
+        // the public landing page was the outage); reporting it as a session
+        // expiry drives `onUnauthorized` and ejects the visitor to /login.
+        // Surface the 401 to the caller and leave their state alone.
+        throw new ApiClientError('Unauthorized', 401);
       }
       // Refresh itself failed → genuine session expiry
       this.onUnauthorized?.();
@@ -164,6 +173,7 @@ class ApiClient {
       if (token) {
         xhr.setRequestHeader('Authorization', `Bearer ${token}`);
       }
+      const sentWithToken = Boolean(token);
 
       if (options?.onProgress) {
         xhr.upload.onprogress = (event) => {
@@ -176,17 +186,25 @@ class ApiClient {
       xhr.onload = () => {
         if (xhr.status === 401 && !isRetry) {
           // First 401 — try a silent refresh, then retry once.
+          // A tokenless upload that 401s was never an authenticated session,
+          // so it must not trigger the global logout/redirect. Same rule as
+          // `request()`.
+          const expired = () => {
+            if (sentWithToken) this.onUnauthorized?.();
+            reject(
+              new ApiClientError(
+                sentWithToken ? 'Session expired. Please log in again.' : 'Unauthorized',
+                401,
+              ),
+            );
+          };
           this.tryRefresh().then((newToken) => {
             if (newToken) {
               this.uploadMultipart<T>(endpoint, formData, options, true).then(resolve, reject);
               return;
             }
-            this.onUnauthorized?.();
-            reject(new ApiClientError('Session expired. Please log in again.', 401));
-          }, () => {
-            this.onUnauthorized?.();
-            reject(new ApiClientError('Session expired. Please log in again.', 401));
-          });
+            expired();
+          }, expired);
           return;
         }
 
@@ -248,6 +266,11 @@ class ApiClient {
     });
 
     if (response.status === 401) {
+      // Only a request that actually carried a token can have had a session
+      // expire — see `request()`.
+      if (!token) {
+        throw new ApiClientError('Unauthorized', 401);
+      }
       this.onUnauthorized?.();
       throw new ApiClientError('Session expired. Please log in again.', 401);
     }

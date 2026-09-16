@@ -24,7 +24,19 @@ const NOTIFICATIONS_SERVICE = path.join(
   'modules/notifications/notifications.service.ts',
 );
 const WEB_APP_DIR = path.join(MONOREPO_ROOT, 'apps/web/src/app');
-const WEB_MIDDLEWARE = path.join(MONOREPO_ROOT, 'apps/web/src/middleware.ts');
+/**
+ * The no-session allowlist. It used to be declared inline in
+ * `apps/web/src/middleware.ts`; it now lives here because the client-side 401
+ * handler (`apps/web/src/providers/auth-provider.tsx`) has to answer the same
+ * question, and while the two kept separate lists the middleware served the
+ * public landing page and the client bounced the visitor off it seconds later.
+ * `apps/web/src/lib/public-routes.test.ts` asserts that middleware.ts declares
+ * no copy of these arrays, so this path is where they will stay.
+ */
+const WEB_PUBLIC_ROUTES = path.join(
+  MONOREPO_ROOT,
+  'apps/web/src/lib/public-routes.ts',
+);
 
 /** A URL built from `${this.appUrl}` in notifications.service.ts. */
 interface EmailLink {
@@ -112,11 +124,39 @@ function routeMatches(route: SegmentMatcher[], pathname: string): boolean {
   return parts.length === route.length;
 }
 
-/** Paths listed in the middleware's no-session allowlist. */
-function collectPublicPaths(): string[] {
-  const source = fs.readFileSync(WEB_MIDDLEWARE, 'utf-8');
-  const block = /const PUBLIC_PATHS = \[([\s\S]*?)\];/.exec(source)?.[1] ?? '';
+/**
+ * The declaration of each allowlist array, as written in the source.
+ *
+ * `(?:export\s+)?` and `(?::[^=]+)?` tolerate the `export` keyword and the
+ * `: readonly string[]` annotation the arrays now carry — the narrower pattern
+ * these replaced (`const PUBLIC_PATHS = [`) matched neither, which is how this
+ * guard silently started checking an empty list.
+ */
+const ARRAY_DECLARATIONS = {
+  PUBLIC_PATHS: /(?:export\s+)?const\s+PUBLIC_PATHS\s*(?::[^=]+)?=\s*\[([\s\S]*?)\]/,
+  PUBLIC_PREFIXES:
+    /(?:export\s+)?const\s+PUBLIC_PREFIXES\s*(?::[^=]+)?=\s*\[([\s\S]*?)\]/,
+} satisfies Record<string, RegExp>;
+
+/**
+ * Read one string-array declaration out of the shared public-route module.
+ * Callers must assert the result is non-empty: an unmatched regex is
+ * indistinguishable from a genuinely empty allowlist, and reads as a pass.
+ */
+function collectStringArray(name: keyof typeof ARRAY_DECLARATIONS): string[] {
+  const source = fs.readFileSync(WEB_PUBLIC_ROUTES, 'utf-8');
+  const block = ARRAY_DECLARATIONS[name].exec(source)?.[1] ?? '';
   return [...block.matchAll(/'([^']+)'/g)].map((match) => match[1] as string);
+}
+
+/** Exact paths listed in the no-session allowlist. */
+function collectPublicPaths(): string[] {
+  return collectStringArray('PUBLIC_PATHS');
+}
+
+/** Path prefixes listed in the no-session allowlist. */
+function collectPublicPrefixes(): string[] {
+  return collectStringArray('PUBLIC_PREFIXES');
 }
 
 describe('transactional email links point at routes that exist', () => {
@@ -189,15 +229,35 @@ describe('transactional email links point at routes that exist', () => {
 
 describe('email entry points are reachable without a session', () => {
   const publicPaths = collectPublicPaths();
+  const publicPrefixes = collectPublicPrefixes();
+
+  it('finds the allowlist (the guard is not silently matching nothing)', () => {
+    // When the arrays moved out of middleware.ts the old regex matched
+    // nothing, so every check below ran against `[]`. Read an empty list as
+    // "allowlist not found" and fail loudly rather than asserting on air —
+    // the next move of this file should land here, not go unnoticed.
+    expect(publicPaths.length).toBeGreaterThan(0);
+    expect(publicPrefixes.length).toBeGreaterThan(0);
+    // Spot-check one entry of each that has no reason to ever leave, so a
+    // regex that matches only the first line or the wrong array still fails.
+    expect(publicPaths).toContain('/login');
+    expect(publicPrefixes).toContain('/email/');
+  });
 
   // These three links are opened by someone who, by definition, cannot be
   // signed in: a locked-out user resetting a password, or an invitee with no
   // account at all. A path missing from PUBLIC_PATHS 307s to /login and the
   // emailed token never reaches the page — the same symptom as a dead route.
   it.each([['/reset-password'], ['/forgot-password'], ['/accept-invite']])(
-    '%s is in the middleware PUBLIC_PATHS allowlist',
+    '%s is in the PUBLIC_PATHS allowlist',
     (pathname: string) => {
       expect(publicPaths).toContain(pathname);
     },
   );
+
+  it('keeps the emailed static assets reachable', () => {
+    // Transactional emails reference /email/<asset>; an email client fetches
+    // those with no session cookie and must get a direct 200, never a 307.
+    expect(publicPrefixes).toContain('/email/');
+  });
 });

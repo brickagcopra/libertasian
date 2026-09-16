@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 
 import { apiClient } from '@/lib/api-client';
+import { isPublicRoute } from '@/lib/public-routes';
 import { useAuthStore, type User } from '@/stores/auth-store';
 
 /**
@@ -26,11 +27,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       getAccessToken: () => useAuthStore.getState().accessToken,
       onUnauthorized: () => {
         useAuthStore.getState().logout();
-        // Don't redirect if already on login/auth pages to prevent loops
-        if (!window.location.pathname.startsWith('/login') &&
-            !window.location.pathname.startsWith('/register')) {
-          window.location.href = '/login';
-        }
+        // A visitor standing on a public route is not a session that expired —
+        // they may never have had one. Any 401 fired from such a page (the
+        // analytics beacon on the landing page was the one that took the site
+        // down) must clear local auth state and stop there. Hard-navigating
+        // them to /login ejects anonymous readers, payment-gateway KYC
+        // reviewers and email-link recipients from pages built for them.
+        //
+        // The allowlist is the SAME module the Edge middleware consults
+        // (`@/lib/public-routes`), so the server's idea of a public page and
+        // the client's can no longer drift. The previous hand-rolled
+        // "/login and /register only" exemption is exactly the patch that
+        // failed: 6a19554 fixed the login page and the bug returned everywhere
+        // else.
+        if (isPublicRoute(window.location.pathname)) return;
+        window.location.href = '/login';
       },
       refreshAccessToken: async () => {
         try {

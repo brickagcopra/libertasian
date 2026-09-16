@@ -30,6 +30,21 @@ class AnalyticsClient {
     return this.sessionId;
   }
 
+  /**
+   * True when the auth store currently holds an access token.
+   *
+   * Every `/analytics/…/auth` endpoint is behind `JwtAuthGuard`. Posting to
+   * one without a token returns 401, and a 401 is indistinguishable from an
+   * expired session to the api-client — which is how a page view on the
+   * anonymous landing page ended up hard-redirecting the visitor to /login.
+   * Analytics must never be able to produce that 401: choose the public twin
+   * of the endpoint instead. The public handlers take the identical DTO and
+   * simply attribute the row to no user.
+   */
+  private isAuthenticated(): boolean {
+    return Boolean(useAuthStore.getState().accessToken);
+  }
+
   /** Track a single event. Fire-and-forget. */
   track(eventName: string, properties: Record<string, unknown> = {}, durationMs?: number): void {
     const payload: TrackEventPayload = {
@@ -40,12 +55,24 @@ class AnalyticsClient {
       durationMs,
     };
 
-    apiClient.post('/analytics/events/auth', payload).catch(() => {
+    // Anonymous page views are still recorded — on the public endpoint, where
+    // they belong. Dropping them would blind the funnel at exactly the step
+    // (landing → register) we most need to see.
+    const endpoint = this.isAuthenticated() ? '/analytics/events/auth' : '/analytics/events';
+
+    apiClient.post(endpoint, payload).catch(() => {
       // Fire-and-forget: silently ignore tracking errors
     });
   }
 
-  /** Track a batch of events. Used by beacon/offline flush. */
+  /**
+   * Track a batch of events. Used by beacon/offline flush.
+   *
+   * `/analytics/events/batch` is public by design (it is the mobile offline
+   * sync endpoint) and has no `/auth` twin, so this is already safe for an
+   * anonymous visitor. The guard stays explicit so that adding an authed
+   * variant later cannot reintroduce a tokenless 401 from a public page.
+   */
   trackBatch(events: TrackEventPayload[]): void {
     const payload: TrackBatchPayload = { events };
     apiClient.post('/analytics/events/batch', payload).catch(() => {});
@@ -53,9 +80,11 @@ class AnalyticsClient {
 
   /** Start a new session. Stores sessionId internally. */
   async startSession(entryPath: string, referrer: string): Promise<void> {
-    // Skip analytics session for unauthenticated users
-    const token = useAuthStore.getState().accessToken;
-    if (!token) return;
+    // Skip analytics session for unauthenticated users: the only session-start
+    // endpoint this client uses is the guarded one, so calling it without a
+    // token would be a 401 from a public page. Anonymous events are sent
+    // sessionless via `track()` above.
+    if (!this.isAuthenticated()) return;
 
     try {
       const payload: StartSessionPayload = {
