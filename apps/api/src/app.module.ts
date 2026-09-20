@@ -208,10 +208,20 @@ import { RequestPlatformMiddleware } from './common/middleware/request-platform.
         // exam ALAC answers. Disabled by default; flip to 'true' once a
         // baseline batch of answers has been approved by editorial.
         FEATURE_BAR_EXAM_ANSWERS_PUBLIC: Joi.string().valid('true', 'false').default('false'),
-        // Kill switch for every paid-tier gate in the API. Prod runs `false`
-        // while no payment gateway is live: with no purchasable tier, a 402
-        // subscription_required is an unfulfillable demand for payment, which
-        // is what got iOS build 23 rejected under App Review 3.1.1.
+        // Kill switch for every paid-tier gate in the API. Prod runs `false`,
+        // but as of 2026-09-20 the reason is no longer "no payment gateway is
+        // live" — iOS 1.0.2 (build 32) has been on the App Store since
+        // 2026-09-14 with four approved, purchasable IAPs, and Apple has
+        // reviewed and approved a paid tier there.
+        //
+        // The reason now is that THIS FLAG IS GLOBAL and the other two surfaces
+        // still have no rail: Android's Play billing is off pending a Google
+        // payments profile, and web has no gateway at all after Xendit declined
+        // the merchant activation. Flipping this would gate those users with a
+        // 402 subscription_required they cannot clear — an unfulfillable demand
+        // for payment, which is what got iOS build 23 rejected under App Review
+        // 3.1.1. Gate iOS through `STORE_PURCHASE_AVAILABLE_IOS`, which is
+        // per-platform, not through this.
         //
         // THE DEFAULT IS `false` BECAUSE THE SAFE DIRECTION MUST BE THE DEFAULT
         // DIRECTION. It used to be `true`, which meant production was compliant
@@ -233,10 +243,23 @@ import { RequestPlatformMiddleware } from './common/middleware/request-platform.
         // an ABSENT var is off, a MALFORMED var is on.
         PAYWALL_ENFORCED: Joi.boolean().default(false),
         // Browsers only — the web read surface. Separate from PAYWALL_ENFORCED
-        // because the two surfaces ship on different clocks: the browser has a
-        // purchase route today, while the iOS and Android builds are still
-        // waiting on store products, and one global switch gets that wrong for
-        // whichever side it is not set for.
+        // because the surfaces ship on different clocks and, as of 2026-09-20,
+        // are in three different states: iOS sells through approved IAPs,
+        // Android is pending a Google payments profile, and web has no
+        // ON-SURFACE purchase route at all (Xendit declined the merchant
+        // activation). One global switch gets that wrong for whichever side it
+        // is not set for.
+        //
+        // WHAT A GATED WEB USER'S ROUTE OUT ACTUALLY IS. Not nothing, and not a
+        // web checkout: it is subscribing in the iOS app, where IAP is live and
+        // selling. That route works for a gated web user who also owns an
+        // iPhone. It does NOT exist for an Android owner or for someone on a
+        // desktop alone — for them a gated web surface has no way out at all.
+        //
+        // Flipping this is therefore a deliberate PRODUCT decision about
+        // whether an iOS-only purchase route is an acceptable way out for web
+        // users, not an engineering blocker. The engineering is ready either
+        // way. A decision to proceed was taken 2026-09-20.
         //
         // DEFAULT `false`, so this ships inert and gating the web is a
         // deliberate act, exactly like the two flags above.
