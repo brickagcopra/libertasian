@@ -370,6 +370,68 @@ describe('RBAC Enforcement (E2E)', () => {
     });
   });
 
+  // ─── Self-service access discovery (P4) ──────────────────────────────────
+
+  describe('GET /api/v1/rbac/me/permissions', () => {
+    it('should deny unauthenticated requests', async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/rbac/me/permissions')
+        .expect(401);
+    });
+
+    it('serves ANY authenticated user, with no permission required', async () => {
+      // The regression this prevents: the web client resolved its own
+      // permissions via GET /rbac/members, which needs `members:read`. Roles
+      // that legitimately lack it — reviewer, editor — got 403, fell through
+      // to [], and PermissionGate then denied them the whole product.
+      const user = await createAuthenticatedUser(app, {
+        email: `self-perms-${Date.now()}@test.com`,
+      });
+
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/rbac/me/permissions')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .expect(200);
+
+      expect(res.body.success).toBe(true);
+      expect(Array.isArray(res.body.data.permissions)).toBe(true);
+      expect(Array.isArray(res.body.data.platformPermissions)).toBe(true);
+    });
+
+    it('reports an ordinary signup as non-staff with zero platform capability', async () => {
+      // P5 — least privilege: a new account gets no platform capability, even
+      // though it owns (and is `owner` of) a personal workspace.
+      const user = await createAuthenticatedUser(app, {
+        email: `self-perms-nonstaff-${Date.now()}@test.com`,
+      });
+
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/rbac/me/permissions')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .expect(200);
+
+      expect(res.body.data.platformMember).toBe(false);
+      expect(res.body.data.platformPermissions).toEqual([]);
+      expect(res.body.data.isPlatformAdmin).toBe(false);
+    });
+
+    it('does not leak platform capability from tenant permissions', async () => {
+      // P2: the two sets stay separate. Whatever the caller holds on their own
+      // workspace must not appear as platform standing.
+      const user = await createAuthenticatedUser(app, {
+        email: `self-perms-split-${Date.now()}@test.com`,
+      });
+
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/rbac/me/permissions')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .expect(200);
+
+      expect(res.body.data.permissions.length).toBeGreaterThan(0);
+      expect(res.body.data.platformPermissions).toEqual([]);
+    });
+  });
+
   // ─── Internal API guard ──────────────────────────────────────────────────
 
   describe('Internal API endpoints — X-Internal-Api-Key enforcement', () => {

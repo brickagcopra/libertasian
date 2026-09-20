@@ -140,6 +140,30 @@ export interface MemberWithRoles {
   createdAt: string;
 }
 
+/**
+ * The caller's own effective access, from GET /rbac/me/permissions.
+ *
+ * Readable by ANY authenticated user with no permission required — the
+ * Kubernetes SelfSubjectRulesReview pattern. Discovering your own access must
+ * never itself require an admin permission, or roles that legitimately hold no
+ * `members:read` (reviewer, editor) resolve to an empty permission set and the
+ * UI denies them everything.
+ */
+export interface MyPermissions {
+  /** Effective codes in the caller's CURRENT organization. */
+  permissions: string[];
+  /**
+   * Effective codes held on the PLATFORM organization. Empty for everyone who
+   * is not platform staff — which is every self-registered user, since owning
+   * a personal workspace confers nothing here.
+   */
+  platformPermissions: string[];
+  /** True when the caller has an ACTIVE membership on the platform org. */
+  platformMember: boolean;
+  /** True when platformPermissions contains any `admin:*` code. */
+  isPlatformAdmin: boolean;
+}
+
 /** A single role assignment for a member */
 export interface MemberRoleAssignment {
   id: string;

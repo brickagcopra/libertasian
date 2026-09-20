@@ -5,6 +5,7 @@ import { PermissionsController } from './controllers/permissions.controller';
 import { RolesController } from './controllers/roles.controller';
 import { MemberRolesController } from './controllers/member-roles.controller';
 import { RbacAuditController } from './controllers/rbac-audit.controller';
+import { SelfPermissionsController } from './controllers/self-permissions.controller';
 import { PermissionsService } from './permissions.service';
 import { RbacCacheService } from './rbac-cache.service';
 import { RolesService } from './roles.service';
@@ -20,6 +21,9 @@ import { RolesService } from './roles.service';
 @Module({
   imports: [AuditModule],
   controllers: [
+    // Declared FIRST: 'rbac/me/permissions' must not be shadowed by
+    // PermissionsController's 'rbac/permissions/:code' route.
+    SelfPermissionsController,
     PermissionsController,
     RolesController,
     MemberRolesController,

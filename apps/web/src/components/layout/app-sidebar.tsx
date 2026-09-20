@@ -7,6 +7,12 @@ import { useAuthStore } from '@/stores/auth-store';
 import { Wordmark } from '@/components/brand/wordmark';
 import { useSubscription, meetsMinimumTier } from '@/features/billing/hooks/use-subscription';
 import { useCanAccessPaidFeature } from '@/hooks/useCanAccessPaidFeature';
+import { useMyPermissions } from '@/features/settings/hooks/use-rbac';
+import {
+  ADMIN_NAV_ITEMS,
+  visibleAdminNavItems,
+  type AdminNavItem,
+} from '@/components/layout/admin-nav';
 import { cn } from '@/lib/utils';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
@@ -64,12 +70,26 @@ import {
   FileStackIcon,
 } from 'lucide-react';
 
+/**
+ * A sidebar entry: an admin entry's shape with `permission` optional (product
+ * and workspace entries have none) plus the tier gate.
+ *
+ * `icon` is `React.ElementType` via the UMD global, matching admin-nav.tsx.
+ * With two copies of @types/react resolvable in this workspace, importing
+ * `ElementType` explicitly instead yields a type JSX will not accept.
+ */
 interface NavItem {
   href: string;
   label: string;
   icon: React.ElementType;
   exact?: boolean;
   minTier?: string;
+  /**
+   * PLATFORM permission codes, ANY of which reveals this entry (admin entries
+   * only). It hides; it does not protect — each destination keeps its own
+   * server-side guard, and that guard is the control (P3).
+   */
+  permissions?: string[];
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -101,65 +121,22 @@ const WORKSPACE_ITEMS: NavItem[] = [
   { href: '/workspace/activity', label: 'Activity', icon: ActivityIcon },
 ];
 
-const ADMIN_NAV_ITEMS: NavItem[] = [
-  { href: '/admin', label: 'Dashboard', icon: LayoutDashboardIcon, exact: true },
-
-  // 1 — Source setup
-  { href: '/admin/sources', label: 'Sources', icon: DatabaseIcon },
-  { href: '/admin/ai-settings', label: 'AI Settings', icon: BrainCircuitIcon },
-  { href: '/admin/budget', label: 'Budget', icon: WalletIcon },
-
-  // 2 — Crawl / ingestion
-  { href: '/admin/ingestion', label: 'Ingestion', icon: DownloadCloudIcon },
-  { href: '/admin/backfill', label: 'Backfill', icon: ArchiveRestoreIcon },
-  { href: '/admin/bar-exams', label: 'Bar Exams', icon: ScrollTextIcon },
-  { href: '/admin/bar-exams/answers', label: 'Bar Exam Answers', icon: SparklesIcon },
-
-  // 3 — Document review
-  { href: '/admin/documents', label: 'Documents', icon: FileStackIcon },
-  { href: '/admin/review', label: 'Review Queue', icon: ClipboardCheckIcon },
-  { href: '/admin/duplicates', label: 'Duplicates', icon: CopyIcon },
-  { href: '/admin/flags', label: 'Flags', icon: FlagIcon },
-  { href: '/admin/health', label: 'Source Health', icon: HeartPulseIcon },
-
-  // 4 — AI study material
-  { href: '/admin/derivatives', label: 'Derivatives', icon: SparklesIcon },
-  { href: '/admin/doctrines', label: 'Doctrines', icon: BookOpenIcon },
-  { href: '/admin/knowledge-graph', label: 'Knowledge Graph', icon: NetworkIcon },
-  { href: '/admin/categorize', label: 'Categorize', icon: LayersIcon },
-  { href: '/admin/classification', label: 'Classification', icon: FolderTreeIcon },
-  { href: '/admin/subjects', label: 'Subjects', icon: TagsIcon },
-  { href: '/admin/golden-sets', label: 'Golden Sets', icon: AwardIcon },
-  { href: '/admin/simulator', label: 'Simulator', icon: PlayCircleIcon },
-
-  // 5 — Visibility telemetry
-  { href: '/admin/lifecycle-events', label: 'Lifecycle Events', icon: TimerIcon },
-  { href: '/admin/reporting', label: 'Reporting', icon: BarChart3Icon },
-
-  // 6 — Analytics (read-only)
-  { href: '/admin/analytics', label: 'Analytics', icon: ActivityIcon },
-  { href: '/admin/analytics/mobile-scan', label: 'Mobile & Scan', icon: ScanLineIcon },
-  { href: '/admin/analytics/study', label: 'Study Mode', icon: GraduationCapIcon },
-  { href: '/admin/analytics/corpus', label: 'Corpus & Ingestion', icon: DatabaseIcon },
-  { href: '/admin/analytics/realtime', label: 'Real-time', icon: ActivityIcon },
-
-  // 7 — Business surfaces
-  { href: '/admin/plans', label: 'Plans', icon: CreditCardIcon },
-  { href: '/admin/subscriptions', label: 'Subscriptions', icon: CreditCardIcon },
-  { href: '/admin/users', label: 'Users', icon: UsersIcon },
-  { href: '/admin/coupons', label: 'Coupons', icon: TicketIcon },
-  { href: '/admin/promotions', label: 'Promotions', icon: MegaphoneIcon },
-  { href: '/admin/homepage', label: 'Homepage', icon: HomeIcon },
-  { href: '/admin/blog', label: 'Blog', icon: BookOpenIcon },
-  { href: '/admin/ads', label: 'Advertising', icon: MegaphoneIcon },
-];
 
 export function SidebarContent() {
   const user = useAuthStore((s) => s.user);
-  // Admin nav is platform-admin only — same signal as the /admin route guard.
-  // NOT the org 'owner' role (every user owns a personal workspace) and NOT
-  // documents:read (every owner has it).
-  const showAdmin = user?.isPlatformAdmin === true;
+  // Admin nav is permission-driven, not a single all-or-nothing flag. Each
+  // entry declares a PLATFORM permission code and only the entries the caller
+  // actually holds are rendered — so a reviewer sees the review queue and
+  // nothing else, instead of either everything or (as before) nothing.
+  //
+  // visibleAdminNavItems is shared with the /admin route guard, so the nav and
+  // the guard cannot disagree about who gets in.
+  const { data: me } = useMyPermissions();
+  const adminItems = visibleAdminNavItems(me?.platformPermissions);
+  const showAdmin = adminItems.length > 0;
+  // Separate from showAdmin: the /settings/* pages below are wrapped in
+  // <PlatformAdminGate>, which still keys on isPlatformAdmin.
+  const isPlatformAdmin = me?.isPlatformAdmin === true;
   const pathname = usePathname();
   const { data: subscription } = useSubscription();
   const currentPlan = subscription?.planCode;
@@ -294,10 +271,20 @@ export function SidebarContent() {
         <nav className="space-y-1">
           {renderSettingsLink('/settings', 'Settings', SettingsIcon, true)}
           {renderSettingsLink('/settings/usage', 'Usage & Quotas', BarChart3Icon)}
-          {showAdmin && renderSettingsLink('/settings/members', 'Members & Roles', ShieldCheckIcon)}
-          {showAdmin && renderSettingsLink('/settings/roles', 'Roles & Permissions', LockIcon)}
-          {showAdmin && renderSettingsLink('/settings/audit-logs', 'Audit Logs', ScrollTextIcon)}
-          {showAdmin && renderSettingsLink('/settings/analytics', 'Org Analytics', BarChart3Icon)}
+          {/*
+            These four pages are wrapped in <PlatformAdminGate>, which
+            redirects anyone without isPlatformAdmin to /search. The link must
+            use the SAME signal or it becomes a link that bounces you.
+
+            They are org-scoped surfaces behind a platform-admin gate, which is
+            arguably the wrong gate — /settings/members administers the
+            caller's OWN organization — but changing who may administer their
+            own org is a product decision, not a side effect of this PR.
+          */}
+          {isPlatformAdmin && renderSettingsLink('/settings/members', 'Members & Roles', ShieldCheckIcon)}
+          {isPlatformAdmin && renderSettingsLink('/settings/roles', 'Roles & Permissions', LockIcon)}
+          {isPlatformAdmin && renderSettingsLink('/settings/audit-logs', 'Audit Logs', ScrollTextIcon)}
+          {isPlatformAdmin && renderSettingsLink('/settings/analytics', 'Org Analytics', BarChart3Icon)}
         </nav>
 
         {showAdmin && (
@@ -308,15 +295,21 @@ export function SidebarContent() {
                 <p className="font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-warm-ink-faint">
                   Admin
                 </p>
+                {/*
+                  Was `user.role` — the LEGACY organization_members.role
+                  column, which for platform staff reads 'owner' (their
+                  personal workspace) and says nothing about why they are
+                  here. Roles are data now; the honest label is the standing.
+                */}
                 <Badge
                   variant="secondary"
                   className="border border-warm-ink/15 bg-warm-cream text-[10px] text-warm-ink-soft"
                 >
-                  {user.role}
+                  {me?.isPlatformAdmin ? 'platform admin' : 'platform staff'}
                 </Badge>
               </div>
               <nav className="space-y-1">
-                {ADMIN_NAV_ITEMS.map(renderNavItem)}
+                {adminItems.map(renderNavItem)}
               </nav>
             </div>
           </>
