@@ -4,6 +4,7 @@ import type { Request, Response, NextFunction } from 'express';
 import {
   CLIENT_PLATFORM_HEADER,
   parseClientPlatform,
+  resolveClientSurface,
 } from '../config/store-availability';
 import { runWithRequestContext } from '../context/request-context';
 
@@ -35,10 +36,17 @@ export class RequestPlatformMiddleware implements NestMiddleware {
     // the safe direction.
     const platform = parseClientPlatform(req.headers?.[CLIENT_PLATFORM_HEADER]);
 
+    // Resolved from the SAME header bag, in the same pass. `surface` refines
+    // what `platform` cannot express: both a browser and live build 25 resolve
+    // to a `null` platform, and only the User-Agent separates them. Never
+    // enforced on its own — `web` is gated only when `PAYWALL_ENFORCED_WEB` is
+    // explicitly on, and `legacy_app` is never gated at all.
+    const surface = resolveClientSurface(req.headers);
+
     // `next` is invoked INSIDE `run`, so every downstream guard, interceptor,
     // controller and service — including everything they await — observes this
     // store. Calling `next()` outside would leave the context empty for the
     // entire request.
-    runWithRequestContext({ platform }, () => next());
+    runWithRequestContext({ platform, surface }, () => next());
   }
 }

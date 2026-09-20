@@ -3,6 +3,7 @@ import type { ConfigService } from '@nestjs/config';
 import {
   isStorePurchaseAvailable,
   type ClientPlatform,
+  type ClientSurface,
 } from './store-availability';
 
 /**
@@ -21,11 +22,33 @@ export function isPaywallEnforced(config: ConfigService): boolean {
 }
 
 /**
+ * Read the `PAYWALL_ENFORCED_WEB` switch — browsers only.
+ *
+ * STRICT `=== true`, UNLIKE `isPaywallEnforced`. The two switches are not
+ * spelled the same way because they fail in opposite directions. The master
+ * switch treats a malformed value as ON so a typo cannot silently open the paid
+ * surface; this one treats anything but a real boolean `true` as OFF so a typo
+ * cannot silently gate a surface that has no purchase flow. A browser cannot
+ * buy through an in-app store, so the failure it must never have is the one
+ * where it starts refusing reads by accident.
+ *
+ * The `=== true` comparison is also why `PAYWALL_ENFORCED_WEB` MUST be in the
+ * Joi schema in `app.module.ts`: only the validated env-var path coerces
+ * `'true'` to a boolean. A var absent from the schema arrives as the STRING
+ * `'true'`, fails `=== true`, and the flag is inert with nothing in the logs
+ * to say so.
+ */
+export function isWebPaywallEnforced(config: ConfigService): boolean {
+  return config.get<boolean | string>('PAYWALL_ENFORCED_WEB') === true;
+}
+
+/**
  * Whether the paywall is enforced for ONE request, given the platform that
- * request came from.
+ * request came from and the client surface that issued it.
  *
  *     enforced = isPaywallEnforced(config)                       // global master
  *             || isStorePurchaseAvailable(config, platform)      // per platform
+ *             || (surface === 'web' && isWebPaywallEnforced())   // browsers
  *
  * THE RULE IN ONE SENTENCE: only gate a client that can actually buy.
  *
@@ -60,10 +83,36 @@ export function isPaywallEnforced(config: ConfigService): boolean {
  * A `null` platform means "no platform with an in-app store" — web, an absent
  * header, or an unrecognised value. It is the safe default and every caller
  * that has no request context must pass it.
+ *
+ * THE WEB TERM, AND WHY IT IS KEYED ON THE SURFACE AND NOT ON `platform`:
+ *
+ *   Everything above is about clients that CAN buy. A browser cannot, so by the
+ *   rule above it would never be gated — and indeed it is not today, which is
+ *   how a signed-in free account reads the whole paid corpus from a browser.
+ *   The rule still holds, though: the browser's route out of the gate is to
+ *   subscribe, and the only question is whether a route exists. `web` is
+ *   therefore gated ONLY behind its own explicit switch.
+ *
+ *   It cannot key on `platform === null`, because `null` is ALSO what live App
+ *   Store build 25 resolves to — it predates `x-platform` and sends no header.
+ *   Gating on `null` would gate build 25 along with the browser, which is
+ *   exactly the build-23 rejection. `ClientSurface` exists to split those two
+ *   apart by User-Agent; see `resolveClientSurface`.
+ *
+ * `surface` DEFAULTS TO `null` — "no surface", i.e. never web-enforced. That is
+ * the value every caller outside an HTTP request has: BullMQ workers, `@Cron`
+ * sweeps, seeds and scripts resolve entitlements with no headers to read, and
+ * none of them has a user waiting on a paywall. Same reasoning as the `null`
+ * platform.
  */
 export function isPaywallEnforcedForRequest(
   config: ConfigService,
   platform: ClientPlatform | null,
+  surface: ClientSurface | null = null,
 ): boolean {
-  return isPaywallEnforced(config) || isStorePurchaseAvailable(config, platform);
+  return (
+    isPaywallEnforced(config) ||
+    isStorePurchaseAvailable(config, platform) ||
+    (surface === 'web' && isWebPaywallEnforced(config))
+  );
 }

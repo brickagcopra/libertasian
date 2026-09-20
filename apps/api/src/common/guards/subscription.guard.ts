@@ -15,6 +15,7 @@ import { isPaywallEnforcedForRequest } from '../config/paywall';
 import {
   CLIENT_PLATFORM_HEADER,
   parseClientPlatform,
+  resolveClientSurface,
 } from '../config/store-availability';
 import { AdminBypassAuditService } from '../services/admin-bypass-audit.service';
 
@@ -88,7 +89,19 @@ export class SubscriptionGuard implements CanActivate {
     const platform = parseClientPlatform(
       request.headers?.[CLIENT_PLATFORM_HEADER],
     );
-    const currentTier = isPaywallEnforcedForRequest(this.configService, platform)
+    // The surface comes from the SAME header bag as the platform above, not
+    // from the request context, so this guard keeps deciding entirely from the
+    // request it was handed. `RequestPlatformMiddleware` computes the identical
+    // value with the identical function; reading one of the two from the
+    // context and the other from the headers is the arrangement that could
+    // silently disagree.
+    const surface = resolveClientSurface(request.headers);
+
+    const currentTier = isPaywallEnforcedForRequest(
+      this.configService,
+      platform,
+      surface,
+    )
       ? await this.subscriptionsService.getPlanCode(user.organizationId)
       : 'pro';
 

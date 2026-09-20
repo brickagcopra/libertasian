@@ -232,6 +232,22 @@ import { RequestPlatformMiddleware } from './common/middleware/request-platform.
         // value cannot accidentally disable the paywall. The two rules compose:
         // an ABSENT var is off, a MALFORMED var is on.
         PAYWALL_ENFORCED: Joi.boolean().default(false),
+        // Browsers only — the web read surface. Separate from PAYWALL_ENFORCED
+        // because the two surfaces ship on different clocks: the browser has a
+        // purchase route today, while the iOS and Android builds are still
+        // waiting on store products, and one global switch gets that wrong for
+        // whichever side it is not set for.
+        //
+        // DEFAULT `false`, so this ships inert and gating the web is a
+        // deliberate act, exactly like the two flags above.
+        //
+        // MUST BE IN THIS SCHEMA, not just read from the environment.
+        // `isWebPaywallEnforced` compares with `=== true`, and only the
+        // validated env-var path coerces `'true'` into a real boolean. A var
+        // missing from here arrives as the STRING `'true'`, fails the
+        // comparison, and the flag is silently inert — set in the environment,
+        // doing nothing, with nothing in the logs to say so.
+        PAYWALL_ENFORCED_WEB: Joi.boolean().default(false),
         // Search dedup post-filter: when 'true' (default), excludes
         // non-canonical duplicate documents from search results via a
         // Redis-backed must_not.terms clause. Flip to 'false' to revert

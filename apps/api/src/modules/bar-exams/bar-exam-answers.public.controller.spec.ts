@@ -256,9 +256,12 @@ describe('BarExamAnswersPublicController', () => {
       const result = await controller.get(QUESTION_ID, USER, REQ, 'ios');
 
       expect(result.data.answerText).toBe(fakeApprovedRow().answerText);
+      // Third argument: the client surface, resolved from the request's own
+      // headers. This fixture carries none, so it reads as 'web'.
       expect(resolveEffectiveEntitlements).toHaveBeenCalledWith(
         USER.organizationId,
         'ios',
+        'web',
       );
     });
 
@@ -340,6 +343,7 @@ describe('BarExamAnswersPublicController', () => {
       expect(resolveEffectiveEntitlements).toHaveBeenCalledWith(
         USER.organizationId,
         null,
+        'web',
       );
     });
   });

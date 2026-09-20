@@ -252,7 +252,14 @@ describe('BarExamsController (authenticated)', () => {
 
       expect(result.success).toBe(true);
       expect(result.data).toHaveLength(1);
-      expect(resolveEffectiveEntitlements).toHaveBeenCalledWith('org-1', 'ios');
+      // Third argument: the client surface, resolved from the request's own
+      // headers. This fixture carries none, so it reads as 'web' — the safe
+      // default for a client we cannot positively identify as a native app.
+      expect(resolveEffectiveEntitlements).toHaveBeenCalledWith(
+        'org-1',
+        'ios',
+        'web',
+      );
     });
 
     it('refuses a previewOnly caller on all three routes, and never queries', async () => {
@@ -311,7 +318,11 @@ describe('BarExamsController (authenticated)', () => {
       const result = await controller.list(USER, REQ);
 
       expect(result.data).toHaveLength(1);
-      expect(resolveEffectiveEntitlements).toHaveBeenCalledWith('org-1', null);
+      expect(resolveEffectiveEntitlements).toHaveBeenCalledWith(
+        'org-1',
+        null,
+        'web',
+      );
     });
   });
 });

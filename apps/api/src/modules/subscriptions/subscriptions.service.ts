@@ -2,8 +2,14 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import { isPaywallEnforcedForRequest } from '../../common/config/paywall';
-import type { ClientPlatform } from '../../common/config/store-availability';
-import { getRequestPlatform } from '../../common/context/request-context';
+import type {
+  ClientPlatform,
+  ClientSurface,
+} from '../../common/config/store-availability';
+import {
+  getRequestPlatform,
+  getRequestSurface,
+} from '../../common/context/request-context';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FeatureFlagService } from '../feature-flags/feature-flags.service';
 import { PlansService } from '../plans/plans.service';
@@ -140,13 +146,26 @@ export class SubscriptionsService {
    * Outside any request — BullMQ workers, @Cron sweeps, scripts — the context
    * is empty and this resolves to `null` = not enforced, i.e. today's
    * behaviour. See `getRequestPlatform`.
+   *
+   * `surface` follows exactly the same convention and is what decides the
+   * browser case: a `null` platform covers BOTH a browser and live App Store
+   * build 25, and only the surface tells them apart. See
+   * `isPaywallEnforcedForRequest`.
    */
   async getEntitlements(
     organizationId: string,
     platform?: ClientPlatform | null,
+    surface?: ClientSurface | null,
   ): Promise<SubscriptionEntitlements> {
     const resolvedPlatform =
       platform === undefined ? getRequestPlatform() : platform;
+    // Same override convention as `platform`, resolved independently of it:
+    // omitted reads the request context, an explicit value (including `null`)
+    // wins. Independently on purpose — `QuotaController` passes an explicit
+    // platform parsed from the header while still wanting the ambient surface,
+    // and coupling the two would silently blank the surface there.
+    const resolvedSurface =
+      surface === undefined ? getRequestSurface() : surface;
     // Not enforced for this caller — nothing is purchasable from this client,
     // so no org can buy its way past a gate. Everyone resolves to 'pro'.
     //
@@ -161,7 +180,13 @@ export class SubscriptionsService {
     // The stored `sub.entitlementsJson` overrides are deliberately NOT merged:
     // a persisted 0 or previewOnly:true from the paid era would re-introduce
     // the exact 402 this switch exists to remove.
-    if (!isPaywallEnforcedForRequest(this.configService, resolvedPlatform)) {
+    if (
+      !isPaywallEnforcedForRequest(
+        this.configService,
+        resolvedPlatform,
+        resolvedSurface,
+      )
+    ) {
       return {
         ...this.getDefaultEntitlements('pro'),
         aiAnswers: 50,
@@ -226,9 +251,16 @@ export class SubscriptionsService {
    * any of the three layers: on a platform that cannot buy, `getEntitlements`
    * short-circuits to the not-enforced fallback above and neither the plan nor
    * the stored overrides are consulted at all.
+   *
+   * `surface` defaults to `null` (never web-enforced) so a caller that has not
+   * been taught about surfaces cannot accidentally report a web client as
+   * gated.
    */
-  isPaywallEnforcedFor(platform: ClientPlatform | null): boolean {
-    return isPaywallEnforcedForRequest(this.configService, platform);
+  isPaywallEnforcedFor(
+    platform: ClientPlatform | null,
+    surface: ClientSurface | null = null,
+  ): boolean {
+    return isPaywallEnforcedForRequest(this.configService, platform, surface);
   }
 
   /**
