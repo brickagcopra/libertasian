@@ -245,13 +245,21 @@ import { RequestPlatformMiddleware } from './common/middleware/request-platform.
         // Browsers only — the web read surface. Separate from PAYWALL_ENFORCED
         // because the surfaces ship on different clocks and, as of 2026-09-20,
         // are in three different states: iOS sells through approved IAPs,
-        // Android is pending a Google payments profile, and web has no gateway
-        // at all (Xendit declined the merchant activation). One global switch
-        // gets that wrong for whichever side it is not set for.
+        // Android is pending a Google payments profile, and web has no
+        // ON-SURFACE purchase route at all (Xendit declined the merchant
+        // activation). One global switch gets that wrong for whichever side it
+        // is not set for.
         //
-        // NOT DUE TO BE FLIPPED. With no web gateway, turning this on would
-        // refuse reads on a surface with no route out. It exists so the gate is
-        // ready the day a rail is.
+        // WHAT A GATED WEB USER'S ROUTE OUT ACTUALLY IS. Not nothing, and not a
+        // web checkout: it is subscribing in the iOS app, where IAP is live and
+        // selling. That route works for a gated web user who also owns an
+        // iPhone. It does NOT exist for an Android owner or for someone on a
+        // desktop alone — for them a gated web surface has no way out at all.
+        //
+        // Flipping this is therefore a deliberate PRODUCT decision about
+        // whether an iOS-only purchase route is an acceptable way out for web
+        // users, not an engineering blocker. The engineering is ready either
+        // way. A decision to proceed was taken 2026-09-20.
         //
         // DEFAULT `false`, so this ships inert and gating the web is a
         // deliberate act, exactly like the two flags above.

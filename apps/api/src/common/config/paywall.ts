@@ -115,11 +115,17 @@ export function isWebPaywallEnforced(config: ConfigService): boolean {
  *   how a signed-in free account reads the whole paid corpus from a browser.
  *   `web` is therefore gated ONLY behind its own explicit switch.
  *
- *   AND THAT SWITCH IS NOT READY TO FLIP. Web has no payment gateway — Xendit
- *   declined the merchant activation — so as of 2026-09-20 turning
- *   `PAYWALL_ENFORCED_WEB` on would gate a surface with no route out, which is
- *   the same mistake in a smaller blast radius. The term exists so the gate is
- *   in place the day a rail is; it does not mean the gate is due.
+ *   WHAT A GATED WEB USER'S ROUTE OUT ACTUALLY IS. As of 2026-09-20 web has no
+ *   ON-SURFACE purchase route — Xendit declined the merchant activation — so
+ *   there is no web checkout to send anyone to. The route out is subscribing in
+ *   the iOS app, where IAP is live and selling: a gated web user who also owns
+ *   an iPhone can clear the gate there. An Android owner, or someone on a
+ *   desktop alone, cannot — for them a gated web surface has no way out.
+ *
+ *   Flipping `PAYWALL_ENFORCED_WEB` is therefore a deliberate PRODUCT decision
+ *   about whether an iOS-only purchase route is an acceptable way out for web
+ *   users, not an engineering blocker. The mechanism below works either way. A
+ *   decision to proceed was taken 2026-09-20.
  *
  *   It cannot key on `platform === null`, because `null` is ALSO what the
  *   legacy header-less install base resolves to — those builds predate
