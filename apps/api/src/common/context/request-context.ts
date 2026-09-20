@@ -1,6 +1,9 @@
 import { AsyncLocalStorage } from 'async_hooks';
 
-import type { ClientPlatform } from '../config/store-availability';
+import type {
+  ClientPlatform,
+  ClientSurface,
+} from '../config/store-availability';
 
 /**
  * Per-request ambient context.
@@ -18,6 +21,22 @@ export interface RequestContext {
    * an unrecognised value. See `store-availability.ts`.
    */
   platform: ClientPlatform | null;
+
+  /**
+   * Which client issued the request — see `resolveClientSurface`.
+   *
+   * Carried ALONGSIDE `platform`, not instead of it. They answer different
+   * questions: `platform` is "can this client buy from a store?", `surface` is
+   * "which client is this?". Only `surface` can tell a browser apart from live
+   * App Store build 25, because both send no `x-platform` header and both have
+   * a `null` platform.
+   *
+   * OPTIONAL, and absent means `null` = never web-enforced. Callers that
+   * construct a context by hand — tests, and anything simulating a request —
+   * keep working unchanged and keep today's behaviour, which is the safe
+   * direction. The middleware always sets it.
+   */
+  surface?: ClientSurface | null;
 }
 
 /**
@@ -48,6 +67,21 @@ export const requestContextStorage = new AsyncLocalStorage<RequestContext>();
  */
 export function getRequestPlatform(): ClientPlatform | null {
   return requestContextStorage.getStore()?.platform ?? null;
+}
+
+/**
+ * The current request's client surface, or `null` when there is no request.
+ *
+ * `null` OUTSIDE A REQUEST IS THE SAFE DEFAULT, for the same reason as
+ * `getRequestPlatform`: a BullMQ worker, a `@Cron` sweep or a seed has no
+ * headers to read and no user waiting on a paywall, and `null` is the one value
+ * `isPaywallEnforcedForRequest` never enforces on. Note this is NOT the same
+ * default as `resolveClientSurface`, which returns `'web'` for an
+ * unidentifiable HTTP client — there, a request really did arrive and the
+ * question is which client sent it; here, no request exists at all.
+ */
+export function getRequestSurface(): ClientSurface | null {
+  return requestContextStorage.getStore()?.surface ?? null;
 }
 
 /**

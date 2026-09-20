@@ -132,15 +132,33 @@ describe('EntitlementService — admin entitlements surface', () => {
     it('resolves the effective column for the requested platform', async () => {
       await service.getEffectiveEntitlementReport(SUB, 'ios');
 
-      expect(subscriptions.getEntitlements).toHaveBeenCalledWith(ORG, 'ios');
-      expect(subscriptions.isPaywallEnforcedFor).toHaveBeenCalledWith('ios');
+      // Third argument: the surface the report SIMULATES, derived from the
+      // platform it was asked about rather than inherited from the admin's own
+      // browser.
+      expect(subscriptions.getEntitlements).toHaveBeenCalledWith(
+        ORG,
+        'ios',
+        'ios',
+      );
+      // Second argument: the simulated surface, derived from the platform the
+      // report was asked about — not inherited from the admin's own browser.
+      expect(subscriptions.isPaywallEnforcedFor).toHaveBeenCalledWith(
+        'ios',
+        'ios',
+      );
     });
 
     it('reports web as the wire spelling of the null platform', async () => {
       const report = await service.getEffectiveEntitlementReport(SUB, null);
 
       expect(report.platform).toBe('web');
-      expect(subscriptions.getEntitlements).toHaveBeenCalledWith(ORG, null);
+      // `platform ?? 'web'` — the same mapping the `platform` field of the
+      // report itself uses, so both columns describe one client.
+      expect(subscriptions.getEntitlements).toHaveBeenCalledWith(
+        ORG,
+        null,
+        'web',
+      );
     });
 
     it('404s on an unknown subscription', async () => {

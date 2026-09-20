@@ -86,7 +86,12 @@ describe('EntitlementService', () => {
       const result = await service.resolveEffectiveEntitlements('org-1');
 
       expect(result).toEqual(mockBaseEntitlements);
-      expect(subscriptions.getEntitlements).toHaveBeenCalledWith('org-1', null);
+      // Third argument: the surface, null outside a request context.
+      expect(subscriptions.getEntitlements).toHaveBeenCalledWith(
+        'org-1',
+        null,
+        null,
+      );
     });
 
     it('should return cached result if available', async () => {
@@ -529,11 +534,12 @@ describe('EntitlementService', () => {
     it('should clear every platform variant and nothing else', async () => {
       await service.invalidateEntitlementCache('org-1');
 
-      // Exactly three named DELs. Asserted as a count so that adding a variant
-      // without adding it to ENTITLEMENT_CACHE_PLATFORMS — which would leave a
-      // stale entitlement served for the full TTL after a grant or purchase —
-      // fails here rather than in production.
-      expect(redis.del).toHaveBeenCalledTimes(3);
+      // Exactly six named DELs: three platforms x {browser, not-a-browser}.
+      // Asserted as a count so that adding a variant without adding it to
+      // ENTITLEMENT_CACHE_PLATFORMS / ENTITLEMENT_CACHE_SURFACES — which would
+      // leave a stale entitlement served for the full TTL after a grant or
+      // purchase — fails here rather than in production.
+      expect(redis.del).toHaveBeenCalledTimes(6);
     });
   });
 
@@ -562,7 +568,11 @@ describe('EntitlementService', () => {
 
       // Must MISS the ios entry and resolve from source, not inherit aiAnswers: 1.
       expect(headerless).toEqual(mockBaseEntitlements);
-      expect(subscriptions.getEntitlements).toHaveBeenCalledWith('org-1', null);
+      expect(subscriptions.getEntitlements).toHaveBeenCalledWith(
+        'org-1',
+        null,
+        null,
+      );
     });
 
     it('reads and writes a distinct key per platform', async () => {
@@ -592,7 +602,11 @@ describe('EntitlementService', () => {
       // The platform must reach the layer that actually decides enforcement.
       // Keying the cache correctly is useless if every variant resolves from
       // the same platform-blind source.
-      expect(subscriptions.getEntitlements).toHaveBeenCalledWith('org-1', 'ios');
+      expect(subscriptions.getEntitlements).toHaveBeenCalledWith(
+        'org-1',
+        'ios',
+        null,
+      );
     });
   });
 });

@@ -8,8 +8,14 @@ import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../common/services/redis.service';
-import type { ClientPlatform } from '../../common/config/store-availability';
-import { getRequestPlatform } from '../../common/context/request-context';
+import type {
+  ClientPlatform,
+  ClientSurface,
+} from '../../common/config/store-availability';
+import {
+  getRequestPlatform,
+  getRequestSurface,
+} from '../../common/context/request-context';
 import { AuditService } from '../audit/audit.service';
 import {
   CANONICAL_ENTITLEMENT_KEYS,
@@ -33,6 +39,26 @@ function platformKeyPart(platform: ClientPlatform | null): string {
 }
 
 /**
+ * The cache-key suffix for a surface: `':web'` for a browser, nothing at all
+ * for everything else.
+ *
+ * ONLY `'web'` IS DISTINGUISHED, and that asymmetry is the point. The cached
+ * value depends on the surface through exactly one term —
+ * `surface === 'web' && isWebPaywallEnforced(config)` — so `'web'` versus
+ * not-`'web'` is the entire distinction the key has to carry. Spelling out all
+ * five surfaces would enumerate combinations that cannot arise (the header wins
+ * in `resolveClientSurface`, so an `ios` surface never pairs with an `android`
+ * platform) and would rename every key already in Redis for no behavioural
+ * gain.
+ *
+ * The empty suffix keeps `ios`, `android` and `none` byte-identical to the keys
+ * this deploy replaces, so nothing in the cache is orphaned on rollout.
+ */
+function surfaceKeyPart(surface: ClientSurface | null): string {
+  return surface === 'web' ? ':web' : '';
+}
+
+/**
  * Every platform variant a cache key can exist under.
  *
  * `invalidateEntitlementCache` deletes all of them by name. This list is
@@ -40,7 +66,8 @@ function platformKeyPart(platform: ClientPlatform | null): string {
  * O(n) over the whole keyspace and blocks the single-threaded Redis this
  * process shares with BullMQ; `SCAN` is cursor-based and can miss a key that is
  * written mid-iteration, which is exactly the write pattern an invalidation
- * races against. Three named `DEL`s are cheap, exact, and cannot stall prod.
+ * races against. A handful of named `DEL`s are cheap, exact, and cannot
+ * stall prod.
  *
  * If `ClientPlatform` ever gains a member, add it here. The type is small and
  * closed for precisely this reason.
@@ -50,6 +77,38 @@ const ENTITLEMENT_CACHE_PLATFORMS: readonly (ClientPlatform | null)[] = [
   'android',
   null,
 ];
+
+/**
+ * The two suffixes `surfaceKeyPart` can produce — a browser, and everything
+ * else. Same enumerate-rather-than-scan rule as `ENTITLEMENT_CACHE_PLATFORMS`;
+ * `invalidateEntitlementCache` deletes the cross product of the two lists, six
+ * named `DEL`s on a cold path (a grant, a revoke, a purchase).
+ *
+ * If `surfaceKeyPart` ever learns to distinguish a third bucket, add a
+ * representative of it here — the two lists must together generate every key
+ * the read path can write, or a grant will leave a stale paywall decision alive
+ * for the full TTL.
+ */
+const ENTITLEMENT_CACHE_SURFACES: readonly (ClientSurface | null)[] = [
+  'web',
+  null,
+];
+
+/**
+ * The cache key for one org under one (platform, surface) pair.
+ *
+ * ONE DEFINITION, shared by the read/write path and the invalidation path. When
+ * those were two separate format strings, a change to either one silently
+ * orphaned every key written by the other — and an orphaned entitlement key is
+ * a stale paywall decision that survives its own invalidation for the full TTL.
+ */
+function entitlementCacheKey(
+  organizationId: string,
+  platform: ClientPlatform | null,
+  surface: ClientSurface | null,
+): string {
+  return `${ENTITLEMENT_CACHE_PREFIX}${organizationId}:${platformKeyPart(platform)}${surfaceKeyPart(surface)}`;
+}
 
 export interface ActiveBonus {
   id: string;
@@ -176,12 +235,15 @@ export class EntitlementService {
   async resolveEffectiveEntitlements(
     organizationId: string,
     platform?: ClientPlatform | null,
+    surface?: ClientSurface | null,
   ): Promise<SubscriptionEntitlements> {
     // Resolved ONCE here and passed down concretely, so the cache key and the
     // entitlements written under it can never be computed for two different
     // platforms within one call.
     const resolvedPlatform =
       platform === undefined ? getRequestPlatform() : platform;
+    const resolvedSurface =
+      surface === undefined ? getRequestSurface() : surface;
 
     // THE PLATFORM IS PART OF THE KEY, and must stay that way. Entitlements are
     // platform-dependent now (see `isPaywallEnforcedForRequest`): the same org
@@ -190,13 +252,30 @@ export class EntitlementService {
     // of those answers to the other for the full 120s TTL — gating a web user
     // who cannot buy, or un-gating an iOS user who can, depending purely on
     // which client happened to warm the cache first.
-    const cacheKey = `${ENTITLEMENT_CACHE_PREFIX}${organizationId}:${platformKeyPart(resolvedPlatform)}`;
+    // THE SURFACE IS PART OF THE KEY TOO, and that is not optional either. A
+    // browser and live App Store build 25 BOTH resolve to a `null` platform, so
+    // on the platform alone they share one slot — while with
+    // `PAYWALL_ENFORCED_WEB` on they resolve to OPPOSITE answers. Whichever of
+    // the two warmed the key first would serve its answer to the other for the
+    // full 120s TTL: either a browser reads the paid corpus free, or build 25
+    // is handed a 403 it has no purchase surface to clear. The second direction
+    // is the build-23 rejection, arriving intermittently and only when both
+    // clients are in flight at once.
+    const cacheKey = entitlementCacheKey(
+      organizationId,
+      resolvedPlatform,
+      resolvedSurface,
+    );
     const cached = await this.redis.get(cacheKey);
     if (cached) {
       return JSON.parse(cached) as SubscriptionEntitlements;
     }
 
-    const base = await this.getBaseEntitlements(organizationId, resolvedPlatform);
+    const base = await this.getBaseEntitlements(
+      organizationId,
+      resolvedPlatform,
+      resolvedSurface,
+    );
     const overrides = await this.getActiveOverrides(organizationId);
 
     const effective = { ...base };
@@ -243,10 +322,17 @@ export class EntitlementService {
   async getBaseEntitlements(
     organizationId: string,
     platform?: ClientPlatform | null,
+    surface?: ClientSurface | null,
   ): Promise<SubscriptionEntitlements> {
     const resolvedPlatform =
       platform === undefined ? getRequestPlatform() : platform;
-    return this.subscriptions.getEntitlements(organizationId, resolvedPlatform);
+    const resolvedSurface =
+      surface === undefined ? getRequestSurface() : surface;
+    return this.subscriptions.getEntitlements(
+      organizationId,
+      resolvedPlatform,
+      resolvedSurface,
+    );
   }
 
   /**
@@ -443,13 +529,23 @@ export class EntitlementService {
 
     const organizationId = subscription.organizationId;
 
+    // The report SIMULATES a client; it must not inherit the surface of the
+    // admin's own browser from the request context. `platform ?? 'web'` is
+    // already how the `platform` field below is labelled, so deriving the
+    // surface the same way keeps the two columns describing one client: an
+    // `ios` row reports what an iOS build sees, and the `web` row is the only
+    // one that can report `PAYWALL_ENFORCED_WEB`. Leaving it to the context
+    // would show `paywallEnforced: true` on the iOS row purely because an admin
+    // opened the panel in a browser.
+    const simulatedSurface: ClientSurface = platform ?? 'web';
+
     const [planDefaults, overrides, effective, resolvedSub] = await Promise.all([
       this.subscriptions.resolvePlanDefaults(
         organizationId,
         subscription.planCode,
       ),
       this.getActiveBonuses(organizationId),
-      this.resolveEffectiveEntitlements(organizationId, platform),
+      this.resolveEffectiveEntitlements(organizationId, platform, simulatedSurface),
       this.subscriptions.getActiveSubscription(organizationId),
     ]);
 
@@ -516,7 +612,10 @@ export class EntitlementService {
       organizationId,
       planCode: subscription.planCode,
       platform: platform ?? 'web',
-      paywallEnforced: this.subscriptions.isPaywallEnforcedFor(platform),
+      paywallEnforced: this.subscriptions.isPaywallEnforcedFor(
+        platform,
+        simulatedSurface,
+      ),
       isResolvedSubscription: resolvedSub?.id === subscription.id,
       resolvedSubscriptionId: resolvedSub?.id ?? null,
       keys,
@@ -762,19 +861,22 @@ export class EntitlementService {
 
   /**
    * Invalidate the entitlement cache for an organization, across EVERY platform
-   * variant.
+   * AND surface variant.
    *
    * Clearing only one variant would leave the others serving pre-change
    * entitlements for up to the 120s TTL — so a grant, revoke, or store purchase
    * would appear to apply on one client and not another. See
    * `ENTITLEMENT_CACHE_PLATFORMS` for why the variants are enumerated rather
    * than matched with KEYS/SCAN.
+   *
+   * "Every variant" now means every (platform, surface) pair, because that is
+   * what the key is made of — see `entitlementCacheKey`.
    */
   async invalidateEntitlementCache(organizationId: string): Promise<void> {
     await Promise.all(
-      ENTITLEMENT_CACHE_PLATFORMS.map((platform) =>
-        this.redis.del(
-          `${ENTITLEMENT_CACHE_PREFIX}${organizationId}:${platformKeyPart(platform)}`,
+      ENTITLEMENT_CACHE_PLATFORMS.flatMap((platform) =>
+        ENTITLEMENT_CACHE_SURFACES.map((surface) =>
+          this.redis.del(entitlementCacheKey(organizationId, platform, surface)),
         ),
       ),
     );

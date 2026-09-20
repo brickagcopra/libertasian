@@ -3,7 +3,10 @@ import type { JwtPayload } from '@libertasian/types';
 
 import type { Request } from 'express';
 
-import { parseClientPlatform } from '../../common/config/store-availability';
+import {
+  parseClientPlatform,
+  resolveClientSurface,
+} from '../../common/config/store-availability';
 import type { AdminBypassAuditService } from '../../common/services/admin-bypass-audit.service';
 import type { EntitlementService } from '../subscriptions/entitlement.service';
 
@@ -35,6 +38,15 @@ import type { EntitlementService } from '../subscriptions/entitlement.service';
  * cannot buy (web, and every mobile build before 26, which sends no header)
  * resolves to `previewOnly === false` and stays unenforced — the same rule as
  * `isPaywallEnforcedForRequest`.
+ *
+ * The SURFACE is threaded through alongside it, read from the same request. It
+ * is passed explicitly rather than left to the request context because the
+ * platform beside it is explicit too, and resolving half the pair from the
+ * headers and half from ambient state is how the two come to disagree. It is
+ * also what makes this gate reachable for a browser at all: a browser's
+ * platform is `null`, indistinguishable from live build 25, so without the
+ * surface this endpoint stays free on the web however `PAYWALL_ENFORCED_WEB`
+ * is set.
  */
 export async function assertBarExamEntitlement(opts: {
   entitlementService: EntitlementService;
@@ -60,6 +72,7 @@ export async function assertBarExamEntitlement(opts: {
   const ent = await entitlementService.resolveEffectiveEntitlements(
     user.organizationId,
     parseClientPlatform(platformHeader),
+    resolveClientSurface(req.headers),
   );
   if (ent.previewOnly === true) {
     throw new ForbiddenException({
