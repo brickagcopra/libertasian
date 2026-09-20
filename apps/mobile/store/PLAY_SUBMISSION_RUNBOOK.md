@@ -347,7 +347,7 @@ press Submit.**
 
 > I verified that URL returns **200** and renders "Delete Your Account and Data —
 > LIBERTASIAN", with the in-app path *Settings → Delete account* and a fallback
-> contact of `libertasianphilippines@gmail.com`. It is live; you do not need to
+> contact of `dpo@libertasian.com`. It is live; you do not need to
 > check it.
 
 2.3 **Data types** screen. Diff what is on screen against this table. It is the

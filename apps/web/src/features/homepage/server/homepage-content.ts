@@ -45,13 +45,20 @@ export const businessInfo = {
   phone: '+639563659471',
   phoneDisplay: '+63 956 365 9471',
   /**
-   * Data Protection Officer under RA 10173. The DPO is contactable at a
-   * personal-domain mailbox because the dpo@ alias on our own domain does not
-   * exist — publishing it made the Data Privacy Act contact route a dead end.
+   * Data Protection Officer under RA 10173. `dpo@libertasian.com` is an active
+   * mailbox — confirmed by SMTP RCPT probe against both mx1 and mx2
+   * .privateemail.com on 2026-09-20 (250 Ok, with a random control address
+   * proving there is no catch-all) and by the account owner. It replaced a
+   * free-mail address, which reads to a merchant-KYC reviewer as a registered
+   * corporation with no corporate privacy contact.
+   *
+   * This single constant feeds every Data Privacy Act contact line the site
+   * publishes — /privacy, /contact, /about, /account-deletion and
+   * /restore-account all read it. Change it here, nowhere else.
    */
   dpo: {
     name: 'Jecar John Esling',
-    email: 'libertasianphilippines@gmail.com',
+    email: 'dpo@libertasian.com',
   },
   /**
    * Payment methods named in text on /pricing and in the footer.
