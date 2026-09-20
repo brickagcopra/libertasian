@@ -25,10 +25,15 @@ import {
  *      NOT. Gating a stale install with no purchase surface is the build-23
  *      rejection.
  *
- * Neither flag is due to be flipped as of 2026-09-20: web has no payment
- * gateway (Xendit declined the merchant activation), so gating it would refuse
- * reads on a surface with no route out. These tests pin the mechanism, not a
- * plan to use it.
+ * WHAT A GATED WEB USER'S ROUTE OUT IS, as of 2026-09-20: web has no ON-SURFACE
+ * purchase route — Xendit declined the merchant activation — so there is no web
+ * checkout to send anyone to. The route out is subscribing in the iOS app,
+ * where IAP is live and selling. That works for a gated web user who also owns
+ * an iPhone; it does not exist for an Android owner or for someone on a desktop
+ * alone. Flipping `PAYWALL_ENFORCED_WEB` is therefore a product decision about
+ * whether an iOS-only purchase route is an acceptable way out for web users,
+ * not an engineering blocker. These tests pin the mechanism, not a plan to use
+ * it.
  *
  * `paywall-for-request.spec.ts` covers the first two terms; this file covers
  * the third and the interaction between them.
