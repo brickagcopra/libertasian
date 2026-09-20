@@ -24,15 +24,24 @@ jobs:
       # found these by hand. The only prior guard,
       # apps/web/src/features/homepage/server/business-info.test.ts, asserts
       # over rendered web content only and saw neither #364 surface. That file
-      # is excluded below because it legitimately names both addresses in its
+      # is excluded below because it legitimately names legal@ and info@ in its
       # DEAD_MAILBOXES exclusion list.
       #
-      # These mailboxes reject at SMTP (450 — mailbox does not exist). Publishing
-      # them was a likely contributor to the Xendit KYC rejection. DELETE THIS STEP
-      # once dpo@/legal@ exist as real mailboxes in the Namecheap PrivateEmail panel
-      # AND a test send to each is confirmed delivered — at that point they are
-      # publishable again and this guard becomes wrong.
-      - name: Guard — no dead mailboxes published
+      # SMTP RCPT probe against mx1 and mx2.privateemail.com, 2026-09-20,
+      # repeated, with a random control address proving there is no catch-all:
+      #
+      #   dpo@libertasian.com     250 Ok — ACTIVE (it was not on 2026-08-05;
+      #                           it is now the published DPA contact, so it is
+      #                           no longer guarded here)
+      #   support@libertasian.com 250 Ok — ACTIVE, monitored daily
+      #   legal@libertasian.com   450    — does not exist
+      #
+      # legal@ rejects at SMTP, and publishing a dead contact route was a likely
+      # contributor to the Xendit KYC rejection. DELETE THIS STEP once legal@
+      # exists as a real mailbox in the Namecheap PrivateEmail panel AND a test
+      # send is confirmed delivered — at that point it is publishable again and
+      # this guard becomes wrong.
+      - name: Guard — no dead legal@ mailbox published
         run: |
           if grep -rIn \
             --exclude-dir=node_modules \
@@ -41,15 +50,14 @@ jobs:
             --exclude-dir=build \
             --exclude-dir=coverage \
             --exclude=business-info.test.ts \
-            -e 'dpo@libertasian\.com' \
             -e 'legal@libertasian\.com' \
             apps/ services/ packages/
           then
             echo
-            echo "::error::Dead mailbox published — dpo@ and legal@libertasian.com reject at SMTP (450, mailbox does not exist). Use libertasianphilippines@gmail.com (privacy/DPO of record) or support@libertasian.com (monitored daily)."
+            echo "::error::Dead mailbox published — legal@libertasian.com rejects at SMTP (450, mailbox does not exist). Use dpo@libertasian.com for privacy/DPA contact, or support@libertasian.com for general contact (both monitored)."
             exit 1
           fi
-          echo "OK — no published references to dpo@ or legal@libertasian.com."
+          echo "OK — no published references to legal@libertasian.com."
 
       - uses: pnpm/action-setup@v4
 

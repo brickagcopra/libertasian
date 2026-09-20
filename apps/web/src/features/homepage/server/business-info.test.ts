@@ -23,12 +23,19 @@ import { businessInfo, DEFAULT_HOMEPAGE_CONTENT } from './homepage-content';
  * these assertions outlive the Xendit application.
  */
 
-/** Mailboxes that reject at SMTP (450 unverified). Must never be published. */
-const DEAD_MAILBOXES = [
-  'dpo@libertasian.com',
-  'legal@libertasian.com',
-  'info@libertasian.com',
-];
+/**
+ * Mailboxes that reject at SMTP (450 unverified). Must never be published.
+ *
+ * Probed by SMTP RCPT against mx1 and mx2.privateemail.com on 2026-09-20,
+ * repeated, with a random control address proving there is no catch-all:
+ *
+ *   dpo@libertasian.com     250 Ok — ACTIVE (it was not on 2026-08-05; removed
+ *                           from this list, and now the published DPA contact)
+ *   support@libertasian.com 250 Ok — ACTIVE, monitored daily
+ *   legal@libertasian.com   450    — does not exist
+ *   info@libertasian.com    450    — does not exist
+ */
+const DEAD_MAILBOXES = ['legal@libertasian.com', 'info@libertasian.com'];
 
 /** Entity spellings that do not match the certificate. */
 const WRONG_ENTITY_STRINGS = ['LIBERTASIAN Inc.', 'LIBERTASIAN, Inc.'];
@@ -75,6 +82,13 @@ describe('businessInfo — registered identity', () => {
     expect(businessInfo.dpo.name).not.toHaveLength(0);
     expect(businessInfo.dpo.email).toContain('@');
     expect(businessInfo.foundedYear).toBe(2026);
+  });
+
+  it('publishes the DPA contact on our own domain, never a free-mail provider', () => {
+    // A registered corporation whose RA 10173 contact is a gmail.com address
+    // is a merchant-KYC finding on every PH gateway's checklist. The address
+    // must live on the domain the certificate names.
+    expect(businessInfo.dpo.email).toMatch(/@libertasian\.com$/);
   });
 
   it('keeps the tel:-safe phone unspaced and the display phone grouped', () => {
