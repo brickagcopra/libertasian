@@ -75,13 +75,21 @@ describe('strip_owner_platform_admin — seed-level invariants', () => {
     );
   });
 
-  it('the owner role is every non-admin:* code (nothing else was stripped)', () => {
+  // 20260920120000_platform_rbac_authority additionally strips digests:review:
+  // the admin review queue accepts EITHER digests:review or admin:review-queue,
+  // resolved against the caller's CURRENT org, so leaving it on the shared
+  // owner role let every personal-workspace owner into the queue.
+  it('the owner role is every non-admin:* code except digests:review', () => {
     const expected = PERMISSIONS.map((p) => p.code).filter(
-      (c) => !c.startsWith('admin:'),
+      (c) => !c.startsWith('admin:') && c !== 'digests:review',
     );
     expect([...(ROLE_PERMISSIONS['owner'] ?? [])].sort()).toEqual(
       [...new Set(expected)].sort(),
     );
+  });
+
+  it('the owner role does NOT hold digests:review', () => {
+    expect(ROLE_PERMISSIONS['owner']).not.toContain('digests:review');
   });
 
   it('the admin role still holds all 13 admin:* codes (allowlist path intact)', () => {
@@ -148,7 +156,10 @@ describe('strip_owner_platform_admin — downstream authorization', () => {
       getCachedPermissions: jest.fn().mockResolvedValue(null),
       setCachedPermissions: jest.fn().mockResolvedValue(undefined),
     };
-    return new PermissionsService(prisma as never, cache as never);
+    const config = {
+      get: jest.fn().mockReturnValue('00000000-0000-0000-0000-000000000001'),
+    };
+    return new PermissionsService(prisma as never, cache as never, config as never);
   }
 
   it('a member holding ONLY the system owner role resolves isPlatformAdmin=false', async () => {

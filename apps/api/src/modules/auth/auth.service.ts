@@ -197,16 +197,11 @@ export class AuthService {
     // Login" column reflects the user's first known network context.
     this.emitLoginEvent('login_success', user.id, req);
 
-    // Newly-registered owner of a personal org never has admin:* permissions
-    // (those are only granted to platform staff via RBAC). Compute anyway so
-    // the response shape stays consistent — fail-closed if anything errors.
-    const member = await this.prisma.organizationMember.findFirst({
-      where: { userId: user.id, organizationId: org.id, status: 'active' },
-      select: { id: true },
-    });
-    const isPlatformAdmin = member
-      ? await this.computeIsPlatformAdmin(member.id)
-      : false;
+    // A newly-registered user is not a member of the platform organization,
+    // so this is structurally false — platform capability is granted
+    // explicitly by a superadmin, never conferred by signing up. Computed
+    // anyway so the response shape stays consistent.
+    const isPlatformAdmin = await this.computeIsPlatformAdmin(user.id);
 
     return {
       // role is the literal used in the organizationMember.create above.
@@ -318,7 +313,7 @@ export class AuthService {
     // per-IP velocity counter is deliberately preserved (NIST SP 800-63B).
     await this.loginThrottle.recordSuccess(dto.email, ip);
 
-    const isPlatformAdmin = await this.computeIsPlatformAdmin(membership.id);
+    const isPlatformAdmin = await this.computeIsPlatformAdmin(user.id);
 
     return {
       tokens,
@@ -389,7 +384,7 @@ export class AuthService {
 
     this.emitLoginEvent('google_login', user.id, req, { deviceFingerprint });
 
-    const isPlatformAdmin = await this.computeIsPlatformAdmin(membership.id);
+    const isPlatformAdmin = await this.computeIsPlatformAdmin(user.id);
 
     return {
       tokens,
@@ -474,7 +469,7 @@ export class AuthService {
 
     this.emitLoginEvent('apple_login', user.id, req, { deviceFingerprint });
 
-    const isPlatformAdmin = await this.computeIsPlatformAdmin(membership.id);
+    const isPlatformAdmin = await this.computeIsPlatformAdmin(user.id);
 
     return {
       tokens,
@@ -1141,24 +1136,21 @@ export class AuthService {
   }
 
   /**
-   * Resolve platform-admin status from the member's effective permissions
-   * (any `admin:*` code) at token-issuance time. JwtAuthGuard has not run
-   * yet on login/register/refresh, so the JWT-strategy lookup is not in
-   * play — we resolve directly here. Fail-closed on error: the frontend
-   * uses this to decide whether to render paywall UI, so a transient RBAC
-   * failure should bias toward showing the upsell rather than unlocking
-   * features we cannot prove the user is entitled to.
+   * Resolve platform-admin status at token-issuance time. JwtAuthGuard has not
+   * run yet on login/register/refresh, so the JWT-strategy lookup is not in
+   * play — we resolve directly here.
+   *
+   * Takes a USER id, not a member id. It used to take the member id of
+   * whichever org the caller happened to be logging into and ask whether THAT
+   * membership carried any `admin:*` code. Since every self-registered user
+   * owns a personal workspace, that made platform authority a property of an
+   * arbitrary tenant membership rather than of platform staffing. The single
+   * definition now lives in PermissionsService.isPlatformAdmin, scoped to the
+   * platform organization, and jwt.strategy calls the same one — they cannot
+   * drift. Fail-closed behaviour is preserved inside that method.
    */
-  private async computeIsPlatformAdmin(memberId: string): Promise<boolean> {
-    try {
-      const perms = await this.permissions.getEffectivePermissions(memberId);
-      return perms.some((p) => p.startsWith('admin:'));
-    } catch (err) {
-      this.logger.warn(
-        `Failed to compute isPlatformAdmin for member ${memberId}: ${(err as Error).message}`,
-      );
-      return false;
-    }
+  private async computeIsPlatformAdmin(userId: string): Promise<boolean> {
+    return this.permissions.isPlatformAdmin(userId);
   }
 
   private generateSlug(name: string): string {

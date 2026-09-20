@@ -2,6 +2,8 @@ import { NotFoundException } from '@nestjs/common';
 
 import { PermissionsService } from './permissions.service';
 
+const PLATFORM_ORG_ID = '00000000-0000-0000-0000-000000000001';
+
 describe('PermissionsService', () => {
   let service: PermissionsService;
   let prisma: {
@@ -31,7 +33,7 @@ describe('PermissionsService', () => {
       invalidateForMember: jest.fn().mockResolvedValue(undefined),
     };
 
-    service = new PermissionsService(prisma as never, cache as never);
+    service = new PermissionsService(prisma as never, cache as never, { get: jest.fn().mockReturnValue(PLATFORM_ORG_ID) } as never);
   });
 
   // --------------------------------------------------------------------------

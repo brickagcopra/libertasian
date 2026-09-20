@@ -219,11 +219,21 @@ function byResource(res: string): string[] {
 }
 
 export const ROLE_PERMISSIONS: Record<string, string[]> = {
-  // Owner: ALL tenant permissions EXCEPT platform admin:* codes. Personal-
-  // workspace owners are linked to this shared system role, so it must NOT
-  // confer platform administration. Real admins are granted explicitly (see
-  // migration 20260702120000_strip_owner_platform_admin), never via ownership.
-  owner: ALL_CODES.filter((c) => !c.startsWith('admin:')),
+  // Owner: ALL tenant permissions EXCEPT platform admin:* codes AND
+  // digests:review. Personal-workspace owners are linked to this shared
+  // system role, so it must NOT confer platform administration OR editorial
+  // authority over shared corpus content. Real admins and reviewers are
+  // granted explicitly on the PLATFORM organization (see migrations
+  // 20260702120000_strip_owner_platform_admin and
+  // 20260920120000_platform_rbac_authority), never via ownership.
+  //
+  // digests:review specifically: the admin review queue is guarded by
+  // @RequiredPermissions(['digests:review','admin:review-queue'], 'any')
+  // resolved against the caller's CURRENT org, so leaving it on `owner` gave
+  // every signup HTTP 200 on GET /admin/digests/review-queue.
+  owner: ALL_CODES.filter(
+    (c) => !c.startsWith('admin:') && c !== 'digests:review',
+  ),
 
   // Admin: all except billing:manage and org transfer
   admin: ALL_CODES.filter(

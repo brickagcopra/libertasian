@@ -4,6 +4,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Test, type TestingModule } from '@nestjs/testing';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { PermissionsService } from '../rbac/permissions.service';
 import { DigestsService } from './digests.service';
 
 /**
@@ -11,6 +12,16 @@ import { DigestsService } from './digests.service';
  * Separate file from digests.service.spec.ts to avoid stepping on the
  * sprawling existing suite.
  */
+/**
+ * Platform-scoped reviewer validation (PR: platform RBAC authority) resolves
+ * through PermissionsService, so the service now needs it. Default: nobody is
+ * platform staff — individual tests opt in.
+ */
+const mockPermissionsService = {
+  hasPlatformPermission: jest.fn().mockResolvedValue(false),
+  listPlatformMembersWithPermission: jest.fn().mockResolvedValue([]),
+};
+
 describe('DigestsService — search + generateOnDemand (PR2)', () => {
   let service: DigestsService;
   let prisma: {
@@ -43,6 +54,7 @@ describe('DigestsService — search + generateOnDemand (PR2)', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: getQueueToken('digests'), useValue: { add: jest.fn() } },
         { provide: EventEmitter2, useValue: { emit: jest.fn() } },
+        { provide: PermissionsService, useValue: mockPermissionsService },
       ],
     }).compile();
 

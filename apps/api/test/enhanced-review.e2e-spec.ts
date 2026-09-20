@@ -191,6 +191,66 @@ describe('Enhanced Digest Review (E2E)', () => {
         .send({ digestIds: [FAKE_UUID_1], reviewerUserId: FAKE_UUID_2 })
         .expect(403);
     });
+
+    /**
+     * Regression for the live authorization hole verified on prod 2026-09-20:
+     * an ordinary self-registered account got HTTP 200 on the review queue.
+     *
+     * createAuthenticatedUser registers a user, which provisions a personal
+     * workspace and links that membership to the shared SYSTEM `owner` role.
+     * That role carried `digests:review`, and the controller guard
+     * (@RequiredPermissions(['digests:review','admin:review-queue'], 'any'))
+     * resolves permissions against the CALLER'S CURRENT ORG — so owning a
+     * workspace was enough. Migration 20260920120000_platform_rbac_authority
+     * strips that grant; this asserts the server refuses, per P3.
+     */
+    it('a plain signup (owner of a personal workspace) is 403 on the review queue', async () => {
+      const owner = await createAuthenticatedUser(app, {
+        email: `personal-workspace-owner-${Date.now()}@test.com`,
+      });
+
+      await request(app.getHttpServer())
+        .get('/api/v1/admin/digests/review-queue')
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .expect(403);
+    });
+
+    it('a plain signup is not offered the reviewers roster', async () => {
+      const owner = await createAuthenticatedUser(app, {
+        email: `personal-workspace-roster-${Date.now()}@test.com`,
+      });
+
+      await request(app.getHttpServer())
+        .get('/api/v1/admin/digests/reviewers')
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .expect(403);
+    });
+  });
+
+  // =========================================================================
+  // Reviewer roster — GET /api/v1/admin/digests/reviewers
+  // =========================================================================
+
+  describe('GET /api/v1/admin/digests/reviewers', () => {
+    it('should reject unauthenticated requests', async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/admin/digests/reviewers')
+        .expect(401);
+    });
+
+    it('does not collide with GET /admin/digests/:id (literal route wins)', async () => {
+      // Declared above @Get(':id'); below it the literal path would be parsed
+      // as an id and rejected by ParseUUIDPipe with 400 rather than 401/403.
+      await request(app.getHttpServer())
+        .get('/api/v1/admin/digests/reviewers')
+        .expect((res) => {
+          if (res.status === 400) {
+            throw new Error(
+              'reviewers was routed to :id — check handler declaration order',
+            );
+          }
+        });
+    });
   });
 
   // =========================================================================

@@ -248,11 +248,15 @@ describe('AuthService', () => {
         {
           provide: PermissionsService,
           useValue: {
-            // Default: no admin:* permissions — non-admin user. Individual
-            // tests that exercise the admin-bypass response can override
-            // getEffectivePermissions to return ['admin:billing', ...].
+            // Default: not platform staff. isPlatformAdmin is now resolved
+            // against the PLATFORM organization by user id (not against
+            // whichever org the caller happens to be logging into), so tests
+            // that exercise the admin response override THIS.
+            isPlatformAdmin: jest.fn().mockResolvedValue(false),
+            getPlatformPermissions: jest.fn().mockResolvedValue([]),
             getEffectivePermissions: jest.fn().mockResolvedValue([]),
             resolveMemberId: jest.fn().mockResolvedValue(null),
+            resolvePlatformMemberId: jest.fn().mockResolvedValue(null),
           },
         },
       ],
@@ -380,7 +384,7 @@ describe('AuthService', () => {
       );
 
       // Verify result — register attaches isPlatformAdmin=false for a fresh
-      // user (no admin:* permissions on the just-created membership), plus the
+      // user (not a member of the platform organization), plus the
       // org fields of the personal workspace it just provisioned. Mobile seeds
       // its auth context from this response; without organizationId the
       // purchase screen never configures RevenueCat.
@@ -545,20 +549,17 @@ describe('AuthService', () => {
       const permissions = (await import('../rbac/permissions.service'))
         .PermissionsService.prototype;
       // Re-resolve the PermissionsService instance from the testing module so
-      // we can override getEffectivePermissions for this single test.
+      // we can override the platform-admin answer for this single test.
       const permsInstance = (service as unknown as { permissions: typeof permissions })
-        .permissions as unknown as { getEffectivePermissions: jest.Mock };
-      permsInstance.getEffectivePermissions.mockResolvedValueOnce([
-        'documents:read',
-        'admin:billing',
-      ]);
+        .permissions as unknown as { isPlatformAdmin: jest.Mock };
+      permsInstance.isPlatformAdmin.mockResolvedValueOnce(true);
 
       const result = await service.login(loginDto, deviceFingerprint);
 
       expect(result.user.isPlatformAdmin).toBe(true);
-      expect(permsInstance.getEffectivePermissions).toHaveBeenCalledWith(
-        mockMembership.id,
-      );
+      // Keyed by USER id, not by the membership of the org being logged into:
+      // a personal workspace must not confer platform authority.
+      expect(permsInstance.isPlatformAdmin).toHaveBeenCalledWith(mockUser.id);
     });
 
     // ─── brute-force throttle wiring (LoginThrottleService) ───────────
