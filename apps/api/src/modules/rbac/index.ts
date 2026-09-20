@@ -9,6 +9,7 @@ export { RolesController } from './controllers/roles.controller';
 export { MemberRolesController } from './controllers/member-roles.controller';
 export { RbacAuditController } from './controllers/rbac-audit.controller';
 export { SelfPermissionsController } from './controllers/self-permissions.controller';
+export { PlatformStaffController } from './controllers/platform-staff.controller';
 
 // DTOs
 export {

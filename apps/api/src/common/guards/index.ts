@@ -4,6 +4,7 @@ export { JwtAuthGuard } from './jwt-auth.guard';
 export { MfaGuard } from './mfa.guard';
 export { OptionalJwtAuthGuard } from './optional-jwt-auth.guard';
 export { PermissionsGuard } from './permissions.guard';
+export { PlatformPermissionsGuard } from './platform-permissions.guard';
 export { RolesGuard } from './roles.guard';
 export { TenantGuard } from './tenant.guard';
 export { SubscriptionGuard } from './subscription.guard';

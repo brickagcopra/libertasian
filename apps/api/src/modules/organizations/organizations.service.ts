@@ -10,6 +10,7 @@ import * as crypto from 'crypto';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { PermissionsService } from '../rbac/permissions.service';
 import { CreateOrganizationDto, UpdateOrganizationDto, InviteMemberDto } from './dto';
 
 @Injectable()
@@ -19,6 +20,7 @@ export class OrganizationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
+    private readonly permissions: PermissionsService,
   ) {}
 
   // ---- Organization CRUD ----
@@ -95,7 +97,7 @@ export class OrganizationsService {
   }
 
   async update(id: string, dto: UpdateOrganizationDto, actorUserId: string) {
-    await this.assertRole(id, actorUserId, ['owner', 'admin']);
+    await this.assertRole(id, actorUserId, ['owner', 'admin'], 'organizations:update');
 
     return this.prisma.organization.update({
       where: { id },
@@ -149,7 +151,7 @@ export class OrganizationsService {
     inviterUserId: string,
   ) {
     // Only owner/admin can invite
-    await this.assertRole(organizationId, inviterUserId, ['owner', 'admin']);
+    await this.assertRole(organizationId, inviterUserId, ['owner', 'admin'], 'members:invite');
 
     // Check seat limits
     await this.checkSeatLimit(organizationId);
@@ -266,7 +268,7 @@ export class OrganizationsService {
     newRole: string,
     actorUserId: string,
   ) {
-    await this.assertRole(organizationId, actorUserId, ['owner', 'admin']);
+    await this.assertRole(organizationId, actorUserId, ['owner', 'admin'], 'members:update-role');
 
     // Prevent changing owner role (must use transfer ownership flow)
     if (newRole === 'owner') {
@@ -311,7 +313,12 @@ export class OrganizationsService {
     });
 
     // RBAC dual-write: replace system role in new RBAC system
-    await this.dualWriteReplaceMemberRole(membership.id, newRole, actorUserId);
+    await this.dualWriteReplaceMemberRole(
+      membership.id,
+      newRole,
+      actorUserId,
+      membership.role,
+    );
 
     return updated;
   }
@@ -321,7 +328,7 @@ export class OrganizationsService {
     targetUserId: string,
     actorUserId: string,
   ) {
-    await this.assertRole(organizationId, actorUserId, ['owner', 'admin']);
+    await this.assertRole(organizationId, actorUserId, ['owner', 'admin'], 'members:remove');
 
     const membership = await this.prisma.organizationMember.findUnique({
       where: {
@@ -519,7 +526,7 @@ export class OrganizationsService {
   }
 
   async listPendingInvites(organizationId: string, actorUserId: string) {
-    await this.assertRole(organizationId, actorUserId, ['owner', 'admin']);
+    await this.assertRole(organizationId, actorUserId, ['owner', 'admin'], 'members:read');
 
     return this.prisma.pendingInvite.findMany({
       where: { organizationId, acceptedAt: null },
@@ -570,13 +577,31 @@ export class OrganizationsService {
   // ---- Authorization Helpers ----
 
   /**
-   * Assert that the actor has one of the required roles in the organization.
-   * Throws ForbiddenException if not.
+   * Assert the actor may perform an org-management operation.
+   *
+   * Passes on EITHER the RBAC permission (authoritative) or the legacy
+   * `organization_members.role` column. The legacy arm is a transitional
+   * fallback, not a second source of truth:
+   *
+   *  - The permission arm is what makes this work at all for members whose
+   *    roles were granted through the RBAC APIs. Those write `member_roles`
+   *    and never touch the legacy column, so a role granted in the admin
+   *    panel could not satisfy a column check — the same defect that made the
+   *    digest Assign button unfixable.
+   *  - The legacy arm cannot be dropped yet. Signup historically created
+   *    `organization_members` with NO `member_roles` row, so a large share of
+   *    existing owners resolve to ZERO permissions. Removing the column check
+   *    would lock them out of their own organizations. Both signup paths now
+   *    write the missing row, so the population stops growing; clearing the
+   *    backlog is a separate, deliberate migration.
+   *
+   * @param permissionCode RBAC code that authorizes this operation.
    */
   async assertRole(
     organizationId: string,
     userId: string,
     requiredRoles: string[],
+    permissionCode?: string,
   ): Promise<void> {
     const membership = await this.prisma.organizationMember.findUnique({
       where: {
@@ -589,6 +614,14 @@ export class OrganizationsService {
 
     if (!membership || membership.status !== 'active') {
       throw new ForbiddenException('Not a member of this organization');
+    }
+
+    if (permissionCode) {
+      const held = await this.permissions.hasPermission(
+        membership.id,
+        permissionCode,
+      );
+      if (held) return;
     }
 
     if (!requiredRoles.includes(membership.role)) {
@@ -664,13 +697,16 @@ export class OrganizationsService {
   }
 
   /**
-   * Replace a member's system MemberRole when the legacy role changes.
-   * Removes all system MemberRoles and assigns the new one.
+   * Keep the RBAC grant in step when the legacy role column changes.
+   *
+   * Replaces the system role matching `previousLegacyRole` with the one
+   * matching `newLegacyRole`, and leaves every other grant alone.
    */
   private async dualWriteReplaceMemberRole(
     memberId: string,
     newLegacyRole: string,
     assignedByUserId: string,
+    previousLegacyRole?: string,
   ): Promise<void> {
     try {
       const newRoleDef = await this.prisma.roleDefinition.findFirst({
@@ -683,27 +719,42 @@ export class OrganizationsService {
         return;
       }
 
-      // Remove all existing system role assignments for this member
-      const systemRoleIds = await this.prisma.roleDefinition.findMany({
-        where: { isSystem: true, organizationId: null },
-        select: { id: true },
-      });
-      const systemIds = systemRoleIds.map((r) => r.id);
+      // Remove ONLY the system role that mirrors the member's PREVIOUS legacy
+      // value. This used to delete every system role the member held, which
+      // meant a PATCH of the legacy column silently revoked explicit platform
+      // grants — including the `admin` grant that makes someone a superadmin.
+      // A legacy-column edit must not be able to strip a deliberate RBAC
+      // grant it never knew about.
+      if (previousLegacyRole && previousLegacyRole !== newLegacyRole) {
+        const oldRoleDef = await this.prisma.roleDefinition.findFirst({
+          where: { slug: previousLegacyRole, isSystem: true, organizationId: null },
+          select: { id: true },
+        });
+        if (oldRoleDef) {
+          await this.prisma.memberRole.deleteMany({
+            where: {
+              organizationMemberId: memberId,
+              roleDefinitionId: oldRoleDef.id,
+            },
+          });
+        }
+      }
 
-      await this.prisma.memberRole.deleteMany({
+      // Assign the new system role. Upsert, not create: the member may already
+      // hold it from an explicit grant, and a duplicate would throw.
+      await this.prisma.memberRole.upsert({
         where: {
-          organizationMemberId: memberId,
-          roleDefinitionId: { in: systemIds },
+          organizationMemberId_roleDefinitionId: {
+            organizationMemberId: memberId,
+            roleDefinitionId: newRoleDef.id,
+          },
         },
-      });
-
-      // Assign the new system role
-      await this.prisma.memberRole.create({
-        data: {
+        create: {
           organizationMemberId: memberId,
           roleDefinitionId: newRoleDef.id,
           assignedByUserId,
         },
+        update: {},
       });
     } catch (err) {
       this.logger.error(

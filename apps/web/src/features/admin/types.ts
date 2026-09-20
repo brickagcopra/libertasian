@@ -541,6 +541,25 @@ export interface ReviewQueueStats {
   }>;
 }
 
+/**
+ * A person who may be assigned digests, from GET /admin/digests/reviewers.
+ *
+ * NOT the same list as ReviewQueueStats.perReviewer, which answers "who has
+ * review history" — it includes staff whose grant has since been revoked and
+ * omits newly-granted reviewers with nothing assigned yet. This list is
+ * resolved from the `digests:review` permission on the platform org, the same
+ * resolution the assignment endpoint validates against, so everyone here is
+ * assignable and nobody assignable is missing.
+ */
+export interface AssignableReviewer {
+  /** users.id — what digests.assigned_reviewer_user_id stores. */
+  userId: string;
+  fullName: string | null;
+  email: string;
+  assigned: number;
+  reviewed: number;
+}
+
 export interface BatchReviewResult {
   processed: number;
   digestIds: string[];

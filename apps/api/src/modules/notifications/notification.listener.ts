@@ -10,6 +10,7 @@ import {
   type TaskCommentAddedEvent,
   type MatterCommentAddedEvent,
   type DigestReadyEvent,
+  type DigestsAssignedEvent,
   type ShareCreatedEvent,
   type SubscriptionNotificationEvent,
 } from './notification.events';
@@ -41,6 +42,48 @@ export class NotificationListener {
       });
     } catch (error) {
       this.logger.error('Failed to create task_assigned notification', error);
+    }
+  }
+
+  /**
+   * A reviewer was assigned one or more digests.
+   *
+   * ONE notification per assignment, however many digests it covered —
+   * a 200-digest batch assign must not put 200 rows in someone's bell.
+   *
+   * Swallows its own errors: the caller emits this after the assignment has
+   * already been written, and a notification failure must never surface as a
+   * failed assignment.
+   */
+  @OnEvent(NOTIFICATION_EVENTS.DIGESTS_ASSIGNED)
+  async handleDigestsAssigned(event: DigestsAssignedEvent) {
+    // Assigning work to yourself needs no announcement.
+    if (event.assignedToUserId === event.assignedByUserId) return;
+    if (event.digestIds.length === 0) return;
+
+    const count = event.digestIds.length;
+    const firstId = event.digestIds[0];
+
+    try {
+      await this.notificationCenterService.createNotification({
+        userId: event.assignedToUserId,
+        organizationId: event.organizationId,
+        type: 'digests_assigned',
+        title:
+          count === 1
+            ? `${event.assignedByName} assigned you a digest to review`
+            : `${event.assignedByName} assigned you ${count} digests to review`,
+        body:
+          count === 1
+            ? (event.sampleTitle ?? 'Open the review queue to start.')
+            : `Including "${event.sampleTitle ?? 'untitled'}". Open the review queue to start.`,
+        entityType: 'digest',
+        // A batch has no single subject; deep-link to the one digest only when
+        // there IS one, so the link never lands somewhere arbitrary.
+        entityId: count === 1 && firstId ? firstId : 'review-queue',
+      });
+    } catch (error) {
+      this.logger.error('Failed to create digests_assigned notification', error);
     }
   }
 

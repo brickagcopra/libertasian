@@ -36,10 +36,20 @@ describe('admin nav permissions', () => {
     expect(canAccessAdminArea([])).toBe(false);
   });
 
-  it('shows nothing to a personal-workspace owner, whatever tenant rights they hold', () => {
-    // The caller's tenant permissions are never passed here; this asserts the
-    // shape of the contract — only platform codes reach this function.
-    expect(canAccessAdminArea(['members:read', 'roles:create'])).toBe(false);
+  it('only ever receives PLATFORM codes, so a workspace owner gets nothing', () => {
+    // The contract that keeps this safe lives at the call site: the sidebar
+    // and the /admin guard both pass `me.platformPermissions`, which is empty
+    // for anyone who is not platform staff, whatever they hold on their own
+    // workspace. Some codes here (members:read) are held by both populations,
+    // and that is exactly why the SET matters rather than the code.
+    expect(canAccessAdminArea([])).toBe(false);
+    expect(canAccessAdminArea(undefined)).toBe(false);
+  });
+
+  it('opens Staff & Roles for a platform members:read holder', () => {
+    // Read-only roster access for someone who can see staff but not grant.
+    const hrefs = visibleAdminNavItems(['members:read']).map((i) => i.href);
+    expect(hrefs).toEqual(['/admin/staff']);
   });
 
   it('admits a reviewer via digests:review, with NO admin:* code', () => {

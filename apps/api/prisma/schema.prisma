@@ -312,6 +312,13 @@ model OrganizationMember {
   id             String   @id @default(uuid()) @db.Uuid
   organizationId String   @map("organization_id") @db.Uuid
   userId         String   @map("user_id") @db.Uuid
+  /// DEPRECATED — RBAC (`member_roles` -> `role_definitions`) is authoritative.
+  /// Do not read this column in an authorization decision. The RBAC role APIs
+  /// never write it, so a role granted in the admin panel leaves it stale, and
+  /// checking it made panel-granted roles unable to satisfy the check at all.
+  /// It survives only as a fallback in OrganizationsService.assertRole, for
+  /// members created before signup wrote a `member_roles` row; every write
+  /// path now dual-writes both. Removing it is a separate migration.
   role           String   @default("member") @db.VarChar(20)
   status         String   @default("active") @db.VarChar(20)
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz

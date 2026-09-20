@@ -2,18 +2,34 @@
 
 import { useState, useCallback } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Check, X, RotateCcw, ArrowUpDown, UserPlus } from 'lucide-react';
+import {
+  ArrowLeft,
+  ArrowUpDown,
+  Check,
+  ExternalLink,
+  RotateCcw,
+  UserPlus,
+  X,
+} from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 
 import {
+  useAdminDigest,
   useEnhancedReviewQueue,
   useReviewQueueStats,
+  useReviewers,
   useSubmitReview,
   useBatchApprove,
   useBatchReject,
   useBatchAssign,
 } from '@/features/admin/hooks/use-admin';
-import type { ReviewQueueItem, ReviewQueueStats } from '@/features/admin/types';
+import type {
+  AssignableReviewer,
+  ReviewQueueItem,
+  ReviewQueueStats,
+} from '@/features/admin/types';
+import { DigestContentPanel } from '@/features/digests/components/digest-content-panel';
+import { useAuthStore } from '@/stores/auth-store';
 import {
   Dialog,
   DialogContent,
@@ -51,8 +67,17 @@ export default function ReviewQueuePage() {
   const [batchNotesOpen, setBatchNotesOpen] = useState<'approve' | 'reject' | null>(null);
   const [batchNotes, setBatchNotes] = useState('');
   const [batchAssignOpen, setBatchAssignOpen] = useState(false);
+  const [assignError, setAssignError] = useState<string | null>(null);
+  const [lastAssigned, setLastAssigned] = useState<number | null>(null);
 
   const { data: stats, isLoading: statsLoading } = useReviewQueueStats();
+  // Who may be assigned, resolved from the `digests:review` permission on the
+  // platform org — the SAME resolution the assign endpoint validates against.
+  // The dialog used to be fed from stats.perReviewer ("who has history"), so
+  // it offered people whose grant had been revoked (the assign then 400'd) and
+  // hid newly-granted reviewers with nothing assigned yet.
+  const { data: reviewers } = useReviewers();
+  const currentUserId = useAuthStore((state) => state.user?.id);
   const { data, isLoading, error } = useEnhancedReviewQueue({
     reviewStatus: statusFilter || undefined,
     sourceOrigin: originFilter || undefined,
@@ -112,12 +137,23 @@ export default function ReviewQueuePage() {
 
   const handleBatchAssign = async (reviewerUserId: string) => {
     if (selected.size === 0) return;
+    setAssignError(null);
     try {
-      await batchAssign.mutateAsync({ digestIds: Array.from(selected), reviewerUserId });
+      const result = await batchAssign.mutateAsync({
+        digestIds: Array.from(selected),
+        reviewerUserId,
+      });
+      setLastAssigned(result.processed);
       setSelected(new Set());
       setBatchAssignOpen(false);
-    } catch {
-      // Error handled by mutation state
+    } catch (err) {
+      // This used to be swallowed entirely, and the success banner covered
+      // only approve/reject — so a failed assign looked exactly like nothing
+      // happening. Show what the server said and keep the dialog open so the
+      // selection survives and another reviewer can be tried.
+      setAssignError(
+        err instanceof Error ? err.message : 'Assignment failed. Please try again.',
+      );
     }
   };
 
@@ -193,11 +229,16 @@ export default function ReviewQueuePage() {
           <SelectContent>
             <SelectItem value="__all__">All Assignees</SelectItem>
             <SelectItem value="unassigned">Unassigned</SelectItem>
-            {stats?.perReviewer.map((r) => (
-              <SelectItem key={r.reviewerUserId} value={r.reviewerUserId}>
-                {r.reviewerName ?? r.reviewerUserId.slice(0, 8)}
-              </SelectItem>
-            ))}
+            {currentUserId && (
+              <SelectItem value={currentUserId}>Assigned to me</SelectItem>
+            )}
+            {(reviewers ?? [])
+              .filter((r) => r.userId !== currentUserId)
+              .map((r) => (
+                <SelectItem key={r.userId} value={r.userId}>
+                  {reviewerLabel(r)}
+                </SelectItem>
+              ))}
           </SelectContent>
         </Select>
       </div>
@@ -280,7 +321,10 @@ export default function ReviewQueuePage() {
           <Button
             size="sm"
             variant="outline"
-            onClick={() => setBatchAssignOpen(true)}
+            onClick={() => {
+              setAssignError(null);
+              setBatchAssignOpen(true);
+            }}
             disabled={batchAssign.isPending}
             className="h-7 px-2 text-xs"
           >
@@ -339,39 +383,70 @@ export default function ReviewQueuePage() {
       </Dialog>
 
       {/* Batch Assign Dialog */}
-      <Dialog open={batchAssignOpen} onOpenChange={setBatchAssignOpen}>
+      <Dialog
+        open={batchAssignOpen}
+        onOpenChange={(open) => {
+          setBatchAssignOpen(open);
+          if (!open) setAssignError(null);
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Assign {selected.size} digests to reviewer</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            {stats?.perReviewer && stats.perReviewer.length > 0 ? (
+            {assignError && (
+              <Alert variant="destructive">
+                <AlertDescription>{assignError}</AlertDescription>
+              </Alert>
+            )}
+            {reviewers && reviewers.length > 0 ? (
               <div className="space-y-2">
-                {stats.perReviewer.map((r) => (
+                {reviewers.map((r) => (
                   <Button
-                    key={r.reviewerUserId}
+                    key={r.userId}
                     variant="outline"
                     className="w-full justify-between"
-                    onClick={() => handleBatchAssign(r.reviewerUserId)}
+                    onClick={() => handleBatchAssign(r.userId)}
                     disabled={batchAssign.isPending}
                   >
-                    <span>{r.reviewerName ?? r.reviewerUserId.slice(0, 8)}</span>
-                    <span className="text-xs text-muted-foreground">{r.assigned} assigned</span>
+                    <span>{reviewerLabel(r)}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {r.assigned} assigned
+                    </span>
                   </Button>
                 ))}
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">No reviewers available.</p>
+              <p className="text-sm text-muted-foreground">
+                No one currently holds the <code>digests:review</code> permission on the
+                platform organization. Grant it in Staff Administration.
+              </p>
             )}
           </div>
         </DialogContent>
       </Dialog>
 
-      {(batchApprove.isSuccess || batchReject.isSuccess) && (
+      {/* Assign is included here; it used to be the one batch action with no
+          feedback at all, success or failure. */}
+      {(batchApprove.isSuccess || batchReject.isSuccess || lastAssigned !== null) && (
         <Alert>
           <AlertDescription className="text-green-700">
-            Batch operation complete: {batchApprove.data?.processed ?? batchReject.data?.processed ?? 0} digests processed.
+            Batch operation complete:{' '}
+            {batchApprove.data?.processed ??
+              batchReject.data?.processed ??
+              lastAssigned ??
+              0}{' '}
+            digests processed.
           </AlertDescription>
+        </Alert>
+      )}
+
+      {/* A failure that happened after the dialog was dismissed still has to
+          be visible. */}
+      {assignError && !batchAssignOpen && (
+        <Alert variant="destructive">
+          <AlertDescription>{assignError}</AlertDescription>
         </Alert>
       )}
 
@@ -427,6 +502,15 @@ export default function ReviewQueuePage() {
   );
 }
 
+/**
+ * A reviewer's display name. Falls back to email, then to a truncated id —
+ * never to a bare id, which tells an operator nothing about who they are
+ * about to hand work to.
+ */
+function reviewerLabel(reviewer: AssignableReviewer): string {
+  return reviewer.fullName ?? reviewer.email ?? reviewer.userId.slice(0, 8);
+}
+
 // ---- Stats Cards ----
 
 function ReviewStatsCards({ stats }: { stats: ReviewQueueStats }) {
@@ -456,6 +540,8 @@ function ReviewStatsCards({ stats }: { stats: ReviewQueueStats }) {
         ))}
       </div>
 
+      {/* Workload is history, so perReviewer is the right source HERE — it is
+          the assign picker that must not be driven from it. */}
       {stats.perReviewer.length > 0 && (
         <div>
           <h3 className="mb-2 text-xs font-semibold text-muted-foreground">Reviewer Workload</h3>
@@ -559,12 +645,23 @@ function EnhancedDigestCard({
             className="mt-1"
           />
           <div className="flex-1">
-            <button
-              onClick={() => setExpanded(!expanded)}
-              className="text-left text-sm font-medium hover:underline"
-            >
-              {item.title}
-            </button>
+            <div className="flex items-start justify-between gap-2">
+              <button
+                onClick={() => setExpanded(!expanded)}
+                className="text-left text-sm font-medium hover:underline"
+              >
+                {item.title}
+              </button>
+              {/* The full-page view renders the same DigestContentPanel and the
+                  same review form, and survives a reload — worth a link of its
+                  own rather than only an inline expand. */}
+              <Button variant="ghost" size="sm" asChild className="h-7 shrink-0 px-2 text-xs">
+                <Link href={`/admin/digests/${item.id}`}>
+                  View
+                  <ExternalLink className="ml-1 h-3 w-3" />
+                </Link>
+              </Button>
+            </div>
             <div className="mt-1 flex flex-wrap gap-2">
               <Badge variant="secondary">{item.digestType}</Badge>
               <Badge variant="secondary">{item.sourceOrigin.replace(/_/g, ' ')}</Badge>
@@ -613,6 +710,12 @@ function EnhancedDigestCard({
                 </CardContent>
               </Card>
             )}
+
+            {/* Lazy — mounted only once this row is expanded, so the list
+                payload stays metadata-only. Putting content_json on 20 rows
+                per page would be a payload regression, and a reviewer scoring
+                truthfulness needs to READ the digest, not guess from a title. */}
+            <ExpandedDigestContent digestId={item.id} />
 
             <div>
               <Label htmlFor={`notes-${item.id}`} className="text-xs">
@@ -679,6 +782,53 @@ function EnhancedDigestCard({
             </div>
           </div>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * The digest itself, fetched on expand.
+ *
+ * `useAdminDigest` is `enabled: !!id`, so this component only exists — and
+ * therefore only fetches — while the row is open. React Query caches per
+ * digest id, so collapsing and re-expanding is free.
+ */
+function ExpandedDigestContent({ digestId }: { digestId: string }) {
+  const { data: digest, isLoading, error } = useAdminDigest(digestId);
+
+  if (isLoading) {
+    return (
+      <Card className="bg-muted">
+        <CardContent className="p-3">
+          <p className="text-xs text-muted-foreground">Loading digest content...</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (error || !digest) {
+    return (
+      <Alert variant="destructive">
+        <AlertDescription className="text-xs">
+          {error instanceof Error ? error.message : 'Could not load this digest.'}{' '}
+          <Link href={`/admin/digests/${digestId}`} className="underline">
+            Open the full view
+          </Link>
+          .
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  return (
+    <Card>
+      <CardContent className="p-3">
+        <DigestContentPanel
+          digest={digest}
+          citedAuthoritiesJson={digest.citedAuthoritiesJson}
+          showHeader={false}
+        />
       </CardContent>
     </Card>
   );

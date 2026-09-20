@@ -5,7 +5,12 @@ import { ForbiddenException, NotFoundException, ConflictException } from '@nestj
 import { OrganizationsService } from './organizations.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { PermissionsService } from '../rbac/permissions.service';
 import { CreateOrganizationDto, UpdateOrganizationDto, InviteMemberDto } from './dto';
+
+const mockPermissionsService = {
+  hasPermission: jest.fn().mockResolvedValue(false),
+};
 
 describe('OrganizationsService', () => {
   let service: OrganizationsService;
@@ -60,6 +65,13 @@ describe('OrganizationsService', () => {
         {
           provide: NotificationsService,
           useValue: mockNotificationsService,
+        },
+        {
+          // assertRole now passes on EITHER the RBAC permission or the legacy
+          // role column. Default: no RBAC grant, so these tests keep
+          // exercising the legacy arm they were written for.
+          provide: PermissionsService,
+          useValue: mockPermissionsService,
         },
       ],
     }).compile();

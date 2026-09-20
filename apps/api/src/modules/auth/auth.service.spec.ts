@@ -60,6 +60,12 @@ type MockPrismaService = {
     create: jest.Mock;
     findFirst: jest.Mock;
   };
+  roleDefinition: {
+    findFirst: jest.Mock;
+  };
+  memberRole: {
+    upsert: jest.Mock;
+  };
   subscription: {
     create: jest.Mock;
   };
@@ -169,6 +175,12 @@ describe('AuthService', () => {
               create: jest.fn(),
               findFirst: jest.fn(),
             },
+            // Signup now links the new membership to the system role so a
+            // self-registered user resolves real permissions instead of none.
+            roleDefinition: {
+              findFirst: jest.fn().mockResolvedValue({ id: 'rd-owner-sys' }),
+            },
+            memberRole: { upsert: jest.fn().mockResolvedValue({}) },
             subscription: {
               create: jest.fn(),
             },
@@ -394,6 +406,99 @@ describe('AuthService', () => {
         organizationRole: 'owner',
         isPlatformAdmin: false,
       });
+    });
+
+    it('links the new membership to the system role in RBAC', async () => {
+      // Signup used to write organization_members and NOTHING else, so a
+      // self-registered user resolved to ZERO effective permissions: every
+      // PermissionsGuard check against their own workspace failed, and org
+      // management worked only because assertRole fell back to the legacy
+      // `role` column. 43 of 55 active owners were in that state on prod.
+      usersService.findByEmail.mockResolvedValue(null);
+      usersService.create.mockResolvedValue(
+        mockUser as unknown as ReturnType<UsersService['create']>,
+      );
+      prismaService.organization.create.mockResolvedValue(
+        mockOrganization as unknown as ReturnType<typeof prismaService.organization.create>,
+      );
+      prismaService.organizationMember.create.mockResolvedValue(
+        mockMembership as unknown as ReturnType<typeof prismaService.organizationMember.create>,
+      );
+      prismaService.subscription.create.mockResolvedValue(
+        {} as unknown as ReturnType<typeof prismaService.subscription.create>,
+      );
+      prismaService.user.update.mockResolvedValue(
+        mockUser as unknown as ReturnType<typeof prismaService.user.update>,
+      );
+
+      await service.register(registerDto);
+
+      expect(prismaService.roleDefinition.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { slug: 'owner', isSystem: true, organizationId: null },
+        }),
+      );
+      expect(prismaService.memberRole.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({
+            organizationMemberId: mockMembership.id,
+            roleDefinitionId: 'rd-owner-sys',
+          }),
+        }),
+      );
+    });
+
+    it('does not fail registration when the RBAC link cannot be written', async () => {
+      // Best-effort: the worst case is the state signup produced for years.
+      // Failing a registration over it would be a strictly worse outcome.
+      usersService.findByEmail.mockResolvedValue(null);
+      usersService.create.mockResolvedValue(
+        mockUser as unknown as ReturnType<UsersService['create']>,
+      );
+      prismaService.organization.create.mockResolvedValue(
+        mockOrganization as unknown as ReturnType<typeof prismaService.organization.create>,
+      );
+      prismaService.organizationMember.create.mockResolvedValue(
+        mockMembership as unknown as ReturnType<typeof prismaService.organizationMember.create>,
+      );
+      prismaService.subscription.create.mockResolvedValue(
+        {} as unknown as ReturnType<typeof prismaService.subscription.create>,
+      );
+      prismaService.user.update.mockResolvedValue(
+        mockUser as unknown as ReturnType<typeof prismaService.user.update>,
+      );
+      prismaService.memberRole.upsert.mockRejectedValue(new Error('db blip'));
+
+      await expect(service.register(registerDto)).resolves.toBeDefined();
+    });
+
+    it('grants the TENANT owner role only — no platform capability', async () => {
+      // The system owner role holds no admin:* code and, since
+      // 20260920120000_platform_rbac_authority, no digests:review either. P5:
+      // a new account gets zero platform capability.
+      usersService.findByEmail.mockResolvedValue(null);
+      usersService.create.mockResolvedValue(
+        mockUser as unknown as ReturnType<UsersService['create']>,
+      );
+      prismaService.organization.create.mockResolvedValue(
+        mockOrganization as unknown as ReturnType<typeof prismaService.organization.create>,
+      );
+      prismaService.organizationMember.create.mockResolvedValue(
+        mockMembership as unknown as ReturnType<typeof prismaService.organizationMember.create>,
+      );
+      prismaService.subscription.create.mockResolvedValue(
+        {} as unknown as ReturnType<typeof prismaService.subscription.create>,
+      );
+      prismaService.user.update.mockResolvedValue(
+        mockUser as unknown as ReturnType<typeof prismaService.user.update>,
+      );
+
+      const result = await service.register(registerDto);
+
+      expect(result.user.isPlatformAdmin).toBe(false);
+      const linkedSlug =
+        prismaService.roleDefinition.findFirst.mock.calls[0]?.[0]?.where?.slug;
+      expect(linkedSlug).toBe('owner');
     });
   });
 

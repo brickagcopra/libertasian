@@ -22,6 +22,7 @@ import type {
   DuplicateStats,
   DetectionResult,
   ReviewQueueItem,
+  AssignableReviewer,
   ReviewQueueStats,
   BatchReviewResult,
   DoctrineListItem,
@@ -566,6 +567,28 @@ export function useReviewQueueStats() {
       );
       return res.data;
     },
+  });
+}
+
+/**
+ * The people who may be assigned digests, with their current workload.
+ *
+ * The assign dialog and the assignee filter consume THIS, not
+ * useReviewQueueStats().perReviewer. perReviewer answers "who has review
+ * history", so the dialog used to offer people whose grant had been revoked —
+ * the assignment then failed with a 400 — while hiding newly-granted
+ * reviewers who had nothing assigned yet.
+ */
+export function useReviewers() {
+  return useQuery({
+    queryKey: ['admin', 'digest-reviewers'],
+    queryFn: async () => {
+      const res = await apiClient.get<{ success: boolean; data: AssignableReviewer[] }>(
+        '/admin/digests/reviewers',
+      );
+      return res.data;
+    },
+    staleTime: 5 * 60 * 1000,
   });
 }
 
