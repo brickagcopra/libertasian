@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api-client';
 import { useAuthStore } from '@/stores/auth-store';
 import type {
+  MyPermissions,
   PermissionDef,
   RoleDefinitionDto,
   RoleHierarchyNode,
@@ -180,34 +181,57 @@ export function useMemberEffectivePermissions(memberId: string) {
 // ---------------------------------------------------------------------------
 
 /**
- * Fetches effective permissions for the currently logged-in user's membership.
- * The API resolves memberId from the JWT + org context.
- * We call the members list with a search for the current user, then fetch their permissions.
- * Alternatively, we cache this in the auth flow. For now we use a dedicated approach.
+ * The caller's own effective access, in ONE request.
+ *
+ * This used to be a two-hop lookup: GET /rbac/members (gated on
+ * `members:read`) to find the caller's own member id, then
+ * GET /rbac/members/:id/permissions. Roles that legitimately hold no
+ * `members:read` — reviewer, editor — got 403 on the first hop, fell through
+ * to `[]`, and PermissionGate then denied them every surface in the product,
+ * including the review queue they exist to work.
+ *
+ * GET /rbac/me/permissions needs no permission at all (the Kubernetes
+ * SelfSubjectRulesReview pattern): asking what you can do must never require
+ * permission to ask.
  */
-export function useCurrentUserPermissions() {
+export function useMyPermissions() {
   const user = useAuthStore((s) => s.user);
   return useQuery({
     queryKey: rbacKeys.myPermissions(),
     queryFn: async () => {
-      // First get the current user's member entry
-      const membersRes = await apiClient.get<{
-        success: boolean;
-        data: MemberWithRoles[];
-        meta: { hasNext: boolean; nextCursor?: string; limit: number };
-      }>('/rbac/members', { params: { search: user?.email ?? '', limit: '1' } });
-
-      const member = membersRes.data.find((m) => m.userId === user?.id);
-      if (!member) return [] as string[];
-
-      const permsRes = await apiClient.get<{ success: boolean; data: string[] }>(
-        `/rbac/members/${member.id}/permissions`,
+      const res = await apiClient.get<{ success: boolean; data: MyPermissions }>(
+        '/rbac/me/permissions',
       );
-      return permsRes.data;
+      return res.data;
     },
     enabled: !!user?.id,
-    staleTime: 5 * 60 * 1000, // 5 minutes — matches Redis RBAC cache TTL
+    staleTime: 5 * 60 * 1000, // 5 minutes — matches the Redis RBAC cache TTL
   });
+}
+
+/**
+ * Back-compat alias. Returns the flat code list the old hook returned, so
+ * callers that only want "can I do X" keep working unchanged.
+ *
+ * @deprecated Prefer useMyPermissions() when you need the tenant/platform
+ * split or the platformMember flag.
+ */
+export function useCurrentUserPermissions() {
+  const query = useMyPermissions();
+  return { ...query, data: query.data ? flattenPermissions(query.data) : undefined };
+}
+
+/**
+ * Tenant and platform codes in one list, for RENDERING decisions only.
+ *
+ * The server keeps them apart because they answer different questions, and no
+ * server-side gate is ever satisfied from this union — every surface it
+ * reveals still has its own guard, and that guard is the real control (P3).
+ * Merging here only means the UI stops hiding a button from someone who holds
+ * the permission on the org that actually matters for it.
+ */
+function flattenPermissions(me: MyPermissions): string[] {
+  return [...new Set([...me.permissions, ...me.platformPermissions])];
 }
 
 /**
@@ -219,17 +243,43 @@ export function useHasPermission(
   permissions: string | string[],
   mode: 'all' | 'any' = 'all',
 ): { hasPermission: boolean; isLoading: boolean } {
-  const { data: userPermissions, isLoading } = useCurrentUserPermissions();
+  const { data: me, isLoading } = useMyPermissions();
 
-  if (isLoading || !userPermissions) {
+  if (isLoading || !me) {
+    return { hasPermission: false, isLoading };
+  }
+
+  const held = flattenPermissions(me);
+  const codes = Array.isArray(permissions) ? permissions : [permissions];
+  const hasPermission =
+    mode === 'all'
+      ? codes.every((code) => held.includes(code))
+      : codes.some((code) => held.includes(code));
+
+  return { hasPermission, isLoading: false };
+}
+
+/**
+ * Platform-staff codes only — what the admin surfaces gate on.
+ *
+ * Deliberately NOT the union: an admin entry must never be unlocked by a
+ * permission the caller holds on their own personal workspace (P2).
+ */
+export function useHasPlatformPermission(
+  permissions: string | string[],
+  mode: 'all' | 'any' = 'any',
+): { hasPermission: boolean; isLoading: boolean } {
+  const { data: me, isLoading } = useMyPermissions();
+
+  if (isLoading || !me) {
     return { hasPermission: false, isLoading };
   }
 
   const codes = Array.isArray(permissions) ? permissions : [permissions];
   const hasPermission =
     mode === 'all'
-      ? codes.every((code) => userPermissions.includes(code))
-      : codes.some((code) => userPermissions.includes(code));
+      ? codes.every((code) => me.platformPermissions.includes(code))
+      : codes.some((code) => me.platformPermissions.includes(code));
 
   return { hasPermission, isLoading: false };
 }
