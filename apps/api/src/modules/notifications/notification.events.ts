@@ -4,6 +4,7 @@ export const NOTIFICATION_EVENTS = {
   TASK_COMMENT_ADDED: 'notification.task_comment_added',
   MATTER_COMMENT_ADDED: 'notification.matter_comment_added',
   DIGEST_READY: 'notification.digest_ready',
+  DIGESTS_ASSIGNED: 'notification.digests_assigned',
   SHARE_CREATED: 'notification.share_created',
   COMMUNITY_RATING_RECEIVED: 'notification.community_rating_received',
   EXPERT_VERIFICATION_RESOLVED: 'notification.expert_verification_resolved',
@@ -50,6 +51,25 @@ export interface DigestReadyEvent {
   digestId: string;
   digestTitle: string;
   userId: string;
+  organizationId: string;
+}
+
+/**
+ * One or more digests assigned to a reviewer.
+ *
+ * Deliberately batch-shaped rather than reusing TaskAssignedEvent: a batch of
+ * N digests to one person must produce ONE notification, not N, and the task
+ * payload carries entityType 'task', which would point the notification's deep
+ * link at a task id that does not exist.
+ */
+export interface DigestsAssignedEvent {
+  /** Every digest in this assignment. A single assign sends exactly one id. */
+  digestIds: string[];
+  /** Title of the first digest — the body when only one was assigned. */
+  sampleTitle: string | null;
+  assignedToUserId: string;
+  assignedByUserId: string;
+  assignedByName: string;
   organizationId: string;
 }
 

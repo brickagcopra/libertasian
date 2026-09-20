@@ -432,6 +432,61 @@ describe('RBAC Enforcement (E2E)', () => {
     });
   });
 
+  // ─── Platform staff administration ───────────────────────────────────────
+
+  describe('Platform staff endpoints — /api/v1/rbac/platform/*', () => {
+    const endpoints: Array<{ method: string; path: string; body?: unknown }> = [
+      { method: 'get', path: '/api/v1/rbac/platform/members' },
+      { method: 'get', path: '/api/v1/rbac/platform/roles' },
+      { method: 'get', path: '/api/v1/rbac/platform/permissions' },
+      { method: 'get', path: '/api/v1/rbac/platform/audit-logs' },
+      {
+        method: 'post',
+        path: '/api/v1/rbac/platform/members/invite',
+        body: { email: 'someone@example.com', role: 'reviewer' },
+      },
+      {
+        method: 'post',
+        path: '/api/v1/rbac/platform/roles',
+        body: { name: 'X', slug: 'x', permissionIds: [] },
+      },
+    ];
+
+    endpoints.forEach(({ method, path, body }) => {
+      it(`denies ${method.toUpperCase()} ${path} without a token`, async () => {
+        const req = (request(app.getHttpServer()) as Record<string, Function>)[
+          method
+        ](path);
+        await (body ? req.send(body) : req).expect(401);
+      });
+    });
+
+    /**
+     * The property that makes these endpoints safe: authorization resolves
+     * against the PLATFORM organization, not the caller's current org.
+     *
+     * A tenant-scoped check would be meaningless here — every self-registered
+     * user holds `owner` on their personal workspace, and `owner` carries
+     * `members:read`, `members:invite`, `roles:create`... so a fresh signup
+     * would satisfy every one of these.
+     */
+    endpoints.forEach(({ method, path, body }) => {
+      it(`denies ${method.toUpperCase()} ${path} to a personal-workspace owner`, async () => {
+        const owner = await createAuthenticatedUser(app, {
+          email: `platform-staff-outsider-${Date.now()}-${Math.random()
+            .toString(36)
+            .slice(2, 8)}@test.com`,
+        });
+
+        const req = (request(app.getHttpServer()) as Record<string, Function>)[
+          method
+        ](path).set('Authorization', `Bearer ${owner.accessToken}`);
+
+        await (body ? req.send(body) : req).expect(403);
+      });
+    });
+  });
+
   // ─── Internal API guard ──────────────────────────────────────────────────
 
   describe('Internal API endpoints — X-Internal-Api-Key enforcement', () => {

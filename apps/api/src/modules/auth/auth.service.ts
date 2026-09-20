@@ -41,6 +41,14 @@ export type AuthUser = ReturnType<UsersService['sanitize']> & {
 
 const BCRYPT_COST = 12;
 
+/**
+ * Slug of the system role a self-registered user receives on the personal
+ * workspace created for them. Tenant-scoped only: it carries no `admin:*`
+ * code and no `digests:review`, so owning a workspace confers no platform or
+ * editorial capability.
+ */
+const DEFAULT_WORKSPACE_ROLE = 'owner';
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -149,14 +157,21 @@ export class AuthService {
     });
 
     // Add user as owner of personal org
-    await this.prisma.organizationMember.create({
+    const ownerMember = await this.prisma.organizationMember.create({
       data: {
         organizationId: org.id,
         userId: user.id,
-        role: 'owner',
+        role: DEFAULT_WORKSPACE_ROLE,
         status: 'active',
       },
     });
+
+    // RBAC: link the membership to the matching system role. Signup used to
+    // write organization_members and NOTHING else, so a self-registered user
+    // resolved to ZERO effective permissions — every PermissionsGuard check
+    // against their own workspace failed, and org management only worked
+    // because assertRole fell back to the legacy `role` column.
+    await this.linkDefaultWorkspaceRole(ownerMember.id, user.id);
 
     // Create free subscription
     await this.prisma.subscription.create({
@@ -204,8 +219,12 @@ export class AuthService {
     const isPlatformAdmin = await this.computeIsPlatformAdmin(user.id);
 
     return {
-      // role is the literal used in the organizationMember.create above.
-      user: this.buildAuthUser(user, { organizationId: org.id, role: 'owner' }, isPlatformAdmin),
+      // Same value written to organization_members above.
+      user: this.buildAuthUser(
+        user,
+        { organizationId: org.id, role: DEFAULT_WORKSPACE_ROLE },
+        isPlatformAdmin,
+      ),
     };
   }
 
@@ -494,14 +513,18 @@ export class AuthService {
       },
     });
 
-    await this.prisma.organizationMember.create({
+    const ownerMember = await this.prisma.organizationMember.create({
       data: {
         organizationId: org.id,
         userId,
-        role: 'owner',
+        role: DEFAULT_WORKSPACE_ROLE,
         status: 'active',
       },
     });
+
+    // Same RBAC link as register() — social signups must not resolve to an
+    // empty permission set either.
+    await this.linkDefaultWorkspaceRole(ownerMember.id, userId);
 
     await this.prisma.subscription.create({
       data: {
@@ -1151,6 +1174,62 @@ export class AuthService {
    */
   private async computeIsPlatformAdmin(userId: string): Promise<boolean> {
     return this.permissions.isPlatformAdmin(userId);
+  }
+
+  /**
+   * Link a freshly-created personal-workspace membership to the matching
+   * SYSTEM role definition, so the member resolves real permissions.
+   *
+   * Best-effort: a failure here must never fail a registration. The user
+   * would land in the state signup produced for years — a membership with no
+   * RBAC grant — which the legacy-column fallback in
+   * OrganizationsService.assertRole still covers.
+   *
+   * Note this grants the TENANT owner role on the user's own workspace. It
+   * confers no platform capability: the system owner role holds no `admin:*`
+   * code and, since 20260920120000_platform_rbac_authority, no
+   * `digests:review` either.
+   */
+  private async linkDefaultWorkspaceRole(
+    memberId: string,
+    userId: string,
+  ): Promise<void> {
+    try {
+      const roleDef = await this.prisma.roleDefinition.findFirst({
+        where: {
+          slug: DEFAULT_WORKSPACE_ROLE,
+          isSystem: true,
+          organizationId: null,
+        },
+        select: { id: true },
+      });
+
+      if (!roleDef) {
+        this.logger.warn(
+          `No system role definition for "${DEFAULT_WORKSPACE_ROLE}" — new member ${memberId} has no RBAC grant`,
+        );
+        return;
+      }
+
+      await this.prisma.memberRole.upsert({
+        where: {
+          organizationMemberId_roleDefinitionId: {
+            organizationMemberId: memberId,
+            roleDefinitionId: roleDef.id,
+          },
+        },
+        create: {
+          organizationMemberId: memberId,
+          roleDefinitionId: roleDef.id,
+          assignedByUserId: userId,
+        },
+        update: {},
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Failed to link default RBAC role for member ${memberId}: ${(err as Error).message}`,
+      );
+    }
   }
 
   private generateSlug(name: string): string {

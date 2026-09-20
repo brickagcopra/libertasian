@@ -5,6 +5,7 @@ import { Test, type TestingModule } from '@nestjs/testing';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { PermissionsService } from '../rbac/permissions.service';
+import { NOTIFICATION_EVENTS } from '../notifications/notification.events';
 import { DigestsService, REVIEWER_PERMISSION } from './digests.service';
 
 /**
@@ -51,9 +52,11 @@ describe('DigestsService — reviewer authority', () => {
 
   let service: DigestsService;
   let prisma: {
-    digest: { groupBy: jest.Mock; updateMany: jest.Mock };
+    digest: { groupBy: jest.Mock; updateMany: jest.Mock; findFirst: jest.Mock };
     digestReview: { groupBy: jest.Mock };
+    user: { findUnique: jest.Mock };
   };
+  let events: { emit: jest.Mock };
   let permissions: {
     hasPlatformPermission: jest.Mock;
     listPlatformMembersWithPermission: jest.Mock;
@@ -64,9 +67,14 @@ describe('DigestsService — reviewer authority', () => {
       digest: {
         groupBy: jest.fn().mockResolvedValue([]),
         updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        findFirst: jest
+          .fn()
+          .mockResolvedValue({ title: 'People v. Cruz', organizationId: 'org-1' }),
       },
       digestReview: { groupBy: jest.fn().mockResolvedValue([]) },
+      user: { findUnique: jest.fn().mockResolvedValue({ fullName: 'Ada Admin' }) },
     };
+    events = { emit: jest.fn() };
 
     // One backing roster, two views of it — exactly as the real service
     // resolves both through getEffectivePermissions.
@@ -85,7 +93,7 @@ describe('DigestsService — reviewer authority', () => {
         DigestsService,
         { provide: PrismaService, useValue: prisma },
         { provide: getQueueToken('digests'), useValue: { add: jest.fn() } },
-        { provide: EventEmitter2, useValue: { emit: jest.fn() } },
+        { provide: EventEmitter2, useValue: events },
         { provide: PermissionsService, useValue: permissions },
       ],
     }).compile();
@@ -207,6 +215,105 @@ describe('DigestsService — reviewer authority', () => {
         'u-editor',
         REVIEWER_PERMISSION,
       );
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Assignment notifications
+  // -----------------------------------------------------------------------
+
+  describe('assignment notifications', () => {
+    function assignedEvents() {
+      return events.emit.mock.calls.filter(
+        ([name]) => name === NOTIFICATION_EVENTS.DIGESTS_ASSIGNED,
+      );
+    }
+
+    it('emits ONE notification for a batch of N digests, not N', async () => {
+      // A 200-digest batch assign must not put 200 rows in someone's bell.
+      const digestIds = Array.from({ length: 200 }, (_, i) => `d-${i}`);
+      prisma.digest.updateMany.mockResolvedValue({ count: digestIds.length });
+
+      await service.batchAssign(
+        { digestIds, reviewerUserId: 'u-reviewer' },
+        'u-admin',
+      );
+
+      const emitted = assignedEvents();
+      expect(emitted).toHaveLength(1);
+      expect(emitted[0]?.[1]).toMatchObject({
+        assignedToUserId: 'u-reviewer',
+        assignedByUserId: 'u-admin',
+      });
+      expect((emitted[0]?.[1] as { digestIds: string[] }).digestIds).toHaveLength(
+        200,
+      );
+    });
+
+    it('carries the actor name and a sample title', async () => {
+      prisma.digest.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.batchAssign(
+        { digestIds: ['d-1'], reviewerUserId: 'u-reviewer' },
+        'u-admin',
+      );
+
+      expect(assignedEvents()[0]?.[1]).toMatchObject({
+        assignedByName: 'Ada Admin',
+        sampleTitle: 'People v. Cruz',
+      });
+    });
+
+    it('emits nothing when the batch matched no rows', async () => {
+      prisma.digest.updateMany.mockResolvedValue({ count: 0 });
+
+      await service.batchAssign(
+        { digestIds: ['gone-1', 'gone-2'], reviewerUserId: 'u-reviewer' },
+        'u-admin',
+      );
+
+      expect(assignedEvents()).toHaveLength(0);
+    });
+
+    it('emits nothing when there is no actor (service-level callers, jobs)', async () => {
+      prisma.digest.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.batchAssign({
+        digestIds: ['d-1'],
+        reviewerUserId: 'u-reviewer',
+      });
+
+      expect(assignedEvents()).toHaveLength(0);
+    });
+
+    it('still completes the assignment when notification lookup throws', async () => {
+      // Non-blocking is the contract: a notification failure must never fail
+      // or roll back the assignment.
+      prisma.digest.updateMany.mockResolvedValue({ count: 1 });
+      prisma.user.findUnique.mockRejectedValue(new Error('db blip'));
+
+      await expect(
+        service.batchAssign(
+          { digestIds: ['d-1'], reviewerUserId: 'u-reviewer' },
+          'u-admin',
+        ),
+      ).resolves.toMatchObject({ processed: 1 });
+
+      expect(assignedEvents()).toHaveLength(0);
+    });
+
+    it('still completes the assignment when the emit itself throws', async () => {
+      prisma.digest.updateMany.mockResolvedValue({ count: 1 });
+      events.emit.mockImplementation(() => {
+        throw new Error('listener exploded');
+      });
+
+      await expect(
+        service.batchAssign(
+          { digestIds: ['d-1'], reviewerUserId: 'u-reviewer' },
+          'u-admin',
+        ),
+      ).resolves.toMatchObject({ processed: 1 });
     });
   });
 

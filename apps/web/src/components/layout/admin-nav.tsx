@@ -23,6 +23,7 @@ import {
   PlayCircleIcon,
   ScanLineIcon,
   ScrollTextIcon,
+  ShieldCheckIcon,
   SparklesIcon,
   TagsIcon,
   TicketIcon,
@@ -108,6 +109,11 @@ export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
   { href: '/admin/plans', label: 'Plans', icon: CreditCardIcon, permissions: ['admin:plans'] },
   { href: '/admin/subscriptions', label: 'Subscriptions', icon: CreditCardIcon, permissions: ['admin:billing'] },
   { href: '/admin/users', label: 'Users', icon: UsersIcon, permissions: ['admin:users'] },
+  // Staff administration: granting platform capability. Gated on
+  // members:update-role — the permission its actions actually require — not on
+  // an admin:* code, so the entry appears for exactly the people who can use
+  // it. `members:read` alone gets the read-only roster via the same page.
+  { href: '/admin/staff', label: 'Staff & Roles', icon: ShieldCheckIcon, permissions: ['members:update-role', 'members:read'] },
   { href: '/admin/coupons', label: 'Coupons', icon: TicketIcon, permissions: ['admin:billing'] },
   { href: '/admin/promotions', label: 'Promotions', icon: MegaphoneIcon, permissions: ['admin:billing'] },
   { href: '/admin/homepage', label: 'Homepage', icon: HomeIcon, permissions: ['admin:settings'] },

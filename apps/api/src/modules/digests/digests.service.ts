@@ -22,6 +22,10 @@ import {
   type ContentPublishedEvent,
 } from '../audio/audio.events';
 import {
+  NOTIFICATION_EVENTS,
+  type DigestsAssignedEvent,
+} from '../notifications/notification.events';
+import {
   AssignReviewerDto,
   BatchApproveDto,
   BatchAssignDto,
@@ -963,7 +967,11 @@ export class DigestsService {
   /**
    * Assign a reviewer to a digest. Validates the reviewer has an appropriate role.
    */
-  async assignReviewer(digestId: string, dto: AssignReviewerDto) {
+  async assignReviewer(
+    digestId: string,
+    dto: AssignReviewerDto,
+    assignedByUserId?: string,
+  ) {
     // CARVE-OUT: admin operation — cross-tenant by design
     const digest = await this.prisma.digest.findUnique({
       where: { id: digestId },
@@ -975,7 +983,7 @@ export class DigestsService {
     await this.validateReviewerRole(dto.reviewerUserId);
 
     // CARVE-OUT: admin operation — cross-tenant by design
-    return this.prisma.digest.update({
+    const updated = await this.prisma.digest.update({
       where: { id: digestId },
       data: { assignedReviewerUserId: dto.reviewerUserId },
       include: {
@@ -984,6 +992,16 @@ export class DigestsService {
         },
       },
     });
+
+    await this.notifyAssignee({
+      digestIds: [digestId],
+      sampleTitle: digest.title ?? null,
+      assignedToUserId: dto.reviewerUserId,
+      assignedByUserId,
+      organizationId: digest.organizationId,
+    });
+
+    return updated;
   }
 
   /**
@@ -1194,7 +1212,7 @@ export class DigestsService {
   /**
    * Batch assign a reviewer to multiple digests.
    */
-  async batchAssign(dto: BatchAssignDto) {
+  async batchAssign(dto: BatchAssignDto, assignedByUserId?: string) {
     await this.validateReviewerRole(dto.reviewerUserId);
 
     // CARVE-OUT: admin batch — cross-tenant by design
@@ -1202,6 +1220,25 @@ export class DigestsService {
       where: { id: { in: dto.digestIds } },
       data: { assignedReviewerUserId: dto.reviewerUserId },
     });
+
+    if (result.count > 0) {
+      // One notification for the whole batch, not one per digest. Read the
+      // first digest only for its title and org — a batch can span orgs, and
+      // the notification is addressed to a person, not to a tenant.
+      // CARVE-OUT: admin batch — cross-tenant by design
+      const sample = await this.prisma.digest.findFirst({
+        where: { id: { in: dto.digestIds } },
+        select: { title: true, organizationId: true },
+      });
+
+      await this.notifyAssignee({
+        digestIds: dto.digestIds,
+        sampleTitle: sample?.title ?? null,
+        assignedToUserId: dto.reviewerUserId,
+        assignedByUserId,
+        organizationId: sample?.organizationId,
+      });
+    }
 
     return { processed: result.count, digestIds: dto.digestIds };
   }
@@ -1398,6 +1435,53 @@ export class DigestsService {
     if (!allowed) {
       throw new BadRequestException(
         `User is not platform staff with the "${REVIEWER_PERMISSION}" permission`,
+      );
+    }
+  }
+
+  /**
+   * Tell a reviewer they have been assigned work. Exactly one notification per
+   * assignment, however many digests it covered.
+   *
+   * NON-BLOCKING by construction, in three ways:
+   *  - it is called AFTER the assignment is written, so nothing here can roll
+   *    one back;
+   *  - the emit is synchronous but the listener swallows its own errors;
+   *  - this method additionally try/catches, so even a missing listener or a
+   *    malformed payload cannot turn a successful assignment into a failed
+   *    request. A reviewer who is not told is a worse outcome than a failed
+   *    assignment only if the assignment also fails.
+   */
+  private async notifyAssignee(input: {
+    digestIds: string[];
+    sampleTitle: string | null;
+    assignedToUserId: string;
+    assignedByUserId?: string;
+    organizationId?: string | null;
+  }): Promise<void> {
+    // No actor (service-level callers, jobs) means nobody to attribute it to;
+    // no org means no notification scope. Either way: nothing to send.
+    if (!input.assignedByUserId || !input.organizationId) return;
+
+    try {
+      const actor = await this.prisma.user.findUnique({
+        where: { id: input.assignedByUserId },
+        select: { fullName: true },
+      });
+
+      const event: DigestsAssignedEvent = {
+        digestIds: input.digestIds,
+        sampleTitle: input.sampleTitle,
+        assignedToUserId: input.assignedToUserId,
+        assignedByUserId: input.assignedByUserId,
+        assignedByName: actor?.fullName ?? 'A reviewer',
+        organizationId: input.organizationId,
+      };
+
+      this.events.emit(NOTIFICATION_EVENTS.DIGESTS_ASSIGNED, event);
+    } catch (err) {
+      this.logger.warn(
+        `Assignment notification dropped for ${input.digestIds.length} digest(s): ${(err as Error).message}`,
       );
     }
   }

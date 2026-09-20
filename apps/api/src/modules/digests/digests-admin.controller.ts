@@ -86,7 +86,7 @@ export class DigestsAdminController {
     @CurrentUser() user: JwtPayload,
     @Ip() ip: string,
   ) {
-    const digest = await this.digestsService.assignReviewer(id, dto);
+    const digest = await this.digestsService.assignReviewer(id, dto, user.sub);
     await this.auditService.log({
       actorUserId: user.sub,
       actorType: 'admin',
@@ -207,7 +207,7 @@ export class DigestsAdminController {
     @CurrentUser() user: JwtPayload,
     @Ip() ip: string,
   ) {
-    const result = await this.digestsService.batchAssign(dto);
+    const result = await this.digestsService.batchAssign(dto, user.sub);
     await this.auditService.log({
       actorUserId: user.sub,
       actorType: 'admin',
