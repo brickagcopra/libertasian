@@ -47,24 +47,31 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     // (not from a JWT claim) so revoking an `admin:*` role takes effect on
     // the next request rather than requiring token refresh. Hot path is
     // served from the RBAC cache, so cost is one cache lookup per request.
-    let isPlatformAdmin = false;
+    //
+    // Scoped to the PLATFORM organization, not to payload.organizationId.
+    // Every self-registered user owns a personal workspace and holds `owner`
+    // on it, so deriving platform authority from the caller's current org
+    // handed it to every account on the system. PermissionsService.isPlatformAdmin
+    // is the single definition — auth.service calls the same one at token
+    // issuance — and it already fails closed on error.
+    const isPlatformAdmin = await this.permissions.isPlatformAdmin(payload.sub);
+
+    // memberId stays scoped to the caller's CURRENT org: it is what
+    // PermissionsGuard and TenantGuard use for tenant-scoped authorization,
+    // a different question from platform staffing.
     let memberId: string | undefined;
     if (payload.organizationId) {
       try {
-        const resolved = await this.permissions.resolveMemberId(
-          payload.sub,
-          payload.organizationId,
-        );
-        if (resolved) {
-          memberId = resolved;
-          const perms = await this.permissions.getEffectivePermissions(resolved);
-          isPlatformAdmin = perms.some((p) => p.startsWith('admin:'));
-        }
+        memberId =
+          (await this.permissions.resolveMemberId(
+            payload.sub,
+            payload.organizationId,
+          )) ?? undefined;
       } catch (err) {
-        // Never deny the request because RBAC resolution failed; treat as
-        // non-admin and let downstream guards/services handle authz.
+        // Never deny the request because RBAC resolution failed; leave the
+        // member unresolved and let downstream guards handle authz.
         this.logger.warn(
-          `Failed to resolve platform-admin status for user ${payload.sub}: ${(err as Error).message}`,
+          `Failed to resolve member for user ${payload.sub}: ${(err as Error).message}`,
         );
       }
     }

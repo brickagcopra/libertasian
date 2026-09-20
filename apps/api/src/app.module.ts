@@ -102,6 +102,21 @@ import { RequestPlatformMiddleware } from './common/middleware/request-platform.
         JWT_PUBLIC_KEY: Joi.string().optional().allow(''),
         JWT_ACCESS_TTL: Joi.number().default(900),
         JWT_REFRESH_TTL: Joi.number().default(604800),
+        // The organization that carries PLATFORM staff authority. Editorial
+        // capability (review queue, assignment, admin surfaces) is derived from
+        // a role held on THIS org only — never from owning a personal
+        // workspace, which every self-registered user does.
+        //
+        // MUST BE IN THIS SCHEMA, not just read from the environment: a missing
+        // or malformed value must fail startup loudly rather than silently
+        // resolve platform membership against a non-existent org, which would
+        // lock every admin out with nothing in the logs to say why.
+        // No `version` constraint: the seeded id below is a nil-prefixed
+        // sentinel, not a v4 UUID, so `guid({ version: 'uuidv4' })` would
+        // reject the default and refuse to boot.
+        PLATFORM_ORGANIZATION_ID: Joi.string()
+          .guid()
+          .default('00000000-0000-0000-0000-000000000001'),
         // Two-layer brute-force protection (LoginThrottleService) — failures-only,
         // per-account + per-IP velocity. All optional with NAT-safe defaults.
         AUTH_LOCK_ACCOUNT_THRESHOLD: Joi.number().default(10),

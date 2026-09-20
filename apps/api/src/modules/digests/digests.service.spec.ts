@@ -6,11 +6,22 @@ import type { Queue } from 'bullmq';
 
 import { PaywallException } from '../../common/exceptions/paywall.exception';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PermissionsService } from '../rbac/permissions.service';
 import { DigestsService } from './digests.service';
 import { CreateDigestDto, UpdateDigestDto, ListDigestsQueryDto } from './dto';
 
 const CONFIDENCE_THRESHOLD = 0.7;
 const USER_SCAN_ORIGINS = ['user_scan', 'user_upload', 'camera_capture'];
+
+/**
+ * Platform-scoped reviewer validation (PR: platform RBAC authority) resolves
+ * through PermissionsService, so the service now needs it. Default: nobody is
+ * platform staff — individual tests opt in.
+ */
+const mockPermissionsService = {
+  hasPlatformPermission: jest.fn().mockResolvedValue(false),
+  listPlatformMembersWithPermission: jest.fn().mockResolvedValue([]),
+};
 
 describe('DigestsService', () => {
   let service: DigestsService;
@@ -121,6 +132,10 @@ describe('DigestsService', () => {
         {
           provide: EventEmitter2,
           useValue: { emit: jest.fn() },
+        },
+        {
+          provide: PermissionsService,
+          useValue: mockPermissionsService,
         },
       ],
     }).compile();

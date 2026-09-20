@@ -1,5 +1,7 @@
 import { PermissionsService } from './permissions.service';
 
+const PLATFORM_ORG_ID = '00000000-0000-0000-0000-000000000001';
+
 /**
  * Regression test for migration
  * `20260611120000_backfill_legacy_member_roles`.
@@ -230,7 +232,7 @@ describe('backfill_legacy_member_roles migration', () => {
         setCachedPermissions: jest.fn().mockResolvedValue(undefined),
       };
 
-      const service = new PermissionsService(prisma as never, cache as never);
+      const service = new PermissionsService(prisma as never, cache as never, { get: jest.fn().mockReturnValue(PLATFORM_ORG_ID) } as never);
       const perms = await service.getEffectivePermissions('member-owner');
 
       // 3a. getEffectivePermissions restores the owner's tenant perms (the
@@ -258,7 +260,7 @@ describe('backfill_legacy_member_roles migration', () => {
         setCachedPermissions: jest.fn().mockResolvedValue(undefined),
       };
 
-      const service = new PermissionsService(prisma as never, cache as never);
+      const service = new PermissionsService(prisma as never, cache as never, { get: jest.fn().mockReturnValue(PLATFORM_ORG_ID) } as never);
       const perms = await service.getEffectivePermissions('member-owner');
 
       expect(perms).toEqual([]);

@@ -17,7 +17,21 @@ function buildPayload(overrides: Partial<JwtPayload> = {}): JwtPayload {
   };
 }
 
-describe('JwtStrategy.validate — platform admin resolution', () => {
+/**
+ * Platform-admin resolution no longer lives here. The strategy used to read
+ * the effective permissions of the caller's CURRENT org membership and test
+ * them for any `admin:*` code — which made platform authority a property of
+ * owning a personal workspace, i.e. of every account on the system. The single
+ * definition is now PermissionsService.isPlatformAdmin, scoped to the platform
+ * organization and shared with auth.service's token issuance; the `admin:*`
+ * prefix semantics and fail-closed behaviour are asserted there
+ * (platform-authority.spec.ts).
+ *
+ * What is asserted here is the wiring: the strategy delegates by USER id, and
+ * memberId stays scoped to the caller's current org because that is what
+ * PermissionsGuard and TenantGuard consume.
+ */
+describe('JwtStrategy.validate', () => {
   let config: ConfigService;
   let permissions: jest.Mocked<PermissionsService>;
   let strategy: JwtStrategy;
@@ -31,73 +45,61 @@ describe('JwtStrategy.validate — platform admin resolution', () => {
     } as unknown as ConfigService;
 
     permissions = {
-      resolveMemberId: jest.fn(),
+      resolveMemberId: jest.fn().mockResolvedValue('member-1'),
       getEffectivePermissions: jest.fn(),
+      isPlatformAdmin: jest.fn().mockResolvedValue(false),
     } as unknown as jest.Mocked<PermissionsService>;
 
     strategy = new JwtStrategy(config, permissions);
   });
 
-  it('marks isPlatformAdmin=true when member has any admin:* permission', async () => {
-    permissions.resolveMemberId.mockResolvedValue('member-1');
-    permissions.getEffectivePermissions.mockResolvedValue([
-      'documents:read',
-      'admin:billing',
-    ]);
+  it('delegates isPlatformAdmin to PermissionsService, keyed by USER id', async () => {
+    permissions.isPlatformAdmin.mockResolvedValue(true);
 
     const out = await strategy.validate(buildPayload());
 
     expect(out.isPlatformAdmin).toBe(true);
-    expect(out.memberId).toBe('member-1');
+    expect(permissions.isPlatformAdmin).toHaveBeenCalledWith('user-1');
+  });
+
+  it('marks isPlatformAdmin=false when the user is not platform staff', async () => {
+    permissions.isPlatformAdmin.mockResolvedValue(false);
+
+    const out = await strategy.validate(buildPayload());
+
+    expect(out.isPlatformAdmin).toBe(false);
+  });
+
+  it('does NOT derive platform admin from the caller’s current org', async () => {
+    // The old implementation called getEffectivePermissions(memberId of
+    // payload.organizationId) and prefix-tested the result. A personal
+    // workspace must contribute nothing to this answer.
+    permissions.isPlatformAdmin.mockResolvedValue(false);
+    permissions.getEffectivePermissions.mockResolvedValue(['admin:billing']);
+
+    const out = await strategy.validate(
+      buildPayload({ organizationId: 'personal-workspace' }),
+    );
+
+    expect(out.isPlatformAdmin).toBe(false);
+    expect(permissions.getEffectivePermissions).not.toHaveBeenCalled();
+  });
+
+  it('resolves memberId against the caller’s CURRENT org', async () => {
+    permissions.resolveMemberId.mockResolvedValue('member-9');
+
+    const out = await strategy.validate(buildPayload());
+
+    expect(out.memberId).toBe('member-9');
     expect(permissions.resolveMemberId).toHaveBeenCalledWith('user-1', 'org-1');
-    expect(permissions.getEffectivePermissions).toHaveBeenCalledWith('member-1');
   });
 
-  it('marks isPlatformAdmin=true on admin:users', async () => {
-    permissions.resolveMemberId.mockResolvedValue('member-1');
-    permissions.getEffectivePermissions.mockResolvedValue(['admin:users']);
-
-    const out = await strategy.validate(buildPayload());
-
-    expect(out.isPlatformAdmin).toBe(true);
-  });
-
-  it('marks isPlatformAdmin=false when member only holds non-admin perms', async () => {
-    permissions.resolveMemberId.mockResolvedValue('member-1');
-    permissions.getEffectivePermissions.mockResolvedValue([
-      'documents:read',
-      'digests:read',
-      'workspace:matter:read',
-    ]);
-
-    const out = await strategy.validate(buildPayload());
-
-    expect(out.isPlatformAdmin).toBe(false);
-    expect(out.memberId).toBe('member-1');
-  });
-
-  it('does not match strings that merely contain "admin:" in the middle', async () => {
-    // Defense against any future perm that contains the substring but is not
-    // a real admin:* code (e.g. "workspace:admin:foo"). startsWith() is the
-    // contract.
-    permissions.resolveMemberId.mockResolvedValue('member-1');
-    permissions.getEffectivePermissions.mockResolvedValue([
-      'workspace:admin:notes',
-    ]);
-
-    const out = await strategy.validate(buildPayload());
-
-    expect(out.isPlatformAdmin).toBe(false);
-  });
-
-  it('returns isPlatformAdmin=false when user is not an org member', async () => {
+  it('leaves memberId undefined when the user is not a member of the token org', async () => {
     permissions.resolveMemberId.mockResolvedValue(null);
 
     const out = await strategy.validate(buildPayload());
 
-    expect(out.isPlatformAdmin).toBe(false);
     expect(out.memberId).toBeUndefined();
-    expect(permissions.getEffectivePermissions).not.toHaveBeenCalled();
   });
 
   it('rejects payloads missing sub or email', async () => {
@@ -109,11 +111,12 @@ describe('JwtStrategy.validate — platform admin resolution', () => {
     ).rejects.toThrow();
   });
 
-  it('fails open as non-admin if RBAC lookup throws (must not deny the request)', async () => {
+  it('does not deny the request if member resolution throws', async () => {
     permissions.resolveMemberId.mockRejectedValue(new Error('redis down'));
 
     const out = await strategy.validate(buildPayload());
 
+    expect(out.memberId).toBeUndefined();
     expect(out.isPlatformAdmin).toBe(false);
   });
 });

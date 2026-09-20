@@ -57,6 +57,20 @@ export class DigestsAdminController {
     return { success: true, data: stats };
   }
 
+  /**
+   * Declared BEFORE `@Get(':id')`: Nest matches routes in declaration order,
+   * so below it the literal path would be swallowed by the :id param and
+   * rejected by ParseUUIDPipe as a malformed UUID.
+   */
+  @Get('reviewers')
+  @ApiOperation({
+    summary: 'List platform staff assignable as digest reviewers, with workload',
+  })
+  async listReviewers() {
+    const reviewers = await this.digestsService.listReviewers();
+    return { success: true, data: reviewers };
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get full digest detail (admin view, bypasses visibility checks)' })
   async findById(@Param('id', ParseUUIDPipe) id: string) {

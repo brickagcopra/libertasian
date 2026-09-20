@@ -16,6 +16,7 @@ import { Queue } from 'bullmq';
 import { PaywallException } from '../../common/exceptions/paywall.exception';
 import { RedisService } from '../../common/services/redis.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PermissionsService } from '../rbac/permissions.service';
 import {
   CONTENT_PUBLISHED_EVENT,
   type ContentPublishedEvent,
@@ -36,6 +37,13 @@ import {
 
 /** Confidence threshold: below this → needs_human_review per CLAUDE.md */
 const CONFIDENCE_THRESHOLD = 0.7;
+
+/**
+ * The permission that makes someone assignable as a digest reviewer.
+ * One constant, consumed by both validateReviewerRole and listReviewers, so
+ * the check and the picker can never disagree about who qualifies.
+ */
+export const REVIEWER_PERMISSION = 'digests:review';
 
 /** Source origins that come from user scans — always private visibility */
 export const USER_SCAN_ORIGINS = ['user_scan', 'user_upload', 'camera_capture'];
@@ -63,6 +71,7 @@ export class DigestsService {
     private readonly prisma: PrismaService,
     @InjectQueue('digests') private readonly digestQueue: Queue,
     private readonly events: EventEmitter2,
+    private readonly permissions: PermissionsService,
     @Optional() private readonly redis?: RedisService,
   ) {}
 
@@ -1297,24 +1306,98 @@ export class DigestsService {
     };
   }
 
+  /**
+   * The people who may be assigned digests for review, with their current
+   * workload.
+   *
+   * Source of truth is listPlatformMembersWithPermission(REVIEWER_PERMISSION)
+   * — the same resolution validateReviewerRole performs — so every person this
+   * returns is assignable and no assignable person is missing. The assign
+   * dialog and the assignee filter consume THIS, not getReviewStats.perReviewer.
+   *
+   * perReviewer is deliberately left alone: it answers "who has review
+   * history", which includes staff whose grant has since been revoked and
+   * excludes newly-granted reviewers with nothing assigned yet. Driving a
+   * picker from it is how the two drifted in the first place.
+   */
+  async listReviewers() {
+    const staff = await this.permissions.listPlatformMembersWithPermission(
+      REVIEWER_PERMISSION,
+    );
+    if (staff.length === 0) return [];
+
+    const userIds = staff.map((s) => s.userId);
+
+    // LEFT JOIN equivalent of the assigned/reviewed counts getReviewStats
+    // computes, narrowed to the staff roster. Grouped counts, so reviewers
+    // with no history simply come back as 0 rather than dropping out.
+    // CARVE-OUT: platform metric — counts digests across all orgs by design.
+    const [assigned, reviewed] = await Promise.all([
+      this.prisma.digest.groupBy({
+        by: ['assignedReviewerUserId'],
+        where: { assignedReviewerUserId: { in: userIds } },
+        _count: { _all: true },
+      }),
+      this.prisma.digestReview.groupBy({
+        by: ['reviewerUserId'],
+        where: { reviewerUserId: { in: userIds } },
+        _count: { _all: true },
+      }),
+    ]);
+
+    const assignedBy = new Map(
+      assigned
+        .filter((row) => row.assignedReviewerUserId !== null)
+        .map((row) => [row.assignedReviewerUserId as string, row._count._all]),
+    );
+    const reviewedBy = new Map(
+      reviewed.map((row) => [row.reviewerUserId, row._count._all]),
+    );
+
+    return staff
+      .map((member) => ({
+        userId: member.userId,
+        fullName: member.fullName,
+        email: member.email,
+        assigned: assignedBy.get(member.userId) ?? 0,
+        reviewed: reviewedBy.get(member.userId) ?? 0,
+      }))
+      .sort((a, b) =>
+        (a.fullName ?? a.email).localeCompare(b.fullName ?? b.email),
+      );
+  }
+
   // =====================================================================
   // Private Helpers
   // =====================================================================
 
   /**
-   * Validate that a user has an admin, editor, or reviewer role.
+   * Validate that a user may be assigned digests for review.
+   *
+   * Permissions are the authority, not role names. This used to read the
+   * LEGACY `organization_members.role` string column against a hardcoded
+   * ['admin','editor','reviewer'] list — a column the RBAC role APIs never
+   * write. Granting someone `reviewer` in the admin panel wrote `member_roles`
+   * and left that column untouched, so the assignment still failed with a 400
+   * and the Assign button was unfixable without removing the check.
+   *
+   * It is also scoped to the PLATFORM organization: every self-registered user
+   * owns a personal workspace, so "holds digests:review somewhere" was never
+   * an authorization answer. Editorial capability comes only from a role held
+   * on the platform org.
+   *
+   * Shares its resolution path with listPlatformMembersWithPermission (see
+   * `GET /admin/digests/reviewers`), so the people the UI offers and the
+   * people an assignment accepts are the same set by construction.
    */
   private async validateReviewerRole(userId: string) {
-    const membership = await this.prisma.organizationMember.findFirst({
-      where: {
-        userId,
-        role: { in: ['admin', 'editor', 'reviewer'] },
-        status: 'active',
-      },
-    });
-    if (!membership) {
+    const allowed = await this.permissions.hasPlatformPermission(
+      userId,
+      REVIEWER_PERMISSION,
+    );
+    if (!allowed) {
       throw new BadRequestException(
-        'User does not have a valid reviewer role (admin, editor, or reviewer required)',
+        `User is not platform staff with the "${REVIEWER_PERMISSION}" permission`,
       );
     }
   }
