@@ -27,9 +27,10 @@ export interface RequestContext {
    *
    * Carried ALONGSIDE `platform`, not instead of it. They answer different
    * questions: `platform` is "can this client buy from a store?", `surface` is
-   * "which client is this?". Only `surface` can tell a browser apart from live
-   * App Store build 25, because both send no `x-platform` header and both have
-   * a `null` platform.
+   * "which client is this?". Only `surface` can tell a browser apart from the
+   * legacy header-less install base (App Store build 25 and older, still on
+   * devices that never updated), because both send no `x-platform` header and
+   * both have a `null` platform.
    *
    * OPTIONAL, and absent means `null` = never web-enforced. Callers that
    * construct a context by hand — tests, and anything simulating a request —

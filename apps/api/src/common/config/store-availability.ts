@@ -58,9 +58,16 @@ export const USER_AGENT_HEADER = 'user-agent';
  * "which client is this?", and its whole reason to exist is that
  * `ClientPlatform` cannot distinguish the two headerless callers:
  *
- *   - `legacy_app` — live App Store build 25 and every pre-#439 mobile build.
- *     Cut before `x-platform` existed, has NO purchase surface, told Apple
- *     there is no paid tier. MUST STAY UNGATED FOREVER.
+ *   - `legacy_app` — the LEGACY INSTALL BASE: App Store build 25 and every
+ *     other pre-#439 mobile build, still sitting on devices that never
+ *     updated. Cut before `x-platform` existed, so it carries NO purchase
+ *     surface; its review notes said, at the time it was approved on
+ *     2026-08-28, that there was no paid tier. That is history now — build 32
+ *     superseded it on 2026-09-14 with four approved IAPs, and Apple has
+ *     reviewed and approved a paid tier on iOS. The stale installs still
+ *     cannot buy, so they MUST STAY UNGATED. Measured empty as of 2026-09-20
+ *     (249 of 249 iOS requests over 7 days carry `LIBERTASIAN/32`); this is a
+ *     defensive branch and is kept anyway.
  *   - `web` — a browser. Has no in-app store either, which is why it also
  *     resolves to a `null` platform and today reads the entire paid corpus for
  *     free.
@@ -83,8 +90,8 @@ export type ClientSurface = 'ios' | 'android' | 'legacy_app' | 'web';
  *
  * DELIBERATELY OVER-BROAD IN THE UNGATED DIRECTION. A match means "do not
  * gate", so a false positive (some tool that also uses OkHttp) costs a free
- * read, while a false negative would gate a shipped binary that cannot buy —
- * the build-23 rejection. When in doubt this pattern should match.
+ * read, while a false negative would gate a stale install that has no purchase
+ * surface — the build-23 rejection. When in doubt this pattern should match.
  */
 const NATIVE_APP_USER_AGENT = /LIBERTASIAN\/\d+|CFNetwork|Darwin|okhttp/i;
 
@@ -92,9 +99,9 @@ const NATIVE_APP_USER_AGENT = /LIBERTASIAN\/\d+|CFNetwork|Darwin|okhttp/i;
  * Resolve the surface a request came from, from its headers alone.
  *
  * THE HEADER WINS WHEN IT PARSES. A build new enough to send `x-platform` has
- * told us exactly what it is; its user agent cannot overrule that, or an iOS
- * build 26 that can buy would be demoted to `legacy_app` by its own CFNetwork
- * UA and never gated.
+ * told us exactly what it is; its user agent cannot overrule that, or a current
+ * iOS build that can buy — build 32 and later — would be demoted to
+ * `legacy_app` by its own CFNetwork UA and never gated.
  *
  * THE FALLBACK DEFAULTS TO `'web'`, NOT `'legacy_app'`, and must stay that way.
  * `web` is the only value this function returns that is ever gated (and only

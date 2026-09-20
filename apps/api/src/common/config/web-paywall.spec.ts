@@ -19,9 +19,16 @@ import {
  *
  *   1. With `PAYWALL_ENFORCED_WEB` unset, this change ships INERT. Nothing that
  *      is ungated today becomes gated on deploy.
- *   2. With it on, a browser is gated — and live App Store build 25, which has
- *      the same `null` platform as a browser, still is NOT. Gating build 25 is
- *      the build-23 rejection.
+ *   2. With it on, a browser is gated — and the legacy header-less install
+ *      base (App Store build 25 and older, still on devices that never
+ *      updated), which has the same `null` platform as a browser, still is
+ *      NOT. Gating a stale install with no purchase surface is the build-23
+ *      rejection.
+ *
+ * Neither flag is due to be flipped as of 2026-09-20: web has no payment
+ * gateway (Xendit declined the merchant activation), so gating it would refuse
+ * reads on a surface with no route out. These tests pin the mechanism, not a
+ * plan to use it.
  *
  * `paywall-for-request.spec.ts` covers the first two terms; this file covers
  * the third and the interaction between them.
@@ -109,7 +116,7 @@ describe('the web term of isPaywallEnforcedForRequest', () => {
     'user-agent':
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
   });
-  /** What live App Store build 25 resolves to. */
+  /** What the legacy header-less install base — build 25 and older — resolves to. */
   const LEGACY_APP: ClientSurface = resolveClientSurface({
     'user-agent': 'LIBERTASIAN/25 CFNetwork/3860.700.2 Darwin/25.6.0',
   });
@@ -214,7 +221,7 @@ describe('the web term of isPaywallEnforcedForRequest', () => {
     // THE LOAD-BEARING CASE. Build 25 and a browser have the SAME `null`
     // platform; only the surface tells them apart. If this goes red, gating the
     // web simultaneously starts returning 403 to every installed copy of an
-    // approved binary with no purchase surface — the build-23 rejection.
+    // stale install with no purchase surface — the build-23 rejection.
     expect(isPaywallEnforcedForRequest(config, null, LEGACY_APP)).toBe(false);
   });
 
@@ -222,8 +229,8 @@ describe('the web term of isPaywallEnforcedForRequest', () => {
     const config = await configFor({ PAYWALL_ENFORCED_WEB: 'true' });
 
     // The web flag is per-surface exactly as the store flags are per-platform:
-    // a build 26 that declares `x-platform: ios` stays ungated until its own
-    // store flag flips.
+    // a current build that declares `x-platform: ios` stays ungated until its
+    // own store flag flips.
     expect(isPaywallEnforcedForRequest(config, 'ios', 'ios')).toBe(false);
     expect(isPaywallEnforcedForRequest(config, 'android', 'android')).toBe(
       false,

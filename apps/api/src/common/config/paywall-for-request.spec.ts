@@ -78,7 +78,7 @@ describe('isPaywallEnforcedForRequest', () => {
     // Pins the assumption the tests below rest on. `isStorePurchaseAvailable`
     // uses `=== true`; if the loading path ever stopped coercing, the flag
     // would silently read as OFF in production and no paywall would appear for
-    // the build-26 reviewer.
+    // a reviewer on a current build.
     const config = await configFor({ STORE_PURCHASE_AVAILABLE_IOS: 'true' });
 
     expect(config.get('STORE_PURCHASE_AVAILABLE_IOS')).toBe(true);
@@ -110,14 +110,22 @@ describe('isPaywallEnforcedForRequest', () => {
   it('is NOT enforced for a header-less caller even when iOS purchasing is ON — PROTECTS LIVE BUILD 25', async () => {
     const config = await configFor({ STORE_PURCHASE_AVAILABLE_IOS: 'true' });
 
-    // App Store build 25 is live, has NO purchase surface, and its review notes
-    // tell Apple there is no paid tier. It was cut 2026-08-25; the `x-platform`
-    // header only landed 2026-08-29 (#439). So build 25 sends NO header, and
-    // that ABSENCE is the only thing distinguishing it from build 26.
+    // App Store build 25 is the LEGACY INSTALL BASE — copies on devices that
+    // never updated. It has NO purchase surface, and its review notes said, when
+    // it was approved on 2026-08-28, that there was no paid tier. Neither claim
+    // describes the store any more: build 32 superseded it on 2026-09-14 with
+    // four approved IAPs. It was cut 2026-08-25; the `x-platform` header only
+    // landed 2026-08-29 (#439), so it sends NO header, and that ABSENCE is the
+    // only thing distinguishing a stale install from a current one.
     //
-    // If this test ever goes red, turning on iOS purchasing for build 26 will
-    // simultaneously start returning 402/403 to every build-25 user, who has no
-    // purchase surface to clear it with. That is the build-23 rejection.
+    // If this test ever goes red, iOS purchasing starts returning 402/403 to
+    // every stale-install user, who has no purchase surface to clear it with.
+    // That is the build-23 rejection.
+    //
+    // Defensive as of 2026-09-20: 249 of 249 iOS requests over 7 days of prod
+    // nginx logs carry `LIBERTASIAN/32`, so the header-less population measures
+    // empty. Kept anyway — the branch costs nothing and the failure it prevents
+    // is charging a user with no way to pay.
     expect(isPaywallEnforcedForRequest(config, NO_HEADER)).toBe(false);
   });
 

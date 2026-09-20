@@ -82,7 +82,9 @@ export class SubscriptionGuard implements CanActivate {
     // The platform comes from the request's own `x-platform` header. An absent
     // header resolves to `null` and is never enforced — see
     // `isPaywallEnforcedForRequest` for why that absence is what protects the
-    // live App Store build 25.
+    // legacy header-less install base (build 25 and older) that has no purchase
+    // surface. Defensive as of 2026-09-20: that population measures empty in
+    // prod, and the branch is kept anyway.
     // `headers?.` — Express always populates this, but a guard must not throw
     // a TypeError on a request shape it did not expect. A missing headers bag
     // resolves to `null`, i.e. not enforced, which is the safe direction.
