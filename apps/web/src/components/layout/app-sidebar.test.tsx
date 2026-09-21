@@ -21,6 +21,17 @@ vi.mock('next/link', () => ({
   default: ({ children, ...props }: { children: React.ReactNode; [key: string]: unknown }) => <a {...props}>{children}</a>,
 }));
 
+// The sidebar now asks whether the caller holds digests:review, so a platform
+// reviewer (who holds no admin:* permission, and so is NOT isPlatformAdmin)
+// still gets the one admin entry they can actually use.
+let mockCanReview = false;
+vi.mock('@/features/settings/hooks/use-rbac', () => ({
+  useHasPermission: () => ({
+    hasPermission: mockCanReview,
+    isLoading: false,
+  }),
+}));
+
 vi.mock('@/stores/auth-store', () => ({
   useAuthStore: vi.fn((selector: (s: unknown) => unknown) =>
     selector({ user: mockUser }),
@@ -55,6 +66,7 @@ describe('SidebarContent', () => {
     };
     mockSubscription = { planCode: 'free' };
     mockAccess = { canAccess: false, reason: 'free' };
+    mockCanReview = false;
   });
 
   it('renders the warm-editorial wordmark', () => {
@@ -174,5 +186,82 @@ describe('AppSidebar', () => {
   it('renders aside element', () => {
     render(<AppSidebar />);
     expect(screen.getByText('libertasian')).toBeInTheDocument();
+  });
+});
+
+describe('SidebarContent — platform reviewer', () => {
+  beforeEach(() => {
+    mockSubscription = { planCode: 'free' };
+    mockAccess = { canAccess: false, reason: 'free' };
+    mockCanReview = false;
+  });
+
+  it('shows no admin section to an ordinary member', () => {
+    mockUser = {
+      fullName: 'Juan Cruz',
+      email: 'juan@example.com',
+      role: 'member',
+      isPlatformAdmin: false,
+    };
+
+    render(<SidebarContent />);
+
+    expect(screen.queryByText('Admin')).not.toBeInTheDocument();
+    expect(screen.queryByText('Review Queue')).not.toBeInTheDocument();
+  });
+
+  it('shows ONLY the review queue to a platform reviewer', () => {
+    // They hold digests:review as a platform grant and no admin:* code, so
+    // isPlatformAdmin is false. Before this they were redirected to /search.
+    mockUser = {
+      fullName: 'Rosa Reviewer',
+      email: 'rosa@example.com',
+      role: 'owner', // their own personal workspace — says nothing about this
+      isPlatformAdmin: false,
+    };
+    mockCanReview = true;
+
+    render(<SidebarContent />);
+
+    expect(screen.getByText('Review Queue')).toBeInTheDocument();
+    // Everything else under /admin would 403 at the API, so it is not offered.
+    expect(screen.queryByText('Platform Staff')).not.toBeInTheDocument();
+    expect(screen.queryByText('Plans')).not.toBeInTheDocument();
+    expect(screen.queryByText('Sources')).not.toBeInTheDocument();
+    // Org-settings links stay admin-only too.
+    expect(screen.queryByText('Roles & Permissions')).not.toBeInTheDocument();
+  });
+
+  it('does not badge a reviewer with their personal-workspace legacy role', () => {
+    mockUser = {
+      fullName: 'Rosa Reviewer',
+      email: 'rosa@example.com',
+      role: 'owner',
+      isPlatformAdmin: false,
+    };
+    mockCanReview = true;
+
+    render(<SidebarContent />);
+
+    // "owner" here is the legacy role of their OWN workspace and means nothing
+    // about platform capability — showing it next to "Admin" is a lie.
+    expect(screen.queryByText('owner')).not.toBeInTheDocument();
+  });
+
+  it('still shows a platform admin the whole shell', () => {
+    mockUser = {
+      fullName: 'Ana Admin',
+      email: 'ana@example.com',
+      role: 'admin',
+      isPlatformAdmin: true,
+    };
+    mockCanReview = true;
+
+    render(<SidebarContent />);
+
+    expect(screen.getByText('Review Queue')).toBeInTheDocument();
+    expect(screen.getByText('Platform Staff')).toBeInTheDocument();
+    expect(screen.getByText('Plans')).toBeInTheDocument();
+    expect(screen.getByText('Roles & Permissions')).toBeInTheDocument();
   });
 });

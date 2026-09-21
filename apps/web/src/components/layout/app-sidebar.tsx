@@ -5,6 +5,11 @@ import { usePathname } from 'next/navigation';
 
 import { useAuthStore } from '@/stores/auth-store';
 import { Wordmark } from '@/components/brand/wordmark';
+import { useHasPermission } from '@/features/settings/hooks/use-rbac';
+import {
+  REVIEW_PERMISSION,
+  REVIEWER_NAV_HREFS,
+} from '@/features/admin/review-access';
 import { useSubscription, meetsMinimumTier } from '@/features/billing/hooks/use-subscription';
 import { useCanAccessPaidFeature } from '@/hooks/useCanAccessPaidFeature';
 import { cn } from '@/lib/utils';
@@ -163,7 +168,17 @@ export function SidebarContent() {
   // Admin nav is platform-admin only — same signal as the /admin route guard.
   // NOT the org 'owner' role (every user owns a personal workspace) and NOT
   // documents:read (every owner has it).
-  const showAdmin = user?.isPlatformAdmin === true;
+  const isPlatformAdmin = user?.isPlatformAdmin === true;
+  // A platform `reviewer` holds no admin:* permission, so isPlatformAdmin is
+  // false for them — but they can work the review queue. Show them that one
+  // entry and nothing else: a link a reviewer cannot use is a 403 waiting to
+  // happen. Widening the rest of the shell to per-item permissions is a
+  // separate cleanup.
+  const { hasPermission: canReview } = useHasPermission(REVIEW_PERMISSION);
+  const showAdmin = isPlatformAdmin || canReview;
+  const adminNavItems = isPlatformAdmin
+    ? ADMIN_NAV_ITEMS
+    : ADMIN_NAV_ITEMS.filter((navItem) => REVIEWER_NAV_HREFS.has(navItem.href));
   const pathname = usePathname();
   const { data: subscription } = useSubscription();
   const currentPlan = subscription?.planCode;
@@ -298,10 +313,10 @@ export function SidebarContent() {
         <nav className="space-y-1">
           {renderSettingsLink('/settings', 'Settings', SettingsIcon, true)}
           {renderSettingsLink('/settings/usage', 'Usage & Quotas', BarChart3Icon)}
-          {showAdmin && renderSettingsLink('/settings/members', 'Members & Roles', ShieldCheckIcon)}
-          {showAdmin && renderSettingsLink('/settings/roles', 'Roles & Permissions', LockIcon)}
-          {showAdmin && renderSettingsLink('/settings/audit-logs', 'Audit Logs', ScrollTextIcon)}
-          {showAdmin && renderSettingsLink('/settings/analytics', 'Org Analytics', BarChart3Icon)}
+          {isPlatformAdmin && renderSettingsLink('/settings/members', 'Members & Roles', ShieldCheckIcon)}
+          {isPlatformAdmin && renderSettingsLink('/settings/roles', 'Roles & Permissions', LockIcon)}
+          {isPlatformAdmin && renderSettingsLink('/settings/audit-logs', 'Audit Logs', ScrollTextIcon)}
+          {isPlatformAdmin && renderSettingsLink('/settings/analytics', 'Org Analytics', BarChart3Icon)}
         </nav>
 
         {showAdmin && (
@@ -312,15 +327,21 @@ export function SidebarContent() {
                 <p className="font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-warm-ink-faint">
                   Admin
                 </p>
-                <Badge
-                  variant="secondary"
-                  className="border border-warm-ink/15 bg-warm-cream text-[10px] text-warm-ink-soft"
-                >
-                  {user.role}
-                </Badge>
+                {/* The legacy organization_members.role of the caller's own
+                    workspace. Shown for platform admins as before; omitted for
+                    a reviewer, for whom it would read "owner" and mean
+                    nothing about their platform capability. */}
+                {isPlatformAdmin && user && (
+                  <Badge
+                    variant="secondary"
+                    className="border border-warm-ink/15 bg-warm-cream text-[10px] text-warm-ink-soft"
+                  >
+                    {user.role}
+                  </Badge>
+                )}
               </div>
               <nav className="space-y-1">
-                {ADMIN_NAV_ITEMS.map(renderNavItem)}
+                {adminNavItems.map(renderNavItem)}
               </nav>
             </div>
           </>

@@ -14,11 +14,10 @@ import { Throttle } from '@nestjs/throttler';
 import type { JwtPayload } from '@libertasian/types';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { RequiredPermissions } from '../../common/decorators/permissions.decorator';
+import { RequiredPlatformPermissions } from '../../common/decorators/platform-permissions.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { MfaGuard } from '../../common/guards/mfa.guard';
-import { TenantGuard } from '../../common/guards/tenant.guard';
-import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { PlatformPermissionsGuard } from '../../common/guards/platform-permissions.guard';
 import { TrackEvent } from '../analytics';
 import { AuditService } from '../audit/audit.service';
 import { DigestsService } from './digests.service';
@@ -31,10 +30,36 @@ import {
   SubmitReviewDto,
 } from './dto';
 
+/**
+ * The editorial review queue.
+ *
+ * Guarded by PLATFORM capability, not tenant permissions. Reviewing the shared
+ * corpus belongs to no organization, and a reviewer's JWT organization is
+ * permanently their own personal workspace (login picks the oldest membership;
+ * there is no org-switch endpoint) — so an org-scoped guard could only ever
+ * admit members of the seeded org. Someone granted `reviewer` in Admin → Staff
+ * could be ASSIGNED a digest and then not open the queue to work it.
+ *
+ * TenantGuard is deliberately absent: a platform admin has no org context to
+ * require, and it would 403 them on "No organization context" before the
+ * permission check ran. Nothing downstream needs what it attached — verified:
+ * `request.tenantContext` is written by TenantGuard and read nowhere in src,
+ * and none of this controller's routes or the ten DigestsService methods they
+ * call read `user.memberId` (which JwtStrategy populates on every request
+ * regardless). Every one of those methods already carries a
+ * `// CARVE-OUT: admin operation — cross-tenant by design` comment.
+ *
+ * DEPLOY ORDER MATTERS: today's holders reach this through TENANT roles, not
+ * platform grants. Deploying this before the staff roster is populated takes
+ * the review queue away from everyone. See the PR body.
+ */
 @ApiTags('Admin — Digests')
 @Controller('admin/digests')
-@UseGuards(JwtAuthGuard, MfaGuard, TenantGuard, PermissionsGuard)
-@RequiredPermissions({ permissions: ['digests:review', 'admin:review-queue'], mode: 'any' })
+@UseGuards(JwtAuthGuard, MfaGuard, PlatformPermissionsGuard)
+@RequiredPlatformPermissions({
+  permissions: ['digests:review', 'admin:review-queue'],
+  mode: 'any',
+})
 @Throttle({ default: { ttl: 60000, limit: 100 } })
 @ApiBearerAuth()
 export class DigestsAdminController {
