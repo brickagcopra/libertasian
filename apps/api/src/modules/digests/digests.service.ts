@@ -16,6 +16,7 @@ import { Queue } from 'bullmq';
 import { PaywallException } from '../../common/exceptions/paywall.exception';
 import { RedisService } from '../../common/services/redis.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PlatformGrantsService } from '../rbac/platform-grants.service';
 import {
   CONTENT_PUBLISHED_EVENT,
   type ContentPublishedEvent,
@@ -33,6 +34,13 @@ import {
   SubmitReviewDto,
   UpdateDigestDto,
 } from './dto';
+
+/**
+ * The platform permission that makes someone assignable as a digest reviewer.
+ * One constant, read by both the reviewer list and the assignment validator,
+ * so the dropdown and the validator cannot disagree.
+ */
+const REVIEWER_PERMISSION = 'digests:review';
 
 /** Confidence threshold: below this → needs_human_review per CLAUDE.md */
 const CONFIDENCE_THRESHOLD = 0.7;
@@ -63,6 +71,7 @@ export class DigestsService {
     private readonly prisma: PrismaService,
     @InjectQueue('digests') private readonly digestQueue: Queue,
     private readonly events: EventEmitter2,
+    private readonly platformGrants: PlatformGrantsService,
     @Optional() private readonly redis?: RedisService,
   ) {}
 
@@ -1245,21 +1254,10 @@ export class DigestsService {
         _avg: { confidenceScore: true },
       }),
 
-      // Per-reviewer stats: assigned + reviewed
-      this.prisma.$queryRaw<
-        { reviewer_user_id: string; reviewer_name: string | null; assigned: bigint; reviewed: bigint }[]
-      >`
-        SELECT
-          u.id AS reviewer_user_id,
-          u.full_name AS reviewer_name,
-          COUNT(DISTINCT d.id) AS assigned,
-          COUNT(DISTINCT dr.id) AS reviewed
-        FROM users u
-        LEFT JOIN digests d ON d.assigned_reviewer_user_id = u.id
-        LEFT JOIN digest_reviews dr ON dr.reviewer_user_id = u.id
-        WHERE d.id IS NOT NULL OR dr.id IS NOT NULL
-        GROUP BY u.id, u.full_name
-      `,
+      // Per-reviewer stats: assigned + reviewed. Answers "who has HISTORY",
+      // which is a different question from "who MAY review" — see
+      // listReviewers(). Both are useful; neither substitutes for the other.
+      this.getReviewerWorkloadCounts(),
     ]);
 
     // Compute average time-to-review using raw SQL
@@ -1297,24 +1295,105 @@ export class DigestsService {
     };
   }
 
+  /**
+   * Everyone who MAY review a digest, with their current workload.
+   *
+   * Source of truth is `listUsersWithPlatformPermission(REVIEWER_PERMISSION)`
+   * — the same resolution validateReviewerRole goes through — so the assign
+   * dropdown can never offer a person the assignment validator will reject.
+   * getReviewStats().perReviewer is deliberately NOT reused here: it answers
+   * "who has review history", so it both omits a newly-granted reviewer and
+   * includes people who have since lost the permission.
+   *
+   * Workload counts are LEFT JOINed on: a reviewer with no history appears
+   * with zeros rather than disappearing.
+   */
+  async listReviewers(): Promise<
+    Array<{
+      userId: string;
+      fullName: string;
+      email: string;
+      assigned: number;
+      reviewed: number;
+    }>
+  > {
+    const [reviewers, counts] = await Promise.all([
+      this.platformGrants.listUsersWithPlatformPermission(REVIEWER_PERMISSION),
+      this.getReviewerWorkloadCounts(),
+    ]);
+
+    const byUserId = new Map(counts.map((c) => [c.reviewer_user_id, c]));
+
+    return reviewers.map((r) => {
+      const row = byUserId.get(r.userId);
+      return {
+        userId: r.userId,
+        fullName: r.fullName,
+        email: r.email,
+        assigned: row ? Number(row.assigned) : 0,
+        reviewed: row ? Number(row.reviewed) : 0,
+      };
+    });
+  }
+
+  /**
+   * Assigned + reviewed counts per user who has any review history.
+   * Shared by getReviewStats().perReviewer and listReviewers().
+   */
+  private async getReviewerWorkloadCounts(): Promise<
+    Array<{
+      reviewer_user_id: string;
+      reviewer_name: string | null;
+      assigned: bigint;
+      reviewed: bigint;
+    }>
+  > {
+    // CARVE-OUT: global metric — counts all orgs by design
+    return this.prisma.$queryRaw<
+      { reviewer_user_id: string; reviewer_name: string | null; assigned: bigint; reviewed: bigint }[]
+    >`
+      SELECT
+        u.id AS reviewer_user_id,
+        u.full_name AS reviewer_name,
+        COUNT(DISTINCT d.id) AS assigned,
+        COUNT(DISTINCT dr.id) AS reviewed
+      FROM users u
+      LEFT JOIN digests d ON d.assigned_reviewer_user_id = u.id
+      LEFT JOIN digest_reviews dr ON dr.reviewer_user_id = u.id
+      WHERE d.id IS NOT NULL OR dr.id IS NOT NULL
+      GROUP BY u.id, u.full_name
+    `;
+  }
+
   // =====================================================================
   // Private Helpers
   // =====================================================================
 
   /**
-   * Validate that a user has an admin, editor, or reviewer role.
+   * Validate that a user may review digests.
+   *
+   * Was: a lookup on the LEGACY `organization_members.role` string column
+   * against a hardcoded ['admin','editor','reviewer']. The RBAC APIs write
+   * `member_roles` only and never touch that column, so granting someone the
+   * reviewer role in a panel could never satisfy this — which is why
+   * POST /admin/digests/batch-assign returned 400 for every reviewer.
+   *
+   * Now: the platform capability `digests:review`, resolved from
+   * platform_role_grants. Same query the reviewer dropdown is built from
+   * (GET /admin/digests/reviewers), so the list can never offer someone the
+   * validator will then reject.
+   *
+   * Still a 400 — the request names a user who cannot hold the assignment —
+   * but the message names the permission rather than a list of role names.
    */
   private async validateReviewerRole(userId: string) {
-    const membership = await this.prisma.organizationMember.findFirst({
-      where: {
-        userId,
-        role: { in: ['admin', 'editor', 'reviewer'] },
-        status: 'active',
-      },
-    });
-    if (!membership) {
+    const permitted = await this.platformGrants.hasPlatformPermission(
+      userId,
+      REVIEWER_PERMISSION,
+    );
+    if (!permitted) {
       throw new BadRequestException(
-        'User does not have a valid reviewer role (admin, editor, or reviewer required)',
+        `User does not hold the "${REVIEWER_PERMISSION}" platform permission. Grant them a platform role that confers it in Admin → Staff.`,
       );
     }
   }

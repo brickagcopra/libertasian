@@ -5,9 +5,13 @@ import { PermissionsController } from './controllers/permissions.controller';
 import { RolesController } from './controllers/roles.controller';
 import { MemberRolesController } from './controllers/member-roles.controller';
 import { RbacAuditController } from './controllers/rbac-audit.controller';
+import { PlatformStaffController } from './controllers/platform-staff.controller';
+import { PlatformRolesController } from './controllers/platform-roles.controller';
+import { SelfPermissionsController } from './controllers/self-permissions.controller';
 import { PermissionsService } from './permissions.service';
 import { RbacCacheService } from './rbac-cache.service';
 import { RolesService } from './roles.service';
+import { PlatformGrantsService } from './platform-grants.service';
 
 /**
  * Global RBAC module — provides permission resolution, role management,
@@ -24,8 +28,21 @@ import { RolesService } from './roles.service';
     RolesController,
     MemberRolesController,
     RbacAuditController,
+    SelfPermissionsController,
+    PlatformStaffController,
+    PlatformRolesController,
   ],
-  providers: [RbacCacheService, PermissionsService, RolesService],
-  exports: [RbacCacheService, PermissionsService, RolesService],
+  providers: [
+    RbacCacheService,
+    PermissionsService,
+    RolesService,
+    PlatformGrantsService,
+  ],
+  exports: [
+    RbacCacheService,
+    PermissionsService,
+    RolesService,
+    PlatformGrantsService,
+  ],
 })
 export class RbacModule {}

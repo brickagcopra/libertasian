@@ -183,3 +183,101 @@ export interface PermissionGroup {
   category: PermissionCategory;
   permissions: PermissionDef[];
 }
+
+// ==========================================================================
+// Platform capability (no organization)
+// ==========================================================================
+
+/**
+ * Effective permissions for the current user, from GET /rbac/me/permissions.
+ *
+ * Two independent sets, deliberately not merged: `tenantPermissions` come
+ * from the caller's membership in their JWT organization (their personal
+ * workspace, in practice — login picks the oldest membership and there is no
+ * org-switch endpoint), while `platformPermissions` come from
+ * `platform_role_grants`, which have no organization at all.
+ */
+export interface MyPermissions {
+  tenantPermissions: string[];
+  platformPermissions: string[];
+  isPlatformStaff: boolean;
+}
+
+/** A user who holds at least one platform grant. */
+export interface PlatformStaffUser {
+  userId: string;
+  fullName: string;
+  email: string;
+}
+
+/** One platform staff grant, as the staff panel lists it. */
+export interface PlatformGrant {
+  id: string;
+  userId: string;
+  fullName: string;
+  email: string;
+  roleDefinitionId: string;
+  roleName: string;
+  roleSlug: string;
+  isSystemRole: boolean;
+  grantedByUserId: string | null;
+  grantedByName: string | null;
+  expiresAt: string | null;
+  createdAt: string;
+  /** Effective permission codes this one role confers (hierarchy expanded). */
+  permissions: string[];
+}
+
+/** A candidate for a grant: an EXISTING account found by search. */
+export interface PlatformStaffCandidate extends PlatformStaffUser {
+  status: string;
+}
+
+/** A role that can be granted as platform capability (organization_id IS NULL). */
+export interface PlatformRoleSummary {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  isSystem: boolean;
+  requiresMfa: boolean;
+  /** Maximum simultaneous PLATFORM holders (stored in role_definitions.max_per_org). */
+  maxPerOrg: number | null;
+  holderCount: number;
+  permissions: string[];
+}
+
+/** Full detail for one platform role, including its own permission rows. */
+export interface PlatformRoleDetail {
+  id: string;
+  organizationId: string | null;
+  name: string;
+  slug: string;
+  description: string | null;
+  isSystem: boolean;
+  requiresMfa: boolean;
+  maxPerOrg: number | null;
+  permissions: PermissionDef[];
+  effectivePermissions: string[];
+  holderCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** The permission catalogue, grouped for the picker. */
+export interface PermissionCatalogue {
+  permissions: PermissionDef[];
+  groups: Array<{
+    category: string;
+    resources: Array<{ resource: string; permissions: PermissionDef[] }>;
+  }>;
+}
+
+/** A user who may be assigned a digest to review, with their workload. */
+export interface DigestReviewer {
+  userId: string;
+  fullName: string;
+  email: string;
+  assigned: number;
+  reviewed: number;
+}

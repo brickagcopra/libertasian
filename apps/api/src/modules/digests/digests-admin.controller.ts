@@ -57,6 +57,18 @@ export class DigestsAdminController {
     return { success: true, data: stats };
   }
 
+  // Static route MUST precede :id, or "reviewers" is parsed as a digest id.
+  @Get('reviewers')
+  @ApiOperation({
+    summary: 'List users who may be assigned as digest reviewers',
+    description:
+      'Resolved from the digests:review PLATFORM permission — the same check the assignment validator runs — with each reviewer’s assigned/reviewed counts LEFT JOINed on.',
+  })
+  async getReviewers() {
+    const reviewers = await this.digestsService.listReviewers();
+    return { success: true, data: reviewers };
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get full digest detail (admin view, bypasses visibility checks)' })
   async findById(@Param('id', ParseUUIDPipe) id: string) {

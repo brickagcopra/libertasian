@@ -14,6 +14,7 @@
     "test:e2e:ci": "jest --config ./test/jest-e2e.json --runInBand --forceExit",
     "type-check": "tsc --noEmit",
     "generate:jwt-keys": "ts-node scripts/generate-jwt-keys.ts",
+    "platform:grant": "dotenv -e ../../.env -- ts-node scripts/platform-grant.ts",
     "prisma:generate": "dotenv -e ../../.env -- prisma generate",
     "prisma:migrate:dev": "dotenv -e ../../.env -- prisma migrate dev",
     "prisma:migrate:reset": "dotenv -e ../../.env -- prisma migrate reset",

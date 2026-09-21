@@ -75,13 +75,41 @@ describe('strip_owner_platform_admin — seed-level invariants', () => {
     );
   });
 
-  it('the owner role is every non-admin:* code (nothing else was stripped)', () => {
+  it('the owner role is every code outside platform scope (nothing else was stripped)', () => {
+    // Platform scope grew in 20260920140000_platform_role_grants: the two
+    // platform-*:manage codes, and digests:review — which owner held, and
+    // which is why every self-registered user got 200 on the review queue.
     const expected = PERMISSIONS.map((p) => p.code).filter(
-      (c) => !c.startsWith('admin:'),
+      (c) =>
+        !c.startsWith('admin:') &&
+        !c.startsWith('platform-staff:') &&
+        !c.startsWith('platform-roles:') &&
+        c !== 'digests:review',
     );
     expect([...(ROLE_PERMISSIONS['owner'] ?? [])].sort()).toEqual(
       [...new Set(expected)].sort(),
     );
+  });
+
+  it('the owner role does NOT hold digests:review (the review-queue hole)', () => {
+    expect(ROLE_PERMISSIONS['owner']).not.toContain('digests:review');
+  });
+
+  it('admin, editor and reviewer keep digests:review', () => {
+    for (const slug of ['admin', 'editor', 'reviewer']) {
+      expect(ROLE_PERMISSIONS[slug]).toContain('digests:review');
+    }
+  });
+
+  it('only the SYSTEM admin role holds the platform-*:manage codes', () => {
+    const platformCodes = ['platform-staff:manage', 'platform-roles:manage'];
+    for (const [slug, codes] of Object.entries(ROLE_PERMISSIONS)) {
+      const held = platformCodes.filter((c) => codes.includes(c));
+      expect({ slug, held }).toEqual({
+        slug,
+        held: slug === 'admin' ? platformCodes : [],
+      });
+    }
   });
 
   it('the admin role still holds all 13 admin:* codes (allowlist path intact)', () => {

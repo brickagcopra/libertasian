@@ -65,6 +65,8 @@ model User {
   derivativeReviews          DerivativeReview[]
   matters                    Matter[]
   auditLogs                  AuditLog[]
+  platformRoleGrants         PlatformRoleGrant[]       @relation("PlatformGrantHolder")
+  platformRoleGrantsMade     PlatformRoleGrant[]       @relation("PlatformGrantGrantedBy")
   flashcardSets              FlashcardSet[]
   reviewerPacks              ReviewerPack[]
   studyProgress              StudyProgress[]
@@ -2055,6 +2057,7 @@ model RoleDefinition {
   memberRoles     MemberRole[]
   parentEdges     RoleHierarchy[]  @relation("HierarchyParent")
   childEdges      RoleHierarchy[]  @relation("HierarchyChild")
+  platformGrants  PlatformRoleGrant[]
   constraintsAsA  RoleConstraint[] @relation("ConstraintRoleA")
   constraintsAsB  RoleConstraint[] @relation("ConstraintRoleB")
 
@@ -2128,6 +2131,31 @@ model MemberRole {
   @@index([roleDefinitionId], map: "idx_member_roles_role")
   @@index([expiresAt], map: "idx_member_roles_expires")
   @@map("member_roles")
+}
+
+// Platform staff capability. Deliberately has NO organization_id: admins
+// belong to no organization, and a user's JWT org is permanently their
+// personal workspace (login picks the oldest membership; there is no
+// org-switch endpoint), so an org-scoped grant could never be seen.
+// Rows are created ONLY by a human — the staff panel or the interactive
+// bootstrap CLI. No migration, seed or startup hook writes here.
+model PlatformRoleGrant {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  roleDefinitionId String    @map("role_definition_id") @db.Uuid
+  grantedByUserId  String?   @map("granted_by_user_id") @db.Uuid
+  expiresAt        DateTime? @map("expires_at") @db.Timestamptz
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  user           User           @relation("PlatformGrantHolder", fields: [userId], references: [id], onDelete: Cascade)
+  roleDefinition RoleDefinition @relation(fields: [roleDefinitionId], references: [id], onDelete: Cascade)
+  grantedBy      User?          @relation("PlatformGrantGrantedBy", fields: [grantedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, roleDefinitionId], map: "uq_platform_role_grant")
+  @@index([userId], map: "idx_platform_role_grants_user")
+  @@index([expiresAt], map: "idx_platform_role_grants_expires")
+  @@map("platform_role_grants")
 }
 
 // ==========================================================================

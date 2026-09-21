@@ -5,3 +5,10 @@ export { UpdateCustomRoleDto } from './update-custom-role.dto';
 export { AssignRoleDto } from './assign-role.dto';
 export { ListAuditLogsQueryDto } from './list-audit-logs-query.dto';
 export { ListMembersQueryDto } from './list-members-query.dto';
+export {
+  GrantPlatformRoleDto,
+  ListPlatformStaffQueryDto,
+  SearchStaffCandidatesQueryDto,
+  CreatePlatformRoleDto,
+  UpdatePlatformRoleDto,
+} from './platform-staff.dto';

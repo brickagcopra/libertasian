@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api-client';
 import { useAuthStore } from '@/stores/auth-store';
 import type {
+  MyPermissions,
   PermissionDef,
   RoleDefinitionDto,
   RoleHierarchyNode,
@@ -180,30 +181,29 @@ export function useMemberEffectivePermissions(memberId: string) {
 // ---------------------------------------------------------------------------
 
 /**
- * Fetches effective permissions for the currently logged-in user's membership.
- * The API resolves memberId from the JWT + org context.
- * We call the members list with a search for the current user, then fetch their permissions.
- * Alternatively, we cache this in the auth flow. For now we use a dedicated approach.
+ * The current user's own permissions, in ONE call.
+ *
+ * Was a two-hop lookup: GET /rbac/members (to find the caller's member id),
+ * then GET /rbac/members/:id/permissions. The first hop needs `members:read`,
+ * which a reviewer or editor does not hold — so it 403'd, this hook returned
+ * [], and PermissionGate then hid every control from exactly the staff it was
+ * supposed to reveal them to. GET /rbac/me/permissions needs no permission at
+ * all: any authenticated user may read their own.
+ *
+ * Returns both sets separately. They are not interchangeable — a tenant
+ * permission is authority over your own workspace, a platform permission is
+ * authority over the platform — so merging them here would re-create the
+ * confusion the platform-grants model exists to end.
  */
-export function useCurrentUserPermissions() {
+export function useMyPermissions() {
   const user = useAuthStore((s) => s.user);
   return useQuery({
     queryKey: rbacKeys.myPermissions(),
     queryFn: async () => {
-      // First get the current user's member entry
-      const membersRes = await apiClient.get<{
-        success: boolean;
-        data: MemberWithRoles[];
-        meta: { hasNext: boolean; nextCursor?: string; limit: number };
-      }>('/rbac/members', { params: { search: user?.email ?? '', limit: '1' } });
-
-      const member = membersRes.data.find((m) => m.userId === user?.id);
-      if (!member) return [] as string[];
-
-      const permsRes = await apiClient.get<{ success: boolean; data: string[] }>(
-        `/rbac/members/${member.id}/permissions`,
+      const res = await apiClient.get<{ success: boolean; data: MyPermissions }>(
+        '/rbac/me/permissions',
       );
-      return permsRes.data;
+      return res.data;
     },
     enabled: !!user?.id,
     staleTime: 5 * 60 * 1000, // 5 minutes — matches Redis RBAC cache TTL
@@ -211,7 +211,15 @@ export function useCurrentUserPermissions() {
 }
 
 /**
- * Check if the current user has a specific permission or set of permissions.
+ * Check whether the current user holds a permission, in EITHER set.
+ *
+ * Gates in the UI ask "may this person do this thing", and the answer is yes
+ * whether the capability came from their workspace membership or from a
+ * platform grant. Use `useMyPermissions()` directly when a surface must
+ * distinguish the two.
+ *
+ * The server gate is the real control (P4) — this only hides.
+ *
  * @param permissions - Single code or array of permission codes
  * @param mode - 'all' (default) requires all permissions, 'any' requires at least one
  */
@@ -219,19 +227,26 @@ export function useHasPermission(
   permissions: string | string[],
   mode: 'all' | 'any' = 'all',
 ): { hasPermission: boolean; isLoading: boolean } {
-  const { data: userPermissions, isLoading } = useCurrentUserPermissions();
+  const { data, isLoading } = useMyPermissions();
 
-  if (isLoading || !userPermissions) {
+  if (isLoading || !data) {
     return { hasPermission: false, isLoading };
   }
 
+  const held = [...data.tenantPermissions, ...data.platformPermissions];
   const codes = Array.isArray(permissions) ? permissions : [permissions];
   const hasPermission =
     mode === 'all'
-      ? codes.every((code) => userPermissions.includes(code))
-      : codes.some((code) => userPermissions.includes(code));
+      ? codes.every((code) => held.includes(code))
+      : codes.some((code) => held.includes(code));
 
   return { hasPermission, isLoading: false };
+}
+
+/** Does the current user hold any platform capability at all? */
+export function useIsPlatformStaff(): { isPlatformStaff: boolean; isLoading: boolean } {
+  const { data, isLoading } = useMyPermissions();
+  return { isPlatformStaff: data?.isPlatformStaff ?? false, isLoading };
 }
 
 // ---------------------------------------------------------------------------

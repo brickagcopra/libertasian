@@ -7,6 +7,7 @@ import type { Queue } from 'bullmq';
 import { PaywallException } from '../../common/exceptions/paywall.exception';
 import { PrismaService } from '../../prisma/prisma.service';
 import { DigestsService } from './digests.service';
+import { PlatformGrantsService } from '../rbac/platform-grants.service';
 import { CreateDigestDto, UpdateDigestDto, ListDigestsQueryDto } from './dto';
 
 const CONFIDENCE_THRESHOLD = 0.7;
@@ -121,6 +122,15 @@ describe('DigestsService', () => {
         {
           provide: EventEmitter2,
           useValue: { emit: jest.fn() },
+        },
+        {
+          // Reviewer authority is a PLATFORM permission now, not a row in
+          // organization_members. These suites do not exercise assignment.
+          provide: PlatformGrantsService,
+          useValue: {
+            hasPlatformPermission: jest.fn().mockResolvedValue(false),
+            listUsersWithPlatformPermission: jest.fn().mockResolvedValue([]),
+          },
         },
       ],
     }).compile();
