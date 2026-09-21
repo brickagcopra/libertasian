@@ -99,6 +99,12 @@ describe('PlatformRosterHealthService', () => {
 
       await expect(service.onApplicationBootstrap()).resolves.toBeUndefined();
     });
+
+    it('resolves when the expected controller is missing entirely', async () => {
+      const { service } = build({ controllers: [], grantCount: 0 });
+
+      await expect(service.onApplicationBootstrap()).resolves.toBeUndefined();
+    });
   });
 
   describe('the warning', () => {
@@ -134,7 +140,7 @@ describe('PlatformRosterHealthService', () => {
       expect(errorSpy).not.toHaveBeenCalled();
     });
 
-    it('says nothing when the queue is NOT platform-guarded', async () => {
+    it('says nothing when the queue is deliberately NOT platform-guarded', async () => {
       // Read from live metadata, so the warning retires itself if the
       // controller is ever repointed back at tenant permissions.
       const { service } = build({
@@ -145,6 +151,51 @@ describe('PlatformRosterHealthService', () => {
       await service.onApplicationBootstrap();
 
       expect(errorSpy).not.toHaveBeenCalled();
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('warns on its own when the expected controller is NOT FOUND', async () => {
+      // Silence here would be indistinguishable from a healthy platform: the
+      // check has not verified anything, it simply could not look.
+      const { service } = build({ controllers: [], grantCount: 0 });
+
+      await service.onApplicationBootstrap();
+
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const payload = warnSpy.mock.calls[0]![0] as Record<string, unknown>;
+      expect(payload).toMatchObject({
+        event: 'platform_roster_check_skipped',
+        reason: 'controller_not_found',
+        expectedControllerPath: 'admin/digests',
+      });
+      // It names the path it looked for, so a rename is actionable from the log.
+      expect(payload['expectedControllerPath']).toBe('admin/digests');
+      expect(String(payload['message'])).toMatch(/REVIEW_QUEUE_CONTROLLER_PATH/);
+    });
+
+    it('warns when guard introspection fails, rather than assuming not-guarded', async () => {
+      const { service } = build({ discoveryThrows: true, grantCount: 0 });
+
+      await service.onApplicationBootstrap();
+
+      expect(errorSpy).not.toHaveBeenCalled();
+      const payload = warnSpy.mock.calls[0]![0] as Record<string, unknown>;
+      expect(payload).toMatchObject({
+        event: 'platform_roster_check_skipped',
+        reason: 'introspection_failed',
+      });
+    });
+
+    it('still names the diagnostics endpoint when it skips', async () => {
+      const { service } = build({ controllers: [], grantCount: 0 });
+
+      await service.onApplicationBootstrap();
+
+      const payload = warnSpy.mock.calls[0]![0] as Record<string, unknown>;
+      expect(payload['diagnostics']).toContain(
+        '/admin/diagnostics/platform-roster',
+      );
     });
 
     it('warns rather than errors when the check could not run', async () => {
@@ -162,7 +213,9 @@ describe('PlatformRosterHealthService', () => {
       const { service } = build({ grantCount: 0 });
 
       await expect(service.getStatus()).resolves.toEqual({
+        reviewQueueGuardState: 'platform_guarded',
         reviewQueuePlatformGuarded: true,
+        checkRan: true,
         grantCount: 0,
         liveGrantCount: 0,
         healthy: false,
@@ -176,7 +229,9 @@ describe('PlatformRosterHealthService', () => {
       const status = await service.getStatus();
 
       expect(status).toEqual({
+        reviewQueueGuardState: 'platform_guarded',
         reviewQueuePlatformGuarded: true,
+        checkRan: true,
         grantCount: 3,
         liveGrantCount: 2,
         healthy: true,
@@ -203,13 +258,41 @@ describe('PlatformRosterHealthService', () => {
       expect(status.healthy).toBe(true);
     });
 
-    it('reports not-guarded when no controller serves admin/digests', async () => {
-      const { service } = build({ controllers: [], grantCount: 0 });
+    it('distinguishes a DELIBERATELY tenant-guarded queue from a missing one', async () => {
+      // Both mean "no roster warning" and used to be the same boolean. They
+      // mean opposite things: one is a configuration, the other is the check
+      // failing to run.
+      const tenant = build({
+        controllers: [controller('admin/digests', [PermissionsGuard])],
+        grantCount: 0,
+      });
+      const missing = build({ controllers: [], grantCount: 0 });
+
+      const tenantStatus = await tenant.service.getStatus();
+      const missingStatus = await missing.service.getStatus();
+
+      expect(tenantStatus.reviewQueueGuardState).toBe('tenant_guarded');
+      expect(tenantStatus.checkRan).toBe(true);
+      expect(tenantStatus.error).toBeUndefined();
+
+      expect(missingStatus.reviewQueueGuardState).toBe('controller_not_found');
+      expect(missingStatus.checkRan).toBe(false);
+      expect(missingStatus.error).toMatch(/admin\/digests/);
+
+      // Both are reviewQueuePlatformGuarded: false — which is exactly why the
+      // boolean alone was not enough.
+      expect(tenantStatus.reviewQueuePlatformGuarded).toBe(false);
+      expect(missingStatus.reviewQueuePlatformGuarded).toBe(false);
+    });
+
+    it('reports introspection failure as inconclusive, not as not-guarded', async () => {
+      const { service } = build({ discoveryThrows: true, grantCount: 0 });
 
       const status = await service.getStatus();
 
-      expect(status.reviewQueuePlatformGuarded).toBe(false);
-      expect(status.healthy).toBe(true);
+      expect(status.reviewQueueGuardState).toBe('introspection_failed');
+      expect(status.checkRan).toBe(false);
+      expect(status.error).toBeDefined();
     });
   });
 });

@@ -59,11 +59,28 @@ export class AdminDiagnosticsController {
     return { success: true, data: this.searchService.getVectorIndexStats() };
   }
 
+  /**
+   * Deliberately on THIS controller, behind the tenant-resolved
+   * `admin:settings`, and NOT on the platform-staff controller behind
+   * `platform-staff:manage`.
+   *
+   * A diagnostic must not depend on the subsystem it diagnoses. If this route
+   * required a platform permission, then in the exact condition it exists to
+   * report — an empty `platform_role_grants` — nobody would hold that
+   * permission and the diagnostic would be unreadable. Keeping it on the
+   * tenant path is what makes it answerable precisely when platform auth is
+   * broken.
+   *
+   * Verified this holds: the `admin` role carries `admin:settings` among its
+   * 13 admin:* permissions, and subscription.guard.ts:61 short-circuits the
+   * plan gate on `isPlatformAdmin === true`, so neither gate bites. The
+   * structured boot log remains the primary channel regardless.
+   */
   @Get('platform-roster')
   @ApiOperation({
     summary: 'Whether anybody can actually open the review queue',
     description:
-      'The review queue is guarded by PLATFORM capability. If platform_role_grants is empty, it 403s for everyone — including whoever would have to grant the access back. The same condition is logged once at boot; this endpoint exists so an operator can see it without reading container logs. It is NEVER fatal: a review-queue misconfiguration must not stop search, auth, mobile or billing webhooks from starting.',
+      'The review queue is guarded by PLATFORM capability. If platform_role_grants is empty, it 403s for everyone — including whoever would have to grant the access back. The same condition is logged once at boot; this endpoint exists so an operator can see it without reading container logs. Gated on the TENANT permission admin:settings on purpose: a diagnostic gated on the thing it diagnoses is unreadable exactly when it matters. It is NEVER fatal — a review-queue misconfiguration must not stop search, auth, mobile or billing webhooks from starting. reviewQueueGuardState distinguishes a deliberately tenant-guarded queue from a controller the check could not find at all.',
   })
   async getPlatformRosterHealth() {
     const status = await this.platformRoster.getStatus();

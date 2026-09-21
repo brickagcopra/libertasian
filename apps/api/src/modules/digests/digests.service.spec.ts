@@ -377,6 +377,22 @@ describe('DigestsService', () => {
     });
 
     it('should throw NotFoundException if digest does not exist', async () => {
+      // POSITIVE CONTROL. The rejection assertion below cannot, on its own,
+      // tell a deliberate not-found from a mock that was never wired: an
+      // unstubbed jest.fn() returns undefined, which is just as falsy as null.
+      // Proving the SAME lookup succeeds when the mock IS wired is what makes
+      // an unwired mock fail here instead of passing silently.
+      prismaService.digest.findUnique.mockResolvedValue({
+        ...mockDigest,
+        legalDocument: mockLegalDocument,
+        reviews: [],
+        _count: { doctrineExtracts: 0, editorialFlags: 0 },
+      });
+      await expect(
+        service.findById('digest-1', 'user-1', 'org-1'),
+      ).resolves.toMatchObject({ id: 'digest-1' });
+
+      // …and only then the not-found path.
       prismaService.digest.findUnique.mockResolvedValue(null);
 
       await expect(service.findById('digest-999', 'user-1', 'org-1')).rejects.toThrow(
@@ -384,6 +400,9 @@ describe('DigestsService', () => {
       );
       await expect(service.findById('digest-999', 'user-1', 'org-1')).rejects.toThrow(
         'Digest not found',
+      );
+      expect(prismaService.digest.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'digest-999' } }),
       );
     });
 
@@ -711,11 +730,34 @@ describe('DigestsService', () => {
     });
 
     it('should throw NotFoundException if digest does not exist', async () => {
+      // POSITIVE CONTROL. The rejection assertion below cannot, on its own,
+      // tell a deliberate not-found from a mock that was never wired: an
+      // unstubbed jest.fn() returns undefined, which is just as falsy as null.
+      // Proving the SAME lookup succeeds when the mock IS wired is what makes
+      // an unwired mock fail here instead of passing silently.
+      prismaService.digest.findUnique.mockResolvedValue(mockDigest);
+      prismaService.digest.update.mockResolvedValue({
+        ...mockDigest,
+        ...updateDto,
+        legalDocument: mockLegalDocument,
+      });
+      await expect(
+        service.update('digest-1', updateDto, 'user-1', 'org-1'),
+      ).resolves.toBeDefined();
+
+      // …and only then the not-found path.
+      prismaService.digest.update.mockClear();
       prismaService.digest.findUnique.mockResolvedValue(null);
 
       await expect(
         service.update('digest-999', updateDto, 'user-1', 'org-1'),
       ).rejects.toThrow(NotFoundException);
+
+      expect(prismaService.digest.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'digest-999' } }),
+      );
+      // A digest that was not found must not have been written to.
+      expect(prismaService.digest.update).not.toHaveBeenCalled();
     });
 
     it('should block changing user_scan visibility to non-private', async () => {
@@ -840,11 +882,35 @@ describe('DigestsService', () => {
     });
 
     it('should throw NotFoundException if digest does not exist', async () => {
+      // POSITIVE CONTROL. The rejection assertion below cannot, on its own,
+      // tell a deliberate not-found from a mock that was never wired: an
+      // unstubbed jest.fn() returns undefined, which is just as falsy as null.
+      // Proving the SAME lookup succeeds when the mock IS wired is what makes
+      // an unwired mock fail here instead of passing silently.
+      prismaService.digest.findUnique.mockResolvedValue(mockDigest);
+      prismaService.digest.delete.mockResolvedValue(mockDigest);
+      // delete() returns void, so the control is that it RESOLVES at all —
+      // with the mock unwired it throws NotFoundException here instead.
+      await expect(
+        service.delete('digest-1', 'user-1', 'org-1'),
+      ).resolves.toBeUndefined();
+      expect(prismaService.digest.delete).toHaveBeenCalledWith({
+        where: { id: 'digest-1' },
+      });
+
+      // …and only then the not-found path.
+      prismaService.digest.delete.mockClear();
       prismaService.digest.findUnique.mockResolvedValue(null);
 
       await expect(service.delete('digest-999', 'user-1', 'org-1')).rejects.toThrow(
         NotFoundException,
       );
+
+      expect(prismaService.digest.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'digest-999' } }),
+      );
+      // A delete that found nothing must not have deleted anything.
+      expect(prismaService.digest.delete).not.toHaveBeenCalled();
     });
 
     it('should throw ForbiddenException if user is not the creator', async () => {
