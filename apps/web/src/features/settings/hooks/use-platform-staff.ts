@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api-client';
 import type {
   PermissionCatalogue,
+  PlatformAuditEntry,
   PlatformGrant,
   PlatformRoleDetail,
   PlatformRoleSummary,
@@ -22,6 +23,8 @@ export const platformKeys = {
   staff: (params?: { cursor?: string; limit?: number }) =>
     [...platformKeys.all, 'staff', params ?? {}] as const,
   candidates: (q: string) => [...platformKeys.all, 'candidates', q] as const,
+  audit: (params?: { cursor?: string }) =>
+    [...platformKeys.all, 'audit', params ?? {}] as const,
   roles: () => [...platformKeys.all, 'roles'] as const,
   role: (id: string) => [...platformKeys.all, 'roles', id] as const,
   permissionCatalogue: () => [...platformKeys.all, 'permissions'] as const,
@@ -120,6 +123,30 @@ export function useRevokePlatformRole() {
       );
     },
     onSuccess: invalidate,
+  });
+}
+
+/**
+ * The grant / revoke / refusal history.
+ *
+ * Deliberately NOT /settings/audit-logs: that surface is tenant-scoped,
+ * plan-gated at Team and needs `audit-logs:read`, which is held by admin,
+ * owner and admin-manager only. Sending a platform-only admin there to read
+ * platform-grant history fails on all three counts.
+ */
+export function usePlatformStaffAudit(params?: { cursor?: string }) {
+  return useQuery({
+    queryKey: platformKeys.audit(params),
+    queryFn: async () => {
+      const queryParams: Record<string, string> = {};
+      if (params?.cursor) queryParams['cursor'] = params.cursor;
+      const res = await apiClient.get<{
+        success: boolean;
+        data: PlatformAuditEntry[];
+        meta: { hasNext: boolean; nextCursor?: string; limit: number };
+      }>('/platform/staff/audit', { params: queryParams });
+      return { items: res.data, meta: res.meta };
+    },
   });
 }
 

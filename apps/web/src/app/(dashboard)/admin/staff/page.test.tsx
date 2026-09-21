@@ -17,6 +17,7 @@ const revokeMutate = vi.fn();
 const staffQuery = vi.fn();
 const rolesQuery = vi.fn();
 const candidatesQuery = vi.fn();
+const auditQuery = vi.fn();
 
 vi.mock('@/features/settings/hooks/use-platform-staff', () => ({
   usePlatformStaff: () => staffQuery(),
@@ -52,6 +53,7 @@ vi.mock('@/features/settings/hooks/use-platform-staff', () => ({
   }),
   useGrantPlatformRole: () => ({ mutateAsync: grantMutate, isPending: false }),
   useRevokePlatformRole: () => ({ mutateAsync: revokeMutate, isPending: false }),
+  usePlatformStaffAudit: () => auditQuery(),
   useCreatePlatformRole: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useUpdatePlatformRole: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeletePlatformRole: () => ({ mutateAsync: vi.fn(), isPending: false }),
@@ -105,6 +107,11 @@ beforeEach(() => {
   });
   rolesQuery.mockReturnValue({ data: [role()], isLoading: false, error: null });
   candidatesQuery.mockReturnValue({ data: [], isFetching: false });
+  auditQuery.mockReturnValue({
+    data: { items: [], meta: { hasNext: false, limit: 25 } },
+    isLoading: false,
+    error: null,
+  });
 });
 
 describe('Platform staff panel — the staff list', () => {
@@ -332,11 +339,164 @@ describe('Platform staff panel — gating', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('names the permission codes the audit log records', () => {
+});
+
+describe('Platform staff panel — audit trail', () => {
+  it('shows the history in the panel, not as a link to the tenant audit log', () => {
+    // /settings/audit-logs is tenant-scoped, plan-gated at Team and needs
+    // audit-logs:read — which a platform-only admin may hold none of.
     render(<PlatformStaffPage />);
 
-    expect(screen.getByText('platform_grant.created')).toBeInTheDocument();
-    expect(screen.getByText('platform_grant.revoked')).toBeInTheDocument();
-    expect(screen.getByText('platform_grant.refused')).toBeInTheDocument();
+    expect(screen.getByText('Audit trail')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('link', { name: /audit log/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows grantor, target, role and expiry for a grant', () => {
+    // Empty the staff list so the names asserted below can only come from the
+    // audit trail.
+    staffQuery.mockReturnValue({
+      data: { items: [], meta: { hasNext: false, limit: 20 } },
+      isLoading: false,
+      error: null,
+    });
+    auditQuery.mockReturnValue({
+      data: {
+        items: [
+          {
+            id: 'audit-1',
+            action: 'platform_grant.created',
+            outcome: 'granted',
+            actorUserId: 'u-admin',
+            actorName: 'Ana Admin',
+            actorEmail: 'a***@libertasian.com',
+            targetUserId: 'u-rosa',
+            targetName: 'Rosa Reviewer',
+            targetEmail: 'r***@libertasian.com',
+            roleSlug: 'reviewer',
+            roleName: 'Reviewer',
+            expiresAt: '2099-01-01T00:00:00Z',
+            refusal: null,
+            reason: null,
+            createdAt: '2026-09-21T12:00:00Z',
+          },
+        ],
+        meta: { hasNext: false, limit: 25 },
+      },
+      isLoading: false,
+      error: null,
+    });
+
+    render(<PlatformStaffPage />);
+
+    expect(screen.getByText('granted')).toBeInTheDocument();
+    expect(screen.getByText('Ana Admin')).toBeInTheDocument();
+    expect(screen.getByText('Rosa Reviewer')).toBeInTheDocument();
+    expect(screen.getByText(/expires/)).toBeInTheDocument();
+  });
+
+  it('shows a BLOCKED escalation attempt, with the rule and the message', () => {
+    const reason =
+      'Privilege escalation refused: "Admin" confers 6 permission(s) you do not hold — admin:billing, admin:users.';
+    auditQuery.mockReturnValue({
+      data: {
+        items: [
+          {
+            id: 'audit-2',
+            action: 'platform_grant.refused',
+            outcome: 'refused',
+            actorUserId: 'u-clerk',
+            actorName: 'Carl Clerk',
+            actorEmail: 'c***@libertasian.com',
+            targetUserId: 'u-target',
+            targetName: 'Tomas Target',
+            targetEmail: 't***@libertasian.com',
+            roleSlug: 'admin',
+            roleName: 'Admin',
+            expiresAt: null,
+            refusal: 'privilege_escalation',
+            reason,
+            createdAt: '2026-09-21T12:05:00Z',
+          },
+        ],
+        meta: { hasNext: false, limit: 25 },
+      },
+      isLoading: false,
+      error: null,
+    });
+
+    render(<PlatformStaffPage />);
+
+    expect(screen.getByText('refused')).toBeInTheDocument();
+    expect(screen.getByText('privilege_escalation')).toBeInTheDocument();
+    expect(screen.getByText(reason)).toBeInTheDocument();
+  });
+
+  it('never renders a full email address', () => {
+    auditQuery.mockReturnValue({
+      data: {
+        items: [
+          {
+            id: 'audit-3',
+            action: 'platform_grant.created',
+            outcome: 'granted',
+            actorUserId: 'u-admin',
+            actorName: null,
+            actorEmail: 'a***@libertasian.com',
+            targetUserId: 'u-rosa',
+            targetName: null,
+            targetEmail: 'r***@libertasian.com',
+            roleSlug: 'reviewer',
+            roleName: 'Reviewer',
+            expiresAt: null,
+            refusal: null,
+            reason: null,
+            createdAt: '2026-09-21T12:00:00Z',
+          },
+        ],
+        meta: { hasNext: false, limit: 25 },
+      },
+      isLoading: false,
+      error: null,
+    });
+
+    const { container } = render(<PlatformStaffPage />);
+
+    expect(container.textContent).toContain('a***@libertasian.com');
+    expect(container.textContent).not.toMatch(/ana@libertasian\.com/);
+  });
+
+  it('attributes a bootstrap entry with no actor to the CLI', () => {
+    auditQuery.mockReturnValue({
+      data: {
+        items: [
+          {
+            id: 'audit-4',
+            action: 'platform_grant.created',
+            outcome: 'granted',
+            actorUserId: null,
+            actorName: null,
+            actorEmail: null,
+            targetUserId: 'u-root',
+            targetName: 'Root Admin',
+            targetEmail: 'r***@libertasian.com',
+            roleSlug: 'admin',
+            roleName: 'Admin',
+            expiresAt: null,
+            refusal: null,
+            reason: null,
+            createdAt: '2026-09-21T11:00:00Z',
+          },
+        ],
+        meta: { hasNext: false, limit: 25 },
+      },
+      isLoading: false,
+      error: null,
+    });
+
+    render(<PlatformStaffPage />);
+
+    expect(screen.getByText('the bootstrap CLI')).toBeInTheDocument();
   });
 });

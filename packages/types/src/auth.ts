@@ -281,3 +281,32 @@ export interface DigestReviewer {
   assigned: number;
   reviewed: number;
 }
+
+/**
+ * One row of the staff panel's audit trail.
+ *
+ * Served by GET /platform/staff/audit rather than the tenant audit log:
+ * /rbac/audit-logs is TenantGuard + SubscriptionGuard + `audit-logs:read`,
+ * which platform staff may hold none of.
+ */
+export interface PlatformAuditEntry {
+  id: string;
+  action: string;
+  outcome: 'granted' | 'revoked' | 'refused' | 'role_changed';
+  actorUserId: string | null;
+  actorName: string | null;
+  /** Redacted — never a full address. */
+  actorEmail: string | null;
+  targetUserId: string | null;
+  targetName: string | null;
+  /** Redacted. */
+  targetEmail: string | null;
+  roleSlug: string | null;
+  roleName: string | null;
+  expiresAt: string | null;
+  /** Which rule refused this, when one did. */
+  refusal: string | null;
+  /** The refusal message the operator was shown, verbatim. */
+  reason: string | null;
+  createdAt: string;
+}

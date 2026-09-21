@@ -166,6 +166,13 @@ interface Harness {
 
 function buildHarness(world: World = baseWorld()): Harness {
   const auditCalls: Array<Record<string, unknown>> = [];
+  const auditRows: Array<{
+    id: string;
+    action: string;
+    actorUserId: string | null;
+    metadataJson: Record<string, unknown>;
+    createdAt: Date;
+  }> = [];
   const cacheInvalidations: string[] = [];
 
   const hydrate = (g: FixtureGrant) => ({
@@ -342,11 +349,36 @@ function buildHarness(world: World = baseWorld()): Harness {
         .mockImplementation((args: { where: { id: string } }) =>
           Promise.resolve(world.users.find((u) => u.id === args.where.id) ?? null),
         ),
-      findMany: jest.fn().mockResolvedValue([]),
+      findMany: jest
+        .fn()
+        .mockImplementation((args: { where: { id?: { in: string[] } } }) =>
+          Promise.resolve(
+            args.where.id
+              ? world.users.filter((u) => args.where.id!.in.includes(u.id))
+              : world.users,
+          ),
+        ),
     },
     memberRole: {
       findMany: jest.fn().mockResolvedValue([]),
       count: jest.fn().mockResolvedValue(0),
+    },
+    auditLog: {
+      findMany: jest.fn().mockImplementation(() =>
+        Promise.resolve(
+          // Newest first, like the real orderBy.
+          [...auditRows].reverse().map((row) => ({
+            ...row,
+            actor: row.actorUserId
+              ? {
+                  id: row.actorUserId,
+                  fullName: `User ${row.actorUserId}`,
+                  email: `${row.actorUserId}@libertasian.com`,
+                }
+              : null,
+          })),
+        ),
+      ),
     },
     $transaction: jest
       .fn()
@@ -370,6 +402,15 @@ function buildHarness(world: World = baseWorld()): Harness {
   const audit = {
     log: jest.fn().mockImplementation((entry: Record<string, unknown>) => {
       auditCalls.push(entry);
+      // Shaped like the audit_logs row AuditService would write, so
+      // listAuditTrail reads back exactly what grant/revoke wrote.
+      auditRows.push({
+        id: `audit-${auditRows.length + 1}`,
+        action: entry['action'] as string,
+        actorUserId: (entry['actorUserId'] as string | undefined) ?? null,
+        metadataJson: (entry['metadata'] as Record<string, unknown>) ?? {},
+        createdAt: new Date(2026, 8, 21, 12, auditRows.length),
+      });
       return Promise.resolve();
     }),
   };
@@ -760,5 +801,102 @@ describe('PlatformGrantsService — platform role authoring', () => {
     await expect(
       h.service.updatePlatformRole(ROLE.orgCustom, { name: 'X' }, 'u-root'),
     ).rejects.toThrow(/belongs to an organization/i);
+  });
+});
+
+describe('PlatformGrantsService — audit trail', () => {
+  it('reads back the grant it just wrote, with role, expiry and grantor', async () => {
+    const h = buildHarness();
+    h.world.grants.push(grantRow('u-root', ROLE.admin));
+    const expiry = new Date('2026-12-31T00:00:00.000Z');
+
+    await h.service.grant('u-target', ROLE.member, 'u-root', expiry);
+    const trail = await h.service.listAuditTrail({});
+
+    expect(trail.items[0]).toMatchObject({
+      action: 'platform_grant.created',
+      outcome: 'granted',
+      actorUserId: 'u-root',
+      targetUserId: 'u-target',
+      roleSlug: 'member',
+      expiresAt: expiry.toISOString(),
+      refusal: null,
+    });
+  });
+
+  it('records a REFUSED escalation, so a blocked attempt is visible', async () => {
+    const h = buildHarness();
+    h.world.grants.push(grantRow('u-root', ROLE.reviewer));
+
+    await expect(
+      h.service.grant('u-target', ROLE.admin, 'u-root'),
+    ).rejects.toThrow();
+
+    const trail = await h.service.listAuditTrail({});
+    expect(trail.items[0]).toMatchObject({
+      outcome: 'refused',
+      refusal: 'privilege_escalation',
+      targetUserId: 'u-target',
+      roleSlug: 'admin',
+    });
+    // The operator-facing message is kept verbatim on the row.
+    expect(trail.items[0]?.reason).toMatch(/Privilege escalation refused/);
+  });
+
+  it('records a refused revoke under last_admin', async () => {
+    const h = buildHarness();
+    h.world.grants.push(grantRow('u-root', ROLE.admin));
+
+    await expect(
+      h.service.revoke('u-root', ROLE.admin, 'u-root'),
+    ).rejects.toThrow();
+
+    const trail = await h.service.listAuditTrail({});
+    expect(trail.items[0]).toMatchObject({
+      action: 'platform_revoke.refused',
+      outcome: 'refused',
+      refusal: 'last_admin',
+    });
+  });
+
+  it('redacts both emails — the actor’s and the target’s', async () => {
+    const h = buildHarness();
+    h.world.grants.push(grantRow('u-root', ROLE.admin));
+
+    await h.service.grant('u-target', ROLE.member, 'u-root');
+    const trail = await h.service.listAuditTrail({});
+
+    expect(trail.items[0]?.targetEmail).toBe('t***@libertasian.com');
+    expect(trail.items[0]?.actorEmail).toBe('u***@libertasian.com');
+    // No full address anywhere on the row.
+    expect(JSON.stringify(trail.items[0])).not.toContain(
+      'target@libertasian.com',
+    );
+  });
+
+  it('resolves the target’s display name without un-redacting their email', async () => {
+    const h = buildHarness();
+    h.world.grants.push(grantRow('u-root', ROLE.admin));
+
+    await h.service.grant('u-target', ROLE.member, 'u-root');
+    const trail = await h.service.listAuditTrail({});
+
+    expect(trail.items[0]?.targetName).toBe('User u-target');
+    expect(trail.items[0]?.targetEmail).toBe('t***@libertasian.com');
+  });
+
+  it('paginates by cursor, newest first', async () => {
+    const h = buildHarness();
+    h.world.grants.push(grantRow('u-root', ROLE.admin));
+
+    await h.service.grant('u-target', ROLE.member, 'u-root');
+    await h.service.grant('u-other', ROLE.member, 'u-root');
+
+    const page = await h.service.listAuditTrail({ limit: 1 });
+    expect(page.items).toHaveLength(1);
+    expect(page.meta.hasNext).toBe(true);
+    expect(page.meta.nextCursor).toBeDefined();
+    // Newest first: the second grant comes back before the first.
+    expect(page.items[0]?.targetUserId).toBe('u-other');
   });
 });

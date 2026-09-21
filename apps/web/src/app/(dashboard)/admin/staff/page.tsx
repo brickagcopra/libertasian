@@ -26,6 +26,7 @@ import {
   usePlatformRole,
   usePlatformRoles,
   usePlatformStaff,
+  usePlatformStaffAudit,
   useRevokePlatformRole,
   useStaffCandidates,
   useUpdatePlatformRole,
@@ -33,6 +34,7 @@ import {
 import { PermissionGate } from '@/components/layout/permission-gate';
 import type {
   PermissionDef,
+  PlatformAuditEntry,
   PlatformGrant,
   PlatformRoleSummary,
   PlatformStaffCandidate,
@@ -120,7 +122,9 @@ export default function PlatformStaffPage() {
         </TabsContent>
       </Tabs>
 
-      <AuditLink />
+      <PermissionGate permissions={MANAGE_STAFF}>
+        <AuditTrail />
+      </PermissionGate>
     </div>
   );
 }
@@ -138,26 +142,130 @@ function NoAccessNotice({ permission }: { permission: string }) {
   );
 }
 
-function AuditLink() {
+/**
+ * Grant, revoke and refusal history, served by GET /platform/staff/audit.
+ *
+ * NOT a link to /settings/audit-logs. That page is tenant-scoped, plan-gated
+ * at Team and needs `audit-logs:read` — held by admin, owner and
+ * admin-manager only. A platform-only admin on a free personal workspace
+ * fails all three, so the one surface showing platform-grant history would be
+ * shut to the people who administer platform grants.
+ */
+function AuditTrail() {
+  const [cursor, setCursor] = useState<string | undefined>(undefined);
+  const { data, isLoading, error } = usePlatformStaffAudit(
+    cursor ? { cursor } : undefined,
+  );
+
   return (
     <Card>
-      <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
-        <div className="flex items-start gap-2">
-          <ScrollTextIcon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-          <p className="text-xs text-muted-foreground">
-            Every grant, revoke and refusal on this page writes an audit entry.
-            Filter the audit log by entity type{' '}
-            <code className="font-mono">platform_role_grant</code>, or by action{' '}
-            <code className="font-mono">platform_grant.created</code>,{' '}
-            <code className="font-mono">platform_grant.revoked</code>,{' '}
-            <code className="font-mono">platform_grant.refused</code>.
-          </p>
+      <CardContent className="p-4">
+        <div className="flex items-center gap-2">
+          <ScrollTextIcon className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-sm font-semibold">Audit trail</h2>
         </div>
-        <Button variant="outline" size="sm" asChild>
-          <Link href="/settings/audit-logs">Open audit log</Link>
-        </Button>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Every grant, revoke and refusal — including attempts the server
+          blocked. Emails are redacted.
+        </p>
+
+        {error && (
+          <Alert variant="destructive" className="mt-3">
+            <AlertDescription>{serverMessage(error)}</AlertDescription>
+          </Alert>
+        )}
+
+        {isLoading ? (
+          <div className="mt-3">
+            <AdminListSkeleton count={3} />
+          </div>
+        ) : data && data.items.length > 0 ? (
+          <div className="mt-3 space-y-2">
+            {data.items.map((entry) => (
+              <AuditRow key={entry.id} entry={entry} />
+            ))}
+            {data.meta.hasNext && data.meta.nextCursor && (
+              <div className="flex justify-center pt-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCursor(data.meta.nextCursor)}
+                >
+                  Load more
+                </Button>
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="mt-3 text-xs text-muted-foreground">
+            Nothing has been granted or revoked yet.
+          </p>
+        )}
       </CardContent>
     </Card>
+  );
+}
+
+const OUTCOME_STYLE: Record<PlatformAuditEntry['outcome'], string> = {
+  granted: 'bg-green-100 text-green-700',
+  revoked: 'bg-yellow-100 text-yellow-700',
+  refused: 'bg-red-100 text-red-700',
+  role_changed: 'bg-blue-100 text-blue-700',
+};
+
+const OUTCOME_LABEL: Record<PlatformAuditEntry['outcome'], string> = {
+  granted: 'granted',
+  revoked: 'revoked',
+  refused: 'refused',
+  role_changed: 'role changed',
+};
+
+function AuditRow({ entry }: { entry: PlatformAuditEntry }) {
+  const actor = entry.actorName ?? entry.actorEmail ?? 'the bootstrap CLI';
+  const target = entry.targetName ?? entry.targetEmail ?? null;
+
+  return (
+    <div className="rounded-md border px-3 py-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge className={OUTCOME_STYLE[entry.outcome]}>
+          {OUTCOME_LABEL[entry.outcome]}
+        </Badge>
+        {entry.roleName && (
+          <Badge variant="secondary" className="text-xs">
+            {entry.roleName}
+          </Badge>
+        )}
+        {entry.refusal && (
+          <code className="rounded bg-red-50 px-1.5 py-0.5 font-mono text-[11px] text-red-700">
+            {entry.refusal}
+          </code>
+        )}
+        <span className="ml-auto text-[11px] text-muted-foreground">
+          {new Date(entry.createdAt).toLocaleString()}
+        </span>
+      </div>
+
+      <p className="mt-1 text-xs text-muted-foreground">
+        <span className="font-medium text-foreground">{actor}</span>
+        {target ? (
+          <>
+            {' → '}
+            <span className="font-medium text-foreground">{target}</span>
+            {entry.targetEmail && target !== entry.targetEmail && (
+              <> ({entry.targetEmail})</>
+            )}
+          </>
+        ) : null}
+        {entry.expiresAt && (
+          <> · expires {new Date(entry.expiresAt).toLocaleDateString()}</>
+        )}
+      </p>
+
+      {/* The refusal message verbatim — it is what teaches the rule. */}
+      {entry.reason && (
+        <p className="mt-1 text-xs text-red-700">{entry.reason}</p>
+      )}
+    </div>
   );
 }
 

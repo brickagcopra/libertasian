@@ -39,6 +39,45 @@ export interface PlatformGrantRow {
   permissions: string[];
 }
 
+/**
+ * Every action this service audits. The staff panel's trail is exactly these
+ * rows — including the refusals, so an operator can see a blocked escalation
+ * attempt rather than only the grants that succeeded.
+ */
+export const PLATFORM_AUDIT_ACTIONS = [
+  'platform_grant.created',
+  'platform_grant.revoked',
+  'platform_grant.refused',
+  'platform_role.created',
+  'platform_role.updated',
+  'platform_role.deleted',
+  'platform_role.refused',
+] as const;
+
+/** One row of the staff panel's audit trail. */
+export interface PlatformAuditEntry {
+  id: string;
+  action: string;
+  /** What actually happened, for the panel's badge. */
+  outcome: 'granted' | 'revoked' | 'refused' | 'role_changed';
+  actorUserId: string | null;
+  actorName: string | null;
+  /** Redacted — never a full address (CLAUDE.md: no PII in plaintext). */
+  actorEmail: string | null;
+  targetUserId: string | null;
+  targetName: string | null;
+  /** Redacted. */
+  targetEmail: string | null;
+  roleSlug: string | null;
+  roleName: string | null;
+  expiresAt: string | null;
+  /** Which rule refused this, when one did. */
+  refusal: string | null;
+  /** The refusal message the operator was shown, verbatim. */
+  reason: string | null;
+  createdAt: string;
+}
+
 interface GrantOptions {
   /**
    * Skip the no-privilege-escalation check. Reserved for the interactive
@@ -56,6 +95,21 @@ function redactEmail(email: string): string {
   const [local, domain] = email.split('@');
   if (!local || !domain) return '***';
   return `${local.charAt(0)}***@${domain}`;
+}
+
+/** Read a string field out of an audit row's JSON metadata, or null. */
+function readString(metadata: unknown, key: string): string | null {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const value = (metadata as Record<string, unknown>)[key];
+  return typeof value === 'string' ? value : null;
+}
+
+/** Collapse an audit action into the outcome the panel badges. */
+function outcomeOf(action: string): PlatformAuditEntry['outcome'] {
+  if (action.endsWith('.refused')) return 'refused';
+  if (action === 'platform_grant.created') return 'granted';
+  if (action === 'platform_grant.revoked') return 'revoked';
+  return 'role_changed';
 }
 
 /**
@@ -316,6 +370,102 @@ export class PlatformGrantsService {
       });
     }
     return rows;
+  }
+
+  // -----------------------------------------------------------------------
+  // Audit trail
+  // -----------------------------------------------------------------------
+
+  /**
+   * The grant/revoke/refusal history, for the staff panel.
+   *
+   * Served from here rather than sending the operator to /rbac/audit-logs:
+   * that surface is TenantGuard + SubscriptionGuard + `audit-logs:read`, a
+   * permission held only by admin, owner and admin-manager. A platform-only
+   * admin on a free personal workspace fails the plan gate AND the org-scoped
+   * permission — so the one page that shows platform-grant history would be
+   * shut to the people who administer platform grants.
+   *
+   * CARVE-OUT: platform staff administration — cross-tenant by design. These
+   * rows describe grants that belong to no organization, so they are read
+   * without an organizationId filter. Guarded by platform-staff:manage.
+   */
+  async listAuditTrail(opts: {
+    cursor?: string;
+    limit?: number;
+  }): Promise<{
+    items: PlatformAuditEntry[];
+    meta: { hasNext: boolean; nextCursor?: string; limit: number };
+  }> {
+    const limit = opts.limit ?? 25;
+
+    const rows = await this.prisma.auditLog.findMany({
+      where: { action: { in: [...PLATFORM_AUDIT_ACTIONS] } },
+      take: limit + 1,
+      ...(opts.cursor && { skip: 1, cursor: { id: opts.cursor } }),
+      orderBy: { createdAt: 'desc' },
+      include: {
+        actor: { select: { id: true, fullName: true, email: true } },
+      },
+    });
+
+    const hasNext = rows.length > limit;
+    const page = hasNext ? rows.slice(0, limit) : rows;
+
+    // Resolve target display names in one query. The metadata already carries
+    // a REDACTED email (the service redacts before writing), so nothing here
+    // un-redacts anything — it only adds the name.
+    const targetIds = [
+      ...new Set(
+        page
+          .map((r) => readString(r.metadataJson, 'targetUserId'))
+          .filter((id): id is string => id !== null),
+      ),
+    ];
+    const targets = targetIds.length
+      ? await this.prisma.user.findMany({
+          where: { id: { in: targetIds } },
+          select: { id: true, fullName: true },
+        })
+      : [];
+    const nameByUserId = new Map(targets.map((t) => [t.id, t.fullName]));
+
+    const lastItem = page[page.length - 1];
+
+    return {
+      items: page.map((row) => {
+        const targetUserId = readString(row.metadataJson, 'targetUserId');
+        return {
+          id: row.id,
+          action: row.action,
+          outcome: outcomeOf(row.action),
+          actorUserId: row.actorUserId,
+          actorName: row.actor?.fullName ?? null,
+          actorEmail: row.actor?.email ? redactEmail(row.actor.email) : null,
+          targetUserId,
+          targetName: targetUserId
+            ? (nameByUserId.get(targetUserId) ?? null)
+            : null,
+          // Already redacted at write time; passed through as-is.
+          targetEmail: readString(row.metadataJson, 'targetEmail'),
+          roleSlug:
+            readString(row.metadataJson, 'roleSlug') ??
+            readString(row.metadataJson, 'slug'),
+          roleName:
+            readString(row.metadataJson, 'roleName') ??
+            readString(row.metadataJson, 'name'),
+          expiresAt: readString(row.metadataJson, 'expiresAt'),
+          refusal: readString(row.metadataJson, 'refusal'),
+          reason: readString(row.metadataJson, 'reason'),
+          createdAt: row.createdAt.toISOString(),
+        };
+      }),
+      meta: {
+        hasNext,
+        ...(hasNext && lastItem ? { nextCursor: lastItem.id } : {}),
+        limit,
+      },
+    };
   }
 
   // -----------------------------------------------------------------------

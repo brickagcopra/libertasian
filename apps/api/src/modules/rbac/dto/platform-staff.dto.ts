@@ -49,6 +49,22 @@ export class ListPlatformStaffQueryDto {
   limit?: number;
 }
 
+/** GET /platform/staff/audit */
+export class ListPlatformAuditQueryDto {
+  @ApiPropertyOptional({ description: 'Cursor for pagination (audit log ID)' })
+  @IsOptional()
+  @IsUUID('4')
+  cursor?: string;
+
+  @ApiPropertyOptional({ description: 'Items per page', default: 25, minimum: 1, maximum: 100 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number;
+}
+
 /** GET /platform/staff/candidates */
 export class SearchStaffCandidatesQueryDto {
   @ApiProperty({ description: 'Email or name fragment (existing accounts only)', example: 'jane' })
