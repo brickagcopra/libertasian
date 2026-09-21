@@ -374,6 +374,107 @@ describe('Platform role grants (E2E)', () => {
     });
   });
 
+  describe('user-owned private content stays out of editorial review', () => {
+    it('is absent from the queue and 404s on direct fetch for a digests:review holder', async () => {
+      const reviewer = await createAuthenticatedUser(app, {
+        email: `plat-privacy-rev-${Date.now()}@libertasian-test.com`,
+      });
+      const owner = await createAuthenticatedUser(app, {
+        email: `plat-privacy-owner-${Date.now()}@libertasian-test.com`,
+      });
+
+      const reviewerRole = await systemRole('reviewer');
+      await prisma.platformRoleGrant.create({
+        data: { userId: reviewer.userId, roleDefinitionId: reviewerRole.id },
+      });
+      await cache.invalidatePlatformForUser(reviewer.userId);
+
+      const orgRes = await request(app.getHttpServer())
+        .get('/api/v1/organizations/me')
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .expect(200);
+      const organizationId = orgRes.body.data[0].id as string;
+
+      // What a camera scan produces: owned by a person, private.
+      const scan = await prisma.digest.create({
+        data: {
+          organizationId,
+          userId: owner.userId,
+          title: 'A scan of my own case file',
+          digestType: 'case',
+          sourceOrigin: 'user_scan',
+          visibility: 'private',
+          reviewStatus: 'needs_human_review',
+        },
+        select: { id: true },
+      });
+
+      // Orphaned system output: private, but nobody owns it. The 108 rows in
+      // the prod queue look like this and must keep working.
+      const orphan = await prisma.digest.create({
+        data: {
+          title: 'Orphaned system output',
+          digestType: 'case',
+          sourceOrigin: 'official_pipeline',
+          visibility: 'private',
+          reviewStatus: 'needs_human_review',
+        },
+        select: { id: true },
+      });
+
+      // A public_editorial digest belonging to somebody else's organization:
+      // the reason the cross-tenant carve-out exists at all.
+      const editorial = await prisma.digest.create({
+        data: {
+          organizationId,
+          title: 'Editorial corpus digest',
+          digestType: 'case',
+          sourceOrigin: 'official_pipeline',
+          visibility: 'public_editorial',
+          reviewStatus: 'needs_human_review',
+        },
+        select: { id: true },
+      });
+
+      try {
+        const queue = await request(app.getHttpServer())
+          .get('/api/v1/admin/digests/review-queue')
+          .set('Authorization', `Bearer ${reviewer.accessToken}`)
+          .query({ limit: 100 })
+          .expect(200);
+        const ids = (queue.body.data as Array<{ id: string }>).map((d) => d.id);
+
+        expect(ids).not.toContain(scan.id);
+        expect(ids).toContain(orphan.id);
+        expect(ids).toContain(editorial.id);
+
+        // 404, not 403 — the endpoint must not confirm the scan exists.
+        const denied = await request(app.getHttpServer())
+          .get(`/api/v1/admin/digests/${scan.id}`)
+          .set('Authorization', `Bearer ${reviewer.accessToken}`)
+          .expect(404);
+        expect(denied.body.message).toBe('Digest not found');
+
+        await request(app.getHttpServer())
+          .get(`/api/v1/admin/digests/${orphan.id}`)
+          .set('Authorization', `Bearer ${reviewer.accessToken}`)
+          .expect(200);
+        await request(app.getHttpServer())
+          .get(`/api/v1/admin/digests/${editorial.id}`)
+          .set('Authorization', `Bearer ${reviewer.accessToken}`)
+          .expect(200);
+      } finally {
+        await prisma.digest.deleteMany({
+          where: { id: { in: [scan.id, orphan.id, editorial.id] } },
+        });
+        await prisma.platformRoleGrant.deleteMany({
+          where: { userId: reviewer.userId },
+        });
+        await cache.invalidatePlatformForUser(reviewer.userId);
+      }
+    });
+  });
+
   describe('the staff API', () => {
     it('denies a user without platform-staff:manage', async () => {
       const user = await createAuthenticatedUser(app, {

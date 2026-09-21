@@ -7,6 +7,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { MfaGuard } from '../../common/guards/mfa.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { TenantGuard } from '../../common/guards/tenant.guard';
+import { PlatformRosterHealthService } from '../rbac/platform-roster.health';
 import { SearchService } from './search.service';
 import { SuppressedDocsService } from './suppressed-docs.service';
 
@@ -28,6 +29,8 @@ export class AdminDiagnosticsController {
   constructor(
     private readonly suppressedDocs: SuppressedDocsService,
     private readonly searchService: SearchService,
+    // RbacModule is @Global, so this needs no module edge from search.
+    private readonly platformRoster: PlatformRosterHealthService,
   ) {}
 
   @Get('suppressed-docs')
@@ -54,6 +57,17 @@ export class AdminDiagnosticsController {
   })
   getVectorIndexHealth() {
     return { success: true, data: this.searchService.getVectorIndexStats() };
+  }
+
+  @Get('platform-roster')
+  @ApiOperation({
+    summary: 'Whether anybody can actually open the review queue',
+    description:
+      'The review queue is guarded by PLATFORM capability. If platform_role_grants is empty, it 403s for everyone — including whoever would have to grant the access back. The same condition is logged once at boot; this endpoint exists so an operator can see it without reading container logs. It is NEVER fatal: a review-queue misconfiguration must not stop search, auth, mobile or billing webhooks from starting.',
+  })
+  async getPlatformRosterHealth() {
+    const status = await this.platformRoster.getStatus();
+    return { success: true, data: status };
   }
 
   @Post('suppressed-docs/refresh')

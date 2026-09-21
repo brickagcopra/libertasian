@@ -3,6 +3,11 @@ export { PermissionsService } from './permissions.service';
 export { RolesService } from './roles.service';
 export { RbacCacheService } from './rbac-cache.service';
 export { PlatformGrantsService } from './platform-grants.service';
+export {
+  PlatformRosterHealthService,
+  BOOTSTRAP_COMMAND,
+} from './platform-roster.health';
+export type { PlatformRosterStatus } from './platform-roster.health';
 export type {
   PlatformStaffUser,
   PlatformGrantRow,

@@ -1135,7 +1135,7 @@ describe('DigestsService', () => {
         _count: { doctrineExtracts: 2, editorialFlags: 0 },
       };
 
-      prismaService.digest.findUnique.mockResolvedValue(aiGeneratedDigest);
+      prismaService.digest.findFirst.mockResolvedValue(aiGeneratedDigest);
 
       const result = await service.findByIdAdmin('ai-digest-1');
 
@@ -1146,7 +1146,7 @@ describe('DigestsService', () => {
     });
 
     it('should throw NotFoundException if digest does not exist', async () => {
-      prismaService.digest.findUnique.mockResolvedValue(null);
+      prismaService.digest.findFirst.mockResolvedValue(null);
 
       await expect(service.findByIdAdmin('nonexistent-id')).rejects.toThrow(
         NotFoundException,
@@ -1156,23 +1156,41 @@ describe('DigestsService', () => {
       );
     });
 
-    it('should NOT call assertDigestAccess (no visibility enforcement)', async () => {
-      const privateDigestDifferentUser = {
+    it('reads across organizations without an access check', async () => {
+      // The whole point of the admin view: one editorial team reviews a
+      // corpus spanning every organization, so no assertDigestAccess.
+      const otherOrgDigest = {
         ...mockDigest,
-        userId: 'other-user',
+        userId: null,
         organizationId: 'other-org',
-        visibility: 'private',
+        visibility: 'org',
         legalDocument: mockLegalDocument,
         reviews: [],
         derivativeGenerationJob: null,
         _count: { doctrineExtracts: 0, editorialFlags: 0 },
       };
 
-      prismaService.digest.findUnique.mockResolvedValue(privateDigestDifferentUser);
+      prismaService.digest.findFirst.mockResolvedValue(otherOrgDigest);
 
-      // findByIdAdmin should succeed without userId/orgId — no access check
       const result = await service.findByIdAdmin('digest-1');
-      expect(result).toEqual(privateDigestDifferentUser);
+      expect(result).toEqual(otherOrgDigest);
+    });
+
+    it('excludes user-owned private content from that carve-out', async () => {
+      // Cross-tenant is about ORGANIZATIONS, not about people's own material.
+      // The exclusion lives in the WHERE, so an excluded digest comes back as
+      // null and 404s exactly like a missing one — see
+      // editorial-review-privacy.spec.ts for the full set of cases.
+      await service.findByIdAdmin('digest-1').catch(() => undefined);
+
+      const call = (
+        prismaService.digest.findFirst.mock.calls as Array<
+          [{ where: Record<string, unknown> }]
+        >
+      )[0]![0];
+      expect(call.where).toMatchObject({
+        NOT: { AND: [{ userId: { not: null } }, { visibility: 'private' }] },
+      });
     });
 
     it('should include derivativeGenerationJob in response', async () => {
@@ -1196,7 +1214,7 @@ describe('DigestsService', () => {
         _count: { doctrineExtracts: 0, editorialFlags: 0 },
       };
 
-      prismaService.digest.findUnique.mockResolvedValue(digestWithJob);
+      prismaService.digest.findFirst.mockResolvedValue(digestWithJob);
 
       const result = await service.findByIdAdmin('digest-1');
 
