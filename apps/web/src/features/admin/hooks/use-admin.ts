@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { apiClient } from '@/lib/api-client';
+import type { DigestReviewer } from '@libertasian/types';
 import type {
   CorpusHealth,
   Source,
@@ -563,6 +564,27 @@ export function useReviewQueueStats() {
     queryFn: async () => {
       const res = await apiClient.get<{ success: boolean; data: ReviewQueueStats }>(
         '/admin/digests/review-stats',
+      );
+      return res.data;
+    },
+  });
+}
+
+/**
+ * Who may be assigned a digest.
+ *
+ * Resolved server-side from the `digests:review` platform permission — the
+ * SAME check the assignment validator runs. The assign dropdown used to be
+ * built from `reviewStats.perReviewer`, which lists who has review HISTORY:
+ * it omitted every newly-granted reviewer and offered people who had since
+ * lost the permission, whose assignment then failed with a 400.
+ */
+export function useDigestReviewers() {
+  return useQuery({
+    queryKey: ['admin', 'digest-reviewers'],
+    queryFn: async () => {
+      const res = await apiClient.get<{ success: boolean; data: DigestReviewer[] }>(
+        '/admin/digests/reviewers',
       );
       return res.data;
     },

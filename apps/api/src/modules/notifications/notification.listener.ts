@@ -10,6 +10,7 @@ import {
   type TaskCommentAddedEvent,
   type MatterCommentAddedEvent,
   type DigestReadyEvent,
+  type DigestAssignedEvent,
   type ShareCreatedEvent,
   type SubscriptionNotificationEvent,
 } from './notification.events';
@@ -41,6 +42,63 @@ export class NotificationListener {
       });
     } catch (error) {
       this.logger.error('Failed to create task_assigned notification', error);
+    }
+  }
+
+  /**
+   * A reviewer was assigned digests.
+   *
+   * ONE notification per event, however many digests it carries — a batch of
+   * 20 to one person is one piece of news, not twenty. Everything here is
+   * best-effort: the assignment has already been written by the time this
+   * runs, and a notification failure must never fail or roll it back, so the
+   * whole body is inside a catch that only logs.
+   */
+  @OnEvent(NOTIFICATION_EVENTS.DIGEST_ASSIGNED)
+  async handleDigestAssigned(event: DigestAssignedEvent) {
+    // Don't notify someone about their own action.
+    if (event.assignedToUserId === event.assignedByUserId) return;
+    if (event.digestIds.length === 0) return;
+
+    try {
+      const count = event.digestIds.length;
+      const firstId = event.digestIds[0]!;
+
+      const [actor, digest] = await Promise.all([
+        event.assignedByUserId
+          ? this.prisma.user.findUnique({
+              where: { id: event.assignedByUserId },
+              select: { fullName: true },
+            })
+          : Promise.resolve(null),
+        count === 1
+          ? // CARVE-OUT: admin operation — cross-tenant by design. The
+            // assignee is platform staff and is generally not a member of the
+            // digest's organization.
+            this.prisma.digest.findUnique({
+              where: { id: firstId },
+              select: { title: true },
+            })
+          : Promise.resolve(null),
+      ]);
+
+      const actorName = actor?.fullName ?? 'An editor';
+
+      await this.notificationCenterService.createNotification({
+        userId: event.assignedToUserId,
+        // No organizationId: reviewing the shared corpus is platform work.
+        type: 'digest_assigned',
+        title:
+          count === 1
+            ? `${actorName} assigned you a digest to review`
+            : `${actorName} assigned you ${count} digests to review`,
+        entityType: 'digest',
+        ...(digest?.title ? { body: digest.title } : {}),
+        // entity_id is a UUID column — only meaningful when there is exactly one.
+        ...(count === 1 ? { entityId: firstId } : {}),
+      });
+    } catch (error) {
+      this.logger.error('Failed to create digest_assigned notification', error);
     }
   }
 

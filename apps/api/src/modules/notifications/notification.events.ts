@@ -4,6 +4,7 @@ export const NOTIFICATION_EVENTS = {
   TASK_COMMENT_ADDED: 'notification.task_comment_added',
   MATTER_COMMENT_ADDED: 'notification.matter_comment_added',
   DIGEST_READY: 'notification.digest_ready',
+  DIGEST_ASSIGNED: 'notification.digest_assigned',
   SHARE_CREATED: 'notification.share_created',
   COMMUNITY_RATING_RECEIVED: 'notification.community_rating_received',
   EXPERT_VERIFICATION_RESOLVED: 'notification.expert_verification_resolved',
@@ -99,4 +100,19 @@ export interface SubscriptionNotificationEvent {
   fromState: string;
   toState: string;
   action: string;
+}
+
+/**
+ * A reviewer was assigned one or more digests.
+ *
+ * Deliberately carries the whole batch rather than one event per digest: a
+ * batch of N digests to one person must produce ONE notification, not N.
+ * There is no organizationId — reviewing the shared editorial corpus is
+ * platform work, and the assignee's own organization has nothing to do with it.
+ */
+export interface DigestAssignedEvent {
+  digestIds: string[];
+  assignedToUserId: string;
+  /** null when the assignment came from a non-user path. */
+  assignedByUserId: string | null;
 }
