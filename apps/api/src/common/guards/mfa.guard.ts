@@ -14,6 +14,14 @@ import type { Request } from 'express';
  * For roles that don't require MFA, this guard passes through.
  */
 
+// TODO(rbac): replace this hardcoded list with `role_definitions.requires_mfa`,
+// which every seeded role already sets, resolved through the roles the caller
+// actually holds (member_roles for tenant, platform_role_grants for platform).
+// This list reads the LEGACY `organization_members.role` string column off the
+// JWT, which the RBAC APIs never write — so a role granted in a panel can
+// never trigger it. It is inert today because MFA is off; it must not outlive
+// that, since a role-name string literal in an authorization decision is
+// exactly what the platform-grants model removes everywhere else.
 const MFA_REQUIRED_ROLES = ['owner', 'admin', 'editor', 'reviewer'];
 
 @Injectable()

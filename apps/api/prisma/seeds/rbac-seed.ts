@@ -134,6 +134,12 @@ export const PERMISSIONS: PermissionSeed[] = [
   { code: 'admin:billing', resource: 'admin', action: 'billing', category: 'admin', description: 'Manage billing, subscriptions, coupons, and promotions' },
   { code: 'admin:users', resource: 'admin', action: 'users', category: 'admin', description: 'View users across organizations (admin user management)' },
   { code: 'admin:ai-settings', resource: 'admin', action: 'ai-settings', category: 'admin', description: 'Manage AI model settings and budgets' },
+  // Platform staff administration. Codes deliberately do NOT start with
+  // 'admin:' — jwt.strategy derives isPlatformAdmin from that prefix over
+  // TENANT permissions, and these are platform-scope capabilities resolved
+  // from platform_role_grants instead (see PlatformGrantsService).
+  { code: 'platform-staff:manage', resource: 'platform-staff', action: 'manage', category: 'admin', description: 'Grant and revoke platform staff roles (no organization)' },
+  { code: 'platform-roles:manage', resource: 'platform-roles', action: 'manage', category: 'admin', description: 'Create and edit platform-scope roles that can be granted to staff' },
   { code: 'users:read', resource: 'users', action: 'read', category: 'admin', description: 'View organization members' },
   { code: 'users:update', resource: 'users', action: 'update', category: 'admin', description: 'Update user profiles' },
   { code: 'users:deactivate', resource: 'users', action: 'deactivate', category: 'admin', description: 'Deactivate/suspend users' },
@@ -208,6 +214,19 @@ const ROLES: RoleSeed[] = [
 /** All permission codes */
 const ALL_CODES = PERMISSIONS.map((p) => p.code);
 
+/**
+ * Codes that must never be conferred by tenant ownership. Kept next to the
+ * role matrix so adding a platform capability to PERMISSIONS cannot silently
+ * fall into `owner` via ALL_CODES.
+ */
+const PLATFORM_SCOPE_CODES = ALL_CODES.filter(
+  (c) =>
+    c.startsWith('admin:') ||
+    c.startsWith('platform-staff:') ||
+    c.startsWith('platform-roles:') ||
+    c === 'digests:review',
+);
+
 /** Helper: all permissions matching a category */
 function byCategory(cat: string): string[] {
   return PERMISSIONS.filter((p) => p.category === cat).map((p) => p.code);
@@ -219,11 +238,24 @@ function byResource(res: string): string[] {
 }
 
 export const ROLE_PERMISSIONS: Record<string, string[]> = {
-  // Owner: ALL tenant permissions EXCEPT platform admin:* codes. Personal-
+  // Owner: ALL tenant permissions EXCEPT platform capability. Personal-
   // workspace owners are linked to this shared system role, so it must NOT
   // confer platform administration. Real admins are granted explicitly (see
-  // migration 20260702120000_strip_owner_platform_admin), never via ownership.
-  owner: ALL_CODES.filter((c) => !c.startsWith('admin:')),
+  // migrations 20260702120000_strip_owner_platform_admin and
+  // 20260920140000_platform_role_grants), never via ownership.
+  //
+  // Excluded, and why each one:
+  //  - admin:*            cross-tenant platform codes; also what
+  //                       jwt.strategy reads to derive isPlatformAdmin.
+  //  - platform-*:manage  staff administration; platform scope by definition.
+  //  - digests:review     reviewing the shared editorial corpus is platform
+  //                       work, not workspace ownership. While owner held it,
+  //                       every self-registered user got HTTP 200 on
+  //                       GET /admin/digests/review-queue (verified on prod
+  //                       2026-09-21) because DigestsAdminController accepts
+  //                       {digests:review, admin:review-queue} with mode
+  //                       'any'. admin, editor and reviewer keep it.
+  owner: ALL_CODES.filter((c) => !PLATFORM_SCOPE_CODES.includes(c)),
 
   // Admin: all except billing:manage and org transfer
   admin: ALL_CODES.filter(

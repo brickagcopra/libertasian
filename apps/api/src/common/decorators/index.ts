@@ -5,3 +5,8 @@ export { CurrentUser } from './current-user.decorator';
 export { RequiredSubscription } from './subscription.decorator';
 export { RequiredApiKeyPermissions } from './api-key-permissions.decorator';
 export { DerivativeResponse, DERIVATIVE_RESPONSE_KEY } from './derivative-response.decorator';
+export {
+  RequiredPlatformPermissions,
+  PLATFORM_PERMISSIONS_KEY,
+} from './platform-permissions.decorator';
+export type { PlatformPermissionsMetadata } from './platform-permissions.decorator';

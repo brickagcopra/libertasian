@@ -46,15 +46,30 @@ export class PermissionsService {
 
     const directRoleIds = memberRoles.map((mr) => mr.roleDefinitionId);
 
-    if (directRoleIds.length === 0) {
-      await this.cache.setCachedPermissions(memberId, []);
-      return [];
-    }
+    // 3 + 4. Expand via hierarchy and union the permission codes
+    const permissions = await this.resolvePermissionCodes(directRoleIds);
 
-    // 3. Expand roles via hierarchy (BFS — parent inherits child permissions)
+    // 5. Cache and return
+    await this.cache.setCachedPermissions(memberId, permissions);
+    return permissions;
+  }
+
+  /**
+   * Expand a set of directly-held role IDs through the hierarchy and return
+   * the union of their permission codes.
+   *
+   * Extracted so PLATFORM permission resolution (PlatformGrantsService, which
+   * is keyed on users rather than org members) runs through the exact same
+   * hierarchy expansion as tenant resolution. Two copies of a BFS is how the
+   * two models drift apart.
+   */
+  async resolvePermissionCodes(directRoleIds: string[]): Promise<string[]> {
+    if (directRoleIds.length === 0) return [];
+
+    // Expand roles via hierarchy (BFS — parent inherits child permissions)
     const allRoleIds = await this.expandRolesViaHierarchy(directRoleIds);
 
-    // 4. Fetch distinct permission codes for all resolved roles
+    // Fetch distinct permission codes for all resolved roles
     const rolePermissions = await this.prisma.rolePermission.findMany({
       where: { roleId: { in: allRoleIds } },
       select: {
@@ -62,11 +77,7 @@ export class PermissionsService {
       },
     });
 
-    const permissions = [...new Set(rolePermissions.map((rp) => rp.permission.code))];
-
-    // 5. Cache and return
-    await this.cache.setCachedPermissions(memberId, permissions);
-    return permissions;
+    return [...new Set(rolePermissions.map((rp) => rp.permission.code))];
   }
 
   /**

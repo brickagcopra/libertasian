@@ -5,6 +5,7 @@ import { Test, type TestingModule } from '@nestjs/testing';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { DigestsService } from './digests.service';
+import { PlatformGrantsService } from '../rbac/platform-grants.service';
 
 /**
  * Focused unit tests for the PR2 additions — search() and generateOnDemand().
@@ -43,6 +44,15 @@ describe('DigestsService — search + generateOnDemand (PR2)', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: getQueueToken('digests'), useValue: { add: jest.fn() } },
         { provide: EventEmitter2, useValue: { emit: jest.fn() } },
+        {
+          // Reviewer authority is a PLATFORM permission now, not a row in
+          // organization_members. This suite does not exercise assignment.
+          provide: PlatformGrantsService,
+          useValue: {
+            hasPlatformPermission: jest.fn().mockResolvedValue(false),
+            listUsersWithPlatformPermission: jest.fn().mockResolvedValue([]),
+          },
+        },
       ],
     }).compile();
 
