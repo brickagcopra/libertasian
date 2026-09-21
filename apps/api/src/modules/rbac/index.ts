@@ -8,6 +8,7 @@ export {
   BOOTSTRAP_COMMAND,
 } from './platform-roster.health';
 export type { PlatformRosterStatus } from './platform-roster.health';
+export { MemberRoleSyncService } from './member-role-sync.service';
 export type {
   PlatformStaffUser,
   PlatformGrantRow,
