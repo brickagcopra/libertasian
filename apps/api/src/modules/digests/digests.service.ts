@@ -22,6 +22,10 @@ import {
   type ContentPublishedEvent,
 } from '../audio/audio.events';
 import {
+  NOTIFICATION_EVENTS,
+  type DigestAssignedEvent,
+} from '../notifications/notification.events';
+import {
   AssignReviewerDto,
   BatchApproveDto,
   BatchAssignDto,
@@ -963,7 +967,11 @@ export class DigestsService {
   /**
    * Assign a reviewer to a digest. Validates the reviewer has an appropriate role.
    */
-  async assignReviewer(digestId: string, dto: AssignReviewerDto) {
+  async assignReviewer(
+    digestId: string,
+    dto: AssignReviewerDto,
+    actorUserId?: string,
+  ) {
     // CARVE-OUT: admin operation — cross-tenant by design
     const digest = await this.prisma.digest.findUnique({
       where: { id: digestId },
@@ -975,7 +983,7 @@ export class DigestsService {
     await this.validateReviewerRole(dto.reviewerUserId);
 
     // CARVE-OUT: admin operation — cross-tenant by design
-    return this.prisma.digest.update({
+    const updated = await this.prisma.digest.update({
       where: { id: digestId },
       data: { assignedReviewerUserId: dto.reviewerUserId },
       include: {
@@ -984,6 +992,10 @@ export class DigestsService {
         },
       },
     });
+
+    this.notifyAssignee([digestId], dto.reviewerUserId, actorUserId);
+
+    return updated;
   }
 
   /**
@@ -1194,7 +1206,7 @@ export class DigestsService {
   /**
    * Batch assign a reviewer to multiple digests.
    */
-  async batchAssign(dto: BatchAssignDto) {
+  async batchAssign(dto: BatchAssignDto, actorUserId?: string) {
     await this.validateReviewerRole(dto.reviewerUserId);
 
     // CARVE-OUT: admin batch — cross-tenant by design
@@ -1203,7 +1215,37 @@ export class DigestsService {
       data: { assignedReviewerUserId: dto.reviewerUserId },
     });
 
+    // ONE notification for the whole batch, not one per digest.
+    this.notifyAssignee(dto.digestIds, dto.reviewerUserId, actorUserId);
+
     return { processed: result.count, digestIds: dto.digestIds };
+  }
+
+  /**
+   * Tell the assignee they have work, without letting that failure reach the
+   * assignment.
+   *
+   * Deliberately NOT awaited and wrapped in its own catch: the digest rows are
+   * already written by the time this runs, and a notification problem must
+   * never fail the request or roll the assignment back.
+   */
+  private notifyAssignee(
+    digestIds: string[],
+    assignedToUserId: string,
+    actorUserId?: string,
+  ): void {
+    try {
+      const event: DigestAssignedEvent = {
+        digestIds,
+        assignedToUserId,
+        assignedByUserId: actorUserId ?? null,
+      };
+      this.events.emit(NOTIFICATION_EVENTS.DIGEST_ASSIGNED, event);
+    } catch (err) {
+      this.logger.warn(
+        `Digest assignment notification failed to dispatch: ${(err as Error).message}`,
+      );
+    }
   }
 
   /**

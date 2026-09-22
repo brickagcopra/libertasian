@@ -2,7 +2,16 @@
 
 import { useState, useCallback } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Check, X, RotateCcw, ArrowUpDown, UserPlus } from 'lucide-react';
+import {
+  ArrowLeft,
+  Check,
+  X,
+  RotateCcw,
+  ArrowUpDown,
+  UserPlus,
+  ExternalLink,
+  AlertTriangle,
+} from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 
 import {
@@ -12,7 +21,11 @@ import {
   useBatchApprove,
   useBatchReject,
   useBatchAssign,
+  useAdminDigest,
+  useDigestReviewers,
 } from '@/features/admin/hooks/use-admin';
+import { DigestContentPanel } from '@/features/digests/components/digest-content-panel';
+import { useAuthStore } from '@/stores/auth-store';
 import type { ReviewQueueItem, ReviewQueueStats } from '@/features/admin/types';
 import {
   Dialog,
@@ -51,8 +64,20 @@ export default function ReviewQueuePage() {
   const [batchNotesOpen, setBatchNotesOpen] = useState<'approve' | 'reject' | null>(null);
   const [batchNotes, setBatchNotes] = useState('');
   const [batchAssignOpen, setBatchAssignOpen] = useState(false);
+  // handleBatchAssign used to swallow its error entirely, so a refused
+  // assignment looked exactly like a successful one.
+  const [assignError, setAssignError] = useState<string | null>(null);
+  const [assignSuccess, setAssignSuccess] = useState<string | null>(null);
+
+  const currentUserId = useAuthStore((state) => state.user?.id);
 
   const { data: stats, isLoading: statsLoading } = useReviewQueueStats();
+  // Who MAY review, resolved server-side from the digests:review platform
+  // permission — the same check the assignment validator runs. The dropdown
+  // was built from stats.perReviewer, which lists who has review HISTORY: it
+  // hid every newly-granted reviewer and offered people whose assignment then
+  // failed with a 400.
+  const { data: reviewers } = useDigestReviewers();
   const { data, isLoading, error } = useEnhancedReviewQueue({
     reviewStatus: statusFilter || undefined,
     sourceOrigin: originFilter || undefined,
@@ -110,14 +135,22 @@ export default function ReviewQueuePage() {
     }
   };
 
-  const handleBatchAssign = async (reviewerUserId: string) => {
+  const handleBatchAssign = async (reviewerUserId: string, reviewerName: string) => {
     if (selected.size === 0) return;
+    setAssignError(null);
+    setAssignSuccess(null);
+    const count = selected.size;
     try {
       await batchAssign.mutateAsync({ digestIds: Array.from(selected), reviewerUserId });
       setSelected(new Set());
       setBatchAssignOpen(false);
-    } catch {
-      // Error handled by mutation state
+      setAssignSuccess(
+        `${count} digest${count === 1 ? '' : 's'} assigned to ${reviewerName}.`,
+      );
+    } catch (err) {
+      // Show the server's message and KEEP THE DIALOG OPEN so the operator can
+      // pick someone else — the message names the permission that is missing.
+      setAssignError(err instanceof Error ? err.message : 'Assignment failed.');
     }
   };
 
@@ -193,13 +226,30 @@ export default function ReviewQueuePage() {
           <SelectContent>
             <SelectItem value="__all__">All Assignees</SelectItem>
             <SelectItem value="unassigned">Unassigned</SelectItem>
-            {stats?.perReviewer.map((r) => (
-              <SelectItem key={r.reviewerUserId} value={r.reviewerUserId}>
-                {r.reviewerName ?? r.reviewerUserId.slice(0, 8)}
+            {reviewers?.map((r) => (
+              <SelectItem key={r.userId} value={r.userId}>
+                {r.fullName}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
+
+        {currentUserId && (
+          <Button
+            variant={assignedToFilter === currentUserId ? 'default' : 'outline'}
+            size="sm"
+            className="h-9"
+            onClick={() => {
+              setAssignedToFilter((prev) =>
+                prev === currentUserId ? '' : currentUserId,
+              );
+              setCursor(undefined);
+              setSelected(new Set());
+            }}
+          >
+            Assigned to me
+          </Button>
+        )}
       </div>
 
       {/* Filters Row 2: Confidence Range, Sort */}
@@ -339,38 +389,64 @@ export default function ReviewQueuePage() {
       </Dialog>
 
       {/* Batch Assign Dialog */}
-      <Dialog open={batchAssignOpen} onOpenChange={setBatchAssignOpen}>
+      <Dialog
+        open={batchAssignOpen}
+        onOpenChange={(open) => {
+          setBatchAssignOpen(open);
+          if (!open) setAssignError(null);
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Assign {selected.size} digests to reviewer</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            {stats?.perReviewer && stats.perReviewer.length > 0 ? (
+            {assignError && (
+              <Alert variant="destructive">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertDescription>{assignError}</AlertDescription>
+              </Alert>
+            )}
+            {reviewers && reviewers.length > 0 ? (
               <div className="space-y-2">
-                {stats.perReviewer.map((r) => (
+                {reviewers.map((r) => (
                   <Button
-                    key={r.reviewerUserId}
+                    key={r.userId}
                     variant="outline"
                     className="w-full justify-between"
-                    onClick={() => handleBatchAssign(r.reviewerUserId)}
+                    onClick={() => handleBatchAssign(r.userId, r.fullName)}
                     disabled={batchAssign.isPending}
                   >
-                    <span>{r.reviewerName ?? r.reviewerUserId.slice(0, 8)}</span>
-                    <span className="text-xs text-muted-foreground">{r.assigned} assigned</span>
+                    <span>{r.fullName}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {r.assigned} assigned / {r.reviewed} reviewed
+                    </span>
                   </Button>
                 ))}
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">No reviewers available.</p>
+              <p className="text-sm text-muted-foreground">
+                Nobody holds the <code className="font-mono">digests:review</code>{' '}
+                platform permission yet. Grant someone a platform role that
+                confers it in Admin → Staff.
+              </p>
             )}
           </div>
         </DialogContent>
       </Dialog>
 
-      {(batchApprove.isSuccess || batchReject.isSuccess) && (
+      {assignError && !batchAssignOpen && (
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertDescription>{assignError}</AlertDescription>
+        </Alert>
+      )}
+
+      {(batchApprove.isSuccess || batchReject.isSuccess || assignSuccess) && (
         <Alert>
           <AlertDescription className="text-green-700">
-            Batch operation complete: {batchApprove.data?.processed ?? batchReject.data?.processed ?? 0} digests processed.
+            {assignSuccess ??
+              `Batch operation complete: ${batchApprove.data?.processed ?? batchReject.data?.processed ?? 0} digests processed.`}
           </AlertDescription>
         </Alert>
       )}
@@ -559,12 +635,22 @@ function EnhancedDigestCard({
             className="mt-1"
           />
           <div className="flex-1">
-            <button
-              onClick={() => setExpanded(!expanded)}
-              className="text-left text-sm font-medium hover:underline"
-            >
-              {item.title}
-            </button>
+            <div className="flex items-start justify-between gap-2">
+              <button
+                onClick={() => setExpanded(!expanded)}
+                className="text-left text-sm font-medium hover:underline"
+              >
+                {item.title}
+              </button>
+              {/* The detail page already renders the full digest and the same
+                  review form — a reviewer should never have to guess the URL. */}
+              <Button variant="ghost" size="sm" className="h-7 shrink-0 px-2 text-xs" asChild>
+                <Link href={`/admin/digests/${item.id}`}>
+                  <ExternalLink className="mr-1 h-3 w-3" />
+                  View
+                </Link>
+              </Button>
+            </div>
             <div className="mt-1 flex flex-wrap gap-2">
               <Badge variant="secondary">{item.digestType}</Badge>
               <Badge variant="secondary">{item.sourceOrigin.replace(/_/g, ' ')}</Badge>
@@ -597,6 +683,12 @@ function EnhancedDigestCard({
         {expanded && (
           <div className="ml-7 mt-4 space-y-3">
             <Separator />
+
+            {/* Lazy-loaded: scoring a digest you cannot read is guesswork, but
+                20 rows of content_json in the list payload is a regression.
+                useAdminDigest only fires once this row is expanded. */}
+            <InlineDigestContent digestId={item.id} />
+
             {item.legalDocument && (
               <Card className="bg-muted">
                 <CardContent className="p-3">
@@ -679,6 +771,41 @@ function EnhancedDigestCard({
             </div>
           </div>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function InlineDigestContent({ digestId }: { digestId: string }) {
+  const { data: digest, isLoading, error } = useAdminDigest(digestId);
+
+  if (isLoading) {
+    return <AdminCardSkeleton />;
+  }
+
+  if (error || !digest) {
+    return (
+      <Alert variant="destructive">
+        <AlertDescription className="text-xs">
+          {error instanceof Error ? error.message : 'Failed to load digest content.'}{' '}
+          <Link href={`/admin/digests/${digestId}`} className="underline">
+            Open the detail page
+          </Link>
+          .
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  return (
+    <Card className="bg-muted/40">
+      <CardContent className="p-3">
+        <DigestContentPanel
+          digest={digest}
+          citedAuthoritiesJson={digest.citedAuthoritiesJson}
+          showHeader={false}
+          detailHref={`/admin/digests/${digestId}`}
+        />
       </CardContent>
     </Card>
   );

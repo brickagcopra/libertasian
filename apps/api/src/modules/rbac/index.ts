@@ -6,7 +6,9 @@ export { PlatformGrantsService } from './platform-grants.service';
 export type {
   PlatformStaffUser,
   PlatformGrantRow,
+  PlatformAuditEntry,
 } from './platform-grants.service';
+export { PLATFORM_AUDIT_ACTIONS } from './platform-grants.service';
 
 // Controllers
 export { PermissionsController } from './controllers/permissions.controller';
@@ -28,6 +30,7 @@ export {
   ListMembersQueryDto,
   GrantPlatformRoleDto,
   ListPlatformStaffQueryDto,
+  ListPlatformAuditQueryDto,
   SearchStaffCandidatesQueryDto,
   CreatePlatformRoleDto,
   UpdatePlatformRoleDto,

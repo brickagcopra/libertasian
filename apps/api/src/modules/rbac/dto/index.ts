@@ -8,6 +8,7 @@ export { ListMembersQueryDto } from './list-members-query.dto';
 export {
   GrantPlatformRoleDto,
   ListPlatformStaffQueryDto,
+  ListPlatformAuditQueryDto,
   SearchStaffCandidatesQueryDto,
   CreatePlatformRoleDto,
   UpdatePlatformRoleDto,

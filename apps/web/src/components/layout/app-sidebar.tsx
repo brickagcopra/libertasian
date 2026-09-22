@@ -62,6 +62,7 @@ import {
   LayersIcon,
   LibraryBigIcon,
   FileStackIcon,
+  ShieldIcon,
 } from 'lucide-react';
 
 interface NavItem {
@@ -143,7 +144,10 @@ const ADMIN_NAV_ITEMS: NavItem[] = [
   { href: '/admin/analytics/corpus', label: 'Corpus & Ingestion', icon: DatabaseIcon },
   { href: '/admin/analytics/realtime', label: 'Real-time', icon: ActivityIcon },
 
-  // 7 — Business surfaces
+  // 7 — Platform administration
+  { href: '/admin/staff', label: 'Platform Staff', icon: ShieldIcon },
+
+  // 8 — Business surfaces
   { href: '/admin/plans', label: 'Plans', icon: CreditCardIcon },
   { href: '/admin/subscriptions', label: 'Subscriptions', icon: CreditCardIcon },
   { href: '/admin/users', label: 'Users', icon: UsersIcon },

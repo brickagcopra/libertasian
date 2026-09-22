@@ -18,6 +18,7 @@ import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { PlatformGrantsService } from '../platform-grants.service';
 import {
   GrantPlatformRoleDto,
+  ListPlatformAuditQueryDto,
   ListPlatformStaffQueryDto,
   SearchStaffCandidatesQueryDto,
 } from '../dto';
@@ -67,6 +68,21 @@ export class PlatformStaffController {
       query.limit,
     );
     return { success: true, data: candidates };
+  }
+
+  // Static route MUST precede :userId.
+  @Get('audit')
+  @ApiOperation({
+    summary: 'Grant, revoke and refusal history',
+    description:
+      'Served here rather than from /rbac/audit-logs, which is tenant-scoped, plan-gated and needs audit-logs:read — a permission platform staff may not hold. Includes refusals, so a blocked escalation attempt is visible.',
+  })
+  async auditTrail(@Query() query: ListPlatformAuditQueryDto) {
+    const result = await this.platformGrants.listAuditTrail({
+      ...(query.cursor ? { cursor: query.cursor } : {}),
+      ...(query.limit ? { limit: query.limit } : {}),
+    });
+    return { success: true, data: result.items, meta: result.meta };
   }
 
   @Get(':userId/roles')
