@@ -34,7 +34,7 @@ import { stdin, stdout } from 'node:process';
 
 import { NestFactory } from '@nestjs/core';
 
-import { AppModule } from '../src/app.module';
+import { PlatformGrantCliModule } from '../src/modules/rbac/platform-grant-cli.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { PermissionsService } from '../src/modules/rbac/permissions.service';
 import { PlatformGrantsService } from '../src/modules/rbac/platform-grants.service';
@@ -98,7 +98,11 @@ async function main(): Promise<number> {
     return 1;
   }
 
-  const app = await NestFactory.createApplicationContext(AppModule, {
+  // PlatformGrantCliModule, NOT AppModule — see the comment on that module.
+  // AppModule's 19 BullMQ processors would make this throwaway container a
+  // second consumer of the live queues (2026-09-21: 728 digests' audio jobs
+  // consumed, 499 audio_renditions rows failed) and bury the prompt below.
+  const app = await NestFactory.createApplicationContext(PlatformGrantCliModule, {
     logger: ['error', 'warn'],
   });
 
