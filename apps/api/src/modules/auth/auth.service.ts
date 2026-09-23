@@ -17,6 +17,7 @@ import type { JwtPayload, TokenPair, UserRole } from '@libertasian/types';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { MemberRoleSyncService } from '../rbac/member-role-sync.service';
 import { PermissionsService } from '../rbac/permissions.service';
 import { UsersService } from '../users/users.service';
 import { RegisterDto, LoginDto } from './dto';
@@ -58,6 +59,7 @@ export class AuthService {
     private readonly loginEvents: LoginEventService,
     private readonly permissions: PermissionsService,
     private readonly loginThrottle: LoginThrottleService,
+    private readonly memberRoleSync: MemberRoleSyncService,
   ) {
     this.accessTtl = this.config.get<number>('JWT_ACCESS_TTL', 900);
     this.refreshTtl = this.config.get<number>('JWT_REFRESH_TTL', 604800);
@@ -149,7 +151,7 @@ export class AuthService {
     });
 
     // Add user as owner of personal org
-    await this.prisma.organizationMember.create({
+    const ownerMember = await this.prisma.organizationMember.create({
       data: {
         organizationId: org.id,
         userId: user.id,
@@ -157,6 +159,13 @@ export class AuthService {
         status: 'active',
       },
     });
+
+    // Mirror that legacy role into `member_roles`. Authorization reads
+    // member_roles ONLY — PermissionsService and the isPlatformAdmin
+    // derivation never look at organization_members.role — so without this
+    // row the new owner resolves to ZERO permissions in their own workspace.
+    // Non-fatal by contract: registration must not fail over a mirrored row.
+    await this.memberRoleSync.linkSystemRole(ownerMember.id, 'owner', user.id);
 
     // Create free subscription
     await this.prisma.subscription.create({
@@ -197,9 +206,11 @@ export class AuthService {
     // Login" column reflects the user's first known network context.
     this.emitLoginEvent('login_success', user.id, req);
 
-    // Newly-registered owner of a personal org never has admin:* permissions
-    // (those are only granted to platform staff via RBAC). Compute anyway so
-    // the response shape stays consistent — fail-closed if anything errors.
+    // Newly-registered owner of a personal org never has admin:* permissions:
+    // the system owner role carries none (migration
+    // 20260702120000_strip_owner_platform_admin), and platform capability
+    // lives in platform_role_grants, which nothing automated writes. Compute
+    // anyway so the response shape stays consistent — fail-closed on error.
     const member = await this.prisma.organizationMember.findFirst({
       where: { userId: user.id, organizationId: org.id, status: 'active' },
       select: { id: true },
@@ -499,7 +510,7 @@ export class AuthService {
       },
     });
 
-    await this.prisma.organizationMember.create({
+    const ownerMember = await this.prisma.organizationMember.create({
       data: {
         organizationId: org.id,
         userId,
@@ -507,6 +518,10 @@ export class AuthService {
         status: 'active',
       },
     });
+
+    // Same mirror as register(). Social signups took this path and were
+    // equally permissionless.
+    await this.memberRoleSync.linkSystemRole(ownerMember.id, 'owner', userId);
 
     await this.prisma.subscription.create({
       data: {

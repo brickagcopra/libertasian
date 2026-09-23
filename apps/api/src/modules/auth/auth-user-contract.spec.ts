@@ -5,6 +5,7 @@ import { UserRole, type JwtPayload } from '@libertasian/types';
 import type { PrismaService } from '../../prisma/prisma.service';
 import type { AuditService } from '../audit/audit.service';
 import type { NotificationsService } from '../notifications/notifications.service';
+import type { MemberRoleSyncService } from '../rbac/member-role-sync.service';
 import type { PermissionsService } from '../rbac/permissions.service';
 import { UsersController } from '../users/users.controller';
 import { UsersService } from '../users/users.service';
@@ -67,6 +68,8 @@ describe('auth user shape contract (sign-in vs GET /users/me)', () => {
       {} as LoginEventService,
       {} as PermissionsService,
       {} as LoginThrottleService,
+      // Only buildAuthUser is exercised here; nothing registers.
+      {} as MemberRoleSyncService,
     );
     return (
       authService as unknown as {
@@ -144,6 +147,8 @@ describe('auth user shape contract (sign-in vs GET /users/me)', () => {
       {} as LoginEventService,
       {} as PermissionsService,
       {} as LoginThrottleService,
+      // Only buildAuthUser is exercised here; nothing registers.
+      {} as MemberRoleSyncService,
     );
     const built = (
       authService as unknown as {
