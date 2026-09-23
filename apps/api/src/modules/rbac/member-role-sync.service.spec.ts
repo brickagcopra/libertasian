@@ -60,10 +60,22 @@ describe('MemberRoleSyncService', () => {
     const cache = {
       invalidateForMember: jest.fn().mockResolvedValue(undefined),
     };
+    // Default: the legacy role confers nothing platform-scoped, so the
+    // containment guard passes and the mirror behaviour below is what is
+    // under test. The guard itself is covered in
+    // no-platform-capability-via-legacy-membership.spec.ts.
+    const permissions = {
+      resolvePermissionCodes: jest.fn().mockResolvedValue([]),
+    };
     return {
-      service: new MemberRoleSyncService(prisma as never, cache as never),
+      service: new MemberRoleSyncService(
+        prisma as never,
+        cache as never,
+        permissions as never,
+      ),
       prisma,
       cache,
+      permissions,
     };
   }
 
