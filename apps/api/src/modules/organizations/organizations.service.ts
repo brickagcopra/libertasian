@@ -10,6 +10,11 @@ import * as crypto from 'crypto';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { PermissionsService } from '../rbac/permissions.service';
+import {
+  PLATFORM_CAPABILITY_REFUSAL,
+  findPlatformScopedCodes,
+} from '../rbac/platform-scope';
 import { CreateOrganizationDto, UpdateOrganizationDto, InviteMemberDto } from './dto';
 
 @Injectable()
@@ -19,7 +24,54 @@ export class OrganizationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
+    // RbacModule is @Global(), so this needs no change to OrganizationsModule.
+    private readonly permissions: PermissionsService,
   ) {}
+
+  // ---- Platform-capability containment ----
+
+  /**
+   * True when the SYSTEM role behind a legacy role slug confers platform
+   * capability.
+   *
+   * The seeded `admin`, `editor` and `reviewer` roles mix workspace and
+   * platform permissions — `admin` alone carries 13 `admin:*` codes — and
+   * jwt.strategy derives isPlatformAdmin from the presence of any `admin:`
+   * code in a caller's WORKSPACE permissions. Linking a member to one of them
+   * through the legacy role string is therefore a platform-admin grant wearing
+   * an org-membership costume.
+   *
+   * Resolved through PermissionsService so role_hierarchy inheritance counts,
+   * exactly as in RolesService. Splitting those seeded roles into workspace and
+   * platform halves is the proper fix; refusing them here needs no seed change,
+   * no migration, and touches no existing row.
+   */
+  private async confersPlatformCapability(legacyRole: string): Promise<boolean> {
+    const roleDef = await this.prisma.roleDefinition.findFirst({
+      where: { slug: legacyRole, isSystem: true, organizationId: null },
+      select: { id: true },
+    });
+    // No system role for this slug means the dual-write would no-op anyway.
+    if (!roleDef) return false;
+
+    const conferred = await this.permissions.resolvePermissionCodes([roleDef.id]);
+    return findPlatformScopedCodes(conferred).length > 0;
+  }
+
+  /** Throwing form of {@link confersPlatformCapability}. */
+  private async assertLegacyRoleConfersNoPlatformCapability(
+    legacyRole: string,
+    context: { organizationId?: string; actorUserId: string },
+  ): Promise<void> {
+    if (!(await this.confersPlatformCapability(legacyRole))) return;
+
+    this.logger.warn(
+      `Refused platform capability through a workspace membership: ` +
+        `org=${context.organizationId ?? 'unknown'} ` +
+        `actor=${context.actorUserId} role="${legacyRole}"`,
+    );
+    throw new ForbiddenException(PLATFORM_CAPABILITY_REFUSAL);
+  }
 
   // ---- Organization CRUD ----
 
@@ -151,6 +203,16 @@ export class OrganizationsService {
     // Only owner/admin can invite
     await this.assertRole(organizationId, inviterUserId, ['owner', 'admin']);
 
+    // BEFORE any write, so neither a legacy role='admin' member row nor a
+    // pending_invites row carrying it is ever created. Without this, an owner
+    // could invite a second email address they control as `admin` and the
+    // dual-write would link it to the system admin role (13 admin:* codes),
+    // setting isPlatformAdmin on that account.
+    await this.assertLegacyRoleConfersNoPlatformCapability(dto.role, {
+      organizationId,
+      actorUserId: inviterUserId,
+    });
+
     // Check seat limits
     await this.checkSeatLimit(organizationId);
 
@@ -272,6 +334,15 @@ export class OrganizationsService {
     if (newRole === 'owner') {
       throw new ForbiddenException('Cannot assign owner role. Use transfer ownership.');
     }
+
+    // Before the update, so organization_members.role is left unchanged on
+    // refusal. UpdateMemberRoleDto accepts 'admin', and the only guard below
+    // (an admin may not promote to admin) does not apply to an owner — so this
+    // is the step that turns an invited second account into a platform admin.
+    await this.assertLegacyRoleConfersNoPlatformCapability(newRole, {
+      organizationId,
+      actorUserId: actorUserId,
+    });
 
     const membership = await this.prisma.organizationMember.findUnique({
       where: {
@@ -437,6 +508,16 @@ export class OrganizationsService {
       throw new ConflictException('You are already a member of this organization');
     }
 
+    // A pending invite is a role decision made in the past. There are none
+    // carrying a platform-scoped role on prod today, but an invite minted
+    // before this guard existed must not be redeemable now. Checked before the
+    // transaction so the membership is not created and the invite is not
+    // consumed — it stays visible for an admin to revoke.
+    await this.assertLegacyRoleConfersNoPlatformCapability(invite.role, {
+      organizationId: invite.organizationId,
+      actorUserId: userId,
+    });
+
     // Add user to organization and mark invite as accepted
     const [member] = await this.prisma.$transaction([
       this.prisma.organizationMember.create({
@@ -480,6 +561,17 @@ export class OrganizationsService {
 
     for (const invite of pendingInvites) {
       try {
+        // Skipped rather than thrown: this runs during registration, and one
+        // bad legacy invite must not fail the signup. The invite is left
+        // unaccepted and logged, so it can be revoked or re-issued.
+        if (await this.confersPlatformCapability(invite.role)) {
+          this.logger.warn(
+            `Skipped auto-accepting invite ${invite.id}: role "${invite.role}" ` +
+              'confers platform capability and cannot be granted through a workspace.',
+          );
+          continue;
+        }
+
         const [member] = await this.prisma.$transaction([
           this.prisma.organizationMember.create({
             data: {
@@ -631,6 +723,16 @@ export class OrganizationsService {
     legacyRole: string,
     assignedByUserId: string,
   ): Promise<void> {
+    // OUTSIDE the try ON PURPOSE. The catch below deliberately swallows
+    // dual-write failures so an RBAC hiccup cannot break an invite; a refusal
+    // to grant platform capability must not be swallowed the same way, or the
+    // backstop silently becomes a log line. Callers validate up front too —
+    // this is the chokepoint all four write paths funnel through, so it is the
+    // one place a new caller cannot forget.
+    await this.assertLegacyRoleConfersNoPlatformCapability(legacyRole, {
+      actorUserId: assignedByUserId,
+    });
+
     try {
       const roleDef = await this.prisma.roleDefinition.findFirst({
         where: { slug: legacyRole, isSystem: true, organizationId: null },
@@ -672,6 +774,11 @@ export class OrganizationsService {
     newLegacyRole: string,
     assignedByUserId: string,
   ): Promise<void> {
+    // Outside the try, for the reason given in dualWriteCreateMemberRole.
+    await this.assertLegacyRoleConfersNoPlatformCapability(newLegacyRole, {
+      actorUserId: assignedByUserId,
+    });
+
     try {
       const newRoleDef = await this.prisma.roleDefinition.findFirst({
         where: { slug: newLegacyRole, isSystem: true, organizationId: null },
