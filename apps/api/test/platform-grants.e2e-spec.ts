@@ -25,15 +25,9 @@ import { RbacCacheService } from '../src/modules/rbac/rbac-cache.service';
  *     org-switch endpoint, so a staff member's JWT org is permanently their
  *     personal workspace.
  *
- * Note on the acting admin below: DigestsAdminController's guard chain is
- * JwtAuthGuard + MfaGuard + TenantGuard + PermissionsGuard, and this PR
- * deliberately does not touch it, so REACHING /admin/digests/* still needs a
- * TENANT permission. The actor is therefore linked to the system admin role
- * the way migration 20260702120000 links the allowlist. The ASSIGNEE holds
- * nothing but a platform grant — which is the thing under test. Repointing
- * that controller at platform capability is the separate follow-up the brief
- * scopes out; `platformStaffCannotYetReachAdminDigests` below pins the
- * current behaviour so the follow-up has something to flip.
+ * DigestsAdminController is now guarded by PlatformPermissionsGuard, so both
+ * halves are platform capability: the actor reaches the queue on a platform
+ * grant, and so does the assignee. No membership anywhere is consulted.
  *
  * Requires PostgreSQL and Redis, and a database with the migration applied.
  */
@@ -159,45 +153,105 @@ describe('Platform role grants (E2E)', () => {
   });
 
   describe('a platform grant, with no organization anywhere', () => {
-    it('platformStaffCannotYetReachAdminDigests — pins the scoped-out gap', async () => {
-      // A platform reviewer holds digests:review as PLATFORM capability, but
-      // DigestsAdminController is still guarded by PermissionsGuard, which
-      // resolves TENANT permissions from the caller's organization membership.
-      // This PR deliberately does not touch that guard chain, so the reviewer
-      // is still refused at the door even though the platform model now knows
-      // perfectly well who they are.
-      //
-      // This test exists to make that gap visible and to give the follow-up a
-      // failing assertion to flip. It is NOT the desired end state.
-      const user = await createAuthenticatedUser(app, {
-        email: `plat-reviewer-${Date.now()}@libertasian-test.com`,
+    it('a platform reviewer works the queue end to end from a personal-workspace JWT', async () => {
+      // The case no org-scoped model can express: login picks the oldest
+      // membership and there is no org-switch endpoint, so this person's JWT
+      // organization is permanently their own personal workspace. They hold
+      // nothing there — their authority is a grant on them as a PERSON.
+      const reviewer = await createAuthenticatedUser(app, {
+        email: `plat-worker-${Date.now()}@libertasian-test.com`,
       });
-      const reviewer = await systemRole('reviewer');
+
+      // Denied before the grant…
+      await request(app.getHttpServer())
+        .get('/api/v1/admin/digests/review-queue')
+        .set('Authorization', `Bearer ${reviewer.accessToken}`)
+        .expect(403);
+
+      const reviewerRole = await systemRole('reviewer');
       await prisma.platformRoleGrant.create({
-        data: { userId: user.userId, roleDefinitionId: reviewer.id },
+        data: { userId: reviewer.userId, roleDefinitionId: reviewerRole.id },
       });
-      await cache.invalidatePlatformForUser(user.userId);
+      await cache.invalidatePlatformForUser(reviewer.userId);
+
+      // A digest to work. Its organization is somebody else's entirely.
+      const owner = await createAuthenticatedUser(app, {
+        email: `plat-digest-owner-${Date.now()}@libertasian-test.com`,
+      });
+      const orgRes = await request(app.getHttpServer())
+        .get('/api/v1/organizations/me')
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .expect(200);
+      const digest = await prisma.digest.create({
+        data: {
+          organizationId: orgRes.body.data[0].id as string,
+          userId: owner.userId,
+          title: 'Queue worker target',
+          digestType: 'case',
+          sourceOrigin: 'admin_generated',
+          visibility: 'org',
+          reviewStatus: 'needs_human_review',
+        },
+        select: { id: true },
+      });
 
       try {
-        // The platform model says yes…
-        const me = await request(app.getHttpServer())
-          .get('/api/v1/rbac/me/permissions')
-          .set('Authorization', `Bearer ${user.accessToken}`)
-          .expect(200);
-        expect(me.body.data.platformPermissions).toContain('digests:review');
-        expect(me.body.data.isPlatformStaff).toBe(true);
-
-        // …and the untouched tenant guard chain still says no.
-        await request(app.getHttpServer())
+        // …allowed after it, on the SAME token: the grant is on the person, so
+        // nothing about their JWT organization had to change.
+        const queue = await request(app.getHttpServer())
           .get('/api/v1/admin/digests/review-queue')
-          .set('Authorization', `Bearer ${user.accessToken}`)
-          .expect(403);
-      } finally {
-        await prisma.platformRoleGrant.deleteMany({
-          where: { userId: user.userId },
+          .set('Authorization', `Bearer ${reviewer.accessToken}`)
+          .expect(200);
+        expect(Array.isArray(queue.body.data)).toBe(true);
+
+        // They can open the digest they are being asked to score.
+        const detail = await request(app.getHttpServer())
+          .get(`/api/v1/admin/digests/${digest.id}`)
+          .set('Authorization', `Bearer ${reviewer.accessToken}`)
+          .expect(200);
+        expect(detail.body.data.id).toBe(digest.id);
+
+        // And submit a verdict.
+        await request(app.getHttpServer())
+          .post(`/api/v1/admin/digests/${digest.id}/review`)
+          .set('Authorization', `Bearer ${reviewer.accessToken}`)
+          .send({
+            verdict: 'approve',
+            notes: 'Reads correctly against the source.',
+            truthfulnessScore: 0.9,
+            completenessScore: 0.9,
+            citationAccuracyScore: 0.9,
+          })
+          .expect(201);
+
+        const reviewed = await prisma.digest.findUnique({
+          where: { id: digest.id },
+          select: { reviewStatus: true },
         });
-        await cache.invalidatePlatformForUser(user.userId);
+        expect(reviewed?.reviewStatus).toBe('approved');
+      } finally {
+        await prisma.digestReview.deleteMany({ where: { digestId: digest.id } });
+        await prisma.digest.delete({ where: { id: digest.id } });
+        await prisma.platformRoleGrant.deleteMany({
+          where: { userId: reviewer.userId },
+        });
+        await cache.invalidatePlatformForUser(reviewer.userId);
       }
+    });
+
+    it('a plain owner is still refused the queue', async () => {
+      // The john@gmail.com hole stays shut: a tenant role — even owner of your
+      // own workspace, linked the way the 2026-06-11 backfill linked it —
+      // confers no platform capability.
+      const user = await createAuthenticatedUser(app, {
+        email: `plat-plain-owner-${Date.now()}@libertasian-test.com`,
+      });
+      await linkTenantRole(user.userId, 'owner');
+
+      await request(app.getHttpServer())
+        .get('/api/v1/admin/digests/review-queue')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .expect(403);
     });
 
     it('a platform reviewer can be ASSIGNED a digest', async () => {
@@ -211,14 +265,8 @@ describe('Platform role grants (E2E)', () => {
       const adminRole = await systemRole('admin');
       const reviewerRole = await systemRole('reviewer');
 
-      // The ACTOR needs tenant authority to get through
-      // DigestsAdminController's untouched guard chain — the same link
-      // migration 20260702120000 makes for the platform-admin allowlist.
-      await linkTenantRole(admin.userId, 'admin');
-
-      // The ASSIGNEE gets nothing but a platform grant. No membership
-      // anywhere confers review authority on them; their JWT organization is
-      // their own personal workspace. This is the case under test.
+      // Both actor and assignee reach this on PLATFORM grants now — no
+      // membership anywhere is consulted by the controller's guard chain.
       await prisma.platformRoleGrant.createMany({
         data: [
           { userId: admin.userId, roleDefinitionId: adminRole.id },
@@ -301,7 +349,6 @@ describe('Platform role grants (E2E)', () => {
       });
 
       const adminRole = await systemRole('admin');
-      await linkTenantRole(admin.userId, 'admin');
       await prisma.platformRoleGrant.create({
         data: { userId: admin.userId, roleDefinitionId: adminRole.id },
       });
@@ -323,6 +370,107 @@ describe('Platform role grants (E2E)', () => {
           where: { userId: admin.userId },
         });
         await cache.invalidatePlatformForUser(admin.userId);
+      }
+    });
+  });
+
+  describe('user-owned private content stays out of editorial review', () => {
+    it('is absent from the queue and 404s on direct fetch for a digests:review holder', async () => {
+      const reviewer = await createAuthenticatedUser(app, {
+        email: `plat-privacy-rev-${Date.now()}@libertasian-test.com`,
+      });
+      const owner = await createAuthenticatedUser(app, {
+        email: `plat-privacy-owner-${Date.now()}@libertasian-test.com`,
+      });
+
+      const reviewerRole = await systemRole('reviewer');
+      await prisma.platformRoleGrant.create({
+        data: { userId: reviewer.userId, roleDefinitionId: reviewerRole.id },
+      });
+      await cache.invalidatePlatformForUser(reviewer.userId);
+
+      const orgRes = await request(app.getHttpServer())
+        .get('/api/v1/organizations/me')
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .expect(200);
+      const organizationId = orgRes.body.data[0].id as string;
+
+      // What a camera scan produces: owned by a person, private.
+      const scan = await prisma.digest.create({
+        data: {
+          organizationId,
+          userId: owner.userId,
+          title: 'A scan of my own case file',
+          digestType: 'case',
+          sourceOrigin: 'user_scan',
+          visibility: 'private',
+          reviewStatus: 'needs_human_review',
+        },
+        select: { id: true },
+      });
+
+      // Orphaned system output: private, but nobody owns it. The 108 rows in
+      // the prod queue look like this and must keep working.
+      const orphan = await prisma.digest.create({
+        data: {
+          title: 'Orphaned system output',
+          digestType: 'case',
+          sourceOrigin: 'official_pipeline',
+          visibility: 'private',
+          reviewStatus: 'needs_human_review',
+        },
+        select: { id: true },
+      });
+
+      // A public_editorial digest belonging to somebody else's organization:
+      // the reason the cross-tenant carve-out exists at all.
+      const editorial = await prisma.digest.create({
+        data: {
+          organizationId,
+          title: 'Editorial corpus digest',
+          digestType: 'case',
+          sourceOrigin: 'official_pipeline',
+          visibility: 'public_editorial',
+          reviewStatus: 'needs_human_review',
+        },
+        select: { id: true },
+      });
+
+      try {
+        const queue = await request(app.getHttpServer())
+          .get('/api/v1/admin/digests/review-queue')
+          .set('Authorization', `Bearer ${reviewer.accessToken}`)
+          .query({ limit: 100 })
+          .expect(200);
+        const ids = (queue.body.data as Array<{ id: string }>).map((d) => d.id);
+
+        expect(ids).not.toContain(scan.id);
+        expect(ids).toContain(orphan.id);
+        expect(ids).toContain(editorial.id);
+
+        // 404, not 403 — the endpoint must not confirm the scan exists.
+        const denied = await request(app.getHttpServer())
+          .get(`/api/v1/admin/digests/${scan.id}`)
+          .set('Authorization', `Bearer ${reviewer.accessToken}`)
+          .expect(404);
+        expect(denied.body.message).toBe('Digest not found');
+
+        await request(app.getHttpServer())
+          .get(`/api/v1/admin/digests/${orphan.id}`)
+          .set('Authorization', `Bearer ${reviewer.accessToken}`)
+          .expect(200);
+        await request(app.getHttpServer())
+          .get(`/api/v1/admin/digests/${editorial.id}`)
+          .set('Authorization', `Bearer ${reviewer.accessToken}`)
+          .expect(200);
+      } finally {
+        await prisma.digest.deleteMany({
+          where: { id: { in: [scan.id, orphan.id, editorial.id] } },
+        });
+        await prisma.platformRoleGrant.deleteMany({
+          where: { userId: reviewer.userId },
+        });
+        await cache.invalidatePlatformForUser(reviewer.userId);
       }
     });
   });

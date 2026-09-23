@@ -40,6 +40,32 @@ import {
 } from './dto';
 
 /**
+ * Content editorial review must never see: a digest a USER owns and has kept
+ * private.
+ *
+ * The admin queue is deliberately cross-tenant — that is how one editorial
+ * team reviews a corpus that spans every organization. That carve-out is
+ * about ORGANIZATIONS, not about people's own material. Per CLAUDE.md a
+ * camera scan is `visibility = 'private'` always and never enters the public
+ * editorial corpus without explicit consent and rights review, so a private
+ * digest with an owner must not surface to a reviewer merely because they
+ * hold `digests:review`.
+ *
+ * Measured on prod 2026-09-21 this excludes nothing: 30,084 digests, zero
+ * with a non-null `user_id`, and all 108 private rows in the queue are
+ * orphaned system output with `user_id IS NULL` (they stay visible — the
+ * predicate needs BOTH conditions). It is written now because it costs
+ * nothing now, and because the day camera-scan-to-digest gets real usage is
+ * the wrong day to discover the queue was reading people's scans.
+ *
+ * Applied in the SERVICE, not a route, so no future endpoint can reach around
+ * it.
+ */
+const EXCLUDE_USER_OWNED_PRIVATE: Prisma.DigestWhereInput = {
+  NOT: { AND: [{ userId: { not: null } }, { visibility: 'private' }] },
+};
+
+/**
  * The platform permission that makes someone assignable as a digest reviewer.
  * One constant, read by both the reviewer list and the assignment validator,
  * so the dropdown and the validator cannot disagree.
@@ -823,9 +849,12 @@ export class DigestsService {
    * Authorization is handled by controller guards (RequiredPermissions).
    */
   async findByIdAdmin(digestId: string) {
-    // CARVE-OUT: admin operation — cross-tenant by design
-    const digest = await this.prisma.digest.findUnique({
-      where: { id: digestId },
+    // CARVE-OUT: admin operation — cross-tenant by design.
+    // Cross-tenant does NOT extend to user-owned private content: the
+    // exclusion is part of the WHERE, so an excluded digest is indistinguish-
+    // able from a missing one and the 404 below cannot confirm it exists.
+    const digest = await this.prisma.digest.findFirst({
+      where: { id: digestId, ...EXCLUDE_USER_OWNED_PRIVATE },
       include: {
         legalDocument: {
           select: {
@@ -897,7 +926,11 @@ export class DigestsService {
     const sortBy = query.sortBy ?? 'createdAt';
     const sortOrder = (query.sortOrder ?? 'desc') as 'asc' | 'desc';
 
-    const where: Prisma.DigestWhereInput = {};
+    // Seeded with the exclusion inside AND so none of the field assignments
+    // below can overwrite it, and neither can a filter added later.
+    const where: Prisma.DigestWhereInput = {
+      AND: [EXCLUDE_USER_OWNED_PRIVATE],
+    };
 
     if (query.reviewStatus && query.reviewStatus.length > 0) {
       where.reviewStatus = { in: query.reviewStatus };
@@ -925,7 +958,9 @@ export class DigestsService {
       }
     }
 
-    // CARVE-OUT: admin operation — cross-tenant by design
+    // CARVE-OUT: admin operation — cross-tenant by design.
+    // Cross-tenant does NOT extend to user-owned private content — see
+    // EXCLUDE_USER_OWNED_PRIVATE, seeded into `where` above.
     const digests = await this.prisma.digest.findMany({
       where,
       take: limit + 1,

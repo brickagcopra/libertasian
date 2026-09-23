@@ -1,4 +1,5 @@
 import { Global, Module } from '@nestjs/common';
+import { DiscoveryModule } from '@nestjs/core';
 
 import { AuditModule } from '../audit/audit.module';
 import { PermissionsController } from './controllers/permissions.controller';
@@ -12,6 +13,7 @@ import { PermissionsService } from './permissions.service';
 import { RbacCacheService } from './rbac-cache.service';
 import { RolesService } from './roles.service';
 import { PlatformGrantsService } from './platform-grants.service';
+import { PlatformRosterHealthService } from './platform-roster.health';
 
 /**
  * Global RBAC module — provides permission resolution, role management,
@@ -22,7 +24,7 @@ import { PlatformGrantsService } from './platform-grants.service';
  */
 @Global()
 @Module({
-  imports: [AuditModule],
+  imports: [AuditModule, DiscoveryModule],
   controllers: [
     PermissionsController,
     RolesController,
@@ -37,12 +39,14 @@ import { PlatformGrantsService } from './platform-grants.service';
     PermissionsService,
     RolesService,
     PlatformGrantsService,
+    PlatformRosterHealthService,
   ],
   exports: [
     RbacCacheService,
     PermissionsService,
     RolesService,
     PlatformGrantsService,
+    PlatformRosterHealthService,
   ],
 })
 export class RbacModule {}

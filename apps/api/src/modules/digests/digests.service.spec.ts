@@ -377,6 +377,22 @@ describe('DigestsService', () => {
     });
 
     it('should throw NotFoundException if digest does not exist', async () => {
+      // POSITIVE CONTROL. The rejection assertion below cannot, on its own,
+      // tell a deliberate not-found from a mock that was never wired: an
+      // unstubbed jest.fn() returns undefined, which is just as falsy as null.
+      // Proving the SAME lookup succeeds when the mock IS wired is what makes
+      // an unwired mock fail here instead of passing silently.
+      prismaService.digest.findUnique.mockResolvedValue({
+        ...mockDigest,
+        legalDocument: mockLegalDocument,
+        reviews: [],
+        _count: { doctrineExtracts: 0, editorialFlags: 0 },
+      });
+      await expect(
+        service.findById('digest-1', 'user-1', 'org-1'),
+      ).resolves.toMatchObject({ id: 'digest-1' });
+
+      // …and only then the not-found path.
       prismaService.digest.findUnique.mockResolvedValue(null);
 
       await expect(service.findById('digest-999', 'user-1', 'org-1')).rejects.toThrow(
@@ -384,6 +400,9 @@ describe('DigestsService', () => {
       );
       await expect(service.findById('digest-999', 'user-1', 'org-1')).rejects.toThrow(
         'Digest not found',
+      );
+      expect(prismaService.digest.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'digest-999' } }),
       );
     });
 
@@ -711,11 +730,34 @@ describe('DigestsService', () => {
     });
 
     it('should throw NotFoundException if digest does not exist', async () => {
+      // POSITIVE CONTROL. The rejection assertion below cannot, on its own,
+      // tell a deliberate not-found from a mock that was never wired: an
+      // unstubbed jest.fn() returns undefined, which is just as falsy as null.
+      // Proving the SAME lookup succeeds when the mock IS wired is what makes
+      // an unwired mock fail here instead of passing silently.
+      prismaService.digest.findUnique.mockResolvedValue(mockDigest);
+      prismaService.digest.update.mockResolvedValue({
+        ...mockDigest,
+        ...updateDto,
+        legalDocument: mockLegalDocument,
+      });
+      await expect(
+        service.update('digest-1', updateDto, 'user-1', 'org-1'),
+      ).resolves.toBeDefined();
+
+      // …and only then the not-found path.
+      prismaService.digest.update.mockClear();
       prismaService.digest.findUnique.mockResolvedValue(null);
 
       await expect(
         service.update('digest-999', updateDto, 'user-1', 'org-1'),
       ).rejects.toThrow(NotFoundException);
+
+      expect(prismaService.digest.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'digest-999' } }),
+      );
+      // A digest that was not found must not have been written to.
+      expect(prismaService.digest.update).not.toHaveBeenCalled();
     });
 
     it('should block changing user_scan visibility to non-private', async () => {
@@ -840,11 +882,35 @@ describe('DigestsService', () => {
     });
 
     it('should throw NotFoundException if digest does not exist', async () => {
+      // POSITIVE CONTROL. The rejection assertion below cannot, on its own,
+      // tell a deliberate not-found from a mock that was never wired: an
+      // unstubbed jest.fn() returns undefined, which is just as falsy as null.
+      // Proving the SAME lookup succeeds when the mock IS wired is what makes
+      // an unwired mock fail here instead of passing silently.
+      prismaService.digest.findUnique.mockResolvedValue(mockDigest);
+      prismaService.digest.delete.mockResolvedValue(mockDigest);
+      // delete() returns void, so the control is that it RESOLVES at all —
+      // with the mock unwired it throws NotFoundException here instead.
+      await expect(
+        service.delete('digest-1', 'user-1', 'org-1'),
+      ).resolves.toBeUndefined();
+      expect(prismaService.digest.delete).toHaveBeenCalledWith({
+        where: { id: 'digest-1' },
+      });
+
+      // …and only then the not-found path.
+      prismaService.digest.delete.mockClear();
       prismaService.digest.findUnique.mockResolvedValue(null);
 
       await expect(service.delete('digest-999', 'user-1', 'org-1')).rejects.toThrow(
         NotFoundException,
       );
+
+      expect(prismaService.digest.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'digest-999' } }),
+      );
+      // A delete that found nothing must not have deleted anything.
+      expect(prismaService.digest.delete).not.toHaveBeenCalled();
     });
 
     it('should throw ForbiddenException if user is not the creator', async () => {
@@ -1135,7 +1201,7 @@ describe('DigestsService', () => {
         _count: { doctrineExtracts: 2, editorialFlags: 0 },
       };
 
-      prismaService.digest.findUnique.mockResolvedValue(aiGeneratedDigest);
+      prismaService.digest.findFirst.mockResolvedValue(aiGeneratedDigest);
 
       const result = await service.findByIdAdmin('ai-digest-1');
 
@@ -1146,7 +1212,7 @@ describe('DigestsService', () => {
     });
 
     it('should throw NotFoundException if digest does not exist', async () => {
-      prismaService.digest.findUnique.mockResolvedValue(null);
+      prismaService.digest.findFirst.mockResolvedValue(null);
 
       await expect(service.findByIdAdmin('nonexistent-id')).rejects.toThrow(
         NotFoundException,
@@ -1156,23 +1222,41 @@ describe('DigestsService', () => {
       );
     });
 
-    it('should NOT call assertDigestAccess (no visibility enforcement)', async () => {
-      const privateDigestDifferentUser = {
+    it('reads across organizations without an access check', async () => {
+      // The whole point of the admin view: one editorial team reviews a
+      // corpus spanning every organization, so no assertDigestAccess.
+      const otherOrgDigest = {
         ...mockDigest,
-        userId: 'other-user',
+        userId: null,
         organizationId: 'other-org',
-        visibility: 'private',
+        visibility: 'org',
         legalDocument: mockLegalDocument,
         reviews: [],
         derivativeGenerationJob: null,
         _count: { doctrineExtracts: 0, editorialFlags: 0 },
       };
 
-      prismaService.digest.findUnique.mockResolvedValue(privateDigestDifferentUser);
+      prismaService.digest.findFirst.mockResolvedValue(otherOrgDigest);
 
-      // findByIdAdmin should succeed without userId/orgId — no access check
       const result = await service.findByIdAdmin('digest-1');
-      expect(result).toEqual(privateDigestDifferentUser);
+      expect(result).toEqual(otherOrgDigest);
+    });
+
+    it('excludes user-owned private content from that carve-out', async () => {
+      // Cross-tenant is about ORGANIZATIONS, not about people's own material.
+      // The exclusion lives in the WHERE, so an excluded digest comes back as
+      // null and 404s exactly like a missing one — see
+      // editorial-review-privacy.spec.ts for the full set of cases.
+      await service.findByIdAdmin('digest-1').catch(() => undefined);
+
+      const call = (
+        prismaService.digest.findFirst.mock.calls as Array<
+          [{ where: Record<string, unknown> }]
+        >
+      )[0]![0];
+      expect(call.where).toMatchObject({
+        NOT: { AND: [{ userId: { not: null } }, { visibility: 'private' }] },
+      });
     });
 
     it('should include derivativeGenerationJob in response', async () => {
@@ -1196,7 +1280,7 @@ describe('DigestsService', () => {
         _count: { doctrineExtracts: 0, editorialFlags: 0 },
       };
 
-      prismaService.digest.findUnique.mockResolvedValue(digestWithJob);
+      prismaService.digest.findFirst.mockResolvedValue(digestWithJob);
 
       const result = await service.findByIdAdmin('digest-1');
 
