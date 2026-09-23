@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -16,7 +17,12 @@ import type { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { PermissionsService } from './permissions.service';
 import { RbacCacheService } from './rbac-cache.service';
+import {
+  PLATFORM_CAPABILITY_REFUSAL,
+  findPlatformScopedCodes,
+} from './platform-scope';
 import type { CreateCustomRoleDto, UpdateCustomRoleDto } from './dto';
 
 @Injectable()
@@ -27,7 +33,110 @@ export class RolesService {
     private readonly prisma: PrismaService,
     private readonly cache: RbacCacheService,
     private readonly audit: AuditService,
+    private readonly permissions: PermissionsService,
   ) {}
+
+  // -----------------------------------------------------------------------
+  // Platform-capability containment
+  // -----------------------------------------------------------------------
+
+  /**
+   * Refuse if `conferred` contains any platform-scope code.
+   *
+   * Writes an audit row on refusal: a caller probing for this boundary is a
+   * privilege-escalation attempt and should be visible to whoever reads the
+   * log, not just to the caller who got the 403.
+   */
+  private async assertConfersNoPlatformCapability(
+    conferred: readonly string[],
+    organizationId: string,
+    actorUserId: string,
+    context: {
+      memberId?: string;
+      roleSlug?: string;
+      roleDefinitionId?: string;
+      roleName?: string;
+    },
+  ): Promise<void> {
+    const platformCodes = findPlatformScopedCodes(conferred);
+    if (platformCodes.length === 0) return;
+
+    await this.audit.log({
+      organizationId,
+      actorUserId,
+      actorType: 'user',
+      action: 'role.platform_capability_refused',
+      entityType: 'role_definition',
+      entityId: context.roleDefinitionId ?? 'n/a',
+      metadata: { ...context, platformCodes },
+    });
+
+    this.logger.warn(
+      `Refused platform capability through a workspace role: org=${organizationId} ` +
+        `actor=${actorUserId} codes=${platformCodes.join(',')}`,
+    );
+
+    throw new ForbiddenException(PLATFORM_CAPABILITY_REFUSAL);
+  }
+
+  /**
+   * Refuse unless the assigner's own effective workspace permissions are a
+   * superset of what the role confers.
+   *
+   * Resolved from the DB rather than from anything the caller sends, and
+   * scoped to the organization the target member belongs to — an assigner who
+   * is not an active member of that org holds nothing there and can assign
+   * nothing.
+   */
+  private async assertAssignerHoldsAtLeast(
+    conferred: readonly string[],
+    organizationId: string,
+    assignedByUserId: string,
+    roleName: string,
+  ): Promise<void> {
+    if (conferred.length === 0) return;
+
+    const assignerMemberId = await this.permissions.resolveMemberId(
+      assignedByUserId,
+      organizationId,
+    );
+    if (!assignerMemberId) {
+      throw new ForbiddenException(
+        'You are not an active member of this organization.',
+      );
+    }
+
+    const held = new Set(
+      await this.permissions.getEffectivePermissions(assignerMemberId),
+    );
+    const missing = conferred.filter((code) => !held.has(code)).sort();
+    if (missing.length === 0) return;
+
+    throw new ForbiddenException(
+      `You cannot assign "${roleName}" because it grants permissions you do not ` +
+        `hold: ${missing.join(', ')}.`,
+    );
+  }
+
+  /**
+   * The codes a role inherits from its hierarchy children.
+   *
+   * Used when validating a PROPOSED permission set, where resolving the role
+   * itself would read the permissions we are about to replace. There is no API
+   * that creates a hierarchy edge today, so in practice this is empty — it is
+   * here so that a role wired under a platform-bearing child by a seed or a
+   * migration cannot then be edited into service through the org role editor.
+   */
+  private async resolveInheritedCodes(roleId: string): Promise<string[]> {
+    const childEdges = await this.prisma.roleHierarchy.findMany({
+      where: { parentRoleId: roleId },
+      select: { childRoleId: true },
+    });
+    if (childEdges.length === 0) return [];
+    return this.permissions.resolvePermissionCodes(
+      childEdges.map((e) => e.childRoleId),
+    );
+  }
 
   // -----------------------------------------------------------------------
   // Role Assignment
@@ -60,6 +169,41 @@ export class RolesService {
     if (!roleDef.isSystem && roleDef.organizationId !== member.organizationId) {
       throw new BadRequestException('Role does not belong to this organization');
     }
+
+    // What this role ACTUALLY confers, including everything inherited through
+    // role_hierarchy. Reading role_permissions alone would miss a role whose
+    // only path to `admin:*` is a parent edge, which is the same hole wearing
+    // a hat.
+    const conferred = await this.permissions.resolvePermissionCodes([
+      roleDefinitionId,
+    ]);
+
+    // GATE 1 — a workspace role may never confer platform capability.
+    //
+    // Every signup owns a personal workspace, and the owner role holds
+    // members:update-role. Without this, any account could POST its own
+    // member id the system admin role id (which GET /rbac/roles lists) and
+    // come back as a platform admin, because jwt.strategy derives
+    // isPlatformAdmin from the presence of any `admin:` code.
+    await this.assertConfersNoPlatformCapability(
+      conferred,
+      member.organizationId,
+      assignedByUserId,
+      { memberId, roleSlug: roleDef.slug, roleDefinitionId },
+    );
+
+    // GATE 2 — no escalation: you cannot hand out what you do not hold.
+    //
+    // There is deliberately no bypass parameter on this path. The one
+    // legitimate bootstrap (the first platform admin) runs through
+    // PlatformGrantsService, which has its own audited bypass; a tenant role
+    // assignment never needs one.
+    await this.assertAssignerHoldsAtLeast(
+      conferred,
+      member.organizationId,
+      assignedByUserId,
+      roleDef.name,
+    );
 
     // Check if already assigned
     const existing = await this.prisma.memberRole.findUnique({
@@ -369,13 +513,24 @@ export class RolesService {
     // Validate all permission IDs exist
     const permissions = await this.prisma.permission.findMany({
       where: { id: { in: dto.permissionIds } },
-      select: { id: true },
+      select: { id: true, code: true },
     });
     if (permissions.length !== dto.permissionIds.length) {
       const foundIds = new Set(permissions.map((p) => p.id));
       const missing = dto.permissionIds.filter((id) => !foundIds.has(id));
       throw new BadRequestException(`Invalid permission IDs: ${missing.join(', ')}`);
     }
+
+    // An org role is a workspace role by construction, so it may not carry
+    // platform capability. Without this, `roles:create` (held by every
+    // workspace owner) is just a slower route to the same escalation as
+    // assigning the system admin role.
+    await this.assertConfersNoPlatformCapability(
+      permissions.map((p) => p.code),
+      organizationId,
+      createdByUserId,
+      { roleSlug: dto.slug, roleName: dto.name },
+    );
 
     // Create role + permission links in a transaction
     const role = await this.prisma.$transaction(async (tx) => {
@@ -439,13 +594,25 @@ export class RolesService {
     if (dto.permissionIds) {
       const permissions = await this.prisma.permission.findMany({
         where: { id: { in: dto.permissionIds } },
-        select: { id: true },
+        select: { id: true, code: true },
       });
       if (permissions.length !== dto.permissionIds.length) {
         const foundIds = new Set(permissions.map((p) => p.id));
         const missing = dto.permissionIds.filter((id) => !foundIds.has(id));
         throw new BadRequestException(`Invalid permission IDs: ${missing.join(', ')}`);
       }
+
+      // Validate what the role WOULD confer after this edit: the proposed
+      // codes plus anything reachable through its hierarchy children.
+      await this.assertConfersNoPlatformCapability(
+        [
+          ...permissions.map((p) => p.code),
+          ...(await this.resolveInheritedCodes(roleId)),
+        ],
+        role.organizationId ?? 'unknown',
+        updatedByUserId,
+        { roleSlug: role.slug, roleName: role.name, roleDefinitionId: roleId },
+      );
     }
 
     // Update in transaction

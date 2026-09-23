@@ -5,6 +5,7 @@ import { ForbiddenException, NotFoundException, ConflictException } from '@nestj
 import { OrganizationsService } from './organizations.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { PermissionsService } from '../rbac/permissions.service';
 import { CreateOrganizationDto, UpdateOrganizationDto, InviteMemberDto } from './dto';
 
 describe('OrganizationsService', () => {
@@ -42,11 +43,31 @@ describe('OrganizationsService', () => {
       findUnique: jest.fn(),
       findMany: jest.fn(),
     },
+    // Read by the platform-capability guard to resolve the system role behind
+    // a legacy role slug.
+    roleDefinition: {
+      findFirst: jest.fn(),
+    },
+    memberRole: {
+      upsert: jest.fn(),
+      create: jest.fn(),
+      deleteMany: jest.fn(),
+    },
+    roleHierarchy: {
+      findMany: jest.fn(),
+    },
     $transaction: jest.fn(),
   };
 
   const mockNotificationsService = {
     sendMemberInviteEmail: jest.fn(),
+  };
+
+  // Default: the legacy role maps to a system role conferring nothing, so the
+  // platform-capability guard passes and the cases below exercise what they
+  // were written to exercise. Cases that care override it.
+  const mockPermissionsService = {
+    resolvePermissionCodes: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -61,6 +82,10 @@ describe('OrganizationsService', () => {
           provide: NotificationsService,
           useValue: mockNotificationsService,
         },
+        {
+          provide: PermissionsService,
+          useValue: mockPermissionsService,
+        },
       ],
     }).compile();
 
@@ -70,6 +95,10 @@ describe('OrganizationsService', () => {
 
     // Reset mocks before each test
     jest.clearAllMocks();
+    mockPrismaService.roleDefinition.findFirst.mockResolvedValue({
+      id: 'system-role-1',
+    });
+    mockPermissionsService.resolvePermissionCodes.mockResolvedValue([]);
   });
 
   describe('create', () => {

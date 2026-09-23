@@ -31,6 +31,11 @@ describe('RolesService', () => {
   let audit: {
     log: jest.Mock;
   };
+  let permissions: {
+    resolvePermissionCodes: jest.Mock;
+    resolveMemberId: jest.Mock;
+    getEffectivePermissions: jest.Mock;
+  };
 
   // Shared fixtures
   const memberId = 'member-1';
@@ -91,6 +96,10 @@ describe('RolesService', () => {
       rolePermission: { findMany: jest.fn() },
       $transaction: jest.fn(),
     };
+    // Sane default: no hierarchy edges. Left unstubbed, prisma mocks return
+    // undefined, and code that reads `.length` off the result throws a
+    // TypeError that an `expect(...).rejects.toThrow()` will happily absorb.
+    prisma.roleHierarchy.findMany.mockResolvedValue([]);
     cache = {
       invalidateForMember: jest.fn().mockResolvedValue(undefined),
       invalidateForRole: jest.fn().mockResolvedValue(undefined),
@@ -98,8 +107,21 @@ describe('RolesService', () => {
     audit = {
       log: jest.fn().mockResolvedValue(undefined),
     };
+    // Default: the role under test confers nothing, so the platform-capability
+    // and escalation gates are satisfied and the pre-existing cases below still
+    // exercise what they were written to exercise. Cases that care override it.
+    permissions = {
+      resolvePermissionCodes: jest.fn().mockResolvedValue([]),
+      resolveMemberId: jest.fn().mockResolvedValue('assigner-member-1'),
+      getEffectivePermissions: jest.fn().mockResolvedValue([]),
+    };
 
-    service = new RolesService(prisma as never, cache as never, audit as never);
+    service = new RolesService(
+      prisma as never,
+      cache as never,
+      audit as never,
+      permissions as never,
+    );
   });
 
   // -------------------------------------------------------------------------
@@ -499,7 +521,10 @@ describe('RolesService', () => {
 
     it('should create a custom role in a transaction', async () => {
       prisma.roleDefinition.findFirst.mockResolvedValue(null); // slug unique
-      prisma.permission.findMany.mockResolvedValue([{ id: 'p-1' }, { id: 'p-2' }]);
+      prisma.permission.findMany.mockResolvedValue([
+        { id: 'p-1', code: 'documents:read' },
+        { id: 'p-2', code: 'notes:update' },
+      ]);
       prisma.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
         const tx = {
           roleDefinition: { create: jest.fn().mockResolvedValue({ id: 'new-role-1' }) },
@@ -543,7 +568,9 @@ describe('RolesService', () => {
 
     it('should throw BadRequestException if permission IDs are invalid', async () => {
       prisma.roleDefinition.findFirst.mockResolvedValue(null);
-      prisma.permission.findMany.mockResolvedValue([{ id: 'p-1' }]); // only 1 of 2 found
+      prisma.permission.findMany.mockResolvedValue([
+        { id: 'p-1', code: 'documents:read' },
+      ]); // only 1 of 2 found
 
       await expect(service.createCustomRole(orgId, dto, userId))
         .rejects.toThrow(BadRequestException);
@@ -570,7 +597,9 @@ describe('RolesService', () => {
           rolePermissions: [],
           _count: { memberRoles: 0 },
         });
-      prisma.permission.findMany.mockResolvedValue([{ id: 'p-1' }]);
+      prisma.permission.findMany.mockResolvedValue([
+        { id: 'p-1', code: 'documents:read' },
+      ]);
       prisma.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
         const tx = {
           roleDefinition: { update: jest.fn().mockResolvedValue({}) },

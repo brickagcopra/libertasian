@@ -9,6 +9,8 @@
 
 import { PrismaClient } from '@prisma/client';
 
+import { isPlatformScopedCode } from '../../src/modules/rbac/platform-scope';
+
 // ---------------------------------------------------------------------------
 // Permission Catalogue (~90 permissions)
 // ---------------------------------------------------------------------------
@@ -218,14 +220,14 @@ const ALL_CODES = PERMISSIONS.map((p) => p.code);
  * Codes that must never be conferred by tenant ownership. Kept next to the
  * role matrix so adding a platform capability to PERMISSIONS cannot silently
  * fall into `owner` via ALL_CODES.
+ *
+ * The predicate lives in src/modules/rbac/platform-scope.ts because
+ * RolesService enforces the same invariant at runtime — it refuses to assign
+ * or mint any workspace role conferring one of these. Two copies of the list
+ * is how the seed and the guard drift apart, and the drifted one is whichever
+ * a workspace owner probes first.
  */
-const PLATFORM_SCOPE_CODES = ALL_CODES.filter(
-  (c) =>
-    c.startsWith('admin:') ||
-    c.startsWith('platform-staff:') ||
-    c.startsWith('platform-roles:') ||
-    c === 'digests:review',
-);
+const PLATFORM_SCOPE_CODES = ALL_CODES.filter(isPlatformScopedCode);
 
 /** Helper: all permissions matching a category */
 function byCategory(cat: string): string[] {
