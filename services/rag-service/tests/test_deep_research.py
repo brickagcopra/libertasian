@@ -146,7 +146,9 @@ async def _collect(
     ranked = AsyncMock(return_value=RankedPassages(passages=reranked, candidates=len(reranked)))
     rerank = AsyncMock(return_value=RerankOutcome(passages=reranked, top_score=top_score))
     lookup = AsyncMock(return_value={})
+    pinpoint = AsyncMock(return_value=[])
     with (
+        patch.object(service, "fetch_pinpoint_passages", pinpoint),
         patch.object(service, "generate_completion_with_usage", llm),
         patch.object(service, "retrieve_ranked", ranked),
         patch.object(service, "rerank_passages", rerank),

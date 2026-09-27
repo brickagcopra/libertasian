@@ -4,9 +4,12 @@ Pipeline (each stage is announced on the SSE stream as a ``stage`` event):
 
 1. **planning**  — a small model splits the question into 3-5 sub-queries.
 2. **searching** — every sub-query (and the question itself) goes through the
-   shared `retrieve_ranked` path, at most 3 in flight.
+   shared `retrieve_ranked` path, at most 3 in flight. Alongside, any
+   provision named precisely ("Article 1318 of the Civil Code", "Rule 113
+   Section 5") is read from PostgreSQL (`pinpoint.py`).
 3. **ranking**   — the per-query results are merged and deduped by section,
-   capped at 40 candidates and 2 passages per document, then reranked ONCE
+   capped at 40 candidates and per document (2 for a decision, 6 for a
+   statute), the pinpointed sections are put in front, then reranked ONCE
    against the original question. Abstention reads the RAW top rerank score,
    exactly as /answer does after #504.
 4. **writing**   — the writer returns structured JSON whose citations are
@@ -40,10 +43,12 @@ from ..core.context import estimate_tokens
 from ..core.generation import compute_cost_usd, generate_completion_with_usage
 from ..core.ranked import RankedPassages, retrieve_ranked
 from ..core.reranking import rerank_passages
+from ..core.retrieval import STATUTORY_DOCUMENT_TYPES
 from ..core.schemas import Passage
 from ..core.types import AbstentionReason
 from ..shared.database import acquire_connection
 from ..shared.exceptions import BudgetExceededError, RetrievalError, SchemaIntegrityError
+from .pinpoint import fetch_pinpoint_passages
 from .prompts import (
     MAX_QUOTE_WORDS,
     MAX_SUB_QUERIES,
@@ -142,6 +147,7 @@ def merge_candidates(
     *,
     max_candidates: int,
     max_per_document: int,
+    max_per_statute: int | None = None,
 ) -> list[Passage]:
     """Merge per-sub-query results: dedupe by section, cap per document and overall.
 
@@ -149,7 +155,14 @@ def merge_candidates(
     pool is ordered by that score before the caps are applied, so the caps
     drop the weakest candidates, and the per-document cap keeps one long
     decision from filling the whole pool.
+
+    The cap depends on the document's type. ``max_per_document`` applies to
+    decisions (and anything not statutory); ``max_per_statute`` to statutory
+    types, where one "document" is a whole code — the Civil Code has 2,533
+    sections — and a cap of 2 would allow a question at most two articles of
+    it. ``None`` means the same cap for both.
     """
+    statute_cap = max_per_document if max_per_statute is None else max_per_statute
     best: dict[str, Passage] = {}
     for passages in result_sets:
         for passage in passages:
@@ -162,13 +175,38 @@ def merge_candidates(
     per_document: Counter[str] = Counter()
     merged: list[Passage] = []
     for passage in ordered:
-        if per_document[passage.document_id] >= max_per_document:
+        cap = (
+            statute_cap
+            if passage.document_type in STATUTORY_DOCUMENT_TYPES
+            else max_per_document
+        )
+        if per_document[passage.document_id] >= cap:
             continue
         per_document[passage.document_id] += 1
         merged.append(passage)
         if len(merged) >= max_candidates:
             break
     return merged
+
+
+def add_pinpoints(
+    pool: Sequence[Passage], pinpoints: Sequence[Passage], *, max_candidates: int
+) -> list[Passage]:
+    """Put the pinpointed sections at the front of the pool, deduped by section.
+
+    They were named by the question, so they are not subject to the score-
+    ordered caps; the rerank still decides whether they are kept. The pool
+    stays within ``max_candidates``: pinpoints displace its weakest tail.
+    """
+    present = {_section_key(p) for p in pool}
+    pinned: list[Passage] = []
+    for passage in pinpoints:
+        key = _section_key(passage)
+        if key in present:
+            continue
+        present.add(key)
+        pinned.append(passage)
+    return [*pinned, *pool][:max_candidates]
 
 
 def _clean_sub_queries(raw: object, question: str) -> list[str]:
@@ -613,7 +651,11 @@ async def run_deep_research(request: DeepResearchRequest) -> AsyncIterator[Event
         # pool is never narrower than what /answer would have retrieved.
         queries = [question, *sub_queries]
         yield _stage("searching", f"{len(queries)} queries")
-        ranked_sets, degraded = await retrieve_all(queries)
+        # The pinpoint lookup (an article or rule section the question names
+        # precisely, read from PostgreSQL) runs alongside the searches.
+        (ranked_sets, degraded), pinpoints = await asyncio.gather(
+            retrieve_all(queries), fetch_pinpoint_passages(queries)
+        )
 
         # 3. Merge, rerank once, abstain on the RAW top score.
         yield _stage("ranking")
@@ -621,6 +663,10 @@ async def run_deep_research(request: DeepResearchRequest) -> AsyncIterator[Event
             [r.passages for r in ranked_sets],
             max_candidates=settings.deep_research_max_candidates,
             max_per_document=settings.deep_research_max_per_document,
+            max_per_statute=settings.deep_research_max_per_statute,
+        )
+        pool = add_pinpoints(
+            pool, pinpoints, max_candidates=settings.deep_research_max_candidates
         )
         outcome = await rerank_passages(question, pool, top_k=settings.deep_research_top_k)
         degraded = list(dict.fromkeys([*degraded, *outcome.degraded_legs]))
