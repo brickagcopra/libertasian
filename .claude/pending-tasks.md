@@ -1,11 +1,22 @@
 # Pending Tasks
 
 ## Deep Research client follow-ups (2026-09-27, after #508 / #509 merged)
-- [ ] Mobile reader: honour the `section` param and highlight the passage (parity with web `pinpoint.ts`). Today "Open in reader" opens the document, not the passage.
-- [ ] Login redirect drops the query string (`?q=` is lost on `/research?q=`). The same thing happens on main.
+- [ ] Review/merge PR #513 (mobile reader pinpoint + login redirect keeps `?q=`, incl. Google OAuth via sessionStorage). One web test (`reader/[id]/page.test.tsx`) timed out under full-suite load; it passes on its own.
 - [ ] Web UpgradeBanner → "subscribe in the iOS app" CTA (decided 09-20) before `PAYWALL_ENFORCED_WEB` is set. Applies to Deep Research and Memos. It never shows today: the flag is unset in prod, so every web user counts as pro.
 - [ ] 16 pre-existing e2e failures in `subscription-enforcement` + `entitlement-enforcement-gaps`.
 - [ ] Duplicate `@types/react` (tsc reports 397 errors on main).
+
+## RAG statute retrieval (2026-09-27, PR #511, NOT merged)
+- [ ] Review/merge #511: stopwords removed + citation_text dropped from non-CASE_LOOKUP BM25; statutory doc-level rows excluded; `deep_research_max_per_statute=6`; article/section pinpoint fetch.
+- [ ] Verify on prod that the pinpoint lookup finds sections (it assumes labels "Article N." / "Section M."; Rules of Court relies on a "RULE N" heading or a per-rule document).
+- [ ] Pre-existing: 40 pytest-asyncio errors in rag `tests/test_routers.py`; 19 `mypy --strict` errors; ruff I001 in `tests/test_retrieval.py`.
+
+## Codal off-by-one repair (2026-09-27, PR #512, NOT merged)
+- first_label_missing deviation ACCEPTED by prod review 09-27 (12/24 statute docs lack first label; strict rule would skip half). Realign dry-run + commit + re-embed/reindex are prod-side, not done yet.
+- [ ] **Decide:** the first row of each doc is exempt from "skip if label missing" (flagged `first_label_missing`), because the old parser lost each doc's opening paragraph. Accept, or make it strict.
+- [ ] After merge: run the dry run on prod, review `sections.csv` (a cross-reference whose text matches the next label can mis-split a row), then `--commit`.
+- [ ] After commit: re-embed the changed sections and re-index their OpenSearch chunks; review `audio_renditions.csv`; re-seed to recover each doc's lost first paragraph.
+- [ ] Repaired rows keep the "Article N." prefix in their text; freshly seeded rows strip it. Decide whether to normalise.
 
 ## Deep Research (2026-09-26, feature/PHASE-1-deep-research-api, PR open, NOT merged)
 - [ ] **Acceptance gate before shipping:** run `python -m evals.run --endpoint deep` on prod (45-question golden set) and compare it against the /answer result file with `python -m evals.compare ... --k 8`. It ships only if authority_hit@8 > 0.525, citation_validity = 1.0, and no must-abstain question is answered.
