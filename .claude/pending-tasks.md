@@ -16,3 +16,13 @@
 - [ ] Add usage export/download feature for finance reporting
 - [ ] Add per-feature budget allocation (separate budgets for digests vs answers vs memos)
 - [ ] Migrate auth token storage from localStorage to httpOnly cookies (deferred from security audit)
+
+## RAG / Deep Research (2026-09-26)
+- [ ] Merge PR #503, run baseline eval on prod BEFORE deploying #504
+- [ ] Merge + deploy PR #504, re-run eval, `evals.compare` vs baseline
+- [ ] Lawyer review of golden set (all `reviewed: false`); low-confidence G.R. Nos: lab-03, merc-02, crim-03, eth-02
+- [ ] Prompt 3 (P1-A Deep Research backend) — after #504 merged
+- [ ] Prompts 4 (web) + 5 (mobile) — after P1-A PR is open
+
+## Chores
+- [ ] chore: fix 40 pre-existing rag-service `tests/test_routers.py` setup errors ("requested an async fixture 'client'", pytest 9 + pytest-asyncio); present on main
