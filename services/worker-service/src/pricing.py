@@ -34,6 +34,9 @@ _PRICE_PER_MTOK: dict[str, tuple[Decimal, Decimal]] = {
     # 2324 prod rows on Stage 3 batch ebb8780b through 2026-04-27).
     "gpt-4o-mini": (Decimal("0.150"), Decimal("0.600")),
     "gpt-4o": (Decimal("2.500"), Decimal("10.000")),
+    # Deep Research writer option (rag-service DEEP_RESEARCH_MODEL). Mirrors
+    # MODEL_PRICING in services/rag-service/src/core/generation.py.
+    "gpt-6-luna": (Decimal("0.100"), Decimal("0.500")),
 }
 
 # Local-only embedding models. Free at the edge — no per-call cost. We

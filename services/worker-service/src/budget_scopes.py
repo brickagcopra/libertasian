@@ -24,6 +24,7 @@ BUDGET_SCOPES: Final[tuple[str, ...]] = (
     "subject_classification",
     "bar_exam_answer",
     "ai_answer",
+    "ai_research",
 )
 
 # Named constants so a task references a symbol rather than retyping the
@@ -38,6 +39,7 @@ SCOPE_SUBJECT_OUTLINE: Final[str] = "subject_outline"
 SCOPE_SUBJECT_CLASSIFICATION: Final[str] = "subject_classification"
 SCOPE_BAR_EXAM_ANSWER: Final[str] = "bar_exam_answer"
 SCOPE_AI_ANSWER: Final[str] = "ai_answer"
+SCOPE_AI_RESEARCH: Final[str] = "ai_research"
 
 
 def is_budget_scope(value: object) -> bool:
