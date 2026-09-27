@@ -50,7 +50,7 @@ const RRF_K = 60;
  * Embedding batch size for the LIVE indexing path. The embedding service caps a
  * request at 256 texts; a single document rarely approaches that, so this is a
  * ceiling rather than a target. The BACKFILL uses its own, much smaller batch
- * (default 64) because it is throughput-shaping a multi-hour run on a box
+ * (default 32) because it is throughput-shaping a multi-hour run on a box
  * shared with TTS — see VECTOR_BACKFILL_DEFAULT_BATCH_SIZE.
  */
 const LIVE_EMBEDDING_BATCH_SIZE = 256;

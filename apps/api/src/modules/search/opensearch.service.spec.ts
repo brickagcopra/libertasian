@@ -23,6 +23,10 @@ const mockClient = {
   mget: jest.fn(),
   count: jest.fn(),
   reindex: jest.fn(),
+  tasks: {
+    get: jest.fn(),
+    cancel: jest.fn(),
+  },
   indices: {
     exists: jest.fn(),
     existsAlias: jest.fn(),
@@ -1265,36 +1269,149 @@ describe('OpenSearchService', () => {
   // ---- reindexInto ----
 
   describe('reindexInto', () => {
+    const TASK_ID = 'node-1:4242';
+    const POLL_MS = 5_000;
+
+    beforeEach(() => {
+      jest.useFakeTimers({ doNotFake: ['nextTick'] });
+      mockClient.reindex.mockResolvedValue({ body: { task: TASK_ID } });
+      mockClient.indices.refresh.mockResolvedValue({});
+      mockClient.tasks.cancel.mockResolvedValue({ body: {} });
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    /** Run `reindexInto` to settlement, advancing fake time as it polls. */
+    async function settle(
+      promise: Promise<unknown>,
+      advanceMs: number,
+    ): Promise<{ value?: unknown; error?: Error }> {
+      const outcome = promise.then(
+        (value) => ({ value }),
+        (error: Error) => ({ error }),
+      );
+      await jest.advanceTimersByTimeAsync(advanceMs);
+      return outcome;
+    }
+
+    it('starts the copy as an async task with retries disabled for that request only', async () => {
+      mockClient.tasks.get.mockResolvedValue({
+        body: { completed: true, response: { created: 3, failures: [] } },
+      });
+      mockClient.count.mockResolvedValue({ body: { count: 3 } });
+
+      await settle(service.reindexInto('src', 'dest'), POLL_MS);
+
+      expect(mockClient.reindex).toHaveBeenCalledTimes(1);
+      expect(mockClient.reindex).toHaveBeenCalledWith(
+        expect.objectContaining({
+          wait_for_completion: false,
+          body: { source: { index: 'src' }, dest: { index: 'dest' } },
+        }),
+        { maxRetries: 0 },
+      );
+    });
+
     // Ground truth from the Phase A production run: `_reindex` answered
     // `created: 0` for a copy that moved all 12,196 embeddings. Anything
     // derived from that number is unusable as a verification signal.
-    it('measures both sides instead of believing the _reindex response', async () => {
-      mockClient.reindex.mockResolvedValue({ body: { created: 0 } });
-      mockClient.indices.refresh.mockResolvedValue({});
+    it('polls the task to completion, then measures both sides instead of believing it', async () => {
+      mockClient.tasks.get
+        .mockResolvedValueOnce({ body: { completed: false } })
+        .mockResolvedValueOnce({ body: { completed: false } })
+        .mockResolvedValueOnce({
+          body: { completed: true, response: { created: 0, failures: [] } },
+        });
       mockClient.count
         .mockResolvedValueOnce({ body: { count: 12_196 } })
         .mockResolvedValueOnce({ body: { count: 12_196 } });
 
-      const result = await service.reindexInto('src', 'dest');
+      const { value, error } = await settle(service.reindexInto('src', 'dest'), 3 * POLL_MS);
 
-      expect(result).toEqual({
-        reportedCreated: 0,
-        sourceCount: 12_196,
-        destCount: 12_196,
-      });
+      expect(error).toBeUndefined();
+      expect(value).toEqual({ reportedCreated: 0, sourceCount: 12_196, destCount: 12_196 });
+      expect(mockClient.tasks.get).toHaveBeenCalledTimes(3);
+      expect(mockClient.tasks.get).toHaveBeenCalledWith({ task_id: TASK_ID });
+      expect(mockClient.tasks.cancel).not.toHaveBeenCalled();
       // The count is the verification, so it does not ride on the reindex
       // call's own refresh flag.
       expect(mockClient.indices.refresh).toHaveBeenCalledWith({ index: 'dest' });
     });
 
-    it('throws when the response carries per-document failures', async () => {
-      mockClient.reindex.mockResolvedValue({
-        body: { created: 5, failures: [{ id: 'doc-1', cause: 'mapper_parsing_exception' }] },
+    it('cancels the task and throws when it outlives the deadline', async () => {
+      mockClient.tasks.get.mockResolvedValue({ body: { completed: false } });
+
+      const { error } = await settle(service.reindexInto('src', 'dest'), 61 * 60_000);
+
+      expect(error?.message).toMatch(/did not finish within 60 min \(cancelled\)/);
+      expect(mockClient.tasks.cancel).toHaveBeenCalledWith({ task_id: TASK_ID });
+      // Never verified, never counted: a cancelled copy is not a partial success.
+      expect(mockClient.count).not.toHaveBeenCalled();
+    });
+
+    it('honours SEARCH_INDEX_COPY_TIMEOUT_MIN', async () => {
+      const config = (service as unknown as { config: { get: jest.Mock } }).config;
+      config.get.mockImplementation((key: string, defaultValue?: unknown) =>
+        key === 'SEARCH_INDEX_COPY_TIMEOUT_MIN' ? 1 : defaultValue,
+      );
+      mockClient.tasks.get.mockResolvedValue({ body: { completed: false } });
+
+      const { error } = await settle(service.reindexInto('src', 'dest'), 70_000);
+
+      expect(error?.message).toMatch(/within 1 min/);
+      expect(mockClient.tasks.cancel).toHaveBeenCalledTimes(1);
+    });
+
+    it('throws with the first reason when the task response carries failures', async () => {
+      mockClient.tasks.get.mockResolvedValue({
+        body: {
+          completed: true,
+          response: {
+            created: 5,
+            failures: [
+              { id: 'doc-1', cause: { type: 'mapper_parsing_exception', reason: 'bad vector' } },
+              { id: 'doc-2', cause: { type: 'x', reason: 'second' } },
+            ],
+          },
+        },
       });
 
-      await expect(service.reindexInto('src', 'dest')).rejects.toThrow(
-        /1 document failure/,
-      );
+      const { error } = await settle(service.reindexInto('src', 'dest'), POLL_MS);
+
+      expect(error?.message).toMatch(/2 document failure\(s\); first: bad vector/);
+      expect(mockClient.count).not.toHaveBeenCalled();
+    });
+
+    it('throws when the task itself finished in error', async () => {
+      mockClient.tasks.get.mockResolvedValue({
+        body: { completed: true, error: { type: 'index_not_found_exception', reason: 'no such index [src]' } },
+      });
+
+      const { error } = await settle(service.reindexInto('src', 'dest'), POLL_MS);
+
+      expect(error?.message).toMatch(/no such index \[src\]/);
+      expect(mockClient.tasks.cancel).not.toHaveBeenCalled();
+    });
+
+    it('rides out a transient poll error but cancels after a run of them', async () => {
+      mockClient.tasks.get
+        .mockRejectedValueOnce(new Error('Request timed out'))
+        .mockResolvedValueOnce({ body: { completed: false } })
+        .mockRejectedValue(new Error('Request timed out'));
+
+      const { error } = await settle(service.reindexInto('src', 'dest'), 5 * POLL_MS);
+
+      expect(error?.message).toMatch(/could not be polled 3 times in a row \(cancelled\)/);
+      expect(mockClient.tasks.cancel).toHaveBeenCalledWith({ task_id: TASK_ID });
+    });
+
+    it('throws when the start call returns no task id', async () => {
+      mockClient.reindex.mockResolvedValue({ body: {} });
+
+      await expect(service.reindexInto('src', 'dest')).rejects.toThrow(/did not return a task id/);
+      expect(mockClient.tasks.get).not.toHaveBeenCalled();
     });
   });
 

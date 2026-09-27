@@ -79,7 +79,8 @@ export class StartVectorBackfillDto {
   @ApiPropertyOptional({
     description:
       'Texts per embedding request. Measured throughput is 4.8 texts/s on CPU ' +
-      '(a batch of 64 took 13.46s) on a box shared with TTS.',
+      '(a batch of 64 took 13.46s) on a box shared with TTS; 64 later timed out ' +
+      'and OOM-restarted the embedding workers, so the default is 32.',
     default: VECTOR_BACKFILL_DEFAULT_BATCH_SIZE,
     minimum: 1,
     maximum: VECTOR_BACKFILL_MAX_BATCH_SIZE,

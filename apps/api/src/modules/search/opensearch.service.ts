@@ -305,6 +305,43 @@ export interface IndexCopyCounts {
   destCount: number;
 }
 
+/** Poll cadence for a server-side `_reindex` task. */
+const REINDEX_TASK_POLL_INTERVAL_MS = 5_000;
+/** Overall copy deadline when `SEARCH_INDEX_COPY_TIMEOUT_MIN` is unset. */
+export const REINDEX_TASK_DEFAULT_TIMEOUT_MIN = 60;
+/** Consecutive failed `_tasks` reads before the copy is given up on. */
+const REINDEX_TASK_MAX_POLL_ERRORS = 3;
+
+/** The subset of a `_reindex` response the copy verification reads. */
+interface ReindexTaskResponse {
+  created?: number;
+  failures?: unknown[];
+}
+
+/** The subset of `GET _tasks/<id>` the poll loop reads. */
+interface ReindexTaskStatus {
+  completed?: boolean;
+  response?: ReindexTaskResponse;
+  error?: unknown;
+}
+
+/** A task that finished in error — terminal, never retried by the poll loop. */
+class ReindexTaskFailedError extends Error {}
+
+/**
+ * One line for a `_reindex` failure entry or task error. OpenSearch nests the
+ * human-readable reason at `cause.reason` for per-document failures and at
+ * `reason` for task-level errors; fall back to the raw JSON for anything else.
+ */
+function describeReindexFailure(failure: unknown): string {
+  if (failure && typeof failure === 'object') {
+    const record = failure as { reason?: unknown; cause?: { reason?: unknown } };
+    if (typeof record.cause?.reason === 'string') return record.cause.reason;
+    if (typeof record.reason === 'string') return record.reason;
+  }
+  return JSON.stringify(failure);
+}
+
 export interface SuggestionItem {
   id: string;
   documentId: string;
@@ -516,21 +553,31 @@ export class OpenSearchService implements OnModuleInit {
    * dangerous half of that bug.
    */
   async reindexInto(source: string, dest: string): Promise<IndexCopyCounts> {
-    const response = await this.client.reindex({
-      wait_for_completion: true,
-      refresh: true,
-      body: { source: { index: source }, dest: { index: dest } },
-    });
+    // Start the copy as a server-side task and poll it, rather than holding one
+    // HTTP request open for the whole copy. On prod the 1.6 GB vector index
+    // outlived the client's request timeout; the client then RETRIED the
+    // request, and four duplicate `_reindex` tasks wrote into one target.
+    // `maxRetries: 0` scopes the no-retry rule to this call alone — a retried
+    // start is a second copy, not a second attempt at the same one.
+    const started = await this.client.reindex(
+      {
+        wait_for_completion: false,
+        refresh: true,
+        body: { source: { index: source }, dest: { index: dest } },
+      },
+      { maxRetries: 0 },
+    );
+    const taskId = (started.body as { task?: unknown }).task;
+    if (typeof taskId !== 'string' || taskId.length === 0) {
+      throw new Error(`_reindex ${source} → ${dest} did not return a task id`);
+    }
 
-    const body = response.body as {
-      created?: number;
-      failures?: unknown[];
-    };
+    const body = await this.awaitReindexTask(taskId, source, dest);
     const failures = body.failures ?? [];
     if (failures.length > 0) {
       throw new Error(
         `_reindex ${source} → ${dest} reported ${failures.length} document ` +
-          `failure(s): ${JSON.stringify(failures.slice(0, 3))}`,
+          `failure(s); first: ${describeReindexFailure(failures[0])}`,
       );
     }
 
@@ -544,6 +591,75 @@ export class OpenSearchService implements OnModuleInit {
       sourceCount: await this.countIndex(source),
       destCount: await this.countIndex(dest),
     };
+  }
+
+  /**
+   * Poll `_tasks/<id>` until the reindex task completes, and return its final
+   * response. Past the deadline (`SEARCH_INDEX_COPY_TIMEOUT_MIN`) the task is
+   * CANCELLED before throwing: a copy that keeps running after the rebuild has
+   * given up on it would keep writing into an index nobody is verifying.
+   */
+  private async awaitReindexTask(
+    taskId: string,
+    source: string,
+    dest: string,
+  ): Promise<ReindexTaskResponse> {
+    const timeoutMin = this.config.get<number>(
+      'SEARCH_INDEX_COPY_TIMEOUT_MIN',
+      REINDEX_TASK_DEFAULT_TIMEOUT_MIN,
+    );
+    const deadline = Date.now() + timeoutMin * 60_000;
+    let consecutivePollErrors = 0;
+
+    for (;;) {
+      await new Promise((resolve) => setTimeout(resolve, REINDEX_TASK_POLL_INTERVAL_MS));
+
+      try {
+        const { body } = await this.client.tasks.get({ task_id: taskId });
+        consecutivePollErrors = 0;
+        const status = body as ReindexTaskStatus;
+        if (status.completed) {
+          if (status.error) {
+            throw new ReindexTaskFailedError(
+              `_reindex ${source} → ${dest} task ${taskId} failed: ` +
+                describeReindexFailure(status.error),
+            );
+          }
+          return status.response ?? {};
+        }
+      } catch (error) {
+        if (error instanceof ReindexTaskFailedError) throw error;
+        // One slow `_tasks` read is not a failed copy; a run of them is.
+        consecutivePollErrors += 1;
+        if (consecutivePollErrors >= REINDEX_TASK_MAX_POLL_ERRORS) {
+          await this.cancelReindexTask(taskId);
+          throw new Error(
+            `_reindex ${source} → ${dest} task ${taskId} could not be polled ` +
+              `${consecutivePollErrors} times in a row (cancelled): ` +
+              `${(error as Error).message}`,
+          );
+        }
+      }
+
+      if (Date.now() >= deadline) {
+        await this.cancelReindexTask(taskId);
+        throw new Error(
+          `_reindex ${source} → ${dest} task ${taskId} did not finish within ` +
+            `${timeoutMin} min (cancelled)`,
+        );
+      }
+    }
+  }
+
+  /** Best-effort: a failed cancel is logged, never allowed to mask the cause. */
+  private async cancelReindexTask(taskId: string): Promise<void> {
+    try {
+      await this.client.tasks.cancel({ task_id: taskId });
+    } catch (error) {
+      this.logger.error(
+        `Failed to cancel _reindex task ${taskId}: ${(error as Error).message}`,
+      );
+    }
   }
 
   async indexDocument(doc: IndexDocumentPayload) {

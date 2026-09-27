@@ -5,7 +5,12 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmbeddingClientService } from '../search/embedding-client.service';
 import { OpenSearchService } from '../search/opensearch.service';
-import { FAILURE_REASONS, SKIP_REASONS, VECTOR_BACKFILL_QUEUE } from './vector-backfill.constants';
+import {
+  FAILURE_REASONS,
+  SKIP_REASONS,
+  VECTOR_BACKFILL_DEFAULT_BATCH_SIZE,
+  VECTOR_BACKFILL_QUEUE,
+} from './vector-backfill.constants';
 import {
   VectorBackfillService,
   type VectorBackfillProgress,
@@ -763,7 +768,8 @@ describe('VectorBackfillService', () => {
 
     it('defaults the batch size to the measured-throughput value', async () => {
       const run = await service.enqueueRun({});
-      expect(run.batchSize).toBe(64);
+      expect(run.batchSize).toBe(32);
+      expect(run.batchSize).toBe(VECTOR_BACKFILL_DEFAULT_BATCH_SIZE);
     });
   });
 

@@ -212,6 +212,10 @@ export const ENV_VALIDATION_SCHEMA = Joi.object({
   EMBEDDING_DIM: Joi.number().integer().min(1).max(4096).default(384),
   // Documents per PostgreSQL page during a full index rebuild.
   SEARCH_INDEX_REBUILD_BATCH_SIZE: Joi.number().integer().min(1).max(2000).default(500),
+  // Overall deadline for one server-side `_reindex` copy during a rebuild
+  // (vector / user-upload indices). The task is polled every 5 s; past this it
+  // is cancelled and the copy reports 'failed', leaving the alias untouched.
+  SEARCH_INDEX_COPY_TIMEOUT_MIN: Joi.number().integer().min(1).max(1440).default(60),
   // Ranking v2: tiered bool.should, native collapse, intent-aware
   // clauses. Flip to 'false' to restore the legacy single-fuzzy
   // multi_match builder without a code deploy (retained one release).
