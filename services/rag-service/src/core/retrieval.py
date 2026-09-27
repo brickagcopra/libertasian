@@ -47,6 +47,40 @@ _CODAL_TYPE_BOOSTS: dict[str, float] = {
     "executive_order": 1.5,
 }
 
+# The statutory document_types: the same measured vocabulary as the boost
+# above. Consumers that treat a code differently from a decision (Deep
+# Research's per-document cap, its article pinpoint lookup) read this.
+STATUTORY_DOCUMENT_TYPES: frozenset[str] = frozenset(_CODAL_TYPE_BOOSTS)
+
+# The one document_type whose document-level row is worth retrieving. A
+# decision's document-level row is the whole opinion and competes fairly with
+# its sections; a statute's document-level row is the WHOLE CODE (the Civil
+# Code is one document of 2,533 sections), which is never the passage a
+# question needs and still costs a candidate slot and a context slot.
+_DECISION_TYPE = "decision"
+
+# Lucene's English stopword list, i.e. OpenSearch's `_english_` set. The
+# keyword index analyses with `legal_analyzer`, which has NO stopword filter
+# and no separate search_analyzer, so each of these words is a real, matchable
+# term. Measured on prod 2026-09-27: "Rules of Court, Rule 139-A" indexes the
+# token "a" in `citation_text`, and with `citation_text^3` in the
+# GENERAL/LEGAL_QUESTION field list every such query containing the word "a"
+# spent 20 of its 60 BM25 hits on Rule 139-A. Stripping stopwords from the
+# query text took that to 0/60. Done on the query side because the index side
+# needs a reindex; this is the half that ships without one.
+_ENGLISH_STOPWORDS = frozenset(
+    {
+        "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "if",
+        "in", "into", "is", "it", "no", "not", "of", "on", "or", "such",
+        "that", "the", "their", "then", "there", "these", "they", "this",
+        "to", "was", "will", "with",
+    }
+)
+
+# Stripped from a token's edges for the stopword comparison ONLY — the token
+# itself is emitted verbatim, so "Art." and "139-A" survive untouched.
+_TOKEN_EDGE_PUNCT = "\"'`.,;:!?()[]{}<>"
+
 # Index names
 _KEYWORD_INDEX = "legal_documents_keyword"
 _VECTOR_INDEX = "legal_documents_vector"
@@ -232,6 +266,39 @@ def _keyword_body(source: dict[str, Any]) -> str:
     return str(source.get("plain_text") or source.get("section_text") or "")
 
 
+def strip_query_stopwords(query: str) -> str:
+    """Drop English stopwords from a BM25 query string, keeping everything else.
+
+    Whitespace-tokenised, compared case-insensitively after trimming edge
+    punctuation, and every surviving token is emitted exactly as written: a
+    number, "Art.", "Sec." or a hyphenated "139-A" is never altered. Only a
+    token that IS a stopword on its own goes — the "A" inside "139-A" is not a
+    token here. A query made only of stopwords is returned unchanged rather
+    than emptied, since an empty multi_match matches nothing at all.
+    """
+    tokens = query.split()
+    kept = [t for t in tokens if t.strip(_TOKEN_EDGE_PUNCT).lower() not in _ENGLISH_STOPWORDS]
+    return " ".join(kept) if kept else query
+
+
+def _statute_document_row_exclusion() -> dict[str, Any]:
+    """Match a document-level row (no ``section_id``) of a non-decision.
+
+    Placed under ``must_not``. The row it matches is an entire statute or code
+    whose sections are indexed individually anyway, so excluding it loses no
+    content. A decision's document-level row is NOT matched: case law keeps
+    its whole-opinion row.
+    """
+    return {
+        "bool": {
+            "must_not": [
+                {"exists": {"field": "section_id"}},
+                {"term": {"document_type": _DECISION_TYPE}},
+            ],
+        },
+    }
+
+
 def _filter_clauses(filter_terms: dict[str, Any] | None) -> list[dict[str, Any]]:
     """Expand a ``{field: value}`` map into OpenSearch term/terms clauses.
 
@@ -401,47 +468,52 @@ async def _bm25_search(
     top_k: int = 60,
     filter_terms: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Execute BM25 keyword search on OpenSearch."""
+    """Execute BM25 keyword search on OpenSearch.
+
+    Every intent except CASE_LOOKUP searches with English stopwords removed
+    (see `strip_query_stopwords`). CASE_LOOKUP is left exactly as it was: a
+    case title or docket reference is matched as the user typed it.
+    """
     # Adjust field boosts based on intent
     fields = _get_boosted_fields(intent)
+    query_text = query if intent == QueryIntent.CASE_LOOKUP else strip_query_stopwords(query)
 
-    body: dict[str, Any] = {
-        "size": top_k,
-        "query": {
-            "multi_match": {
-                "query": query,
-                "fields": fields,
-                "type": "best_fields",
+    bool_query: dict[str, Any] = {
+        "must": [
+            {
+                "multi_match": {
+                    "query": query_text,
+                    "fields": fields,
+                    "type": "best_fields",
+                },
             },
-        },
-        "_source": _KEYWORD_SOURCE_FIELDS,
+        ],
     }
 
     # Add document type filter for codal queries
     if intent == QueryIntent.CODAL_REFERENCE:
-        body["query"] = {
-            "bool": {
-                "must": [body["query"]],
-                "should": [
-                    {"term": {"document_type": {"value": value, "boost": boost}}}
-                    for value, boost in _CODAL_TYPE_BOOSTS.items()
-                ],
-            },
-        }
+        bool_query["should"] = [
+            {"term": {"document_type": {"value": value, "boost": boost}}}
+            for value, boost in _CODAL_TYPE_BOOSTS.items()
+        ]
 
     # Scoping goes in `filter` context, not `must`. A filter is a hard yes/no
     # that contributes nothing to _score, so passage scores inside a scoped
     # query stay on the same scale as an unscoped one — which matters because
     # check_abstention compares the top score against a fixed threshold.
     # (retrieve_by_query puts its filter_terms in `must` instead; that path
-    # feeds callers who do not run the abstention check.)
+    # feeds callers who do not run the abstention check.) `must_not` is filter
+    # context too, so the statute-row exclusion is score-neutral as well.
     clauses = _filter_clauses(filter_terms)
     if clauses:
-        inner = body["query"]
-        if "bool" in inner:
-            inner["bool"]["filter"] = clauses
-        else:
-            body["query"] = {"bool": {"must": [inner], "filter": clauses}}
+        bool_query["filter"] = clauses
+    bool_query["must_not"] = [_statute_document_row_exclusion()]
+
+    body: dict[str, Any] = {
+        "size": top_k,
+        "query": {"bool": bool_query},
+        "_source": _KEYWORD_SOURCE_FIELDS,
+    }
 
     data = await opensearch_search(_KEYWORD_INDEX, body)
     hits = data.get("hits", {}).get("hits", [])
@@ -486,9 +558,13 @@ async def _knn_search(
     # OpenSearch applies a kNN `filter` during graph traversal rather than after
     # it, so the k nearest neighbours are drawn from the matching subset instead
     # of being found first and then discarded.
+    # The statute document-level row is excluded here as on the BM25 leg; RRF
+    # would otherwise reintroduce a whole code from the vector side.
+    knn_filter: dict[str, Any] = {"must_not": [_statute_document_row_exclusion()]}
     clauses = _filter_clauses(filter_terms)
     if clauses:
-        knn_clause["filter"] = {"bool": {"filter": clauses}}
+        knn_filter["filter"] = clauses
+    knn_clause["filter"] = {"bool": knn_filter}
 
     body: dict[str, Any] = {
         "size": top_k,
@@ -559,17 +635,25 @@ def _rrf_fuse(
 
 
 def _get_boosted_fields(intent: QueryIntent) -> list[str]:
-    """Return OpenSearch field list with intent-specific boosts."""
+    """Return OpenSearch field list with intent-specific boosts.
+
+    Only CASE_LOOKUP searches `citation_text`. The field has no search-time
+    stopword handling (see `_ENGLISH_STOPWORDS`), it is short enough that one
+    matching token dominates BM25's length normalisation, and every section row
+    of a document repeats it — so on any other intent it ranked citation
+    strings rather than content. A case lookup is the one query that is ABOUT
+    the citation.
+    """
     if intent == QueryIntent.CASE_LOOKUP:
         return ["citation_text^5", "title^3", "plain_text"]
     if intent == QueryIntent.CODAL_REFERENCE:
-        return ["title^3", "section_text^2", "plain_text", "citation_text^2"]
+        return ["title^3", "section_text^2", "plain_text"]
     if intent == QueryIntent.DOCTRINE_SEARCH:
-        return ["plain_text^2", "title^2", "section_text^2", "citation_text"]
+        return ["plain_text^2", "title^2", "section_text^2"]
     if intent == QueryIntent.PROCEDURAL_QUERY:
-        return ["plain_text^2", "title^2", "section_text", "citation_text"]
+        return ["plain_text^2", "title^2", "section_text"]
     # LEGAL_QUESTION and GENERAL
-    return ["title^2", "citation_text^3", "plain_text", "section_text"]
+    return ["title^2", "plain_text", "section_text"]
 
 
 def _to_passage(data: dict[str, Any]) -> Passage:

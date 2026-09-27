@@ -246,7 +246,14 @@ class Settings(BaseSettings):
     deep_research_subquery_top_k: int = 15
     # Merged pool handed to the single final rerank, and its diversity cap.
     deep_research_max_candidates: int = 40
+    # Per-document cap for decisions (and any non-statutory type): one long
+    # opinion must not fill the pool.
     deep_research_max_per_document: int = 2
+    # Per-document cap for statutory types (constitution, codal, republic_act,
+    # rules_of_court, presidential_decree, executive_order). A code is ONE
+    # document — the Civil Code has 2,533 sections — so the decision cap of 2
+    # let a question spanning several articles see at most two of them.
+    deep_research_max_per_statute: int = 6
     # Passages kept after the final rerank (CLAUDE.md: 15 for long-form output).
     deep_research_top_k: int = 15
     # Sub-query retrievals in flight at once.

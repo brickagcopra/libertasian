@@ -219,7 +219,6 @@ class TestGetBoostedFields:
         fields = _get_boosted_fields(QueryIntent.CODAL_REFERENCE)
         assert "title^3" in fields
         assert "section_text^2" in fields
-        assert "citation_text^2" in fields
 
     def test_doctrine_search_boosts_plain_text(self) -> None:
         fields = _get_boosted_fields(QueryIntent.DOCTRINE_SEARCH)
@@ -234,12 +233,19 @@ class TestGetBoostedFields:
     def test_legal_question_fallback(self) -> None:
         fields = _get_boosted_fields(QueryIntent.LEGAL_QUESTION)
         assert "title^2" in fields
-        assert "citation_text^3" in fields
+        assert "section_text" in fields
 
     def test_general_fallback(self) -> None:
         fields = _get_boosted_fields(QueryIntent.GENERAL)
         assert "title^2" in fields
-        assert "citation_text^3" in fields
+        assert "section_text" in fields
+
+    def test_only_case_lookup_searches_citation_text(self) -> None:
+        """`citation_text` poisoned every non-case intent (Rule 139-A, prod 2026-09-27)."""
+        for intent in QueryIntent:
+            fields = _get_boosted_fields(intent)
+            has_citation = any(f.split("^")[0] == "citation_text" for f in fields)
+            assert has_citation == (intent == QueryIntent.CASE_LOOKUP), intent
 
     def test_all_intents_include_plain_text(self) -> None:
         """Every intent must include plain_text (with or without boost)."""
@@ -1193,7 +1199,7 @@ class TestBm25Search:
 
     @pytest.mark.asyncio
     async def test_non_codal_uses_multi_match(self) -> None:
-        """Non-codal intents should use a simple multi_match query."""
+        """Non-codal intents score on one multi_match and carry no type boost."""
         from src.core.retrieval import _bm25_search
 
         captured_body: dict[str, Any] = {}
@@ -1206,7 +1212,8 @@ class TestBm25Search:
             await _bm25_search("constructive dismissal", QueryIntent.LEGAL_QUESTION)
 
         query = captured_body.get("query", {})
-        assert "multi_match" in query
+        assert "multi_match" in query["bool"]["must"][0]
+        assert "should" not in query["bool"]
 
     @pytest.mark.asyncio
     async def test_text_truncated_to_2000(self) -> None:
@@ -1556,9 +1563,10 @@ class TestBm25DocumentScope:
         assert len(query["bool"]["should"]) == len(_CODAL_TYPE_BOOSTS)
 
     @pytest.mark.asyncio
-    async def test_no_filter_terms_leaves_body_unchanged(self) -> None:
-        """Absent filter_terms, the body must be byte-identical to before."""
-        from src.core.retrieval import _bm25_search
+    async def test_no_filter_terms_adds_no_filter(self) -> None:
+        """Absent filter_terms there is no `filter` clause, only the scoring
+        multi_match and the statute document-row exclusion."""
+        from src.core.retrieval import _bm25_search, _statute_document_row_exclusion
 
         captured: dict[str, Any] = {}
         with patch(
@@ -1567,8 +1575,10 @@ class TestBm25DocumentScope:
         ):
             await _bm25_search("due process", QueryIntent.LEGAL_QUESTION)
 
-        assert "multi_match" in captured["query"]
-        assert "bool" not in captured["query"]
+        bool_query = captured["query"]["bool"]
+        assert "filter" not in bool_query
+        assert "multi_match" in bool_query["must"][0]
+        assert bool_query["must_not"] == [_statute_document_row_exclusion()]
 
 
 class TestKnnDocumentScope:
@@ -1587,13 +1597,20 @@ class TestKnnDocumentScope:
         with patch("src.core.retrieval.opensearch_search", side_effect=_capture_search):
             await _knn_search([0.1, 0.2, 0.3], filter_terms={"document_id": "doc-42"})
 
+        from src.core.retrieval import _statute_document_row_exclusion
+
         knn = captured["query"]["knn"]["embedding_vector"]
-        assert knn["filter"] == {"bool": {"filter": [{"term": {"document_id": "doc-42"}}]}}
+        assert knn["filter"] == {
+            "bool": {
+                "filter": [{"term": {"document_id": "doc-42"}}],
+                "must_not": [_statute_document_row_exclusion()],
+            }
+        }
         assert knn["vector"] == [0.1, 0.2, 0.3]
 
     @pytest.mark.asyncio
-    async def test_no_filter_terms_leaves_knn_unchanged(self) -> None:
-        from src.core.retrieval import _knn_search
+    async def test_no_filter_terms_adds_only_the_statute_exclusion(self) -> None:
+        from src.core.retrieval import _knn_search, _statute_document_row_exclusion
 
         captured: dict[str, Any] = {}
 
@@ -1604,7 +1621,9 @@ class TestKnnDocumentScope:
         with patch("src.core.retrieval.opensearch_search", side_effect=_capture_search):
             await _knn_search([0.1, 0.2, 0.3])
 
-        assert "filter" not in captured["query"]["knn"]["embedding_vector"]
+        assert captured["query"]["knn"]["embedding_vector"]["filter"] == {
+            "bool": {"must_not": [_statute_document_row_exclusion()]}
+        }
 
 
 class TestHybridRetrieveDocumentScope:
