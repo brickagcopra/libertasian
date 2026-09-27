@@ -85,6 +85,9 @@ export class AudioController {
       language,
     );
 
+    // getRendition never returns a stale ready row: one whose content_hash no
+    // longer matches the current text comes back as a miss, so it takes the
+    // enqueue + 202 path below instead of playing mismatched audio.
     if (rendition && rendition.status === 'ready') {
       return {
         success: true,
