@@ -22,12 +22,17 @@ export function sourceMetaLine(source: DeepResearchSource): string {
   const parts = [
     source.citation ?? source.grNo ?? null,
     source.court ? source.court.replace(/_/g, ' ') : null,
-    source.date ?? null,
+    formatSourceDate(source.date),
   ].filter((p): p is string => !!p && p.trim().length > 0);
   return parts.join(' · ');
 }
 
-/** Human form of a date string off the wire; the raw value if unparseable. */
+/**
+ * Human form of a decision date off the wire; the raw value if unparseable.
+ *
+ * Formatted in UTC: `2020-01-15` is a calendar DATE, which `Date.parse` reads
+ * as UTC midnight — rendered in a timezone west of UTC it would show the 14th.
+ */
 export function formatSourceDate(date: string | null | undefined): string | null {
   if (!date) return null;
   const t = Date.parse(date);
@@ -36,6 +41,7 @@ export function formatSourceDate(date: string | null | undefined): string | null
     year: 'numeric',
     month: 'short',
     day: 'numeric',
+    timeZone: 'UTC',
   });
 }
 
@@ -55,7 +61,9 @@ export function buildShareText(
   for (const section of result.sections) {
     lines.push('', section.heading.toUpperCase());
     for (const claim of section.claims) {
-      const refs = uniqueNumbers(claim.citations.map((c) => index.get(c.sourceId)));
+      const refs = uniqueNumbers(claim.citations.map((c) => index.get(c.sourceId))).sort(
+        (a, b) => a - b,
+      );
       const marker = refs.length > 0 ? ` ${refs.map((n) => `[${n}]`).join('')}` : '';
       lines.push(`- ${claim.text.trim()}${marker}`);
     }
