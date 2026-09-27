@@ -68,6 +68,17 @@ class MemoGenerationResponse(BaseModel):
     confidence_score: float = Field(ge=0.0, le=1.0)
     model_name: str
     prompt_template_version: str
+    invalid_citation_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Cited source IDs that match no retrieved passage and no known legal "
+            "document (validate_citations). Reported, never fatal."
+        ),
+    )
+    warnings: list[str] = Field(
+        default_factory=list,
+        description="Human-readable quality warnings about this output.",
+    )
 
 
 # ---- Outline-specific response models ----

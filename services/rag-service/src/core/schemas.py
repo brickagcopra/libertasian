@@ -21,7 +21,11 @@ class Passage(BaseModel):
     document_type: str = Field(default="")
     source_authority_level: str = Field(
         default="editorial",
-        description="official | semi_official | editorial | private",
+        description=(
+            "The index's source_trust_level: high | medium | low (Source.trustLevel);"
+            " legacy official | semi_official | editorial | private are aliases."
+            " Missing values default to editorial (= low)."
+        ),
     )
     score: float = Field(default=0.0, description="Combined retrieval score")
     bm25_score: float = Field(default=0.0)
@@ -79,6 +83,17 @@ class RerankOutcome(BaseModel):
             "Why reranking did not run — 'reranker:not_configured', "
             "'reranker:unreachable', 'reranker:failed'. Empty iff ``degraded`` "
             "is False."
+        ),
+    )
+    top_score: float | None = Field(
+        default=None,
+        description=(
+            "The RAW (pre-authority-boost) score at the head of the reranked "
+            "order — the cross-encoder score, or the RRF score on the fallback "
+            "path. `passages` is in BOOSTED order, so its head may be a "
+            "higher-authority passage with a lower raw score; abstention must "
+            "judge relevance, not authority, and reads this instead. None when "
+            "there were no passages, or when the outcome was built without it."
         ),
     )
 

@@ -259,8 +259,8 @@ class TestGenerateAnswer:
         )
 
         self.patches = [
-            patch("src.answer.service.hybrid_retrieve", self.mock_retrieve),
-            patch("src.answer.service.rerank_passages", self.mock_rerank),
+            patch("src.core.ranked.hybrid_retrieve", self.mock_retrieve),
+            patch("src.core.ranked.rerank_passages", self.mock_rerank),
             patch("src.answer.service.generate_completion_with_usage", self.mock_generate),
             patch("src.answer.service.validate_citations", self.mock_validate),
             patch("src.answer.service.get_model_info", self.mock_model_info),
@@ -420,8 +420,8 @@ class TestGenerateAnswerAbstention:
         )
 
         self.patches = [
-            patch("src.answer.service.hybrid_retrieve", self.mock_retrieve),
-            patch("src.answer.service.rerank_passages", self.mock_rerank),
+            patch("src.core.ranked.hybrid_retrieve", self.mock_retrieve),
+            patch("src.core.ranked.rerank_passages", self.mock_rerank),
             patch("src.answer.service.get_model_info", self.mock_model_info),
             patch(
                 "src.answer.service.check_abstention",
@@ -489,8 +489,8 @@ class TestDegradedReporting:
             yield "The court ruled that the petition is granted."
 
         self.patches = [
-            patch("src.answer.service.hybrid_retrieve", self.mock_retrieve),
-            patch("src.answer.service.rerank_passages", self.mock_rerank),
+            patch("src.core.ranked.hybrid_retrieve", self.mock_retrieve),
+            patch("src.core.ranked.rerank_passages", self.mock_rerank),
             patch("src.answer.service.generate_completion_with_usage", self.mock_generate),
             patch("src.answer.service.validate_citations", self.mock_validate),
             patch("src.answer.service.get_model_info", self.mock_model_info),
@@ -650,8 +650,8 @@ class TestStreamAnswer:
             yield "the petition is granted."
 
         self.patches = [
-            patch("src.answer.service.hybrid_retrieve", self.mock_retrieve),
-            patch("src.answer.service.rerank_passages", self.mock_rerank),
+            patch("src.core.ranked.hybrid_retrieve", self.mock_retrieve),
+            patch("src.core.ranked.rerank_passages", self.mock_rerank),
             patch("src.answer.service.validate_citations", self.mock_validate),
             patch("src.answer.service.get_model_info", self.mock_model_info),
             patch("src.answer.service.check_abstention", return_value=None),
@@ -726,8 +726,8 @@ class TestStreamAnswerAbstention:
         )
 
         self.patches = [
-            patch("src.answer.service.hybrid_retrieve", self.mock_retrieve),
-            patch("src.answer.service.rerank_passages", self.mock_rerank),
+            patch("src.core.ranked.hybrid_retrieve", self.mock_retrieve),
+            patch("src.core.ranked.rerank_passages", self.mock_rerank),
             patch("src.answer.service.get_model_info", self.mock_model_info),
             patch(
                 "src.answer.service.check_abstention",
@@ -770,7 +770,7 @@ class TestStreamAnswerError:
     def _setup_mocks(self) -> None:
         self.patches = [
             patch(
-                "src.answer.service.hybrid_retrieve",
+                "src.core.ranked.hybrid_retrieve",
                 AsyncMock(side_effect=RuntimeError("Connection failed")),
             ),
             patch(
@@ -818,8 +818,8 @@ class TestDocumentScopedRetrieval:
         )
 
         self.patches = [
-            patch("src.answer.service.hybrid_retrieve", self.mock_retrieve),
-            patch("src.answer.service.rerank_passages", self.mock_rerank),
+            patch("src.core.ranked.hybrid_retrieve", self.mock_retrieve),
+            patch("src.core.ranked.rerank_passages", self.mock_rerank),
             patch("src.answer.service.generate_completion_with_usage", self.mock_generate),
             patch("src.answer.service.validate_citations", self.mock_validate),
             patch("src.answer.service.get_model_info", self.mock_model_info),
@@ -952,8 +952,8 @@ class TestScopedPassageFloor:
 
         # check_abstention is deliberately NOT patched.
         self.patches = [
-            patch("src.answer.service.hybrid_retrieve", self.mock_retrieve),
-            patch("src.answer.service.rerank_passages", self.mock_rerank),
+            patch("src.core.ranked.hybrid_retrieve", self.mock_retrieve),
+            patch("src.core.ranked.rerank_passages", self.mock_rerank),
             patch("src.answer.service.generate_completion_with_usage", self.mock_generate),
             patch("src.answer.service.validate_citations", self.mock_validate),
             patch("src.answer.service.get_model_info", self.mock_model_info),
@@ -1070,8 +1070,8 @@ class TestCitationGrounding:
         )
 
         self.patches = [
-            patch("src.answer.service.hybrid_retrieve", self.mock_retrieve),
-            patch("src.answer.service.rerank_passages", self.mock_rerank),
+            patch("src.core.ranked.hybrid_retrieve", self.mock_retrieve),
+            patch("src.core.ranked.rerank_passages", self.mock_rerank),
             patch("src.answer.service.generate_completion_with_usage", self.mock_generate),
             patch("src.answer.service.validate_citations", self.mock_validate),
             patch("src.answer.service.get_model_info", self.mock_model_info),
@@ -1211,12 +1211,12 @@ class TestQueryEmbeddingIsWired:
         self.mock_embed = AsyncMock(return_value=[0.1] * 384)
 
         self.patches = [
-            patch("src.answer.service.hybrid_retrieve", self.mock_retrieve),
-            patch("src.answer.service.rerank_passages", self.mock_rerank),
+            patch("src.core.ranked.hybrid_retrieve", self.mock_retrieve),
+            patch("src.core.ranked.rerank_passages", self.mock_rerank),
             patch("src.answer.service.generate_completion_with_usage", self.mock_generate),
             patch("src.answer.service.validate_citations", self.mock_validate),
             patch("src.answer.service.get_model_info", self.mock_model_info),
-            patch("src.answer.service.embed_query", self.mock_embed),
+            patch("src.core.ranked.embed_query", self.mock_embed),
             patch("src.answer.service.pack_context", return_value=_make_context_bundle()),
         ]
         for p in self.patches:
@@ -1355,8 +1355,8 @@ class TestInsufficientSentinelNonStreaming:
         )
 
         self.patches = [
-            patch("src.answer.service.hybrid_retrieve", self.mock_retrieve),
-            patch("src.answer.service.rerank_passages", self.mock_rerank),
+            patch("src.core.ranked.hybrid_retrieve", self.mock_retrieve),
+            patch("src.core.ranked.rerank_passages", self.mock_rerank),
             patch("src.answer.service.generate_completion_with_usage", self.mock_generate),
             patch("src.answer.service.validate_citations", self.mock_validate),
             patch("src.answer.service.get_model_info", self.mock_model_info),
@@ -1429,8 +1429,8 @@ class TestInsufficientSentinelStreaming:
         )
 
         self.patches = [
-            patch("src.answer.service.hybrid_retrieve", self.mock_retrieve),
-            patch("src.answer.service.rerank_passages", self.mock_rerank),
+            patch("src.core.ranked.hybrid_retrieve", self.mock_retrieve),
+            patch("src.core.ranked.rerank_passages", self.mock_rerank),
             patch("src.answer.service.validate_citations", self.mock_validate),
             patch("src.answer.service.get_model_info", self.mock_model_info),
             patch("src.answer.service.check_abstention", return_value=None),

@@ -12,6 +12,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.core.context import pack_context
+from src.core.schemas import CitationRef as CoreCitationRef
+from src.core.schemas import Passage, ValidationResult
 from src.memos.schemas import (
     MemoGenerationRequest,
     MemoGenerationResponse,
@@ -341,12 +344,14 @@ class TestGenerateMemo:
         )
         self.llm_response = json.dumps(_make_full_memo_data())
         self.mock_generate = AsyncMock(return_value=self.llm_response)
-        self.mock_retrieve = AsyncMock(return_value=_make_passages(5))
+        self.mock_retrieve = AsyncMock(return_value=MagicMock(passages=_make_passages(5)))
+        self.mock_validate = AsyncMock(return_value=ValidationResult(is_valid=True))
 
         self.patches = [
             patch("src.memos.service.get_model_info", self.mock_model_info),
             patch("src.memos.service.generate_completion", self.mock_generate),
-            patch("src.memos.service.retrieve_by_query", self.mock_retrieve),
+            patch("src.memos.service.retrieve_ranked", self.mock_retrieve),
+            patch("src.memos.service.validate_citations", self.mock_validate),
         ]
         for p in self.patches:
             p.start()
@@ -434,6 +439,92 @@ class TestGenerateMemo:
         call_kwargs = self.mock_generate.call_args.kwargs
         assert call_kwargs.get("response_format") == "json_object"
         assert call_kwargs.get("temperature") == 0.2
+
+    # ---- full pipeline: hybrid + rerank, 15 passages, 8192-token budget ----
+
+    @pytest.mark.asyncio
+    async def test_uses_ranked_retrieval_with_top_k_15(self) -> None:
+        request = MemoGenerationRequest(
+            query="  What is constructive dismissal?  ",
+            memo_type=MemoType.LEGAL_OPINION,
+        )
+        await generate_memo(request)
+
+        self.mock_retrieve.assert_awaited_once()
+        assert self.mock_retrieve.call_args.args[0] == "What is constructive dismissal?"
+        assert self.mock_retrieve.call_args.kwargs["top_k"] == 15
+
+    @pytest.mark.asyncio
+    async def test_context_packed_to_the_memo_budget(self) -> None:
+        passages = [
+            Passage(id=f"h{i}", document_id=f"d{i}", text="x" * 8000) for i in range(15)
+        ]
+        self.mock_retrieve.return_value = MagicMock(passages=passages)
+        request = MemoGenerationRequest(
+            query="What is constructive dismissal?",
+            memo_type=MemoType.LEGAL_OPINION,
+        )
+        with patch("src.memos.service.pack_context", wraps=pack_context) as spy:
+            await generate_memo(request)
+
+        assert spy.call_args.kwargs["token_budget"] == 8192
+        user_prompt = self.mock_generate.call_args.kwargs["user_prompt"]
+        # 15 passages of ~2000 tokens each cannot all fit into 8192 tokens.
+        assert 0 < user_prompt.count("[SOURCE d") < 15
+
+    @pytest.mark.asyncio
+    async def test_citations_are_validated_against_retrieved_passages(self) -> None:
+        passages = _make_passages(5)
+        self.mock_retrieve.return_value = MagicMock(passages=passages)
+        request = MemoGenerationRequest(
+            query="What is constructive dismissal?",
+            memo_type=MemoType.LEGAL_OPINION,
+        )
+        await generate_memo(request)
+
+        self.mock_validate.assert_awaited_once()
+        text, validated_against = self.mock_validate.call_args.args
+        assert validated_against is passages
+        assert "Article 297 of the Labor Code" in text
+
+    @pytest.mark.asyncio
+    async def test_invalid_citations_reported_not_fatal(self) -> None:
+        self.mock_validate.return_value = ValidationResult(
+            is_valid=False,
+            invalid_citations=[
+                CoreCitationRef(source_id="dead-beef", text="[SOURCE dead-beef]", valid=False)
+            ],
+        )
+        request = MemoGenerationRequest(
+            query="What is constructive dismissal?",
+            memo_type=MemoType.LEGAL_OPINION,
+        )
+        response = await generate_memo(request)
+
+        # The fixture's IDs are "doc-0001" / "doc-0002": not document-ID shaped,
+        # so they are invalid by construction, alongside the one the check flagged.
+        assert response.invalid_citation_ids == ["dead-beef", "doc-0001", "doc-0002"]
+        assert len(response.warnings) == 1
+        assert "dead-beef" in response.warnings[0]
+        assert response.title == "Legal Memo: Constructive Dismissal"
+
+    @pytest.mark.asyncio
+    async def test_no_warnings_when_citations_valid(self) -> None:
+        data = _make_full_memo_data()
+        uuid = "0b7c6a4e-1f2d-4c3b-9a8e-7d6c5b4a3f21"
+        for c in [*data["all_citations"], *(c for s in data["sections"] for c in s["citations"])]:
+            c["source_id"] = uuid
+            c.pop("section_id", None)
+        self.mock_generate.return_value = json.dumps(data)
+        request = MemoGenerationRequest(
+            query="What is constructive dismissal?",
+            memo_type=MemoType.LEGAL_OPINION,
+        )
+        response = await generate_memo(request)
+
+        assert response.invalid_citation_ids == []
+        assert response.warnings == []
+        assert f"[SOURCE {uuid}]" in self.mock_validate.call_args.args[0]
 
 
 # ---------------------------------------------------------------------------

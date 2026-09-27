@@ -2,7 +2,9 @@
 
 Per CLAUDE.md:
 - OpenSearch for both BM25 and kNN
-- Retrieval ranking: official > semi-official > editorial > private (boost signal)
+- Retrieval ranking: official > semi-official > editorial > private (boost signal).
+  The boost is NOT applied here: it runs after reranking, on the score that
+  decides the final order. See `core/authority.py`.
 - Top-k after reranking: 8 for answers, 15 for digests/memos
 """
 
@@ -22,14 +24,6 @@ logger = logging.getLogger(__name__)
 
 # RRF constant (standard value from the original paper)
 RRF_K = 60
-
-# Authority level boost multipliers
-_AUTHORITY_BOOST: dict[str, float] = {
-    "official": 1.4,
-    "semi_official": 1.2,
-    "editorial": 1.0,
-    "private": 0.8,
-}
 
 # document_type boosts applied to CODAL_REFERENCE queries in `_bm25_search`.
 #
@@ -278,7 +272,8 @@ async def hybrid_retrieve(
             passages the BM25 filter had just excluded.
 
     Returns:
-        SearchResult with fused and authority-boosted passages.
+        SearchResult with fused passages in RRF order (not authority-boosted;
+        the boost runs after reranking).
     """
     degraded_legs: list[str] = []
     # Legs that FAILED at runtime, as opposed to legs that were never wired up.
@@ -381,13 +376,10 @@ async def hybrid_retrieve(
         )
     fused = non_empty
 
-    # Apply authority boost
-    for passage_data in fused:
-        authority = passage_data.get("source_authority_level", "editorial")
-        boost = _AUTHORITY_BOOST.get(authority, 1.0)
-        passage_data["score"] = passage_data.get("score", 0.0) * boost
-
-    # Sort by boosted score and take top_k
+    # Sort by RRF score and take top_k. The authority boost is deliberately not
+    # applied here: the reranker replaces this ordering, so a boost on the RRF
+    # score never reached the final order. It is applied after reranking — see
+    # `core/authority.py` and `core/reranking.py`.
     fused.sort(key=lambda x: x.get("score", 0.0), reverse=True)
     fused = fused[:top_k]
 

@@ -4,6 +4,7 @@ from .abstention import check_abstention, generate_abstention_response
 from .context import pack_context
 from .generation import generate_completion, stream_completion
 from .intent import classify_intent
+from .ranked import RankedPassages, retrieve_ranked
 from .reranking import rerank_passages
 from .retrieval import hybrid_retrieve, retrieve_by_document_id, retrieve_by_query
 from .schemas import ContextBundle, Passage, SearchResult
@@ -16,6 +17,7 @@ __all__ = [
     "ContextBundle",
     "Passage",
     "QueryIntent",
+    "RankedPassages",
     "SearchResult",
     "check_abstention",
     "classify_intent",
@@ -26,6 +28,7 @@ __all__ = [
     "retrieve_by_query",
     "pack_context",
     "rerank_passages",
+    "retrieve_ranked",
     "stream_completion",
     "validate_citations",
 ]
