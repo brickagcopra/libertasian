@@ -4,6 +4,12 @@ When the reranker service is not deployed, passages retain their RRF fusion
 scores. When available, the reranker replaces scores with cross-encoder
 relevance estimates.
 
+Either way the source-authority boost (`core/authority.py`) is applied HERE,
+after the scores that decide the final order exist and before the top-k cut:
+``final = rerank_score * boost``, or ``rrf_score * boost`` on the fallback
+path. The raw, unboosted top score is returned separately on
+`RerankOutcome.top_score` for abstention.
+
 Why RRF alone is not enough: it fuses BM25 and kNN by **rank position**, not by
 relevance. Measured on prod 2026-08-14, adding the kNN leg put the right
 documents into the candidate set but not at the top of it — and it actively
@@ -21,6 +27,7 @@ from typing import Any
 import httpx
 
 from ..config import settings
+from .authority import apply_authority_boost
 from .schemas import Passage, RerankOutcome
 
 logger = logging.getLogger(__name__)
@@ -92,11 +99,7 @@ async def rerank_passages(
     reranker_url = settings.reranker_url
     if not reranker_url:
         _warn_reranker_unconfigured()
-        return RerankOutcome(
-            passages=_fallback_rerank(passages, top_k),
-            degraded=True,
-            degraded_legs=[_MARKER_NOT_CONFIGURED],
-        )
+        return _fallback_outcome(passages, top_k, _MARKER_NOT_CONFIGURED)
 
     try:
         reranked = await _call_reranker(reranker_url, query, passages)
@@ -107,22 +110,14 @@ async def rerank_passages(
             settings.reranker_timeout,
             exc_info=True,
         )
-        return RerankOutcome(
-            passages=_fallback_rerank(passages, top_k),
-            degraded=True,
-            degraded_legs=[_MARKER_UNREACHABLE],
-        )
+        return _fallback_outcome(passages, top_k, _MARKER_UNREACHABLE)
     except httpx.TransportError:
         logger.error(
             "Reranker at %s is unreachable — falling back to RRF order",
             reranker_url,
             exc_info=True,
         )
-        return RerankOutcome(
-            passages=_fallback_rerank(passages, top_k),
-            degraded=True,
-            degraded_legs=[_MARKER_UNREACHABLE],
-        )
+        return _fallback_outcome(passages, top_k, _MARKER_UNREACHABLE)
     except Exception:
         # An HTTP status error (a 403 from a missing or wrong internal key is
         # the one to watch for), a body that does not parse, a result missing
@@ -135,14 +130,35 @@ async def rerank_passages(
             reranker_url,
             exc_info=True,
         )
-        return RerankOutcome(
-            passages=_fallback_rerank(passages, top_k),
-            degraded=True,
-            degraded_legs=[_MARKER_FAILED],
-        )
+        return _fallback_outcome(passages, top_k, _MARKER_FAILED)
 
-    reranked.sort(key=lambda p: p.rerank_score or 0.0, reverse=True)
-    return RerankOutcome(passages=reranked[:top_k])
+    # Raw cross-encoder order first: its head is the abstention signal, which
+    # must stay the unboosted relevance score.
+    reranked.sort(key=_rerank_key, reverse=True)
+    top_score = _raw_top_score(reranked)
+    boosted = apply_authority_boost(reranked, _rerank_key)
+    return RerankOutcome(passages=boosted[:top_k], top_score=top_score)
+
+
+def _rerank_key(passage: Passage) -> float:
+    return passage.rerank_score or 0.0
+
+
+def _rrf_key(passage: Passage) -> float:
+    return passage.score
+
+
+def _raw_top_score(raw_ordered: list[Passage]) -> float | None:
+    """The score `check_abstention` would read off the head of the raw order.
+
+    Same expression as `check_abstention` uses on ``passages[0]``, evaluated on
+    the order BEFORE the authority boost, so moving the boost after reranking
+    cannot move the abstention decision.
+    """
+    if not raw_ordered:
+        return None
+    head = raw_ordered[0]
+    return head.rerank_score if head.rerank_score is not None else head.score
 
 
 async def _call_reranker(
@@ -196,7 +212,19 @@ async def _call_reranker(
     return reranked
 
 
+def _fallback_outcome(
+    passages: list[Passage], top_k: int, marker: str
+) -> RerankOutcome:
+    """The degraded outcome: RRF order with the boost, raw RRF top score."""
+    return RerankOutcome(
+        passages=_fallback_rerank(passages, top_k),
+        degraded=True,
+        degraded_legs=[marker],
+        top_score=_raw_top_score(sorted(passages, key=_rrf_key, reverse=True)),
+    )
+
+
 def _fallback_rerank(passages: list[Passage], top_k: int) -> list[Passage]:
-    """Fallback: sort by existing RRF score."""
-    sorted_passages = sorted(passages, key=lambda p: p.score, reverse=True)
-    return sorted_passages[:top_k]
+    """Fallback: order by RRF score times the authority boost."""
+    raw_ordered = sorted(passages, key=_rrf_key, reverse=True)
+    return apply_authority_boost(raw_ordered, _rrf_key)[:top_k]

@@ -5,9 +5,15 @@ import logging
 from typing import Any
 
 from ..config import settings
+from ..core.context import pack_context
 from ..core.generation import generate_completion, get_model_info
-from ..core.retrieval import retrieve_by_query
-from ..shared.formatting import format_passages
+from ..core.ranked import retrieve_ranked
+from ..core.validation import (
+    build_citation_check_text,
+    invalid_citation_ids,
+    invalid_citation_warning,
+    validate_citations,
+)
 from .prompts import (
     MEMO_TYPE_INSTRUCTIONS,
     OUTLINE_PROMPT_VERSION,
@@ -33,19 +39,18 @@ async def generate_memo(request: MemoGenerationRequest) -> MemoGenerationRespons
     """Generate a structured legal memo using RAG pipeline.
 
     Steps:
-    1. Retrieve relevant source passages via core pipeline
-    2. Build context with citation anchors
+    1. Retrieve relevant source passages via the shared ranked pipeline
+       (hybrid BM25 + kNN, cross-encoder rerank, authority boost)
+    2. Pack context with citation anchors within the memo token budget
     3. Call vLLM via core generation
-    4. Parse and validate output
+    4. Parse the output and validate its citations (reported, not fatal)
     """
     model_info = get_model_info()
 
-    # Step 1: Retrieve relevant passages via core pipeline
-    passages = await retrieve_by_query(
-        request.query,
-        top_k=15,  # Per CLAUDE.md: 15 passages for digest/memo
-        text_truncate=2000,
-    )
+    # Step 1: Retrieve relevant passages via the shared ranked pipeline.
+    # Per CLAUDE.md: 15 passages after reranking for digest/memo.
+    ranked = await retrieve_ranked(request.query.strip(), top_k=15)
+    passages = ranked.passages
 
     # Step 2: Build prompt with context
     memo_instruction = MEMO_TYPE_INSTRUCTIONS.get(
@@ -53,7 +58,10 @@ async def generate_memo(request: MemoGenerationRequest) -> MemoGenerationRespons
         MEMO_TYPE_INSTRUCTIONS["research_summary"],
     )
 
-    context_text = format_passages(passages)
+    # Per CLAUDE.md: 8192-token context budget for digest/memo.
+    context_text = pack_context(
+        passages, token_budget=settings.memo_context_tokens
+    ).formatted_context
 
     user_prompt = USER_PROMPT_TEMPLATE.format(
         context=context_text,
@@ -76,39 +84,62 @@ async def generate_memo(request: MemoGenerationRequest) -> MemoGenerationRespons
     # Compute confidence score based on citation coverage
     confidence = _compute_confidence(memo_data, passages)
 
+    sections = [
+        MemoSectionOutput(
+            heading=s.get("heading", ""),
+            content=s.get("content", ""),
+            citations=[
+                CitationRef(
+                    source_id=c.get("source_id", ""),
+                    section_id=c.get("section_id"),
+                    text=c.get("text", ""),
+                )
+                for c in s.get("citations", [])
+                if isinstance(c, dict) and c.get("source_id")
+            ],
+        )
+        for s in memo_data.get("sections", [])
+        if isinstance(s, dict)
+    ]
+    all_citations = [
+        CitationRef(
+            source_id=c.get("source_id", ""),
+            section_id=c.get("section_id"),
+            text=c.get("text", ""),
+        )
+        for c in memo_data.get("all_citations", [])
+        if isinstance(c, dict) and c.get("source_id")
+    ]
+    summary = memo_data.get("summary", "")
+    conclusion = memo_data.get("conclusion", "")
+
+    # Step 5: Citation validation (NON-OPTIONAL per CLAUDE.md). Invalid IDs are
+    # reported on the response rather than failing the memo.
+    check_text, malformed = build_citation_check_text(
+        [str(summary), *(s.content for s in sections), str(conclusion)],
+        [
+            (c.source_id, c.section_id)
+            for c in [*all_citations, *(c for s in sections for c in s.citations)]
+        ],
+    )
+    validation = await validate_citations(check_text, passages)
+    bad_ids = invalid_citation_ids(validation, malformed)
+    warnings: list[str] = []
+    if bad_ids:
+        logger.warning("Memo cites %d invalid source ID(s)", len(bad_ids))
+        warnings.append(invalid_citation_warning(bad_ids))
+
     return MemoGenerationResponse(
         title=memo_data.get("title", "Untitled Memo"),
-        summary=memo_data.get("summary", ""),
-        sections=[
-            MemoSectionOutput(
-                heading=s.get("heading", ""),
-                content=s.get("content", ""),
-                citations=[
-                    CitationRef(
-                        source_id=c.get("source_id", ""),
-                        section_id=c.get("section_id"),
-                        text=c.get("text", ""),
-                    )
-                    for c in s.get("citations", [])
-                    if isinstance(c, dict) and c.get("source_id")
-                ],
-            )
-            for s in memo_data.get("sections", [])
-            if isinstance(s, dict)
-        ],
-        conclusion=memo_data.get("conclusion", ""),
-        citations=[
-            CitationRef(
-                source_id=c.get("source_id", ""),
-                section_id=c.get("section_id"),
-                text=c.get("text", ""),
-            )
-            for c in memo_data.get("all_citations", [])
-            if isinstance(c, dict) and c.get("source_id")
-        ],
+        summary=summary,
+        sections=sections,
+        conclusion=conclusion,
+        citations=all_citations,
         confidence_score=confidence,
         model_name=model_info["model_name"],
         prompt_template_version=PROMPT_VERSION,
+        invalid_citation_ids=bad_ids,
+        warnings=warnings,
     )
 
 

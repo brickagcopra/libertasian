@@ -6,8 +6,15 @@ from typing import Any
 
 from ..config import settings
 from ..core.generation import generate_completion, get_model_info
-from ..core.retrieval import retrieve_by_document_id, retrieve_by_query
+from ..core.ranked import retrieve_ranked
+from ..core.retrieval import retrieve_by_document_id
 from ..core.schemas import Passage
+from ..core.validation import (
+    build_citation_check_text,
+    invalid_citation_ids,
+    invalid_citation_warning,
+    validate_citations,
+)
 from ..shared.formatting import format_passages
 from .prompts import PROMPT_VERSION, SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
 from .schemas import (
@@ -25,10 +32,11 @@ async def answer_research_query(
     """Answer a research query with workspace context using RAG pipeline.
 
     Steps:
-    1. Retrieve passages from pinned documents and via query search (core pipeline)
+    1. Retrieve passages from pinned documents first, then fill with passages
+       from the shared ranked pipeline (hybrid, rerank, authority boost)
     2. Build context with workspace notes and conversation history
     3. Call vLLM via core generation
-    4. Parse and validate output
+    4. Parse the output and validate its citations (reported, not fatal)
     """
     model_info = get_model_info()
 
@@ -42,11 +50,9 @@ async def answer_research_query(
         )
         all_passages.extend(doc_passages)
 
-    # Also do a query-based search for additional relevant passages
-    query_passages = await retrieve_by_query(
-        request.query, top_k=8, text_truncate=2000,
-    )
-    all_passages.extend(query_passages)
+    # Then fill with ranked passages for the query, after the pinned ones.
+    ranked = await retrieve_ranked(request.query.strip(), top_k=8)
+    all_passages.extend(ranked.passages)
 
     # Deduplicate by passage ID
     seen_ids: set[str] = set()
@@ -95,17 +101,34 @@ async def answer_research_query(
             )
         )
 
+    answer = response_data.get("answer", "Unable to generate answer.")
+
+    # Step 5: Citation validation (NON-OPTIONAL per CLAUDE.md), against every
+    # passage the model was shown. Invalid IDs are reported, never fatal.
+    check_text, malformed = build_citation_check_text(
+        [str(answer)],
+        [(c.source_id, c.section_id) for c in citations if c.source_id],
+    )
+    validation = await validate_citations(check_text, unique_passages)
+    bad_ids = invalid_citation_ids(validation, malformed)
+    warnings: list[str] = []
+    if bad_ids:
+        logger.warning("Research answer cites %d invalid source ID(s)", len(bad_ids))
+        warnings.append(invalid_citation_warning(bad_ids))
+
     follow_ups = response_data.get("follow_up_suggestions", [])
     if not isinstance(follow_ups, list):
         follow_ups = []
 
     return ResearchQueryResponse(
-        answer=response_data.get("answer", "Unable to generate answer."),
+        answer=answer,
         citations=citations,
         follow_up_suggestions=[str(s) for s in follow_ups[:5]],
         confidence_score=confidence,
         model_name=model_info["model_name"],
         prompt_template_version=PROMPT_VERSION,
+        invalid_citation_ids=bad_ids,
+        warnings=warnings,
     )
 
 

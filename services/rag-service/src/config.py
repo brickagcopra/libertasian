@@ -100,6 +100,8 @@ class Settings(BaseSettings):
     # Answer generation
     answer_max_tokens: int = 4096
     answer_context_tokens: int = 4096
+    # Per CLAUDE.md: 8192 tokens max for digest/memo context.
+    memo_context_tokens: int = 8192
 
     # Reranker (empty string = disabled, uses RRF fallback)
     reranker_url: str = ""

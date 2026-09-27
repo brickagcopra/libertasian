@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 def check_abstention(
     passages: list[Passage],
     min_passages: int | None = None,
+    top_score: float | None = None,
 ) -> AbstentionReason | None:
     """Check whether the pipeline should abstain from answering.
 
@@ -28,6 +29,11 @@ def check_abstention(
             a single document pass the lower scoped floor, because the count
             there measures how long the document is rather than how well
             corroborated the answer is. Defaults to the corpus-wide setting.
+        top_score: The raw (pre-authority-boost) top relevance score, from
+            `RerankOutcome.top_score`. The passages arrive in boosted order, so
+            their head is not necessarily the most relevant passage; when this
+            is given it is compared against the threshold instead of the head's
+            score. When None, the head of ``passages`` is used, as before.
 
     Returns:
         An AbstentionReason if the pipeline should abstain, or None if OK to proceed.
@@ -47,7 +53,9 @@ def check_abstention(
         return AbstentionReason.INSUFFICIENT_PASSAGES
 
     # Check top passage score threshold
-    top_score = passages[0].rerank_score if passages[0].rerank_score is not None else passages[0].score
+    if top_score is None:
+        head = passages[0]
+        top_score = head.rerank_score if head.rerank_score is not None else head.score
     if top_score < settings.abstention_score_threshold:
         logger.info(
             "Abstaining: top score %.4f < threshold %.4f",

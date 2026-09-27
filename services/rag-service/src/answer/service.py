@@ -15,11 +15,9 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
-from typing import Any
 
 from ..config import settings
 from ..core.abstention import check_abstention, generate_abstention_response
-from ..core.clients import embed_query
 from ..core.context import pack_context
 from ..core.generation import (
     generate_completion_with_usage,
@@ -27,10 +25,9 @@ from ..core.generation import (
     stream_completion,
 )
 from ..core.intent import classify_intent
-from ..core.reranking import rerank_passages
-from ..core.retrieval import hybrid_retrieve
-from ..core.schemas import Passage, RerankOutcome, SearchResult
-from ..core.types import AbstentionReason, ConfidenceLevel
+from ..core.ranked import RankedPassages, retrieve_ranked
+from ..core.schemas import Passage
+from ..core.types import AbstentionReason, ConfidenceLevel, QueryIntent
 from ..core.validation import validate_citations
 from ..shared.scoring import compute_confidence
 from .prompts import (
@@ -69,19 +66,6 @@ _SENTINEL_ABSTENTION_REASON = AbstentionReason.LOW_RELEVANCE
 # short chunk of perceived latency. The alternative, streaming the sentinel and
 # retracting it, shows the reader a raw token.
 _SENTINEL_PROBE_CHARS = 40
-
-
-def _retrieval_filters(request: AnswerRequest) -> dict[str, Any] | None:
-    """Translate the request's document scope into retrieval filter terms.
-
-    ``history`` is deliberately absent here. Conversation context changes how an
-    answer is written, never which passages are eligible to ground it — folding
-    earlier turns into the retrieval query would let a long conversation drift
-    the evidence set away from the question actually being asked.
-    """
-    if request.document_id is None:
-        return None
-    return {"document_id": request.document_id}
 
 
 def _min_passages(request: AnswerRequest) -> int:
@@ -134,31 +118,19 @@ async def generate_answer(request: AnswerRequest) -> AnswerResponse:
     intent = classify_intent(query)
     logger.info("Query intent: %s, query_length: %d", intent.value, len(query))
 
-    # 2. Hybrid retrieval, narrowed to one document when the caller asked for it.
-    # The embedding is computed once per request and handed to both retrieval
-    # legs; `None` is a supported value that runs BM25-only.
-    embedding = await embed_query(query)
-    search_result = await hybrid_retrieve(
-        query,
-        intent,
-        top_k=30,
-        embedding=embedding,
-        filter_terms=_retrieval_filters(request),
-    )
+    # 2-3. Hybrid retrieval (narrowed to one document when the caller asked for
+    # it), reranking and the authority boost — the shared ranked path.
+    ranked = await _retrieve(request, query, intent)
+    reranked = ranked.passages
+    degraded_legs = ranked.degraded_legs
 
-    # 3. Reranking. `degraded_legs` says whether the cross-encoder actually
-    # ran; RRF order is a fallback, not an equivalent.
-    rerank_outcome = await rerank_passages(
-        query,
-        search_result.passages,
-        top_k=request.max_passages,
-    )
-    reranked = rerank_outcome.passages
-    degraded_legs = _merge_degraded_legs(search_result, rerank_outcome)
-
-    # 4. Abstention check
+    # 4. Abstention check, on the RAW top score (not the boosted order's head).
     scoped = request.document_id is not None
-    abstention_reason = check_abstention(reranked, min_passages=_min_passages(request))
+    abstention_reason = check_abstention(
+        reranked,
+        min_passages=_min_passages(request),
+        top_score=ranked.top_rerank_score,
+    )
     if abstention_reason is not None:
         abstention_text = generate_abstention_response(abstention_reason, query, scoped=scoped)
         return AnswerResponse(
@@ -172,7 +144,7 @@ async def generate_answer(request: AnswerRequest) -> AnswerResponse:
             model_name=model_info["model_name"],
             prompt_template_version=PROMPT_VERSION,
             passages_used=0,
-            passages_available=len(search_result.passages),
+            passages_available=ranked.candidates,
             degraded=bool(degraded_legs),
             degraded_legs=degraded_legs,
         )
@@ -313,25 +285,17 @@ async def stream_answer(request: AnswerRequest) -> AsyncIterator[AnswerChunk]:
     try:
         # 1-4: Same as non-streaming
         intent = classify_intent(query)
-        embedding = await embed_query(query)
-        search_result = await hybrid_retrieve(
-            query,
-            intent,
-            top_k=30,
-            embedding=embedding,
-            filter_terms=_retrieval_filters(request),
-        )
-        rerank_outcome = await rerank_passages(
-            query,
-            search_result.passages,
-            top_k=request.max_passages,
-        )
-        reranked = rerank_outcome.passages
-        degraded_legs = _merge_degraded_legs(search_result, rerank_outcome)
+        ranked = await _retrieve(request, query, intent)
+        reranked = ranked.passages
+        degraded_legs = ranked.degraded_legs
 
-        # Abstention check
+        # Abstention check, on the RAW top score (not the boosted order's head).
         scoped = request.document_id is not None
-        abstention_reason = check_abstention(reranked, min_passages=_min_passages(request))
+        abstention_reason = check_abstention(
+            reranked,
+            min_passages=_min_passages(request),
+            top_score=ranked.top_rerank_score,
+        )
         if abstention_reason is not None:
             abstention_text = generate_abstention_response(
                 abstention_reason, query, scoped=scoped
@@ -500,17 +464,22 @@ def _confidence_to_level(confidence: float) -> ConfidenceLevel:
     return ConfidenceLevel.LOW
 
 
-def _merge_degraded_legs(
-    search_result: SearchResult, rerank_outcome: RerankOutcome
-) -> list[str]:
-    """Collect every leg that did not contribute, retrieval and reranking alike.
+async def _retrieve(
+    request: AnswerRequest, query: str, intent: QueryIntent
+) -> RankedPassages:
+    """Run the shared ranked-retrieval path for this request.
 
-    Both stages already report their own degradation; the answer response is the
-    first place a caller can see them together, which is the only place the
-    distinction between "no good passages exist" and "half the pipeline was
-    down" is actually actionable.
+    ``history`` is deliberately absent here. Conversation context changes how an
+    answer is written, never which passages are eligible to ground it — folding
+    earlier turns into the retrieval query would let a long conversation drift
+    the evidence set away from the question actually being asked.
     """
-    return [*search_result.degraded_legs, *rerank_outcome.degraded_legs]
+    return await retrieve_ranked(
+        query,
+        top_k=request.max_passages,
+        document_id=request.document_id,
+        intent=intent,
+    )
 
 
 def _passage_to_source(passage: Passage) -> AnswerSource:

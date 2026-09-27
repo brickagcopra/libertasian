@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterable
 from typing import Any
 
 from ..shared.database import fetch_documents_by_ids
@@ -177,3 +178,64 @@ def _detect_unsupported_claims(text: str) -> list[str]:
             unsupported.append(sentence.strip()[:200])
 
     return unsupported
+
+
+# ---------------------------------------------------------------------------
+# Structured-output citations (memos, research workspaces)
+# ---------------------------------------------------------------------------
+
+# What `_SOURCE_REF_PATTERN` accepts as an ID. A structured citation whose
+# ``source_id`` is not in this shape cannot be a document ID at all.
+_WELL_FORMED_ID = re.compile(r"[0-9a-f-]+", re.IGNORECASE)
+
+
+def build_citation_check_text(
+    texts: Iterable[str],
+    cited: Iterable[tuple[str, str | None]],
+) -> tuple[str, list[str]]:
+    """Render JSON-structured output into text `validate_citations` can check.
+
+    `validate_citations` reads ``[SOURCE id§section]`` anchors out of prose.
+    Memos and research workspaces return JSON, where citations are separate
+    ``{source_id, section_id}`` objects the anchor pattern never sees. They are
+    rendered as anchors and appended to the prose fields (which may carry
+    inline anchors of their own), so both kinds go through the one check.
+
+    Args:
+        texts: The prose fields of the output.
+        cited: ``(source_id, section_id)`` pairs from the structured citations.
+
+    Returns:
+        The text to validate, and the ``source_id`` values that are not
+        well-formed document IDs. Those are invalid by construction: the anchor
+        regex would skip them, so a fabricated ``"G.R. No. 12345"`` would
+        otherwise read as "no citations" rather than as a bad one.
+    """
+    anchors: list[str] = []
+    malformed: list[str] = []
+    for source_id, section_id in cited:
+        if not _WELL_FORMED_ID.fullmatch(source_id):
+            malformed.append(source_id)
+            continue
+        if section_id and _WELL_FORMED_ID.fullmatch(section_id):
+            anchors.append(f"[SOURCE {source_id}§{section_id}]")
+        else:
+            anchors.append(f"[SOURCE {source_id}]")
+    return "\n\n".join([*texts, *anchors]), malformed
+
+
+def invalid_citation_ids(
+    result: ValidationResult,
+    malformed: Iterable[str] = (),
+) -> list[str]:
+    """The distinct invalid ``source_id`` values, in first-seen order."""
+    ids = [ref.source_id for ref in result.invalid_citations]
+    return list(dict.fromkeys([*ids, *malformed]))
+
+
+def invalid_citation_warning(ids: list[str]) -> str:
+    """Human-readable warning for an output that cites unknown documents."""
+    return (
+        f"{len(ids)} cited source ID(s) match no retrieved passage and no known "
+        f"legal document, and may be fabricated: {', '.join(ids)}"
+    )

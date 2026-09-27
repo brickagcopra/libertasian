@@ -5,7 +5,8 @@ Covers:
 - _get_boosted_fields: Intent-specific field boosting
 - _to_passage: Raw hit dict → Passage conversion
 - _hit_to_passage: OpenSearch hit → Passage conversion
-- hybrid_retrieve: Full pipeline (BM25 + kNN + RRF + authority boost)
+- hybrid_retrieve: Full pipeline (BM25 + kNN + RRF; the authority boost runs
+  after reranking, see test_authority.py)
 - _bm25_search: BM25 keyword search with intent-based query building
 - _knn_search: kNN vector search
 - retrieve_by_document_id: Document-specific retrieval with fallback
@@ -28,7 +29,6 @@ from src.core.retrieval import (
     _rrf_fuse,
     _to_passage,
     RRF_K,
-    _AUTHORITY_BOOST,
     hybrid_retrieve,
     retrieve_by_document_id,
     retrieve_by_query,
@@ -394,37 +394,41 @@ class TestHybridRetrieve:
         assert mock_search.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_authority_boost_applied(self) -> None:
-        """Official sources should get higher scores than private ones."""
-        official_hit = _make_os_hit(
-            "off",
+    async def test_no_authority_boost_before_reranking(self) -> None:
+        """hybrid_retrieve returns raw RRF order; the boost runs after reranking.
+
+        It used to multiply the RRF score here, where the reranker then threw
+        the ordering away. A low-trust hit BM25 ranks first must stay first,
+        with its unboosted RRF score.
+        """
+        low_hit = _make_os_hit(
+            "low",
             5.0,
             source={
                 "document_id": "d1",
-                "plain_text": "Official text",
-                "source_trust_level": "official",
+                "plain_text": "Low-trust text",
+                "source_trust_level": "low",
             },
         )
-        private_hit = _make_os_hit(
-            "priv",
-            5.0,
+        high_hit = _make_os_hit(
+            "high",
+            4.0,
             source={
                 "document_id": "d2",
-                "plain_text": "Private text",
-                "source_trust_level": "private",
+                "plain_text": "High-trust text",
+                "source_trust_level": "high",
             },
         )
 
-        os_response = {"hits": {"hits": [official_hit, private_hit]}}
+        os_response = {"hits": {"hits": [low_hit, high_hit]}}
 
         with patch("src.core.retrieval.opensearch_search", new_callable=AsyncMock) as mock_search:
             mock_search.return_value = os_response
             result = await hybrid_retrieve("test", QueryIntent.GENERAL, top_k=10)
 
-        # Official (boost 1.4) should rank above private (boost 0.8)
-        assert result.passages[0].source_authority_level == "official"
-        assert result.passages[1].source_authority_level == "private"
-        assert result.passages[0].score > result.passages[1].score
+        assert [p.source_authority_level for p in result.passages] == ["low", "high"]
+        assert result.passages[0].score == pytest.approx(1.0 / RRF_K)  # rank 0
+        assert result.passages[1].score == pytest.approx(1.0 / (RRF_K + 1))  # rank 1
 
     @pytest.mark.asyncio
     async def test_top_k_limits_results(self) -> None:
@@ -1466,36 +1470,6 @@ class TestRetrieveByQuery:
             await retrieve_by_query("test", top_k=5)
 
         assert captured_body["size"] == 5
-
-
-# ===========================================================================
-# Authority boost constants
-# ===========================================================================
-
-
-class TestAuthorityBoost:
-    """Verify authority boost values per CLAUDE.md priority."""
-
-    def test_official_highest(self) -> None:
-        assert _AUTHORITY_BOOST["official"] == 1.4
-
-    def test_semi_official(self) -> None:
-        assert _AUTHORITY_BOOST["semi_official"] == 1.2
-
-    def test_editorial_neutral(self) -> None:
-        assert _AUTHORITY_BOOST["editorial"] == 1.0
-
-    def test_private_lowest(self) -> None:
-        assert _AUTHORITY_BOOST["private"] == 0.8
-
-    def test_ordering(self) -> None:
-        """official > semi_official > editorial > private per CLAUDE.md."""
-        assert (
-            _AUTHORITY_BOOST["official"]
-            > _AUTHORITY_BOOST["semi_official"]
-            > _AUTHORITY_BOOST["editorial"]
-            > _AUTHORITY_BOOST["private"]
-        )
 
 
 # ---------------------------------------------------------------------------

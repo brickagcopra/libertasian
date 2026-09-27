@@ -12,6 +12,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.core.schemas import CitationRef as CoreCitationRef
+from src.core.schemas import ValidationResult
 from src.research_workspaces.schemas import (
     PreviousQuery,
     ResearchQueryRequest,
@@ -240,13 +242,17 @@ class TestAnswerResearchQuery:
         self.llm_response = json.dumps(_make_full_response_data())
         self.mock_generate = AsyncMock(return_value=self.llm_response)
         self.mock_retrieve_doc = AsyncMock(return_value=_make_passages(3))
-        self.mock_retrieve_query = AsyncMock(return_value=_make_passages(5))
+        self.mock_retrieve_query = AsyncMock(
+            return_value=MagicMock(passages=_make_passages(5))
+        )
+        self.mock_validate = AsyncMock(return_value=ValidationResult(is_valid=True))
 
         self.patches = [
             patch("src.research_workspaces.service.get_model_info", self.mock_model_info),
             patch("src.research_workspaces.service.generate_completion", self.mock_generate),
             patch("src.research_workspaces.service.retrieve_by_document_id", self.mock_retrieve_doc),
-            patch("src.research_workspaces.service.retrieve_by_query", self.mock_retrieve_query),
+            patch("src.research_workspaces.service.retrieve_ranked", self.mock_retrieve_query),
+            patch("src.research_workspaces.service.validate_citations", self.mock_validate),
         ]
         for p in self.patches:
             p.start()
@@ -284,7 +290,9 @@ class TestAnswerResearchQuery:
         # Return same passage IDs from both sources
         shared = _make_mock_passage("shared-1")
         self.mock_retrieve_doc.return_value = [shared, _make_mock_passage("doc-only")]
-        self.mock_retrieve_query.return_value = [shared, _make_mock_passage("query-only")]
+        self.mock_retrieve_query.return_value = MagicMock(
+            passages=[shared, _make_mock_passage("query-only")]
+        )
 
         request = ResearchQueryRequest(
             query="Test deduplication of passages",
@@ -374,3 +382,63 @@ class TestAnswerResearchQuery:
         call_kwargs = self.mock_generate.call_args.kwargs
         assert call_kwargs.get("response_format") == "json_object"
         assert call_kwargs.get("temperature") == 0.3
+
+
+    # ---- full pipeline + citation validation ----
+
+    @pytest.mark.asyncio
+    async def test_uses_ranked_retrieval_top_8(self) -> None:
+        request = ResearchQueryRequest(query="What is constructive dismissal?")
+        await answer_research_query(request)
+
+        self.mock_retrieve_query.assert_awaited_once()
+        assert self.mock_retrieve_query.call_args.kwargs["top_k"] == 8
+
+    @pytest.mark.asyncio
+    async def test_pinned_passages_come_first_then_ranked(self) -> None:
+        pinned = [_make_mock_passage("pin-1"), _make_mock_passage("shared")]
+        ranked = [_make_mock_passage("shared"), _make_mock_passage("rank-1")]
+        self.mock_retrieve_doc.return_value = pinned
+        self.mock_retrieve_query.return_value = MagicMock(passages=ranked)
+
+        request = ResearchQueryRequest(
+            query="What is the doctrine in the pinned case?",
+            pinned_document_ids=["doc-001"],
+        )
+        await answer_research_query(request)
+
+        validated_against = self.mock_validate.call_args.args[1]
+        assert [p.id for p in validated_against] == ["pin-1", "shared", "rank-1"]
+
+    @pytest.mark.asyncio
+    async def test_invalid_citations_reported_not_fatal(self) -> None:
+        self.mock_validate.return_value = ValidationResult(
+            is_valid=False,
+            invalid_citations=[
+                CoreCitationRef(source_id="dead-beef", text="[SOURCE dead-beef]", valid=False)
+            ],
+        )
+        request = ResearchQueryRequest(query="What is constructive dismissal?")
+        response = await answer_research_query(request)
+
+        assert "dead-beef" in response.invalid_citation_ids
+        assert len(response.warnings) == 1
+        assert "constructive dismissal" in response.answer
+        assert len(response.citations) == 2
+
+    @pytest.mark.asyncio
+    async def test_no_warnings_when_citations_valid(self) -> None:
+        data = _make_full_response_data()
+        uuid = "0b7c6a4e-1f2d-4c3b-9a8e-7d6c5b4a3f21"
+        for c in data["citations"]:
+            c["source_id"] = uuid
+        self.mock_generate.return_value = json.dumps(data)
+
+        request = ResearchQueryRequest(query="What is constructive dismissal?")
+        response = await answer_research_query(request)
+
+        assert response.invalid_citation_ids == []
+        assert response.warnings == []
+        text = self.mock_validate.call_args.args[0]
+        assert f"[SOURCE {uuid}" in text
+        assert "Globe Telecom v. Florendo established" in text
