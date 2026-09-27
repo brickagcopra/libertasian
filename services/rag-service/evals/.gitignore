@@ -1,0 +1,3 @@
+# Run outputs: large, environment-specific, and may quote corpus text.
+results/*
+!results/.gitkeep
