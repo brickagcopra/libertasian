@@ -68,6 +68,7 @@ import {
   LibraryBigIcon,
   FileStackIcon,
   ShieldIcon,
+  TelescopeIcon,
 } from 'lucide-react';
 
 interface NavItem {
@@ -80,6 +81,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { href: '/search', label: 'Search', icon: SearchIcon },
+  { href: '/research', label: 'Deep Research', icon: TelescopeIcon, minTier: 'edu' },
   { href: '/digests', label: 'Digests', icon: FileTextIcon },
   { href: '/library', label: 'Library', icon: LibraryBigIcon },
   { href: '/bar-exams', label: 'Bar Exams', icon: ScrollTextIcon },

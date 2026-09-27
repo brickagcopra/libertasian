@@ -135,3 +135,44 @@ describe('AiSummaryResults citations', () => {
     expect(screen.getByText('1987 Constitution')).toBeInTheDocument();
   });
 });
+
+describe('AiSummaryResults — Go deeper with Deep Research', () => {
+  afterEach(() => {
+    mockUseAiAnswerStream.mockReset();
+  });
+
+  it('links a finished answer to /research?q=<query>', () => {
+    citedAnswer();
+    render(<AiSummaryResults query="warrantless arrest & search" />);
+    expect(screen.getByText('Go deeper with Deep Research').closest('a')).toHaveAttribute(
+      'href',
+      '/research?q=warrantless%20arrest%20%26%20search',
+    );
+  });
+
+  it('offers it on an abstention too', () => {
+    abstainedWith('low_relevance');
+    render(<AiSummaryResults query="maritime salvage" />);
+    expect(screen.getByText('Go deeper with Deep Research').closest('a')).toHaveAttribute(
+      'href',
+      '/research?q=maritime%20salvage',
+    );
+  });
+
+  it('does not offer it while the answer is still streaming', () => {
+    mockUseAiAnswerStream.mockReturnValue({
+      text: 'partial',
+      sources: [],
+      isStreaming: true,
+      isDone: false,
+      error: null,
+      confidence: null,
+      abstained: false,
+      abstentionReason: null,
+      retryCount: 0,
+      reset: vi.fn(),
+    });
+    render(<AiSummaryResults query="q" />);
+    expect(screen.queryByText('Go deeper with Deep Research')).not.toBeInTheDocument();
+  });
+});
