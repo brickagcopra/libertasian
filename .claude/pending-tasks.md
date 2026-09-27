@@ -1,5 +1,12 @@
 # Pending Tasks
 
+## Deep Research client follow-ups (2026-09-27, after #508 / #509 merged)
+- [ ] Mobile reader: honour the `section` param and highlight the passage (parity with web `pinpoint.ts`). Today "Open in reader" opens the document, not the passage.
+- [ ] Login redirect drops the query string (`?q=` is lost on `/research?q=`). The same thing happens on main.
+- [ ] Web UpgradeBanner → "subscribe in the iOS app" CTA (decided 09-20) before `PAYWALL_ENFORCED_WEB` is set. Applies to Deep Research and Memos. It never shows today: the flag is unset in prod, so every web user counts as pro.
+- [ ] 16 pre-existing e2e failures in `subscription-enforcement` + `entitlement-enforcement-gaps`.
+- [ ] Duplicate `@types/react` (tsc reports 397 errors on main).
+
 ## Deep Research (2026-09-26, feature/PHASE-1-deep-research-api, PR open, NOT merged)
 - [ ] **Acceptance gate before shipping:** run `python -m evals.run --endpoint deep` on prod (45-question golden set) and compare it against the /answer result file with `python -m evals.compare ... --k 8`. It ships only if authority_hit@8 > 0.525, citation_validity = 1.0, and no must-abstain question is answered.
 - [ ] Deploy the `20260926120000_add_deep_research_runs` migration. Set `DEEP_RESEARCH_*` env on rag-service if the defaults change, and set `DEEP_RESEARCH_MODEL_ALLOWLIST` to allow `gpt-6-luna`.
