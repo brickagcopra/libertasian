@@ -29,7 +29,7 @@ import { splitCompleteText } from './format-answer-text';
  * same winter runtime and accepts the Uint8Array chunks directly.
  */
 
-function resolveApiBaseUrl(): string {
+export function resolveApiBaseUrl(): string {
   const override = process.env['EXPO_PUBLIC_API_URL'];
   if (override) {
     return override;
