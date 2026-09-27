@@ -12,6 +12,7 @@ const SURFACE_BLURB: Record<string, string> = {
   barExams: 'Past bar examination questions, with model answers.',
   digestGeneration: 'Turn any document into a structured case digest.',
   workspace: 'Matters, notes, memos, pleadings, comparisons and timelines.',
+  deepResearch: 'Research answers drawn from many sources, with every claim checked against its quote.',
 };
 
 export interface PurchaseEntryPointProps {

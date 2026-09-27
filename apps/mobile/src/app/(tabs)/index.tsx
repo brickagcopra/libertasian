@@ -3,6 +3,8 @@ import { router, type Href } from 'expo-router';
 import { HomeScreen, type HomeFeedItem } from '@/components/screens/HomeScreen';
 import { useTabBarNav } from '@/features/navigation/use-tab-bar-nav';
 import { useHomeFeed } from '@/features/home/hooks/use-home-feed';
+import { useDeepResearchEntryVisible } from '@/features/deep-research/components/entry-points';
+import { researchHref } from '@/features/deep-research/navigation';
 import { useAuth } from '@/providers/auth-provider';
 import type { HomeFeedItem as ApiHomeFeedItem } from '@/features/home/types';
 
@@ -36,6 +38,7 @@ export default function HomeRoute() {
   const navigate = useTabBarNav();
   const { user } = useAuth();
   const { data, isLoading, isError } = useHomeFeed();
+  const deepResearchVisible = useDeepResearchEntryVisible();
 
   const greetingDate = useMemo(() => formatGreetingDate(new Date()), []);
   const firstName = firstNameFrom(user?.fullName);
@@ -90,6 +93,9 @@ export default function HomeRoute() {
       onPressFeedItem={handleFeedItemPress}
       onSeeAllFeed={() => router.push('/(tabs)/digests')}
       onSearchPress={() => router.push('/(tabs)/search')}
+      {...(deepResearchVisible
+        ? { onDeepResearchPress: () => router.push(researchHref()) }
+        : {})}
       activeTab="home"
       onTabPress={navigate}
     />
