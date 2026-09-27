@@ -154,6 +154,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         feedPost: { $allOperations: addTenantFilter(organizationId) },
         feedPostMedia: { $allOperations: addTenantFilter(organizationId) },
         feedComment: { $allOperations: addTenantFilter(organizationId) },
+        deepResearchRun: { $allOperations: addTenantFilter(organizationId) },
         // bookmark, annotation, feedCommentLike intentionally omitted.
         // User-scoped/junction tables — no organization_id column. Tenant
         // guard happens at the parent (matter / digest / feedComment)
