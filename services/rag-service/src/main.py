@@ -16,6 +16,7 @@ from .completions.router import router as completions_router
 from .config import settings
 from .contradictions.router import router as contradictions_router
 from .core.clients import close_embedding_client
+from .deep_research.router import router as deep_research_router
 from .digests.router import router as digests_router
 from .doctrines.router import router as doctrines_router
 from .flashcards.router import router as flashcards_router
@@ -162,6 +163,7 @@ app.include_router(hearing_prep_router)
 app.include_router(answer_router)
 app.include_router(digests_router)
 app.include_router(completions_router)
+app.include_router(deep_research_router)
 
 Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 

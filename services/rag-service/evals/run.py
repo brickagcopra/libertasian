@@ -1,13 +1,15 @@
 """Run the golden set against a live rag-service and write a result file.
 
     python -m evals.run --base-url http://localhost:8000 \\
-        --api-key "$RAG_INTERNAL_API_KEY" --endpoint answer \\
+        --api-key "$RAG_INTERNAL_API_KEY" --endpoint answer|deep \\
         --out /tmp/rag-evals/<ts>.json [--limit N] [--concurrency 2]
 
 Talks to the INTERNAL rag-service API (the one NestJS calls), authenticated
 with the ``X-Internal-Api-Key`` header checked by ``src/shared/auth.py``.
-Endpoints are pluggable via ``ENDPOINTS`` so ``--endpoint deep`` can be added
-alongside ``answer`` without touching the runner.
+Endpoints are pluggable via ``ENDPOINTS``. ``answer`` is a JSON POST;
+``deep`` (POST /research/deep) is an SSE stream, consumed to its end and
+reduced to the SAME `QuestionResult` shape, so ``python -m evals.compare``
+diffs a deep run against an answer run like any two runs.
 """
 
 from __future__ import annotations
@@ -19,8 +21,8 @@ import json
 import os
 import sys
 import time
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -53,20 +55,28 @@ class ParsedResponse:
     degraded_legs: list[str]
     confidence: float | None
     intent: str | None
+    # A pipeline failure the endpoint reported IN-BAND (an SSE ``error`` event
+    # on a 200 stream). Scored exactly like an HTTP error: status "error".
+    error: str | None = None
+
+
+# One server-sent event: (event name, parsed JSON data).
+SseEvent = tuple[str, object]
 
 
 @dataclass(frozen=True)
 class Endpoint:
     """How to call one rag-service route and read its response.
 
-    To add Deep Research: define ``build_deep_payload``/``parse_deep_response``
-    and register ``"deep": Endpoint(path=..., ...)`` in ``ENDPOINTS``.
+    ``parse_response`` receives the decoded JSON body for a plain endpoint,
+    and the list of `SseEvent`s for a ``streaming`` one.
     """
 
     name: str
     path: str
     build_payload: Callable[[GoldenEntry], dict[str, object]]
     parse_response: Callable[[object], ParsedResponse]
+    streaming: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -127,12 +137,148 @@ def parse_answer_response(body: object) -> ParsedResponse:
     )
 
 
+# ---------------------------------------------------------------------------
+# /research/deep  (src/deep_research: DeepResearchRequest, SSE event contract)
+# ---------------------------------------------------------------------------
+
+
+def build_deep_payload(entry: GoldenEntry) -> dict[str, object]:
+    # Keys must exist on src/deep_research/schemas.py::DeepResearchRequest.
+    return {"question": entry.question}
+
+
+def _deep_citations(result: dict[str, object]) -> list[dict[str, object]]:
+    return [
+        _as_dict(c)
+        for s in _as_list(result.get("sections"))
+        for claim in _as_list(_as_dict(s).get("claims"))
+        for c in _as_list(_as_dict(claim).get("citations"))
+    ]
+
+
+def _as_events(value: object) -> list[SseEvent]:
+    events: list[SseEvent] = []
+    for item in _as_list(value):
+        if isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str):
+            events.append((item[0], item[1]))
+    return events
+
+
+def parse_deep_response(body: object) -> ParsedResponse:
+    """Reduce a deep-research event stream to the /answer result shape.
+
+    - sources: the ``sources`` event, in S1..Sn (final rerank) order: the same
+      ranked-passage list /answer returns as ``sources``, so authority_hit@k
+      measures the same thing on both. ``rerank_score`` is None (the event
+      carries no scores). ``gr_no`` is the backend's ``grNo``, else parsed from
+      the citation/title exactly as for /answer.
+    - answered/abstained: ``result.abstained`` / ``result.abstainReason``.
+    - citations: every citation in the delivered ``result``; valid when its
+      ``sourceId`` names a delivered source and it carries a quote. A citation
+      the verifier removed is not delivered, as with /answer's validator.
+    - model_name, degraded_legs: from ``done`` (``degradedLegs`` is an internal
+      extra the gateway strips before clients see it).
+    - an ``error`` event, or a stream with no ``result``, is an error.
+    """
+    by_name: dict[str, dict[str, object]] = {}
+    for name, data in _as_events(body):
+        by_name.setdefault(name, _as_dict(data))
+
+    if "error" in by_name:
+        err = by_name["error"]
+        return ParsedResponse(
+            abstained=False,
+            abstain_reason=None,
+            sources=[],
+            citations_total=0,
+            citations_valid=0,
+            model_name="",
+            degraded_legs=[],
+            confidence=None,
+            intent=None,
+            error=f"{err.get('code')}: {err.get('message')}",
+        )
+    if "result" not in by_name:
+        raise ValueError("stream ended without a result event")
+
+    sources: list[SourceRecord] = []
+    source_ids: set[str] = set()
+    for raw in _as_list(by_name.get("sources", {}).get("sources")):
+        s = _as_dict(raw)
+        title = str(s.get("title") or "")
+        citation = str(s.get("citation") or "")
+        gr_no = s.get("grNo")
+        source_ids.add(str(s.get("sourceId") or ""))
+        sources.append(
+            SourceRecord(
+                title=title,
+                citation=citation,
+                gr_no=gr_no if isinstance(gr_no, str) and gr_no else first_gr_no(citation, title),
+                document_type=str(s.get("documentType") or ""),
+                rerank_score=None,
+                document_id=str(s.get("documentId") or ""),
+            )
+        )
+
+    result = by_name["result"]
+    done = by_name.get("done", {})
+    citations = _deep_citations(result)
+    reason = result.get("abstainReason")
+    return ParsedResponse(
+        abstained=result.get("abstained") is True,
+        abstain_reason=reason if isinstance(reason, str) else None,
+        sources=sources,
+        citations_total=len(citations),
+        citations_valid=sum(
+            str(c.get("sourceId") or "") in source_ids and bool(c.get("quote"))
+            for c in citations
+        ),
+        model_name=str(done.get("modelName") or ""),
+        degraded_legs=[str(x) for x in _as_list(done.get("degradedLegs"))],
+        confidence=None,
+        intent=None,
+    )
+
+
+def _decode_event(name: str, data_lines: list[str]) -> SseEvent:
+    try:
+        return (name, json.loads("\n".join(data_lines)))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"event {name!r} carries invalid JSON") from exc
+
+
+async def read_sse(lines: AsyncIterator[str]) -> list[SseEvent]:
+    """Parse an SSE body into ``(event, data)`` pairs. Data must be JSON."""
+    events: list[SseEvent] = []
+    name = "message"
+    data_lines: list[str] = []
+    async for line in lines:
+        if line == "":
+            if data_lines:
+                events.append(_decode_event(name, data_lines))
+            name, data_lines = "message", []
+        elif line.startswith("event:"):
+            name = line[len("event:") :].strip()
+        elif line.startswith("data:"):
+            data_lines.append(line[len("data:") :].lstrip())
+    if data_lines:
+        events.append(_decode_event(name, data_lines))
+    return events
+
+
 ENDPOINTS: Mapping[str, Endpoint] = {
     "answer": Endpoint(
         name="answer",
         path="/answer",
         build_payload=build_answer_payload,
         parse_response=parse_answer_response,
+    ),
+    "deep": Endpoint(
+        name="deep",
+        path="/research/deep",
+        build_payload=build_deep_payload,
+        parse_response=parse_deep_response,
+        streaming=True,
     ),
 }
 
@@ -152,26 +298,56 @@ def _base_result(entry: GoldenEntry) -> QuestionResult:
     )
 
 
+async def _fetch(
+    client: httpx.AsyncClient, endpoint: Endpoint, entry: GoldenEntry
+) -> tuple[int, str, object]:
+    """``(status, error_text, body)``: body is the JSON, or the SSE events.
+
+    A streaming endpoint is read to the end of the stream, so latency covers
+    the whole answer, not time-to-first-byte.
+    """
+    payload = endpoint.build_payload(entry)
+    if not endpoint.streaming:
+        response = await client.post(endpoint.path, json=payload)
+        if response.status_code != 200:
+            return response.status_code, response.text[:300], None
+        return response.status_code, "", response.json()
+    async with client.stream("POST", endpoint.path, json=payload) as response:
+        if response.status_code != 200:
+            text = (await response.aread()).decode("utf-8", errors="replace")
+            return response.status_code, text[:300], None
+        return response.status_code, "", await read_sse(response.aiter_lines())
+
+
 async def evaluate_one(
     client: httpx.AsyncClient, endpoint: Endpoint, entry: GoldenEntry
 ) -> QuestionResult:
     result = _base_result(entry)
     started = time.perf_counter()
     try:
-        response = await client.post(endpoint.path, json=endpoint.build_payload(entry))
+        status_code, error_text, body = await _fetch(client, endpoint, entry)
     except httpx.HTTPError as exc:
         result.latency_ms = (time.perf_counter() - started) * 1000
         result.error = f"{type(exc).__name__}: {exc}"
         return result
+    except ValueError as exc:
+        # A 200 whose body is not JSON (plain) or carries a malformed event.
+        result.latency_ms = (time.perf_counter() - started) * 1000
+        result.http_status = 200
+        result.error = f"unparseable response: {exc}"
+        return result
     result.latency_ms = (time.perf_counter() - started) * 1000
-    result.http_status = response.status_code
-    if response.status_code != 200:
-        result.error = f"HTTP {response.status_code}: {response.text[:300]}"
+    result.http_status = status_code
+    if status_code != 200:
+        result.error = f"HTTP {status_code}: {error_text}"
         return result
     try:
-        parsed = endpoint.parse_response(response.json())
+        parsed = endpoint.parse_response(body)
     except ValueError as exc:
         result.error = f"unparseable response: {exc}"
+        return result
+    if parsed.error is not None:
+        result.error = parsed.error
         return result
     result.status = "abstained" if parsed.abstained else "answered"
     result.abstain_reason = parsed.abstain_reason
@@ -278,7 +454,28 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--ids", default=None, help="comma-separated golden ids to run")
     parser.add_argument("--concurrency", type=int, default=2)
     parser.add_argument("--timeout", type=float, default=180.0, help="per-request seconds")
+    parser.add_argument(
+        "--model-override",
+        default=None,
+        help="deep only: writer model for every question (must be listed in "
+        "the server's DEEP_RESEARCH_MODEL_ALLOWLIST)",
+    )
     return parser.parse_args(argv)
+
+
+def select_endpoint(name: str, model_override: str | None) -> Endpoint:
+    """The endpoint to run, with ``--model-override`` folded into its payload."""
+    endpoint = ENDPOINTS[name]
+    if model_override is None:
+        return endpoint
+    if name != "deep":
+        raise SystemExit("--model-override applies to --endpoint deep only")
+    base = endpoint.build_payload
+
+    def build(entry: GoldenEntry) -> dict[str, object]:
+        return {**base(entry), "model_override": model_override}
+
+    return replace(endpoint, build_payload=build)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -296,7 +493,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     started = datetime.now(UTC)
     stamp = started.strftime("%Y%m%dT%H%M%SZ")
     out: Path = args.out or RESULTS_DIR / f"{stamp}-{args.endpoint}.json"
-    endpoint = ENDPOINTS[args.endpoint]
+    endpoint = select_endpoint(args.endpoint, args.model_override)
     print(f"{len(entries)} questions -> {args.base_url}{endpoint.path}", file=sys.stderr)
 
     t0 = time.perf_counter()

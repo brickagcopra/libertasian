@@ -204,6 +204,54 @@ class Settings(BaseSettings):
     # reindex.
     embedding_dim: int = 384
 
+    # --- Deep Research (POST /research/deep) ---
+    #
+    # Each model is read from the bare DEEP_RESEARCH_* name as well as the
+    # RAG_-prefixed one (prefixed listed first so a per-service override wins),
+    # for the same reason as the OpenSearch credentials above: the bare names are
+    # what the deployment documents.
+    #
+    # Planner and verifier are small, cheap classification-shaped calls; the
+    # writer is the one call whose quality the user reads. gpt-6-luna is
+    # selectable by setting DEEP_RESEARCH_MODEL (or per request via
+    # model_override, when listed in DEEP_RESEARCH_MODEL_ALLOWLIST).
+    deep_research_planner_model: str = Field(
+        default="gpt-4.1-nano",
+        validation_alias=AliasChoices(
+            "RAG_DEEP_RESEARCH_PLANNER_MODEL", "DEEP_RESEARCH_PLANNER_MODEL"
+        ),
+    )
+    deep_research_model: str = Field(
+        default="gpt-4o-mini",
+        validation_alias=AliasChoices("RAG_DEEP_RESEARCH_MODEL", "DEEP_RESEARCH_MODEL"),
+    )
+    deep_research_verifier_model: str = Field(
+        default="gpt-4.1-nano",
+        validation_alias=AliasChoices(
+            "RAG_DEEP_RESEARCH_VERIFIER_MODEL", "DEEP_RESEARCH_VERIFIER_MODEL"
+        ),
+    )
+    # Comma-separated. A request's model_override is honoured only when listed
+    # here; empty means no override is ever accepted.
+    deep_research_model_allowlist: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "RAG_DEEP_RESEARCH_MODEL_ALLOWLIST", "DEEP_RESEARCH_MODEL_ALLOWLIST"
+        ),
+    )
+    # Per CLAUDE.md: 8192 tokens max for digest/memo-class context.
+    deep_research_context_tokens: int = 8192
+    deep_research_max_tokens: int = 4096
+    # Passages kept per sub-query from the shared ranked path.
+    deep_research_subquery_top_k: int = 15
+    # Merged pool handed to the single final rerank, and its diversity cap.
+    deep_research_max_candidates: int = 40
+    deep_research_max_per_document: int = 2
+    # Passages kept after the final rerank (CLAUDE.md: 15 for long-form output).
+    deep_research_top_k: int = 15
+    # Sub-query retrievals in flight at once.
+    deep_research_concurrency: int = 3
+
     # Internal API key for service-to-service authentication
     internal_api_key: str = ""
 
