@@ -112,4 +112,5 @@ app.conf.include = [
     "src.tasks.dedup_backfill_tasks",
     "src.tasks.canonical_url_backfill_tasks",
     "src.tasks.autopublish_backfill_tasks",
+    "src.tasks.realign_statutory_sections_task",
 ]
