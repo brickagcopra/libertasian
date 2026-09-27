@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 
+import { loginHref } from '@/features/auth/safe-redirect';
 import { apiClient } from '@/lib/api-client';
 import { isPublicRoute } from '@/lib/public-routes';
 import { useAuthStore, type User } from '@/stores/auth-store';
@@ -41,7 +42,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // failed: 6a19554 fixed the login page and the bug returned everywhere
         // else.
         if (isPublicRoute(window.location.pathname)) return;
-        window.location.href = '/login';
+        // Session expired mid-use: return here (path + query) after signing in.
+        window.location.href = loginHref(
+          `${window.location.pathname}${window.location.search ?? ''}`,
+        );
       },
       refreshAccessToken: async () => {
         try {

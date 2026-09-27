@@ -66,10 +66,12 @@ export function middleware(request: NextRequest) {
     return withSecurityHeaders(NextResponse.next());
   }
 
-  // Protected route without session → redirect to login with return URL
+  // Protected route without session → redirect to login with return URL.
+  // Path AND query: `/research?q=…` must come back with its `?q=`. The login
+  // page re-validates it (same-origin relative paths only) before using it.
   if (!hasSession) {
     const loginUrl = new URL('/login', request.url);
-    loginUrl.searchParams.set('from', pathname);
+    loginUrl.searchParams.set('from', `${pathname}${request.nextUrl.search}`);
     return withSecurityHeaders(NextResponse.redirect(loginUrl));
   }
 

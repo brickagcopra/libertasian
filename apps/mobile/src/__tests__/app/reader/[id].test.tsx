@@ -717,3 +717,122 @@ describe('ReaderRoute — per-section audio', () => {
     expect(getByTestId('section-audio-stop-chain')).toBeTruthy();
   });
 });
+
+// Deep Research "Open in reader" pushes `/reader/[id]` with `section` and
+// `highlight` (the verbatim quote). The reader marks the quote with the same
+// matcher as the web reader and scrolls the section (and its pinpointed
+// paragraph) into view.
+describe('ReaderRoute — Deep Research pinpoint (section + highlight params)', () => {
+  const { useLocalSearchParams } = jest.requireMock('expo-router') as {
+    useLocalSearchParams: jest.Mock;
+  };
+  const scrollTo = (require('react-native').ScrollView as { prototype: { scrollTo: jest.Mock } })
+    .prototype.scrollTo;
+
+  function section(id: string, ordering: number, plainText: string) {
+    return {
+      id,
+      legalDocumentId: 'doc-1',
+      parentSectionId: null,
+      sectionType: 'ruling',
+      sectionLabel: `Label ${id}`,
+      ordering,
+      plainText,
+      htmlText: null,
+      pageStart: null,
+      pageEnd: null,
+      tokenCount: null,
+      createdAt: '2024-01-15T00:00:00Z',
+    };
+  }
+
+  beforeEach(() => {
+    mockUseDocument.mockReturnValue({ data: baseDoc(), isLoading: false, error: null });
+    mockUseDocumentSections.mockReturnValue({
+      data: [
+        section('s-1', 1, 'Facts. The doctrine of estoppel is mentioned here too.'),
+        section(
+          's-2',
+          2,
+          'Opening paragraph.\n\nWe rule that the doctrine of estoppel is based on “public policy” — fair dealing.',
+        ),
+      ],
+      isLoading: false,
+    });
+  });
+
+  afterEach(() => {
+    useLocalSearchParams.mockImplementation(() => ({ id: 'doc-1' }));
+  });
+
+  it('marks the quote in the named section (case/quote/dash-insensitive)', () => {
+    useLocalSearchParams.mockImplementation(() => ({
+      id: 'doc-1',
+      section: 's-2',
+      highlight: 'THE DOCTRINE OF ESTOPPEL is based on "public policy" - fair',
+    }));
+    const { getAllByTestId } = render(<ReaderRoute />, { wrapper: createWrapper() });
+    const marks = getAllByTestId('reader-pinpoint');
+    expect(marks).toHaveLength(1);
+    expect(marks[0]!.props.children).toBe(
+      'the doctrine of estoppel is based on “public policy” — fair',
+    );
+  });
+
+  it('falls back to the first section containing the quote when section is missing', () => {
+    useLocalSearchParams.mockImplementation(() => ({
+      id: 'doc-1',
+      highlight: 'estoppel is mentioned',
+    }));
+    const { getByTestId } = render(<ReaderRoute />, { wrapper: createWrapper() });
+    expect(getByTestId('reader-pinpoint').props.children).toBe('estoppel is mentioned');
+    expect(getByTestId('reader-focus-section')).toBeTruthy();
+  });
+
+  it('scrolls to the pinpointed paragraph once section and paragraph are laid out', () => {
+    useLocalSearchParams.mockImplementation(() => ({
+      id: 'doc-1',
+      section: 's-2',
+      highlight: 'based on “public policy”',
+    }));
+    const { getByTestId } = render(<ReaderRoute />, { wrapper: createWrapper() });
+    scrollTo.mockClear();
+
+    fireEvent(getByTestId('reader-focus-paragraph'), 'layout', {
+      nativeEvent: { layout: { x: 0, y: 60, width: 300, height: 40 } },
+    });
+    expect(scrollTo).not.toHaveBeenCalled();
+    fireEvent(getByTestId('reader-focus-section'), 'layout', {
+      nativeEvent: { layout: { x: 0, y: 900, width: 300, height: 200 } },
+    });
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+    expect(scrollTo).toHaveBeenCalledWith({ y: 900 + 60 - 120, animated: true });
+
+    // Only once: a later relayout does not yank the reader back.
+    fireEvent(getByTestId('reader-focus-section'), 'layout', {
+      nativeEvent: { layout: { x: 0, y: 950, width: 300, height: 200 } },
+    });
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+  });
+
+  it('still scrolls to the section when the quote does not match', () => {
+    useLocalSearchParams.mockImplementation(() => ({
+      id: 'doc-1',
+      section: 's-2',
+      highlight: 'text that is nowhere in the section',
+    }));
+    const { getByTestId, queryByTestId } = render(<ReaderRoute />, { wrapper: createWrapper() });
+    scrollTo.mockClear();
+    expect(queryByTestId('reader-pinpoint')).toBeNull();
+    fireEvent(getByTestId('reader-focus-section'), 'layout', {
+      nativeEvent: { layout: { x: 0, y: 500, width: 300, height: 200 } },
+    });
+    expect(scrollTo).toHaveBeenCalledWith({ y: 380, animated: true });
+  });
+
+  it('does nothing without pinpoint params', () => {
+    const { queryByTestId } = render(<ReaderRoute />, { wrapper: createWrapper() });
+    expect(queryByTestId('reader-pinpoint')).toBeNull();
+    expect(queryByTestId('reader-focus-section')).toBeNull();
+  });
+});

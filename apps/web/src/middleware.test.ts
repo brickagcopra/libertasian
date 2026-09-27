@@ -86,6 +86,19 @@ describe('middleware — public-path allowlist', () => {
         expect(target.searchParams.get('from')).toBe(path);
       });
     }
+
+    it('keeps the query string in ?from= (/research?q=… keeps its ?q=)', () => {
+      const res = middleware(makeRequest('/research?q=doctrine%20of%20estoppel&mode=deep'));
+      expect(res.status).toBe(307);
+      const target = new URL(res.headers.get('location') as string);
+      expect(target.origin).toBe('https://example.com');
+      expect(target.pathname).toBe('/login');
+      expect(target.searchParams.get('from')).toBe(
+        '/research?q=doctrine%20of%20estoppel&mode=deep',
+      );
+      // Round-trips as exactly one param: the inner `&mode=` does not leak out.
+      expect(target.searchParams.get('mode')).toBeNull();
+    });
   });
 
   describe('with session cookie', () => {

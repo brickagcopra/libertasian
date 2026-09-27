@@ -66,6 +66,7 @@ describe('OAuthCallbackPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     setSearchParam('accessToken', null);
+    window.sessionStorage.clear();
   });
 
   it('redirects to /login when no access token is present', async () => {
@@ -91,6 +92,32 @@ describe('OAuthCallbackPage', () => {
       expect(mockReplace).toHaveBeenCalledWith('/search');
     });
     expect(mockLogout).not.toHaveBeenCalled();
+  });
+
+  it('on success: returns to the path + query the login page parked before Google', async () => {
+    window.sessionStorage.setItem('libertasian:oauth-return-to', '/research?q=estoppel%20doctrine');
+    setSearchParam('accessToken', 'at-abc');
+    mockGet.mockResolvedValueOnce({ success: true, data: SAMPLE_USER });
+
+    render(<OAuthCallbackPage />);
+
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith('/research?q=estoppel%20doctrine');
+    });
+    // One-shot: the parked value is consumed.
+    expect(window.sessionStorage.getItem('libertasian:oauth-return-to')).toBeNull();
+  });
+
+  it('on success: ignores a parked value that is not a same-origin path', async () => {
+    window.sessionStorage.setItem('libertasian:oauth-return-to', '//evil.com/research');
+    setSearchParam('accessToken', 'at-abc');
+    mockGet.mockResolvedValueOnce({ success: true, data: SAMPLE_USER });
+
+    render(<OAuthCallbackPage />);
+
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith('/search');
+    });
   });
 
   it('on /users/me failure: logs out and redirects to /login?error=auth_failed', async () => {

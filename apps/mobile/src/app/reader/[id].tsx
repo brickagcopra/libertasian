@@ -54,6 +54,12 @@ import { useOfflineCodals } from '@/features/study/hooks/use-offline-codals';
 import { ContentDisclaimer } from '@/features/documents/components/content-disclaimer';
 import { useTheme } from '@/providers/theme-provider';
 import type { DocumentSection, LegalDocument } from '@/features/documents/types';
+import {
+  findPinpoint,
+  firstParam,
+  paragraphPinpointRange,
+  resolvePinpointSectionId,
+} from '@/features/documents/lib/pinpoint';
 
 const DOC_TYPE_LABELS: Record<string, string> = {
   supreme_court_decision: 'Supreme Court · Case',
@@ -150,26 +156,31 @@ function headingFor(section: DocumentSection, index: number): string {
 function buildParagraphs(
   section: DocumentSection,
   annotations: Annotation[] | undefined,
+  pinQuote: string | null = null,
 ): DocumentReaderParagraph[] {
   const texts = paragraphsFromSection(section);
   const plainText = section.plainText ?? '';
+  // Pinpoint (Deep Research "Open in reader"): matched once against the whole
+  // section so a quote spanning a paragraph break is marked in each part.
+  const pin = pinQuote ? findPinpoint(plainText, pinQuote) : null;
   let cursor = 0;
   return texts.map((text) => {
     const start = plainText.indexOf(text, cursor);
     const end = start === -1 ? -1 : start + text.length;
     if (start !== -1) cursor = end;
     const offset = start === -1 ? undefined : start;
-    if (!annotations || annotations.length === 0) return { text, offset };
+    const pinpoint = paragraphPinpointRange(offset, text.length, pin) ?? undefined;
+    const base: DocumentReaderParagraph = pinpoint ? { text, offset, pinpoint } : { text, offset };
+    if (!annotations || annotations.length === 0) return base;
     const matches =
       start === -1
         ? annotations.filter((a) => a.textAnchor.anchorText === text)
         : annotations.filter(
             (a) => a.textAnchor.startOffset < end && a.textAnchor.endOffset > start,
           );
-    if (matches.length === 0) return { text, offset };
+    if (matches.length === 0) return base;
     return {
-      text,
-      offset,
+      ...base,
       annotations: matches.map((m) => {
         const { tint, solid } = annotationColorStyle(m.color);
         return { id: m.id, tint, solid };
@@ -181,6 +192,7 @@ function buildParagraphs(
 function buildReaderSections(
   sections: DocumentSection[] | undefined,
   annotations: Annotation[] | undefined,
+  pin: { sectionId: string | null; quote: string | null } = { sectionId: null, quote: null },
 ): DocumentReaderSection[] {
   if (!sections) return [];
   const bySection = new Map<string, Annotation[]>();
@@ -196,7 +208,11 @@ function buildReaderSections(
     .map((s, i) => ({
       id: s.id,
       heading: headingFor(s, i),
-      paragraphs: buildParagraphs(s, bySection.get(s.id)),
+      paragraphs: buildParagraphs(
+        s,
+        bySection.get(s.id),
+        s.id === pin.sectionId ? pin.quote : null,
+      ),
       pageStart: s.pageStart,
       pageEnd: s.pageEnd,
     }))
@@ -205,11 +221,25 @@ function buildReaderSections(
 
 export default function ReaderRoute() {
   const { theme } = useTheme();
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, section: sectionParam, highlight } = useLocalSearchParams<{
+    id: string;
+    section?: string;
+    highlight?: string;
+  }>();
   const documentId = id ?? '';
 
   const { data: doc, isLoading: docLoading, error: docError } = useDocument(documentId);
   const { data: sections } = useDocumentSections(documentId);
+
+  // Pinpoint (`?section=&highlight=`, Deep Research's "Open in reader"): the
+  // section to scroll to and the verbatim quote to mark in it. Same rules as
+  // the web reader: a missing/unknown section falls back to the first section
+  // whose text contains the quote.
+  const pinQuote = firstParam(highlight);
+  const pinSectionId = useMemo(
+    () => resolvePinpointSectionId(sections ?? undefined, firstParam(sectionParam), pinQuote),
+    [sections, sectionParam, pinQuote],
+  );
 
   // Citations + related are lazy-loaded once a document loads.
   const enableExtras = Boolean(doc);
@@ -277,8 +307,8 @@ export default function ReaderRoute() {
   const [viewedAnnotations, setViewedAnnotations] = useState<Annotation[]>([]);
 
   const readerSections = useMemo(
-    () => buildReaderSections(sections, annotations),
-    [sections, annotations],
+    () => buildReaderSections(sections, annotations, { sectionId: pinSectionId, quote: pinQuote }),
+    [sections, annotations, pinSectionId, pinQuote],
   );
 
   // Per-section narration. The gate is `hasSectionAudio`, NOT the broader
@@ -674,6 +704,7 @@ export default function ReaderRoute() {
         onAdd={showDigestUI ? handleGenerateDigest : undefined}
         onParagraphLongPress={handleParagraphLongPress}
         onAnnotationPress={handleAnnotationPress}
+        focusSectionId={pinSectionId}
       />
 
       {/* Bookmark-with-note sheet */}

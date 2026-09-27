@@ -3,6 +3,7 @@
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
+import { loginHref } from '@/features/auth/safe-redirect';
 import { ROUTES } from '@/lib/constants';
 import { useAuthStore } from '@/stores/auth-store';
 
@@ -32,9 +33,12 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (hydrated && !isAuthenticated) {
-      router.replace(ROUTES.LOGIN);
+      // Come back here after signing in, query string included (read from
+      // window: useSearchParams would force a Suspense boundary on every page).
+      const search = typeof window !== 'undefined' ? window.location.search : '';
+      router.replace(loginHref(`${pathname ?? ''}${search}`));
     }
-  }, [hydrated, isAuthenticated, router]);
+  }, [hydrated, isAuthenticated, pathname, router]);
 
   useEffect(() => {
     if (hydrated && isAuthenticated && user && !user.onboardingCompletedAt) {

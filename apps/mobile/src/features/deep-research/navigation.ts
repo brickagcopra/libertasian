@@ -30,3 +30,20 @@ export function newRunHref(question: string): Href {
 export function runHref(id: string): Href {
   return { pathname: '/research/[id]', params: { id } };
 }
+
+/**
+ * "Open in reader" for a citation: the document, the section to land on and
+ * the verbatim quote to mark (`highlight`, the same name the web reader uses).
+ * Empty values are left out so the reader only sees params it can act on.
+ */
+export function readerHref(
+  documentId: string,
+  sectionId?: string | null,
+  quote?: string | null,
+): Href {
+  const params: { id: string; section?: string; highlight?: string } = { id: documentId };
+  if (sectionId) params.section = sectionId;
+  const q = quote?.trim();
+  if (q) params.highlight = q;
+  return { pathname: '/reader/[id]', params };
+}
