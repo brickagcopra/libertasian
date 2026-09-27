@@ -149,6 +149,16 @@ jobs:
         working-directory: services/rag-service
         run: uv run pytest tests/test_rerank_contract.py tests/test_reranking.py -q
 
+      # The answer-quality eval harness (services/rag-service/evals). Its
+      # unit tests are network-free (httpx.MockTransport), validate the golden
+      # set's shape, and pin its G.R. regex to the worker normaliser's by
+      # reading that file, so a drift between the two fails here.
+      - name: Test and type-check the RAG eval harness
+        working-directory: services/rag-service
+        run: |
+          uv run pytest evals/ -q
+          uv run mypy --strict evals
+
       - name: Install reranker-service dependencies
         working-directory: services/reranker-service
         run: uv sync --all-extras
