@@ -43,6 +43,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from bs4 import BeautifulSoup, Tag
+from bs4.element import Comment, NavigableString
 from celery import shared_task
 
 from ..clients.db_client import get_connection
@@ -347,6 +348,52 @@ def _is_bold_marker_tag(tag: Tag) -> bool:
     return tag.name in {"b", "strong"}
 
 
+def _is_marker_tag(tag: Tag) -> bool:
+    """A heading / bold tag whose text starts with a structural marker."""
+    if not (_is_heading_tag(tag) or _is_bold_marker_tag(tag)):
+        return False
+    return _SECTION_MARKER_RE.match(tag.get_text(" ", strip=True)) is not None
+
+
+# Block containers the leading-marker search must not descend into: a
+# nested paragraph is visited by the descendant walk on its own.
+_BLOCK_TAGS = frozenset(
+    {"p", "td", "th", "tr", "table", "li", "ul", "ol", "div", "blockquote"},
+)
+
+
+def _leading_marker(element: Tag) -> Tag | None:
+    """Return the marker tag that OPENS ``element``, or ``None``.
+
+    LawPhil markup is ``<p><b>Article 1317.</b> text…</p>``. The marker is
+    the paragraph's first meaningful child (whitespace-only strings and
+    comments are ignored), possibly wrapped in inline tags such as
+    ``<font>``. A marker in the middle of a paragraph does not count.
+    """
+    node: Tag = element
+    while True:
+        first: Tag | None = None
+        for child in node.children:
+            if isinstance(child, Comment):
+                continue
+            if isinstance(child, NavigableString):
+                if str(child).strip():
+                    return None  # paragraph opens with plain text
+                continue
+            if isinstance(child, Tag):
+                if not child.get_text(strip=True):
+                    continue  # empty <br>, <a name=…></a>, etc.
+                first = child
+                break
+        if first is None:
+            return None
+        if _is_marker_tag(first):
+            return first
+        if first.name in _BLOCK_TAGS:
+            return None
+        node = first
+
+
 def _classify_marker(label: str) -> str:
     """Return ``section_type`` for a marker label (e.g. ``ARTICLE 1``)."""
     match = _SECTION_MARKER_RE.match(label)
@@ -396,6 +443,18 @@ def _parse_sections(html: str) -> list[ParsedSection]:
             ),
         )
 
+    # Marker tags already consumed as the opener of their enclosing
+    # paragraph. The descendant walk reaches them AFTER the paragraph, so
+    # they must not open a second (empty) section.
+    consumed_markers: set[int] = set()
+
+    def open_section(label_text: str) -> None:
+        nonlocal current_label, current_type, current_buffer
+        flush()
+        current_label = label_text[:255]
+        current_type = _classify_marker(label_text)
+        current_buffer = []
+
     for element in body.descendants:
         if not isinstance(element, Tag):
             continue
@@ -405,22 +464,35 @@ def _parse_sections(html: str) -> list[ParsedSection]:
         if not text:
             continue
 
-        is_marker = (
-            (_is_heading_tag(element) or _is_bold_marker_tag(element))
-            and _SECTION_MARKER_RE.match(text) is not None
-        )
-        if is_marker:
+        if id(element) in consumed_markers:
+            continue
+
+        if _is_marker_tag(element):
             # Boundary — close the previous section, open a new one.
-            flush()
-            current_label = text[:255]
-            current_type = _classify_marker(text)
-            current_buffer = []
+            open_section(text)
             continue
 
         # Only accumulate text from leaf-ish content tags (paragraphs and
         # cells). The full descendant walk would otherwise double-count
         # text contained in nested tags.
         if element.name in {"p", "td", "li"}:
+            # ``<p><b>Article 1317.</b> text…</p>``: the parent <p> is
+            # visited BEFORE its child <b>. Appending first and letting the
+            # <b> open the section afterwards put Art. 1317's first
+            # paragraph into the Art. 1316 row — every statutory section
+            # was off by one (prod 2026-09-27: 3,414 of 3,420). Open the
+            # new section first, then append the paragraph minus the
+            # marker text (the marker is the row's label).
+            marker = _leading_marker(element)
+            if marker is not None:
+                consumed_markers.add(id(marker))
+                marker_text = marker.get_text(" ", strip=True)
+                open_section(marker_text)
+                if text.startswith(marker_text):
+                    text = text[len(marker_text):].strip()
+                if text:
+                    current_buffer.append(text)
+                continue
             current_buffer.append(text)
 
     flush()

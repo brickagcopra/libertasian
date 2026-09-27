@@ -267,3 +267,106 @@ def test_parse_sections_keeps_single_section_fallback_when_no_markers_at_all() -
     sections = _parse_sections(html)
     assert len(sections) == 1, [s.section_label for s in sections]
     assert sections[0].section_label == "Full Text"
+
+
+# ---------------------------------------------------------------------------
+# Off-by-one regression (prod 2026-09-27): LawPhil puts the marker INSIDE
+# the paragraph it opens — ``<p><b>Article 1317.</b> text…</p>``. The parent
+# <p> is visited before its child <b>, so the old walk appended Art. 1317's
+# first paragraph to the Art. 1316 row. Civil Code c2426740-…, orderings
+# 1479/1480, is the reported example.
+# ---------------------------------------------------------------------------
+
+_LAWPHIL_INLINE_MARKER_HTML = """
+<html><body>
+  <p>REPUBLIC ACT NO. 386</p>
+  <p align="center"><b>CHAPTER 2<br>Consent</b></p>
+  <p><b>Article 1316.</b> Real contracts shall not be perfected until the
+     delivery of the object. (n)</p>
+  <p><b>Article 1317.</b> No one may contract in the name of another without
+     being authorized by the latter.</p>
+  <p>A contract entered into in the name of another by one who has no
+     authority shall be unenforceable. (1259a)</p>
+  <p align="center"><b>CHAPTER 3</b></p>
+  <p align="center">Object of Contracts</p>
+  <p><font><b>Article 1318.</b></font> There is no contract unless the
+     following requisites concur: (1261)</p>
+  <p>(1) Consent of the contracting parties;</p>
+</body></html>
+"""
+
+
+def test_parse_sections_inline_marker_opens_its_own_paragraph() -> None:
+    sections = _parse_sections(_LAWPHIL_INLINE_MARKER_HTML)
+    by_label = {s.section_label: s for s in sections}
+    assert [s.section_label for s in sections] == [
+        "CHAPTER 2 Consent",
+        "Article 1316.",
+        "Article 1317.",
+        "CHAPTER 3",
+        "Article 1318.",
+    ]
+    art_1316 = by_label["Article 1316."].plain_text
+    assert art_1316.startswith("Real contracts shall not be perfected")
+    # The bug: Art. 1316's row used to END with Art. 1317's first paragraph.
+    assert "No one may contract" not in art_1316
+    assert "Article 1317" not in art_1316
+
+
+def test_parse_sections_strips_marker_text_from_body() -> None:
+    sections = _parse_sections(_LAWPHIL_INLINE_MARKER_HTML)
+    for s in sections:
+        assert not s.plain_text.startswith(s.section_label), s
+
+
+def test_parse_sections_multi_paragraph_article_stays_together() -> None:
+    sections = _parse_sections(_LAWPHIL_INLINE_MARKER_HTML)
+    art_1317 = next(s for s in sections if s.section_label == "Article 1317.")
+    assert art_1317.section_type == "article"
+    assert art_1317.plain_text.startswith("No one may contract")
+    assert "shall be unenforceable. (1259a)" in art_1317.plain_text
+    # Nothing from the CHAPTER heading or the next article leaks in.
+    assert "CHAPTER" not in art_1317.plain_text
+    assert "Object of Contracts" not in art_1317.plain_text
+    assert "requisites" not in art_1317.plain_text
+
+
+def test_parse_sections_chapter_heading_between_articles() -> None:
+    sections = _parse_sections(_LAWPHIL_INLINE_MARKER_HTML)
+    chapter_3 = next(s for s in sections if s.section_label == "CHAPTER 3")
+    assert chapter_3.section_type == "chapter"
+    assert chapter_3.plain_text == "Object of Contracts"
+    art_1318 = sections[-1]
+    assert art_1318.section_label == "Article 1318."  # marker wrapped in <font>
+    assert art_1318.plain_text.startswith("There is no contract unless")
+    assert art_1318.plain_text.endswith("(1) Consent of the contracting parties;")
+
+
+def test_parse_sections_first_marker_paragraph_is_not_dropped() -> None:
+    """Before the fix the paragraph opening the FIRST marker was appended
+    while no section was open, and lost."""
+    html = (
+        "<html><body><p>Preamble.</p>"
+        "<p><b>Article 1.</b> This Act shall be known as the Civil Code.</p>"
+        "<p><b>Article 2.</b> Laws shall take effect after fifteen days.</p>"
+        "</body></html>"
+    )
+    sections = _parse_sections(html)
+    assert [(s.section_label, s.plain_text) for s in sections] == [
+        ("Article 1.", "This Act shall be known as the Civil Code."),
+        ("Article 2.", "Laws shall take effect after fifteen days."),
+    ]
+
+
+def test_parse_sections_mid_paragraph_marker_keeps_old_behaviour() -> None:
+    """Only a LEADING marker opens the paragraph's section; a bold marker
+    after running text still splits where it sits."""
+    html = (
+        "<html><body>"
+        "<p><b>Section 1.</b> One.</p>"
+        "<p>Lead-in text <b>Section 2.</b> two.</p>"
+        "</body></html>"
+    )
+    sections = _parse_sections(html)
+    assert [s.section_label for s in sections] == ["Section 1.", "Section 2."]
+    assert "Lead-in text" in sections[0].plain_text
