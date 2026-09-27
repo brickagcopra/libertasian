@@ -20,6 +20,35 @@ import {
 class FakeVectorIndex {
   readonly ids = new Set<string>();
   readonly writes: string[][] = [];
+  /** `_id` → the `document_id` field of the vector stored under it. */
+  readonly owner = new Map<string, string>();
+  readonly deletes: string[][] = [];
+
+  /** Seed a vector as if a previous run had written it for `documentId`. */
+  hold(id: string, documentId: string) {
+    this.ids.add(id);
+    this.owner.set(id, documentId);
+  }
+
+  findVectorIdsForDocuments = jest.fn(async (documentIds: readonly string[]) => {
+    const idsByDocument = new Map<string, string[]>();
+    for (const documentId of documentIds) {
+      idsByDocument.set(
+        documentId,
+        [...this.ids].filter((id) => this.owner.get(id) === documentId),
+      );
+    }
+    return { idsByDocument, incomplete: new Set<string>() };
+  });
+
+  deleteVectorIds = jest.fn(async (ids: readonly string[]) => {
+    this.deletes.push([...ids]);
+    for (const id of ids) {
+      this.ids.delete(id);
+      this.owner.delete(id);
+    }
+    return { deleted: ids.length, failedIds: [] as string[] };
+  });
   /** Ids the next bulk call should reject, simulating a mapping error. */
   rejectIds = new Set<string>();
   /** When set, the next bulk call throws instead of returning. */
@@ -45,6 +74,7 @@ class FakeVectorIndex {
           continue;
         }
         this.ids.add(id);
+        this.owner.set(id, doc.document_id);
         written.push(id);
       }
       this.writes.push(written);
@@ -157,6 +187,9 @@ class FakePrisma {
         status: 'queued',
         jobId: null,
         documentTypes: [],
+        // Column defaults, as the database applies them.
+        documentIds: [],
+        force: false,
         batchSize: 64,
         batchDelayMs: 0,
         maxDocuments: null,
@@ -790,6 +823,213 @@ describe('VectorBackfillService', () => {
       await expect(service.resume(run.id, {})).rejects.toBeInstanceOf(
         BadRequestException,
       );
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // Targeted and forced runs
+  // -------------------------------------------------------------------
+
+  describe('documentIds and force', () => {
+    const DOC_1 = '11111111-1111-4111-8111-111111111111';
+    const DOC_2 = '22222222-2222-4222-8222-222222222222';
+
+    const seedCorpus = () => {
+      prisma.documents = [
+        {
+          id: DOC_1,
+          documentType: 'codal',
+          sections: [
+            { id: 'sec-a', plainText: body(3) },
+            { id: 'sec-b', plainText: body(3) },
+            { id: 'sec-short', plainText: 'Article 1.' },
+          ],
+        },
+        {
+          id: DOC_2,
+          documentType: 'codal',
+          sections: [{ id: 'sec-z', plainText: body(3) }],
+        },
+      ];
+    };
+
+    describe('enqueueRun', () => {
+      it('rejects force without documentIds (400), and writes no run row', async () => {
+        await expect(service.enqueueRun({ force: true })).rejects.toBeInstanceOf(
+          BadRequestException,
+        );
+        await expect(
+          service.enqueueRun({ force: true, documentIds: [] }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        expect(prisma.runs).toHaveLength(0);
+        expect(queue.add).not.toHaveBeenCalled();
+      });
+
+      it('rejects documentIds that name no legal document', async () => {
+        seedCorpus();
+        const unknown = '33333333-3333-4333-8333-333333333333';
+        await expect(
+          service.enqueueRun({ documentIds: [DOC_1, unknown] }),
+        ).rejects.toThrow(unknown);
+        expect(prisma.runs).toHaveLength(0);
+      });
+
+      it('persists documentIds (deduplicated) and force on the run row', async () => {
+        seedCorpus();
+        const run = await service.enqueueRun({
+          documentIds: [DOC_1, DOC_1],
+          force: true,
+        });
+        expect(run['documentIds']).toEqual([DOC_1]);
+        expect(run['force']).toBe(true);
+      });
+
+      it('keeps the single-active-run guard for a targeted forced run', async () => {
+        seedCorpus();
+        await service.enqueueRun({});
+        await expect(
+          service.enqueueRun({ documentIds: [DOC_1], force: true }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+      });
+    });
+
+    it('restricts enumeration to the listed documents', async () => {
+      seedCorpus();
+      const order = await service.enumerateDocumentOrder([], [DOC_2]);
+      expect(order.map((d) => d.documentId)).toEqual([DOC_2]);
+    });
+
+    it('without force, a targeted run still does only the gap and deletes nothing', async () => {
+      seedCorpus();
+      index.hold(DOC_1, DOC_1);
+      index.hold('sec-a', DOC_1);
+      index.hold('sec-gone', DOC_1);
+
+      const run = await service.enqueueRun({ documentIds: [DOC_1] });
+      const result = await service.runBackfill({ runId: run.id }, NOOP_REPORT);
+
+      expect(result.status).toBe('completed');
+      expect(embed.embedBatch.mock.calls.flat(2)).toHaveLength(1); // sec-b only
+      expect(index.findVectorIdsForDocuments).not.toHaveBeenCalled();
+      expect(index.deleteVectorIds).not.toHaveBeenCalled();
+      expect(index.ids.has('sec-gone')).toBe(true);
+      // DOC_2 was not listed, so it was not touched.
+      expect(index.ids.has('sec-z')).toBe(false);
+    });
+
+    it('force re-embeds and overwrites vectors that already exist', async () => {
+      seedCorpus();
+      // Every chunk DOC_1 produces is already indexed: a normal run would
+      // record it as skipped: already_indexed and embed nothing.
+      index.hold(DOC_1, DOC_1);
+      index.hold('sec-a', DOC_1);
+      index.hold('sec-b', DOC_1);
+
+      const run = await service.enqueueRun({ documentIds: [DOC_1], force: true });
+      const result = await service.runBackfill({ runId: run.id }, NOOP_REPORT);
+
+      expect(result.status).toBe('completed');
+      expect(result.chunksIndexed).toBe(3);
+      // Written under the SAME _ids (section_id ?? document_id): an overwrite,
+      // not a duplicate.
+      expect(index.writes.flat().sort()).toEqual([DOC_1, 'sec-a', 'sec-b'].sort());
+      expect([...index.ids].sort()).toEqual([DOC_1, 'sec-a', 'sec-b'].sort());
+      // The <50-character skip still applies under force.
+      expect(index.ids.has('sec-short')).toBe(false);
+      expect(prisma.statuses).toEqual([
+        expect.objectContaining({
+          legalDocumentId: DOC_1,
+          status: 'indexed',
+          chunksAttempted: 3,
+          chunksIndexed: 3,
+        }),
+      ]);
+    });
+
+    it('force deletes the listed documents\' vector ids that no longer map to a section', async () => {
+      seedCorpus();
+      index.hold(DOC_1, DOC_1);
+      index.hold('sec-a', DOC_1);
+      index.hold('sec-removed', DOC_1); // a section that was re-segmented away
+      index.hold('sec-short', DOC_1); // now below the 50-character minimum
+      index.hold('sec-z', DOC_2); // another document's live vector
+      index.hold('sec-other-stale', DOC_2); // stale, but DOC_2 is not listed
+
+      const run = await service.enqueueRun({ documentIds: [DOC_1], force: true });
+      const result = await service.runBackfill({ runId: run.id }, NOOP_REPORT);
+
+      expect(index.deleteVectorIds).toHaveBeenCalledTimes(1);
+      expect([...index.deletes.flat()].sort()).toEqual(['sec-removed', 'sec-short']);
+      expect(index.ids.has('sec-removed')).toBe(false);
+      expect(index.ids.has('sec-short')).toBe(false);
+      // Live vectors — this document's and every other document's — survive.
+      expect(index.ids.has('sec-a')).toBe(true);
+      expect(index.ids.has('sec-b')).toBe(true);
+      expect(index.ids.has('sec-z')).toBe(true);
+      expect(index.ids.has('sec-other-stale')).toBe(true);
+      expect(result.staleVectorsDeleted).toBe(2);
+      expect(result.staleVectorsFailed).toBe(0);
+      expect(result.message).toContain('stale vectors 2 deleted');
+    });
+
+    it('a forced dry run embeds nothing and deletes nothing', async () => {
+      seedCorpus();
+      index.hold('sec-a', DOC_1);
+      index.hold('sec-removed', DOC_1);
+
+      const run = await service.enqueueRun({
+        documentIds: [DOC_1],
+        force: true,
+        dryRun: true,
+      });
+      await service.runBackfill({ runId: run.id }, NOOP_REPORT);
+
+      expect(embed.embedBatch).not.toHaveBeenCalled();
+      expect(index.deleteVectorIds).not.toHaveBeenCalled();
+      expect(index.ids.has('sec-removed')).toBe(true);
+    });
+
+    it('a failed stale delete is counted, not thrown, and the re-embed still lands', async () => {
+      seedCorpus();
+      index.hold('sec-removed', DOC_1);
+      index.deleteVectorIds.mockRejectedValueOnce(new Error('cluster_block_exception'));
+
+      const run = await service.enqueueRun({ documentIds: [DOC_1], force: true });
+      const result = await service.runBackfill({ runId: run.id }, NOOP_REPORT);
+
+      expect(result.status).toBe('completed');
+      expect(result.staleVectorsFailed).toBe(1);
+      expect(result.chunksIndexed).toBe(3);
+    });
+
+    it('ignores a force flag on a run row with no documentIds', async () => {
+      seedCorpus();
+      index.hold(DOC_1, DOC_1);
+      index.hold('sec-a', DOC_1);
+      index.hold('sec-b', DOC_1);
+      const row = await prisma.vectorBackfillRun.create({
+        data: { status: 'queued', force: true, documentIds: [] },
+      });
+
+      await service.runBackfill({ runId: row['id'] as string }, NOOP_REPORT);
+
+      // DOC_1 is fully indexed, so only DOC_2's two chunks are embedded.
+      expect(embed.embedBatch.mock.calls.flat(2)).toHaveLength(2);
+      expect(index.findVectorIdsForDocuments).not.toHaveBeenCalled();
+    });
+
+    it('resume carries documentIds and force, so a targeted run stays targeted', async () => {
+      seedCorpus();
+      const first = await service.enqueueRun({ documentIds: [DOC_1], force: true });
+      await prisma.vectorBackfillRun.update({
+        where: { id: first.id },
+        data: { status: 'paused' },
+      });
+
+      const second = await service.resume(first.id, { userId: 'user-2' });
+
+      expect(second['documentIds']).toEqual([DOC_1]);
+      expect(second['force']).toBe(true);
     });
   });
 });
