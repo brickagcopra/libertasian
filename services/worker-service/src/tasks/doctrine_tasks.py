@@ -11,6 +11,7 @@ import logging
 from celery import shared_task
 
 from ..clients import db_client, rag_client
+from ..clients.rag_client import ProviderQuotaExhaustedError
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +157,19 @@ def extract_doctrines_task(
             "status": "completed",
         }
 
+    except ProviderQuotaExhaustedError:
+        # The provider is out of credit; a retry 1-3 minutes from now will
+        # meet the same 503, so give up at once instead of tripling traffic.
+        logger.warning(
+            "extract_doctrines_task skipped: LLM provider quota exhausted "
+            "(document=%s, not retried)",
+            document_id,
+        )
+        return {
+            "document_id": document_id,
+            "status": "skipped",
+            "reason": "provider_quota_exhausted",
+        }
     except Exception as exc:
         logger.error(
             "extract_doctrines_task failed: document=%s error=%s",

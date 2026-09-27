@@ -24,7 +24,7 @@ from .memos.router import router as memos_router
 from .passages.router import router as passages_router
 from .pleadings.router import router as pleadings_router
 from .research_workspaces.router import router as research_workspaces_router
-from .shared.exceptions import BudgetExceededError
+from .shared.exceptions import BudgetExceededError, ProviderQuotaExhaustedError
 from .shared.opensearch import close_opensearch, ping_opensearch
 from .timelines.router import router as timelines_router
 
@@ -119,6 +119,30 @@ async def budget_exceeded_handler(
             "code": "budget_exceeded",
             "scope": exc.scope,
             "period": exc.period,
+        },
+    )
+
+
+@app.exception_handler(ProviderQuotaExhaustedError)
+async def provider_quota_exhausted_handler(
+    request: Request,  # noqa: ARG001
+    exc: ProviderQuotaExhaustedError,  # noqa: ARG001
+) -> JSONResponse:
+    """Return the same 503 as an exhausted budget, with its own code.
+
+    Registered separately from ``budget_exceeded_handler`` (Starlette picks
+    the most specific class in the MRO) because that handler's log line and
+    ``code`` would send an operator hunting for an admin budget to raise,
+    when the fix is topping up the provider account. Not logged per request:
+    ``core.generation`` logs one ERROR each time the quota breaker trips.
+    """
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": "AI generation is temporarily unavailable. Please try again later.",
+            "code": "provider_quota_exhausted",
+            "scope": None,
+            "period": None,
         },
     )
 

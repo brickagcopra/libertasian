@@ -26,6 +26,7 @@ from ..budget_scopes import SCOPE_SUBJECT_CLASSIFICATION
 from ..clients import classification_db_client as class_db
 from ..clients import ingestion_db_client as db
 from ..clients import nestjs_client, rag_client
+from ..clients.rag_client import ProviderQuotaExhaustedError
 from ..config import settings
 
 logger = logging.getLogger(__name__)
@@ -595,6 +596,15 @@ def classify_document_subjects(
             "model_run_id": model_run_id,
             "assignments_count": len(content["assignments"]),
         }
+
+    except ProviderQuotaExhaustedError:
+        # Out of provider credit: retrying would only meet the same 503.
+        logger.warning(
+            "classify_document_subjects skipped doc %s: LLM provider quota "
+            "exhausted (not retried)",
+            document_id,
+        )
+        return {"status": "skipped", "reason": "provider_quota_exhausted"}
 
     except httpx.HTTPStatusError as exc:
         logger.error(

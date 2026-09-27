@@ -20,6 +20,19 @@ def make_uuid() -> str:
     return str(uuid.uuid4())
 
 
+@pytest.fixture(autouse=True)
+def _quota_breaker_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Report rag-service's provider-quota breaker as NOT set by default.
+
+    Beat producers now read Redis for ``llm:provider:quota_exhausted``; no
+    test should depend on (or wait for) a real Redis to answer. Tests of
+    the breaker itself override this or import the real function directly.
+    """
+    monkeypatch.setattr(
+        "src.clients.rag_client.provider_quota_exhausted", lambda: False
+    )
+
+
 @pytest.fixture()
 def source_id() -> str:
     return make_uuid()
