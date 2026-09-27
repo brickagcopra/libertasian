@@ -25,6 +25,8 @@ worker shell:
 
 Idempotent: a codal whose ``(citation_text, document_type)`` already
 exists in ``legal_documents`` is skipped.
+To re-parse a document that already exists (without losing its section
+ids), use ``reseed_statutory_document_task``.
 
 URL verification rule: every URL in ``SEED_CODALS`` was checked with
 ``curl -sI -L`` against ``lawphil.net`` (not www., per the expired-cert
@@ -394,6 +396,39 @@ def _leading_marker(element: Tag) -> Tag | None:
         node = first
 
 
+# Tags whose text ``_parse_sections`` accumulates into a section body.
+_ACCUMULATED_TAGS = frozenset({"p", "td", "li"})
+
+
+def _own_text(element: Tag) -> str:
+    """``element``'s text EXCLUDING any nested ``p`` / ``td`` / ``li``.
+
+    The descendant walk visits (and appends) every accumulated tag, so a
+    container's text must not repeat what its nested blocks contribute.
+    LawPhil's 1987 Constitution has ``<li><p>text</p></li>`` (every
+    enumerated clause appeared twice) and a malformed ``<nd …>`` tag in
+    Art. III §2 that swallows §§3–12 into §2's ``<p>`` (the whole block
+    was repeated inside §2). Joined like ``get_text(" ", strip=True)``.
+    """
+    parts: list[str] = []
+    for string in element.find_all(string=True):
+        if isinstance(string, Comment):
+            continue
+        parent = string.parent
+        nested = False
+        while parent is not None and parent is not element:
+            if parent.name in _ACCUMULATED_TAGS:
+                nested = True
+                break
+            parent = parent.parent
+        if nested:
+            continue
+        stripped = str(string).strip()
+        if stripped:
+            parts.append(stripped)
+    return " ".join(parts)
+
+
 def _classify_marker(label: str) -> str:
     """Return ``section_type`` for a marker label (e.g. ``ARTICLE 1``)."""
     match = _SECTION_MARKER_RE.match(label)
@@ -448,6 +483,13 @@ def _parse_sections(html: str) -> list[ParsedSection]:
     # they must not open a second (empty) section.
     consumed_markers: set[int] = set()
 
+    def append(text: str) -> None:
+        # Collapse a paragraph identical to the one just appended: the
+        # nested-block rule above removes the known cause, this keeps any
+        # other container/child echo out of the stored text.
+        if text and (not current_buffer or current_buffer[-1] != text):
+            current_buffer.append(text)
+
     def open_section(label_text: str) -> None:
         nonlocal current_label, current_type, current_buffer
         flush()
@@ -475,7 +517,11 @@ def _parse_sections(html: str) -> list[ParsedSection]:
         # Only accumulate text from leaf-ish content tags (paragraphs and
         # cells). The full descendant walk would otherwise double-count
         # text contained in nested tags.
-        if element.name in {"p", "td", "li"}:
+        if element.name in _ACCUMULATED_TAGS:
+            if element.find(_ACCUMULATED_TAGS) is not None:
+                # A container of other accumulated blocks: keep only its
+                # loose text; the nested blocks are appended on their own.
+                text = _own_text(element)
             # ``<p><b>Article 1317.</b> text…</p>``: the parent <p> is
             # visited BEFORE its child <b>. Appending first and letting the
             # <b> open the section afterwards put Art. 1317's first
@@ -490,10 +536,9 @@ def _parse_sections(html: str) -> list[ParsedSection]:
                 open_section(marker_text)
                 if text.startswith(marker_text):
                     text = text[len(marker_text):].strip()
-                if text:
-                    current_buffer.append(text)
+                append(text)
                 continue
-            current_buffer.append(text)
+            append(text)
 
     flush()
 
