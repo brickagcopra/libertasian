@@ -395,6 +395,14 @@ describe('SubscriptionsService', () => {
       expect(ent.maxResearchWorkspaces).toBe(-1);
     });
 
+    it('meters Deep Research per plan (free 0 — paid-only, tier-gated with 402)', () => {
+      expect(
+        (['free', 'edu', 'pro', 'team', 'enterprise'] as const).map(
+          (p) => service.getDefaultEntitlements(p).deepResearchPerMonth,
+        ),
+      ).toEqual([0, 20, 100, 500, 1500]);
+    });
+
     it('should fallback to free for unknown plan code', () => {
       const ent = service.getDefaultEntitlements('platinum');
       expect(ent.aiAnswers).toBe(3);
@@ -586,6 +594,12 @@ describe('SubscriptionsService', () => {
       expect(ent.digestsPerMonth).toBe(-1);
       expect(ent.searchQueries).toBe(-1);
       expect(ent.documentUploadsPerMonth).toBe(-1);
+    });
+
+    it('caps Deep Research at 5/month, not pro 100 and never unlimited', async () => {
+      (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(null);
+      const ent = await service.getEntitlements('org-1');
+      expect(ent.deepResearchPerMonth).toBe(5);
     });
 
     it('should cap aiAnswers and cameraScansPerMonth at finite positive values', async () => {

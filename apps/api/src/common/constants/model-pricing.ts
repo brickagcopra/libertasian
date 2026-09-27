@@ -15,6 +15,7 @@ const MODEL_PRICING: Readonly<Record<string, { input: number; output: number }>>
     'gpt-4o': { input: 2.5, output: 10.0 },
     'gpt-4.1-mini': { input: 0.4, output: 1.6 },
     'gpt-4.1-nano': { input: 0.1, output: 0.4 },
+    'gpt-6-luna': { input: 0.1, output: 0.5 },
   };
 
 /**

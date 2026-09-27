@@ -123,6 +123,63 @@ export class UsageQuotaService {
   }
 
   /**
+   * Give back ONE unit consumed by `checkAndIncrement`.
+   *
+   * For surfaces that charge up front and then learn the work produced nothing
+   * the user should pay for (Deep Research abstained / failed / the AI budget
+   * was exhausted). The key is derived exactly as `checkAndIncrement` derives
+   * it, so the unit returns to the same billing-period counter it came from.
+   *
+   * Atomic: a Lua script decrements only when the key EXISTS and is > 0, so a
+   * refund can never create a TTL-less key (Redis runs `noeviction`), never
+   * drives a counter negative, and never races a concurrent increment.
+   *
+   * No-op for platform admins and unlimited (-1) quotas — `checkAndIncrement`
+   * never touched a counter for them. Never throws: a refund failure is logged
+   * and swallowed, because the caller is already on an error/abstain path and
+   * must still deliver that outcome to the user.
+   *
+   * Returns true when a unit was actually returned.
+   */
+  async refund(
+    organizationId: string,
+    userId: string,
+    quotaType: QuotaType,
+    opts?: { isPlatformAdmin?: boolean },
+  ): Promise<boolean> {
+    if (opts?.isPlatformAdmin) return false;
+    try {
+      const entitlements =
+        await this.entitlementService.resolveEffectiveEntitlements(organizationId);
+      if (this.getLimit(entitlements, quotaType) === -1) return false;
+
+      const billingPeriod = await this.getBillingPeriod(organizationId);
+      const isMonthly = this.isMonthlyQuota(quotaType);
+      const key = this.buildRedisKey(organizationId, userId, quotaType, isMonthly, billingPeriod);
+
+      const result = await this.redis
+        .getClient()
+        .eval(UsageQuotaService.REFUND_SCRIPT, 1, key);
+      return Number(result) === 1;
+    } catch (err) {
+      this.logger.warn(
+        `Quota refund failed (quotaType=${quotaType}): ${(err as Error).message}`,
+      );
+      return false;
+    }
+  }
+
+  /** DECR only when the key exists and holds a positive count; TTL untouched. */
+  static readonly REFUND_SCRIPT = [
+    "local v = redis.call('GET', KEYS[1])",
+    'if v and tonumber(v) and tonumber(v) > 0 then',
+    "  redis.call('DECR', KEYS[1])",
+    '  return 1',
+    'end',
+    'return 0',
+  ].join('\n');
+
+  /**
    * Get current usage summary for all quota types (backward-compatible V1).
    * Wraps V2 and strips the new fields.
    */
@@ -295,6 +352,7 @@ export class UsageQuotaService {
       'hearingPrepPerMonth',
       'contradictionDetectionPerMonth',
       'documentUploadsPerMonth',
+      'deepResearchPerMonth',
     ];
     return monthlyTypes.includes(quotaType);
   }

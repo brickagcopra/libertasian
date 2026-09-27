@@ -3,6 +3,8 @@ import {
   CanActivate,
   ExecutionContext,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Inject,
   Logger,
 } from '@nestjs/common';
@@ -20,6 +22,15 @@ import {
 import { AdminBypassAuditService } from '../services/admin-bypass-audit.service';
 
 export const SUBSCRIPTION_KEY = 'subscription_tier';
+/**
+ * Optional companion metadata set by `@RequiredSubscription(tier,
+ * { paymentRequired: true })`. When it is 'payment_required' a below-tier
+ * caller is refused 402 `subscription_required` instead of 403.
+ */
+export const SUBSCRIPTION_DENIAL_KEY = 'subscription_denial';
+
+/** Same client-visible copy as the 403: names no tier, price or action. */
+const NOT_AVAILABLE_MESSAGE = "This isn't available on this account.";
 
 @Injectable()
 export class SubscriptionGuard implements CanActivate {
@@ -51,7 +62,7 @@ export class SubscriptionGuard implements CanActivate {
       | undefined;
 
     if (!user?.organizationId) {
-      throw new ForbiddenException("This isn't available on this account.");
+      throw new ForbiddenException(NOT_AVAILABLE_MESSAGE);
     }
 
     // Platform admins (anyone holding any `admin:*` permission) bypass
@@ -108,11 +119,30 @@ export class SubscriptionGuard implements CanActivate {
       : 'pro';
 
     if (!SubscriptionsService.meetsMinimumTier(currentTier, requiredTier)) {
+      // Opt-in 402 for routes the product has declared paid-only. Reached
+      // only when the paywall IS enforced for this caller (otherwise the
+      // caller compared as 'pro' above), and before the handler runs — so
+      // before any quota counter is read or incremented.
+      const denial = this.reflector.getAllAndOverride<string | undefined>(
+        SUBSCRIPTION_DENIAL_KEY,
+        [context.getHandler(), context.getClass()],
+      );
+      if (denial === 'payment_required') {
+        throw new HttpException(
+          {
+            success: false,
+            error: 'subscription_required',
+            code: 'subscription_required',
+            message: NOT_AVAILABLE_MESSAGE,
+          },
+          HttpStatus.PAYMENT_REQUIRED,
+        );
+      }
       // Deliberately names no tier, no price and no purchase action: App
       // Review 3.1.1/2.1(b) treat any of those in a client-visible string as
       // an offer to purchase outside IAP, and the mobile client surfaces this
       // body verbatim on some paths.
-      throw new ForbiddenException("This isn't available on this account.");
+      throw new ForbiddenException(NOT_AVAILABLE_MESSAGE);
     }
 
     return true;

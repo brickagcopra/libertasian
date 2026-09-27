@@ -22,7 +22,8 @@ export type QuotaType =
   | 'timelineGenerationPerMonth'
   | 'hearingPrepPerMonth'
   | 'contradictionDetectionPerMonth'
-  | 'documentUploadsPerMonth';
+  | 'documentUploadsPerMonth'
+  | 'deepResearchPerMonth';
 
 export const ALL_QUOTA_TYPES: QuotaType[] = [
   'aiAnswers',
@@ -36,6 +37,7 @@ export const ALL_QUOTA_TYPES: QuotaType[] = [
   'hearingPrepPerMonth',
   'contradictionDetectionPerMonth',
   'documentUploadsPerMonth',
+  'deepResearchPerMonth',
 ];
 
 type NonQuotaEntitlementKey = Exclude<keyof SubscriptionEntitlements, QuotaType>;

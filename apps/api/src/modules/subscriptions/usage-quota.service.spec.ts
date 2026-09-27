@@ -397,6 +397,98 @@ describe('UsageQuotaService', () => {
     });
   });
 
+  // ---- refund ----
+
+  describe('refund', () => {
+    let evalMock: jest.Mock;
+
+    beforeEach(() => {
+      evalMock = jest.fn().mockResolvedValue(1);
+      (redis.getClient as jest.Mock).mockReturnValue({
+        set: jest.fn().mockResolvedValue('OK'),
+        eval: evalMock,
+      });
+      entitlementService.resolveEffectiveEntitlements.mockResolvedValue({
+        ...mockEntitlements,
+        deepResearchPerMonth: 20,
+      });
+    });
+
+    it('decrements the same monthly key checkAndIncrement uses, atomically via Lua', async () => {
+      await expect(
+        service.refund('org-1', 'user-1', 'deepResearchPerMonth'),
+      ).resolves.toBe(true);
+      expect(evalMock).toHaveBeenCalledWith(
+        UsageQuotaService.REFUND_SCRIPT,
+        1,
+        'quota:monthly:org-1:user-1:deepResearchPerMonth',
+      );
+    });
+
+    it('uses the billing-period key when a subscription period exists', async () => {
+      prisma.subscription.findFirst.mockResolvedValue({
+        currentPeriodStart: new Date('2026-09-10T00:00:00Z'),
+        currentPeriodEnd: new Date('2026-10-10T00:00:00Z'),
+      });
+      await service.refund('org-1', 'user-1', 'deepResearchPerMonth');
+      expect(evalMock).toHaveBeenCalledWith(
+        expect.any(String),
+        1,
+        'quota:period:org-1:user-1:deepResearchPerMonth:2026-09-10',
+      );
+    });
+
+    it('reports false when the script found nothing to give back', async () => {
+      evalMock.mockResolvedValue(0);
+      await expect(
+        service.refund('org-1', 'user-1', 'deepResearchPerMonth'),
+      ).resolves.toBe(false);
+    });
+
+    it('is a no-op for platform admins and unlimited quotas', async () => {
+      await expect(
+        service.refund('org-1', 'user-1', 'deepResearchPerMonth', {
+          isPlatformAdmin: true,
+        }),
+      ).resolves.toBe(false);
+      entitlementService.resolveEffectiveEntitlements.mockResolvedValue({
+        deepResearchPerMonth: -1,
+      });
+      await expect(
+        service.refund('org-1', 'user-1', 'deepResearchPerMonth'),
+      ).resolves.toBe(false);
+      expect(evalMock).not.toHaveBeenCalled();
+    });
+
+    it('never throws when Redis fails', async () => {
+      evalMock.mockRejectedValue(new Error('ECONNREFUSED'));
+      await expect(
+        service.refund('org-1', 'user-1', 'deepResearchPerMonth'),
+      ).resolves.toBe(false);
+    });
+
+    it('the script only DECRs an existing positive counter', () => {
+      const script = UsageQuotaService.REFUND_SCRIPT;
+      expect(script).toContain("redis.call('GET', KEYS[1])");
+      expect(script).toContain('tonumber(v) > 0');
+      expect(script).toContain("redis.call('DECR', KEYS[1])");
+      // Never SET: a refund must not create a TTL-less key under noeviction.
+      expect(script).not.toMatch(/'SET'|INCRBY|EXPIRE/);
+    });
+  });
+
+  it('deepResearchPerMonth is a monthly quota', async () => {
+    entitlementService.resolveEffectiveEntitlements.mockResolvedValue({
+      deepResearchPerMonth: 20,
+    });
+    redis.get.mockResolvedValue('0');
+    redis.incr.mockResolvedValue(1);
+    await service.checkAndIncrement('org-1', 'user-1', 'deepResearchPerMonth');
+    expect(redis.incr).toHaveBeenCalledWith(
+      'quota:monthly:org-1:user-1:deepResearchPerMonth',
+    );
+  });
+
   // ---- getUsageSummary (V1 backward compat) ----
 
   describe('getUsageSummary', () => {
@@ -409,6 +501,7 @@ describe('UsageQuotaService', () => {
         'aiAnswers', 'searchQueries', 'digestsPerMonth', 'cameraScansPerMonth',
         'memoDraftingPerMonth', 'pleadingAssistancePerMonth', 'caseComparisonPerMonth',
         'timelineGenerationPerMonth', 'hearingPrepPerMonth', 'contradictionDetectionPerMonth',
+        'deepResearchPerMonth',
       ];
 
       for (const t of types) {
@@ -434,6 +527,7 @@ describe('UsageQuotaService', () => {
         hearingPrepPerMonth: -1,
         contradictionDetectionPerMonth: -1,
         documentUploadsPerMonth: -1,
+        deepResearchPerMonth: -1,
       });
       entitlementService.getBaseEntitlements.mockResolvedValue({
         aiAnswers: -1,
@@ -447,6 +541,7 @@ describe('UsageQuotaService', () => {
         hearingPrepPerMonth: -1,
         contradictionDetectionPerMonth: -1,
         documentUploadsPerMonth: -1,
+        deepResearchPerMonth: -1,
       });
 
       const summary = await service.getUsageSummary('org-1', 'user-1');
