@@ -21,10 +21,15 @@ export const VECTOR_BACKFILL_JOB = 'backfill';
  *
  * Measured throughput is 4.8 texts/s on CPU (a batch of 64 took 13.46s) on a
  * box shared with TTS, and the full gap is ~4.3 hours of continuous embedding.
- * 64 keeps a single request under ~15s so a pause signal is honoured promptly
- * and a transport timeout costs one batch, not a hundred.
+ * A small batch keeps a single request short so a pause signal is honoured
+ * promptly and a transport timeout costs one batch, not a hundred.
+ *
+ * Prod, 2026-09-27: 64 timed out against the 60s client timeout and
+ * OOM-restarted the embedding workers (2 GiB limit); 32 embedded 5,224 chunks
+ * with 0 failures. The `batch_size` column default is still 64, but every run
+ * is enqueued with an explicit value, so the column default is never applied.
  */
-export const VECTOR_BACKFILL_DEFAULT_BATCH_SIZE = 64;
+export const VECTOR_BACKFILL_DEFAULT_BATCH_SIZE = 32;
 
 /** Upper bound accepted from an operator; the embedding service caps at 256. */
 export const VECTOR_BACKFILL_MAX_BATCH_SIZE = 256;
