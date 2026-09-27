@@ -1,5 +1,10 @@
 # Completed Tasks
 
+## 2026-09-27 — Prompts 6–8 (PRs opened, not merged)
+- [x] #511 fix(rag): statute-aware retrieval + BM25 stopword poisoning (45 new tests)
+- [x] #512 fix(worker): `_parse_sections` off-by-one + `realign_statutory_sections` (dry-run default, audit log per doc, audio_renditions report)
+- [x] #513 Deep Research client follow-ups: mobile reader pinpoint highlight + login/OAuth redirect keeps path+query (open-redirect safe)
+
 ## Security Hardening (2026-04-08)
 
 ### Section 1: Secure API Documentation & Python Services
