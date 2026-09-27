@@ -12,6 +12,7 @@ import {
   FileTextIcon,
   LoaderIcon,
   ShieldAlertIcon,
+  TelescopeIcon,
 } from 'lucide-react';
 
 import { useAiAnswerStream } from '../hooks/use-ai-answer-stream';
@@ -80,10 +81,13 @@ export function AiSummaryResults({ query }: AiSummaryResultsProps) {
   // Abstention state
   if (isDone && abstained) {
     return (
-      <Alert>
-        <ShieldAlertIcon className="size-4" />
-        <AlertDescription>{abstentionCopy(abstentionReason)}</AlertDescription>
-      </Alert>
+      <div className="space-y-3">
+        <Alert>
+          <ShieldAlertIcon className="size-4" />
+          <AlertDescription>{abstentionCopy(abstentionReason)}</AlertDescription>
+        </Alert>
+        <GoDeeperLink query={query} />
+      </div>
     );
   }
 
@@ -103,9 +107,10 @@ export function AiSummaryResults({ query }: AiSummaryResultsProps) {
               <span className="inline-block h-4 w-1 animate-pulse bg-foreground" />
             )}
           </div>
-          {isDone && confidence !== null && (
-            <div className="mt-4 flex items-center gap-2">
-              <ConfidenceBadge confidence={confidence} />
+          {isDone && (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+              {confidence !== null ? <ConfidenceBadge confidence={confidence} /> : <span />}
+              <GoDeeperLink query={query} />
             </div>
           )}
         </CardContent>
@@ -167,6 +172,20 @@ export function AiSummaryResults({ query }: AiSummaryResultsProps) {
         </Card>
       )}
     </div>
+  );
+}
+
+/** Hands the same question to Deep Research (/research?q=…). */
+function GoDeeperLink({ query }: { query: string }) {
+  return (
+    <Link
+      href={`/research?q=${encodeURIComponent(query)}`}
+      data-testid="go-deeper"
+      className="inline-flex h-8 items-center gap-1.5 rounded-full border border-warm-accent/40 bg-warm-accent-soft px-3 text-xs font-semibold text-warm-accent-deep transition hover:bg-warm-accent hover:text-warm-cream"
+    >
+      <TelescopeIcon className="size-3.5" aria-hidden />
+      Go deeper with Deep Research
+    </Link>
   );
 }
 

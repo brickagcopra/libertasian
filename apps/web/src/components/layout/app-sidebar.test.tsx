@@ -170,6 +170,28 @@ describe('SidebarContent', () => {
     expect(memosLink).not.toHaveClass('opacity-50');
   });
 
+  it('lists Deep Research directly under Search, keeping the workspace "Research" item', () => {
+    render(<SidebarContent />);
+    const link = screen.getByText('Deep Research').closest('a');
+    expect(link).toHaveAttribute('href', '/research');
+    const hrefs = screen.getAllByRole('link').map((a) => a.getAttribute('href'));
+    expect(hrefs.indexOf('/research')).toBe(hrefs.indexOf('/search') + 1);
+    expect(screen.getByText('Research').closest('a')).toHaveAttribute(
+      'href',
+      '/workspace/research-workspaces',
+    );
+  });
+
+  it('locks Deep Research below edu and unlocks it on edu', () => {
+    mockSubscription = { planCode: 'free' };
+    const { unmount } = render(<SidebarContent />);
+    expect(screen.getByText('Deep Research').closest('a')).toHaveClass('opacity-50');
+    unmount();
+    mockSubscription = { planCode: 'edu' };
+    render(<SidebarContent />);
+    expect(screen.getByText('Deep Research').closest('a')).not.toHaveClass('opacity-50');
+  });
+
   it('does not lock pro features for platform admins on the free plan', () => {
     // Regression: admins were seeing locked icons on tier-gated nav even
     // though the backend gives them full access. The hook now short-
