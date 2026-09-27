@@ -44,10 +44,18 @@ export interface VectorBackfillRunOptions {
   dryRun?: boolean;
   /** Restrict to these document types. Empty/omitted = full priority order. */
   documentTypes?: string[];
+  /** Restrict to these legal_documents ids. Empty/omitted = no id filter. */
+  documentIds?: string[];
+  /**
+   * Re-embed `documentIds` even where their vectors exist, and delete their
+   * vector _ids that no longer map to a section. Requires `documentIds`.
+   */
+  force?: boolean;
   batchSize?: number;
   batchDelayMs?: number;
   maxDocuments?: number;
   triggeredByUserId?: string;
+  /** Actor's JWT organization, if any — absent for platform staff. */
   organizationId?: string;
 }
 
@@ -66,6 +74,12 @@ export interface DocumentGap {
   /** Chunks it is missing — the work. */
   missing: VectorEmbeddingInput[];
   base: VectorPayloadBase;
+  /**
+   * Vector _ids held for this document that it no longer produces — a section
+   * that was deleted or re-segmented. Only computed on a forced run; always
+   * empty otherwise.
+   */
+  stale: string[];
 }
 
 export interface GapByType {
@@ -95,6 +109,9 @@ export interface VectorBackfillProgress {
   chunksFailed: number;
   batchesCompleted: number;
   batchesFailed: number;
+  /** Forced runs only: stale vector _ids removed / that could not be removed. */
+  staleVectorsDeleted: number;
+  staleVectorsFailed: number;
   message: string;
 }
 
@@ -197,12 +214,38 @@ export class VectorBackfillService {
     const batchSize = this.normalizeBatchSize(options.batchSize);
     const batchDelayMs = this.normalizeDelay(options.batchDelayMs);
     const documentTypes = options.documentTypes ?? [];
+    const documentIds = [...new Set(options.documentIds ?? [])];
+    const force = options.force === true;
+
+    // Re-checked here, not only in the controller: `resume` reaches this path
+    // too, and a corpus-wide forced re-embed is never intended.
+    if (force && documentIds.length === 0) {
+      throw new BadRequestException(
+        'force requires documentIds: a forced re-embed is only allowed for an explicit list of documents',
+      );
+    }
+    if (documentIds.length > 0) {
+      const found = await this.prisma.legalDocument.findMany({
+        where: { id: { in: documentIds } },
+        select: { id: true },
+      });
+      const known = new Set(found.map((row) => row.id));
+      const unknown = documentIds.filter((id) => !known.has(id));
+      if (unknown.length > 0) {
+        throw new BadRequestException(
+          `Unknown documentIds: ${unknown.slice(0, 10).join(', ')}` +
+            (unknown.length > 10 ? ` (and ${unknown.length - 10} more)` : ''),
+        );
+      }
+    }
 
     const run = await this.prisma.vectorBackfillRun.create({
       data: {
         status: 'queued',
         dryRun: options.dryRun === true,
         documentTypes,
+        documentIds,
+        force,
         batchSize,
         batchDelayMs,
         maxDocuments: options.maxDocuments ?? null,
@@ -237,7 +280,8 @@ export class VectorBackfillService {
     this.logger.log(
       `Enqueued vector backfill run ${run.id} (job ${job.id}, dryRun=${run.dryRun}, ` +
         `batchSize=${batchSize}, delayMs=${batchDelayMs}, ` +
-        `types=${documentTypes.join(',') || 'all'})`,
+        `types=${documentTypes.join(',') || 'all'}, ` +
+        `documents=${documentIds.length || 'all'}, force=${force})`,
     );
 
     return { ...run, jobId: job.id };
@@ -279,6 +323,9 @@ export class VectorBackfillService {
     return this.enqueueRun({
       dryRun: run.dryRun,
       documentTypes: run.documentTypes,
+      // Carried over so a resumed targeted run stays targeted.
+      documentIds: run.documentIds,
+      force: run.force,
       batchSize: run.batchSize,
       batchDelayMs: run.batchDelayMs,
       maxDocuments: run.maxDocuments ?? undefined,
@@ -370,8 +417,12 @@ export class VectorBackfillService {
    */
   async enumerateDocumentOrder(
     documentTypes: string[] = [],
+    documentIds: string[] = [],
   ): Promise<OrderedDocument[]> {
     const restricted = documentTypes.length > 0 ? new Set(documentTypes) : null;
+    // An explicit id list narrows both phases; it never widens past
+    // `documentTypes` (a document must match both).
+    const idFilter = documentIds.length > 0 ? { id: { in: documentIds } } : {};
     const priority = VECTOR_BACKFILL_TYPE_PRIORITY.filter(
       (type) => !restricted || restricted.has(type),
     );
@@ -392,7 +443,7 @@ export class VectorBackfillService {
     // than "oldest first".
     if (priority.length > 0) {
       const rows = await this.prisma.legalDocument.findMany({
-        where: { documentType: { in: [...priority] } },
+        where: { documentType: { in: [...priority] }, ...idFilter },
         select,
       });
       const rank = new Map(priority.map((type, index) => [type as string, index]));
@@ -419,9 +470,12 @@ export class VectorBackfillService {
       : null;
     if (!restTypes || restTypes.length > 0) {
       const rows = await this.prisma.legalDocument.findMany({
-        where: restTypes
-          ? { documentType: { in: restTypes } }
-          : { documentType: { notIn: [...VECTOR_BACKFILL_TYPE_PRIORITY] } },
+        where: {
+          ...(restTypes
+            ? { documentType: { in: restTypes } }
+            : { documentType: { notIn: [...VECTOR_BACKFILL_TYPE_PRIORITY] } }),
+          ...idFilter,
+        },
         select,
       });
       rows.sort((a, b) => this.recencyKey(b) - this.recencyKey(a));
@@ -448,8 +502,12 @@ export class VectorBackfillService {
    * All candidate ids for the page go out in a single `findExistingVectorIds`
    * call — the diff is the cheap half of this job and should stay that way.
    */
-  async computeGapForDocuments(documentIds: string[]): Promise<DocumentGap[]> {
+  async computeGapForDocuments(
+    documentIds: string[],
+    options: { force?: boolean } = {},
+  ): Promise<DocumentGap[]> {
     if (documentIds.length === 0) return [];
+    const force = options.force === true;
 
     const documents = await this.prisma.legalDocument.findMany({
       where: { id: { in: documentIds } },
@@ -488,7 +546,16 @@ export class VectorBackfillService {
     const candidateIds = built.flatMap((entry) =>
       entry.inputs.map((input) => vectorDocumentId(input)),
     );
-    const existing = await this.openSearch.findExistingVectorIds(candidateIds);
+    // A forced run re-embeds every chunk regardless, so it skips the diff and
+    // instead lists what each document holds, to find ids it no longer maps to.
+    const existing = force
+      ? new Set<string>()
+      : await this.openSearch.findExistingVectorIds(candidateIds);
+    const held = force
+      ? await this.openSearch.findVectorIdsForDocuments(
+          built.map((entry) => entry.doc.id),
+        )
+      : null;
 
     // Preserve the caller's ordering: `findMany` does not guarantee it, and the
     // point of the priority order is that the valuable documents go first.
@@ -497,14 +564,32 @@ export class VectorBackfillService {
     for (const documentId of documentIds) {
       const entry = byId.get(documentId);
       if (!entry) continue;
+      let stale: string[] = [];
+      if (held) {
+        if (held.incomplete.has(documentId)) {
+          // A partial listing can miss stale ids but never names a live one,
+          // so what was listed is still safe to delete.
+          this.logger.warn(
+            `Vector id listing for document ${documentId} was truncated; ` +
+              'stale ids beyond the first page are not removed this run',
+          );
+        }
+        const expectedIds = new Set(
+          entry.inputs.map((input) => vectorDocumentId(input)),
+        );
+        stale = (held.idsByDocument.get(documentId) ?? []).filter(
+          (id) => !expectedIds.has(id),
+        );
+      }
       gaps.push({
         documentId,
         documentType: entry.doc.documentType,
         expected: entry.inputs.length,
-        missing: entry.inputs.filter(
-          (input) => !existing.has(vectorDocumentId(input)),
-        ),
+        missing: force
+          ? [...entry.inputs]
+          : entry.inputs.filter((input) => !existing.has(vectorDocumentId(input))),
         base: entry.base,
+        stale,
       });
     }
     return gaps;
@@ -566,6 +651,8 @@ export class VectorBackfillService {
       chunksFailed: 0,
       batchesCompleted: 0,
       batchesFailed: 0,
+      staleVectorsDeleted: 0,
+      staleVectorsFailed: 0,
       message: 'Enumerating documents',
     };
     const gapReport = this.emptyGapReport();
@@ -581,8 +668,11 @@ export class VectorBackfillService {
     });
     await report(progress);
 
+    // Force only ever applies to an explicit list (enforced at enqueue; checked
+    // again here so a hand-edited row cannot turn into a corpus-wide re-embed).
+    const force = run.force === true && run.documentIds.length > 0;
     const order = this.applyMaxDocuments(
-      await this.enumerateDocumentOrder(run.documentTypes),
+      await this.enumerateDocumentOrder(run.documentTypes, run.documentIds),
       run.maxDocuments ?? undefined,
     );
     progress.documentsTotal = order.length;
@@ -736,7 +826,27 @@ export class VectorBackfillService {
       if (control.stop) break;
 
       const page = order.slice(i, i + VECTOR_BACKFILL_DOCUMENT_PAGE_SIZE);
-      const gaps = await this.computeGapForDocuments(page.map((d) => d.documentId));
+      const gaps = await this.computeGapForDocuments(
+        page.map((d) => d.documentId),
+        { force },
+      );
+
+      // Forced runs: remove the page's stale vector ids in one bulk request.
+      // They are by definition ids no current chunk writes, so removing them
+      // never races the re-embed below. A dry run deletes nothing.
+      const staleIds = gaps.flatMap((gap) => gap.stale);
+      if (staleIds.length > 0 && !run.dryRun) {
+        try {
+          const deleted = await this.openSearch.deleteVectorIds(staleIds);
+          progress.staleVectorsDeleted += deleted.deleted;
+          progress.staleVectorsFailed += deleted.failedIds.length;
+        } catch (err) {
+          progress.staleVectorsFailed += staleIds.length;
+          this.logger.warn(
+            `Stale vector delete failed for run ${run.id}: ${(err as Error).message}`,
+          );
+        }
+      }
 
       for (const gap of gaps) {
         this.accumulateGap(gapReport, gap);
@@ -946,11 +1056,17 @@ export class VectorBackfillService {
         (byType ? ` (${byType})` : '')
       );
     }
+    const stale =
+      progress.staleVectorsDeleted + progress.staleVectorsFailed > 0
+        ? `; stale vectors ${progress.staleVectorsDeleted} deleted, ` +
+          `${progress.staleVectorsFailed} failed`
+        : '';
     return (
       `Run ${status}: ${progress.chunksIndexed} chunks indexed, ` +
       `${progress.chunksFailed} failed; documents ${progress.documentsIndexed} indexed, ` +
       `${progress.documentsSkipped} skipped, ${progress.documentsFailed} failed ` +
-      `of ${progress.documentsTotal}`
+      `of ${progress.documentsTotal}` +
+      stale
     );
   }
 
