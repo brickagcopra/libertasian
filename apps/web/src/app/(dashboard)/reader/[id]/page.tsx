@@ -598,8 +598,8 @@ function cleanLegalText(text: string): string {
  */
 function usePinpointTarget(sections: DocumentSection[] | undefined) {
   const searchParams = useSearchParams();
-  const pinQuote = searchParams.get('highlight');
-  const sectionParam = searchParams.get('section');
+  const pinQuote = searchParams?.get('highlight') ?? null;
+  const sectionParam = searchParams?.get('section') ?? null;
   const pinSectionId = useMemo(() => {
     if (!sections || (!pinQuote && !sectionParam)) return null;
     if (sectionParam && sections.some((s) => s.id === sectionParam)) return sectionParam;

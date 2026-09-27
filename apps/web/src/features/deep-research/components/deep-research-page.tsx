@@ -80,8 +80,8 @@ function SavedRun({ runId, onFollowUp }: { runId: string; onFollowUp: (q: string
 export function DeepResearchPage() {
   const router = useRouter();
   const params = useSearchParams();
-  const runParam = params.get('run');
-  const prefill = params.get('q') ?? '';
+  const runParam = params?.get('run') ?? null;
+  const prefill = params?.get('q') ?? '';
   const { state, start, reset } = useDeepResearchStream();
   const [historyOpen, setHistoryOpen] = useState(false);
 
