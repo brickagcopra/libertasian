@@ -931,6 +931,72 @@ describe('OpenSearchService', () => {
     });
   });
 
+  // ---- findVectorIdsForDocuments / deleteVectorIds (forced backfill) ----
+
+  describe('findVectorIdsForDocuments', () => {
+    it('lists each document\'s vector _ids with a term query on document_id', async () => {
+      mockClient.search = jest.fn().mockResolvedValue({
+        body: { hits: { total: { value: 2 }, hits: [{ _id: 'sec-1' }, { _id: 'doc-1' }] } },
+      });
+
+      const { idsByDocument, incomplete } = await service.findVectorIdsForDocuments([
+        'doc-1',
+      ]);
+
+      expect(idsByDocument.get('doc-1')).toEqual(['sec-1', 'doc-1']);
+      expect(incomplete.size).toBe(0);
+      expect(mockClient.search).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.objectContaining({ query: { term: { document_id: 'doc-1' } } }),
+        }),
+      );
+    });
+
+    // A caller deciding what to DELETE must never read "not listed" as
+    // "does not exist".
+    it('flags a document whose hits exceed one page as incomplete', async () => {
+      mockClient.search = jest.fn().mockResolvedValue({
+        body: { hits: { total: { value: 12_000 }, hits: [{ _id: 'sec-1' }] } },
+      });
+      const { incomplete } = await service.findVectorIdsForDocuments(['doc-1']);
+      expect(incomplete.has('doc-1')).toBe(true);
+    });
+  });
+
+  describe('deleteVectorIds', () => {
+    it('bulk-deletes and treats not_found as deleted', async () => {
+      mockClient.bulk = jest.fn().mockResolvedValue({
+        body: {
+          errors: true,
+          items: [
+            { delete: { _id: 'a', status: 200, result: 'deleted' } },
+            { delete: { _id: 'b', status: 404, result: 'not_found' } },
+            { delete: { _id: 'c', status: 500, error: { type: 'x' } } },
+          ],
+        },
+      });
+
+      const result = await service.deleteVectorIds(['a', 'b', 'c']);
+
+      expect(result).toEqual({ deleted: 2, failedIds: ['c'] });
+      expect(mockClient.bulk).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: [
+            { delete: expect.objectContaining({ _id: 'a' }) },
+            { delete: expect.objectContaining({ _id: 'b' }) },
+            { delete: expect.objectContaining({ _id: 'c' }) },
+          ],
+        }),
+      );
+    });
+
+    it('short-circuits on an empty list', async () => {
+      mockClient.bulk = jest.fn();
+      expect(await service.deleteVectorIds([])).toEqual({ deleted: 0, failedIds: [] });
+      expect(mockClient.bulk).not.toHaveBeenCalled();
+    });
+  });
+
   // ---- searchVector ----
 
   describe('searchVector', () => {
