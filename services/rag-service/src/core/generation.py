@@ -10,8 +10,10 @@ Per CLAUDE.md:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import random
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
@@ -19,7 +21,7 @@ from typing import Any
 import httpx
 
 from ..config import settings
-from ..shared.exceptions import BudgetExceededError
+from ..shared.exceptions import BudgetExceededError, ProviderQuotaExhaustedError
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +48,14 @@ def _get_openai_client() -> Any:
     if _openai_client is None:
         from openai import AsyncOpenAI
 
+        # max_retries=0: the SDK would otherwise retry every 429 twice before
+        # our code sees it, including insufficient_quota, which no retry can
+        # fix. _openai_create() re-implements the SDK's retry policy and
+        # skips it for quota exhaustion only.
         _openai_client = AsyncOpenAI(
             api_key=settings.openai_api_key,
             timeout=float(settings.openai_request_timeout),
+            max_retries=0,
         )
     return _openai_client
 
@@ -222,6 +229,190 @@ async def _track_usage(
 
 
 # ---------------------------------------------------------------------------
+# Provider quota circuit breaker
+#
+# On 2026-09-26 the OpenAI account ran out of credit for ~8 hours. Every call
+# came back 429 insufficient_quota, the SDK retried each one twice, the answer
+# route turned it into a 500, and the worker kept firing ~8,300 calls an hour.
+# The first quota error now sets a Redis flag that short-circuits every later
+# call for a few minutes, so an outage costs one failed OpenAI request per TTL
+# window instead of three per call.
+# ---------------------------------------------------------------------------
+QUOTA_BREAKER_KEY = "llm:provider:quota_exhausted"
+QUOTA_BREAKER_TTL_SECONDS = 300
+_QUOTA_ERROR_MARKERS = frozenset({"insufficient_quota", "credit_balance_exhausted"})
+
+# Mirrors the openai SDK's defaults (DEFAULT_MAX_RETRIES, INITIAL_RETRY_DELAY,
+# MAX_RETRY_DELAY), which the client no longer applies itself (max_retries=0).
+_OPENAI_MAX_RETRIES = 2
+_OPENAI_INITIAL_RETRY_DELAY = 0.5
+_OPENAI_MAX_RETRY_DELAY = 8.0
+_OPENAI_MAX_RETRY_AFTER = 60.0
+
+
+def _openai_error_fields(exc: BaseException) -> tuple[str | None, str | None]:
+    """Return ``(type, code)`` from an openai APIError.
+
+    openai 2.x copies ``type``/``code`` onto the exception as attributes when
+    the body is a dict, and ``body`` is the inner ``error`` object. A body that
+    still carries the full ``{"error": {...}}`` envelope is handled too, so the
+    classification does not depend on which of the two the SDK hands us.
+    """
+    err_type = getattr(exc, "type", None)
+    err_code = getattr(exc, "code", None)
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        inner = body.get("error")
+        source: dict[str, Any] = inner if isinstance(inner, dict) else body
+        if not isinstance(err_type, str):
+            err_type = source.get("type")
+        if not isinstance(err_code, str):
+            err_code = source.get("code")
+    return (
+        err_type if isinstance(err_type, str) else None,
+        err_code if isinstance(err_code, str) else None,
+    )
+
+
+def _is_quota_exhausted(exc: BaseException) -> bool:
+    """True when a RateLimitError means "no credit", not "slow down"."""
+    err_type, err_code = _openai_error_fields(exc)
+    return err_type == "insufficient_quota" or err_code in _QUOTA_ERROR_MARKERS
+
+
+async def _check_quota_breaker() -> None:
+    """Raise ProviderQuotaExhaustedError while the quota breaker is set.
+
+    Fails OPEN: if Redis is unreachable the call proceeds to OpenAI, since a
+    Redis outage must not take generation down with it.
+    """
+    try:
+        redis = await _get_redis()
+        raw = await redis.get(QUOTA_BREAKER_KEY)
+    except Exception as exc:  # noqa: BLE001 - fail open by design
+        logger.warning(
+            "Quota breaker check failed; proceeding without it: %s",
+            type(exc).__name__,
+        )
+        return
+    if isinstance(raw, (str, bytes)) and raw:
+        raise ProviderQuotaExhaustedError(
+            "LLM provider quota exhausted (circuit breaker open)"
+        )
+
+
+async def _trip_quota_breaker(exc: BaseException) -> None:
+    """Set the breaker key with SET NX EX and log ONE error per trip.
+
+    Only the request whose SET NX succeeds logs, so an outage produces one
+    ERROR line per TTL window rather than one per request.
+    """
+    err_type, err_code = _openai_error_fields(exc)
+    try:
+        redis = await _get_redis()
+        created = await redis.set(
+            QUOTA_BREAKER_KEY,
+            err_code or err_type or "insufficient_quota",
+            ex=QUOTA_BREAKER_TTL_SECONDS,
+            nx=True,
+        )
+    except Exception as redis_exc:  # noqa: BLE001 - fail open by design
+        logger.warning(
+            "Could not set quota breaker %s: %s",
+            QUOTA_BREAKER_KEY,
+            type(redis_exc).__name__,
+        )
+        return
+    if created:
+        logger.error(
+            "LLM provider quota exhausted; breaker %s tripped for %ds "
+            "(provider=openai, error_type=%s, error_code=%s)",
+            QUOTA_BREAKER_KEY,
+            QUOTA_BREAKER_TTL_SECONDS,
+            err_type,
+            err_code,
+            extra={
+                "event": "llm_provider_quota_exhausted",
+                "provider": "openai",
+                "breaker_key": QUOTA_BREAKER_KEY,
+                "breaker_ttl_seconds": QUOTA_BREAKER_TTL_SECONDS,
+                "error_type": err_type,
+                "error_code": err_code,
+            },
+        )
+
+
+def _should_retry_openai(exc: BaseException) -> bool:
+    """The openai SDK's own retry policy (``_should_retry``)."""
+    import openai
+
+    if isinstance(exc, openai.APIConnectionError):  # includes APITimeoutError
+        return True
+    if not isinstance(exc, openai.APIStatusError):
+        return False
+    should_retry_header = exc.response.headers.get("x-should-retry")
+    if should_retry_header == "true":
+        return True
+    if should_retry_header == "false":
+        return False
+    status = exc.status_code
+    return status in (408, 409, 429) or status >= 500
+
+
+def _retry_delay(exc: BaseException, attempt: int) -> float:
+    """Honour Retry-After (up to 60s) like the SDK, else jittered backoff."""
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is not None:
+        for name, scale in (("retry-after-ms", 0.001), ("retry-after", 1.0)):
+            raw = headers.get(name)
+            if raw is None:
+                continue
+            try:
+                value = float(raw) * scale
+            except (TypeError, ValueError):
+                continue
+            if 0 < value <= _OPENAI_MAX_RETRY_AFTER:
+                return value
+    delay = min(_OPENAI_INITIAL_RETRY_DELAY * (2.0**attempt), _OPENAI_MAX_RETRY_DELAY)
+    return delay * (1 - 0.25 * random.random())  # noqa: S311 - jitter only
+
+
+async def _openai_create(client: Any, **kwargs: Any) -> Any:
+    """``client.chat.completions.create`` behind the breaker and our retries.
+
+    - Breaker open: ProviderQuotaExhaustedError before any OpenAI call.
+    - 429 insufficient_quota / credit_balance_exhausted: trip the breaker and
+      raise ProviderQuotaExhaustedError immediately, never retried.
+    - Everything the SDK retried before (plain 429 rate limits, 408/409, 5xx,
+      connection errors and timeouts) is still retried up to 2 times.
+    """
+    import openai
+
+    await _check_quota_breaker()
+
+    attempt = 0
+    while True:
+        try:
+            return await client.chat.completions.create(**kwargs)
+        except openai.RateLimitError as exc:
+            if _is_quota_exhausted(exc):
+                await _trip_quota_breaker(exc)
+                raise ProviderQuotaExhaustedError(
+                    "LLM provider quota exhausted"
+                ) from exc
+            if attempt >= _OPENAI_MAX_RETRIES or not _should_retry_openai(exc):
+                raise
+            delay = _retry_delay(exc, attempt)
+        except openai.APIError as exc:
+            if attempt >= _OPENAI_MAX_RETRIES or not _should_retry_openai(exc):
+                raise
+            delay = _retry_delay(exc, attempt)
+        attempt += 1
+        await asyncio.sleep(delay)
+
+
+# ---------------------------------------------------------------------------
 # OpenAI backend
 # ---------------------------------------------------------------------------
 async def _openai_generate(
@@ -248,7 +439,7 @@ async def _openai_generate(
     if response_format == "json_object":
         kwargs["response_format"] = {"type": "json_object"}
 
-    response = await client.chat.completions.create(**kwargs)
+    response = await _openai_create(client, **kwargs)
 
     content: str = response.choices[0].message.content or ""
 
@@ -275,7 +466,8 @@ async def _openai_stream(
     client = _get_openai_client()
     model = settings.openai_model
 
-    stream = await client.chat.completions.create(
+    stream = await _openai_create(
+        client,
         model=model,
         messages=[
             {"role": "system", "content": system_prompt},
@@ -413,6 +605,8 @@ async def generate_completion(
 
     Raises:
         BudgetExceededError: If a monthly or daily ceiling is exhausted.
+        ProviderQuotaExhaustedError: If OpenAI reports insufficient_quota
+            (a BudgetExceededError subclass), or the quota breaker is open.
         httpx.HTTPStatusError: If the vLLM backend returns an error.
         openai.APIError: If the OpenAI backend returns an error.
     """
@@ -479,7 +673,7 @@ async def generate_completion_with_usage(
         if response_format == "json_object":
             kwargs["response_format"] = {"type": "json_object"}
 
-        resp = await client.chat.completions.create(**kwargs)
+        resp = await _openai_create(client, **kwargs)
         content: str = resp.choices[0].message.content or ""
         tokens_in = resp.usage.prompt_tokens if resp.usage else 0
         tokens_out = resp.usage.completion_tokens if resp.usage else 0

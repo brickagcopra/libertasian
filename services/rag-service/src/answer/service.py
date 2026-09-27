@@ -29,6 +29,7 @@ from ..core.ranked import RankedPassages, retrieve_ranked
 from ..core.schemas import Passage
 from ..core.types import AbstentionReason, ConfidenceLevel, QueryIntent
 from ..core.validation import validate_citations
+from ..shared.exceptions import BudgetExceededError, ProviderQuotaExhaustedError
 from ..shared.scoring import compute_confidence
 from .prompts import (
     INSUFFICIENT_SOURCES_SENTINEL,
@@ -447,6 +448,18 @@ async def stream_answer(request: AnswerRequest) -> AsyncIterator[AnswerChunk]:
             },
         )
 
+    except ProviderQuotaExhaustedError:
+        # Same terminal chunk a BudgetExceededError produces, so clients see
+        # one "AI unavailable" shape. No traceback: the breaker already logged
+        # one ERROR for this outage and this fires on every request during it.
+        logger.warning("Streaming answer refused: LLM provider quota exhausted")
+        yield AnswerChunk(
+            type="error",
+            content=(
+                "An error occurred while generating the answer: "
+                f"{BudgetExceededError.__name__}"
+            ),
+        )
     except Exception as exc:
         logger.exception("Error in streaming answer pipeline")
         yield AnswerChunk(

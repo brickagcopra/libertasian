@@ -47,6 +47,24 @@ class BudgetExceededError(RagPipelineError):
         self.period = period
 
 
+class ProviderQuotaExhaustedError(BudgetExceededError):
+    """Raised when the upstream LLM provider has no credit left.
+
+    OpenAI reports this as a 429 whose error type is ``insufficient_quota``
+    (code ``insufficient_quota`` or ``credit_balance_exhausted``). It is
+    not a rate limit: waiting a few seconds never fixes it, so it must
+    neither be retried nor surface as a 500. It subclasses
+    :class:`BudgetExceededError` so every path that already turns an
+    exhausted budget into "AI generation is temporarily unavailable"
+    (the answer router's re-raise, the SSE error chunk, the 503 handler)
+    covers it too. ``main.py`` registers a dedicated handler for it so the
+    503 body and log line do not claim an admin budget ran out.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, scope=None, period="provider")
+
+
 class SchemaIntegrityError(RuntimeError):
     """Raised when raw SQL references a table or column that does not exist.
 
