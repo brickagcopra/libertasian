@@ -86,3 +86,8 @@
 ### Part 4: Internal Model Runs Endpoint
 - [x] Created `POST /api/v1/internal/model-runs` (InternalApiGuard, no JWT)
 - [x] Records model run in `model_runs` table
+
+## RAG P0 (2026-09-26)
+- [x] P0-A: authority boost fixed (high 1.30 / medium 1.15 / low 1.00 / private-unknown 0.90), applied after rerank; abstention on raw score; memos + research workspaces moved onto shared `retrieve_ranked` + validate_citations. PR #504 (open, not merged)
+- [x] P0-B: eval harness `services/rag-service/evals/` (45-entry golden set, run/metrics/compare, README). PR #503 (open, not merged)
+- [x] Decisions (2026-09-27): hits missing source_trust_level stay at 1.00 (editorial) — missing metadata, not lower authority; `invalid_citation_ids` + `warnings` fields accepted as-is
