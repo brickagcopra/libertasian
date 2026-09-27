@@ -97,6 +97,20 @@ interface ResolvedContent {
 /** TTL (seconds) for the signed audio/marks URLs handed to clients. */
 const SIGNED_URL_TTL_SECONDS = 300;
 
+/**
+ * `audio_renditions.content_hash` for a normalized text. Hashes the VERSIONED
+ * input so a READALONG_SCHEMA_VERSION bump invalidates every prior row (whose
+ * hash predates the bump) and forces a clean regen — adding `<mark>` tags does
+ * not change normalizedText, so without this the hash would be unchanged and
+ * existing rows would never regenerate.
+ */
+function hashNormalizedText(normalizedText: string): string {
+  return crypto
+    .createHash('sha256')
+    .update(audioContentHashInput(normalizedText))
+    .digest('hex');
+}
+
 @Injectable()
 export class AudioRenditionService {
   private readonly logger = new Logger(AudioRenditionService.name);
@@ -371,6 +385,41 @@ export class AudioRenditionService {
   }
 
   /**
+   * The `content_hash` a rendition of this content would carry if it were
+   * synthesized NOW — the same computation `generate()` stores. Throws what
+   * `resolveText` throws (NotFoundException for deleted, unpublished or empty
+   * content).
+   */
+  async currentContentHash(
+    contentType: AudioContentType,
+    contentId: string,
+  ): Promise<string> {
+    const { doc } = await this.resolveText(contentType, contentId);
+    return hashNormalizedText(toSsmlDocument(doc).normalizedText);
+  }
+
+  /**
+   * `currentContentHash`, or `null` when the current text cannot be read. A
+   * rendition whose source is gone cannot be regenerated, so the caller keeps
+   * serving it rather than enqueueing a job that can only fail.
+   */
+  private async tryCurrentContentHash(
+    contentType: AudioContentType,
+    contentId: string,
+  ): Promise<string | null> {
+    try {
+      return await this.currentContentHash(contentType, contentId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      this.logger.warn(
+        `Cannot read current text of ${contentType}/${contentId} to check its ` +
+          `audio is up to date; serving the existing rendition: ${message}`,
+      );
+      return null;
+    }
+  }
+
+  /**
    * Look up the rendition to serve.
    *
    * Prefers the configured voice, then falls back to ANY ready rendition for the
@@ -386,6 +435,14 @@ export class AudioRenditionService {
    * with it off, this fallback makes a TTS_PROVIDER flip permanent, because
    * nothing else ever enqueues the migration. Enable the reconciler in the
    * same change window as any provider switch.
+   *
+   * A ready row is served ONLY while its `contentHash` matches the content's
+   * current text. Section text is rewritten in place by the statutory
+   * realign/re-seed tasks; a stale clip would narrate the old text with
+   * read-along highlighting that no longer lines up. A stale row is treated
+   * as a miss, so the controller enqueues a regen (deduped on the
+   * deterministic job id) and answers 202 pending. The hash is computed
+   * lazily — only when a ready row is actually a candidate.
    */
   async getRendition(
     contentType: AudioContentType,
@@ -402,7 +459,22 @@ export class AudioRenditionService {
         },
       },
     });
-    if (active?.status === 'ready') return active;
+    // `undefined` = not computed yet; `null` = text unreadable (serve as-is).
+    let currentHash: string | null | undefined;
+    const isFresh = async (row: { contentHash: string }): Promise<boolean> => {
+      if (currentHash === undefined) {
+        currentHash = await this.tryCurrentContentHash(contentType, contentId);
+      }
+      return currentHash === null || row.contentHash === currentHash;
+    };
+
+    if (active?.status === 'ready') {
+      if (await isFresh(active)) return active;
+      this.logger.log(
+        `Audio ${contentType}/${contentId} (${language}) is stale: text changed ` +
+          `since it was synthesized; regenerating instead of serving it`,
+      );
+    }
 
     // `status: 'ready'` ONLY. A pending or failed row from a previous voice must
     // not mask the active voice's absence, or synthesis would never be enqueued.
@@ -412,7 +484,11 @@ export class AudioRenditionService {
       where: { contentType, contentId, language, status: 'ready' },
       orderBy: { createdAt: 'desc' },
     });
-    return fallback ?? active;
+    if (fallback && (await isFresh(fallback))) return fallback;
+    // Never hand back a stale ready row: with a ready-but-stale active row
+    // this is a miss (null → enqueue); otherwise the non-ready active row
+    // still drives the failure/pending handling.
+    return active?.status === 'ready' ? null : active;
   }
 
   /**
@@ -594,14 +670,7 @@ export class AudioRenditionService {
 
     const { doc, visibility } = await this.resolveText(contentType, contentId);
     const { ssml, normalizedText, manifest } = toSsmlDocument(doc);
-    // Hash the VERSIONED input so a READALONG_SCHEMA_VERSION bump invalidates
-    // every prior row (whose hash predates the bump) and forces a clean regen —
-    // adding `<mark>` tags does not change normalizedText, so without this the
-    // hash would be unchanged and existing rows would never regenerate.
-    const contentHash = crypto
-      .createHash('sha256')
-      .update(audioContentHashInput(normalizedText))
-      .digest('hex');
+    const contentHash = hashNormalizedText(normalizedText);
 
     if (!force) {
       const ready = await this.prisma.audioRendition.findFirst({
