@@ -1,8 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useParams, useSearchParams } from 'next/navigation';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeftIcon,
   BookmarkIcon,
@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 
 import { useDocument, useDocumentSections } from '@/features/documents/hooks/use-document';
+import { findPinpoint } from '@/features/documents/lib/pinpoint';
 import { useCreateBookmark, useBookmarks } from '@/features/bookmarks/hooks/use-bookmarks';
 import { useDigests, useGenerateDigest } from '@/features/digests/hooks/use-digests';
 import { useAnnotations, useCreateAnnotation, useDeleteAnnotation } from '@/features/workspace/hooks/use-annotations';
@@ -136,6 +137,7 @@ export default function ReaderPage() {
 
   const { data: document, isLoading: docLoading, error: docError } = useDocument(id);
   const { data: sections, isLoading: sectionsLoading } = useDocumentSections(id);
+  const { pinQuote, pinSectionId } = usePinpointTarget(sections);
   const { data: bookmarksData } = useBookmarks();
   const createBookmark = useCreateBookmark();
   const [bookmarkNote, setBookmarkNote] = useState('');
@@ -533,6 +535,8 @@ export default function ReaderPage() {
                       audioEnabled={sectionAudioEnabled}
                       isNarrating={playback.activeSectionId === section.id}
                       onPlaySection={playback.playSection}
+                      // '' = scroll to the section, nothing to mark.
+                      pinpoint={section.id === pinSectionId ? (pinQuote ?? '') : null}
                     />
                   ))}
                 </div>
@@ -587,6 +591,25 @@ function cleanLegalText(text: string): string {
   return cleaned.trim();
 }
 
+/**
+ * `?section=<id>&highlight=<quote>` (Deep Research's "Open in reader"): the
+ * section to pinpoint, and the quote to mark in it. Without a usable
+ * `section`, the first section whose text contains the quote is used.
+ */
+function usePinpointTarget(sections: DocumentSection[] | undefined) {
+  const searchParams = useSearchParams();
+  const pinQuote = searchParams.get('highlight');
+  const sectionParam = searchParams.get('section');
+  const pinSectionId = useMemo(() => {
+    if (!sections || (!pinQuote && !sectionParam)) return null;
+    if (sectionParam && sections.some((s) => s.id === sectionParam)) return sectionParam;
+    if (!pinQuote) return null;
+    const hit = sections.find((s) => findPinpoint(cleanLegalText(s.plainText ?? ''), pinQuote));
+    return hit?.id ?? null;
+  }, [sections, pinQuote, sectionParam]);
+  return { pinQuote, pinSectionId };
+}
+
 function AnnotatedSection({
   section,
   documentId,
@@ -596,7 +619,10 @@ function AnnotatedSection({
   audioEnabled = false,
   isNarrating = false,
   onPlaySection,
+  pinpoint = null,
 }: {
+  /** Quote to mark and scroll to in THIS section (reader `?highlight=`). */
+  pinpoint?: string | null;
   section: DocumentSection;
   documentId: string;
   annotations: Annotation[];
@@ -672,8 +698,33 @@ function AnnotatedSection({
   const canListen =
     audioEnabled && !!onPlaySection && hasNarratableText(section.plainText);
 
+  // Pinpoint (`?highlight=`): the one passage a citation pointed at. It takes
+  // precedence over annotation highlights in this section only.
+  const pinRange = useMemo(() => findPinpoint(plainText, pinpoint), [plainText, pinpoint]);
+  const pinRef = useRef<HTMLElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const isPinTarget = pinpoint !== null;
+  useEffect(() => {
+    if (!isPinTarget) return;
+    const target = pinRef.current ?? containerRef.current;
+    target?.scrollIntoView?.({ behavior: 'smooth', block: pinRef.current ? 'center' : 'start' });
+  }, [isPinTarget, pinRange]);
+
   // Build the rendered content with highlights
-  const rendered = showAnnotations && annotations.length > 0
+  const rendered = pinRange
+    ? [
+        plainText.slice(0, pinRange.start),
+        <mark
+          key="pinpoint"
+          ref={pinRef}
+          data-testid="reader-pinpoint"
+          className="rounded-sm bg-amber-200/70 px-0.5 text-inherit"
+        >
+          {plainText.slice(pinRange.start, pinRange.end)}
+        </mark>,
+        plainText.slice(pinRange.end),
+      ]
+    : showAnnotations && annotations.length > 0
     ? renderWithHighlights(plainText, annotations, (a) => {
         setActiveAnnotation(activeAnnotation?.id === a.id ? null : a);
         setSelectionPopup(null);
@@ -682,6 +733,7 @@ function AnnotatedSection({
 
   return (
     <div
+      ref={containerRef}
       id={`section-${section.id}`}
       className="scroll-mt-6 border-b border-gray-100 pb-8 last:border-0"
     >
