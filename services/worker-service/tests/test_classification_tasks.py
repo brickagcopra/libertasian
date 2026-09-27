@@ -258,6 +258,46 @@ class TestClassifyDocumentSubjects:
     @patch("src.tasks.classification_generation_tasks.rag_client")
     @patch("src.tasks.classification_generation_tasks.db")
     @patch("src.tasks.classification_generation_tasks.class_db")
+    def test_provider_quota_exhausted_is_not_retried(
+        self,
+        mock_class_db: MagicMock,
+        mock_db: MagicMock,
+        mock_rag: MagicMock,
+        mock_nestjs: MagicMock,
+        document_id: str,
+        sample_document: dict[str, Any],
+        sample_sections: list[dict[str, Any]],
+        sample_subjects: list[dict[str, Any]],
+    ) -> None:
+        import httpx
+
+        from src.clients.rag_client import ProviderQuotaExhaustedError
+
+        mock_class_db.get_document_for_classification.return_value = sample_document
+        mock_class_db.get_document_sections_for_classification.return_value = sample_sections
+        mock_class_db.get_existing_digest_summary.return_value = "A tax case summary"
+        mock_class_db.get_subjects_with_topics.return_value = sample_subjects
+        mock_db.create_model_run.return_value = "model-run-001"
+        request = httpx.Request("POST", "http://rag/completions/generate")
+        mock_rag.generate_completion.side_effect = ProviderQuotaExhaustedError(
+            "quota",
+            request=request,
+            response=httpx.Response(
+                503, json={"code": "provider_quota_exhausted"}, request=request
+            ),
+        )
+
+        with patch.object(classify_document_subjects, "retry") as mock_retry:
+            result = classify_document_subjects.run(document_id)
+
+        assert result == {"status": "skipped", "reason": "provider_quota_exhausted"}
+        mock_retry.assert_not_called()
+        mock_nestjs.write_classification.assert_not_called()
+
+    @patch("src.tasks.classification_generation_tasks.nestjs_client")
+    @patch("src.tasks.classification_generation_tasks.rag_client")
+    @patch("src.tasks.classification_generation_tasks.db")
+    @patch("src.tasks.classification_generation_tasks.class_db")
     def test_4_abstain_returns_no_write(
         self,
         mock_class_db: MagicMock,

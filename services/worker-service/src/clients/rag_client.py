@@ -9,6 +9,7 @@ import logging
 from typing import Any
 
 import httpx
+import redis
 
 from ..config import settings
 
@@ -44,10 +45,57 @@ class BudgetExceededError(httpx.HTTPStatusError):
         self.period = period
 
 
-def _raise_for_budget(response: httpx.Response) -> None:
-    """Turn rag-service's budget 503 into :class:`BudgetExceededError`.
+class ProviderQuotaExhaustedError(BudgetExceededError):
+    """rag-service refused because the LLM provider account is out of credit.
 
-    Any other status (including a 503 that is a genuine outage) is left to
+    Reported as HTTP 503 ``{"code": "provider_quota_exhausted"}``. It is a
+    :class:`BudgetExceededError` so callers that already pause on an
+    exhausted budget (bar exam chunks) pause on this too. Unlike a plain
+    outage it will not clear within a Celery retry window, so retrying
+    tasks should give up on it at once instead of self.retry()-ing.
+    """
+
+
+# Set by rag-service (core/generation.py) for 300s after OpenAI answers
+# insufficient_quota. Both services share Redis db 0 in every compose file.
+QUOTA_BREAKER_KEY = "llm:provider:quota_exhausted"
+
+_breaker_redis: redis.Redis | None = None
+
+
+def provider_quota_exhausted() -> bool:
+    """True while rag-service's provider-quota breaker is set.
+
+    Lets beat-driven producers (backfill tick, derivative poller) stand
+    still during a provider outage instead of feeding it work. Fails OPEN:
+    any Redis error reads as "not exhausted", with a warning, so a Redis
+    problem can never stop generation on its own.
+    """
+    global _breaker_redis  # noqa: PLW0603
+    try:
+        if _breaker_redis is None:
+            _breaker_redis = redis.Redis.from_url(
+                settings.redis_url,
+                decode_responses=True,
+                socket_connect_timeout=2,
+                socket_timeout=2,
+            )
+        return bool(_breaker_redis.exists(QUOTA_BREAKER_KEY))
+    except Exception as exc:  # noqa: BLE001 - fail open by design
+        logger.warning(
+            "Could not read %s; assuming provider quota is available: %s",
+            QUOTA_BREAKER_KEY,
+            type(exc).__name__,
+        )
+        return False
+
+
+def _raise_for_budget(response: httpx.Response) -> None:
+    """Turn rag-service's budget/quota 503 into :class:`BudgetExceededError`.
+
+    ``code == "provider_quota_exhausted"`` raises the
+    :class:`ProviderQuotaExhaustedError` subclass. Any other status
+    (including a 503 that is a genuine outage) is left to
     ``raise_for_status``.
     """
     if response.status_code != 503:
@@ -56,7 +104,15 @@ def _raise_for_budget(response: httpx.Response) -> None:
         body = response.json()
     except ValueError:
         return
-    if not isinstance(body, dict) or body.get("code") != "budget_exceeded":
+    if not isinstance(body, dict):
+        return
+    if body.get("code") == "provider_quota_exhausted":
+        raise ProviderQuotaExhaustedError(
+            "LLM provider quota exhausted",
+            request=response.request,
+            response=response,
+        )
+    if body.get("code") != "budget_exceeded":
         return
     scope = body.get("scope")
     period = body.get("period")
@@ -107,6 +163,7 @@ def extract_doctrines(
 
     with httpx.Client(timeout=settings.rag_request_timeout) as client:
         response = client.post(url, json=payload, headers=_internal_headers())
+        _raise_for_budget(response)
         response.raise_for_status()
         return response.json()
 
@@ -139,6 +196,7 @@ def generate_digest(
 
     with httpx.Client(timeout=settings.rag_request_timeout) as client:
         response = client.post(url, json=payload, headers=_internal_headers())
+        _raise_for_budget(response)
         response.raise_for_status()
         return response.json()
 

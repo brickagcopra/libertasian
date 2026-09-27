@@ -27,6 +27,7 @@ from celery import shared_task
 from ..backfill.fetch_window import is_in_fetch_window
 from ..clients import backfill_db_client as backfill_db
 from ..clients import ingestion_db_client as ingestion_db
+from ..clients import rag_client
 from ..config import settings
 from ..fetchers.base import CloudflareBlockedError
 from ..fetchers.registry import get_fetcher
@@ -474,6 +475,23 @@ def _tick_single_batch(batch: dict[str, Any]) -> dict[str, Any]:
         )
         logger.info("backfill_batch %s skipped: outside fetch window", batch_id)
         return {"batch_id": batch_id, "status": "skipped_outside_fetch_window"}
+
+    # Same idle-skip while the LLM provider is out of credit. Every ingested
+    # document fans out ~12-17 rag calls (chain_post_ingestion) and the
+    # in-flight cap drains when ingestion lands, not when the LLM chain does,
+    # so without this an 8-hour OpenAI quota outage (2026-09-26) kept this
+    # tick feeding ~8,300 doomed calls an hour. The breaker expires 300s
+    # after the last quota error, so ticks resume on their own.
+    if rag_client.provider_quota_exhausted():
+        backfill_db.update_batch_counters(
+            batch_id, last_tick_at=datetime.now(UTC),
+        )
+        logger.warning(
+            "backfill_batch %s skipped: LLM provider quota exhausted (%s set)",
+            batch_id,
+            rag_client.QUOTA_BREAKER_KEY,
+        )
+        return {"batch_id": batch_id, "status": "skipped_provider_quota_exhausted"}
 
     checkpoint = batch.get("checkpoint_state") or {}
     candidate_urls = checkpoint.get("candidate_urls", [])

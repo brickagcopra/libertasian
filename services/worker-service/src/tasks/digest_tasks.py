@@ -19,6 +19,7 @@ from celery import shared_task
 from ..clients import ingestion_db_client as db
 from ..clients import rag_client
 from ..clients.db_client import SchemaIntegrityError
+from ..clients.rag_client import ProviderQuotaExhaustedError
 
 logger = logging.getLogger(__name__)
 
@@ -273,6 +274,19 @@ def generate_ingestion_digest(
             document_id,
         )
         raise
+    except ProviderQuotaExhaustedError:
+        # Out of provider credit: a Celery retry would only meet the same
+        # 503. Non-blocking like any other digest failure, just not retried.
+        logger.warning(
+            "generate_ingestion_digest skipped: LLM provider quota exhausted "
+            "(document=%s, not retried)",
+            document_id,
+        )
+        return {
+            "document_id": document_id,
+            "status": "skipped",
+            "reason": "provider_quota_exhausted",
+        }
     except Exception as exc:
         logger.error(
             "generate_ingestion_digest failed: document=%s error=%s",

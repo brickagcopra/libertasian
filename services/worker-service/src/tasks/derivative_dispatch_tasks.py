@@ -18,6 +18,7 @@ from typing import Any
 
 from celery import shared_task
 
+from ..clients import rag_client
 from ..clients.db_client import get_connection
 from ..config import settings
 
@@ -62,6 +63,17 @@ def poll_pending_derivative_jobs(self: Any) -> dict[str, Any]:
     then dispatches the appropriate generator task for each.
     """
     batch_size = getattr(settings, "derivative_poll_batch_size", 10)
+
+    # Leave jobs 'pending' while the LLM provider is out of credit. Claiming
+    # them now would move each to 'dispatched' and then straight to 'failed'
+    # on rag-service's 503; skipping keeps them queued for the next poll
+    # after the breaker (300s TTL) expires.
+    if rag_client.provider_quota_exhausted():
+        logger.warning(
+            "Derivative poll skipped: LLM provider quota exhausted (%s set)",
+            rag_client.QUOTA_BREAKER_KEY,
+        )
+        return {"dispatched": 0, "status": "skipped_provider_quota_exhausted"}
 
     with get_connection() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
