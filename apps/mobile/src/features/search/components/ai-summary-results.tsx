@@ -5,6 +5,7 @@ import { SourceCard } from '../../ai-answers/components/source-card';
 import { dedupeSources, formatAnswerText } from '../../ai-answers/format-answer-text';
 import { useAiAnswerStream } from '../hooks/use-ai-answer-stream';
 import type { AiAnswerSource } from '../types';
+import { GoDeeperChip } from '../../deep-research/components/entry-points';
 import { abstentionCopy } from './abstention-copy';
 
 interface AiSummaryResultsProps {
@@ -81,9 +82,14 @@ export function AiSummaryResults({ query }: AiSummaryResultsProps) {
 
   if (isDone && abstained) {
     return (
-      <View style={styles.abstentionContainer}>
-        <Ionicons name="shield-outline" size={20} color="#d97706" />
-        <Text style={styles.abstentionText}>{abstentionCopy(abstentionReason)}</Text>
+      <View>
+        <View style={styles.abstentionContainer}>
+          <Ionicons name="shield-outline" size={20} color="#d97706" />
+          <Text style={styles.abstentionText}>{abstentionCopy(abstentionReason)}</Text>
+        </View>
+        <View style={styles.goDeeperAbstained}>
+          <GoDeeperChip query={query} />
+        </View>
       </View>
     );
   }
@@ -106,6 +112,9 @@ export function AiSummaryResults({ query }: AiSummaryResultsProps) {
           </View>
         ) : null}
       </View>
+
+      {/* Deep Research entry: renders nothing when the surface is hidden. */}
+      {isDone ? <GoDeeperChip query={query} /> : null}
 
       {/* Sources */}
       {citedSources.length > 0 ? (
@@ -159,6 +168,7 @@ const styles = StyleSheet.create({
     borderColor: '#fde68a',
   },
   abstentionText: { flex: 1, fontSize: 14, color: '#92400e', lineHeight: 20 },
+  goDeeperAbstained: { marginHorizontal: 12 },
   answerCard: {
     backgroundColor: '#fff',
     borderRadius: 12,

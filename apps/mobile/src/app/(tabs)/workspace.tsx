@@ -12,6 +12,7 @@ import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { TabBar, useTabBarClearance } from '@/components/ui/TabBar';
 import { SurfaceGuard } from '@/features/entitlements/surface-guard';
+import { DeepResearchTile } from '@/features/deep-research/components/entry-points';
 import { useTabBarNav } from '@/features/navigation/use-tab-bar-nav';
 import { useMatters } from '../../features/workspace/hooks/use-matters';
 import { useNotes } from '../../features/workspace/hooks/use-notes';
@@ -327,6 +328,9 @@ function WorkspaceTabScreen() {
           onPress={() => router.push('/workspace/annotations')}
         />
       </View>
+
+      {/* Deep Research — its own stack, reached from here and Home/Search. */}
+      <DeepResearchTile />
 
       {/* Recent Matters */}
       <SectionHeader

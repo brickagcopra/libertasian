@@ -32,6 +32,12 @@ export interface HomeScreenProps {
   onProfilePress?: () => void;
   /** Tapping the search bar affordance (navigates to the Search tab). */
   onSearchPress?: () => void;
+  /**
+   * Opens Deep Research. The card renders ONLY when this is set — the route
+   * omits it when the surface is hidden for this account, so a hidden feature
+   * leaves no card behind.
+   */
+  onDeepResearchPress?: () => void;
   /** Active tab id passed to the design's bottom TabBar. */
   activeTab?: TabBarItemId;
   onTabPress?: (id: TabBarItemId) => void;
@@ -69,6 +75,7 @@ export function HomeScreen({
   onPressFeedItem,
   onProfilePress,
   onSearchPress,
+  onDeepResearchPress,
   activeTab = 'home',
   onTabPress,
 }: HomeScreenProps) {
@@ -244,6 +251,57 @@ export function HomeScreen({
             </View>
           </View>
         </View>
+
+        {onDeepResearchPress ? (
+          <>
+            <View style={{ height: 14 }} />
+            <Pressable
+              onPress={onDeepResearchPress}
+              accessibilityRole="button"
+              accessibilityLabel="Deep Research — verified multi-source answers"
+              testID="home-deep-research-card"
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 12,
+                backgroundColor: theme.surface,
+                borderWidth: 1,
+                borderColor: theme.line,
+                borderRadius: 18,
+                padding: 16,
+              }}
+            >
+              <View
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 12,
+                  backgroundColor: theme.accentSoft,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Ionicons name="layers-outline" size={20} color={theme.accent} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontFamily: theme.serif, fontSize: 18, color: theme.ink }}>
+                  Deep Research
+                </Text>
+                <Text
+                  style={{
+                    fontFamily: 'Inter_400Regular',
+                    fontSize: 13,
+                    color: theme.inkSoft,
+                    marginTop: 2,
+                  }}
+                >
+                  Verified multi-source answers
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={theme.inkFaint} />
+            </Pressable>
+          </>
+        ) : null}
 
         <View style={{ height: 22 }} />
 
