@@ -113,4 +113,5 @@ app.conf.include = [
     "src.tasks.canonical_url_backfill_tasks",
     "src.tasks.autopublish_backfill_tasks",
     "src.tasks.realign_statutory_sections_task",
+    "src.tasks.reseed_statutory_document_task",
 ]
