@@ -1,7 +1,6 @@
 'use client';
 
 import Link from 'next/link';
-import type { ReactNode } from 'react';
 import {
   AlertCircleIcon,
   CalendarClockIcon,
@@ -22,9 +21,9 @@ function Shell({
   children,
   testId,
 }: {
-  icon: ReactNode;
+  icon: React.ReactNode;
   title: string;
-  children: ReactNode;
+  children: React.ReactNode;
   testId: string;
 }) {
   return (
