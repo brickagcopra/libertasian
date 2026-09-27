@@ -1135,6 +1135,82 @@ export class OpenSearchService implements OnModuleInit {
   }
 
   /**
+   * Every vector `_id` currently held for each of these documents.
+   *
+   * One `terms` query per call on `document_id`, `_source` limited to that one
+   * field, so no embeddings come back over the wire. A document whose hits
+   * exceed what one page returned is reported in `incomplete` rather than
+   * truncated: a caller deciding what to DELETE must never mistake "not
+   * listed" for "does not exist".
+   *
+   * Propagates transport errors, for the same reason as
+   * `findExistingVectorIds`.
+   */
+  async findVectorIdsForDocuments(
+    documentIds: readonly string[],
+    targetIndex = VECTOR_INDEX,
+  ): Promise<{ idsByDocument: Map<string, string[]>; incomplete: Set<string> }> {
+    const idsByDocument = new Map<string, string[]>();
+    const incomplete = new Set<string>();
+    if (documentIds.length === 0) return { idsByDocument, incomplete };
+
+    const pageSize = 10_000;
+    for (const documentId of documentIds) {
+      const response = await this.client.search({
+        index: targetIndex,
+        body: {
+          query: { term: { document_id: documentId } },
+          _source: ['document_id'],
+          size: pageSize,
+          track_total_hits: true,
+        },
+      });
+      const hits = (response.body.hits?.hits ?? []) as { _id: string }[];
+      const totalRaw = response.body.hits?.total as
+        | number
+        | { value: number }
+        | undefined;
+      const total =
+        typeof totalRaw === 'number' ? totalRaw : (totalRaw?.value ?? hits.length);
+      idsByDocument.set(
+        documentId,
+        hits.map((hit) => hit._id),
+      );
+      if (total > hits.length) incomplete.add(documentId);
+    }
+    return { idsByDocument, incomplete };
+  }
+
+  /**
+   * Delete these `_id`s from the vector index in one bulk request.
+   *
+   * A `not_found` result counts as deleted: the goal is that the id is absent,
+   * and a re-run over the same list must converge rather than report failure.
+   */
+  async deleteVectorIds(
+    ids: readonly string[],
+    targetIndex = VECTOR_INDEX,
+  ): Promise<{ deleted: number; failedIds: string[] }> {
+    if (ids.length === 0) return { deleted: 0, failedIds: [] };
+
+    const body = ids.map((id) => ({ delete: { _index: targetIndex, _id: id } }));
+    const response = await this.client.bulk({ body, refresh: 'false' });
+    const failedIds: string[] = [];
+    if (response.body.errors) {
+      const items = response.body.items as Record<string, Record<string, unknown>>[];
+      for (const item of items) {
+        const entry = item['delete'];
+        const status = entry?.['status'];
+        if (entry?.['error'] && status !== 404) {
+          const id = entry['_id'];
+          if (typeof id === 'string') failedIds.push(id);
+        }
+      }
+    }
+    return { deleted: ids.length - failedIds.length, failedIds };
+  }
+
+  /**
    * Bulk index vector documents into the vector index.
    *
    * Returns the failed `_id`s alongside the counts. Without them a caller can

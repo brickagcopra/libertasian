@@ -51,6 +51,33 @@ export class StartVectorBackfillDto {
 
   @ApiPropertyOptional({
     description:
+      'Restrict the run to these legal_documents ids (max 100). Combined with ' +
+      'documentTypes, a document must match both. Required when force is true.',
+    type: [String],
+    maxItems: 100,
+  })
+  @IsArray()
+  @IsOptional()
+  @ArrayMaxSize(100)
+  @IsUUID('all', { each: true })
+  documentIds?: string[];
+
+  @ApiPropertyOptional({
+    description:
+      'Re-embed the listed documents even where their vectors already exist, ' +
+      'overwriting them (the vector _id is section_id ?? document_id, so the ' +
+      'overwrite is idempotent), and delete any vector _id of theirs that no ' +
+      'longer maps to a section. Requires documentIds; rejected with 400 ' +
+      'otherwise.',
+    default: false,
+  })
+  @IsBoolean()
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  force?: boolean;
+
+  @ApiPropertyOptional({
+    description:
       'Texts per embedding request. Measured throughput is 4.8 texts/s on CPU ' +
       '(a batch of 64 took 13.46s) on a box shared with TTS.',
     default: VECTOR_BACKFILL_DEFAULT_BATCH_SIZE,

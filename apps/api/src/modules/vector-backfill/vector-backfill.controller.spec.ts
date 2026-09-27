@@ -1,11 +1,14 @@
+import { BadRequestException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import type { JwtPayload } from '@libertasian/types';
 
 import { PERMISSIONS_KEY } from '../../common/decorators/permissions.decorator';
+import { PLATFORM_PERMISSIONS_KEY } from '../../common/decorators/platform-permissions.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { MfaGuard } from '../../common/guards/mfa.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { PlatformPermissionsGuard } from '../../common/guards/platform-permissions.guard';
 import { TenantGuard } from '../../common/guards/tenant.guard';
 import { AuditService } from '../audit/audit.service';
 import { VectorBackfillController } from './vector-backfill.controller';
@@ -18,6 +21,12 @@ const USER: JwtPayload = {
   sub: '00000000-0000-0000-0000-0000000000aa',
   organizationId: '00000000-0000-0000-0000-0000000000bb',
 } as JwtPayload;
+/** Platform staff belong to no organization: their JWT carries none. */
+const PLATFORM_ADMIN = {
+  sub: '00000000-0000-0000-0000-0000000000cc',
+  email: 'staff@example.com',
+} as JwtPayload;
+const DOC_ID = '22222222-2222-4222-8222-222222222222';
 
 describe('VectorBackfillController', () => {
   let controller: VectorBackfillController;
@@ -57,9 +66,7 @@ describe('VectorBackfillController', () => {
       .useValue(mockGuard)
       .overrideGuard(MfaGuard)
       .useValue(mockGuard)
-      .overrideGuard(TenantGuard)
-      .useValue(mockGuard)
-      .overrideGuard(PermissionsGuard)
+      .overrideGuard(PlatformPermissionsGuard)
       .useValue(mockGuard)
       .compile();
 
@@ -71,17 +78,23 @@ describe('VectorBackfillController', () => {
   describe('auth gate', () => {
     // This endpoint can start a ~4.3-hour job on the shared embedding box and
     // its read side is a map of which parts of the corpus kNN cannot reach.
-    it('declares the same guard stack as the other admin search endpoints', () => {
+    //
+    // A PLATFORM route, like /platform/staff and /admin/digests: platform
+    // admins belong to no organization, and TenantGuard 403'd them on
+    // "No organization context" before any permission check ran.
+    it('declares the platform guard stack, with no TenantGuard', () => {
       const guards = (Reflect.getMetadata(GUARDS_METADATA, VectorBackfillController) ??
         []) as unknown[];
-      expect(guards).toEqual([JwtAuthGuard, MfaGuard, TenantGuard, PermissionsGuard]);
+      expect(guards).toEqual([JwtAuthGuard, MfaGuard, PlatformPermissionsGuard]);
+      expect(guards).not.toContain(TenantGuard);
+      expect(guards).not.toContain(PermissionsGuard);
     });
 
-    it('requires admin:ingestion', () => {
-      expect(Reflect.getMetadata(PERMISSIONS_KEY, VectorBackfillController)).toEqual({
-        permissions: ['admin:ingestion'],
-        mode: 'all',
-      });
+    it('requires PLATFORM admin:ingestion and carries no tenant permission metadata', () => {
+      expect(
+        Reflect.getMetadata(PLATFORM_PERMISSIONS_KEY, VectorBackfillController),
+      ).toEqual({ permissions: ['admin:ingestion'], mode: 'all' });
+      expect(Reflect.getMetadata(PERMISSIONS_KEY, VectorBackfillController)).toBeUndefined();
     });
   });
 
@@ -117,6 +130,53 @@ describe('VectorBackfillController', () => {
           entityId: RUN_ID,
           actorUserId: USER.sub,
         }),
+      );
+    });
+
+    it('starts a run for a platform admin with no organization, auditing the actor', async () => {
+      await controller.startRun({ dryRun: true }, PLATFORM_ADMIN);
+
+      expect(backfill.enqueueRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          triggeredByUserId: PLATFORM_ADMIN.sub,
+          organizationId: undefined,
+        }),
+      );
+      const entry = audit.log.mock.calls[0]![0] as Record<string, unknown>;
+      expect(entry['actorUserId']).toBe(PLATFORM_ADMIN.sub);
+      expect(entry['organizationId']).toBeUndefined();
+    });
+
+    it('treats an empty-string organization as none, never as an id', async () => {
+      await controller.startRun({}, { ...PLATFORM_ADMIN, organizationId: '' });
+      expect(backfill.enqueueRun).toHaveBeenCalledWith(
+        expect.objectContaining({ organizationId: undefined }),
+      );
+    });
+
+    it('passes documentIds and force through and records them in the audit row', async () => {
+      await controller.startRun({ documentIds: [DOC_ID], force: true }, PLATFORM_ADMIN);
+
+      expect(backfill.enqueueRun).toHaveBeenCalledWith(
+        expect.objectContaining({ documentIds: [DOC_ID], force: true }),
+      );
+    });
+
+    it('rejects force without documentIds with 400 before enqueueing anything', async () => {
+      await expect(controller.startRun({ force: true }, PLATFORM_ADMIN)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      await expect(
+        controller.startRun({ force: true, documentIds: [] }, PLATFORM_ADMIN),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(backfill.enqueueRun).not.toHaveBeenCalled();
+      expect(audit.log).not.toHaveBeenCalled();
+    });
+
+    it('defaults force to false', async () => {
+      await controller.startRun({ documentIds: [DOC_ID] }, USER);
+      expect(backfill.enqueueRun).toHaveBeenCalledWith(
+        expect.objectContaining({ documentIds: [DOC_ID], force: false }),
       );
     });
   });

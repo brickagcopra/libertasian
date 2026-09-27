@@ -38,6 +38,8 @@ describe('VectorBackfillProcessor', () => {
     chunksFailed: 4,
     batchesCompleted: 5,
     batchesFailed: 1,
+    staleVectorsDeleted: 0,
+    staleVectorsFailed: 0,
     message: 'Run completed',
     gapByType: {
       codal: {

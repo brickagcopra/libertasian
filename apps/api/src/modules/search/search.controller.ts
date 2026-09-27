@@ -17,13 +17,13 @@ import type { JwtPayload } from '@libertasian/types';
 import type { Request } from 'express';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { RequiredPermissions } from '../../common/decorators/permissions.decorator';
+import { optionalOrganizationId } from '../../common/utils/optional-organization-id';
+import { RequiredPlatformPermissions } from '../../common/decorators/platform-permissions.decorator';
 import { InternalApiGuard } from '../../common/guards/internal-api.guard';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { MfaGuard } from '../../common/guards/mfa.guard';
 import { OptionalJwtAuthGuard } from '../../common/guards/optional-jwt-auth.guard';
-import { TenantGuard } from '../../common/guards/tenant.guard';
-import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { PlatformPermissionsGuard } from '../../common/guards/platform-permissions.guard';
 import { AdminBypassAuditService } from '../../common/services/admin-bypass-audit.service';
 import { TrackEvent } from '../analytics';
 import { AuditService } from '../audit/audit.service';
@@ -46,7 +46,13 @@ import {
  * OptionalJwtAuthGuard so a present token is hydrated and the free-tier gate
  * can be resolved — same pattern as the public GETs on DocumentsController.
  * Anonymous callers are treated as free-tier.
- * POST /index/* endpoints require JwtAuthGuard + MfaGuard + RolesGuard (admin/editor).
+ * The /index/* maintenance endpoints are PLATFORM routes: JwtAuthGuard +
+ * MfaGuard + PlatformPermissionsGuard with platform `admin:ingestion`, the same
+ * mechanism as /platform/staff and /admin/digests. No TenantGuard: platform
+ * admins belong to no organization, and TenantGuard 403'd them on "No
+ * organization context" before the permission check ran (prod, 2026-09-27).
+ * `admin:ingestion` is platform-scoped (see rbac/platform-scope.ts), so a
+ * workspace role can never confer it. User-facing search routes are unchanged.
  */
 @ApiTags('Search')
 @Controller('search')
@@ -263,13 +269,13 @@ export class SearchController {
 
   @Post('index/initialize')
   @ApiOperation({ summary: 'Initialize OpenSearch indexes (admin only)' })
-  @UseGuards(JwtAuthGuard, MfaGuard, TenantGuard, PermissionsGuard)
-  @RequiredPermissions('admin:ingestion')
+  @UseGuards(JwtAuthGuard, MfaGuard, PlatformPermissionsGuard)
+  @RequiredPlatformPermissions('admin:ingestion')
   @ApiBearerAuth()
   async initializeIndexes(@CurrentUser() user: JwtPayload) {
     const result = await this.searchService.initializeIndexes();
     await this.auditService.log({
-      organizationId: user.organizationId,
+      organizationId: optionalOrganizationId(user),
       actorUserId: user.sub,
       actorType: 'admin',
       action: 'search.index.initialize',
@@ -282,8 +288,8 @@ export class SearchController {
   @ApiOperation({
     summary: 'Show which physical index each search alias resolves to (admin only)',
   })
-  @UseGuards(JwtAuthGuard, MfaGuard, TenantGuard, PermissionsGuard)
-  @RequiredPermissions('admin:ingestion')
+  @UseGuards(JwtAuthGuard, MfaGuard, PlatformPermissionsGuard)
+  @RequiredPlatformPermissions('admin:ingestion')
   @ApiBearerAuth()
   async getIndexTopology() {
     return { success: true, data: await this.indexRebuild.describeTopology() };
@@ -294,8 +300,8 @@ export class SearchController {
     summary:
       'Rebuild the OpenSearch indices from PostgreSQL and swap the aliases (admin only)',
   })
-  @UseGuards(JwtAuthGuard, MfaGuard, TenantGuard, PermissionsGuard)
-  @RequiredPermissions('admin:ingestion')
+  @UseGuards(JwtAuthGuard, MfaGuard, PlatformPermissionsGuard)
+  @RequiredPlatformPermissions('admin:ingestion')
   @ApiBearerAuth()
   async rebuildIndexes(
     @Body() dto: IndexRebuildDto,
@@ -303,11 +309,11 @@ export class SearchController {
   ) {
     const { jobId } = await this.indexRebuild.enqueueRebuild({
       triggeredByUserId: user.sub,
-      organizationId: user.organizationId,
+      organizationId: optionalOrganizationId(user),
       dryRun: dto.dryRun === true,
     });
     await this.auditService.log({
-      organizationId: user.organizationId,
+      organizationId: optionalOrganizationId(user),
       actorUserId: user.sub,
       actorType: 'admin',
       action: 'search.index.rebuild_requested',
@@ -320,8 +326,8 @@ export class SearchController {
 
   @Get('index/rebuild/:jobId')
   @ApiOperation({ summary: 'Progress of a search index rebuild job (admin only)' })
-  @UseGuards(JwtAuthGuard, MfaGuard, TenantGuard, PermissionsGuard)
-  @RequiredPermissions('admin:ingestion')
+  @UseGuards(JwtAuthGuard, MfaGuard, PlatformPermissionsGuard)
+  @RequiredPlatformPermissions('admin:ingestion')
   @ApiBearerAuth()
   async getRebuildStatus(@Param('jobId') jobId: string) {
     return { success: true, data: await this.indexRebuild.getJobStatus(jobId) };
@@ -331,8 +337,8 @@ export class SearchController {
   @ApiOperation({
     summary: 'Repoint a search alias at a previous physical index (admin only)',
   })
-  @UseGuards(JwtAuthGuard, MfaGuard, TenantGuard, PermissionsGuard)
-  @RequiredPermissions('admin:ingestion')
+  @UseGuards(JwtAuthGuard, MfaGuard, PlatformPermissionsGuard)
+  @RequiredPlatformPermissions('admin:ingestion')
   @ApiBearerAuth()
   async rollbackIndex(
     @Body() dto: IndexRollbackDto,
@@ -340,7 +346,7 @@ export class SearchController {
   ) {
     const result = await this.indexRebuild.rollbackAlias(dto.alias, dto.targetIndex);
     await this.auditService.log({
-      organizationId: user.organizationId,
+      organizationId: optionalOrganizationId(user),
       actorUserId: user.sub,
       actorType: 'admin',
       action: 'search.index.rollback',
@@ -353,8 +359,8 @@ export class SearchController {
 
   @Post('index/document/:id')
   @ApiOperation({ summary: 'Index a single document into OpenSearch (admin only)' })
-  @UseGuards(JwtAuthGuard, MfaGuard, TenantGuard, PermissionsGuard)
-  @RequiredPermissions('admin:ingestion')
+  @UseGuards(JwtAuthGuard, MfaGuard, PlatformPermissionsGuard)
+  @RequiredPlatformPermissions('admin:ingestion')
   @ApiBearerAuth()
   async indexDocument(
     @Param('id') documentId: string,
@@ -362,7 +368,7 @@ export class SearchController {
   ) {
     await this.searchService.indexLegalDocument(documentId);
     await this.auditService.log({
-      organizationId: user.organizationId,
+      organizationId: optionalOrganizationId(user),
       actorUserId: user.sub,
       actorType: 'admin',
       action: 'search.index.document',
@@ -374,8 +380,8 @@ export class SearchController {
 
   @Post('index/bulk')
   @ApiOperation({ summary: 'Bulk index documents into OpenSearch (admin only)' })
-  @UseGuards(JwtAuthGuard, MfaGuard, TenantGuard, PermissionsGuard)
-  @RequiredPermissions('admin:ingestion')
+  @UseGuards(JwtAuthGuard, MfaGuard, PlatformPermissionsGuard)
+  @RequiredPlatformPermissions('admin:ingestion')
   @ApiBearerAuth()
   async bulkIndex(
     @Body() body: { documentIds: string[] },
@@ -383,7 +389,7 @@ export class SearchController {
   ) {
     const result = await this.searchService.bulkIndexDocuments(body.documentIds);
     await this.auditService.log({
-      organizationId: user.organizationId,
+      organizationId: optionalOrganizationId(user),
       actorUserId: user.sub,
       actorType: 'admin',
       action: 'search.index.bulk',
