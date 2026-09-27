@@ -7,6 +7,7 @@ import type { Theme } from '@/lib/design-tokens';
 import { useTheme } from '@/providers/theme-provider';
 
 import { formatSourceDate } from '../citations';
+import { readerHref } from '../navigation';
 import type { DeepResearchSource } from '../types';
 
 export interface OpenCitation {
@@ -88,18 +89,15 @@ export function CitationSheet({
 
   const source = citation?.source;
 
+  const quote = citation?.quote;
+
   const openInReader = useCallback(() => {
     if (!source) return;
     onClose();
-    // `section` rides along for the reader to land on; the document is the
-    // part every reader version understands.
-    router.push({
-      pathname: '/reader/[id]',
-      params: source.sectionId
-        ? { id: source.documentId, section: source.sectionId }
-        : { id: source.documentId },
-    });
-  }, [source, onClose]);
+    // The reader scrolls to `section` and marks `highlight` (the verbatim
+    // quote) with the same matcher as the web reader.
+    router.push(readerHref(source.documentId, source.sectionId, quote));
+  }, [source, quote, onClose]);
 
   const meta = useMemo(() => {
     if (!source) return [];

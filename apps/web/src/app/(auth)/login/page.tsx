@@ -18,7 +18,7 @@ import { ApiClientError } from '@/lib/api-client';
 import { Wordmark } from '@/components/brand/wordmark';
 import { Owl } from '@/components/brand/owl';
 import { ROUTES } from '@/lib/constants';
-import { resolveSafeRedirect } from '@/features/auth/safe-redirect';
+import { resolveSafeRedirect, stashOAuthReturnPath } from '@/features/auth/safe-redirect';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -191,6 +191,12 @@ export default function LoginPage() {
               <Button variant="outline" className="w-full rounded-full" asChild>
                 <a
                   href={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api/v1'}/auth/google`}
+                  // The OAuth round trip leaves the app, so park ?from= for
+                  // /auth/callback to pick up (re-validated there).
+                  onClick={() =>
+                    stashOAuthReturnPath(new URLSearchParams(window.location.search).get('from'))
+                  }
+                  data-testid="google-sign-in"
                 >
                   <svg className="h-5 w-5" viewBox="0 0 24 24">
                     <path

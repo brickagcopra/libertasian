@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import type { ReactNode } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { useCallback, useMemo, useRef, type ReactNode } from 'react';
+import { Pressable, ScrollView, Text, View, type LayoutChangeEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { HeaderAmbient } from '@/components/ui/HeaderAmbient';
 import { topInsetPadding, bottomInsetPaddingStacked } from '@/lib/safe-area';
@@ -38,6 +38,12 @@ export interface DocumentReaderParagraph {
   offset?: number;
   /** Optional substring to highlight inline with accent-soft background. */
   highlight?: string;
+  /**
+   * Pinpointed passage (Deep Research "Open in reader"), as offsets into
+   * `text`. Takes precedence over `highlight`. The first pinpointed paragraph
+   * of `focusSectionId` is where the reader scrolls to.
+   */
+  pinpoint?: { start: number; end: number };
   /**
    * Whole-paragraph annotation highlights (tap to view/delete). The FIRST
    * entry drives the background tint + left border; all entries are surfaced
@@ -125,7 +131,16 @@ export interface DocumentReaderScreenProps {
   ) => void;
   /** Tap on an annotated paragraph — receives ALL overlapping annotation ids. */
   onAnnotationPress?: (annotationIds: string[]) => void;
+  /**
+   * Section to scroll to once it has been laid out (reader `section` param).
+   * Lands on its first `pinpoint` paragraph when it has one. Scrolls once
+   * per value.
+   */
+  focusSectionId?: string | null;
 }
+
+/** Room left above a scroll target for the floating header cluster. */
+const FOCUS_SCROLL_MARGIN = 120;
 
 function pageRangeText(s: DocumentReaderSection): string | null {
   if (!s.pageStart) return null;
@@ -155,9 +170,51 @@ export function DocumentReaderScreen({
   onAdd,
   onParagraphLongPress,
   onAnnotationPress,
+  focusSectionId = null,
 }: DocumentReaderScreenProps) {
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
+
+  // Focus scroll: the section's y (relative to the scroll content) plus, when
+  // the section holds a pinpoint, that paragraph's y within the section. The
+  // two onLayout events can arrive in either order, so each one retries.
+  const scrollRef = useRef<ScrollView>(null);
+  const focus = useRef<{ key: string | null; sectionY?: number; paraY?: number; done: boolean }>({
+    key: null,
+    done: false,
+  });
+  if (focus.current.key !== focusSectionId) {
+    focus.current = { key: focusSectionId, done: false };
+  }
+  const focusPinIndex = useMemo(() => {
+    const target = focusSectionId ? sections.find((s) => s.id === focusSectionId) : undefined;
+    if (!target) return -1;
+    return target.paragraphs.findIndex((p) => typeof p !== 'string' && p.pinpoint !== undefined);
+  }, [sections, focusSectionId]);
+  const tryFocusScroll = useCallback(() => {
+    const f = focus.current;
+    if (f.done || f.sectionY === undefined) return;
+    if (focusPinIndex !== -1 && f.paraY === undefined) return;
+    f.done = true;
+    scrollRef.current?.scrollTo({
+      y: Math.max(0, f.sectionY + (f.paraY ?? 0) - FOCUS_SCROLL_MARGIN),
+      animated: true,
+    });
+  }, [focusPinIndex]);
+  const onFocusSectionLayout = useCallback(
+    (e: LayoutChangeEvent) => {
+      focus.current.sectionY = e.nativeEvent.layout.y;
+      tryFocusScroll();
+    },
+    [tryFocusScroll],
+  );
+  const onFocusParagraphLayout = useCallback(
+    (e: LayoutChangeEvent) => {
+      focus.current.paraY = e.nativeEvent.layout.y;
+      tryFocusScroll();
+    },
+    [tryFocusScroll],
+  );
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -272,6 +329,8 @@ export function DocumentReaderScreen({
       </View>
 
       <ScrollView
+        ref={scrollRef}
+        testID="document-reader-scroll"
         contentContainerStyle={{
           paddingTop: topInsetPadding(insets, 110),
           paddingBottom: bottomInsetPaddingStacked(insets, 110),
@@ -365,8 +424,14 @@ export function DocumentReaderScreen({
         {sections.map((section) => {
           const range = pageRangeText(section);
           const sectionAction = renderSectionAction?.(section.id) ?? null;
+          const isFocus = focusSectionId !== null && section.id === focusSectionId;
           return (
-            <View key={section.id} style={{ marginTop: 22 }}>
+            <View
+              key={section.id}
+              style={{ marginTop: 22 }}
+              onLayout={isFocus ? onFocusSectionLayout : undefined}
+              testID={isFocus ? 'reader-focus-section' : undefined}
+            >
               <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
                 <Text
                   style={{
@@ -403,9 +468,12 @@ export function DocumentReaderScreen({
                 // First annotation drives the paragraph's tint + left border.
                 const firstAnnotation =
                   annotations && annotations.length > 0 ? annotations[0] : undefined;
+                const isFocusPin = isFocus && i === focusPinIndex;
                 return (
                   <Pressable
                     key={i}
+                    onLayout={isFocusPin ? onFocusParagraphLayout : undefined}
+                    testID={isFocusPin ? 'reader-focus-paragraph' : undefined}
                     onLongPress={
                       onParagraphLongPress
                         ? () => onParagraphLongPress(section.id, para.text, para.offset)
@@ -446,7 +514,18 @@ export function DocumentReaderScreen({
                         color: theme.ink,
                       }}
                     >
-                      {para.highlight && para.text.includes(para.highlight) ? (
+                      {para.pinpoint ? (
+                        <>
+                          {para.text.slice(0, para.pinpoint.start)}
+                          <Text
+                            testID="reader-pinpoint"
+                            style={{ backgroundColor: theme.accentSoft, color: theme.ink }}
+                          >
+                            {para.text.slice(para.pinpoint.start, para.pinpoint.end)}
+                          </Text>
+                          {para.text.slice(para.pinpoint.end)}
+                        </>
+                      ) : para.highlight && para.text.includes(para.highlight) ? (
                         <>
                           {para.text.split(para.highlight)[0]}
                           <Text style={{ backgroundColor: theme.accentSoft }}>{para.highlight}</Text>

@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { apiClient } from '@/lib/api-client';
 import { useAuthStore, type User } from '@/stores/auth-store';
 import { ROUTES } from '@/lib/constants';
+import { takeOAuthReturnPath } from '@/features/auth/safe-redirect';
 
 function OAuthCallbackContent() {
   const router = useRouter();
@@ -30,7 +31,9 @@ function OAuthCallbackContent() {
       try {
         const res = await apiClient.get<{ success: boolean; data: User }>('/users/me');
         setUser(res.data);
-        router.replace(ROUTES.SEARCH);
+        // The ?from= the login page parked before leaving for Google
+        // (re-validated: same-origin relative paths only).
+        router.replace(takeOAuthReturnPath() ?? ROUTES.SEARCH);
       } catch {
         useAuthStore.getState().logout();
         router.replace(`${ROUTES.LOGIN}?error=auth_failed`);

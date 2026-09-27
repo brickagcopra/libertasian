@@ -341,21 +341,28 @@ describe('citations', () => {
     expect(screen.getByText('Jan 15, 2020')).toBeTruthy();
   });
 
-  it('"Open in reader" lands on the document and section', () => {
+  it('"Open in reader" lands on the document and section with the quote to highlight', () => {
     render(<RunResult result={RESULT} sources={SOURCES} />);
     fireEvent.press(screen.getByTestId('citation-chip-1'));
     fireEvent.press(screen.getByTestId('citation-open-reader'));
     expect(mockPush).toHaveBeenCalledWith({
       pathname: '/reader/[id]',
-      params: { id: 'doc-1', section: 'sec-9' },
+      params: {
+        id: 'doc-1',
+        section: 'sec-9',
+        highlight: 'the doctrine of estoppel is based on public policy',
+      },
     });
   });
 
-  it('a sectionless source opens the document only', () => {
+  it('a sectionless source opens the document with the quote (reader finds the section)', () => {
     render(<RunResult result={RESULT} sources={SOURCES} />);
     fireEvent.press(screen.getByTestId('citation-chip-2'));
     fireEvent.press(screen.getByTestId('citation-open-reader'));
-    expect(mockPush).toHaveBeenCalledWith({ pathname: '/reader/[id]', params: { id: 'doc-2' } });
+    expect(mockPush).toHaveBeenCalledWith({
+      pathname: '/reader/[id]',
+      params: { id: 'doc-2', highlight: 'Through estoppel an admission is rendered conclusive' },
+    });
   });
 
   it('Share sends plain text with numbered citations', async () => {

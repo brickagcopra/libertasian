@@ -72,7 +72,24 @@ describe('AuthGuard', () => {
         <div>Protected Content</div>
       </AuthGuard>,
     );
-    expect(mockReplace).toHaveBeenCalledWith('/login');
+    expect(mockReplace).toHaveBeenCalledWith('/login?from=%2Fsearch');
+  });
+
+  it('keeps the query string in the login return path', () => {
+    mockIsAuthenticated = false;
+    window.history.pushState({}, '', '/search?q=estoppel&page=2');
+    try {
+      render(
+        <AuthGuard>
+          <div>Protected Content</div>
+        </AuthGuard>,
+      );
+      expect(mockReplace).toHaveBeenCalledWith(
+        `/login?from=${encodeURIComponent('/search?q=estoppel&page=2')}`,
+      );
+    } finally {
+      window.history.pushState({}, '', '/');
+    }
   });
 
   it('redirects to onboarding when onboarding not completed', () => {

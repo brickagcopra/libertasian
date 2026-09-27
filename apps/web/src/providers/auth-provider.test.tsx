@@ -301,9 +301,21 @@ describe('AuthProvider onUnauthorized', () => {
       handler();
 
       expect(mockLogout).toHaveBeenCalledTimes(1);
-      expect(location.href).toBe('/login');
+      expect(location.href).toBe(`/login?from=${encodeURIComponent(path)}`);
     });
   }
+
+  it('carries the query string back through /login (?from= keeps ?q=)', () => {
+    atPath('/research');
+    (location as { search?: string }).search = '?q=estoppel%20doctrine';
+    const handler = onUnauthorized();
+
+    handler();
+
+    expect(location.href).toBe(
+      `/login?from=${encodeURIComponent('/research?q=estoppel%20doctrine')}`,
+    );
+  });
 
   it('treats a trailing-slash public path as public', () => {
     // Next.js can serve /about/ as well as /about; the two must not disagree.
