@@ -59,7 +59,11 @@ export function isExpectedPhysicalTarget(expected: string, target: string): bool
 
 export interface IndexRebuildJobData {
   triggeredByUserId: string;
-  organizationId: string;
+  /**
+   * The actor's JWT organization, if any. Absent for platform staff, who
+   * belong to no organization; only ever copied onto audit rows.
+   */
+  organizationId?: string;
   /** Skip the alias swap and leave the freshly built index unattached. */
   dryRun: boolean;
 }

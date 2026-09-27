@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -12,11 +13,11 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { RequiredPermissions } from '../../common/decorators/permissions.decorator';
+import { RequiredPlatformPermissions } from '../../common/decorators/platform-permissions.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { MfaGuard } from '../../common/guards/mfa.guard';
-import { PermissionsGuard } from '../../common/guards/permissions.guard';
-import { TenantGuard } from '../../common/guards/tenant.guard';
+import { PlatformPermissionsGuard } from '../../common/guards/platform-permissions.guard';
+import { optionalOrganizationId } from '../../common/utils/optional-organization-id';
 import type { JwtPayload } from '@libertasian/types';
 import { AuditService } from '../audit/audit.service';
 import {
@@ -30,16 +31,23 @@ import { VectorBackfillService } from './vector-backfill.service';
 /**
  * Admin control surface for the vector-index backfill.
  *
- * Guarded exactly like the other admin search endpoints
- * (`JwtAuthGuard, MfaGuard, TenantGuard, PermissionsGuard` +
- * `admin:ingestion`) and audit-logged on every state change. Reads are guarded
- * too: the gap report is a map of which parts of the corpus are unsearchable by
- * kNN, which is operational detail, not public information.
+ * Guarded exactly like the search index-maintenance endpoints — a PLATFORM
+ * route: `JwtAuthGuard, MfaGuard, PlatformPermissionsGuard` + platform
+ * `admin:ingestion`, the mechanism /platform/staff and /admin/digests use — and
+ * audit-logged on every state change. Reads are guarded too: the gap report is
+ * a map of which parts of the corpus are unsearchable by kNN, which is
+ * operational detail, not public information.
+ *
+ * No TenantGuard: platform admins belong to no organization, and TenantGuard
+ * 403'd them on "No organization context" before the permission check ran.
+ * Nothing here reads `request.tenantContext` or `user.memberId`; the only use
+ * of the caller's organization is as an optional label on audit rows and the
+ * run row (`optionalOrganizationId`).
  */
 @ApiTags('Admin — Vector Backfill')
 @Controller('admin/vector-backfill')
-@UseGuards(JwtAuthGuard, MfaGuard, TenantGuard, PermissionsGuard)
-@RequiredPermissions('admin:ingestion')
+@UseGuards(JwtAuthGuard, MfaGuard, PlatformPermissionsGuard)
+@RequiredPlatformPermissions('admin:ingestion')
 @Throttle({ default: { ttl: 60_000, limit: 100 } })
 @ApiBearerAuth()
 export class VectorBackfillController {
@@ -76,18 +84,29 @@ export class VectorBackfillController {
     @Body() dto: StartVectorBackfillDto,
     @CurrentUser() user: JwtPayload,
   ) {
+    if (dto.force === true && !(dto.documentIds && dto.documentIds.length > 0)) {
+      // Refused before anything is enqueued: a corpus-wide forced re-embed is
+      // ~4.3 hours of embedding capacity, and "force" without a target list is
+      // far more likely a mistake than an intent.
+      throw new BadRequestException(
+        'force requires documentIds: a forced re-embed is only allowed for an explicit list of documents',
+      );
+    }
+
     const run = await this.backfill.enqueueRun({
       dryRun: dto.dryRun,
       documentTypes: dto.documentTypes,
+      documentIds: dto.documentIds,
+      force: dto.force === true,
       batchSize: dto.batchSize,
       batchDelayMs: dto.batchDelayMs,
       maxDocuments: dto.maxDocuments,
       triggeredByUserId: user.sub,
-      organizationId: user.organizationId,
+      organizationId: optionalOrganizationId(user),
     });
 
     await this.auditService.log({
-      organizationId: user.organizationId,
+      organizationId: optionalOrganizationId(user),
       actorUserId: user.sub,
       actorType: 'admin',
       action: 'search.vector_backfill.requested',
@@ -97,6 +116,8 @@ export class VectorBackfillController {
         jobId: run.jobId,
         dryRun: run.dryRun,
         documentTypes: run.documentTypes,
+        documentIds: run.documentIds,
+        force: run.force,
         batchSize: run.batchSize,
         batchDelayMs: run.batchDelayMs,
         maxDocuments: run.maxDocuments,
@@ -152,7 +173,7 @@ export class VectorBackfillController {
   ) {
     const run = await this.backfill.signal(runId, 'pause');
     await this.auditService.log({
-      organizationId: user.organizationId,
+      organizationId: optionalOrganizationId(user),
       actorUserId: user.sub,
       actorType: 'admin',
       action: 'search.vector_backfill.pause_requested',
@@ -171,7 +192,7 @@ export class VectorBackfillController {
   ) {
     const run = await this.backfill.signal(runId, 'cancel');
     await this.auditService.log({
-      organizationId: user.organizationId,
+      organizationId: optionalOrganizationId(user),
       actorUserId: user.sub,
       actorType: 'admin',
       action: 'search.vector_backfill.cancel_requested',
@@ -195,10 +216,10 @@ export class VectorBackfillController {
   ) {
     const run = await this.backfill.resume(runId, {
       userId: user.sub,
-      organizationId: user.organizationId,
+      organizationId: optionalOrganizationId(user),
     });
     await this.auditService.log({
-      organizationId: user.organizationId,
+      organizationId: optionalOrganizationId(user),
       actorUserId: user.sub,
       actorType: 'admin',
       action: 'search.vector_backfill.resumed',
