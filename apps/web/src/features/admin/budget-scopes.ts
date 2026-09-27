@@ -15,6 +15,7 @@ export const BUDGET_SCOPES = [
   'subject_classification',
   'bar_exam_answer',
   'ai_answer',
+  'ai_research',
 ] as const;
 
 export type BudgetScope = (typeof BUDGET_SCOPES)[number];
@@ -30,6 +31,7 @@ export const BUDGET_SCOPE_LABELS: Record<BudgetScope, string> = {
   subject_classification: 'Subject classification',
   bar_exam_answer: 'Bar exam answers',
   ai_answer: 'AI answers',
+  ai_research: 'Deep Research',
 };
 
 export function budgetScopeLabel(scope: string): string {

@@ -17,6 +17,7 @@ import { DerivativeArtifactModule } from './modules/derivative-artifact/derivati
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { AccountDeletionModule } from './modules/account-deletion/account-deletion.module';
 import { AiAnswersModule } from './modules/ai-answers/ai-answers.module';
+import { DeepResearchModule } from './modules/deep-research/deep-research.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { BookmarksModule } from './modules/bookmarks/bookmarks.module';
@@ -141,6 +142,7 @@ import { RequestPlatformMiddleware } from './common/middleware/request-platform.
     // Domain modules
     AnalyticsModule,
     AiAnswersModule,
+    DeepResearchModule,
     HealthModule,
     MetricsModule,
     // AppThrottlerGuard is an APP_GUARD declared in THIS module, so JwtService

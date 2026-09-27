@@ -78,6 +78,7 @@ model User {
   assignedDigestReviews      Digest[]                  @relation("DigestAssignedReviewer")
   caseCodalLinks             CaseCodalLink[]
   legalMemos                 LegalMemo[]
+  deepResearchRuns           DeepResearchRun[]
   pleadings                  Pleading[]
   caseComparisons            CaseComparison[]
   caseTimelines              CaseTimeline[]
@@ -274,6 +275,7 @@ model Organization {
   tasks                       Task[]
   workspaceShares             WorkspaceShare[]
   legalMemos                  LegalMemo[]
+  deepResearchRuns            DeepResearchRun[]
   pleadings                   Pleading[]
   caseComparisons             CaseComparison[]
   caseTimelines               CaseTimeline[]
@@ -1703,6 +1705,31 @@ model LegalMemo {
   @@index([userId], map: "idx_legal_memos_user")
   @@index([status], map: "idx_legal_memos_status")
   @@map("legal_memos")
+}
+
+model DeepResearchRun {
+  id                    String   @id @default(uuid()) @db.Uuid
+  organizationId        String   @map("organization_id") @db.Uuid
+  userId                String   @map("user_id") @db.Uuid
+  question              String
+  // status: running, completed, abstained, failed
+  status                String   @default("running") @db.VarChar(20)
+  resultJson            Json?    @map("result_json")
+  sourcesJson           Json?    @map("sources_json")
+  subQueriesJson        Json?    @map("sub_queries_json")
+  modelName             String?  @map("model_name") @db.VarChar(100)
+  promptTemplateVersion String?  @map("prompt_template_version") @db.VarChar(50)
+  tokensIn              Int?     @map("tokens_in")
+  tokensOut             Int?     @map("tokens_out")
+  costUsd               Decimal? @map("cost_usd") @db.Decimal(12, 6)
+  latencyMs             Int?     @map("latency_ms")
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, userId, createdAt(sort: Desc)], map: "idx_deep_research_runs_org_user_created")
+  @@map("deep_research_runs")
 }
 
 model PleadingTemplate {

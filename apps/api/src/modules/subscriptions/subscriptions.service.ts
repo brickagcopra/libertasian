@@ -46,6 +46,8 @@ export interface SubscriptionEntitlements {
   hearingPrepPerMonth?: number;
   contradictionDetectionPerMonth?: number;
   documentUploadsPerMonth?: number;
+  // Deep Research — multi-query verified research answers, metered monthly.
+  deepResearchPerMonth?: number;
   maxResearchWorkspaces?: number;
   maxApiKeys?: number;
   // When true, public read endpoints expose at most one item per corpus type.
@@ -191,6 +193,13 @@ export class SubscriptionsService {
         ...this.getDefaultEntitlements('pro'),
         aiAnswers: 50,
         cameraScansPerMonth: 20,
+        // NOT pro's 100 and never unlimited: with enforcement off EVERY web
+        // user resolves to pro, so pro's allowance would be handed to every
+        // free account. Deep Research is the most expensive call we make
+        // (planner + up to 5 retrievals + writer + verifier), so the
+        // not-enforced population gets a small positive allowance instead —
+        // positive so exhaustion is a 429 usage limit, never a 402.
+        deepResearchPerMonth: 5,
       };
     }
 
@@ -287,6 +296,13 @@ export class SubscriptionsService {
         // The remaining 0s below are for surfaces the free tier does not have
         // at all (matters, memos, uploads, workspaces, API keys) and are gated
         // before any quota counter is consulted.
+        //
+        // deepResearchPerMonth 0 is an EXPLICIT product decision (paid plans
+        // only), not an oversight of the rule above. It is safe for the same
+        // reason as the other 0s: POST /deep-research/stream carries
+        // @RequiredSubscription('edu', { paymentRequired: true }), so a free
+        // account is refused 402 subscription_required by SubscriptionGuard
+        // BEFORE the quota counter is ever read — the 0 is never what answers.
         return {
           aiAnswers: 3,
           searchQueries: 50,
@@ -304,6 +320,7 @@ export class SubscriptionsService {
           hearingPrepPerMonth: 0,
           contradictionDetectionPerMonth: 0,
           documentUploadsPerMonth: 0,
+          deepResearchPerMonth: 0,
           maxResearchWorkspaces: 0,
           maxApiKeys: 0,
           previewOnly: true,
@@ -326,6 +343,7 @@ export class SubscriptionsService {
           hearingPrepPerMonth: 0,
           contradictionDetectionPerMonth: 0,
           documentUploadsPerMonth: 0,
+          deepResearchPerMonth: 20,
           maxResearchWorkspaces: 0,
           maxApiKeys: 0,
           previewOnly: false,
@@ -348,6 +366,7 @@ export class SubscriptionsService {
           hearingPrepPerMonth: 0,
           contradictionDetectionPerMonth: 0,
           documentUploadsPerMonth: -1,
+          deepResearchPerMonth: 100,
           maxResearchWorkspaces: 3,
           maxApiKeys: 0,
           previewOnly: false,
@@ -370,6 +389,7 @@ export class SubscriptionsService {
           hearingPrepPerMonth: 10,
           contradictionDetectionPerMonth: 5,
           documentUploadsPerMonth: -1,
+          deepResearchPerMonth: 500,
           maxResearchWorkspaces: 20,
           maxApiKeys: 0,
           previewOnly: false,
@@ -392,6 +412,7 @@ export class SubscriptionsService {
           hearingPrepPerMonth: -1,
           contradictionDetectionPerMonth: -1,
           documentUploadsPerMonth: -1,
+          deepResearchPerMonth: 1500,
           maxResearchWorkspaces: -1,
           maxApiKeys: 10,
           previewOnly: false,

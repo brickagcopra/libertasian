@@ -33,7 +33,48 @@ MODEL_PRICING: dict[str, tuple[float, float]] = {
     "gpt-4o": (2.50, 10.00),
     "gpt-4.1-mini": (0.40, 1.60),
     "gpt-4.1-nano": (0.10, 0.40),
+    "gpt-6-luna": (0.10, 0.50),
 }
+
+# A structured-output request: ``"json_object"`` (JSON mode) or a full
+# ``response_format`` object passed through verbatim, e.g.
+# ``{"type": "json_schema", "json_schema": {...}}``.
+ResponseFormat = str | dict[str, Any] | None
+
+
+def compute_cost_usd(model: str, tokens_in: int, tokens_out: int) -> float:
+    """List-price cost of one call. Unknown models price at 0 (untracked spend)."""
+    input_price, output_price = MODEL_PRICING.get(model, (0.0, 0.0))
+    return (tokens_in * input_price + tokens_out * output_price) / 1_000_000
+
+
+def _is_reasoning_model(model: str) -> bool:
+    """gpt-5* / gpt-6* are reasoning models with a different parameter surface."""
+    return model.startswith(("gpt-5", "gpt-6"))
+
+
+def _openai_sampling_params(
+    model: str, max_tokens: int, temperature: float
+) -> dict[str, Any]:
+    """Token-limit and sampling kwargs appropriate to ``model``.
+
+    Reasoning models (gpt-5*, gpt-6*) reject ``max_tokens`` in favour of
+    ``max_completion_tokens``, accept only the default temperature, and take a
+    ``reasoning_effort``. "low" keeps latency and hidden reasoning spend down;
+    every caller here is grounded extraction, not open-ended problem solving.
+    """
+    if _is_reasoning_model(model):
+        return {"max_completion_tokens": max_tokens, "reasoning_effort": "low"}
+    return {"max_tokens": max_tokens, "temperature": temperature}
+
+
+def _response_format_param(response_format: ResponseFormat) -> dict[str, Any] | None:
+    """The wire ``response_format`` for a request, or None for free text."""
+    if response_format == "json_object":
+        return {"type": "json_object"}
+    if isinstance(response_format, dict):
+        return response_format
+    return None
 
 # ---------------------------------------------------------------------------
 # Lazy-initialized clients
@@ -204,8 +245,7 @@ async def _track_usage(
     try:
         redis = await _get_redis()
 
-        input_price, output_price = MODEL_PRICING.get(model, (0.0, 0.0))
-        cost = (tokens_in * input_price + tokens_out * output_price) / 1_000_000
+        cost = compute_cost_usd(model, tokens_in, tokens_out)
 
         targets: list[tuple[str, int]] = [
             (_current_month_key(), 90 * 86400),
@@ -420,7 +460,7 @@ async def _openai_generate(
     user_prompt: str,
     max_tokens: int,
     temperature: float,
-    response_format: str | None,
+    response_format: ResponseFormat,
     scope: str | None = None,
 ) -> str:
     """Generate via OpenAI API (non-streaming)."""
@@ -433,11 +473,11 @@ async def _openai_generate(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        "temperature": temperature,
-        "max_tokens": max_tokens,
+        **_openai_sampling_params(model, max_tokens, temperature),
     }
-    if response_format == "json_object":
-        kwargs["response_format"] = {"type": "json_object"}
+    wire_format = _response_format_param(response_format)
+    if wire_format is not None:
+        kwargs["response_format"] = wire_format
 
     response = await _openai_create(client, **kwargs)
 
@@ -473,8 +513,7 @@ async def _openai_stream(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        temperature=temperature,
-        max_tokens=max_tokens,
+        **_openai_sampling_params(model, max_tokens, temperature),
         stream=True,
         stream_options={"include_usage": True},
     )
@@ -508,7 +547,7 @@ async def _vllm_generate(
     user_prompt: str,
     max_tokens: int,
     temperature: float,
-    response_format: str | None,
+    response_format: ResponseFormat,
 ) -> str:
     """Generate via vLLM (non-streaming)."""
     url = f"{settings.vllm_base_url}/chat/completions"
@@ -522,8 +561,9 @@ async def _vllm_generate(
         "max_tokens": max_tokens,
     }
 
-    if response_format == "json_object":
-        payload["response_format"] = {"type": "json_object"}
+    wire_format = _response_format_param(response_format)
+    if wire_format is not None:
+        payload["response_format"] = wire_format
 
     async with httpx.AsyncClient(timeout=settings.vllm_request_timeout) as client:
         response = await client.post(url, json=payload)
@@ -585,7 +625,7 @@ async def generate_completion(
     user_prompt: str,
     max_tokens: int | None = None,
     temperature: float = 0.2,
-    response_format: str | None = None,
+    response_format: ResponseFormat = None,
     scope: str | None = None,
 ) -> str:
     """Call the active LLM backend for a non-streaming chat completion.
@@ -595,7 +635,8 @@ async def generate_completion(
         user_prompt: User message (contains context + query).
         max_tokens: Max tokens for the response. Defaults to config value.
         temperature: Sampling temperature.
-        response_format: If "json_object", requests JSON mode.
+        response_format: "json_object" requests JSON mode; a dict is sent as
+            the ``response_format`` object verbatim (e.g. a json_schema).
         scope: Budget category this call is charged to. Selects the
             per-category ceiling and usage counters; ``None`` falls back
             to the global ceiling only.
@@ -640,13 +681,18 @@ async def generate_completion_with_usage(
     user_prompt: str,
     max_tokens: int | None = None,
     temperature: float = 0.2,
-    response_format: str | None = None,
+    response_format: ResponseFormat = None,
     scope: str | None = None,
+    model: str | None = None,
 ) -> dict[str, Any]:
     """Like generate_completion but also returns token usage and model name.
 
     Args:
         scope: Budget category this call is charged to.
+        model: OpenAI model for this one call, overriding
+            ``settings.openai_model``. Ignored on the vLLM backend, which
+            serves exactly one model (``settings.vllm_model``); the returned
+            ``model_name`` always names the model that actually ran.
 
     Returns:
         Dict with keys: content (str), model_name (str),
@@ -659,7 +705,7 @@ async def generate_completion_with_usage(
 
     if _use_openai():
         client = _get_openai_client()
-        model = settings.openai_model
+        model = model or settings.openai_model
 
         kwargs: dict[str, Any] = {
             "model": model,
@@ -667,16 +713,17 @@ async def generate_completion_with_usage(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            "temperature": temperature,
-            "max_tokens": effective_max_tokens,
+            **_openai_sampling_params(model, effective_max_tokens, temperature),
         }
-        if response_format == "json_object":
-            kwargs["response_format"] = {"type": "json_object"}
+        wire_format = _response_format_param(response_format)
+        if wire_format is not None:
+            kwargs["response_format"] = wire_format
 
         resp = await _openai_create(client, **kwargs)
         content: str = resp.choices[0].message.content or ""
         tokens_in = resp.usage.prompt_tokens if resp.usage else 0
         tokens_out = resp.usage.completion_tokens if resp.usage else 0
+        served = getattr(resp, "model", None)
 
         if resp.usage:
             await _track_usage(
@@ -689,6 +736,9 @@ async def generate_completion_with_usage(
         return {
             "content": content,
             "model_name": model,
+            # The dated snapshot the provider actually served (e.g.
+            # gpt-4o-mini-2024-07-18): model_runs.model_version per CLAUDE.md.
+            "model_version": served if isinstance(served, str) and served else model,
             "tokens_in": tokens_in,
             "tokens_out": tokens_out,
         }
@@ -705,8 +755,9 @@ async def generate_completion_with_usage(
         "temperature": temperature,
         "max_tokens": effective_max_tokens,
     }
-    if response_format == "json_object":
-        payload["response_format"] = {"type": "json_object"}
+    vllm_format = _response_format_param(response_format)
+    if vllm_format is not None:
+        payload["response_format"] = vllm_format
 
     async with httpx.AsyncClient(timeout=settings.vllm_request_timeout) as client:
         resp = await client.post(url, json=payload)
@@ -727,6 +778,7 @@ async def generate_completion_with_usage(
     return {
         "content": content,
         "model_name": model,
+        "model_version": str(data.get("model") or model),
         "tokens_in": tokens_in,
         "tokens_out": tokens_out,
     }

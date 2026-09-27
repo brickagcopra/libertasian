@@ -127,12 +127,37 @@ The output is Markdown and can be pasted into a PR. It contains:
 Metrics are recomputed from the per-question rows, so older result files are
 scored on the current definitions.
 
+## Deep Research (`--endpoint deep`)
+
+`--endpoint deep` posts `{"question": ...}` to `POST /research/deep` and reads
+the SSE stream to its end, so `latency_ms` is the full answer, not time to first
+byte. The stream is reduced to the same `QuestionResult` row as `/answer`:
+
+| Result field | From the stream |
+|---|---|
+| `sources` | `sources` event, S1..Sn in final-rerank order. `gr_no` = `grNo`, else parsed from citation/title as for /answer. `rerank_score` is null (not on the event). |
+| `status` / `abstain_reason` | `result.abstained` / `result.abstainReason`; an `error` event (or no `result`) is `error` |
+| `citations_total` / `citations_valid` | citations in the delivered `result`; valid = `sourceId` names a delivered source and a quote is present |
+| `model_name`, `degraded_legs` | `done.modelName`, `done.degradedLegs` |
+
+So `evals.compare` diffs a deep run against an answer run directly:
+
+```bash
+TS=$(date -u +%Y%m%dT%H%M%SZ)
+docker exec -w /tmp libertasian-rag-service sh -c   "python -m evals.run --base-url http://localhost:8000      --api-key \"\$RAG_INTERNAL_API_KEY\" --endpoint deep      --out /tmp/rag-evals/$TS-deep.json --concurrency 1 --timeout 300"
+docker cp libertasian-rag-service:/tmp/rag-evals/$TS-deep.json services/rag-service/evals/results/
+python -m evals.compare evals/results/<answer-run>.json evals/results/$TS-deep.json --k 8
+```
+
+`--model-override gpt-6-luna` runs the writer on another model; the server
+must list it in `DEEP_RESEARCH_MODEL_ALLOWLIST`, or every row is an HTTP 422 error.
+
 ## Adding an endpoint
 
-`run.py` keeps a registry, `ENDPOINTS: {name: Endpoint(path, build_payload, parse_response)}`.
-To support `--endpoint deep`, write a payload builder and a response parser
-that returns `ParsedResponse`, then register them. The runner, metrics and
-compare step need no changes.
+`run.py` keeps a registry, `ENDPOINTS: {name: Endpoint(path, build_payload, parse_response, streaming)}`.
+Write a payload builder and a parser that returns `ParsedResponse` (it gets the
+JSON body, or the list of `(event, data)` pairs when `streaming=True`), then
+register them. The runner, metrics and compare step need no changes.
 
 ## Tests
 

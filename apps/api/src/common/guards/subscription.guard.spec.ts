@@ -1,10 +1,15 @@
-import { ExecutionContext, ForbiddenException } from '@nestjs/common';
+import { ExecutionContext, ForbiddenException, HttpException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import { Reflector } from '@nestjs/core';
 
 import { AdminBypassAuditService } from '../services/admin-bypass-audit.service';
 import { SubscriptionsService } from '../../modules/subscriptions/subscriptions.service';
-import { SubscriptionGuard, SUBSCRIPTION_KEY } from './subscription.guard';
+import { RequiredSubscription } from '../decorators/subscription.decorator';
+import {
+  SubscriptionGuard,
+  SUBSCRIPTION_DENIAL_KEY,
+  SUBSCRIPTION_KEY,
+} from './subscription.guard';
 
 function createMockContext(
   user?: Record<string, unknown>,
@@ -157,6 +162,81 @@ describe('SubscriptionGuard', () => {
   describe('SUBSCRIPTION_KEY export', () => {
     it('should export the correct metadata key', () => {
       expect(SUBSCRIPTION_KEY).toBe('subscription_tier');
+    });
+  });
+
+  describe('opt-in 402 (paymentRequired)', () => {
+    function metadata(tier: string, denial?: string) {
+      jest
+        .spyOn(reflector, 'getAllAndOverride')
+        .mockImplementation((key: unknown) =>
+          key === SUBSCRIPTION_KEY
+            ? tier
+            : key === SUBSCRIPTION_DENIAL_KEY
+              ? denial
+              : undefined,
+        );
+    }
+
+    it('refuses a below-tier caller 402 subscription_required when the route opts in', async () => {
+      metadata('edu', 'payment_required');
+      subscriptionsService.getPlanCode.mockResolvedValue('free');
+      const err = await guard
+        .canActivate(createMockContext({ organizationId: 'org-123' }))
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(HttpException);
+      expect((err as HttpException).getStatus()).toBe(402);
+      expect((err as HttpException).getResponse()).toEqual({
+        success: false,
+        error: 'subscription_required',
+        code: 'subscription_required',
+        message: "This isn't available on this account.",
+      });
+    });
+
+    it('keeps 403 for routes that did not opt in', async () => {
+      metadata('edu', undefined);
+      subscriptionsService.getPlanCode.mockResolvedValue('free');
+      await expect(
+        guard.canActivate(createMockContext({ organizationId: 'org-123' })),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('lets an in-tier caller through an opted-in route', async () => {
+      metadata('edu', 'payment_required');
+      subscriptionsService.getPlanCode.mockResolvedValue('edu');
+      await expect(
+        guard.canActivate(createMockContext({ organizationId: 'org-123' })),
+      ).resolves.toBe(true);
+    });
+
+    it('never 402s when the paywall is not enforced (everyone compares as pro)', async () => {
+      const off = new SubscriptionGuard(
+        reflector,
+        subscriptionsService,
+        adminBypassAudit,
+        configWith(false),
+      );
+      metadata('edu', 'payment_required');
+      subscriptionsService.getPlanCode.mockResolvedValue('free');
+      await expect(
+        off.canActivate(createMockContext({ organizationId: 'org-123' })),
+      ).resolves.toBe(true);
+    });
+
+    it('RequiredSubscription(tier, { paymentRequired: true }) sets both keys', () => {
+      class Ctl {
+        @RequiredSubscription('edu', { paymentRequired: true })
+        gated(): void {}
+        @RequiredSubscription('edu')
+        plain(): void {}
+      }
+      const r = new Reflector();
+      expect(r.get(SUBSCRIPTION_KEY, Ctl.prototype.gated)).toBe('edu');
+      expect(r.get(SUBSCRIPTION_DENIAL_KEY, Ctl.prototype.gated)).toBe(
+        'payment_required',
+      );
+      expect(r.get(SUBSCRIPTION_DENIAL_KEY, Ctl.prototype.plain)).toBeUndefined();
     });
   });
 
