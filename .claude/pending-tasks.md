@@ -1,5 +1,14 @@
 # Pending Tasks
 
+## Statute corpus repair follow-ups (2026-09-27, PRs #516–#518, NOT merged)
+- [ ] Review/merge #516 (async `_reindex` copy with a deadline; backfill batch default 32). New env var `SEARCH_INDEX_COPY_TIMEOUT_MIN` (default 60).
+- [ ] Review/merge #517 (`reseed_statutory_document`). Then on prod, between 1 and 6 PM ET, run the dry-run command from the PR body for Evidence, Special Proceedings, Admin Code, NIRC and the 1987 Constitution. Review any `needs_decision` rows and `sections.csv`, then `--commit`.
+- [ ] After a re-seed commit: re-embed the changed sections and re-index their OpenSearch chunks (the task does neither).
+- [ ] Review/merge #518 (stale audio → 202 + regen on play). Adds one section read + SSML build per ready GET.
+- [ ] Parser gap: Rule 72 §1's text is dropped. `Section 1.</b>` has no opening `<b>`, and the text sits before the first recognised marker.
+- [ ] Parser gap: unbolded `RULE 128` / `RULE 72` headings (plain `<p>RULE N</p>`) are not section boundaries, so those rule headings get no row.
+- [ ] `POST /search/index/bulk` has no DTO (request body not validated).
+
 ## Follow-ups after #514 and the codal realign (2026-09-27)
 - [ ] POST /search/index/bulk accepts an unvalidated body; needs a class-validator DTO (found in #514 review).
 - [ ] Re-seed needed: RoC Evidence, RoC Special Proceedings, Administrative Code 1987, NIRC (skipped by realign, still off by one); 1987 Constitution has doubled paragraphs in 35 rows plus a repeated Art III Sec 3–12 block; 10 first rows empty after realign; Rule 135 Section 1 holds Section 2 text.
