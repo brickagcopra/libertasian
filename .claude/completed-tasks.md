@@ -1,5 +1,10 @@
 # Completed Tasks
 
+## 2026-09-27 — Statute corpus repair follow-ups (PRs opened, not merged)
+- [x] #516 fix(api): the index-rebuild `_reindex` copy runs as a polled task (no client retry, deadline + cancel); vector backfill batch default 32
+- [x] #517 feat(worker): `reseed_statutory_document`: re-parse in place keeping section ids, never delete, new version + audit per doc, `needs_decision` flag. Parser drops nested-block echo and collapses duplicate paragraphs.
+- [x] #518 fix(api): a stale audio rendition (hash ≠ current text) is regenerated on play (202 pending), never served
+
 ## 2026-09-27 — Prompts 6–8 (PRs opened, not merged)
 - [x] #511 fix(rag): statute-aware retrieval + BM25 stopword poisoning (45 new tests)
 - [x] #512 fix(worker): `_parse_sections` off-by-one + `realign_statutory_sections` (dry-run default, audit log per doc, audio_renditions report)
