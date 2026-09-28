@@ -3,7 +3,12 @@ import { fireEvent, render, screen } from '@testing-library/react';
 
 vi.mock('@/hooks/use-analytics', () => ({ useTrack: () => vi.fn() }));
 
-import { AbstainedCard, DeepResearchErrorCard } from './error-cards';
+import {
+  ABSTAINED_TITLE_FALLBACK,
+  AbstainedCard,
+  abstainedTitle,
+  DeepResearchErrorCard,
+} from './error-cards';
 
 describe('DeepResearchErrorCard', () => {
   it('subscription_required shows the shared upgrade surface and a pricing link', () => {
@@ -64,5 +69,30 @@ describe('AbstainedCard', () => {
     const card = screen.getByTestId('dr-abstained');
     expect(card).toHaveTextContent(copy);
     expect(card).not.toHaveTextContent(reason);
+  });
+
+  it.each([
+    ['out_of_scope', 'Outside Philippine law'],
+    ['ranking_unavailable', 'Ranking unavailable — try again'],
+  ])('gives %s its own title instead of "Not enough authority found"', (reason, title) => {
+    render(<AbstainedCard reason={reason} />);
+    const card = screen.getByTestId('dr-abstained');
+    expect(card).toHaveTextContent(title);
+    expect(card).not.toHaveTextContent('Not enough authority found');
+  });
+
+  it.each([['insufficient_passages'], ['low_relevance'], ['no_results'], ['validation_failed']])(
+    'keeps the default title for %s',
+    (reason) => {
+      expect(abstainedTitle(reason)).toBe(ABSTAINED_TITLE_FALLBACK);
+    },
+  );
+
+  it('falls back to the default title for a missing or unknown reason', () => {
+    expect(abstainedTitle(undefined)).toBe(ABSTAINED_TITLE_FALLBACK);
+    expect(abstainedTitle(null)).toBe(ABSTAINED_TITLE_FALLBACK);
+    expect(abstainedTitle('some_future_reason')).toBe(ABSTAINED_TITLE_FALLBACK);
+    render(<AbstainedCard reason="some_future_reason" />);
+    expect(screen.getByTestId('dr-abstained')).toHaveTextContent('Not enough authority found');
   });
 });

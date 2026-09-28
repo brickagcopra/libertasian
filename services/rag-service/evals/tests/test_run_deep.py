@@ -86,6 +86,7 @@ ANSWERED_STREAM = "".join(
                 "latencyMs": 1234,
                 "costUsd": 0.001,
                 "degradedLegs": ["knn:not_configured"],
+                "removalReasons": {"bad_label": 1, "verifier_unsupported": 2},
             },
         ),
     ]
@@ -202,10 +203,12 @@ def test_run_eval_deep_maps_stream_to_the_answer_schema() -> None:
     assert (ok.citations_total, ok.citations_valid) == (2, 2)
     assert ok.model_name == "gpt-6-luna"
     assert ok.degraded_legs == ["knn:not_configured"]
+    assert ok.removal_reasons == {"bad_label": 1, "verifier_unsupported": 2}
     assert ok.http_status == 200 and ok.latency_ms > 0
 
     assert abs_.status == "abstained" and abs_.abstain_reason == "low_relevance"
     assert abs_.sources == [] and abs_.citations_total == 0
+    assert abs_.removal_reasons is None  # done carried no removalReasons
 
     assert err.status == "error" and err.error is not None
     assert err.error.startswith("budget_exhausted")

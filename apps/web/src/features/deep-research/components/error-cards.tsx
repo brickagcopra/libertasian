@@ -141,13 +141,31 @@ export function DeepResearchErrorCard({
   }
 }
 
-/** The pipeline found too little authority and refused to write an answer. */
+/** Shown for every abstention reason without its own title below. */
+export const ABSTAINED_TITLE_FALLBACK = 'Not enough authority found';
+
+/**
+ * Card title by the raw `abstainReason` string, like `abstentionCopy`. Most
+ * reasons do mean too little authority; these two do not, and the fallback
+ * title told the user the corpus had failed them when it had not.
+ */
+const ABSTAINED_TITLES: Record<string, string> = {
+  out_of_scope: 'Outside Philippine law',
+  ranking_unavailable: 'Ranking unavailable — try again',
+};
+
+export function abstainedTitle(reason?: string | null): string {
+  if (!reason) return ABSTAINED_TITLE_FALLBACK;
+  return ABSTAINED_TITLES[reason] ?? ABSTAINED_TITLE_FALLBACK;
+}
+
+/** The pipeline refused to write an answer (too little authority, out of scope, ...). */
 export function AbstainedCard({ reason }: { reason?: string | null | undefined }) {
   return (
     <Shell
       testId="dr-abstained"
       icon={<SearchXIcon className="size-4" aria-hidden />}
-      title="Not enough authority found"
+      title={abstainedTitle(reason)}
     >
       <p className="text-sm text-warm-ink-mid">
         {abstentionCopy(reason)} Rather than guess, Deep Research only answers when it can quote

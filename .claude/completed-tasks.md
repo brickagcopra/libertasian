@@ -1,5 +1,10 @@
 # Completed Tasks
 
+## 2026-09-28 — Deep Research removal reasons (PR opened, not merged)
+- [x] `verify_draft` counts why things were removed (bad_label / quote_not_found / quote_length per citation; no_citations_left / verifier_unsupported / verifier_no_verdict per claim), logs `kept= removed= reasons=` once per run, and emits `done.removalReasons`. Counting only.
+- [x] `evals.run` records `removal_reasons` per result (null when absent)
+- [x] Web Deep Research abstained card: own titles for `out_of_scope` and `ranking_unavailable`
+
 ## 2026-09-28 — Deep Research abstention fixes (PR opened, not merged)
 - [x] fix(rag): Deep Research abstains `ranking_unavailable` when the cross-encoder did not run (any `reranker:*` marker), instead of abstaining on an RRF score
 - [x] Planner labels scope (in_scope / non_ph_law / future_or_hypothetical / nonsense, strict JSON + Pydantic); anything but in_scope abstains `out_of_scope` before retrieval. Prompt version → `deep-research-v2`

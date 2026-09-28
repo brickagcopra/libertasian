@@ -92,6 +92,9 @@ class QuestionResult:
     degraded_legs: list[str] = field(default_factory=list)
     confidence: float | None = None
     intent: str | None = None
+    # Deep Research only: verification's removal counts from ``done``
+    # (``removalReasons``). None when the endpoint does not report them.
+    removal_reasons: dict[str, int] | None = None
 
     def to_json(self) -> dict[str, object]:
         return asdict(self)
@@ -195,6 +198,15 @@ def _int(value: object) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
+def parse_removal_reasons(raw: object) -> dict[str, int] | None:
+    """``{reason: count}`` when ``raw`` is an object, else None. Non-int counts drop."""
+    if not isinstance(raw, dict):
+        return None
+    return {
+        str(k): v for k, v in raw.items() if isinstance(v, int) and not isinstance(v, bool)
+    }
+
+
 def parse_source(raw: object) -> SourceRecord:
     if not isinstance(raw, dict):
         raise ResultFormatError("source must be an object")
@@ -244,6 +256,7 @@ def parse_question_result(raw: object) -> QuestionResult:
         degraded_legs=[str(x) for x in legs] if isinstance(legs, list) else [],
         confidence=_num(confidence) if confidence is not None else None,
         intent=_opt_str(raw.get("intent")),
+        removal_reasons=parse_removal_reasons(raw.get("removal_reasons")),
     )
 
 
