@@ -35,6 +35,7 @@ from .model import (
     QuestionResult,
     SourceRecord,
     load_golden,
+    parse_removal_reasons,
 )
 
 API_KEY_HEADER = "X-Internal-Api-Key"
@@ -58,6 +59,8 @@ class ParsedResponse:
     # A pipeline failure the endpoint reported IN-BAND (an SSE ``error`` event
     # on a 200 stream). Scored exactly like an HTTP error: status "error".
     error: str | None = None
+    # Deep Research's ``done.removalReasons``; None when absent (/answer).
+    removal_reasons: dict[str, int] | None = None
 
 
 # One server-sent event: (event name, parsed JSON data).
@@ -176,8 +179,9 @@ def parse_deep_response(body: object) -> ParsedResponse:
     - citations: every citation in the delivered ``result``; valid when its
       ``sourceId`` names a delivered source and it carries a quote. A citation
       the verifier removed is not delivered, as with /answer's validator.
-    - model_name, degraded_legs: from ``done`` (``degradedLegs`` is an internal
-      extra the gateway strips before clients see it).
+    - model_name, degraded_legs, removal_reasons: from ``done``
+      (``degradedLegs`` and ``removalReasons`` are internal extras the gateway
+      strips before clients see them).
     - an ``error`` event, or a stream with no ``result``, is an error.
     """
     by_name: dict[str, dict[str, object]] = {}
@@ -237,6 +241,7 @@ def parse_deep_response(body: object) -> ParsedResponse:
         degraded_legs=[str(x) for x in _as_list(done.get("degradedLegs"))],
         confidence=None,
         intent=None,
+        removal_reasons=parse_removal_reasons(done.get("removalReasons")),
     )
 
 
@@ -358,6 +363,7 @@ async def evaluate_one(
     result.degraded_legs = parsed.degraded_legs
     result.confidence = parsed.confidence
     result.intent = parsed.intent
+    result.removal_reasons = parsed.removal_reasons
     return result
 
 

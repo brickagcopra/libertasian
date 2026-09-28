@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections import Counter
 from collections.abc import Callable
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -661,7 +662,8 @@ class TestFilterCitations:
 
     def _one(self, citation: Citation) -> list[Citation]:
         draft = Draft(summary="", sections=[Section("h", [Claim("t", [citation])])])
-        return filter_citations(draft, self.LABELLED).sections[0].claims[0].citations
+        filtered, _dropped = filter_citations(draft, self.LABELLED)
+        return filtered.sections[0].claims[0].citations
 
     def test_lowercase_label_normalised(self) -> None:
         assert self._one(Citation("s1", "a legal concept, not a medical"))[0].source_id == "S1"
@@ -675,6 +677,130 @@ class TestFilterCitations:
 
     def test_label_shaped_but_absent(self) -> None:
         assert self._one(Citation("S2", "a legal concept, not a medical")) == []
+
+
+class TestRemovalReasons:
+    """verify_draft counts WHY each thing was removed; behaviour is unchanged.
+
+    Citation-level reasons (bad_label, quote_length, quote_not_found) count
+    dropped citations; claim-level reasons (no_citations_left,
+    verifier_unsupported, verifier_no_verdict) count removed claims.
+    """
+
+    ZERO = {
+        "bad_label": 0, "quote_not_found": 0, "quote_length": 0,
+        "no_citations_left": 0, "verifier_unsupported": 0, "verifier_no_verdict": 0,
+    }
+
+    async def _reasons(
+        self,
+        claims: list[dict[str, Any]],
+        verifier: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, int], dict[str, Any]]:
+        events = await _collect(_llm(writer=_writer_answer(claims), verifier=verifier))
+        return _named(events, "done")["removalReasons"], _named(events, "result")
+
+    def _expect(self, **counts: int) -> dict[str, int]:
+        return {**self.ZERO, **counts}
+
+    @pytest.mark.asyncio
+    async def test_bad_label(self) -> None:
+        claim = {"text": "t", "citations": [{"source_id": "S9", "quote": "a legal concept"}]}
+        reasons, result = await self._reasons([GOOD_CLAIM, claim])
+        assert reasons == self._expect(bad_label=1, no_citations_left=1)
+        assert result["removedClaims"] == 1
+
+    @pytest.mark.asyncio
+    async def test_quote_not_found(self) -> None:
+        claim = {"text": "t", "citations": [{"source_id": "S1", "quote": "never said this"}]}
+        reasons, result = await self._reasons([GOOD_CLAIM, claim])
+        assert reasons == self._expect(quote_not_found=1, no_citations_left=1)
+        assert result["removedClaims"] == 1
+
+    @pytest.mark.parametrize("quote", ["legal", " ".join(["concept"] * 31)])
+    @pytest.mark.asyncio
+    async def test_quote_length(self, quote: str) -> None:
+        claim = {"text": "t", "citations": [{"source_id": "S1", "quote": quote}]}
+        reasons, result = await self._reasons([GOOD_CLAIM, claim])
+        assert reasons == self._expect(quote_length=1, no_citations_left=1)
+        assert result["removedClaims"] == 1
+
+    @pytest.mark.asyncio
+    async def test_no_citations_left(self) -> None:
+        claim = {"text": "An uncited proposition.", "citations": []}
+        reasons, result = await self._reasons([GOOD_CLAIM, claim])
+        assert reasons == self._expect(no_citations_left=1)
+        assert result["removedClaims"] == 1
+
+    @pytest.mark.asyncio
+    async def test_verifier_unsupported(self) -> None:
+        verdicts = {"summary_supported": True, "verdicts": [
+            {"claim_id": "C1", "supported": True}, {"claim_id": "C2", "supported": False},
+        ]}
+        reasons, result = await self._reasons([GOOD_CLAIM, GOOD_CLAIM], verifier=verdicts)
+        assert reasons == self._expect(verifier_unsupported=1)
+        assert result["removedClaims"] == 1
+
+    @pytest.mark.asyncio
+    async def test_verifier_no_verdict(self) -> None:
+        verdicts = {"summary_supported": True, "verdicts": [{"claim_id": "C1", "supported": True}]}
+        reasons, result = await self._reasons([GOOD_CLAIM, GOOD_CLAIM], verifier=verdicts)
+        assert reasons == self._expect(verifier_no_verdict=1)
+        assert result["removedClaims"] == 1
+
+    @pytest.mark.asyncio
+    async def test_dropped_citation_on_a_kept_claim_is_counted_but_removes_nothing(
+        self,
+    ) -> None:
+        claim = {
+            "text": GOOD_CLAIM["text"],
+            "citations": [*GOOD_CLAIM["citations"], {"source_id": "S7", "quote": "x y"}],
+        }
+        reasons, result = await self._reasons([claim])
+        assert reasons == self._expect(bad_label=1)
+        assert result["removedClaims"] == 0
+        assert result["abstained"] is False
+
+    @pytest.mark.asyncio
+    async def test_everything_removed_still_abstains_validation_failed(self) -> None:
+        verdicts = {
+            "summary_supported": False,
+            "verdicts": [{"claim_id": "C1", "supported": False}],
+        }
+        reasons, result = await self._reasons([GOOD_CLAIM], verifier=verdicts)
+        assert reasons == self._expect(verifier_unsupported=1)
+        assert result["abstainReason"] == "validation_failed"
+        assert result["removedClaims"] == 1
+
+    @pytest.mark.asyncio
+    async def test_no_verification_means_empty_reasons(self) -> None:
+        events = await _collect(_llm(), passages=PASSAGES[:1])  # too few: abstains early
+        assert _named(events, "done")["removalReasons"] == {}
+
+    @pytest.mark.asyncio
+    async def test_one_log_line_per_run(self, caplog: pytest.LogCaptureFixture) -> None:
+        claim = {"text": "t", "citations": [{"source_id": "S9", "quote": "a legal concept"}]}
+        with caplog.at_level("INFO", logger=service.logger.name):
+            await self._reasons([GOOD_CLAIM, claim])
+        lines = [r.getMessage() for r in caplog.records if "verified" in r.getMessage()]
+        assert lines == [
+            "Deep research verified: kept=1 removed=1 reasons="
+            + json.dumps(self._expect(bad_label=1, no_citations_left=1), sort_keys=True)
+        ]
+
+    def test_filter_citations_returns_counter_per_reason(self) -> None:
+        labelled = [LabelledPassage(label="S1", passage=PASSAGES[0])]
+        draft = Draft(summary="", sections=[Section("h", [Claim("t", [
+            Citation("S1", "a legal concept, not a medical"),  # kept
+            Citation("S1", "a legal concept, not a medical"),  # duplicate: not counted
+            Citation("S4", "a legal concept"),
+            Citation("banana", "a legal concept"),
+            Citation("S1", "legal"),
+            Citation("S1", "not in the passage"),
+        ])])])
+        filtered, dropped = filter_citations(draft, labelled)
+        assert len(filtered.sections[0].claims[0].citations) == 1
+        assert dropped == Counter({"bad_label": 2, "quote_length": 1, "quote_not_found": 1})
 
 
 def test_extract_gr_no() -> None:

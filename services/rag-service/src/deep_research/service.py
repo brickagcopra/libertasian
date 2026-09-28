@@ -105,6 +105,21 @@ _UUID_RE = re.compile(
 _GR_RE = re.compile(
     r"G\.?\s*R\.?\s*(?:Nos?\.?)?\s*(L-)?\s*(\d[\d-]*\d|\d)", re.IGNORECASE
 )
+# Why verification dropped something. See `verify_draft` for the two units.
+REMOVAL_BAD_LABEL = "bad_label"
+REMOVAL_QUOTE_NOT_FOUND = "quote_not_found"
+REMOVAL_QUOTE_LENGTH = "quote_length"
+REMOVAL_NO_CITATIONS_LEFT = "no_citations_left"
+REMOVAL_VERIFIER_UNSUPPORTED = "verifier_unsupported"
+REMOVAL_VERIFIER_NO_VERDICT = "verifier_no_verdict"
+REMOVAL_REASONS = (
+    REMOVAL_BAD_LABEL,
+    REMOVAL_QUOTE_NOT_FOUND,
+    REMOVAL_QUOTE_LENGTH,
+    REMOVAL_NO_CITATIONS_LEFT,
+    REMOVAL_VERIFIER_UNSUPPORTED,
+    REMOVAL_VERIFIER_NO_VERDICT,
+)
 _BUDGET_MESSAGE = "AI generation is temporarily unavailable. Please try again later."
 _INTERNAL_MESSAGE = "Deep research failed. Please try again."
 
@@ -283,7 +298,9 @@ def parse_draft(content: str) -> Draft | None:
     return Draft(summary=summary.strip() if isinstance(summary, str) else "", sections=sections)
 
 
-def filter_citations(draft: Draft, labelled: Sequence[LabelledPassage]) -> Draft:
+def filter_citations(
+    draft: Draft, labelled: Sequence[LabelledPassage]
+) -> tuple[Draft, Counter[str]]:
     """Verification steps (a) and (b), deterministic and in that order.
 
     (a) ``source_id`` must name one of the labels actually shown to the writer.
@@ -291,8 +308,13 @@ def filter_citations(draft: Draft, labelled: Sequence[LabelledPassage]) -> Draft
         between 2 and ``MAX_QUOTE_WORDS`` words.
     Citations failing either are dropped. Claims are kept here even when they
     lose every citation; `verify_draft` removes and counts them.
+
+    Returns the filtered draft and the dropped CITATIONS per reason:
+    ``bad_label`` (a), ``quote_length`` and ``quote_not_found`` (b). A duplicate
+    of a citation already kept is collapsed, not counted.
     """
     by_label = {lp.label: normalize_ws(lp.passage.text) for lp in labelled}
+    dropped: Counter[str] = Counter()
     sections: list[Section] = []
     for section in draft.sections:
         claims: list[Claim] = []
@@ -301,19 +323,22 @@ def filter_citations(draft: Draft, labelled: Sequence[LabelledPassage]) -> Draft
             for citation in claim.citations:
                 label = citation.source_id.strip().upper()
                 if not _LABEL_RE.match(label) or label not in by_label:
-                    continue  # (a) fabricated or out-of-range label
+                    dropped[REMOVAL_BAD_LABEL] += 1  # (a) fabricated or out of range
+                    continue
                 quote = normalize_ws(citation.quote)
                 words = len(quote.split())
                 if words < _MIN_QUOTE_WORDS or words > MAX_QUOTE_WORDS:
+                    dropped[REMOVAL_QUOTE_LENGTH] += 1
                     continue
                 if quote not in by_label[label]:
-                    continue  # (b) not verbatim in the cited passage
+                    dropped[REMOVAL_QUOTE_NOT_FOUND] += 1  # (b) not verbatim
+                    continue
                 if any(k.source_id == label and k.quote == quote for k in kept):
                     continue
                 kept.append(Citation(source_id=label, quote=quote))
             claims.append(Claim(text=claim.text, citations=kept))
         sections.append(Section(heading=section.heading, claims=claims))
-    return Draft(summary=draft.summary, sections=sections)
+    return Draft(summary=draft.summary, sections=sections), dropped
 
 
 # ---------------------------------------------------------------------------
@@ -383,15 +408,22 @@ def _rerank_degraded(degraded_legs: Sequence[str]) -> bool:
 
 async def verify_draft(
     draft: Draft, labelled: Sequence[LabelledPassage], usage: LlmUsage
-) -> tuple[Draft, int]:
-    """Run verification (a), (b), (c). Returns the verified draft and removals.
+) -> tuple[Draft, int, dict[str, int]]:
+    """Run verification (a), (b), (c).
+
+    Returns the verified draft, the number of claims removed, and why, as
+    ``{reason: count}`` over all of `REMOVAL_REASONS`. Two units share the
+    map: ``bad_label`` / ``quote_length`` / ``quote_not_found`` count dropped
+    CITATIONS (a claim with three bad citations adds three), while
+    ``no_citations_left`` / ``verifier_unsupported`` / ``verifier_no_verdict``
+    count removed CLAIMS and sum to the removed number.
 
     Fails closed: a claim the verifier gives no verdict for is removed, the
     same as one it marks unsupported. A summary judged unsupported is replaced
     by the surviving claims themselves.
     """
     total = draft.claim_count()
-    filtered = filter_citations(draft, labelled)
+    filtered, reasons = filter_citations(draft, labelled)
 
     candidates: list[tuple[str, Claim]] = []
     for section in filtered.sections:
@@ -400,6 +432,7 @@ async def verify_draft(
                 candidates.append((f"C{len(candidates) + 1}", claim))
 
     supported_ids: set[str] = set()
+    unsupported_ids: set[str] = set()
     summary_supported = False
     if candidates:
         claims_block = "\n\n".join(
@@ -420,11 +453,27 @@ async def verify_draft(
         )
         verdict_data = _load_json_object(str(result.get("content") or ""))
         for verdict in verdict_data.get("verdicts") or []:
-            if isinstance(verdict, dict) and verdict.get("supported") is True:
-                supported_ids.add(str(verdict.get("claim_id", "")).strip().upper())
+            if not isinstance(verdict, dict):
+                continue
+            claim_id = str(verdict.get("claim_id", "")).strip().upper()
+            if verdict.get("supported") is True:
+                supported_ids.add(claim_id)
+            elif verdict.get("supported") is False:
+                unsupported_ids.add(claim_id)
         summary_supported = verdict_data.get("summary_supported") is True
 
     keep = {id(claim) for cid, claim in candidates if cid in supported_ids}
+    for section in filtered.sections:
+        reasons[REMOVAL_NO_CITATIONS_LEFT] += sum(1 for c in section.claims if not c.citations)
+    for cid, _claim in candidates:
+        if cid in supported_ids:
+            continue
+        # Counting only: an explicit "supported": false is unsupported; a
+        # missing or malformed verdict is no verdict. Both are removed alike.
+        if cid in unsupported_ids:
+            reasons[REMOVAL_VERIFIER_UNSUPPORTED] += 1
+        else:
+            reasons[REMOVAL_VERIFIER_NO_VERDICT] += 1
     sections: list[Section] = []
     kept_count = 0
     for section in filtered.sections:
@@ -436,7 +485,8 @@ async def verify_draft(
     summary = filtered.summary
     if not summary_supported or not summary:
         summary = " ".join(c.text for s in sections for c in s.claims[:1])[:1200]
-    return Draft(summary=summary, sections=sections), total - kept_count
+    counts = {reason: reasons[reason] for reason in REMOVAL_REASONS}
+    return Draft(summary=summary, sections=sections), total - kept_count, counts
 
 
 # ---------------------------------------------------------------------------
@@ -648,8 +698,9 @@ async def run_deep_research(request: DeepResearchRequest) -> AsyncIterator[Event
 
     Terminal events: ``result`` followed by ``done``, or a single ``error``.
     ``done`` carries three fields beyond the client contract — ``tokensIn``,
-    ``tokensOut``, ``modelVersion`` — plus ``degradedLegs``; the gateway
-    persists them and strips them before forwarding.
+    ``tokensOut``, ``modelVersion`` — plus ``degradedLegs`` and
+    ``removalReasons`` (read by the eval harness); the gateway forwards only
+    the contract fields.
     """
     started = time.perf_counter()
     question = normalize_ws(request.question)
@@ -658,6 +709,9 @@ async def run_deep_research(request: DeepResearchRequest) -> AsyncIterator[Event
     writer_model = resolve_writer_model(request.model_override)
     model_version: str | None = None
     degraded: list[str] = []
+    # Verification's removal counts (see `verify_draft`); empty when the run
+    # never reached verification.
+    removal_reasons: dict[str, int] = {}
 
     def done() -> Event:
         return (
@@ -672,6 +726,7 @@ async def run_deep_research(request: DeepResearchRequest) -> AsyncIterator[Event
                 "tokensOut": usage.tokens_out,
                 "modelVersion": model_version,
                 "degradedLegs": degraded,
+                "removalReasons": removal_reasons,
             },
         )
 
@@ -778,12 +833,12 @@ async def run_deep_research(request: DeepResearchRequest) -> AsyncIterator[Event
 
         # 5. Verify
         yield _stage("verifying", f"{draft.claim_count()} claims")
-        verified, removed = await verify_draft(draft, labelled, usage)
+        verified, removed, removal_reasons = await verify_draft(draft, labelled, usage)
         logger.info(
-            "Deep research verified: %d claims kept, %d removed, %d sources",
+            "Deep research verified: kept=%d removed=%d reasons=%s",
             verified.claim_count(),
             removed,
-            len(labelled),
+            json.dumps(removal_reasons, sort_keys=True),
         )
         if verified.claim_count() == 0:
             # Nothing survived verification: an answer with no grounded claim

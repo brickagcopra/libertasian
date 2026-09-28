@@ -164,6 +164,7 @@ byte. The stream is reduced to the same `QuestionResult` row as `/answer`:
 | `status` / `abstain_reason` | `result.abstained` / `result.abstainReason`; an `error` event (or no `result`) is `error` |
 | `citations_total` / `citations_valid` | citations in the delivered `result`; valid = `sourceId` names a delivered source and a quote is present |
 | `model_name`, `degraded_legs` | `done.modelName`, `done.degradedLegs` |
+| `removal_reasons` | `done.removalReasons`: verification's drops per reason (`null` when absent). Citation-level: `bad_label`, `quote_not_found`, `quote_length`; claim-level: `no_citations_left`, `verifier_unsupported`, `verifier_no_verdict`. |
 
 So `evals.compare` diffs a deep run against an answer run directly:
 
