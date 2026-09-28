@@ -1,5 +1,7 @@
 # Pending Tasks
 
+Single source of truth for pending work. Do not create root-level task files.
+
 ## Statute corpus repair follow-ups (2026-09-27, PRs #516–#518, NOT merged)
 - [ ] Review/merge #516 (async `_reindex` copy with a deadline; backfill batch default 32). New env var `SEARCH_INDEX_COPY_TIMEOUT_MIN` (default 60).
 - [ ] Review/merge #517 (`reseed_statutory_document`). Then on prod, between 1 and 6 PM ET, run the dry-run command from the PR body for Evidence, Special Proceedings, Admin Code, NIRC and the 1987 Constitution. Review any `needs_decision` rows and `sections.csv`, then `--commit`.
@@ -38,6 +40,7 @@
 - [ ] Optional: set an `ai_research` per-scope budget cap (`llm:config:monthly_budget_usd:ai_research`).
 - [ ] Web and mobile clients are built in parallel against the SSE contract. Refusals on `POST /deep-research/stream`: 402 `subscription_required` for free accounts, 429 `quota_exceeded` when the quota is spent. Branch on `code`.
 - [ ] Pre-existing e2e drift: `subscription-enforcement` and `entitlement-enforcement-gaps` still expect tier names in the 403 message.
+- [ ] rag runs 2 uvicorn workers, so RAG_RERANKER_MAX_INFLIGHT=1 is per process (2 effective). If the post-#520 gate still shows reranker:unreachable, the reranker should also skip a request when (deadline - now) < its expected scoring time.
 
 ## Follow-ups from the OpenAI quota outage fix (2026-09-26, fix/rag-openai-quota-503)
 - [ ] **Pre-existing 422 bug:** `/memos/generate` and `/comparisons/generate` reject every JSON request. Their `strict=True` request models refuse the string values of `memo_type` / `comparison_type` ("Input should be an instance of MemoType"). NestJS sends exactly those strings (`memos.processor.ts:100`, `case-comparisons.processor.ts:121`). Confirm against prod logs, then add `Field(strict=False)` on the enum fields or drop strict mode on those two models.
@@ -45,6 +48,462 @@
 - [ ] `_check_budget` in rag-service `core/generation.py` still fails CLOSED on a Redis outage (500), while the new quota breaker fails open. Decide whether budgets should fail open too.
 - [ ] `chain_post_ingestion` from daily-crawl still fans out LLM tasks during an outage. Each one now costs a cheap 503 with no retry and no OpenAI call. Gate it on `rag_client.provider_quota_exhausted()` if that noise matters.
 - [ ] Add alerting on the `llm_provider_quota_exhausted` ERROR log (one per 300s breaker trip).
+
+## Reranker overload fix: #520 merged, not deployed (2026-09-27)
+
+`fix/rag-rerank-overload`, squash-merged as #520 (see completed-tasks.md 2026-09-27). **Do not deploy without an owner.**
+
+- **Deploy both services together.** An old reranker ignores the deadline header, which is harmless. A new reranker with an old rag client simply gets no header. The order does not matter, but only the pair fixes the queue.
+- **After deploy, measure:** run a Deep Research question and an /answer at the same time. Confirm the reranker logs one `Rerank request: <=40 passages` per question, no `Rerank skipped` storm, and no `reranker:unreachable` on the /answer.
+- **Still open:** a request that is already scoring when its client gives up still runs to completion (a torch thread cannot be cancelled). The deadline only stops work that has not started. With 40 passages at ~12 s, one Deep Research rerank can still hold the model for ~12 s ahead of an /answer. If that shows up in p95, the levers are `RAG_DEEP_RESEARCH_MAX_CANDIDATES` or a second reranker replica.
+- `httpx` timeouts apply per phase (connect/read/write), not to the whole call, so the HTTP leg can overrun the remaining budget a little. That behavior predates this change.
+
+## Email links: fixed in code, but nothing has been sent through the repaired flows (2026-09-13)
+
+Full context: COMPLETED_TASKS.md, the 2026-09-13 entry.
+`fix/email-auth-invite-links` repairs four dead links and makes organization
+invites redeemable for the first time. **The guard spec proves the links resolve
+to routes; it does not prove a real email was delivered and clicked.**
+
+- [ ] **Send one of each through prod after deploy** — a password reset, a
+      password change, and an invite to an address with no LIBERTASIAN account.
+      Confirm each lands on a 200 page with its token intact. This is the only
+      check that covers the pieces the guard cannot see: the `APP_URL` env var
+      in the prod environment, and the email client's own link handling.
+- [ ] **Re-send any invite created before this deploy.** Every `pending_invites`
+      row written to date was emailed **without its raw token**, which exists
+      nowhere else — only the SHA-256 hash was stored. Those invites are
+      permanently unredeemable and cannot be repaired; they have to be issued
+      again from `/settings/members`. Count them first
+      (`SELECT count(*) FROM pending_invites WHERE accepted_at IS NULL AND
+      expires_at > now()`) and tell the inviting orgs, rather than leaving
+      invitees waiting on a link that can never work.
+- [ ] **Decide whether an already-registered invitee should have to accept.**
+      Today `inviteMember` adds them to the organization outright — no pending
+      invite, nothing to consent to, and their email is a notice rather than an
+      invitation (it links `/settings/members`). That is out of scope here and
+      was left exactly as it was, but it means a stranger can add you to their
+      org and the "Accept Invitation" button in your mail is a formality. A
+      product call, not a bug.
+- [ ] **Widen the guard if a second module starts building email links.** It
+      reads `notifications.service.ts` only, because that is where every
+      outgoing url is built today. A new email whose link is assembled elsewhere
+      is invisible to it and would fail exactly the way these four did.
+
+## iOS 2.1(b): the client fix is merged, the build and the resubmission are not (2026-09-07)
+
+Full context: COMPLETED_TASKS.md, the 2026-09-07 entry. PRs **#462** and **#463**
+are merged to `main`.
+
+- [ ] **Cut EAS build 31 and submit it.** `eas build --platform ios --profile
+      production`, then `eas submit`. `app.json` stays at 1.0.1;
+      `appVersionSource` is remote, so EAS stamps the build number — read it back
+      from `eas build:view` rather than assuming.
+- [ ] **Bundle-prove the fix compiled in before submitting.** Hermes bytecode does
+      not grep. Re-export plain JS with `expo export:embed` and grep that for the
+      Try again label, the bootstrap hook's identifier and the telemetry event
+      names. Remember the `ACCOUNT_SCOPED_KEYS` lesson: values built from a const
+      object minify to **property refs, not string literals**, so check for the
+      form that actually survives minification.
+- [ ] **Watch the telemetry after review, not the App Store Connect status.** The
+      one thing this fix cannot control is whether the reviewer's device has a
+      Sandbox Apple Account. If the rejection repeats,
+      `purchase_surface_unavailable` now carries a machine reason and the raw
+      product ids the store named — `products_empty` means StoreKit still
+      returned nothing, `no_matching_packages` means it returned ids we do not
+      sell. Those are different bugs with different fixes, and until now we could
+      not tell them apart.
+- [ ] **Re-check Restore Purchases on the review build.** Unchanged by these PRs,
+      and still worth a look on a build where the SDK is actually configured at
+      launch.
+
+## Mobile purchases: the server fix is up, the prod confirmation is not (2026-09-01)
+
+Full context: COMPLETED_TASKS.md, the 2026-09-01 entry. PR **#454** is open on `fix/auth-response-org-fields`.
+
+- [ ] **Merge and deploy #454, then confirm on a real device that RevenueCat gets a session.** This is the only thing that proves the fix. Acceptance: sign in on a build-29 device, and the purchase screen shows plans instead of "Plans are not available right now"; RevenueCat then has a session for the org, which it has never had from any build-29 device session. **No new build is needed** — the fix is server-side and existing installs pick it up on their next sign-in.
+- [ ] **Re-check Restore Purchases specifically.** It was throwing into an unconfigured SDK, which is a different failure surface from the empty plan list and may have its own error handling to fix once the SDK actually initializes.
+- [ ] **Users already signed in do not re-run sign-in.** Their auth context was seeded before the fix, so whether they recover depends on whether the client re-populates from `GET /users/me` (which always carried the fields) or only from a fresh sign-in. Worth confirming before assuming the deploy fixes everyone rather than only new sessions.
+- [ ] **The MFA challenge response now carries the org fields.** Behaviour on the 401 path is unchanged and covered by tests, but if any client persists the user object from a challenge response, that is new data reaching it — worth one look at the web client before merge.
+
+### Blocking anyone who wants to run the API e2e suite locally
+
+- [ ] **The local dev DB is 9 migrations behind and e2e cannot run against it.** Every request 500s with `The column users.apple_id does not exist`. `prisma migrate status` also reports one applied migration (`20260505013309`) that is not in `prisma/migrations` at all, which is why `migrate dev` demands a reset. The workaround used for #454, which does not touch the dev DB: create a throwaway database, `DATABASE_URL=...libertasian_e2e prisma migrate deploy`, and run jest with that `DATABASE_URL` exported (dotenv-cli does not override an already-set variable, so the export wins).
+- [ ] **The full e2e suite still cannot complete locally even on a migrated DB** — several suites hang because the Python services (rag, ocr) are not up. #454 was gated on the 8 auth-surface suites instead, which is what it can affect.
+- [ ] **Two e2e failures are pre-existing on `main`** and should be triaged on their own: `auth.e2e-spec.ts › two concurrent refreshes with the same cookie: exactly one wins, family revoked` and `organizations.e2e-spec.ts › should invite a new member to the organization`. Both reproduce with `main` checked out against the same database.
+
+## Retrieval stack is complete — now measure it (2026-08-14)
+
+Full context: COMPLETED_TASKS.md, three entries under 2026-08-13/14. BM25 + kNN + cross-encoder reranking are all wired. What is left is proving it on prod and re-deriving the numbers that were deliberately left alone while retrieval was moving.
+
+- [ ] **Re-measure latency on the prod host — the numbers above are arm64 under Docker Desktop, not prod x86_64.** `python scripts/bench_reranker.py --url http://reranker-service:8002 --key $INTERNAL_API_KEY --max-p95 6`. The acceptance figures are 4 CPUs p95 5.81s (pass) and 2 CPUs p95 9.63s (miss) — **do not run this service at 2 CPUs**, there is no margin against the 10s caller timeout.
+- [ ] **Re-test int8 quantization on prod's x86_64, where fbgemm is actually available.** It is OFF by default because on aarch64/torch 2.13 it either cannot construct or constructs and then fails every forward pass. The code validates a backend with a real inference before using it, so flipping `RERANKER_QUANTIZE=true` is safe to try: if it does not work the service silently stays fp32, and `/health` reports `quantized: false`. Only keep it on if `bench_reranker.py` shows a real gain AND the score spread stays wide.
+- [ ] **The reranker image installs a CUDA torch build (`torch 2.13.0+cu130`) for a CPU-only service.** It is most of the ~7GB image. Pointing uv at the CPU wheel index (`https://download.pytorch.org/whl/cpu`) should cut it dramatically and speed every deploy and CI scan. Same applies to embedding-service and worker-service.
+- [ ] **Deploy reranker-service — it is a NEW container, not a code change.** `docker compose up -d reranker-service rag-service`. The image bakes a ~1.1GB model, so the first build is slow; `RERANKER_INTERNAL_API_KEY` comes from the existing `INTERNAL_API_KEY`. Acceptance: an answer response whose passages carry a non-null `rerank_score`, and `degraded_legs` empty. `reranker:not_configured` means `RAG_RERANKER_URL` did not reach rag-service (check the `RAG_` prefix); `reranker:failed` most likely means the internal key mismatched — that is the 403 path and it logs at ERROR.
+- [ ] **Confirm the acceptance queries against the recorded baseline.** Baseline is 3/12 answered, and **"constitution" must answer again** — it is the query the kNN leg regressed and the reason C4 was prioritised. Measured offline the reranker ranks the Constitution top-1 at 0.4196 against a best distractor of 0.0280, but that was on reconstructed candidate sets, not prod retrieval output.
+- [ ] **Re-derive `abstention_score_threshold` from PROD scores.** It is 0.0004, derived from 12 answerable + 2 unanswerable queries scored offline (answerable top-1 0.0044–0.9993, unanswerable 3.74e-05). That is a defensible starting point, not a settled number. Log real top-1 `rerank_score` values for a few days and re-fit. Note the gate only catches "nothing relevant retrieved" — it is not a quality bar, and no single threshold can be one given a 200x spread across answerable queries.
+- [ ] **Watch p95 latency: there are now TWO extra hops on every answer.** Embedding (5s timeout) before retrieval, reranking (10s timeout) after it. A base cross-encoder over ~30 candidates on CPU is the heavier of the two. If p95 suffers, the levers are `max_passages`, the candidate-set size, or replicas — not more uvicorn workers, since each loads its own copy of the model.
+- [ ] **Re-measure the authority boost and `compute_confidence` — now, and together.** Both were deliberately left untouched across all three retrieval PRs precisely so they could be measured once the stack stopped moving. That point is here.
+- [ ] **Pin FastAPI in the other Python services before their next re-lock.** `prometheus-fastapi-instrumentator` 7.1.0 crashes on FastAPI ≥0.136 *inside the request middleware*. rag-service, embedding-service, worker-service and ocr-service are safe only because their committed locks predate it; the first unpinned `uv lock` on any of them ships a service that 500s every request. reranker-service is pinned `<0.136`.
+- [ ] **Bring the remaining OpenSearch readers under the contract guard**, and **widen the CI guard to the full rag-service suite once `test_routers.py`'s 40 pytest-asyncio fixture errors are repaired.** Both carried over, both still true.
+
+## AI answers — the abstention is fixed, the retrieval is not (2026-08-13)
+
+`fix/answer-abstention-and-placeholders` changes what the app *says* when it cannot answer. It changes nothing about *why* it cannot. Full context: COMPLETED_TASKS.md under 2026-08-13.
+
+- [ ] **Measure the new abstention rate on prod before an EAS build goes out.** The grounding check now fires corpus-wide, and corpus-wide is most of the traffic. If a large share of real queries abstain, the honest reading is that retrieval is the product problem and the reranker moves up the queue — not that the abstention should be loosened back. Re-run the same 9 queries used on 2026-08-14, plus a wider sample, and record the abstain/answer split.
+- [ ] **Ship the reranker (search-epic C4).** This is the actual fix for "bill of rights" retrieving *Spouses Hing v. Choachuy*. Nothing in this branch touches retrieval.
+- [ ] **`abstention_score_threshold` is 0.01 and inert under RRF.** Left alone deliberately. It cannot do useful work until fusion scores are on a comparable scale, i.e. until C4. Revisit with the reranker, not before.
+- [ ] **Watch for the model ignoring `INSUFFICIENT_SOURCES`.** The sentinel is a prompt instruction, not a constraint. The detector tolerates trailing punctuation, emphasis and a disobedient explanation stapled underneath, but a model that paraphrases instead of emitting the token falls back to the citation-grounding check. Sample `model_runs` under `answer-v1.2` for responses that read as refusals but were not detected.
+- [ ] **The coverage fallback is generous by design, and may be too generous.** A bare `[SOURCE doc]` citation credits every retrieved passage from that document, so the observed prod shape (8 passages, 1 document, 1 document-level cite) still scores coverage 1.0. Tightening it to require `§section` anchors is a real option — but per CLAUDE.md, project it over live rows first and treat the per-caller distribution as the acceptance evidence. It affects `POST /ai-answers` only; the nine other generators have their own scorers.
+- [ ] **Nine private `_compute_confidence` implementations remain.** Digests, flashcards, memos, timelines, comparisons, contradictions, hearing prep, pleadings and research workspaces each carry their own copy in their own service module, none of which uses `shared/scoring.py`. Whether they share the document-vs-passage bug is unmeasured. Not in scope here; worth an audit.
+
+## iOS 1.0 submission — blocked on real screenshots, and nothing else (2026-08-08)
+
+Full capture instructions: **`apps/mobile/store/IOS_SCREENSHOT_CAPTURE.md`**. Full context of what was done: COMPLETED_TASKS.md under 2026-08-08.
+
+State: version 1.0 is **Ready for Review**, build **15** attached, draft submission holds one item, **Submit for Review NOT pressed**. Listing, App Privacy (published), age rating (18+), content rights, price (Free), availability (Philippines only), review info and release settings are all set and were individually re-verified after the build swap.
+
+- [ ] **Capture the six screens on a Mac — this is the whole remaining task.** The uploaded set are mockups: the documented `raw/` → `framed/` pipeline never ran (both dirs empty), they came from an undocumented `marketing/` dir, `02-case-digests` shows grey skeleton bars instead of body text, every frame carries the 9:41 marketing status bar with no carrier or battery, and `01-past-bar-exams` has text colliding with its chevrons. Guideline 2.3.3, and the likeliest rejection on this submission.
+- [ ] **Two capture passes, not one.** `frame-screenshots.mjs` maps *all four* Apple platforms from the same `raw/<slug>.ios.png`. One iPhone pass would letterbox a phone screenshot into the iPad canvas — a fresh 2.3.3 problem, since iPad shots must show iPad UI. Capture on iPhone → frame `iphone-*` → **copy the raws aside** → capture on iPad → frame `ipad-*`.
+- [ ] **Upload one file at a time, in filename order.** Uploading six at once orders them by upload-completion. That happened on 2026-08-07, the set came out scrambled, and it had to be deleted and redone. Only the first 3 appear on install sheets.
+- [ ] **Re-verify everything after the upload — swapping assets is where settings silently reset.** The checklist is in §7 of the handoff doc. "Add for Review" re-runs Apple's server-side validation and is reversible; it is the cheapest way to surface a gap, and it is what caught the missing price tier on 2026-08-07 (invisible from every ASC page).
+- [ ] **Do not cut a new build.** Build 15 is what is being submitted.
+- [ ] **Do not sign in as, or delete, `brickagcopra5871+test@gmail.com`** — comp Pro subscription row `6741e44f` that reviewers depend on.
+
+Deferred, deliberate, revisit later:
+
+- [ ] **DSA trader declaration is unset**, so EU storefronts are excluded. Needs a publicly published verified business address/phone. Revisit before any EU launch. Note "make available in all future App Store countries or regions" was left **unchecked** so distribution cannot silently expand into the EU.
+- [ ] **The ad system is dead code and must stay that way until the declarations change.** `src/features/ads/` is complete (modal, slide-in, floating bar, sticky footer, inline banner, impression + click tracking) but nothing outside that directory imports it. That is precisely what makes the age-rating "Advertising = No" and the App Privacy "no Advertising Data" answers true for build 15. Wiring it in makes both false; update them in the same release. No `expo-updates`, so it cannot be enabled without a new review.
+- [ ] **Phased release does nothing for 1.0.** It governs updates to users with auto-update on; a first release has no install base. On Release the app goes live to the whole PH storefront at once. It starts mattering at 1.1.
+- [ ] **The "CI JSON-validity check" in `store.config.json`'s header does not exist.** `grep -rn "store.config" .github/` returns nothing and no package script references the file. Add it so a malformed config fails a PR instead of a release. Flagged in #366.
+- [ ] **Play still has the same screenshot provenance problem** — `marketing/android-*` came from the same undocumented source. Do not reuse them.
+
+## Bar exam answer confidence (`feat/bar-exam-answer-confidence`, 2026-08-05) — the pilot is the gate
+
+Details in COMPLETED_TASKS.md under 2026-08-05. PR 3 (bulk generation + auto-approve) is **blocked** until the pilot numbers exist and have been read.
+
+- [ ] **Run the 50-question pilot on prod after this deploys — this is the deliverable's whole point.** `force_regenerate` exists in `bar_exam_answer_tasks.py`, so the 5 pending rows are re-runnable if the first pass is bad. Then: `uv run python -m src.scripts.score_bar_exam_answers_dryrun --pilot` (read-only, safe against prod).
+- [ ] **Read "retrieval succeeded" off the prompt version, not the score.** A v2 row that scores 0.0 retrieved eight passages and cited none of them; a v1 row written after the deploy is a genuine retrieval miss. Collapsing those two into one number hides which half is broken.
+- [ ] **Read the BY DENOMINATOR block before the aggregate.** The bar is adaptive: validated on prod over 64 questions, the denominator is 3 for 66% of questions, 2 for 31%, 1 for 3%. At denominator 2 **one clean citation scores 0.75 and passes**; the same answer at denominator 3 scores 0.667 and fails. The aggregate pass rate is the number most likely to be quoted and the least likely to mean what it appears to — it mixes answer quality with retrieval breadth, and breadth varies by subject (legal_ethics 2.9 distinct documents, criminal_law 5.0).
+- [ ] **If nothing clears 0.70, that is a finding about the scorer.** CLAUDE.md: prefer fixing what the terms measure over moving the threshold. The per-term min/median/max in the report is the diagnostic — a term whose min equals its max is the thing to replace.
+- [ ] **The 58 existing rows will rescore to 0.000 and that is correct.** They are priors-only with no `citedSectionIds` at all. Note that 53 of them are already **approved and public**, published with no measured grounding — deciding what to do about that is an editorial call, not a scoring one.
+- [ ] **Retrieval-side diagnostics (BM25 spread, relevance-floor counts) are not available from stored rows.** The retrieved passage set is not persisted anywhere, and the obvious home — `structured_answer_json` — is served verbatim to the public endpoint (`bar-exam-answers.public.controller.ts:126`), while `model_runs` has no metadata column. Getting them is a schema decision. The generation task logs the per-answer term breakdown in the meantime.
+- [ ] **`services/worker-service/tests/test_parsers.py` does not compile** (a string literal, `* 10`, then an adjacent literal ≈ line 83). The **entire worker-service suite fails collection** because of it — 1,002 tests unrunnable without `--ignore`. Pre-existing since `5c5596b` and untouched by this PR, but combined with `ci.yml` running no Python tests at all, it means the Python quality signal has been off. One-character fix; worth its own PR alongside wiring the Python suites into CI.
+
+## RAG ↔ OpenSearch connectivity (`fix/rag-opensearch-tls-auth`, 2026-08-04) — MERGED `ae473ad`, deploy is server-side
+
+Details in COMPLETED_TASKS.md under 2026-08-04. Merged 2026-08-05; prod deploy is handled on the server, not from here.
+
+- [x] **Confirmed on prod 2026-08-05 (brick).** Traceback from inside the container: `httpx.ConnectError [SSL: CERTIFICATE_VERIFY_FAILED]`, swallowed into an empty hit set. Both arms tested: `verify=False` alone → **401**; `verify=False` + basic auth → **200, 10k+ hits**. Both are required.
+- [ ] **Deploy rag-service and read the startup line.** `OpenSearch connected: opensearch <version> at https://opensearch:9200 (verify_ssl=False, auth=yes)` is the pass condition. `OPENSEARCH UNREACHABLE` names the env vars to check. **`auth=no` is the failure mode to watch for** — it means neither credential pair resolved, and the fix is inert (the service will get a 401 instead of a TLS error). No compose or `.env` change is needed for this deploy; the container already carries `OPENSEARCH_USERNAME`/`OPENSEARCH_PASSWORD`.
+- [ ] **Then re-run one query per surface** (`/answer`, a memo, flashcards) and check the passage counts are non-zero. Every one of those has been returning zero passages, and a green deploy alone does not prove otherwise — that is precisely the mistake the Kokoro `/health` episode already cost us once.
+- [ ] **Retrieval failures are now 500s, not empty answers.** That is the point of the change, but it is a visible behaviour change for the API gateway: a NestJS call that used to receive a confident abstention will now receive an error. Check `apps/api`'s RAG client handles a 5xx from the Python hop with a sensible user-facing message before this reaches users.
+- [ ] **Nothing measures how long this was broken.** `docker compose logs rag | grep -c "OpenSearch search failed"` over retained logs is the closest available signal, and every hit is a query answered with no sources. Worth one look — it sizes the blast radius on real user traffic and tells us whether any published artifact was generated priors-only.
+- [ ] **`RAG_OPENSEARCH_VERIFY_SSL=false` is a deliberate hole with a real cost.** It is defensible on a container network with a self-signed cert, and it is still an unauthenticated-peer connection carrying admin credentials. Issue a real cert for the cluster and flip the flag; the setting exists so that day is a config change, not a code change.
+- [ ] **`tests/test_routers.py`'s 40 errors are pre-existing and nobody is watching.** The `client` fixture needs `@pytest_asyncio.fixture`. Trivial — but it means 40 router tests have not run for some time, and **`ci.yml` runs no Python tests at all**, so nothing would have said so. The bigger item is wiring the four Python services into CI.
+
+## Three open PRs from 2026-08-03 — merge order matters (do this second)
+
+All three are branched from `main` and CI-green (17/17 each). Nothing is merged and nothing is deployed. Details in COMPLETED_TASKS.md under 2026-08-03.
+
+- [ ] **Merge #353** (`fix/digest-tab-visibility`, api, 2 files). Unhides 3,521 digests the search Digests tab was filtering out by `review_status` — coverage of published decisions goes 77% → 98%. No client change needed; mobile and web already badge `reviewStatus`. Needs an api deploy to take effect.
+- [ ] **Merge #354** (`feat/case-digests-search-corpus`, 27 files). First index over the 16,995-row `digests` table; before this, no query could match digest text at all. **After deploy, an index-rebuild job must run on prod — brick's call, brick runs it.** Until it does, `scope=digests` returns an empty corpus and the rewired Digests tab shows nothing, which is worse than the current behaviour. **Do not merge #354 without scheduling that rebuild.**
+- [ ] **Merge #355** (`fix/mobile-pill-nav-all-tabs`, mobile, 16 files, JS-only). Test-merges cleanly with #354 despite both touching `(tabs)/search.tsx`.
+- [ ] **Eyeball the eight-slot pill on a 360pt Android screen.** The no-clipping requirement is asserted structurally (`numberOfLines={1}`), not visually. Fold into the next preview-build QA pass rather than cutting a build for it.
+- [ ] **#354 leaves `GET /digests/search` as-is** (`title ILIKE '%q%'` over `"Digest: <CASE CAPTION>"` titles). It is now redundant with the new corpus for every caller that can pass a scope. Decide whether to point it at the index or retire it — not urgent, but it is a second search path that will drift.
+
+## Store compliance epic — 4 PRs, in order (2026-08-01)
+
+The app is **submitted but unreviewed**: iOS build 11 in TestFlight (ASC app `6788971669`), Android versionCode 6 uploaded to Play. Four things stand between that and a pass. Each is its own PR, branched from `main` and merged before the next. **No EAS build is cut by these PRs** — brick does that once all four are on `main`.
+
+- [x] **PR 1 — `feat(api): self-serve account deletion` (#343).** Apple 5.1.1(v) + Play data-deletion. `DELETE /users/me` and `POST /users/me/deletion/cancel`, 30-day restore window, daily purge cron + idempotent BullMQ job. Matches the already-published `/account-deletion` copy, so that page needed no edits. **Xendit is called only for a non-NULL `xenditSubscriptionId`** — the reviewer account's comp Pro grant has a NULL one.
+- [x] **PR 2 — `feat(mobile,web): in-app Delete Account UI` (#344, merged `9861c05`).** Mobile `settings/delete-account.tsx` + a red danger-zone entry below Sign out; two-step confirm; signs out and clears MMKV/SQLite. Web: same flow in settings, and `/account-deletion` copy moves from "email us" to "Settings → Delete account (or email support)". **Keep the URL** — Play's data-safety form points at it.
+- [x] **PR 3 — `fix(mobile): remove external purchase entry points` (Apple 3.1.1).** Delete `useCreateCheckout` + the `Linking.openURL(result.checkoutUrl)` in `settings/plans.tsx:189-192`; that screen becomes a read-only view of the current plan. Sweep the 21 `.tsx` files carrying upgrade/₱/subscribe copy so every paywalled surface reads "Not included in your plan." with no price and no outbound link. **`apps/api` and `apps/web` are untouched — web keeps selling.**
+- [ ] **PR 4 — `fix(mobile): Android 15 edge-to-edge + store screenshot sizes`.** targetSdk 35 draws under the system bars and only `settings/plans.tsx` uses `useSafeAreaInsets` today; replace hardcoded `paddingTop` in 13 screens and fix `scan/capture.tsx` + `scan/upload.tsx` (RN `SafeAreaView` is a no-op on Android). iOS must look identical. Add 6.9" iPhone (1320×2868) and 13" iPad (2064×2752) to `assets/store/screenshots.config.json` and regenerate — ASC requires both for a new app.
+
+### Open questions surfaced by PR 3, for brick
+
+- [ ] **The e2e suite had never run, and 17 of its 53 suites are broken.** `apps/api/jest.config.ts` has `rootDir: 'src'`, so `test/*.e2e-spec.ts` was never discovered by `pnpm test` — the whole directory sat unexecuted. PR 3 measured it: the full AppModule boots on the postgres + redis containers CI already declares (**no OpenSearch, MinIO or ClamAV needed**), and **1,022 of 1,081 tests pass**. The remaining **58 failures across 17 suites** are pre-existing rot, not regressions from any recent branch: `auth` fails one refresh-race assertion, `documents` gets 402 where it expects 404 (entitlement drift), `search` almost certainly wants OpenSearch. Seeding the DB first does not help (58 vs 57 failures). CI now runs `account-deletion.e2e-spec.ts` only, with the exclusion and its measured numbers stated in `.github/workflows/ci.yml`. **Repair those suites and widen that list** — until then most of the e2e directory is decoration.
+- [ ] **The mobile app can no longer tell a user how to subscribe, at all.** That is the correct reading of Apple 3.1.1 / Play Payments and it is what shipped, but it is a real product cost: a free user on mobile has no path to paying and is not told one exists. The web app still sells. If conversion matters more than the strictest reading, the options are (a) Apple/Google in-app purchase, paying their cut, or (b) a "manage your account on the web" line with no pricing and no link — riskier, and Apple has rejected exactly that wording before. Product decision, not an engineering one.
+- [ ] **`src/app/billing/mobile/*` deep-link bounce screens are now unreachable from the app.** They existed to catch the return from a mobile-initiated checkout. They are harmless, and still useful if a user buys on the web on their phone, so PR 3 left them. Delete them only together with the web bounce pages they pair with.
+
+### Open questions surfaced by PR 1, for brick
+
+- [ ] **Restore is only reachable for ~15 minutes.** `DELETE /users/me` revokes every refresh family and login refuses a non-`active` status, so `POST /users/me/deletion/cancel` works only while the caller's existing access token is alive. That covers an in-app "Undo", not a user who changes their mind on day 20 — that case needs support today. Widening it means letting `pending_deletion` accounts obtain a restricted token, which is a deliberate change to the auth status gate.
+- [x] **Run the new e2e suite in CI.** Done in PR 3, and the "needs the full compose stack" assumption was wrong: postgres + redis alone are enough. All 14 account-deletion e2e tests pass. See the PR 3 section above for the 17 suites that do not.
+- [ ] **`prisma migrate deploy` for `20260801120000_add_user_account_deletion`** in staging and prod before the mobile UI ships. Additive only (3 nullable columns + 2 indexes on `users`, 1 nullable column on `organizations`), verified against a throwaway PG16 with no drift.
+
+## Audio / Kokoro — #336 open: the GPU backfill route (2026-07-29)
+
+The tier-1 backfill moves to a rented GPU; prod keeps steady state. #336 ships the image, the auth, and the timeout model. It flips nothing.
+
+- [x] **The timeout was a flat 300 s for every request, and that was the cliff.** Digest `0a8d731f-8b21-4332-b001-93779ebdf054` (2,238 chars, near the 2,032-char corpus average) needs ~166 s of audio and ~184–232 s of CPU wall clock; queueing pushed it past 300 s and **all three attempts used the same doomed budget** = 15 min of 8-core CPU for nothing. Budget is now `max(60s, chars / 13.5 x KOKORO_REALTIME_FACTOR)` — 414 s for that digest, 903 s for the 4,877-char one.
+- [x] **Retries are classified.** Transient (network/5xx/429) still gets 3 attempts; a timeout is retried ONCE with a 1.5x budget; 401 / malformed payload / over-ceiling text fail immediately via BullMQ `UnrecoverableError`. `audio_renditions.failure_reason` records which, written on the final attempt and never over a `ready` row.
+- [x] **GPU image is a separate file** (`Dockerfile.tts.gpu`); `Dockerfile.tts` still builds today's CPU-only image because prod has no GPU. cu129 wheels — torch 2.13.0 is **not** published for cu128. Built and acceptance-tested (health 200, 401/200 auth paths, 29,088 B mp3 + 16 marks). **The GPU path itself is unverified**: no NVIDIA device on the build host, so throughput and VRAM are still assumptions.
+- [ ] **Measure real GPU throughput before sizing anything against it.** Every capacity number in this repo is a CPU measurement. Rent the box, run tier 1, and record items/hour and VRAM per worker the same way prod was measured on 2026-07-29 — the 3.59x-vs-0.97x correction is what this project keeps learning.
+- [ ] **Set `KOKORO_REALTIME_FACTOR≈0.25` on the GPU host.** At the CPU default of 2.5 the budget is ~10x too generous there, which also holds the single-call character cap down at ~9,720.
+- [ ] **`TTS_AUTH_TOKEN` is effectively mandatory on the rented box** (same value on API and TTS side). Unlike prod, port 8003 is reachable off-host; unset means serving synthesis to whoever finds the port. Both sides no-op when unset, so prod stays as-is.
+- [ ] **Tier 3 decisions now fail fast rather than time out.** At the default factor one call caps at ~9,720 chars, below the ~25,600-char decision average, so decisions record `text_too_long` instead of burning 15 min to reach the same failure. **The real fix is chunked synthesis** — one HTTP call per document does not survive a 25,600-char document at any factor. Not in #336.
+- [x] **The device is no longer implicit.** `KPipeline` was built with no `device`, so kokoro's internal `cuda if available else cpu` decided it and reported nothing — a GPU deployment could only be inferred from throughput. `TTS_DEVICE` now resolves explicitly (unset/`auto` → cuda when torch sees a device, else cpu), is logged at startup, and **`/health` returns `device`, `cuda_available`, `device_name`, `workers`, `threads_per_worker`**. `device=cuda` + `cuda_available=false` is the misconfigured-container state that used to be invisible.
+- [x] **Worker/thread shape is device-aware.** Unset resolves to 2 x 4 on CPU (the measured prod shape) and **1 x 8 on CUDA** — one process owns the card, because workers do not share the model. `src/serve.py` resolves the device before launching uvicorn, which a shell `--workers ${TTS_WORKERS:-N}` cannot do; the CPU image keeps its shell CMD. An explicit `TTS_WORKERS>1` on CUDA is honoured (multi-GPU is legitimate) with a warning.
+- [ ] **Set `AUDIO_PROCESSOR_CONCURRENCY=1` when the TTS host runs a single worker.** `/synthesize` calls `synthesize_document` synchronously inside an `async def` handler, so one worker serializes synthesis AND cannot answer `/health` while a synthesis is in flight. Extra in-flight jobs buy nothing on a 1-worker host; they queue inside the service. Do not read one failed health probe mid-backfill as the service being down.
+- [ ] **Consider `asyncio.to_thread` for the synthesis call** (CLAUDE.md's own Python standard for CPU-bound blocking work). It would keep `/health` responsive during synthesis and make a single-worker GPU host behave predictably. **Needs care, not a one-liner:** `KPipeline` is not documented thread-safe, so it wants an `asyncio.Lock` to keep synthesis one-at-a-time per process. Deliberately out of #336 — it changes the CPU service's concurrency behaviour, which that PR holds fixed.
+- [ ] **A `failed` rendition is re-enqueued only after its BullMQ job leaves the retained failed set** (`removeOnFail: 500`), because the deterministic jobId is the dedupe key. Pre-existing, but reached sooner now — read the reconciler's gap counts with that in mind.
+
+## Audio / Kokoro — #334 open, prod ops outstanding (2026-07-29)
+
+Measured on the prod box, not assumed. #334 fixes the blocker and corrects the constants; it flips nothing (`TTS_PROVIDER=polly`, all three reconciler flags `false`, all five `AUDIO_S3_*` unset).
+
+- [x] **The blocker: every `/synthesize` returned 500.** kokoro's G2P calls `spacy.cli.download()` at runtime when `en_core_web_sm` is missing; the runner has no pip/uv and is non-root, so spaCy `sys.exit(1)`s. `/health` returned 200 the whole time because G2P inits lazily — **a green health check proved nothing about this service.** Model now locked as a dependency; must move with spacy's minor version (3.8.x ↔ 3.8.14).
+- [x] **Weights baked into the image** after `USER appuser`. `HF_HOME` was empty with no volume behind it, so weights re-downloaded on every recreate and the service could not start with HF unreachable. **Acceptance passed offline** (`docker run --network none`): `/health` 200 **and** a 3-segment `/synthesize` → 27.98 s of audio, 48.6 kbps, 3 ssml + 62 word marks.
+- [x] **Two constants were wrong.** Throughput is **~0.97x realtime** at 4 threads, not the claimed 3.59x (off by ~3.7x). af_heart yields **13.7 chars/audio-second**, not 15.0 — so the reconciler's per-tier estimates are now 116 / 13,000 / 1,870 s and the pinned dry-run expectation is 420.8 h. Memory limit 4G → 8G (one worker peaked at 2.9 GiB). `AUDIO_PROCESSOR_CONCURRENCY` default 2 — BullMQ's default of 1 left one of the two TTS workers permanently idle.
+- [ ] **Before setting `AUDIO_S3_ENDPOINT`: copy the 302 existing MinIO renditions to R2 first.** Object keys live in `audio_renditions` and are signed against whichever backend is active *now*, so switching makes every existing key resolve against the new bucket — signed URLs 404 while the rows still read `ready`. **Not self-healing**, unlike the `TTS_PROVIDER` switch (where a distinct `voiceId` produces new rows). No migration script exists yet.
+- [x] **CSP now carries the real R2 origin, committed literally** (amended in review). Substituting a placeholder on prod was the wrong plan: `nginx.conf` is tracked and bind-mounted from the repo, so the edit would break the no-edits-on-prod rule and be clobbered by the next `git pull`. The account id is not a secret — it is the host of every presigned URL the browser already receives. Harmless while `AUDIO_S3_ENDPOINT` is unset; the origin is just never contacted.
+- [x] **The disk guard now knows storage went remote** (amended in review). Skipped from `AudioStorageService.isRemote` when audio is off-box, so an unrelated local disk issue can no longer halt the backfill; enforced unchanged in local mode. Both tested. A bucket quota/billing check is still the *right* long-term guard — there is now no ceiling of any kind on remote audio volume.
+- [ ] **Create the R2 bucket PRIVATE** before setting `AUDIO_S3_ENDPOINT` — presigned GETs only, never a public `r2.dev` domain.
+- [ ] **Size tier 3 against ~1x realtime before enabling decisions — this is now the only remaining tier 3 blocker.** R2 resolves the storage half (~158 GB no longer has to fit in ~142 GB free); what is left is compute. At the measured throughput the decision backfill is on the order of **8,000 worker-hours** of synthesis — months of continuous work at 2 workers on a box that also serves the API. The old 3.59x constant understated this ~3.7x. `.env.example` now says compute, not disk, is the gate.
+
+## Search visibility — #322 merged, the apply is still outstanding (do this first)
+
+76% of `legal_documents` (13,093 of 17,135) sits in `status='draft'` and is therefore absent from OpenSearch: searching a stranded document's exact title returns a different case. Cause: `citation_mapping` was a blocking auto-publish check requiring an 80% citation resolution ratio, against a resolver whose measured ratio is median 0.000 / mean 0.024. It failed 13,025 of 13,093 drafts and 3,909 of the 4,042 documents already published. Auto-publish stopped on 2026-05-30 while ingestion ran to 2026-07-10. #322 (`5addc51`) made the check advisory and added the backfill.
+
+- [x] **ACCEPTANCE — dry run over live prod rows: DONE, and it holds.** 13,093 drafts scanned → **11,561 would publish (88.3%), every one held by the citation gate alone**; 1,532 to `human_review`; **0 quarantine**. Of the review rows, 1,531 fail `metadata_confidence` on a null `court` (1,525 are `decision`) and 1 fails `document_complete` on a missing `decision_date`. Nothing unexpected surfaced under `Blocking checks failed` — leaving `metadata_confidence` blocking was right, it is catching real incompleteness rather than phantom failures.
+- [ ] **`--apply` the backfill (prod op, brick's call).** Publishes 11,561 documents into the public corpus and fires one OpenSearch index call each.
+      ```bash
+      cd services/worker-service
+      AUTOPUBLISH_BACKFILL_ALLOW_WRITE=1 \
+        uv run python -m src.scripts.backfill_autopublish_drafts --apply --limit 50
+      ```
+      **Run it behind `--limit` first** and confirm those 50 are actually searchable before sweeping 13k rows — the publish and the index call are separate failures. `index_failures` counts documents published in PostgreSQL but NOT in OpenSearch; those need the index trigger re-run. The sweep selects on `status='draft'`, so a resumed run never re-publishes what already landed.
+- [ ] **#323 — 1,531 draft decisions blocked only on a null `court`.** Derivable from the source registry and citation text; publishing them afterwards is a re-run of the same backfill, no new code. Note recorded there: `metadata_confidence` requires ≥80% of **three** fields, and 2/3 = 0.667 < 0.8, so it is effectively "all three or fail" — a single null `court` is a hard block, not a partial deduction. Populate the field; do not loosen the check.
+- [ ] **#321 — the citation resolver resolves ~0% of ~16 citations per document.** This is the real defect; the search outage was its symptom, and demoting the gate does not fix it. Before any threshold is written against this signal again, measure what share of unresolved citations point at documents not in the corpus at all — that ceiling decides what the ratio can ever mean. Suspects in order: whether `citation.resolve_for_document` is dispatched at all for most docs, whether `normalized_citation` matches the form the resolver looks up, then genuine corpus gaps.
+- [ ] **Deliberately out of scope, note if revisiting:** the 3,909 published documents that also fail the citation check are left alone (they are searchable; re-validating could only take that away), and no row is quarantined by the sweep.
+
+## #319 essay citation fix — open follow-ups (do these in order)
+
+- [ ] **ACCEPTANCE STILL OUTSTANDING — `essay_generation.v2` has no rows yet.** #319 is merged (`d1c3343`) and deployed, but **deployed is not verified**. The fix is unproven against live rows until the next essay generation run writes v2 rows and they come back with 0 dangling refs. Nothing about the prod run on 2026-07-27 tested the new code path; it measured the corpus the old one left behind.
+      ```bash
+      cd services/worker-service
+      uv run python -m src.scripts.report_essay_dangling_citations --split-by-version
+      ```
+      Read it this way: **`essay_generation.v2` should show 0 dangling refs.** A non-zero count there means those rows came from a worker predating the deploy — check `created_at` before reading it as the fix failing. An *absent* v2 bucket means no essays have been generated since the deploy, which is where this sits now — that is "not yet tested", not "passing". The `v1` bucket will not improve; those rows are already written. The script cannot write (no `--apply`, no `UPDATE`, test-enforced), so it is safe against prod.
+- [ ] **#320 — the 170 published essays with dangling citations (brick's call).** Aggregate recorded there: 170 of 5,249 `public_editorial` essays (3.2%), mean 1.91 dangling of 5.02 refs, confidence 0.500–1.000. Most are partially grounded, so it is a correction problem more than a retraction one. **4 are fully fabricated** — every ref dangling — and all four scored 0.500. Full per-artifact list regenerates any time with `report_essay_dangling_citations --published`.
+- [ ] **#320 — manual approve bypasses the 0.70 bar entirely (arguably the bigger finding).** Two paths reach `public_editorial` and only one reads the score: `auto-promote.service.ts:47-51` gates on `confidenceScore >= AUTO_PROMOTE_CONFIDENCE_THRESHOLD`, while `derivatives-review.service.ts:54-67` promotes on `verdict === 'approve'` **without consulting `confidenceScore` at all**. That is how four 0.500 artifacts were published. Decide whether approve should hard-block below the bar or warn (editorial override is a legitimate thing to want, and is presumably why the check was never there), and surface the score at the point of approval either way.
+- [ ] **Decide whether a wholly ungrounded essay should be written at all.** `_build_provenance_records` still falls back to `sections[0]` — naming a section the artifact never cited — because the NestJS write endpoint rejects an empty `provenanceRecords` (`internal-derivatives.service.ts:214`). Removing the fallback would make such an essay fail the write instead. Arguably correct; a policy change, not a scoring fix, so #319 left it and flagged it in a comment. Score is unaffected either way.
+- [ ] **Re-measure whether the other four types also fabricate.** #319 establishes that flashcard/MCQ *store* clean IDs because they filter at write time, not because their models behave. Nobody has measured how many IDs those filters are dropping. If the rate is anything like the essay rate, the same prompt fix (closed list + permission to leave empty) belongs in `flashcard_generation_v1` and `mcq_generation_v1`, and the drop counts are worth logging.
+- [ ] **`mcq_question` citations are unmeasurable from persisted rows.** `writeMcqBatch` stores `{questionStem, options, explanation}` only. Measuring them requires either persisting `supportingSectionIds` or reading them back out of `provenance_records` — a change, not a measurement. Blocks any future audit of MCQ grounding.
+- [ ] **Reconsider #316's coverage taper after the above.** Closed, not merged; branch `feat/coverage-weight-short-sources` kept. Its 3.4-section geometry finding is sound, but its projection ran over a corpus where 59.2% of essay citation refs were fake, so the numbers in its table describe a corpus that no longer exists.
+
+## Editorial standard for derivative confidence (product decision for brick)
+
+The re-score that led here is **closed — not worth running** (below). What it exposed is a corpus question that outlives it.
+
+**Generations cite ~1 of ~3.4 available sections.** On a 3-section source with `0.5 + coverage*0.5`, the only reachable scores are **0.5 / 0.667 / 0.833 / 1.0**. So the 0.70 bar is operationally "**cite 2 of 3 sections**" — a coarse, near-binary gate wearing the clothes of a graded 0–1 quality signal. An editor reading "0.833" is reading "cited 2 of 3", not a confidence estimate.
+
+- [ ] **Decide what the bar is supposed to mean** on sources this small. Options worth weighing: keep 0.70 and accept it means "cite 2 of 3"; raise the citation requirement in the generation prompts so artifacts ground themselves more densely; score against something other than section coverage on short sources; or set the bar per source size. This is an editorial-standard decision, not a bug — the formula is doing what it says.
+- [ ] Related, same root: **`mcq_question` provenance is batch-granular.** One score describes ~5 rows (confirmed 100% on prod: all 14,099 MCQ source documents have `max_distinct = 1` across 70,488 rows). The numbers are legitimate — each batch was scored against its source document exactly as intended — but a row's score is not a statement about that row. Worth deciding whether per-question scoring is wanted before the MCQ corpus grows further.
+
+## Derivative confidence re-score — CLOSED, do not run
+
+- [x] **Not worth running, and there is no corpus operation left to perform.** With `mcq_question` and `subject_outline` refused outright (#315 — neither is row-level reproducible), the dry run moves **7 rows out of 29,471**: 3 `flashcard`, 2 `essay_prompt`, 2 `doctrine_extract`.
+- [x] #313 fixed the scorer for everything generated **from now on**, which was the actual problem. The existing corpus barely moves under it.
+- [x] **#315 is a safety rail on a script that should sit unused**, not the last step before a run: `--apply` needs the flag, `RESCORE_ALLOW_WRITE=1`, and a passing reproduction check per type. If anyone reaches for this script later, those gates are why it will refuse rather than repeat the 46,081-row near-miss.
+- [x] The MCQ open question from Session 209 is answered and closed — see COMPLETED_TASKS.md Session 210.
+
+## Owner / billing (genuinely open)
+
+- [x] **Deploy api with #301** — DONE: api deployed + couponed checkout verified in prod 2026-07-15
+- [x] **#360: refund windows CONFIRMED by brick as written** — 7 days first paid period, 7 days unintended renewal, 3 business days to decide, 7–14 banking days to refund. Published at `/refund-policy`; Terms §5 re-checked and does not contradict them.
+- [x] **#360: no runtime override can resurrect the deleted stat tiles** — `site_contents` has 0 rows in production, so `getHomepageContent()` always falls back to `DEFAULT_HOMEPAGE_CONTENT`.
+- [x] **#360: "4.9★ App store" deleted** — same defect as the law-schools tile: a third-party rating for a listing that does not exist (0 App Store results, Play 404). Replaced alongside it by two prod-counted figures, 97 bar sittings and 68,000+ sections indexed.
+- [x] **#360: `/about` founding year added** — 2026.
+- [x] **#359: migration verified against the real production schema and data** — executed in a transaction and rolled back, NOT from this machine (Docker was down). All four `xendit_*` columns covered, all three `ALTER INDEX` names matched real index names, no dependent views, the three `repl_...` subscription ids survived the rename, `provider='xendit'` backfilled correctly. Cleared to merge as-is.
+- [ ] **#359 follow-up (needs its own data migration):** the vendor name still appears in persisted strings that PR would not touch — audit / `Payment.metadata` keys `xenditSessionId`, `xenditSubscriptionId`, `xenditCancelled`; `subscription_history.reason` text; and the admin API response field `xenditInvoiceId`. Neutralising them changes DB writes and an API response, so it was not part of a no-behaviour-change refactor.
+- [ ] **Merchant application rejected** — the gateway is not approved anywhere yet. #360 fixes the website proof; #359 makes the gateway swappable. The actual choice (reapply to Xendit vs PayMongo / Maya / Dragonpay) is still open and blocks everything below.
+- [ ] **Xendit go-live key swap** — deactivate the TEST plan FIRST, then swap env to live keys
+- [ ] **2026-08-10: verify the first anchor-date recurring charge** collects correctly (first cycle after the anchor-date fix)
+- [ ] **Annual interval check** — run one YEAR-interval checkout in sandbox; Xendit sessions doc lists interval DAY|WEEK|MONTH — if `YEAR` 400s, switch annual to `MONTH` × `interval_count: 12`
+- [ ] **Activate Cards** as a payment channel
+- [ ] **Edu-plan billing launch** — blocked on Xendit sandbox setup
+- [ ] Xendit webhook end-to-end test with test payment methods; confirm Nginx webhook route in prod (Session 191 leftover)
+- [ ] #326 deployed the `teamCollaboration` gate on `POST /organizations/:id/members/invite` (Team tier or higher). The internal LIBERTASIAN org `00000000-0000-0000-0000-000000000001` has NO subscription row, so `getPlanCode` resolves it to `free` and it can no longer send invites. Fix is a one-row `subscriptions` insert attaching the `team` plan to that org, or an `entitlement_overrides` admin_override on `teamCollaboration`. Prod-side task — brick/prod Claude, not local.
+- [ ] Same gate: `Bri Agcopra's Workspace` (2 members, no subscription) is in the same state. Decide whether it needs a plan or stays free.
+
+## Mobile (next EAS build / store readiness)
+
+- [ ] **Next EAS build / OTA must carry** (all JS-only): #289 annotations + highlights, #290 bookmark upgrade-alert copy, #297 anchor-offset fix + multi-annotation view sheet, #302 coupon input + Home search entry + Digests repair + Digests TabBar — no server deploy moves these. #302's api dependency is satisfied: the #301 api deploy went live 2026-07-15, so the Digests list params no longer 400. **Add #355** (pill nav on all eight tabs) and **#354's mobile half** (Digests tab querying the real search corpus — but that one is inert until the prod index rebuild runs)
+- [ ] **brick: device smoke of TestFlight build 8** — Google + Apple sign-in end-to-end (new user → onboarding, existing → tabs), cancel silent on both, Apple button absent on Android
+- [ ] **Play Store first upload (manual)** — Android .aab from EAS build `4d20323a` (versionCode 3) + store metadata + reviewer account before App Review; service-account submit path stays unused until the first manual upload
+- [ ] Store assets: replace placeholder `assets/icon.png` / `adaptive-icon.png` / `splash-icon.png` with branded assets; add `google-services.json` for Play submission
+- [ ] iOS spot-check of #285 stack headers — chevron style (`chevron-back` fallback) + swipe-back within groups on simulator/TestFlight
+- [ ] Mobile visual QA batch (#281/#284 rollouts): theme A (orange accent) ambient + owl contrast, reduce-motion → blobs AND owl static, DocumentReaderScreen ambient beneath zIndex 5 gradient + zIndex 10 header; native #285 headers are static Theme A cream — check acceptability under Theme B
+
+## Web visual QA (post-deploy eyeball batch — #280/#282/#283 merged, no tooling)
+
+- [ ] Home header owl position (moved right:5% → left:34%, tuned at 1440px) at common widths; dashboard h-14 `bar` variant live (only verified on an isolated preview page); glass ambient plainly visible on `/`, `/login`, dashboard; reduce-motion → everything static; owl still static on hero/signup illustrations
+- [ ] Receipt email (#277 merged + deployed): send a sandbox receipt and eyeball in Gmail (web + mobile app) and at least one Outlook client — table layout, dark header band, PAID pill, button
+
+## Staging re-enable prerequisites (#295 made deploys dispatch-only)
+
+- [ ] Provision staging VPS (Docker + Compose, repo at `/opt/libertasian`, `DATABASE_URL` in host env)
+- [ ] Set `STAGING_HOST` / `STAGING_USER` / `STAGING_SSH_KEY` (+ optional `STAGING_SSH_PORT`) on the GitHub `staging` environment (currently has ZERO secrets)
+- [ ] Author the missing `docker-compose.staging.yml` the deploy script references (absent from repo — latent blocker)
+- [ ] Then restore the `push: branches: [main]` trigger in `.github/workflows/deploy-staging.yml` (original trigger preserved in a comment)
+
+## Search overhaul (Phases A–C3 merged, deployed and live-verified; client UI + C4 remain)
+
+Ground truth below is from brick's Phase A production dry-run (2026-07-25) — measured on prod, not assumed.
+
+**Shipped / verified**
+- [x] Phase A (#306, `7166214`) — explicit mappings behind versioned aliases. Prod run: 17,135 docs → 85,977 entries in 3m24s. Filters confirmed live on `_v2`: `document_type=decision` 76,484 · `ponente=LOPEZ` 301 · `status=published` 29,166 · `gr_no_digits=246999` 4 · `ponente.text` match `hernando` 622 · `estafa` no-fuzzy 1,987 (was 4,040). Vector index repaired: `knn_vector` dim 384 HNSW, `index.knn` true, all 12,196 embeddings copied. Synonym rules parse against a real cluster — that risk is closed.
+- [x] Phase B (#307, squashed to `27538fd`) — query intent classification + tiered ranking.
+
+- [x] Phase C0 (#308, `b2d1da1`) — measured index-copy verification + `court_key` filter field.
+- [x] Phase C1 (#310, `3e06e64`) — pure `extractSearchableText` for all 11 `content_json` shapes + the `dynamic: 'strict'` derivatives mapping (BM25 only, no `knn_vector`, no field able to hold an MCQ answer key). The 11 shapes moved to `@libertasian/types`; web vitest now aliases that package to source.
+- [x] Phase C2 (#311, `d4077df`) — derivatives phase in the rebuild job (keyset, soft-delete-excluded, `_bulk` 500, per-item failures THROW) + `buildDerivativeVisibilityFilter` with `organization_id` **omitted** (never `''`) for null-org rows.
+- [x] Phase C3 (#312, squashed to `025e538`) — federated `POST /search` with `scope=documents|derivatives|all`; visibility filter is a required non-optional argument; derivative results uncached (org-dependent key); kinds concatenated, not globally ranked; highlight fields named explicitly + `sanitizeDerivativeSource`; derivative-arm failure degrades to document results + warning; `describeTopology` `_r<N>` false-mismatch fixed.
+- [x] **Phase C3 deployed and live-verified on prod (2026-07-26)** — api rebuilt and recreated from `025e538`; all four scope cases exercised against `POST /api/v1/search` with a minted RS256 JWT. Numbers in COMPLETED_TASKS.md Session 208.
+- [x] **Both prod index rebuilds verified (2026-07-26)** — job 3, four indices: docs 17,135/17,135 → 85,977 sections, `vectorsCopied: 12196`, uploads 2, derivatives 99,994/99,994, `aliasSwapped: true`, `aliasesSkipped: []`, `court_key=supreme_court` exactly 7,443.
+
+**What is actually reachable — read this before scoping Phase D**
+
+Deploying the federated surface did **not** make ~100k derivatives reachable. Only the **13,017** `public_editorial` rows match a visibility branch. The other **86,977** are `visibility='private'` with `organization_id` NULL, so they match **neither** branch of `buildDerivativeVisibilityFilter` — not the public branch (wrong visibility) and not the org branch (no org to own them). They are indexed and invisible to every caller, which is the filter working as designed, not a bug to fix.
+
+- [ ] **Question for brick: are those 86,977 private null-org rows a generation-pipeline gap or intended drafts?** This is a product decision, not an engineering task. If the generator was supposed to mark them `public_editorial` on approval, that is a pipeline defect and search recall is ~13% of what anyone assumes. If they are deliberate drafts, the corpus is correct and only the expectation needs fixing. Nothing downstream should be scoped until this is answered.
+
+**Phase C — remaining**
+- [ ] **No client sends `scope`** — web and mobile search UIs still query documents only. Federated results need a UI decision (separate "Study materials" section vs a filter chip) before they reach users. Kind labels and counts are already in the response `meta`.
+- [ ] **`limit` is per corpus, not per response.** `federatedSearch` applies it to each arm, so `scope=all&limit=10` returns **20** items — 10 documents then 10 derivatives. Intentional: two concatenated BM25 lists cannot share one limit without one corpus silently starving the other. Phase D UI must render two sections from `meta.counts` and must **not** assume `items.length <= limit` — a client that slices to `limit` would drop the entire derivative section.
+- [ ] **`content_plain_text` is still dead weight.** It is written from the create/update DTO and `null` in every generation path; C1's extractor is used only by the indexer. Persist the extraction on write, then backfill — real backfill size is **13,017 rows** (`public_editorial` + `approved`), not 99,994.
+- [ ] **E2E cross-tenant tests must seed synthetic org-scoped rows.** `organization_id` is NULL on 100% of prod derivative rows, so no production data exercises the org branch. C2/C3 unit specs evaluate the DSL against synthetic documents; a real seeded E2E pass is still owed.
+- [ ] **C4 — cross-corpus fusion.** The two result lists are concatenated because BM25 scores from indices with different mappings and term statistics are not comparable. Globally ranking them needs a reranker over the merged set → blocked on the same `RAG_RERANKER_URL` deployment as the kNN/cross-encoder work below.
+- [ ] Digests + `bar_exam_questions` federation: scope unchanged from the original plan, not started.
+
+## Parked PRs (decide: revive or close — all verified OPEN 2026-07-13; nothing closed)
+
+- [ ] #2 chore(ingestion): align seed defaults with Option A tiered schedule
+- [ ] #39 chore(infra): document Brevo as SMTP provider
+- [ ] #99 feat(admin): pipeline-ops trigger page + digests list with status tabs
+- [ ] #117 feat(mobile): design system Phase 1 — two-theme tokens, 14 primitives, 9 screen components
+- [ ] #236 chore(api): Polly voice-spike script
+
+## Planned work (not started)
+
+- [ ] **Session 203 — Mobile Design System Phase 2**: wire the 9 presentational screens into real routes (onboarding, login, signup, home, library, reader, digest detail, search-as-own-tab, profile). TabBar IA decision pending — **question for brick:** 7 existing tabs vs design's 4 (Read/Library/Search/Me): drawer items or deep-link-only for the other 5? Open design questions: drop-cap approach on Android, expo-blur for reader top buttons. Phase 3+: BottomSheet primitive (gesture-handler recipe in memory), dark-mode variants, real images. Verification: EAS preview APK + max 2 visual iteration rounds. (Foundations shipped as PR #117 — parked above.)
+
+## Backlog (genuine follow-ups, no deadline)
+
+- [ ] Adopt `emailLayout()` shell in the other 11 notification templates (verify-email, reset-password, password-changed, member-invite, subscription-confirmation, subscription-cancelled, payment-failed, renewal-reminder, budget-alert, announcement, blog-notification) — #277 follow-up
+- [ ] Resend-verification rate limiting (max 3 / 15 min per email, Redis) — currently global throttle only; backfill `EmailPreference` rows for existing users (Session 186)
+- [ ] Spec-file TS error cleanup (Session 184): coupon (~539), promotion (~384), promotion-rule-engine (~209), research-workspaces (~152), pleadings (~129), ~35 other spec files (~987)
+- [ ] Mobile `tsc --noEmit` React 19 @types cleanup (37 errors on main: Stack/Tabs/LinearGradient/Svg)
+- [ ] Congress.gov.ph Cloudflare Turnstile: pick approach — (a) Playwright/headless, (b) ingest RAs via Official Gazette, (c) direct `docs.congress.hrep.online/legisdocs/ra_{congress}/RA{number}.pdf` URLs (Session 193)
+- [ ] Enhancement wishlist (Sessions 200/202, deduped): document browser view toggle + sort options; search cards aware of existing digests ("View" vs "Generate"); stale-data indicator on digest detail; digest list infinite scroll; verify `@react-native-picker/picker` installed for classification override; admin derivatives real-time job status; study stats weekly sparkline; `codal_section` resource navigation; MCQ keyboard navigation; offline syllabus cache (SQLite)
+
+## Needs verification (could NOT be verified against ground truth today — do not treat as done, do not treat as fact)
+
+- [ ] #286 `apple_id` migration (`20260711120000_add_user_apple_id`): has `prisma migrate deploy` run in prod/staging? Also: local dev DB drift (applied migration `20260505013309` missing from directory) — reset vs reconcile still undecided
+- [ ] #254 (2026-07-02): staging/dev `prisma migrate deploy` for the allowlist migration + RBAC Redis cache flush where warm; #250–#253 live verifications (admin sidebar/settings gating on prod; #250's revocation itself WAS live-verified 2026-07-02)
+- [ ] #276 checkout-flow device QA (bounce → deep-link return, AppState safety net, both themes) — may have been implicitly covered by later live billing verification
+- [ ] Session 193 ingestion: worker-service image rebuilt since the autodiscover fix? prod source endpoint URLs re-seeded (`seed-sources.ts`)? fetchers spot-tested?
+- [ ] Sessions 185/186 Prisma migrations applied in prod (`add_email_preferences`, site-content)? end-to-end tests of verify-email OTP / preferences / announcements / homepage CMS
+- [ ] Session 191: lifecycle processor e2e (create event with past `scheduledAt`, verify cron transitions)
+
+## Blocked — requires external resources (unchanged)
+
+| Item | Blocker |
+|---|---|
+| Embedding service kNN + cross-encoder reranker | Deploy models + set `RAG_EMBEDDING_SERVICE_URL` / `RAG_RERANKER_URL` (BM25-only + RRF fallback active) |
+| Production VPS deployment | VPS provisioning (compose/nginx/monitoring/backup/GH Actions all ready) |
+| OpenSearch index creation | Running OpenSearch instance (auto-creates on module init) |
+| Qdrant migration / multi-region / white-label | Scale, budget, enterprise demand (Phase 5+) |
+
+Deferred PRD decisions (Section 16): bilingual/Taglish queries (P2), on-device OCR preview, public API marketplace, AI pleading templates (legal risk).
+
+## Known issues / workarounds (non-blocking)
+
+- React 18/19 type conflict (mobile 18 / web 19): `typescript.ignoreBuildErrors` in next.config.ts; tsc runs separately in CI
+- OneDrive path casing on Windows: `force-dynamic` root layout workaround; cosmetic webpack warnings remain
+- Local gradle debug builds: expo-av CMake fails on arm64 (`build.ninja still dirty`); use `-PreactNativeArchitectures=x86_64` for emulator builds
+
+## Session 194 — iOS screenshots: remaining work + defects found
+
+**Submission is still blocked. Submit for Review remains unpressed.**
+
+### Blocking the 1.0 submission
+
+- [ ] **Fix AI answer streaming on iOS.** `stream-ai-answer.ts:152` — RN `fetch`
+      exposes no `response.body`, so every AI answer fails with the misleading
+      `Request failed with status 201`. Use `expo/fetch` (SDK 52 ships streaming)
+      or an XHR/EventSource fallback, and stop reporting the status code for a
+      body-missing failure. Affects search AI summary + reader assistant (#371).
+      **A reviewer testing the listing's headline feature will hit this.**
+- [ ] **Screen 04 `04-ai-assistant` cannot be captured** until the above is fixed.
+- [ ] **Screen 06 `06-offline-sync` describes a screen that does not exist.**
+      No sync/offline entry in settings; offline lives on codal cards + the reader
+      download control. Either build the screen, or re-point the slug/caption in
+      `screenshots.config.json` at something real.
+- [ ] **iPad pass not run.** No `ipad-13` frames. `supportsTablet: true` means ASC
+      requires at least one iPad screenshot. App is already installed on the
+      iPad Pro 13" (M4) sim; genuine iPad UI confirmed.
+- [ ] **Upload to ASC + walk the §7 re-verification checklist.** Nothing uploaded;
+      the old mockup set is still live in both slots.
+- [ ] **Confirm the 6.9" accepted dimensions at the ASC upload slot.** Apple's help
+      page and third-party refs disagree (1260×2736 vs 1320×2868). We ship
+      1320×2868; fallback is 1290×2796 via `screenshots.config.json` + re-frame.
+
+### Defects found while capturing (not blocking, but visible to users)
+
+- [ ] **Codal reader "Listen" pill wraps to `Liste`/`n`** across long section
+      headings and collides with the heading. Present in the shipped `03` frame.
+- [ ] **Codal section segmentation is off by one** — every `Section N.` heading is
+      paired with `Section N+1.`'s body, with sentences duplicated verbatim.
+      Visible throughout Articles II–IV of the 1987 Constitution.
+- [ ] **`study/codals/[subject]` shows "Nothing here yet"** for Political law while
+      the Codal Reader index reports 229 documents for that subject.
+- [ ] **`libertasian://settings` lands on the Me tab, rendering the account holder's
+      full name and email** — any capture of that screen ships PII.
+- [ ] **Study screen prints a literal `·` escape** instead of `·`
+      ("0% readiness · 0/289 topics").
+- [ ] **Digest detail hero placeholder** — replace `<Photo label="hero · digest" />`
+      with a real asset, or drop the label and make it a deliberate colour field.
+
+## Status history (from the former root PENDING_TASKS.md)
+
+> Last updated: 2026-09-13 (**new, top of the list: `fix/email-auth-invite-links` is merged, and what is left is one thing the test suite structurally cannot do — send a real email and click it.** Four dead links are repaired and organization invites are redeemable for the first time, but **every `pending_invites` row written before this deploy was emailed without its raw token, which exists nowhere else** — only the hash was stored, so those invites cannot be repaired and have to be re-issued. Also open: whether an already-registered invitee should have to accept at all (today they are added to the org outright, with no consent step), and widening the guard spec if a second module ever starts building email links. See the section directly below.)
+>
+> Previously: 2026-09-07 (**new, top of the list: PRs #462 and #463 are MERGED to `main`, and what is left is a build, a submission and one thing only Apple can do.** The 2.1(b) cause is settled — StoreKit returned no products on the reviewer's device because it had no Sandbox Apple Account signed in, and the client cached that empty answer as a success for five minutes. The client no longer can: an empty result throws and retries, it falls back to asking the store directly, the screen carries a **Try again**, and the SDK is configured and prefetched at app launch instead of at purchase-screen mount. The App Review notes now state the sandbox-account requirement. **What remains is EAS build 31, `eas submit`, and the review itself** — plus one thing we cannot verify from here: whether the reviewer signs in a sandbox account this time. If they do not, the new telemetry (`purchase_surface_unavailable` with a machine reason) is what will tell us, which is the whole reason it exists. See the section directly below.)
+>
+> Previously: 2026-09-01 (**new, top of the list: PR #454 `fix/auth-response-org-fields` is OPEN and unmerged.** It restores `organizationId`/`organizationRole` to all five sign-in responses, which is what unblocks the RevenueCat SDK on mobile — the purchase screen currently reads "Plans are not available right now" for every user on every build-29 session. **It is server-only and cuts no EAS build:** existing installed clients start working the moment the API deploys, which is the whole reason it was done this way. Nothing else about billing is touched. See the section directly below for what is left. Also newly documented there: **the local dev DB cannot run the e2e suite** — it is 9 migrations behind and every request 500s on a missing `users.apple_id`.)
+>
+> Previously: 2026-08-19 (**the Android app is IN REVIEW with Google, and the only thing left that anyone can act on is tester recruiting.** Publishing overview reads **"Changes in review"** — the submitted edit carries Closed testing – Alpha **1.0.0 → Start full rollout** (Philippines), the "Libertasian Testers" email list, the en-US listing, the Education category and every App content declaration. **Managed publishing is OFF, so approval auto-publishes — there is no second click pending.** First review of a brand-new app runs **1–7 days**, with no progress signal; an unchanged "Changes in review" is expected, not a stall. 🛑 **Do not edit anything mid-review** — any save creates a new pending item and can restart the queue. What actually remains: (1) **recruit testers — the list has 7, the rule needs 12 opted in *continuously* for 14 days, target 15+ for headroom; the tracker still reads 0 opted in and day 0**, and Google's review sits in FRONT of that clock, so recruit in parallel rather than after; (2) **after approval, flip `submit.production.android.releaseStatus` in `apps/mobile/eas.json` back to `"completed"`**, or every future submit silently stops at draft. Three gates that were never in any checklist are now documented in `store/PLAY_SUBMISSION_RUNBOOK.md`: **Advertising ID** (step 0, blocks any Android-13+ rollout), **signing-key registration** (step 0b, hard-blocks Save on the release), and the `releaseStatus` default. `store/DATA_SAFETY.md` is now aligned to what is actually declared, with the reasoning in-doc.)
+>
+> Previously: 2026-08-14 (**new, top of the list:** `feat/reranker-service` closes search-epic C4 — the retrieval stack is now structurally complete (BM25 + kNN + cross-encoder reranking). **Everything remaining is measurement and deployment, not construction.** The reranker needs `docker compose up -d` for a NEW service, and `abstention_score_threshold` moved 0.01 → 0.0004 on measured scores that must now be confirmed against prod traffic. See the section directly below.)
+>
+> Previously: 2026-08-14 (**was top of the list:** `fix/rag-embedding-client` made retrieval genuinely hybrid — the kNN leg runs. It did not fix ranking; that was C4, now shipped.)
+>
+> Previously: 2026-08-14 (**was top of the list:** `fix/knn-field-name` corrected three OpenSearch field-name mismatches — but the kNN leg still would not run, because nothing computed a query embedding. Resolved by `fix/rag-embedding-client`.)
+>
+> Previously: 2026-08-13 (**was top of the list:** `fix/answer-abstention-and-placeholders` stops the AI assistant presenting non-answers as confident answers — but it does **not** make the answers good. Retrieval still returns a property dispute for "bill of rights"; what changed is that the app now says so instead of badging it "high confidence". The reranker (search-epic C4) is the actual fix and is still unshipped. See the section directly below.)
+>
+> Previously: 2026-08-08 (**was top of the list:** the iOS 1.0 submission is assembled, validated and sitting one button from App Review with build 15 attached — **and it must not be submitted yet.** The uploaded screenshots are mockups, not app captures (Guideline 2.3.3), and replacing them needs `xcrun simctl`, i.e. a Mac. That is the only outstanding item. See the section directly below and `apps/mobile/store/IOS_SCREENSHOT_CAPTURE.md`.)
+>
+> Previously: 2026-08-04 (`fix/rag-opensearch-tls-auth` — the RAG service's OpenSearch client had neither credentials nor a TLS setting while prod serves https + self-signed + basic auth, and the client turned every failure into an empty hit set. Fixed locally; **the prod confirmation is an op, and it is the only thing that proves any of it.** See the section directly below.)
+>
+> Previously: 2026-08-03 (**was top of the list:** three PRs are open and CI-green and none is merged — **#353** digest-tab visibility, **#354** the case-digest search corpus, **#355** the mobile pill nav. #354 does nothing for users until an **index-rebuild job runs on prod after deploy**; #355 is JS-only and rides the next EAS build or OTA. See the section directly below.)
+>
+> Previously: 2026-08-01 (**new, top of the list:** the store-compliance epic — 4 PRs standing between a submitted-but-unreviewed app and a pass. **PR 1 (#343) is up:** self-serve account deletion, which Apple 5.1.1(v) and Play both require and which did not exist. PRs 2–4 (in-app delete UI, removing Apple 3.1.1 purchase entry points, Android 15 edge-to-edge + ASC screenshot sizes) follow in order. **No EAS build is cut by any of them.**)
+>
+> Previously: 2026-07-29 (#336 OPEN — the flat 300 s synthesis timeout made a 2,238-char digest permanently unsynthesizable and burned 15 min of 8-core CPU proving it three times. Budget is now length-proportional, retries are classified, and the failure reason is persisted. Plus a **separate** CUDA image for the rented-GPU tier-1 backfill and bearer auth on the TTS hop, both no-ops for prod. **Nothing is deployed and no flag is flipped.** See the audio section.)
+>
+> Previously: 2026-07-29 (#334 OPEN — the Kokoro tts-service ran on prod for the first time and **synthesis did not work at all**: a missing spaCy model made every `/synthesize` return 500 while `/health` stayed green. Fixed and verified offline, plus two capacity constants that were wrong by ~3.7x, and audio object storage routed to Cloudflare R2 behind an unset-by-default env var. **Nothing is deployed and no flag is flipped.** See the audio section.)
+>
+> Previously: 2026-07-27 (**was top of the list:** #322 MERGED `5addc51` — an unreachable auto-publish gate had kept 76% of the corpus out of search since 2026-05-30. **Dry run over prod is in: 11,561 of 13,093 drafts would publish (88.3%), all held by the citation gate alone; 1,532 to review, 0 quarantine.** The `--apply` is the outstanding prod op. #321 opened for the resolver underneath it, #323 for the 1,531 rows still blocked on a null `court`. Previously: #319 MERGED `d1c3343` — essays were storing fabricated section IDs, 59.2% of 67,515 citation refs resolved to no section row, and the essay scorer counted a non-empty list without checking it. #317 merged, #318 merged with the MCQ row struck, #316 closed, #320 opened for the 170 published essays. **#319's acceptance evidence is still outstanding: `essay_generation.v2` has no rows yet, so the fix is deployed but unverified.** See the top section.)
+>
+> Previously: 2026-07-26 (search Phases A–C3 all merged: #306 #307 #308 #310 #311 #312; C3 squashed to `025e538`, deployed and live-verified on prod. Remaining search work is a client UI for `scope` and C4 fusion behind the reranker — but see the reachability note first: only 13,017 of 99,994 derivatives match any visibility branch. Also new: #313 fixed the confidence scorer, #315 gated the re-score script, and the re-score itself is CLOSED as not worth running — 7 rows of 29,471 move. What replaces it is a product decision about what the 0.70 editorial bar should mean; see the top section.)
+
+Verification rules used for this prune: every PR reference checked with `gh pr view <n> --json state,mergedAt`; every branch reference checked against `git branch -r --no-merged origin/main` after `git fetch --prune`. Items that could not be verified were MOVED to "Needs verification", not deleted.
 
 ## Before Merging (from OpenAI API Integration)
 - [ ] Run `pnpm --filter api prisma:migrate:dev --name add_ai_settings` to create the actual migration
