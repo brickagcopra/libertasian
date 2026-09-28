@@ -38,6 +38,18 @@
 
 ---
 
+## 2026-09-27 — Deep Research overloaded the reranker and degraded /answer for everyone
+
+`fix/rag-rerank-overload`. Measured on prod 2026-09-28: reranker-service scores ONE request at a time (~12 s per 30–40 passages on CPU) against a 20 s client budget. Deep Research reranked every sub-query (up to 3 in flight) and then the merged pool again, so the 2nd and 3rd calls timed out in rag-service while the reranker kept scoring them anyway. Queue waits reached 540 s, and every /answer in that window fell back to RRF (`reranker:unreachable`).
+
+- **One rerank per Deep Research question** (was 5 with a 3-sub-query plan, up to 7 with 5). `retrieve_ranked(..., rerank=False)` returns the fused RRF candidates. `retrieve_all` uses it, and only the merged pool (`RAG_DEEP_RESEARCH_MAX_CANDIDATES`, default 40) is reranked. Abstention still reads the raw top score of that single rerank.
+- **rag client gate:** a process-wide semaphore around reranker HTTP calls (`RAG_RERANKER_MAX_INFLIGHT`, default 1). The wait counts against `reranker_timeout`. If the budget runs out while waiting, the call falls back to RRF and is never sent.
+- **reranker-service deadline:** the client sends `X-Rerank-Deadline` (epoch ms = now + remaining budget). A request that reaches the model after that deadline, or whose client has disconnected, gets a 503 and the model does not run.
+- **Eval runbook:** `--concurrency 1` for both endpoints on prod, plus `wait_reranker_idle` between passes.
+- Tests: rag-service 1117 passed. The 40 errors in `test_routers.py` also occur on main (a local async-fixture issue). reranker-service 61 passed.
+
+---
+
 ## 2026-09-13 — three transactional emails linked to routes that were never there
 
 Branch `fix/email-auth-invite-links`. Verified against the live site before any

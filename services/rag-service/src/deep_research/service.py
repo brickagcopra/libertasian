@@ -4,14 +4,16 @@ Pipeline (each stage is announced on the SSE stream as a ``stage`` event):
 
 1. **planning**  — a small model splits the question into 3-5 sub-queries.
 2. **searching** — every sub-query (and the question itself) goes through the
-   shared `retrieve_ranked` path, at most 3 in flight. Alongside, any
+   shared `retrieve_ranked` path WITHOUT the cross-encoder (``rerank=False``,
+   fused RRF candidates), at most 3 in flight. Alongside, any
    provision named precisely ("Article 1318 of the Civil Code", "Rule 113
    Section 5") is read from PostgreSQL (`pinpoint.py`).
 3. **ranking**   — the per-query results are merged and deduped by section,
    capped at 40 candidates and per document (2 for a decision, 6 for a
    statute), the pinpointed sections are put in front, then reranked ONCE
-   against the original question. Abstention reads the RAW top rerank score,
-   exactly as /answer does after #504.
+   against the original question — the only rerank call a question makes.
+   Abstention reads the RAW top rerank score, exactly as /answer does after
+   #504.
 4. **writing**   — the writer returns structured JSON whose citations are
    ``{source_id: "S3", quote}`` pairs. It never emits document metadata.
 5. **verifying** — (a) the label must be one of S1..Sn, (b) the quote must be
@@ -416,7 +418,14 @@ async def verify_draft(
 
 
 async def retrieve_all(queries: Sequence[str]) -> tuple[list[RankedPassages], list[str]]:
-    """`retrieve_ranked` for every query, at most N in flight.
+    """`retrieve_ranked` for every query, at most N in flight, NOT reranked.
+
+    Sub-queries return fused RRF candidates; the merged pool gets the one
+    rerank in `run_deep_research`. Reranking each sub-query is what took the
+    reranker down on prod 2026-09-28: it scores one request at a time (~12s per
+    30-40 passages on CPU), so 3 in flight meant the 2nd and 3rd timed out
+    here while the reranker kept scoring them, its queue reached 540s, and
+    every /answer in that window fell back to RRF.
 
     A failing sub-query degrades the run rather than failing it; only when
     every one fails is there nothing to research from.
@@ -425,7 +434,9 @@ async def retrieve_all(queries: Sequence[str]) -> tuple[list[RankedPassages], li
 
     async def one(query: str) -> RankedPassages:
         async with semaphore:
-            return await retrieve_ranked(query, top_k=settings.deep_research_subquery_top_k)
+            return await retrieve_ranked(
+                query, top_k=settings.deep_research_subquery_top_k, rerank=False
+            )
 
     outcomes = await asyncio.gather(*(one(q) for q in queries), return_exceptions=True)
     ranked: list[RankedPassages] = []

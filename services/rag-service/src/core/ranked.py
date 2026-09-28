@@ -79,6 +79,7 @@ async def retrieve_ranked(
     document_id: str | None = None,
     intent: QueryIntent | None = None,
     candidate_k: int = DEFAULT_CANDIDATE_K,
+    rerank: bool = True,
 ) -> RankedPassages:
     """Retrieve and rank passages for ``query`` through the full pipeline.
 
@@ -90,6 +91,13 @@ async def retrieve_ranked(
         intent: The classified intent, when the caller already has it (it is
             also returned). Classified from ``query`` when omitted.
         candidate_k: Size of the fused candidate pool handed to the reranker.
+        rerank: False skips the cross-encoder and returns the top ``top_k`` of
+            the fused candidates in RRF order, unboosted. For callers that merge
+            several queries' candidates and rerank the merged pool ONCE (Deep
+            Research): reranker-service scores one request at a time, so a
+            rerank per sub-query queues every other caller behind it.
+            ``top_rerank_score`` is then the raw RRF head, and no reranker
+            degradation marker is added — skipping it was the caller's choice.
     """
     resolved_intent = intent if intent is not None else classify_intent(query)
 
@@ -103,6 +111,16 @@ async def retrieve_ranked(
         embedding=embedding,
         filter_terms=_filter_terms(filters, document_id),
     )
+
+    if not rerank:
+        fused = sorted(search_result.passages, key=lambda p: p.score, reverse=True)
+        return RankedPassages(
+            passages=fused[:top_k],
+            degraded_legs=list(search_result.degraded_legs),
+            top_rerank_score=fused[0].score if fused else None,
+            candidates=len(search_result.passages),
+            intent=resolved_intent,
+        )
 
     # `degraded_legs` says whether the cross-encoder actually ran; RRF order is
     # a fallback, not an equivalent. The authority boost is applied inside

@@ -11,6 +11,7 @@ service rejects an unauthenticated call, and in rag-service's
 
 from __future__ import annotations
 
+import time
 from typing import Any
 from unittest.mock import patch
 
@@ -139,3 +140,80 @@ class TestHealth:
         with patch("src.rerank.service._get_model") as loader:
             client.get("/health")
         loader.assert_not_called()
+
+
+class TestAbandonedRequests:
+    """A request nobody is waiting for any more must not run the model.
+
+    On prod 2026-09-28 rag-service timed out on queued reranks while this
+    service went on scoring them one at a time; the queue reached 540s and
+    every live /answer behind it fell back to RRF.
+    """
+
+    def test_expired_deadline_is_503_without_running_model(
+        self, client: Any, no_auth: Any, mock_model: Any
+    ) -> None:
+        expired = str(int(time.time() * 1000) - 1)
+        with patch("src.rerank.service._get_model", return_value=mock_model) as loader:
+            response = client.post(
+                "/rerank", json=_payload(), headers={"X-Rerank-Deadline": expired}
+            )
+        assert response.status_code == 503
+        assert response.json()["detail"] == "deadline_expired"
+        loader.assert_not_called()
+        mock_model.predict.assert_not_called()
+
+    def test_future_deadline_is_scored(
+        self, client: Any, no_auth: Any, mock_model: Any
+    ) -> None:
+        future = str(int(time.time() * 1000) + 20_000)
+        with patch("src.rerank.service._get_model", return_value=mock_model):
+            response = client.post(
+                "/rerank", json=_payload(), headers={"X-Rerank-Deadline": future}
+            )
+        assert response.status_code == 200
+        mock_model.predict.assert_called_once()
+
+    def test_no_deadline_header_is_scored(
+        self, client: Any, no_auth: Any, mock_model: Any
+    ) -> None:
+        """Callers that predate the header keep working."""
+        with patch("src.rerank.service._get_model", return_value=mock_model):
+            response = client.post("/rerank", json=_payload())
+        assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_disconnected_client_skips_model(self, mock_model: Any) -> None:
+        from src.rerank.service import RequestAbandonedError, rerank
+
+        async def gone() -> bool:
+            return True
+
+        with (
+            patch("src.rerank.service._get_model", return_value=mock_model),
+            pytest.raises(RequestAbandonedError) as exc,
+        ):
+            await rerank("q", [("a", "text")], is_disconnected=gone)
+        assert exc.value.reason == "client_disconnected"
+        mock_model.predict.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_deadline_checked_after_queue_wait(
+        self, mock_model: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A request that expires WHILE queued is skipped once it reaches the model."""
+        import asyncio
+
+        from src.rerank import service as svc
+
+        monkeypatch.setattr(svc, "_model_semaphore", None)  # bind to this loop
+        gate = svc._get_semaphore()
+        await gate.acquire()  # another request holds the model
+        deadline = int(time.time() * 1000) + 30
+        with patch("src.rerank.service._get_model", return_value=mock_model):
+            task = asyncio.create_task(svc.rerank("q", [("a", "t")], deadline_ms=deadline))
+            await asyncio.sleep(0.06)
+            gate.release()
+            with pytest.raises(svc.RequestAbandonedError):
+                await task
+        mock_model.predict.assert_not_called()

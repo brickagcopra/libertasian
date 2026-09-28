@@ -21,7 +21,10 @@ cross-encoder is the fix; reweighting RRF is not.
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -43,6 +46,36 @@ _MARKER_FAILED = "reranker:failed"
 # choice that holds for 100% of requests, so alerting on it per request would
 # emit one Sentry event per query forever and bury real failures.
 _reranker_unconfigured_warned = False
+
+# Header carrying the caller's deadline to reranker-service, as epoch
+# milliseconds. reranker-service answers 503 without running the model when a
+# request only reaches the model after this instant — the caller has already
+# fallen back to RRF by then, so scoring it would only delay everyone queued
+# behind it.
+DEADLINE_HEADER = "X-Rerank-Deadline"
+
+# The process-wide gate on reranker HTTP calls, per event loop. An
+# asyncio.Semaphore binds to the loop it first waits on; keying by loop keeps
+# one gate per running service (uvicorn has one loop) while letting tests that
+# each run their own loop get a fresh one instead of a RuntimeError.
+_inflight: tuple[asyncio.AbstractEventLoop, asyncio.Semaphore] | None = None
+
+# Seconds of the timeout budget left for the HTTP call once a gate slot is
+# held. Set by `rerank_passages` around `_call_reranker`; a ContextVar rather
+# than a parameter so `_call_reranker` keeps its (url, query, passages)
+# contract. Unset means a direct call, which gets the whole budget.
+_remaining_budget: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "rerank_remaining_budget", default=None
+)
+
+
+def _inflight_gate() -> asyncio.Semaphore:
+    """The semaphore bounding concurrent reranker calls from this process."""
+    global _inflight  # noqa: PLW0603
+    loop = asyncio.get_running_loop()
+    if _inflight is None or _inflight[0] is not loop:
+        _inflight = (loop, asyncio.Semaphore(max(1, settings.reranker_max_inflight)))
+    return _inflight[1]
 
 
 def _warn_reranker_unconfigured() -> None:
@@ -101,7 +134,31 @@ async def rerank_passages(
         _warn_reranker_unconfigured()
         return _fallback_outcome(passages, top_k, _MARKER_NOT_CONFIGURED)
 
+    # One budget covers the wait for a gate slot AND the HTTP call. Without the
+    # gate, a burst of concurrent reranks (Deep Research sent three at once)
+    # all reached reranker-service, which scores one at a time: the late ones
+    # timed out here, were scored there anyway, and queued every /answer behind
+    # work nobody was waiting for any more.
+    budget = float(settings.reranker_timeout)
+    started = time.monotonic()
+    gate = _inflight_gate()
     try:
+        await asyncio.wait_for(gate.acquire(), timeout=budget)
+    except TimeoutError:
+        logger.error(
+            "Reranker gate (max %d in flight) not free within the %ss budget — "
+            "falling back to RRF without sending the request",
+            settings.reranker_max_inflight,
+            settings.reranker_timeout,
+        )
+        return _fallback_outcome(passages, top_k, _MARKER_UNREACHABLE)
+
+    token: contextvars.Token[float | None] | None = None
+    try:
+        remaining = budget - (time.monotonic() - started)
+        if remaining <= 0:
+            return _fallback_outcome(passages, top_k, _MARKER_UNREACHABLE)
+        token = _remaining_budget.set(remaining)
         reranked = await _call_reranker(reranker_url, query, passages)
     except httpx.TimeoutException:
         logger.error(
@@ -131,6 +188,10 @@ async def rerank_passages(
             exc_info=True,
         )
         return _fallback_outcome(passages, top_k, _MARKER_FAILED)
+    finally:
+        if token is not None:
+            _remaining_budget.reset(token)
+        gate.release()
 
     # Raw cross-encoder order first: its head is the abstention signal, which
     # must stay the unboosted relevance score.
@@ -179,7 +240,17 @@ async def _call_reranker(
     cross-encoder's raw logit so this holds. That matters beyond presentation:
     `check_abstention` compares the top passage's ``rerank_score`` against
     `abstention_score_threshold`.
+
+    The request carries ``X-Rerank-Deadline`` (epoch ms) = now + the budget
+    left, and the HTTP timeout is that same remainder, so both ends agree on
+    when the answer stops being wanted.
     """
+    remaining = _remaining_budget.get()
+    timeout = float(settings.reranker_timeout) if remaining is None else remaining
+    headers = {
+        **_internal_headers(),
+        DEADLINE_HEADER: str(int((time.time() + timeout) * 1000)),
+    }
     payload: dict[str, Any] = {
         "query": query,
         "passages": [
@@ -188,11 +259,11 @@ async def _call_reranker(
         ],
     }
 
-    async with httpx.AsyncClient(timeout=settings.reranker_timeout) as client:
+    async with httpx.AsyncClient(timeout=timeout) as client:
         response = await client.post(
             f"{reranker_url}/rerank",
             json=payload,
-            headers=_internal_headers(),
+            headers=headers,
         )
         response.raise_for_status()
         data: dict[str, Any] = response.json()

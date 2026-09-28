@@ -343,7 +343,9 @@ class TestInternalAuthHeader:
             mock_client.return_value = instance
             await _call_reranker("http://reranker:8002", "q", [_passage("p1")])
 
-        assert captured["headers"] == {"X-Internal-Api-Key": "secret-key"}
+        assert captured["headers"]["X-Internal-Api-Key"] == "secret-key"
+        # The only other header is the caller's deadline (TestInflightGate).
+        assert set(captured["headers"]) == {"X-Internal-Api-Key", "X-Rerank-Deadline"}
 
     def test_header_name_matches_worker(self) -> None:
         """One spelling across the fleet — worker-service set the precedent."""
@@ -495,3 +497,145 @@ def _aret(value: Any) -> Any:
         return value
 
     return _inner
+
+
+# ===========================================================================
+# In-flight gate and deadline budget (prod 2026-09-28: Deep Research sent three
+# reranks at once to a one-at-a-time reranker; queue waits reached 540s)
+# ===========================================================================
+
+
+class TestInflightGate:
+    @pytest.fixture(autouse=True)
+    def _reranker(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "reranker_url", "http://reranker:8002")
+        monkeypatch.setattr(settings, "reranker_max_inflight", 1)
+
+    @pytest.mark.asyncio
+    async def test_wait_over_budget_falls_back_without_http_call(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The gate wait spends the budget; an exhausted budget never sends."""
+        from src.config import settings
+        from src.core import reranking
+
+        monkeypatch.setattr(settings, "reranker_timeout", 0.05)
+        gate = reranking._inflight_gate()
+        await gate.acquire()  # another rerank holds the only slot
+        try:
+            with patch("src.core.reranking.httpx.AsyncClient") as client_cls:
+                outcome = await rerank_passages(
+                    "q", [_passage("a", 0.3), _passage("b", 0.9)], top_k=2
+                )
+        finally:
+            gate.release()
+
+        client_cls.assert_not_called()
+        assert outcome.degraded is True
+        assert outcome.degraded_legs == ["reranker:unreachable"]
+        assert [p.id for p in outcome.passages] == ["b", "a"]  # RRF order
+        # The timed-out wait must not leak a slot.
+        assert not gate.locked()
+
+    @pytest.mark.asyncio
+    async def test_calls_are_serialised(self) -> None:
+        import asyncio
+
+        in_flight = 0
+        peak = 0
+
+        async def slow(url: str, query: str, passages: list[Passage]) -> list[Passage]:
+            nonlocal in_flight, peak
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await asyncio.sleep(0.01)
+            in_flight -= 1
+            return [p.model_copy(update={"rerank_score": 0.5}) for p in passages]
+
+        with patch("src.core.reranking._call_reranker", side_effect=slow):
+            outcomes = await asyncio.gather(
+                *(rerank_passages(f"q{i}", [_passage("a")], top_k=1) for i in range(3))
+            )
+
+        assert peak == 1
+        assert all(not o.degraded for o in outcomes)
+
+    @pytest.mark.asyncio
+    async def test_sends_deadline_and_uses_remaining_budget_as_timeout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import time
+
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "reranker_timeout", 20)
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"results": [{"id": "a", "score": 0.9}]}
+        mock_response.raise_for_status = lambda: None
+
+        before_ms = time.time() * 1000
+        with patch("src.core.reranking.httpx.AsyncClient") as client_cls:
+            client = AsyncMock()
+            client.post.return_value = mock_response
+            client.__aenter__ = AsyncMock(return_value=client)
+            client.__aexit__ = AsyncMock(return_value=False)
+            client_cls.return_value = client
+
+            outcome = await rerank_passages("q", [_passage("a")], top_k=1)
+
+        assert outcome.degraded is False
+        timeout = client_cls.call_args.kwargs["timeout"]
+        assert 19 < timeout <= 20
+        headers = client.post.call_args.kwargs["headers"]
+        deadline = int(headers["X-Rerank-Deadline"])
+        assert before_ms + 19_000 < deadline <= time.time() * 1000 + 20_000
+        assert "X-Internal-Api-Key" in headers
+
+
+class TestRetrieveRanked:
+    """/answer's path (rerank=True, the default) is unchanged; rerank=False skips it."""
+
+    @staticmethod
+    def _search(passages: list[Passage]) -> Any:
+        from src.core.schemas import SearchResult
+
+        return AsyncMock(return_value=SearchResult(passages=passages))
+
+    @pytest.mark.asyncio
+    async def test_default_reranks_once(self) -> None:
+        from src.core import ranked
+        from src.core.schemas import RerankOutcome
+
+        pool = [_passage("a", 0.3), _passage("b", 0.9)]
+        rerank = AsyncMock(return_value=RerankOutcome(passages=pool[:1], top_score=0.7))
+        with (
+            patch.object(ranked, "embed_query", AsyncMock(return_value=None)),
+            patch.object(ranked, "hybrid_retrieve", self._search(pool)),
+            patch.object(ranked, "rerank_passages", rerank),
+        ):
+            result = await ranked.retrieve_ranked("q", top_k=1)
+
+        rerank.assert_awaited_once_with("q", pool, top_k=1)
+        assert result.top_rerank_score == 0.7
+        assert result.candidates == 2
+
+    @pytest.mark.asyncio
+    async def test_rerank_false_returns_fused_rrf_candidates(self) -> None:
+        from src.core import ranked
+
+        pool = [_passage("a", 0.3), _passage("b", 0.9), _passage("c", 0.6)]
+        rerank = AsyncMock()
+        with (
+            patch.object(ranked, "embed_query", AsyncMock(return_value=None)),
+            patch.object(ranked, "hybrid_retrieve", self._search(pool)),
+            patch.object(ranked, "rerank_passages", rerank),
+        ):
+            result = await ranked.retrieve_ranked("q", top_k=2, rerank=False)
+
+        rerank.assert_not_awaited()
+        assert [p.id for p in result.passages] == ["b", "c"]
+        assert result.top_rerank_score == 0.9
+        assert result.candidates == 3
+        assert result.degraded_legs == []

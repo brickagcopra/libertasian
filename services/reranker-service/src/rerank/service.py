@@ -23,6 +23,7 @@ import inspect
 import logging
 import math
 import time
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from ..config import settings
@@ -277,7 +278,25 @@ def _get_semaphore() -> asyncio.Semaphore:
     return _model_semaphore
 
 
-async def rerank(query: str, passages: list[tuple[str, str]]) -> list[tuple[str, float]]:
+class RequestAbandonedError(Exception):
+    """The caller no longer wants this result, so the model must not run.
+
+    Raised after the request reaches the front of the queue, when either its
+    deadline has passed or its client has disconnected. The router answers 503.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+async def rerank(
+    query: str,
+    passages: list[tuple[str, str]],
+    *,
+    deadline_ms: int | None = None,
+    is_disconnected: Callable[[], Awaitable[bool]] | None = None,
+) -> list[tuple[str, float]]:
     """Score each (id, text) passage against the query.
 
     Concurrency is bounded by `settings.max_concurrent_requests` (default 1).
@@ -296,6 +315,17 @@ async def rerank(query: str, passages: list[tuple[str, str]]) -> list[tuple[str,
     Args:
         query: The user's search query.
         passages: ``(id, text)`` pairs, in any order.
+        deadline_ms: The caller's deadline as epoch milliseconds
+            (``X-Rerank-Deadline``). Past it, the caller has already timed out
+            and fallen back to RRF.
+        is_disconnected: Whether the client has gone away.
+
+    Raises:
+        RequestAbandonedError: when, on getting the model, the deadline has passed
+            or the client has disconnected. Checked AFTER the queue wait,
+            because that wait is where a request goes stale: on prod
+            2026-09-28 abandoned requests were scored anyway and the queue
+            reached 540s, so every live caller behind them timed out too.
 
     Returns:
         ``(id, score)`` pairs sorted by score descending, score in (0, 1).
@@ -321,6 +351,17 @@ async def rerank(query: str, passages: list[tuple[str, str]]) -> list[tuple[str,
                 waited,
                 settings.max_concurrent_requests,
             )
+
+        if deadline_ms is not None and time.time() * 1000 >= deadline_ms:
+            logger.warning(
+                "Rerank skipped: caller deadline passed %.2fs ago after %.2fs in queue",
+                time.time() - deadline_ms / 1000,
+                waited,
+            )
+            raise RequestAbandonedError("deadline_expired")
+        if is_disconnected is not None and await is_disconnected():
+            logger.warning("Rerank skipped: client disconnected after %.2fs in queue", waited)
+            raise RequestAbandonedError("client_disconnected")
 
         scores = await asyncio.to_thread(_score_pairs_sync, query, texts)
 
