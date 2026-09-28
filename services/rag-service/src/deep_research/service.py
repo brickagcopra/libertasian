@@ -2,18 +2,24 @@
 
 Pipeline (each stage is announced on the SSE stream as a ``stage`` event):
 
-1. **planning**  — a small model splits the question into 3-5 sub-queries.
+1. **planning**  — a small model labels the question's scope (in_scope /
+   non_ph_law / future_or_hypothetical / nonsense) and splits it into 3-5
+   sub-queries. Anything but in_scope abstains (OUT_OF_SCOPE) before any
+   retrieval: on the prod gate 2026-09-28 a US case, the German BGB and "PH
+   tax rates for 2040" were all answered from loosely related PH passages.
 2. **searching** — every sub-query (and the question itself) goes through the
    shared `retrieve_ranked` path WITHOUT the cross-encoder (``rerank=False``,
    fused RRF candidates), at most 3 in flight. Alongside, any
    provision named precisely ("Article 1318 of the Civil Code", "Rule 113
    Section 5") is read from PostgreSQL (`pinpoint.py`).
 3. **ranking**   — the per-query results are merged and deduped by section,
-   capped at 40 candidates and per document (2 for a decision, 6 for a
+   capped at 30 candidates and per document (2 for a decision, 6 for a
    statute), the pinpointed sections are put in front, then reranked ONCE
-   against the original question — the only rerank call a question makes.
-   Abstention reads the RAW top rerank score, exactly as /answer does after
-   #504.
+   against the original question — the only rerank call a question makes,
+   with its own budget (`deep_research_rerank_timeout`). Abstention reads the
+   RAW top rerank score, exactly as /answer does after #504. If the
+   cross-encoder did not run there is no such score, and the run abstains
+   (RANKING_UNAVAILABLE) instead of trusting RRF order.
 4. **writing**   — the writer returns structured JSON whose citations are
    ``{source_id: "S3", quote}`` pairs. It never emits document metadata.
 5. **verifying** — (a) the label must be one of S1..Sn, (b) the quote must be
@@ -38,6 +44,8 @@ import uuid
 from collections import Counter
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
+
+from pydantic import ValidationError
 
 from ..config import settings
 from ..core.abstention import check_abstention, generate_abstention_response
@@ -72,6 +80,8 @@ from .schemas import (
     Draft,
     LabelledPassage,
     LlmUsage,
+    Plan,
+    PlannerOutput,
     Section,
 )
 
@@ -339,7 +349,14 @@ async def _call_llm(
     return result
 
 
-async def plan_sub_queries(question: str, usage: LlmUsage) -> list[str]:
+async def plan_research(question: str, usage: LlmUsage) -> Plan:
+    """Scope label and sub-queries for ``question``, from the planner model.
+
+    A response that fails `PlannerOutput` validation counts as in_scope with no
+    sub-queries: the question itself is still searched and every downstream
+    abstention still applies. Failing closed here would refuse legitimate
+    questions whenever the planner returned malformed JSON.
+    """
     result = await _call_llm(
         system_prompt=PLANNER_SYSTEM_PROMPT,
         user_prompt=PLANNER_USER_TEMPLATE.format(question=question),
@@ -349,9 +366,19 @@ async def plan_sub_queries(question: str, usage: LlmUsage) -> list[str]:
         response_format=PLANNER_RESPONSE_FORMAT,
         usage=usage,
     )
-    return _clean_sub_queries(
-        _load_json_object(str(result.get("content") or "")).get("sub_queries"), question
-    )
+    try:
+        output = PlannerOutput.model_validate(_load_json_object(str(result.get("content") or "")))
+    except ValidationError:
+        logger.warning("Deep research planner returned an invalid plan; searching the question")
+        return Plan(scope="in_scope")
+    if output.scope != "in_scope":
+        return Plan(scope=output.scope)
+    return Plan(scope=output.scope, sub_queries=_clean_sub_queries(output.sub_queries, question))
+
+
+def _rerank_degraded(degraded_legs: Sequence[str]) -> bool:
+    """True when the cross-encoder did not score the pool (any reranker marker)."""
+    return any(leg.startswith("reranker:") for leg in degraded_legs)
 
 
 async def verify_draft(
@@ -655,8 +682,15 @@ async def run_deep_research(request: DeepResearchRequest) -> AsyncIterator[Event
     try:
         # 1. Plan
         yield _stage("planning")
-        sub_queries = await plan_sub_queries(question, usage)
+        plan = await plan_research(question, usage)
+        sub_queries = plan.sub_queries
         yield ("plan", {"subQueries": sub_queries})
+        if not plan.in_scope:
+            logger.info("Deep research abstained: planner scope=%s", plan.scope)
+            yield ("sources", {"sources": []})
+            yield abstain(AbstentionReason.OUT_OF_SCOPE)
+            yield done()
+            return
 
         # 2. Search — the question itself runs alongside its sub-queries, so the
         # pool is never narrower than what /answer would have retrieved.
@@ -679,8 +713,27 @@ async def run_deep_research(request: DeepResearchRequest) -> AsyncIterator[Event
         pool = add_pinpoints(
             pool, pinpoints, max_candidates=settings.deep_research_max_candidates
         )
-        outcome = await rerank_passages(question, pool, top_k=settings.deep_research_top_k)
+        outcome = await rerank_passages(
+            question,
+            pool,
+            top_k=settings.deep_research_top_k,
+            timeout=settings.deep_research_rerank_timeout,
+        )
         degraded = list(dict.fromkeys([*degraded, *outcome.degraded_legs]))
+        # Fail closed: without the cross-encoder the only "top score" is an RRF
+        # fusion score, which encodes rank position, not relevance, and clears
+        # `abstention_score_threshold` (set for sigmoid rerank scores) almost
+        # regardless of the question. On the prod gate 2026-09-28 abs-01 and
+        # abs-02 hit the reranker timeout and were answered because of it.
+        if _rerank_degraded(outcome.degraded_legs):
+            logger.warning(
+                "Deep research abstained: rerank degraded (%s)",
+                ",".join(outcome.degraded_legs),
+            )
+            yield ("sources", {"sources": []})
+            yield abstain(AbstentionReason.RANKING_UNAVAILABLE)
+            yield done()
+            return
         reason = check_abstention(
             outcome.passages,
             min_passages=settings.abstention_min_passages,

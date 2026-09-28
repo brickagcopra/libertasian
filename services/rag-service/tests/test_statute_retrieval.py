@@ -409,7 +409,8 @@ class TestPinpointsInThePool:
         pinpoint_fetch = AsyncMock(return_value=[article])
 
         async def llm(**kwargs: Any) -> dict[str, Any]:
-            return {"content": '{"sub_queries": ["Art. 1318 Civil Code"]}', "model_name": "m"}
+            plan = '{"scope": "in_scope", "sub_queries": ["Art. 1318 Civil Code"]}'
+            return {"content": plan, "model_name": "m"}
 
         with (
             patch.object(service, "generate_completion_with_usage", AsyncMock(side_effect=llm)),

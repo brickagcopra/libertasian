@@ -593,6 +593,36 @@ class TestInflightGate:
         assert before_ms + 19_000 < deadline <= time.time() * 1000 + 20_000
         assert "X-Internal-Api-Key" in headers
 
+    @pytest.mark.asyncio
+    async def test_explicit_timeout_overrides_reranker_timeout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Deep Research passes its own budget; the HTTP timeout and deadline follow it."""
+        import time
+
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "reranker_timeout", 20)
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"results": [{"id": "a", "score": 0.9}]}
+        mock_response.raise_for_status = lambda: None
+
+        before_ms = time.time() * 1000
+        with patch("src.core.reranking.httpx.AsyncClient") as client_cls:
+            client = AsyncMock()
+            client.post.return_value = mock_response
+            client.__aenter__ = AsyncMock(return_value=client)
+            client.__aexit__ = AsyncMock(return_value=False)
+            client_cls.return_value = client
+
+            outcome = await rerank_passages("q", [_passage("a")], top_k=1, timeout=30)
+
+        assert outcome.degraded is False
+        timeout = client_cls.call_args.kwargs["timeout"]
+        assert 29 < timeout <= 30
+        deadline = int(client.post.call_args.kwargs["headers"]["X-Rerank-Deadline"])
+        assert before_ms + 29_000 < deadline <= time.time() * 1000 + 30_000
+
 
 class TestRetrieveRanked:
     """/answer's path (rerank=True, the default) is unchanged; rerank=False skips it."""

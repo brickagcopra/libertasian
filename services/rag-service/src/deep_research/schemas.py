@@ -31,6 +31,31 @@ class DeepResearchRequest(BaseModel):
     scope: Literal["ai_research"] = "ai_research"
 
 
+class PlannerOutput(BaseModel):
+    """The planner's structured response: a scope label and the sub-queries.
+
+    Strict: the scope must be one of the four labels verbatim, and a response
+    that does not validate is treated as no plan (see `plan_research`).
+    """
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    scope: Literal["in_scope", "non_ph_law", "future_or_hypothetical", "nonsense"]
+    sub_queries: list[str]
+
+
+@dataclass
+class Plan:
+    """What the planner decided for one question, after cleaning."""
+
+    scope: str
+    sub_queries: list[str] = field(default_factory=list)
+
+    @property
+    def in_scope(self) -> bool:
+        return self.scope == "in_scope"
+
+
 @dataclass
 class LabelledPassage:
     """A passage shown to the writer as ``[S{n}]``, with backend-owned metadata."""

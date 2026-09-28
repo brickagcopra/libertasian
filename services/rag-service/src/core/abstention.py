@@ -101,6 +101,14 @@ def generate_abstention_response(
                 "give you something this document does not actually support, I am "
                 "not answering."
             ),
+            AbstentionReason.RANKING_UNAVAILABLE: (
+                "I could not check which parts of this document match your question "
+                "right now. Please try again in a moment."
+            ),
+            AbstentionReason.OUT_OF_SCOPE: (
+                "That question is outside Philippine law, so this document cannot "
+                "answer it."
+            ),
             AbstentionReason.LOW_RELEVANCE: (
                 "The parts of this document that matched your question do not look "
                 "relevant enough to answer from."
@@ -133,6 +141,15 @@ def generate_abstention_response(
             "I generated a response but could not verify its citations against "
             "authoritative sources. To maintain accuracy, I cannot provide an "
             "unverified answer. Please try a more specific query."
+        ),
+        AbstentionReason.RANKING_UNAVAILABLE: (
+            "I could not rank the sources I found by relevance right now, and I "
+            "will not answer from unranked sources. Please try again in a moment."
+        ),
+        AbstentionReason.OUT_OF_SCOPE: (
+            "This question is outside what I can research: I answer from Philippine "
+            "law as it stands, not foreign law or future or hypothetical rules. "
+            "Ask how Philippine law treats the matter instead."
         ),
     }
 

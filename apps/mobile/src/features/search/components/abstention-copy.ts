@@ -3,7 +3,8 @@
  *
  * `abstentionReason` is a RAW ENUM VALUE off the wire
  * (`services/rag-service/src/core/types.py:28`): `low_relevance`,
- * `insufficient_passages`, `no_results`, `validation_failed`. It selects copy;
+ * `insufficient_passages`, `no_results`, `validation_failed`, and (Deep
+ * Research only) `ranking_unavailable`, `out_of_scope`. It selects copy;
  * it is never rendered. Before PR #376 it was always undefined so the generic
  * fallback always won — once it started populating, the search surface printed
  * the literal word "validation_failed" at the user.
@@ -23,6 +24,10 @@ const ABSTENTION_COPY: Record<string, string> = {
   low_relevance: "The closest sources don't address this question directly.",
   validation_failed:
     'The draft answer could not be traced back to a source, so it was withheld.',
+  ranking_unavailable:
+    "Sources couldn't be ranked by relevance just now, so no answer was given. Try again in a moment.",
+  out_of_scope:
+    'This question is outside Philippine law as it stands (foreign law, or a future or hypothetical rule).',
 };
 
 /**

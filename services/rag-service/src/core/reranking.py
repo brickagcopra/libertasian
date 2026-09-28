@@ -113,6 +113,8 @@ async def rerank_passages(
     query: str,
     passages: list[Passage],
     top_k: int = 8,
+    *,
+    timeout: float | None = None,
 ) -> RerankOutcome:
     """Rerank passages using the cross-encoder, falling back to RRF scores.
 
@@ -120,6 +122,9 @@ async def rerank_passages(
         query: The original user query.
         passages: Passages from hybrid retrieval, already RRF-scored.
         top_k: Number of passages to return after reranking.
+        timeout: Seconds for the gate wait plus the HTTP call. None means
+            `reranker_timeout` (/answer's budget). Deep Research passes its own
+            `deep_research_rerank_timeout` for its single, larger call.
 
     Returns:
         A `RerankOutcome` carrying the top-k passages and, when the
@@ -139,7 +144,7 @@ async def rerank_passages(
     # all reached reranker-service, which scores one at a time: the late ones
     # timed out here, were scored there anyway, and queued every /answer behind
     # work nobody was waiting for any more.
-    budget = float(settings.reranker_timeout)
+    budget = float(settings.reranker_timeout if timeout is None else timeout)
     started = time.monotonic()
     gate = _inflight_gate()
     try:
@@ -149,7 +154,7 @@ async def rerank_passages(
             "Reranker gate (max %d in flight) not free within the %ss budget — "
             "falling back to RRF without sending the request",
             settings.reranker_max_inflight,
-            settings.reranker_timeout,
+            budget,
         )
         return _fallback_outcome(passages, top_k, _MARKER_UNREACHABLE)
 
@@ -164,7 +169,7 @@ async def rerank_passages(
         logger.error(
             "Reranker at %s timed out after %ss — falling back to RRF order",
             reranker_url,
-            settings.reranker_timeout,
+            budget,
             exc_info=True,
         )
         return _fallback_outcome(passages, top_k, _MARKER_UNREACHABLE)
