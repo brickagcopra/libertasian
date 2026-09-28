@@ -36,6 +36,17 @@ Verification rules used for this prune: every PR reference checked with `gh pr v
 
 ---
 
+## Reranker overload fix: open PR, not deployed (2026-09-27)
+
+`fix/rag-rerank-overload` (see COMPLETED 2026-09-27). **Do not merge or deploy without an owner.**
+
+- **Deploy both services together.** An old reranker ignores the deadline header, which is harmless. A new reranker with an old rag client simply gets no header. The order does not matter, but only the pair fixes the queue.
+- **After deploy, measure:** run a Deep Research question and an /answer at the same time. Confirm the reranker logs one `Rerank request: <=40 passages` per question, no `Rerank skipped` storm, and no `reranker:unreachable` on the /answer.
+- **Still open:** a request that is already scoring when its client gives up still runs to completion (a torch thread cannot be cancelled). The deadline only stops work that has not started. With 40 passages at ~12 s, one Deep Research rerank can still hold the model for ~12 s ahead of an /answer. If that shows up in p95, the levers are `RAG_DEEP_RESEARCH_MAX_CANDIDATES` or a second reranker replica.
+- `httpx` timeouts apply per phase (connect/read/write), not to the whole call, so the HTTP leg can overrun the remaining budget a little. That behavior predates this change.
+
+---
+
 ## Email links: fixed in code, but nothing has been sent through the repaired flows (2026-09-13)
 
 Full context: COMPLETED_TASKS.md, the 2026-09-13 entry.

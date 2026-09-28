@@ -449,6 +449,60 @@ class TestRetrieval:
 # ---------------------------------------------------------------------------
 
 
+class TestOneRerankPerQuestion:
+    """Sub-queries return fused RRF candidates; only the merged pool is reranked.
+
+    Runs the real `retrieve_all` -> `retrieve_ranked` -> `rerank_passages`
+    chain and counts reranker HTTP calls. On prod 2026-09-28 every sub-query
+    was reranked (3 in flight) on a reranker that scores one request at a
+    time, and every /answer in that window fell back to RRF.
+    """
+
+    @pytest.mark.asyncio
+    async def test_exactly_one_rerank_call(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from src.core import ranked
+        from src.core.schemas import SearchResult
+
+        monkeypatch.setattr(settings, "reranker_url", "http://reranker:8002")
+        searched: list[str] = []
+
+        async def hybrid(query: str, *_: Any, **__: Any) -> SearchResult:
+            searched.append(query)
+            base = 100 * len(searched)
+            return SearchResult(passages=[
+                _passage(base + i, S1_TEXT).model_copy(
+                    update={"rerank_score": None, "score": 0.03 - i * 0.001}
+                )
+                for i in range(1, 16)
+            ])
+
+        reranked: list[tuple[str, int]] = []
+
+        async def call(url: str, query: str, passages: list[Passage]) -> list[Passage]:
+            reranked.append((query, len(passages)))
+            return [p.model_copy(update={"rerank_score": 0.9}) for p in passages]
+
+        question = "What is psychological incapacity?"
+        with (
+            patch.object(ranked, "embed_query", AsyncMock(return_value=None)),
+            patch.object(ranked, "hybrid_retrieve", hybrid),
+            patch("src.core.reranking._call_reranker", call),
+            patch.object(service, "fetch_pinpoint_passages", AsyncMock(return_value=[])),
+            patch.object(service, "generate_completion_with_usage", _llm()),
+            patch.object(service, "lookup_section_metadata", AsyncMock(return_value={})),
+        ):
+            req = DeepResearchRequest(question=question, run_id="run-1")
+            events = [event async for event in run_deep_research(req)]
+
+        # The question and its three sub-queries were all searched...
+        assert len(searched) == 1 + len(PLAN["sub_queries"])
+        # ...and exactly one rerank went out: the merged pool, against the question.
+        assert len(reranked) == 1
+        assert reranked[0][0] == question
+        assert reranked[0][1] <= settings.deep_research_max_candidates
+        assert [e for e, _ in events][-1] == "done"
+
+
 class TestFilterCitations:
     LABELLED = [LabelledPassage(label="S1", passage=PASSAGES[0])]
 

@@ -75,7 +75,31 @@ Changing the golden set changes the metrics. Every result file records
 ## Running on prod
 
 The rag-service image ships `src/` only, so first copy the harness into the
-running container. Run these from the repo checkout on the prod host:
+running container. Run these from the repo checkout on the prod host.
+
+**Use `--concurrency 1` for BOTH endpoints (`answer` and `deep`), and wait for
+the reranker to be idle before each pass.** reranker-service scores ONE request
+at a time, at ~12s per 30-40 passages on CPU, and it serves live /answer
+traffic too. Every eval question makes at least one rerank, so with two in
+flight one of them waits ~12s for the model, and the rag client's 20s budget
+(`RAG_RERANKER_TIMEOUT`) counts that wait. On prod 2026-09-28 overlapping
+reranks built a 540s queue on the reranker, and every /answer in that window
+(eval rows and real users alike) fell back to RRF (`reranker:unreachable`).
+A run measured that way measures RRF, not the ranker, and it degrades the
+product while it runs. Waiting for idle between passes keeps the tail of one
+pass from bleeding into the first questions of the next:
+
+```bash
+# Idle = the reranker container under 5% CPU on 3 consecutive samples.
+wait_reranker_idle() {
+  n=0
+  while [ "$n" -lt 3 ]; do
+    cpu=$(docker stats --no-stream --format '{{.CPUPerc}}' libertasian-reranker-service | tr -d '%')
+    if [ "${cpu%.*}" -lt 5 ]; then n=$((n + 1)); else n=0; fi
+    sleep 5
+  done
+}
+```
 
 ```bash
 # 1. Copy the harness in. docker cp nests into an existing dir, so clear it first.
@@ -84,11 +108,12 @@ docker cp services/rag-service/evals libertasian-rag-service:/tmp/evals
 
 # 2. Run it. The container already has RAG_INTERNAL_API_KEY, and run.py sends it as
 #    X-Internal-Api-Key (the header src/shared/auth.py checks).
+wait_reranker_idle
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 docker exec -w /tmp libertasian-rag-service sh -c \
   "python -m evals.run --base-url http://localhost:8000 \
      --api-key \"\$RAG_INTERNAL_API_KEY\" --endpoint answer \
-     --out /tmp/rag-evals/$TS.json --concurrency 2"
+     --out /tmp/rag-evals/$TS.json --concurrency 1"
 
 # 3. Copy the result out.
 mkdir -p services/rag-service/evals/results
@@ -105,8 +130,8 @@ Notes:
 - Each question makes a real generation call. The request bypasses NestJS, so
   no user quota is charged, but the LLM spend is real. A `503` from the budget
   guard is recorded as an `error` row, not as a miss.
-- Keep `--concurrency` low (the default is 2). The eval shares the service with
-  live traffic.
+- On prod, `--concurrency 1`, always. The harness default of 2 is for a local
+  stack. See the top of this section for why.
 - From another container on the `ai` network, use
   `--base-url http://rag-service:8000`.
 
@@ -143,11 +168,18 @@ byte. The stream is reduced to the same `QuestionResult` row as `/answer`:
 So `evals.compare` diffs a deep run against an answer run directly:
 
 ```bash
+wait_reranker_idle
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 docker exec -w /tmp libertasian-rag-service sh -c   "python -m evals.run --base-url http://localhost:8000      --api-key \"\$RAG_INTERNAL_API_KEY\" --endpoint deep      --out /tmp/rag-evals/$TS-deep.json --concurrency 1 --timeout 300"
 docker cp libertasian-rag-service:/tmp/rag-evals/$TS-deep.json services/rag-service/evals/results/
 python -m evals.compare evals/results/<answer-run>.json evals/results/$TS-deep.json --k 8
 ```
+
+A Deep Research question makes exactly one rerank. Its sub-queries return fused
+RRF candidates, and only the merged pool (at most
+`RAG_DEEP_RESEARCH_MAX_CANDIDATES`, default 40) is reranked. That one call is
+the largest the reranker sees, so run the deep pass at `--concurrency 1`, after
+`wait_reranker_idle`, and never overlapping the answer pass.
 
 `--model-override gpt-6-luna` runs the writer on another model; the server
 must list it in `DEEP_RESEARCH_MODEL_ALLOWLIST`, or every row is an HTTP 422 error.

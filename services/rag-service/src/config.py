@@ -136,6 +136,20 @@ class Settings(BaseSettings):
     # the first time.
     reranker_timeout: int = 20
 
+    # Reranker HTTP calls in flight from THIS process at once. The budget above
+    # covers the wait for this gate too: a call that cannot get a slot before
+    # `reranker_timeout` runs out falls back to RRF without ever being sent.
+    #
+    # 1, because reranker-service runs ONE request at a time (its own
+    # `max_concurrent_requests`) at ~12s per 30-40 passages on CPU. Measured on
+    # prod 2026-09-28: Deep Research sent three reranks at once, the 2nd and 3rd
+    # timed out here while the reranker kept scoring them anyway, its queue
+    # reached 540s, and every /answer in that window fell back to RRF
+    # ("reranker:unreachable"). Queueing HERE, where the caller's budget is
+    # known, is what keeps abandoned work out of the reranker's queue. Raise it
+    # only together with reranker replicas.
+    reranker_max_inflight: int = 1
+
     # Abstention thresholds
     #
     # The count floor was written for corpus-wide search, where three passages
@@ -244,7 +258,11 @@ class Settings(BaseSettings):
     deep_research_max_tokens: int = 4096
     # Passages kept per sub-query from the shared ranked path.
     deep_research_subquery_top_k: int = 15
-    # Merged pool handed to the single final rerank, and its diversity cap.
+    # Merged pool handed to the single final rerank (the only rerank a Deep
+    # Research question makes), and its diversity cap. Reranker cost is linear in
+    # this number (~12s per 30-40 passages on CPU, prod 2026-09-28), so it is
+    # the lever that keeps the one call inside `reranker_timeout`; lower it
+    # before raising the timeout. RAG_DEEP_RESEARCH_MAX_CANDIDATES.
     deep_research_max_candidates: int = 40
     # Per-document cap for decisions (and any non-statutory type): one long
     # opinion must not fill the pool.
