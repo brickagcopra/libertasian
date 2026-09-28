@@ -99,7 +99,7 @@ jobs:
   #
   # Scoped deliberately to the contract suite rather than the whole rag-service
   # suite: `tests/test_routers.py` has 40 pre-existing pytest-asyncio fixture
-  # errors that are their own piece of work (see PENDING_TASKS.md). Widening
+  # errors that are their own piece of work (see .claude/pending-tasks.md). Widening
   # this to `pytest tests/` is the right follow-up once those are fixed.
   opensearch-field-contract:
     name: Guard — service contracts (OpenSearch fields, reranker API)
@@ -323,7 +323,7 @@ jobs:
       # whole e2e directory. Running all 53 suites today gives 58 failures
       # across 17 suites (1,022 of 1,081 tests pass) — pre-existing rot from a
       # suite that has never been executed, not regressions from this branch.
-      # Fixing those is its own piece of work; see PENDING_TASKS.md. This step
+      # Fixing those is its own piece of work; see .claude/pending-tasks.md. This step
       # genuinely runs and genuinely fails — it is not a soft-fail or a skip.
       # Add spec paths here as suites are repaired.
       - name: Run E2E tests
