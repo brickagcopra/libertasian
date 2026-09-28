@@ -1,5 +1,11 @@
 # Completed Tasks
 
+## 2026-09-28 — Deep Research abstention fixes (PR opened, not merged)
+- [x] fix(rag): Deep Research abstains `ranking_unavailable` when the cross-encoder did not run (any `reranker:*` marker), instead of abstaining on an RRF score
+- [x] Planner labels scope (in_scope / non_ph_law / future_or_hypothetical / nonsense, strict JSON + Pydantic); anything but in_scope abstains `out_of_scope` before retrieval. Prompt version → `deep-research-v2`
+- [x] `deep_research_max_candidates` 40 → 30; new `deep_research_rerank_timeout` (30 s) for Deep Research's one rerank; /answer keeps `reranker_timeout` 20 s
+- [x] Web + mobile abstention copy for the two new reasons (clients map by string with a fallback; no enum change)
+
 ## 2026-09-27 — Statute corpus repair follow-ups (PRs opened, not merged)
 - [x] #516 fix(api): the index-rebuild `_reindex` copy runs as a polled task (no client retry, deadline + cancel); vector backfill batch default 32
 - [x] #517 feat(worker): `reseed_statutory_document`: re-parse in place keeping section ids, never delete, new version + audit per doc, `needs_decision` flag. Parser drops nested-block echo and collapses duplicate paragraphs.

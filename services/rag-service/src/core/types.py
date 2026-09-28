@@ -40,6 +40,15 @@ class AbstentionReason(str, Enum):
     VALIDATION_FAILED = "validation_failed"
     """Generated answer failed citation validation checks."""
 
+    RANKING_UNAVAILABLE = "ranking_unavailable"
+    """The cross-encoder did not score the candidates (timeout, failure, not
+    deployed), so there is no raw relevance score to abstain on. Deep Research
+    fails closed on this rather than trusting RRF order."""
+
+    OUT_OF_SCOPE = "out_of_scope"
+    """The question is not about Philippine law: foreign law, a future or
+    hypothetical state of the law, or not a legal question at all."""
+
 
 class ConfidenceLevel(str, Enum):
     """Discrete confidence level for pipeline outputs."""

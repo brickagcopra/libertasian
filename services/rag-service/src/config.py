@@ -263,7 +263,17 @@ class Settings(BaseSettings):
     # this number (~12s per 30-40 passages on CPU, prod 2026-09-28), so it is
     # the lever that keeps the one call inside `reranker_timeout`; lower it
     # before raising the timeout. RAG_DEEP_RESEARCH_MAX_CANDIDATES.
-    deep_research_max_candidates: int = 40
+    #
+    # 30, not 40: at 40 the one call overran the 20s budget on 11 of 45 golden
+    # questions with nothing else running (prod gate 2026-09-28), and a timed-out
+    # rerank now makes Deep Research abstain (RANKING_UNAVAILABLE).
+    deep_research_max_candidates: int = 30
+    # Budget (gate wait + HTTP) for Deep Research's ONE rerank. Separate from
+    # `reranker_timeout` so /answer keeps 20s: it is the only rerank a Deep
+    # Research question makes, a user already waits ~25s for the run, and a
+    # timeout here is an abstention rather than an RRF-ordered answer.
+    # RAG_DEEP_RESEARCH_RERANK_TIMEOUT.
+    deep_research_rerank_timeout: int = 30
     # Per-document cap for decisions (and any non-statutory type): one long
     # opinion must not fill the pool.
     deep_research_max_per_document: int = 2

@@ -55,4 +55,14 @@ describe('AbstainedCard', () => {
     expect(card).toHaveTextContent('Tips');
     expect(card).not.toHaveTextContent('insufficient_passages');
   });
+
+  it.each([
+    ['out_of_scope', 'outside Philippine law'],
+    ['ranking_unavailable', "couldn't be ranked"],
+  ])('maps the Deep Research-only reason %s to copy, never the raw value', (reason, copy) => {
+    render(<AbstainedCard reason={reason} />);
+    const card = screen.getByTestId('dr-abstained');
+    expect(card).toHaveTextContent(copy);
+    expect(card).not.toHaveTextContent(reason);
+  });
 });

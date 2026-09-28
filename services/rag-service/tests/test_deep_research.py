@@ -23,6 +23,7 @@ from src.core.ranked import RankedPassages
 from src.core.schemas import Passage, RerankOutcome
 from src.deep_research import service
 from src.deep_research.prompts import (
+    PLANNER_RESPONSE_FORMAT,
     PLANNER_SYSTEM_PROMPT,
     PROMPT_TEMPLATE_VERSION,
     VERIFIER_SYSTEM_PROMPT,
@@ -88,7 +89,10 @@ def _llm_result(content: dict[str, Any] | str, model: str = "m") -> dict[str, An
     }
 
 
-PLAN = {"sub_queries": ["Article 36 Family Code", "Tan-Andal v. Andal", "juridical antecedence"]}
+PLAN = {
+    "scope": "in_scope",
+    "sub_queries": ["Article 36 Family Code", "Tan-Andal v. Andal", "juridical antecedence"],
+}
 
 
 def _writer_answer(claims: list[dict[str, Any]]) -> dict[str, Any]:
@@ -141,12 +145,18 @@ async def _collect(
     passages: list[Passage] | None = None,
     top_score: float | None = 0.9,
     request: DeepResearchRequest | None = None,
+    rerank_outcome: RerankOutcome | None = None,
+    mocks: dict[str, AsyncMock] | None = None,
 ) -> list[tuple[str, dict[str, Any]]]:
     reranked = PASSAGES if passages is None else passages
     ranked = AsyncMock(return_value=RankedPassages(passages=reranked, candidates=len(reranked)))
-    rerank = AsyncMock(return_value=RerankOutcome(passages=reranked, top_score=top_score))
+    rerank = AsyncMock(
+        return_value=rerank_outcome or RerankOutcome(passages=reranked, top_score=top_score)
+    )
     lookup = AsyncMock(return_value={})
     pinpoint = AsyncMock(return_value=[])
+    if mocks is not None:
+        mocks.update(retrieve=ranked, rerank=rerank, pinpoint=pinpoint, lookup=lookup)
     with (
         patch.object(service, "fetch_pinpoint_passages", pinpoint),
         patch.object(service, "generate_completion_with_usage", llm),
@@ -447,6 +457,149 @@ class TestRetrieval:
 # ---------------------------------------------------------------------------
 # Deterministic verification helpers
 # ---------------------------------------------------------------------------
+
+
+class TestFailClosedOnDegradedRerank:
+    """No cross-encoder score, no answer: RRF order is not a relevance signal.
+
+    On the prod gate 2026-09-28 abs-01 (a US case) and abs-02 (the German BGB)
+    hit the 20 s reranker timeout, fell back to RRF, cleared the score
+    threshold on a fusion score and were answered.
+    """
+
+    @pytest.mark.parametrize(
+        "marker", ["reranker:unreachable", "reranker:failed", "reranker:not_configured"]
+    )
+    @pytest.mark.asyncio
+    async def test_degraded_rerank_abstains_without_writing(self, marker: str) -> None:
+        llm = _llm()
+        degraded = RerankOutcome(
+            passages=PASSAGES, degraded=True, degraded_legs=[marker], top_score=0.03
+        )
+        events = await _collect(llm, rerank_outcome=degraded)
+
+        result = _named(events, "result")
+        assert result["abstained"] is True
+        assert result["abstainReason"] == "ranking_unavailable"
+        assert _named(events, "sources") == {"sources": []}
+        assert marker in _named(events, "done")["degradedLegs"]
+        # Planner only: the writer and verifier never ran.
+        assert llm.await_count == 1
+        assert "writing" not in [d["stage"] for e, d in events if e == "stage"]
+
+    @pytest.mark.asyncio
+    async def test_degraded_retrieval_leg_alone_does_not_abstain(self) -> None:
+        # A kNN leg that failed during search is not a rerank failure.
+        ranked = AsyncMock(return_value=RankedPassages(
+            passages=PASSAGES, candidates=3, degraded_legs=["knn:unreachable"]
+        ))
+        ok = RerankOutcome(passages=PASSAGES, top_score=0.9)
+        with (
+            patch.object(service, "fetch_pinpoint_passages", AsyncMock(return_value=[])),
+            patch.object(service, "generate_completion_with_usage", _llm()),
+            patch.object(service, "retrieve_ranked", ranked),
+            patch.object(service, "rerank_passages", AsyncMock(return_value=ok)),
+            patch.object(service, "lookup_section_metadata", AsyncMock(return_value={})),
+        ):
+            events = [e async for e in run_deep_research(DeepResearchRequest(question="Q?"))]
+        assert _named(events, "result")["abstained"] is False
+        assert "knn:unreachable" in _named(events, "done")["degradedLegs"]
+
+
+class TestRerankBudget:
+    def test_defaults(self) -> None:
+        assert settings.deep_research_max_candidates == 30
+        assert settings.deep_research_rerank_timeout == 30
+        assert settings.reranker_timeout == 20  # /answer's budget is unchanged
+
+    @pytest.mark.asyncio
+    async def test_deep_research_rerank_uses_its_own_timeout(self) -> None:
+        mocks: dict[str, AsyncMock] = {}
+        await _collect(_llm(), mocks=mocks)
+        mocks["rerank"].assert_awaited_once()
+        assert mocks["rerank"].await_args.kwargs["timeout"] == 30
+
+
+class TestPlannerScope:
+    """The planner labels scope; anything but in_scope abstains before retrieval."""
+
+    @pytest.mark.parametrize(
+        ("scope", "question"),
+        [
+            ("non_ph_law", "What did the US Supreme Court hold in District of Columbia v. Heller?"),
+            ("non_ph_law", "What does Section 823 of the German BGB provide?"),
+            ("future_or_hypothetical", "What are the Philippine income tax rates for 2040?"),
+            ("nonsense", "purple monkey dishwasher"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_out_of_scope_abstains_without_retrieval(
+        self, scope: str, question: str
+    ) -> None:
+        llm = _llm(plan={"scope": scope, "sub_queries": ["should be ignored"]})
+        mocks: dict[str, AsyncMock] = {}
+        events = await _collect(llm, request=DeepResearchRequest(question=question), mocks=mocks)
+
+        result = _named(events, "result")
+        assert result["abstained"] is True
+        assert result["abstainReason"] == "out_of_scope"
+        assert _named(events, "plan") == {"subQueries": []}
+        assert _named(events, "sources") == {"sources": []}
+        mocks["retrieve"].assert_not_awaited()
+        mocks["pinpoint"].assert_not_awaited()
+        mocks["rerank"].assert_not_awaited()
+        assert llm.await_count == 1  # planner only
+        assert [d["stage"] for e, d in events if e == "stage"] == ["planning"]
+        assert [e for e, _ in events][-1] == "done"
+
+    @pytest.mark.asyncio
+    async def test_comparative_ph_question_is_in_scope_and_researched(self) -> None:
+        question = "Is the US Miranda rule applied in the Philippines?"
+        plan = {
+            "scope": "in_scope",
+            "sub_queries": ["Article III Section 12 1987 Constitution custodial investigation"],
+        }
+        llm = _llm(plan=plan)
+        mocks: dict[str, AsyncMock] = {}
+        events = await _collect(llm, request=DeepResearchRequest(question=question), mocks=mocks)
+
+        assert _named(events, "result")["abstained"] is False
+        assert mocks["retrieve"].await_count == 2  # the question + its one sub-query
+        planner_prompt = llm.await_args_list[0].kwargs["user_prompt"]
+        body = planner_prompt.split("---USER QUERY---")[1].split("---END USER QUERY---")[0]
+        assert question in body
+
+    def test_planner_prompt_keeps_comparative_questions_in_scope(self) -> None:
+        # The live model's labelling is measured by the golden set, not here;
+        # this pins the instruction that comparative PH questions stay in scope.
+        assert "Is the US Miranda rule applied in the Philippines?" in PLANNER_SYSTEM_PROMPT
+        assert "untrusted user input" in PLANNER_SYSTEM_PROMPT
+
+    def test_planner_schema_is_strict_with_scope_enum(self) -> None:
+        assert PLANNER_RESPONSE_FORMAT["json_schema"]["strict"] is True
+        schema = PLANNER_RESPONSE_FORMAT["json_schema"]["schema"]
+        assert schema["required"] == ["scope", "sub_queries"]
+        assert schema["properties"]["scope"]["enum"] == [
+            "in_scope", "non_ph_law", "future_or_hypothetical", "nonsense",
+        ]
+
+    @pytest.mark.parametrize(
+        "plan",
+        [
+            {"scope": "maybe", "sub_queries": ["x y z"]},  # label outside the enum
+            {"sub_queries": ["x y z"]},  # scope missing
+            {"scope": "in_scope", "sub_queries": "x y z"},  # wrong type
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_invalid_plan_still_searches_the_question(self, plan: dict[str, Any]) -> None:
+        mocks: dict[str, AsyncMock] = {}
+        events = await _collect(
+            _llm(plan=plan), request=DeepResearchRequest(question="Q?"), mocks=mocks
+        )
+        assert _named(events, "plan") == {"subQueries": []}
+        assert [c.args[0] for c in mocks["retrieve"].await_args_list] == ["Q?"]
+        assert _named(events, "result")["abstained"] is False
 
 
 class TestOneRerankPerQuestion:
