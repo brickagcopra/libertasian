@@ -51,6 +51,13 @@ export interface VectorBackfillRunOptions {
    * vector _ids that no longer map to a section. Requires `documentIds`.
    */
   force?: boolean;
+  /**
+   * Embed only missing ids (like an ordinary run), and per document, once all
+   * of its new vectors are written, delete its vector ids that it no longer
+   * produces — e.g. the whole-section vector of a section now split into
+   * chunks. Works corpus-wide; cannot be combined with `force`.
+   */
+  pruneStale?: boolean;
   batchSize?: number;
   batchDelayMs?: number;
   maxDocuments?: number;
@@ -76,8 +83,8 @@ export interface DocumentGap {
   base: VectorPayloadBase;
   /**
    * Vector _ids held for this document that it no longer produces — a section
-   * that was deleted or re-segmented. Only computed on a forced run; always
-   * empty otherwise.
+   * that was deleted, re-segmented or split into chunks. Only computed on a
+   * forced or pruneStale run; always empty otherwise.
    */
   stale: string[];
 }
@@ -109,7 +116,7 @@ export interface VectorBackfillProgress {
   chunksFailed: number;
   batchesCompleted: number;
   batchesFailed: number;
-  /** Forced runs only: stale vector _ids removed / that could not be removed. */
+  /** Forced/pruneStale runs only: stale vector _ids removed / not removed. */
   staleVectorsDeleted: number;
   staleVectorsFailed: number;
   message: string;
@@ -140,6 +147,11 @@ interface DocumentTally {
   /** Chunks still sitting in the buffer or in flight. */
   remaining: number;
   firstReason: string | null;
+  /**
+   * pruneStale runs: this document's stale vector ids, deleted only once
+   * every one of its missing chunks has been written.
+   */
+  stale: string[];
 }
 
 /** A finalized per-document outcome, buffered for a batched insert. */
@@ -170,7 +182,8 @@ const STATUS_FLUSH_SIZE = 200;
  *    candidate `_id` is diffed against the live index first, so a second run
  *    over a partially filled index does only the remainder.
  * 2. **Every write is an idempotent overwrite.** The vector `_id` is
- *    `section_id ?? document_id`, derived from the row's own identity, so
+ *    `indexRowId` (`{sectionId}:c{n}` for a chunk, else
+ *    `section_id ?? document_id`), derived from the row's own identity, so
  *    running twice converges rather than duplicating.
  * 3. **It embeds by exactly the same rules as the live path.** Both call
  *    `buildVectorEmbeddingInputs`; see `vector-embedding-inputs.ts` for why a
@@ -216,12 +229,18 @@ export class VectorBackfillService {
     const documentTypes = options.documentTypes ?? [];
     const documentIds = [...new Set(options.documentIds ?? [])];
     const force = options.force === true;
+    const pruneStale = options.pruneStale === true;
 
     // Re-checked here, not only in the controller: `resume` reaches this path
     // too, and a corpus-wide forced re-embed is never intended.
     if (force && documentIds.length === 0) {
       throw new BadRequestException(
         'force requires documentIds: a forced re-embed is only allowed for an explicit list of documents',
+      );
+    }
+    if (force && pruneStale) {
+      throw new BadRequestException(
+        'pruneStale cannot be combined with force: force already deletes stale ids, and re-embeds everything',
       );
     }
     if (documentIds.length > 0) {
@@ -246,6 +265,7 @@ export class VectorBackfillService {
         documentTypes,
         documentIds,
         force,
+        pruneStale,
         batchSize,
         batchDelayMs,
         maxDocuments: options.maxDocuments ?? null,
@@ -281,7 +301,7 @@ export class VectorBackfillService {
       `Enqueued vector backfill run ${run.id} (job ${job.id}, dryRun=${run.dryRun}, ` +
         `batchSize=${batchSize}, delayMs=${batchDelayMs}, ` +
         `types=${documentTypes.join(',') || 'all'}, ` +
-        `documents=${documentIds.length || 'all'}, force=${force})`,
+        `documents=${documentIds.length || 'all'}, force=${force}, pruneStale=${pruneStale})`,
     );
 
     return { ...run, jobId: job.id };
@@ -326,6 +346,7 @@ export class VectorBackfillService {
       // Carried over so a resumed targeted run stays targeted.
       documentIds: run.documentIds,
       force: run.force,
+      pruneStale: run.pruneStale,
       batchSize: run.batchSize,
       batchDelayMs: run.batchDelayMs,
       maxDocuments: run.maxDocuments ?? undefined,
@@ -504,10 +525,11 @@ export class VectorBackfillService {
    */
   async computeGapForDocuments(
     documentIds: string[],
-    options: { force?: boolean } = {},
+    options: { force?: boolean; pruneStale?: boolean } = {},
   ): Promise<DocumentGap[]> {
     if (documentIds.length === 0) return [];
     const force = options.force === true;
+    const listHeld = force || options.pruneStale === true;
 
     const documents = await this.prisma.legalDocument.findMany({
       where: { id: { in: documentIds } },
@@ -546,12 +568,13 @@ export class VectorBackfillService {
     const candidateIds = built.flatMap((entry) =>
       entry.inputs.map((input) => vectorDocumentId(input)),
     );
-    // A forced run re-embeds every chunk regardless, so it skips the diff and
-    // instead lists what each document holds, to find ids it no longer maps to.
+    // A forced run re-embeds every chunk regardless, so it skips the diff.
+    // Forced and pruneStale runs list what each document holds, to find ids it
+    // no longer maps to.
     const existing = force
       ? new Set<string>()
       : await this.openSearch.findExistingVectorIds(candidateIds);
-    const held = force
+    const held = listHeld
       ? await this.openSearch.findVectorIdsForDocuments(
           built.map((entry) => entry.doc.id),
         )
@@ -671,6 +694,7 @@ export class VectorBackfillService {
     // Force only ever applies to an explicit list (enforced at enqueue; checked
     // again here so a hand-edited row cannot turn into a corpus-wide re-embed).
     const force = run.force === true && run.documentIds.length > 0;
+    const pruneStale = run.pruneStale === true && !force;
     const order = this.applyMaxDocuments(
       await this.enumerateDocumentOrder(run.documentTypes, run.documentIds),
       run.maxDocuments ?? undefined,
@@ -686,6 +710,23 @@ export class VectorBackfillService {
     // it to `null` in the outer scope — it is only ever assigned from inside
     // `flushBatch`.
     const control: { stop: 'pause' | 'cancel' | null } = { stop: null };
+    // pruneStale: stale ids of documents whose new vectors have all landed,
+    // waiting for the next `deleteStale`.
+    const staleReady: string[] = [];
+
+    const deleteStale = async (ids: string[]) => {
+      if (ids.length === 0 || run.dryRun) return;
+      try {
+        const deleted = await this.openSearch.deleteVectorIds(ids);
+        progress.staleVectorsDeleted += deleted.deleted;
+        progress.staleVectorsFailed += deleted.failedIds.length;
+      } catch (err) {
+        progress.staleVectorsFailed += ids.length;
+        this.logger.warn(
+          `Stale vector delete failed for run ${run.id}: ${(err as Error).message}`,
+        );
+      }
+    };
 
     const pushStatus = (row: DocumentStatusRow) => {
       statusBuffer.push(row);
@@ -699,6 +740,9 @@ export class VectorBackfillService {
       const tally = tallies.get(documentId);
       if (!tally || tally.remaining > 0) return;
       tallies.delete(documentId);
+      // Only a document whose every new vector landed loses its old ones; a
+      // partial failure keeps them serving until a later run completes it.
+      if (tally.failed === 0) staleReady.push(...tally.stale);
       pushStatus({
         runId: run.id,
         legalDocumentId: documentId,
@@ -744,6 +788,7 @@ export class VectorBackfillService {
       try {
         embeddings = await this.embeddingClient.embedBatch(
           batch.map((chunk) => chunk.input.text),
+          'backfill',
         );
       } catch (err) {
         embeddings = null;
@@ -795,6 +840,7 @@ export class VectorBackfillService {
       for (const documentId of new Set(batch.map((c) => c.documentId))) {
         finalizeTally(documentId);
       }
+      await deleteStale(staleReady.splice(0, staleReady.length));
       await flushStatuses();
 
       // One summary line per batch. The whole reason this PR exists is that the
@@ -828,28 +874,23 @@ export class VectorBackfillService {
       const page = order.slice(i, i + VECTOR_BACKFILL_DOCUMENT_PAGE_SIZE);
       const gaps = await this.computeGapForDocuments(
         page.map((d) => d.documentId),
-        { force },
+        { force, pruneStale },
       );
 
       // Forced runs: remove the page's stale vector ids in one bulk request.
       // They are by definition ids no current chunk writes, so removing them
       // never races the re-embed below. A dry run deletes nothing.
-      const staleIds = gaps.flatMap((gap) => gap.stale);
-      if (staleIds.length > 0 && !run.dryRun) {
-        try {
-          const deleted = await this.openSearch.deleteVectorIds(staleIds);
-          progress.staleVectorsDeleted += deleted.deleted;
-          progress.staleVectorsFailed += deleted.failedIds.length;
-        } catch (err) {
-          progress.staleVectorsFailed += staleIds.length;
-          this.logger.warn(
-            `Stale vector delete failed for run ${run.id}: ${(err as Error).message}`,
-          );
-        }
-      }
+      // pruneStale runs defer this per document (see `finalizeTally`).
+      if (force) await deleteStale(gaps.flatMap((gap) => gap.stale));
 
       for (const gap of gaps) {
         this.accumulateGap(gapReport, gap);
+
+        // pruneStale: nothing left to write (or nothing embeddable at all), so
+        // what the document still holds beyond its expected ids can go now.
+        if (pruneStale && (gap.expected === 0 || gap.missing.length === 0)) {
+          staleReady.push(...gap.stale);
+        }
 
         if (gap.expected === 0) {
           pushStatus({
@@ -904,6 +945,7 @@ export class VectorBackfillService {
           failed: 0,
           remaining: gap.missing.length,
           firstReason: null,
+          stale: pruneStale ? gap.stale : [],
         });
         for (const input of gap.missing) {
           pending.push({ documentId: gap.documentId, input, base: gap.base });
@@ -915,6 +957,7 @@ export class VectorBackfillService {
         }
       }
 
+      await deleteStale(staleReady.splice(0, staleReady.length));
       await flushStatuses();
       if (run.dryRun) {
         progress.message =
@@ -951,6 +994,7 @@ export class VectorBackfillService {
       }
       pending.length = 0;
     }
+    await deleteStale(staleReady.splice(0, staleReady.length));
     await flushStatuses(true);
 
     const status =

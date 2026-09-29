@@ -299,6 +299,15 @@ exports[`keyword index mapping matches the mapping snapshot 1`] = `
       "bar_subjects": {
         "type": "keyword",
       },
+      "char_end": {
+        "type": "integer",
+      },
+      "char_start": {
+        "type": "integer",
+      },
+      "chunk_index": {
+        "type": "integer",
+      },
       "citation_text": {
         "analyzer": "legal_analyzer",
         "fields": {
@@ -608,6 +617,15 @@ exports[`vector index mapping matches the mapping snapshot 1`] = `
   "mappings": {
     "dynamic": "strict",
     "properties": {
+      "char_end": {
+        "type": "integer",
+      },
+      "char_start": {
+        "type": "integer",
+      },
+      "chunk_index": {
+        "type": "integer",
+      },
       "citation_text": {
         "type": "keyword",
       },

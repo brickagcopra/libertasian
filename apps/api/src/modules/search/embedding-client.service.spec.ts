@@ -121,6 +121,66 @@ describe('EmbeddingClientService', () => {
     });
   });
 
+  describe('embedBatch targets', () => {
+    const backfillUrl = 'http://embedding-backfill:8001';
+
+    const build = async (env: Record<string, string>) => {
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          EmbeddingClientService,
+          {
+            provide: ConfigService,
+            useValue: {
+              get: jest.fn((key: string, defaultVal?: unknown) => env[key] ?? defaultVal),
+            },
+          },
+        ],
+      }).compile();
+      return module.get<EmbeddingClientService>(EmbeddingClientService);
+    };
+
+    const okBatch = () =>
+      jest.spyOn(global, 'fetch').mockResolvedValue({
+        ok: true,
+        json: async () => ({ embeddings: [[0.1]], model_name: 'm', dimension: 1, count: 1 }),
+      } as Response);
+
+    it('sends backfill batches to EMBEDDING_BACKFILL_URL when it is set', async () => {
+      const client = await build({
+        EMBEDDING_SERVICE_URL: baseUrl,
+        EMBEDDING_BACKFILL_URL: backfillUrl,
+      });
+      okBatch();
+
+      await client.embedBatch(['t'], 'backfill');
+
+      expect(fetch).toHaveBeenCalledWith(`${backfillUrl}/embed/batch`, expect.anything());
+    });
+
+    it('keeps live batches on EMBEDDING_SERVICE_URL even when a backfill URL is set', async () => {
+      const client = await build({
+        EMBEDDING_SERVICE_URL: baseUrl,
+        EMBEDDING_BACKFILL_URL: backfillUrl,
+      });
+      okBatch();
+
+      await client.embedBatch(['t']);
+      await client.embed('t');
+
+      const urls = (fetch as jest.Mock).mock.calls.map((call) => call[0] as string);
+      expect(urls).toEqual([`${baseUrl}/embed/batch`, `${baseUrl}/embed`]);
+    });
+
+    it('falls back to EMBEDDING_SERVICE_URL for backfill batches when unset', async () => {
+      const client = await build({ EMBEDDING_SERVICE_URL: baseUrl });
+      okBatch();
+
+      await client.embedBatch(['t'], 'backfill');
+
+      expect(fetch).toHaveBeenCalledWith(`${baseUrl}/embed/batch`, expect.anything());
+    });
+  });
+
   describe('embedBatch', () => {
     it('should return empty array for empty input', async () => {
       const result = await service.embedBatch([]);

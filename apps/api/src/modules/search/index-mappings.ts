@@ -112,6 +112,22 @@ const BASE_SETTINGS = {
 };
 
 /**
+ * Chunk-row fields, on BOTH indices. A long section is indexed as several
+ * overlapping chunk rows (see `section-chunks.ts`); these carry the chunk's
+ * position and its offsets into the section's `plainText`. Absent on
+ * whole-section and document rows.
+ *
+ * Exported because `ensureIndexes` also adds them to an already-aliased
+ * physical index: both mappings are `dynamic: 'strict'`, so without the fields
+ * every chunk write to an index built before them would be rejected.
+ */
+export const CHUNK_FIELD_MAPPINGS = {
+  chunk_index: { type: 'integer' },
+  char_start: { type: 'integer' },
+  char_end: { type: 'integer' },
+} as const;
+
+/**
  * Keyword (BM25) index. Every field that is filtered on is `keyword`; the three
  * large full-text fields deliberately have no `.keyword` sub-field (that alone
  * cuts roughly 40% of index size on a corpus of decision bodies).
@@ -192,6 +208,7 @@ export function buildKeywordIndexMapping(): Record<string, unknown> {
         source_id: { type: 'keyword' },
         source_trust_level: { type: 'keyword' },
         section_type: { type: 'keyword' },
+        ...CHUNK_FIELD_MAPPINGS,
         bar_subjects: { type: 'keyword' },
         topics: { type: 'keyword' },
 
@@ -248,6 +265,7 @@ export function buildVectorIndexMapping(
         is_official: { type: 'boolean' },
         is_published: { type: 'boolean' },
         decision_date: { type: 'date' },
+        ...CHUNK_FIELD_MAPPINGS,
         text_snippet: { type: 'text', analyzer: 'legal_analyzer' },
         title: { type: 'text', analyzer: 'legal_analyzer' },
         citation_text: { type: 'keyword' },

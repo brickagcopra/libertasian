@@ -92,12 +92,18 @@ export class VectorBackfillController {
         'force requires documentIds: a forced re-embed is only allowed for an explicit list of documents',
       );
     }
+    if (dto.force === true && dto.pruneStale === true) {
+      throw new BadRequestException(
+        'pruneStale cannot be combined with force: force already deletes stale ids, and re-embeds everything',
+      );
+    }
 
     const run = await this.backfill.enqueueRun({
       dryRun: dto.dryRun,
       documentTypes: dto.documentTypes,
       documentIds: dto.documentIds,
       force: dto.force === true,
+      pruneStale: dto.pruneStale === true,
       batchSize: dto.batchSize,
       batchDelayMs: dto.batchDelayMs,
       maxDocuments: dto.maxDocuments,
@@ -118,6 +124,7 @@ export class VectorBackfillController {
         documentTypes: run.documentTypes,
         documentIds: run.documentIds,
         force: run.force,
+        pruneStale: run.pruneStale,
         batchSize: run.batchSize,
         batchDelayMs: run.batchDelayMs,
         maxDocuments: run.maxDocuments,

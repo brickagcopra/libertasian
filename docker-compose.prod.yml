@@ -97,6 +97,11 @@ services:
       CLAMAV_ENABLED: "true"
       JWT_PRIVATE_KEY_PATH: /secrets/jwt-private.pem
       JWT_PUBLIC_KEY_PATH: /secrets/jwt-public.pem
+      # Only the vector backfill uses this; live indexing keeps
+      # EMBEDDING_SERVICE_URL. The service exists only under
+      # `--profile backfill`; while it is down the backfill's batches fail
+      # and are recorded as such, and nothing else is affected.
+      EMBEDDING_BACKFILL_URL: http://embedding-backfill:8001
     volumes:
       - ./infrastructure/secrets/jwt-private.pem:/secrets/jwt-private.pem:ro
       - ./infrastructure/secrets/jwt-public.pem:/secrets/jwt-public.pem:ro
@@ -216,7 +221,10 @@ services:
       - discovery.type=single-node
       - OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_PASSWORD}
       - bootstrap.memory_lock=true
-      - "OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g"
+      # Heap for the section-chunk vectors (~159K -> ~680K). The container
+      # limit stays well above the heap: HNSW graphs (lucene engine) live in
+      # off-heap page cache, not in the JVM heap.
+      - "OPENSEARCH_JAVA_OPTS=-Xms2g -Xmx2g"
     ulimits:
       memlock:
         soft: -1
@@ -236,7 +244,7 @@ services:
       resources:
         limits:
           cpus: "4"
-          memory: 3G
+          memory: 6G
 
   # ====================
   # MinIO (Object Storage)
@@ -561,6 +569,41 @@ services:
         limits:
           cpus: "2"
           memory: 2G
+
+  # ====================
+  # Embedding backfill (Python) — opt-in
+  # ====================
+  # Same image and model as embedding-service, dedicated to the vector
+  # backfill (the api points only the backfill at it via
+  # EMBEDDING_BACKFILL_URL) so a ~600K-chunk re-embed never competes with live
+  # query embeddings. Started only with `--profile backfill`; stop it when the
+  # run completes.
+  embedding-backfill:
+    profiles: [backfill]
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.embedding
+    container_name: libertasian-embedding-backfill
+    restart: unless-stopped
+    expose:
+      - "8001"
+    environment:
+      EMBEDDING_MODEL_NAME: ${EMBEDDING_MODEL_NAME:-BAAI/bge-small-en-v1.5}
+      EMBEDDING_EMBEDDING_DIM: "${EMBEDDING_DIM:-384}"
+      EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-cpu}
+      EMBEDDING_MAX_BATCH_SIZE: "32"
+      EMBEDDING_INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks: [ai]
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 3G
 
   # ====================
   # Reranker Service (Python)

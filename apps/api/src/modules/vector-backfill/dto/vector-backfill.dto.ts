@@ -78,6 +78,20 @@ export class StartVectorBackfillDto {
 
   @ApiPropertyOptional({
     description:
+      'Embed only the missing vector ids (no re-embed), and for each document, ' +
+      'once all of its new vectors are written, delete its vector ids it no ' +
+      'longer produces — e.g. the whole-section vector of a section that is ' +
+      'now indexed as chunks. Works corpus-wide. Cannot be combined with ' +
+      'force; rejected with 400 if both are set.',
+    default: false,
+  })
+  @IsBoolean()
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  pruneStale?: boolean;
+
+  @ApiPropertyOptional({
+    description:
       'Texts per embedding request. Measured throughput is 4.8 texts/s on CPU ' +
       '(a batch of 64 took 13.46s) on a box shared with TTS; 64 later timed out ' +
       'and OOM-restarted the embedding workers, so the default is 32.',

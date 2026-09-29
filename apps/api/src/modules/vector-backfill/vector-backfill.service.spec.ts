@@ -5,6 +5,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmbeddingClientService } from '../search/embedding-client.service';
 import { OpenSearchService } from '../search/opensearch.service';
+import { chunkSection, indexRowId } from '../search/section-chunks';
 import {
   FAILURE_REASONS,
   SKIP_REASONS,
@@ -64,7 +65,7 @@ class FakeVectorIndex {
   });
 
   bulkIndexVectorDocuments = jest.fn(
-    async (docs: { document_id: string; section_id?: string }[]) => {
+    async (docs: { document_id: string; section_id?: string; chunk_index?: number }[]) => {
       if (this.throwOnce) {
         const err = this.throwOnce;
         this.throwOnce = null;
@@ -73,7 +74,7 @@ class FakeVectorIndex {
       const written: string[] = [];
       const failedIds: string[] = [];
       for (const doc of docs) {
-        const id = doc.section_id ?? doc.document_id;
+        const id = indexRowId(doc);
         if (this.rejectIds.has(id)) {
           failedIds.push(id);
           continue;
@@ -195,6 +196,7 @@ class FakePrisma {
         // Column defaults, as the database applies them.
         documentIds: [],
         force: false,
+        pruneStale: false,
         batchSize: 64,
         batchDelayMs: 0,
         maxDocuments: null,
@@ -915,7 +917,7 @@ describe('VectorBackfillService', () => {
       const result = await service.runBackfill({ runId: run.id }, NOOP_REPORT);
 
       expect(result.status).toBe('completed');
-      expect(embed.embedBatch.mock.calls.flat(2)).toHaveLength(1); // sec-b only
+      expect(embed.embedBatch.mock.calls.flatMap((call) => call[0] as string[])).toHaveLength(1); // sec-b only
       expect(index.findVectorIdsForDocuments).not.toHaveBeenCalled();
       expect(index.deleteVectorIds).not.toHaveBeenCalled();
       expect(index.ids.has('sec-gone')).toBe(true);
@@ -1020,7 +1022,7 @@ describe('VectorBackfillService', () => {
       await service.runBackfill({ runId: row['id'] as string }, NOOP_REPORT);
 
       // DOC_1 is fully indexed, so only DOC_2's two chunks are embedded.
-      expect(embed.embedBatch.mock.calls.flat(2)).toHaveLength(2);
+      expect(embed.embedBatch.mock.calls.flatMap((call) => call[0] as string[])).toHaveLength(2);
       expect(index.findVectorIdsForDocuments).not.toHaveBeenCalled();
     });
 
@@ -1037,5 +1039,168 @@ describe('VectorBackfillService', () => {
       expect(second['documentIds']).toEqual([DOC_1]);
       expect(second['force']).toBe(true);
     });
+  });
+
+  // -------------------------------------------------------------------
+  // pruneStale — the run that moves long sections onto chunk vectors
+  // -------------------------------------------------------------------
+
+  describe('pruneStale', () => {
+    const DOC_1 = '11111111-1111-4111-8111-111111111111';
+    const DOC_2 = '22222222-2222-4222-8222-222222222222';
+    // Long enough for chunkSection to split (> 1,800 chars).
+    const longText = 'The Court finds the petition meritorious on this ground. '
+      .repeat(60)
+      .trim();
+    const chunkIds = chunkSection(longText).map((c) => `sec-long:c${c.index}`);
+
+    /** DOC_1 as indexed before chunking: its section vectors all exist. */
+    const seedPreChunkIndex = () => {
+      prisma.documents = [
+        {
+          id: DOC_1,
+          documentType: 'decision',
+          sections: [
+            { id: 'sec-a', plainText: body(3) },
+            { id: 'sec-long', plainText: longText },
+          ],
+        },
+      ];
+      index.hold(DOC_1, DOC_1);
+      index.hold('sec-a', DOC_1);
+      index.hold('sec-long', DOC_1); // the old whole-section vector
+    };
+
+    it('rejects pruneStale combined with force (400), and writes no run row', async () => {
+      seedPreChunkIndex();
+      await expect(
+        service.enqueueRun({ documentIds: [DOC_1], force: true, pruneStale: true }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.runs).toHaveLength(0);
+    });
+
+    it('persists pruneStale, needs no documentIds, and resume carries it', async () => {
+      const run = await service.enqueueRun({ pruneStale: true });
+      expect(run['pruneStale']).toBe(true);
+      expect(run['documentIds']).toEqual([]);
+
+      prisma.runs[0]!.status = 'cancelled';
+      const resumed = await service.resume(run.id, {});
+      expect(resumed['pruneStale']).toBe(true);
+    });
+
+    it('counts chunks, not sections, in the gap', async () => {
+      seedPreChunkIndex();
+      const [gap] = await service.computeGapForDocuments([DOC_1], { pruneStale: true });
+      expect(gap!.expected).toBe(2 + chunkIds.length); // doc + sec-a + chunks
+      expect(
+        gap!.missing.map((m) =>
+          indexRowId({
+            document_id: m.documentId,
+            section_id: m.sectionId,
+            chunk_index: m.chunk?.index,
+          }),
+        ),
+      ).toEqual(chunkIds);
+      expect(gap!.stale).toEqual(['sec-long']);
+    });
+
+    it('embeds only the missing chunk ids and leaves existing vectors alone', async () => {
+      seedPreChunkIndex();
+      const run = await service.enqueueRun({ pruneStale: true });
+      const result = await service.runBackfill({ runId: run.id }, NOOP_REPORT);
+
+      expect(result.status).toBe('completed');
+      // Only the chunks were written: sec-a and the document vector were
+      // neither re-embedded nor overwritten.
+      expect(index.writes.flat().sort()).toEqual([...chunkIds].sort());
+      expect(embed.embedBatch.mock.calls.flatMap((call) => call[0] as string[])).toEqual(
+        chunkSection(longText).map((c) => c.text),
+      );
+      expect(index.ids.has('sec-a')).toBe(true);
+      expect(index.ids.has(DOC_1)).toBe(true);
+    });
+
+    it('deletes the stale section vector only after its chunks are written', async () => {
+      seedPreChunkIndex();
+      const run = await service.enqueueRun({ pruneStale: true });
+      const result = await service.runBackfill({ runId: run.id }, NOOP_REPORT);
+
+      expect(index.deletes.flat()).toEqual(['sec-long']);
+      expect(index.ids.has('sec-long')).toBe(false);
+      for (const id of chunkIds) expect(index.ids.has(id)).toBe(true);
+      const lastWrite = Math.max(...index.bulkIndexVectorDocuments.mock.invocationCallOrder);
+      expect(index.deleteVectorIds.mock.invocationCallOrder[0]).toBeGreaterThan(lastWrite);
+      expect(result.staleVectorsDeleted).toBe(1);
+    });
+
+    it('keeps the old vector of a document whose chunks did not all land', async () => {
+      seedPreChunkIndex();
+      index.rejectIds.add(chunkIds[1]!);
+      const run = await service.enqueueRun({ pruneStale: true });
+      const result = await service.runBackfill({ runId: run.id }, NOOP_REPORT);
+
+      expect(index.deleteVectorIds).not.toHaveBeenCalled();
+      expect(index.ids.has('sec-long')).toBe(true);
+      expect(result.documentsFailed).toBe(1);
+    });
+
+    it('keeps the old vector when the embedding service is down', async () => {
+      seedPreChunkIndex();
+      embed.embedBatch.mockResolvedValue(null);
+      const run = await service.enqueueRun({ pruneStale: true });
+      await service.runBackfill({ runId: run.id }, NOOP_REPORT);
+
+      expect(index.deleteVectorIds).not.toHaveBeenCalled();
+      expect(index.ids.has('sec-long')).toBe(true);
+    });
+
+    it('prunes a fully indexed document without embedding anything', async () => {
+      prisma.documents = [
+        { id: DOC_2, documentType: 'codal', sections: [{ id: 'sec-z', plainText: body(3) }] },
+      ];
+      index.hold(DOC_2, DOC_2);
+      index.hold('sec-z', DOC_2);
+      index.hold('sec-gone', DOC_2);
+
+      const run = await service.enqueueRun({ pruneStale: true });
+      const result = await service.runBackfill({ runId: run.id }, NOOP_REPORT);
+
+      expect(embed.embedBatch).not.toHaveBeenCalled();
+      expect(index.deletes.flat()).toEqual(['sec-gone']);
+      expect(index.ids.has('sec-z')).toBe(true);
+      expect(result.staleVectorsDeleted).toBe(1);
+    });
+
+    it('a pruneStale dry run embeds nothing and deletes nothing', async () => {
+      seedPreChunkIndex();
+      const run = await service.enqueueRun({ pruneStale: true, dryRun: true });
+      await service.runBackfill({ runId: run.id }, NOOP_REPORT);
+
+      expect(embed.embedBatch).not.toHaveBeenCalled();
+      expect(index.deleteVectorIds).not.toHaveBeenCalled();
+      expect(index.ids.has('sec-long')).toBe(true);
+    });
+
+    it('without pruneStale, an ordinary run never lists or deletes', async () => {
+      seedPreChunkIndex();
+      const run = await service.enqueueRun({});
+      await service.runBackfill({ runId: run.id }, NOOP_REPORT);
+
+      expect(index.findVectorIdsForDocuments).not.toHaveBeenCalled();
+      expect(index.deleteVectorIds).not.toHaveBeenCalled();
+      expect(index.ids.has('sec-long')).toBe(true);
+    });
+  });
+
+  it('sends its embedding batches to the backfill instance', async () => {
+    prisma.documents = [
+      { id: 'doc-1', documentType: 'codal', sections: [{ id: 'sec-a', plainText: body(3) }] },
+    ];
+    const run = await service.enqueueRun({});
+    await service.runBackfill({ runId: run.id }, NOOP_REPORT);
+
+    expect(embed.embedBatch).toHaveBeenCalled();
+    for (const call of embed.embedBatch.mock.calls) expect(call[1]).toBe('backfill');
   });
 });

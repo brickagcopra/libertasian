@@ -66,8 +66,11 @@ def _properties_block(source: str, func_name: str) -> str:
     """Return the body of the `properties: { ... }` object inside `func_name`."""
     fn_at = source.index(f"export function {func_name}")
     props_at = source.index("properties:", fn_at)
-    open_at = source.index("{", props_at)
+    return _braced_body(source, source.index("{", props_at), func_name)
 
+
+def _braced_body(source: str, open_at: int, label: str) -> str:
+    """Return the text between the `{` at `open_at` and its matching `}`."""
     depth = 0
     for i in range(open_at, len(source)):
         if source[i] == "{":
@@ -76,24 +79,38 @@ def _properties_block(source: str, func_name: str) -> str:
             depth -= 1
             if depth == 0:
                 return source[open_at + 1 : i]
-    raise AssertionError(f"unbalanced braces in {func_name}")
+    raise AssertionError(f"unbalanced braces in {label}")
 
 
-def _mapped_fields(func_name: str) -> set[str]:
-    """Top-level field names declared by an index mapping builder in the TS file."""
-    block = _properties_block(_strip_comments(_MAPPINGS_TS.read_text()), func_name)
+def _top_level_fields(source: str, block: str) -> set[str]:
+    """Top-level keys of an object literal body, expanding `...CONST` spreads.
 
+    A spread names an `export const CONST = { ... }` in the same file (e.g.
+    `CHUNK_FIELD_MAPPINGS`, shared by both mappings); without expanding it the
+    fields it contributes would be invisible to this contract.
+    """
     fields: set[str] = set()
     depth = 0
-    for match in re.finditer(r"[{}]|([A-Za-z_][A-Za-z0-9_]*)\s*:", block):
+    pattern = r"[{}]|\.\.\.([A-Z_][A-Z0-9_]*)|([A-Za-z_][A-Za-z0-9_]*)\s*:"
+    for match in re.finditer(pattern, block):
         token = match.group(0)
         if token == "{":
             depth += 1
         elif token == "}":
             depth -= 1
         elif depth == 0 and match.group(1):
-            fields.add(match.group(1))
+            const_at = source.index(f"export const {match.group(1)} =")
+            body = _braced_body(source, source.index("{", const_at), match.group(1))
+            fields |= _top_level_fields(source, body)
+        elif depth == 0 and match.group(2):
+            fields.add(match.group(2))
     return fields
+
+
+def _mapped_fields(func_name: str) -> set[str]:
+    """Top-level field names declared by an index mapping builder in the TS file."""
+    source = _strip_comments(_MAPPINGS_TS.read_text())
+    return _top_level_fields(source, _properties_block(source, func_name))
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +159,9 @@ class TestPythonMatchesTsMapping:
         assert "type" not in keyword
         assert "analyzer" not in keyword
         assert "dimension" not in vector
+        # Fields contributed by a `...CHUNK_FIELD_MAPPINGS` spread are read too.
+        assert "chunk_index" in keyword
+        assert "chunk_index" in vector
 
     def test_keyword_field_set_matches(self) -> None:
         assert _mapped_fields("buildKeywordIndexMapping") == _KEYWORD_INDEX_FIELDS

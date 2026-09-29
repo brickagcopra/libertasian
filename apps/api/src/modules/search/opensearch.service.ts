@@ -18,6 +18,7 @@ import {
 import type { QueryIntent } from './query-intent';
 import {
   CASE_DIGESTS_INDEX,
+  CHUNK_FIELD_MAPPINGS,
   DEFAULT_EMBEDDING_DIM,
   DERIVATIVES_INDEX,
   INDEX_TOPOLOGY,
@@ -25,6 +26,7 @@ import {
   USER_UPLOADS_INDEX,
   VECTOR_INDEX,
 } from './index-mappings';
+import { indexRowId } from './section-chunks';
 
 /**
  * Remove the MCQ answer-key fields from a derivative `_source` before it leaves
@@ -123,6 +125,14 @@ export interface IndexDocumentPayload {
   is_official: boolean;
   is_published: boolean;
   section_type?: string;
+  /**
+   * Set only on a chunk row of a long section (see `section-chunks.ts`):
+   * its position, and the offsets of `section_text` within the section's
+   * `plainText`. Absent on whole-section and document rows.
+   */
+  chunk_index?: number;
+  char_start?: number;
+  char_end?: number;
   decision_date?: string;
   promulgation_date?: string;
   publication_date?: string;
@@ -207,6 +217,10 @@ export interface VectorDocumentPayload {
   is_official: boolean;
   is_published: boolean;
   decision_date?: string;
+  /** Chunk rows only; same meaning as on `IndexDocumentPayload`. */
+  chunk_index?: number;
+  char_start?: number;
+  char_end?: number;
   embedding_vector: number[];
   text_snippet: string;
   title: string;
@@ -434,6 +448,9 @@ export class OpenSearchService implements OnModuleInit {
       const aliasExists = await this.aliasExists(entry.alias);
       if (aliasExists) {
         existing.push(entry.alias);
+        if (entry.alias === KEYWORD_INDEX || entry.alias === VECTOR_INDEX) {
+          await this.ensureChunkFields(entry.alias);
+        }
         continue;
       }
 
@@ -461,6 +478,30 @@ export class OpenSearchService implements OnModuleInit {
     }
 
     return { created, existing, needsRebuild };
+  }
+
+  /**
+   * Add the chunk-row fields to the physical index behind `alias`.
+   *
+   * Both document mappings are `dynamic: 'strict'`: a physical index created
+   * before `CHUNK_FIELD_MAPPINGS` existed rejects every chunk-row write until
+   * it has them. Adding fields is the one mapping change OpenSearch allows in
+   * place, it is idempotent, and it never repoints the alias — the rebuild
+   * stays the only path that does. Logged, never thrown: a failure here must
+   * not stop the other aliases being ensured.
+   */
+  private async ensureChunkFields(alias: string): Promise<void> {
+    try {
+      await this.client.indices.putMapping({
+        index: alias,
+        body: { properties: CHUNK_FIELD_MAPPINGS },
+      });
+    } catch (error) {
+      this.logger.error(
+        `Could not add chunk fields to ${alias} — chunk-row writes will be ` +
+          `rejected until it is rebuilt: ${(error as Error).message}`,
+      );
+    }
   }
 
   /** True when `name` resolves to an alias (as opposed to a concrete index). */
@@ -663,7 +704,7 @@ export class OpenSearchService implements OnModuleInit {
   }
 
   async indexDocument(doc: IndexDocumentPayload) {
-    const id = doc.section_id ?? doc.document_id;
+    const id = indexRowId(doc);
     try {
       await this.client.index({
         index: KEYWORD_INDEX,
@@ -723,7 +764,7 @@ export class OpenSearchService implements OnModuleInit {
 
     const body: Record<string, unknown>[] = [];
     for (const doc of docs) {
-      const id = doc.section_id ?? doc.document_id;
+      const id = indexRowId(doc);
       body.push({ index: { _index: targetIndex, _id: id } });
       body.push(this.withDerivedFields(doc));
     }
@@ -1202,7 +1243,7 @@ export class OpenSearchService implements OnModuleInit {
    * Index a document's vector embedding into the vector index.
    */
   async indexVectorDocument(doc: VectorDocumentPayload) {
-    const id = doc.section_id ?? doc.document_id;
+    const id = indexRowId(doc);
     try {
       await this.client.index({
         index: VECTOR_INDEX,
@@ -1327,6 +1368,32 @@ export class OpenSearchService implements OnModuleInit {
   }
 
   /**
+   * Every keyword-index `_id` held for one document (its document row,
+   * section rows and chunk rows). Same contract as
+   * `findVectorIdsForDocuments`: a truncated listing is reported, never
+   * silently short.
+   */
+  async findKeywordIdsForDocument(
+    documentId: string,
+  ): Promise<{ ids: string[]; incomplete: boolean }> {
+    const { idsByDocument, incomplete } = await this.findVectorIdsForDocuments(
+      [documentId],
+      KEYWORD_INDEX,
+    );
+    return {
+      ids: idsByDocument.get(documentId) ?? [],
+      incomplete: incomplete.has(documentId),
+    };
+  }
+
+  /** Delete these `_id`s from the keyword index; see `deleteVectorIds`. */
+  async deleteKeywordIds(
+    ids: readonly string[],
+  ): Promise<{ deleted: number; failedIds: string[] }> {
+    return this.deleteVectorIds(ids, KEYWORD_INDEX);
+  }
+
+  /**
    * Bulk index vector documents into the vector index.
    *
    * Returns the failed `_id`s alongside the counts. Without them a caller can
@@ -1348,7 +1415,7 @@ export class OpenSearchService implements OnModuleInit {
 
     const body: Record<string, unknown>[] = [];
     for (const doc of docs) {
-      const id = doc.section_id ?? doc.document_id;
+      const id = indexRowId(doc);
       body.push({ index: { _index: targetIndex, _id: id } });
       body.push(this.withVectorDerivedFields(doc));
     }
