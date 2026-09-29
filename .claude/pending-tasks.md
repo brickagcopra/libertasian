@@ -14,6 +14,10 @@
 - [ ] Re-seed needed: RoC Evidence, RoC Special Proceedings, Administrative Code 1987, NIRC (skipped by realign, still off by one); 1987 Constitution has doubled paragraphs in 35 rows plus a repeated Art III Sec 3–12 block; 10 first rows empty after realign; Rule 135 Section 1 holds Section 2 text.
 - [ ] 5,630 reader audio clips voice pre-realign text (list: prod /home/brick/realign-2026-09-27/commit/audio_renditions.csv); regeneration is a cost decision.
 
+## Deep Research quote matching (2026-09-28, fix/deep-research-quote-matching, PR open)
+- [ ] After merge + deploy: re-run the gate5 eval and compare against 16/40 `validation_failed` (quote_not_found 31, quote_length 12, verifier_unsupported 6).
+- [ ] `test_routers.py` has 40 errors on main (sync tests request the async `client` fixture, so pytest raises PytestRemovedIn9Warning). This PR did not cause them.
+
 ## Deep Research client follow-ups (2026-09-27, after #508 / #509 merged)
 - [ ] Review/merge PR #513 (mobile reader pinpoint + login redirect keeps `?q=`, incl. Google OAuth via sessionStorage). One web test (`reader/[id]/page.test.tsx`) timed out under full-suite load; it passes on its own.
 - [ ] Web UpgradeBanner → "subscribe in the iOS app" CTA (decided 09-20) before `PAYWALL_ENFORCED_WEB` is set. Applies to Deep Research and Memos. It never shows today: the flag is unset in prod, so every web user counts as pro.

@@ -22,8 +22,9 @@ Pipeline (each stage is announced on the SSE stream as a ``stage`` event):
    (RANKING_UNAVAILABLE) instead of trusting RRF order.
 4. **writing**   — the writer returns structured JSON whose citations are
    ``{source_id: "S3", quote}`` pairs. It never emits document metadata.
-5. **verifying** — (a) the label must be one of S1..Sn, (b) the quote must be
-   a whitespace-normalised substring of that passage, (c) one batched verifier
+5. **verifying** — (a) the label must be one of S1..Sn, (b) the quote must
+   match that passage under `match_quote` (the passage's own words are what
+   is delivered, never the writer's), (c) one batched verifier
    call judges each surviving claim. A claim with no surviving citation, or
    judged unsupported, is removed and counted.
 
@@ -99,6 +100,20 @@ _VERIFIER_MAX_TOKENS = 1500
 _MIN_QUOTE_WORDS = 2
 _LABEL_RE = re.compile(r"^S(\d{1,3})$")
 _WS_RE = re.compile(r"\s+")
+# `match_quote`: a writer joins fragments of one passage with an ellipsis, or a
+# lead-in to a list item ("extended to those: (a) sentenced ..."). Each
+# fragment is matched on its own; fragments shorter than this prove nothing.
+_QUOTE_ELLIPSIS_RE = re.compile(r"\.\.\.|…")
+_QUOTE_LIST_ITEM_RE = re.compile(r"(?<=:)\s*\([a-z]\)\s*", re.IGNORECASE)
+_MIN_FRAGMENT_WORDS = 3
+_FOLD_CHARS = str.maketrans({
+    "‘": "'", "’": "'", "‚": "'", "‛": "'", "′": "'",
+    "“": '"', "”": '"', "„": '"', "‟": '"', "″": '"',
+    "‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-",
+    "―": "-", "−": "-",
+})
+_NO_SPACE_BEFORE = frozenset(",.;:)")
+_QUOTE_TRAILING = " .,;:!?\"'"
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE
 )
@@ -148,6 +163,85 @@ def resolve_writer_model(override: str | None) -> str:
 
 def normalize_ws(text: str) -> str:
     return _WS_RE.sub(" ", text).strip()
+
+
+def _fold(text: str) -> tuple[str, list[int]]:
+    """``text`` in the form quotes are compared on, and an index map back.
+
+    Casefolded, curly quotes and dashes unified, whitespace collapsed, and no
+    space before ``, . ; : )`` (the corpus writes "gravity , i.e."). ``index[i]``
+    is the position in ``text`` of folded character ``i``.
+    """
+    out: list[str] = []
+    index: list[int] = []
+    for pos, char in enumerate(text):
+        if char.isspace():
+            if out and out[-1] != " ":
+                out.append(" ")
+                index.append(pos)
+            continue
+        if char in _NO_SPACE_BEFORE and out and out[-1] == " ":
+            out.pop()
+            index.pop()
+        for folded in char.translate(_FOLD_CHARS).casefold():
+            out.append(folded)
+            index.append(pos)
+    if out and out[-1] == " ":
+        out.pop()
+        index.pop()
+    return "".join(out), index
+
+
+def _quote_fragments(quote: str) -> list[str]:
+    """The folded pieces of ``quote`` that must each appear in the passage."""
+    pieces = [
+        piece
+        for part in _QUOTE_ELLIPSIS_RE.split(quote)
+        for piece in _QUOTE_LIST_ITEM_RE.split(part)
+    ]
+    fragments = [_fold(piece)[0].strip(_QUOTE_TRAILING) for piece in pieces]
+    fragments = [f for f in fragments if f]
+    if len(fragments) <= 1:
+        return fragments
+    return [f for f in fragments if len(f.split()) >= _MIN_FRAGMENT_WORDS]
+
+
+def match_quote(quote: str, passage_text: str) -> str | None:
+    """The span of ``passage_text`` that ``quote`` reproduces, or None.
+
+    Tolerates what a faithful writer gets wrong: case, the corpus's spacing
+    before punctuation, curly quotes and dashes, a trailing full stop where the
+    passage runs on, and fragments of the passage joined by an ellipsis or a
+    lead-in joined to a list item. Every fragment of 3+ words must be found, in
+    order, in this passage; a paraphrase is not found. What is returned is cut
+    from ``passage_text`` itself (fragments joined by " … ") and is at most
+    ``MAX_QUOTE_WORDS`` words, so a delivered quote never carries the writer's
+    wording.
+    """
+    fragments = _quote_fragments(quote)
+    if not fragments:
+        return None
+    folded, index = _fold(passage_text)
+    spans: list[str] = []
+    start = 0
+    for fragment in fragments:
+        hit = folded.find(fragment, start)
+        if hit < 0:
+            return None
+        end = hit + len(fragment)
+        spans.append(passage_text[index[hit] : index[end - 1] + 1])
+        start = end
+    delivered: list[str] = []
+    budget = MAX_QUOTE_WORDS
+    for span in spans:
+        words = span.split()
+        if len(words) > budget:
+            if budget:
+                delivered.append(" ".join(words[:budget]))
+            break
+        delivered.append(span)
+        budget -= len(words)
+    return " … ".join(delivered)
 
 
 def extract_gr_no(*texts: str) -> str | None:
@@ -304,8 +398,9 @@ def filter_citations(
     """Verification steps (a) and (b), deterministic and in that order.
 
     (a) ``source_id`` must name one of the labels actually shown to the writer.
-    (b) ``quote`` must be a whitespace-normalised substring of THAT passage,
-        between 2 and ``MAX_QUOTE_WORDS`` words.
+    (b) ``quote`` must be at least 2 words and match THAT passage under
+        `match_quote`. The kept citation carries the passage's own span
+        (truncated to ``MAX_QUOTE_WORDS`` words), not the writer's text.
     Citations failing either are dropped. Claims are kept here even when they
     lose every citation; `verify_draft` removes and counts them.
 
@@ -325,13 +420,12 @@ def filter_citations(
                 if not _LABEL_RE.match(label) or label not in by_label:
                     dropped[REMOVAL_BAD_LABEL] += 1  # (a) fabricated or out of range
                     continue
-                quote = normalize_ws(citation.quote)
-                words = len(quote.split())
-                if words < _MIN_QUOTE_WORDS or words > MAX_QUOTE_WORDS:
+                if len(citation.quote.split()) < _MIN_QUOTE_WORDS:
                     dropped[REMOVAL_QUOTE_LENGTH] += 1
                     continue
-                if quote not in by_label[label]:
-                    dropped[REMOVAL_QUOTE_NOT_FOUND] += 1  # (b) not verbatim
+                quote = match_quote(citation.quote, by_label[label])
+                if quote is None:
+                    dropped[REMOVAL_QUOTE_NOT_FOUND] += 1  # (b) not in the passage
                     continue
                 if any(k.source_id == label and k.quote == quote for k in kept):
                     continue

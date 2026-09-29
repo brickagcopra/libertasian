@@ -15,9 +15,11 @@ from __future__ import annotations
 
 from typing import Any
 
-PROMPT_TEMPLATE_VERSION = "deep-research-v2"
+PROMPT_TEMPLATE_VERSION = "deep-research-v3"
 
-MAX_QUOTE_WORDS = 30
+# Statute provisions are routinely quoted at 31-45 words (prod gate 2026-09-29).
+# A longer quote that matches is truncated to this many words, never dropped.
+MAX_QUOTE_WORDS = 50
 MIN_SUB_QUERIES = 3
 MAX_SUB_QUERIES = 5
 
