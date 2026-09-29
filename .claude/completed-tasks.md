@@ -1,5 +1,9 @@
 # Completed Tasks
 
+## 2026-09-28 — Deep Research quote matching (PR opened, not merged)
+- [x] `filter_citations` matches quotes via `match_quote`: casefold, collapsed whitespace, no space before `, . ; : )`, unified curly quotes/dashes, trailing punctuation stripped; "..."/"…" and "`: (a)`" list-item joins split into fragments (3+ words each, in order, same passage). Delivers the PASSAGE span joined by " … ", never the writer's text. Paraphrases stay `quote_not_found`.
+- [x] Over-long quotes truncated to `MAX_QUOTE_WORDS` (30 → 50) instead of dropped; <2 words still `quote_length`. Prompt version → `deep-research-v3`. Verifier/abstention unchanged.
+
 ## 2026-09-28 — Deep Research removal reasons (PR opened, not merged)
 - [x] `verify_draft` counts why things were removed (bad_label / quote_not_found / quote_length per citation; no_citations_left / verifier_unsupported / verifier_no_verdict per claim), logs `kept= removed= reasons=` once per run, and emits `done.removalReasons`. Counting only.
 - [x] `evals.run` records `removal_reasons` per result (null when absent)

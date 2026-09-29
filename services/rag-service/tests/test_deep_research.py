@@ -24,6 +24,7 @@ from src.core.ranked import RankedPassages
 from src.core.schemas import Passage, RerankOutcome
 from src.deep_research import service
 from src.deep_research.prompts import (
+    MAX_QUOTE_WORDS,
     PLANNER_RESPONSE_FORMAT,
     PLANNER_SYSTEM_PROMPT,
     PROMPT_TEMPLATE_VERSION,
@@ -42,6 +43,7 @@ from src.deep_research.schemas import (
 from src.deep_research.service import (
     extract_gr_no,
     filter_citations,
+    match_quote,
     merge_candidates,
     run_deep_research,
 )
@@ -672,11 +674,116 @@ class TestFilterCitations:
         assert self._one(Citation("S1", "")) == []
         assert self._one(Citation("S1", "legal")) == []
 
-    def test_overlong_quote_rejected(self) -> None:
-        assert self._one(Citation("S1", " ".join(["concept"] * 31))) == []
+    def test_overlong_quote_not_in_passage_rejected(self) -> None:
+        assert self._one(Citation("S1", " ".join(["concept"] * 51))) == []
+
+    def test_delivers_the_passage_span_not_the_writers_text(self) -> None:
+        kept = self._one(Citation("S1", "IS A LEGAL CONCEPT, not a medical illness."))
+        assert kept[0].quote == "is a legal concept, not a medical illness"
 
     def test_label_shaped_but_absent(self) -> None:
         assert self._one(Citation("S2", "a legal concept, not a medical")) == []
+
+
+class TestMatchQuote:
+    """Faithful quotes that failed the strict substring test on the prod gate
+    (2026-09-29), plus the paraphrase that must still be refused."""
+
+    @staticmethod
+    def _delivered(quote: str, passage: str) -> str:
+        span = match_quote(quote, passage)
+        assert span is not None
+        for fragment in span.split(" … "):
+            assert fragment in passage
+        return span
+
+    def test_trailing_period_where_passage_continues(self) -> None:
+        passage = (
+            "The notice shall be served upon the employer , except when the employer is absent."
+        )
+        assert self._delivered("shall be served upon the employer.", passage) == (
+            "shall be served upon the employer"
+        )
+
+    @pytest.mark.parametrize("ellipsis", ["...", "…"])
+    def test_ellipsis_joins_two_fragments(self, ellipsis: str) -> None:
+        passage = (
+            "The penalty shall be imposed in its maximum period when the offender "
+            "acted with treachery, and in its minimum period in all other cases."
+        )
+        quote = f"shall be imposed in its maximum period {ellipsis} in its minimum period"
+        assert self._delivered(quote, passage) == (
+            "shall be imposed in its maximum period … in its minimum period"
+        )
+
+    def test_fragments_out_of_order_rejected(self) -> None:
+        passage = "first comes the lead clause, then comes the second clause entirely."
+        assert match_quote("the second clause entirely ... first comes the lead", passage) is None
+
+    def test_lead_in_joined_to_list_item(self) -> None:
+        passage = (
+            "The benefit of this Article shall be extended to those: who are first "
+            "offenders; and (a) sentenced to a penalty not exceeding six years."
+        )
+        span = self._delivered(
+            "extended to those: (a) sentenced to a penalty not exceeding six years", passage
+        )
+        assert span == (
+            "extended to those … sentenced to a penalty not exceeding six years"
+        )
+
+    def test_case_difference(self) -> None:
+        passage = "Psychological Incapacity Is A Legal Concept under the Family Code."
+        assert self._delivered("psychological incapacity is a legal concept", passage) == (
+            "Psychological Incapacity Is A Legal Concept"
+        )
+
+    def test_corpus_spacing_before_punctuation(self) -> None:
+        passage = "The act must be of such gravity , i.e. , it must be serious ( not trivial ) ."
+        assert self._delivered("of such gravity, i.e., it must be serious", passage) == (
+            "of such gravity , i.e. , it must be serious"
+        )
+
+    def test_curly_quotes_and_dashes(self) -> None:
+        passage = "the so-called “doctrine of necessity” — a narrow exception"
+        assert self._delivered('so-called "doctrine of necessity" - a narrow', passage) == (
+            "so-called “doctrine of necessity” — a narrow"
+        )
+
+    def test_statute_provision_over_limit_truncated(self) -> None:
+        words = [f"w{i}" for i in range(45)]
+        passage = "Section 5. " + " ".join(words) + " end."
+        quote = " ".join(words)
+        span = self._delivered(quote, passage)
+        assert span == " ".join(words[:MAX_QUOTE_WORDS])
+        long_words = [f"w{i}" for i in range(MAX_QUOTE_WORDS + 10)]
+        span = self._delivered(" ".join(long_words), " ".join(long_words))
+        assert span.split() == long_words[:MAX_QUOTE_WORDS]
+
+    def test_overlong_quote_kept_by_filter_citations(self) -> None:
+        words = [f"w{i}" for i in range(45)]
+        passage = _passage(9, " ".join(words))
+        draft = Draft(summary="", sections=[
+            Section("h", [Claim("t", [Citation("S1", " ".join(words))])]),
+        ])
+        filtered, dropped = filter_citations(
+            draft, [LabelledPassage(label="S1", passage=passage)]
+        )
+        assert filtered.sections[0].claims[0].citations[0].quote == " ".join(words)
+        assert sum(dropped.values()) == 0
+
+    def test_paraphrase_rejected(self) -> None:
+        quote = (
+            "it must be shown to be incapable of doing so due to some psychological illness"
+        )
+        assert match_quote(quote, S1_TEXT) is None
+        claim = Claim("t", [Citation("S1", quote)])
+        draft = Draft(summary="", sections=[Section("h", [claim])])
+        filtered, dropped = filter_citations(
+            draft, [LabelledPassage(label="S1", passage=PASSAGES[0])]
+        )
+        assert filtered.sections[0].claims[0].citations == []
+        assert dropped == Counter({"quote_not_found": 1})
 
 
 class TestRemovalReasons:
@@ -717,7 +824,7 @@ class TestRemovalReasons:
         assert reasons == self._expect(quote_not_found=1, no_citations_left=1)
         assert result["removedClaims"] == 1
 
-    @pytest.mark.parametrize("quote", ["legal", " ".join(["concept"] * 31)])
+    @pytest.mark.parametrize("quote", ["legal", ""])
     @pytest.mark.asyncio
     async def test_quote_length(self, quote: str) -> None:
         claim = {"text": "t", "citations": [{"source_id": "S1", "quote": quote}]}
