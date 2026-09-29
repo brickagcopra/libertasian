@@ -30,6 +30,7 @@ from src.deep_research.prompts import (
     PROMPT_TEMPLATE_VERSION,
     VERIFIER_SYSTEM_PROMPT,
     WRITER_SYSTEM_PROMPT,
+    verifier_response_format,
 )
 from src.deep_research.router import format_sse
 from src.deep_research.schemas import (
@@ -133,9 +134,8 @@ def _llm(
         if system == VERIFIER_SYSTEM_PROMPT:
             if callable(verifier):
                 return _llm_result(verifier(kwargs["user_prompt"]), kwargs["model"])
-            default = {"summary_supported": True, "verdicts": [
-                {"claim_id": f"C{i}", "supported": True} for i in range(1, 10)
-            ]}
+            default = {"summary_supported": True,
+                       "verdicts": {f"C{i}": True for i in range(1, 10)}}
             return _llm_result(verifier if verifier is not None else default, kwargs["model"])
         raise AssertionError(f"unexpected prompt {system[:40]}")
 
@@ -293,10 +293,7 @@ class TestPipeline:
 
         def verdicts(prompt: str) -> dict[str, Any]:
             assert "[C1]" in prompt and "[C2]" in prompt  # one batched call
-            return {"summary_supported": True, "verdicts": [
-                {"claim_id": "C1", "supported": True},
-                {"claim_id": "C2", "supported": False},
-            ]}
+            return {"summary_supported": True, "verdicts": {"C1": True, "C2": False}}
 
         events = await _collect(_llm(writer=_writer_answer([GOOD_CLAIM, second]),
                                      verifier=verdicts))
@@ -307,7 +304,7 @@ class TestPipeline:
 
     @pytest.mark.asyncio
     async def test_claim_without_verdict_fails_closed(self) -> None:
-        events = await _collect(_llm(verifier={"summary_supported": True, "verdicts": []}))
+        events = await _collect(_llm(verifier={"summary_supported": True, "verdicts": {}}))
         result = _named(events, "result")
         assert result["abstained"] is True
         assert result["abstainReason"] == "validation_failed"
@@ -317,7 +314,7 @@ class TestPipeline:
     @pytest.mark.asyncio
     async def test_unsupported_summary_is_replaced_by_claims(self) -> None:
         events = await _collect(_llm(verifier={
-            "summary_supported": False, "verdicts": [{"claim_id": "C1", "supported": True}],
+            "summary_supported": False, "verdicts": {"C1": True},
         }))
         assert _named(events, "result")["summary"] == GOOD_CLAIM["text"]
 
@@ -841,19 +838,48 @@ class TestRemovalReasons:
 
     @pytest.mark.asyncio
     async def test_verifier_unsupported(self) -> None:
-        verdicts = {"summary_supported": True, "verdicts": [
-            {"claim_id": "C1", "supported": True}, {"claim_id": "C2", "supported": False},
-        ]}
+        verdicts = {"summary_supported": True, "verdicts": {"C1": True, "C2": False}}
         reasons, result = await self._reasons([GOOD_CLAIM, GOOD_CLAIM], verifier=verdicts)
         assert reasons == self._expect(verifier_unsupported=1)
         assert result["removedClaims"] == 1
 
     @pytest.mark.asyncio
     async def test_verifier_no_verdict(self) -> None:
-        verdicts = {"summary_supported": True, "verdicts": [{"claim_id": "C1", "supported": True}]}
+        verdicts = {"summary_supported": True, "verdicts": {"C1": True}}
         reasons, result = await self._reasons([GOOD_CLAIM, GOOD_CLAIM], verifier=verdicts)
         assert reasons == self._expect(verifier_no_verdict=1)
         assert result["removedClaims"] == 1
+
+    @pytest.mark.asyncio
+    async def test_verdicts_object_keeps_every_supported_claim(self) -> None:
+        verdicts = {"summary_supported": True, "verdicts": {"C1": True, "c2": True, "C3": True}}
+        reasons, result = await self._reasons([GOOD_CLAIM] * 3, verifier=verdicts)
+        assert reasons == self._expect()
+        assert result["removedClaims"] == 0
+        assert len(_claims(result)) == 3
+
+    @pytest.mark.asyncio
+    async def test_legacy_verdicts_array_fails_closed(self) -> None:
+        verdicts = {"summary_supported": True,
+                    "verdicts": [{"claim_id": "C1", "supported": True}]}
+        reasons, result = await self._reasons([GOOD_CLAIM], verifier=verdicts)
+        assert reasons == self._expect(verifier_no_verdict=1)
+        assert result["abstainReason"] == "validation_failed"
+
+    @pytest.mark.asyncio
+    async def test_verifier_schema_requires_every_claim_id(self) -> None:
+        llm = _llm(writer=_writer_answer([GOOD_CLAIM] * 3))
+        await _collect(llm)
+        (call,) = [c for c in llm.await_args_list
+                   if c.kwargs["system_prompt"] == VERIFIER_SYSTEM_PROMPT]
+        schema = call.kwargs["response_format"]["json_schema"]
+        assert schema["strict"] is True
+        verdicts = schema["schema"]["properties"]["verdicts"]
+        assert verdicts["type"] == "object"
+        assert verdicts["additionalProperties"] is False
+        assert verdicts["required"] == ["C1", "C2", "C3"]
+        assert verdicts["properties"] == {cid: {"type": "boolean"} for cid in ("C1", "C2", "C3")}
+
 
     @pytest.mark.asyncio
     async def test_dropped_citation_on_a_kept_claim_is_counted_but_removes_nothing(
@@ -872,7 +898,7 @@ class TestRemovalReasons:
     async def test_everything_removed_still_abstains_validation_failed(self) -> None:
         verdicts = {
             "summary_supported": False,
-            "verdicts": [{"claim_id": "C1", "supported": False}],
+            "verdicts": {"C1": False},
         }
         reasons, result = await self._reasons([GOOD_CLAIM], verifier=verdicts)
         assert reasons == self._expect(verifier_unsupported=1)
@@ -1032,3 +1058,15 @@ class TestGenerationModelParams:
         assert generation.MODEL_PRICING["gpt-6-luna"] == (0.10, 0.50)
         assert generation.compute_cost_usd("gpt-6-luna", 1_000_000, 1_000_000) == pytest.approx(0.6)
         assert generation.compute_cost_usd("unknown", 10, 10) == 0.0
+
+
+def test_verifier_response_format_is_built_per_call() -> None:
+    fmt = verifier_response_format(["C1", "C2"])
+    verdicts = fmt["json_schema"]["schema"]["properties"]["verdicts"]
+    assert verdicts["required"] == ["C1", "C2"]
+    assert set(verdicts["properties"]) == {"C1", "C2"}
+    assert '"verdicts": {"C1": true|false' in VERIFIER_SYSTEM_PROMPT
+
+
+def test_prompt_template_version() -> None:
+    assert PROMPT_TEMPLATE_VERSION == "deep-research-v4"

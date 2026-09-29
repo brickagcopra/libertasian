@@ -16,6 +16,7 @@ from evals.metrics import (
     hit_rate_at_k,
     instrument_numbers,
     latency_percentiles,
+    mean_citations_per_answer,
     normalize_gr_no,
     per_subject,
     percentile,
@@ -243,6 +244,19 @@ def test_citation_validity_counts_answered_only() -> None:
     ]
     assert citation_validity_rate(results) == pytest.approx(0.8)
     assert citation_validity_rate([qr("x")]) is None
+
+
+def test_mean_citations_per_answer_counts_answered_answerable_only() -> None:
+    results = [
+        qr("a", citations_total=4),
+        qr("b", citations_total=2),
+        qr("c", status="abstained", citations_total=5),
+        qr("d", must_abstain=True, citations_total=9),
+    ]
+    assert mean_citations_per_answer(results) == pytest.approx(3.0)
+    assert mean_citations_per_answer([qr("x", status="abstained")]) is None
+    assert summarize(results, ks=(1,))["mean_citations_per_answer"] == pytest.approx(3.0)
+    assert "| mean_citations_per_answer | 3.000 |" in summary_markdown(results, ks=(1,))
 
 
 def test_latency_excludes_errors() -> None:

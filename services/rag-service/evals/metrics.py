@@ -238,6 +238,14 @@ def citation_validity_rate(results: Sequence[QuestionResult]) -> float | None:
     return _ratio(valid, sum(r.citations_total for r in answered))
 
 
+def mean_citations_per_answer(results: Sequence[QuestionResult]) -> float | None:
+    """Mean delivered citations per answered, answerable (non-must-abstain) question."""
+    answered = [r for r in answerable(results) if r.status == "answered"]
+    if not answered:
+        return None
+    return sum(r.citations_total for r in answered) / len(answered)
+
+
 def latency_percentiles(results: Sequence[QuestionResult]) -> tuple[float | None, float | None]:
     lat = [r.latency_ms for r in results if r.status != "error"]
     return percentile(lat, 50), percentile(lat, 95)
@@ -259,6 +267,7 @@ def summarize(
         "abstention_precision": ab.precision,
         "abstention_recall": ab.recall,
         "citation_validity_rate": citation_validity_rate(results),
+        "mean_citations_per_answer": mean_citations_per_answer(results),
         "latency_p50_ms": p50,
         "latency_p95_ms": p95,
     }

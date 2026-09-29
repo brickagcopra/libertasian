@@ -67,12 +67,12 @@ from .prompts import (
     PLANNER_SYSTEM_PROMPT,
     PLANNER_USER_TEMPLATE,
     PROMPT_TEMPLATE_VERSION,
-    VERIFIER_RESPONSE_FORMAT,
     VERIFIER_SYSTEM_PROMPT,
     VERIFIER_USER_TEMPLATE,
     WRITER_RESPONSE_FORMAT,
     WRITER_SYSTEM_PROMPT,
     WRITER_USER_TEMPLATE,
+    verifier_response_format,
 )
 from .schemas import (
     Citation,
@@ -542,18 +542,18 @@ async def verify_draft(
             model=settings.deep_research_verifier_model,
             max_tokens=_VERIFIER_MAX_TOKENS,
             temperature=0.0,
-            response_format=VERIFIER_RESPONSE_FORMAT,
+            response_format=verifier_response_format([cid for cid, _ in candidates]),
             usage=usage,
         )
         verdict_data = _load_json_object(str(result.get("content") or ""))
-        for verdict in verdict_data.get("verdicts") or []:
-            if not isinstance(verdict, dict):
-                continue
-            claim_id = str(verdict.get("claim_id", "")).strip().upper()
-            if verdict.get("supported") is True:
-                supported_ids.add(claim_id)
-            elif verdict.get("supported") is False:
-                unsupported_ids.add(claim_id)
+        verdicts = verdict_data.get("verdicts")
+        if isinstance(verdicts, dict):
+            for key, supported in verdicts.items():
+                claim_id = str(key).strip().upper()
+                if supported is True:
+                    supported_ids.add(claim_id)
+                elif supported is False:
+                    unsupported_ids.add(claim_id)
         summary_supported = verdict_data.get("summary_supported") is True
 
     keep = {id(claim) for cid, claim in candidates if cid in supported_ids}

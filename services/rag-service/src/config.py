@@ -226,9 +226,10 @@ class Settings(BaseSettings):
     # what the deployment documents.
     #
     # Planner and verifier are small, cheap classification-shaped calls; the
-    # writer is the one call whose quality the user reads. gpt-6-luna is
-    # selectable by setting DEEP_RESEARCH_MODEL (or per request via
-    # model_override, when listed in DEEP_RESEARCH_MODEL_ALLOWLIST).
+    # writer is the one call whose quality the user reads, so it defaults to
+    # gpt-6-luna. Another writer is selectable by setting DEEP_RESEARCH_MODEL
+    # (or per request via model_override, when listed in
+    # DEEP_RESEARCH_MODEL_ALLOWLIST).
     deep_research_planner_model: str = Field(
         default="gpt-4.1-nano",
         validation_alias=AliasChoices(
@@ -236,7 +237,7 @@ class Settings(BaseSettings):
         ),
     )
     deep_research_model: str = Field(
-        default="gpt-4o-mini",
+        default="gpt-6-luna",
         validation_alias=AliasChoices("RAG_DEEP_RESEARCH_MODEL", "DEEP_RESEARCH_MODEL"),
     )
     deep_research_verifier_model: str = Field(
