@@ -173,6 +173,20 @@ describe('VectorBackfillController', () => {
       expect(audit.log).not.toHaveBeenCalled();
     });
 
+    it('passes pruneStale through without documentIds and audits it', async () => {
+      await controller.startRun({ pruneStale: true }, PLATFORM_ADMIN);
+      expect(backfill.enqueueRun).toHaveBeenCalledWith(
+        expect.objectContaining({ pruneStale: true, force: false }),
+      );
+    });
+
+    it('rejects pruneStale together with force with 400 before enqueueing anything', async () => {
+      await expect(
+        controller.startRun({ force: true, pruneStale: true, documentIds: [DOC_ID] }, PLATFORM_ADMIN),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(backfill.enqueueRun).not.toHaveBeenCalled();
+    });
+
     it('defaults force to false', async () => {
       await controller.startRun({ documentIds: [DOC_ID] }, USER);
       expect(backfill.enqueueRun).toHaveBeenCalledWith(

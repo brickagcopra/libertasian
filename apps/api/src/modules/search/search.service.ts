@@ -23,11 +23,13 @@ import {
   type SuggestionItem,
   type VectorDocumentPayload,
 } from './opensearch.service';
+import { indexRowId, sectionKeywordRows } from './section-chunks';
 import {
   buildVectorEmbeddingInputs,
   joinSectionText,
   toVectorDocumentPayload,
   toVectorPayloadBase,
+  vectorDocumentId,
 } from './vector-embedding-inputs';
 import { PonenteDirectoryService } from './ponente-directory.service';
 import {
@@ -1014,23 +1016,25 @@ export class SearchService {
     // Combine full text for document-level operations
     const fullText = joinSectionText(document.sections);
 
-    // Index in keyword index
-    await this.openSearch.indexDocument({
-      ...basePayload,
-      plain_text: fullText,
-    });
-
-    // Index each section separately for section-level retrieval
-    for (const section of document.sections) {
-      if (!section.plainText) continue;
-      await this.openSearch.indexDocument({
-        ...basePayload,
-        section_id: section.id,
-        section_type: section.sectionType,
-        section_text: section.plainText,
-        plain_text: undefined,
-      });
+    // Keyword rows: the document row, then one row per section — or one per
+    // chunk for a section long enough to split (see `section-chunks.ts`).
+    const keywordRows: IndexDocumentPayload[] = [
+      { ...basePayload, plain_text: fullText },
+      ...document.sections.flatMap((section) =>
+        sectionKeywordRows(basePayload, section),
+      ),
+    ];
+    for (const row of keywordRows) {
+      await this.openSearch.indexDocument(row);
     }
+
+    // Every row above was written (indexDocument throws otherwise), so any
+    // other row this document holds is stale: a section that became chunks,
+    // chunks that became fewer, a section that was deleted.
+    await this.sweepStaleKeywordRows(
+      documentId,
+      new Set(keywordRows.map((row) => indexRowId(row))),
+    );
 
     // Index vector embeddings (non-blocking, best-effort).
     //
@@ -1049,6 +1053,54 @@ export class SearchService {
     this.logger.log(
       `Indexed document ${documentId} with ${document.sections.length} sections`,
     );
+  }
+
+  /**
+   * Delete this document's keyword rows whose `_id` is not in `expected`.
+   * Best-effort: a failed sweep leaves duplicates that the retrieval collapse
+   * absorbs, never a missing row, so it logs rather than failing the index.
+   */
+  private async sweepStaleKeywordRows(documentId: string, expected: Set<string>) {
+    try {
+      const held = await this.openSearch.findKeywordIdsForDocument(documentId);
+      const stale = held.ids.filter((id) => !expected.has(id));
+      if (stale.length === 0) return;
+      const result = await this.openSearch.deleteKeywordIds(stale);
+      if (result.failedIds.length > 0) {
+        this.logger.warn(
+          `Stale keyword sweep for ${documentId}: ${result.failedIds.length}/${stale.length} deletes failed`,
+        );
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Stale keyword sweep failed for ${documentId}: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * Delete this document's vectors whose `_id` is not in `expected`. Only
+   * called once every expected vector has been written, so a document is
+   * never left with neither its old section vector nor its new chunks.
+   */
+  private async sweepStaleVectors(documentId: string, expected: Set<string>) {
+    try {
+      const held = await this.openSearch.findVectorIdsForDocuments([documentId]);
+      const stale = (held.idsByDocument.get(documentId) ?? []).filter(
+        (id) => !expected.has(id),
+      );
+      if (stale.length === 0) return;
+      const result = await this.openSearch.deleteVectorIds(stale);
+      if (result.failedIds.length > 0) {
+        this.logger.warn(
+          `Stale vector sweep for ${documentId}: ${result.failedIds.length}/${stale.length} deletes failed`,
+        );
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Stale vector sweep failed for ${documentId}: ${(err as Error).message}`,
+      );
+    }
   }
 
   /**
@@ -1107,7 +1159,12 @@ export class SearchService {
     fullText: string,
   ) {
     const inputs = buildVectorEmbeddingInputs(document, fullText);
-    if (inputs.length === 0) return;
+    const expectedIds = new Set(inputs.map((input) => vectorDocumentId(input)));
+    if (inputs.length === 0) {
+      // Nothing embeddable any more: whatever vectors it held are stale.
+      await this.sweepStaleVectors(document.id, expectedIds);
+      return;
+    }
 
     this.vectorIndexStats.documentsAttempted++;
     let chunksIndexed = 0;
@@ -1149,12 +1206,14 @@ export class SearchService {
     this.vectorIndexStats.chunksFailed += chunksFailed;
 
     if (chunksFailed > 0) {
+      // No sweep: the old vectors keep serving until the new ones all land.
       this.recordVectorFailure(
         document.id,
         `${chunksFailed}/${inputs.length} chunks failed — ${firstReason}`,
       );
     } else {
       this.vectorIndexStats.documentsSucceeded++;
+      await this.sweepStaleVectors(document.id, expectedIds);
     }
   }
 

@@ -15,6 +15,7 @@ import {
   USER_UPLOADS_INDEX_PHYSICAL,
   VECTOR_INDEX,
   VECTOR_INDEX_PHYSICAL,
+  CHUNK_FIELD_MAPPINGS,
 } from './index-mappings';
 import {
   INDEX_REBUILD_QUEUE,
@@ -23,6 +24,7 @@ import {
   type IndexRebuildProgress,
 } from './index-rebuild.service';
 import { OpenSearchService } from './opensearch.service';
+import { chunkSection } from './section-chunks';
 
 /**
  * Ordered log of every side-effecting OpenSearch call the rebuild makes. The
@@ -424,6 +426,73 @@ describe('IndexRebuildService', () => {
       expect(result.aliasSwapped).toBe(false);
       expect(openSearch.swapAlias).not.toHaveBeenCalled();
       expect(calls).toContain(`count:${KEYWORD_INDEX_PHYSICAL}`);
+    });
+  });
+
+  describe('section chunks', () => {
+    const longText = 'The Court finds the petition meritorious on this ground. '
+      .repeat(60)
+      .trim();
+
+    it('rebuilds the keyword index with chunk rows for a long section', async () => {
+      const doc = buildDocument('doc-1');
+      doc.sections = [
+        { id: 'doc-1-s1', sectionType: 'facts', plainText: 'Facts of the case.' },
+        { id: 'doc-1-s2', sectionType: 'ruling', plainText: longText },
+      ];
+      const chunks = chunkSection(longText);
+      prisma.legalDocument.findMany.mockReset();
+      prisma.legalDocument.findMany.mockResolvedValueOnce([doc]).mockResolvedValue([]);
+      pushedCount = 2 + chunks.length;
+      verifiedCount = pushedCount;
+
+      await run();
+
+      const [payloads, target] = openSearch.bulkIndexDocuments.mock.calls[0] as [
+        Record<string, unknown>[],
+        string,
+      ];
+      expect(target).toBe(KEYWORD_INDEX_PHYSICAL);
+      // Document row + the short section's one row + one row per chunk; the
+      // long section's whole-section row is not written.
+      expect(payloads).toHaveLength(2 + chunks.length);
+      const longRows = payloads.filter((p) => p['section_id'] === 'doc-1-s2');
+      expect(longRows).toHaveLength(chunks.length);
+      longRows.forEach((row, n) => {
+        expect(row).toMatchObject({
+          section_text: chunks[n]!.text,
+          chunk_index: n,
+          char_start: chunks[n]!.charStart,
+          char_end: chunks[n]!.charEnd,
+        });
+      });
+      const shortRow = payloads.find((p) => p['section_id'] === 'doc-1-s1')!;
+      expect(shortRow['chunk_index']).toBeUndefined();
+    });
+
+    it('creates the new physical indices from the current mappings, chunk fields included', async () => {
+      await run();
+
+      const created = new Map(
+        openSearch.createPhysicalIndex.mock.calls.map(
+          (call) => [call[0] as string, call[1] as Record<string, unknown>] as const,
+        ),
+      );
+      for (const name of [KEYWORD_INDEX_PHYSICAL, VECTOR_INDEX_PHYSICAL]) {
+        const props = (
+          created.get(name)!['mappings'] as { properties: Record<string, unknown> }
+        ).properties;
+        expect(props).toMatchObject(CHUNK_FIELD_MAPPINGS);
+      }
+    });
+
+    it('keeps the previous physical indices: it detaches, never deletes', async () => {
+      openSearch.aliasExists.mockResolvedValue(true);
+      openSearch.resolveAliasTargets.mockResolvedValue(['legal_documents_keyword_v1']);
+
+      await run();
+
+      expect(calls.some((call) => call.startsWith('delete'))).toBe(false);
     });
   });
 

@@ -210,6 +210,11 @@ export const ENV_VALIDATION_SCHEMA = Joi.object({
   // Vector dimension the embedding service emits. BAAI/bge-small-en-v1.5
   // = 384. MUST match the model or the knn_vector field rejects writes.
   EMBEDDING_DIM: Joi.number().integer().min(1).max(4096).default(384),
+  // Optional dedicated embedding instance for the vector backfill only
+  // (docker-compose.prod.yml `embedding-backfill`, profile `backfill`), so a
+  // corpus re-embed never competes with live query embeddings. Unset = the
+  // backfill uses EMBEDDING_SERVICE_URL like everything else.
+  EMBEDDING_BACKFILL_URL: Joi.string().uri({ scheme: ['http', 'https'] }).optional(),
   // Documents per PostgreSQL page during a full index rebuild.
   SEARCH_INDEX_REBUILD_BATCH_SIZE: Joi.number().integer().min(1).max(2000).default(500),
   // Overall deadline for one server-side `_reindex` copy during a rebuild

@@ -128,6 +128,8 @@ _KEYWORD_INDEX_FIELDS = frozenset(
         "section_type", "bar_subjects", "topics",
         "is_official", "is_published", "decision_date", "promulgation_date",
         "publication_date", "created_at",
+        # Chunk rows of a long section only (`section-chunks.ts`).
+        "chunk_index", "char_start", "char_end",
     }
 )
 
@@ -139,6 +141,7 @@ _VECTOR_INDEX_FIELDS = frozenset(
         "document_id", "section_id", "document_type", "court", "court_key",
         "source_trust_level", "is_official", "is_published", "decision_date",
         "text_snippet", "title", "citation_text",
+        "chunk_index", "char_start", "char_end",
     }
 )
 

@@ -17,6 +17,7 @@ import {
   buildKeywordIndexMapping,
   buildUserUploadsIndexMapping,
   buildVectorIndexMapping,
+  CHUNK_FIELD_MAPPINGS,
 } from './index-mappings';
 
 type Props = Record<string, Record<string, unknown>>;
@@ -134,6 +135,24 @@ describe('keyword index mapping', () => {
 
   it('matches the mapping snapshot', () => {
     expect(buildKeywordIndexMapping()).toMatchSnapshot();
+  });
+});
+
+describe('chunk-row fields', () => {
+  it('are integers on BOTH indices, so a keyword chunk and its vector carry the same offsets', () => {
+    const vectorProps = (
+      buildVectorIndexMapping(384)['mappings'] as { properties: Props }
+    ).properties;
+    for (const props of [keywordProps(), vectorProps]) {
+      expect(props['chunk_index']).toEqual({ type: 'integer' });
+      expect(props['char_start']).toEqual({ type: 'integer' });
+      expect(props['char_end']).toEqual({ type: 'integer' });
+    }
+    expect(Object.keys(CHUNK_FIELD_MAPPINGS).sort()).toEqual([
+      'char_end',
+      'char_start',
+      'chunk_index',
+    ]);
   });
 });
 

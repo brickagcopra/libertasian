@@ -1,5 +1,9 @@
 # Completed Tasks
 
+## 2026-09-29 — Section chunks for search (2 PRs opened, not merged)
+- [x] PR1 #528 fix(rag): hybrid fusion keeps only the best-ranked hit per (document_id, section_id) before top_k; document rows keyed by their own id
+- [x] PR2 feat(api): `chunkSection` (>1,800 chars → ~1,500-char chunks, ~150 overlap, sentence-snapped ±200); chunk rows `{sectionId}:c{n}` in keyword (live + rebuild) and vector (full chunk as snippet); stale-row sweeps; backfill `pruneStale`; `EMBEDDING_BACKFILL_URL` + `embedding-backfill` compose service; opensearch 6G / 2g heap
+
 ## 2026-09-28 — Deep Research quote matching (PR opened, not merged)
 - [x] `filter_citations` matches quotes via `match_quote`: casefold, collapsed whitespace, no space before `, . ; : )`, unified curly quotes/dashes, trailing punctuation stripped; "..."/"…" and "`: (a)`" list-item joins split into fragments (3+ words each, in order, same passage). Delivers the PASSAGE span joined by " … ", never the writer's text. Paraphrases stay `quote_not_found`.
 - [x] Over-long quotes truncated to `MAX_QUOTE_WORDS` (30 → 50) instead of dropped; <2 words still `quote_length`. Prompt version → `deep-research-v3`. Verifier/abstention unchanged.

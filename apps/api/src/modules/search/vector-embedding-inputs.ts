@@ -17,6 +17,7 @@
  */
 
 import type { IndexDocumentPayload, VectorDocumentPayload } from './opensearch.service';
+import { chunkSection, indexRowId } from './section-chunks';
 
 /**
  * Hard ceiling on the characters handed to the embedding service. The model
@@ -40,9 +41,17 @@ export interface VectorEmbeddingInput {
   documentId: string;
   /** Absent for the document-level (whole-text) vector. */
   sectionId?: string;
+  /**
+   * Set for one chunk of a long section (see `section-chunks.ts`): its
+   * position and its offsets into the section's `plainText`.
+   */
+  chunk?: { index: number; charStart: number; charEnd: number };
   /** The text handed to the embedding service, already truncated. */
   text: string;
-  /** Stored on the vector document for result display. */
+  /**
+   * Stored on the vector document for result display. For a chunk it is the
+   * whole chunk text, so kNN hands downstream the passage it matched on.
+   */
   snippet: string;
 }
 
@@ -56,21 +65,28 @@ export interface VectorEmbeddingSource {
 /**
  * The vector index `_id`.
  *
- * `section_id ?? document_id` — the same expression `indexVectorDocument` and
- * `bulkIndexVectorDocuments` use. Because it is derived from the row's own
+ * `indexRowId` — the same function `indexVectorDocument` and
+ * `bulkIndexVectorDocuments` use: `{sectionId}:c{n}` for a chunk, else
+ * `section_id ?? document_id`. Because it is derived from the row's own
  * identity rather than allocated, every write is an idempotent overwrite: the
  * backfill is safe to run twice and resumable by construction.
  */
 export function vectorDocumentId(input: {
   documentId: string;
   sectionId?: string;
+  chunk?: { index: number };
 }): string {
-  return input.sectionId ?? input.documentId;
+  return indexRowId({
+    document_id: input.documentId,
+    section_id: input.sectionId,
+    chunk_index: input.chunk?.index,
+  });
 }
 
 /**
  * Every vector chunk a document should have, in stable order: the
- * document-level vector first, then one per qualifying section.
+ * document-level vector first, then one per qualifying section — or, for a
+ * section long enough that `chunkSection` splits it, one per chunk.
  *
  * `fullText` is the sections' `plainText` joined by a blank line — passed in
  * rather than recomputed because the live path already built it for the
@@ -94,6 +110,23 @@ export function buildVectorEmbeddingInputs(
   // Section-level embeddings.
   for (const section of document.sections) {
     if (!section.plainText || section.plainText.length < MIN_SECTION_TEXT_LENGTH) {
+      continue;
+    }
+    const chunks = chunkSection(section.plainText);
+    if (chunks.length > 0) {
+      for (const chunk of chunks) {
+        inputs.push({
+          documentId: document.id,
+          sectionId: section.id,
+          chunk: {
+            index: chunk.index,
+            charStart: chunk.charStart,
+            charEnd: chunk.charEnd,
+          },
+          text: chunk.text,
+          snippet: chunk.text,
+        });
+      }
       continue;
     }
     inputs.push({
@@ -163,6 +196,11 @@ export function toVectorDocumentPayload(
     ...base,
     document_id: input.documentId,
     section_id: input.sectionId,
+    ...(input.chunk && {
+      chunk_index: input.chunk.index,
+      char_start: input.chunk.charStart,
+      char_end: input.chunk.charEnd,
+    }),
     embedding_vector: embedding,
     text_snippet: input.snippet,
   };

@@ -4609,6 +4609,9 @@ model VectorBackfillRun {
   /// Re-embed `documentIds` even where vectors exist, and delete their stale
   /// vector _ids. Only ever true together with a non-empty `documentIds`.
   force         Boolean  @default(false)
+  /// Embed only missing ids and, per document once its new vectors are
+  /// written, delete its vector _ids it no longer produces. Never with force.
+  pruneStale    Boolean  @default(false) @map("prune_stale")
 
   documentsTotal     Int @default(0) @map("documents_total")
   documentsProcessed Int @default(0) @map("documents_processed")

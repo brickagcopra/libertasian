@@ -18,6 +18,7 @@ import {
   VECTOR_INDEX,
   VECTOR_INDEX_PHYSICAL,
 } from './index-mappings';
+import { sectionKeywordRows } from './section-chunks';
 import {
   OpenSearchService,
   type CaseDigestDocumentPayload,
@@ -724,14 +725,10 @@ export class IndexRebuildService {
 
         payloads.push({ ...base, plain_text: fullText });
 
+        // One row per section, or one per chunk for a long section — the
+        // same rows the live path writes (`sectionKeywordRows`).
         for (const section of document.sections) {
-          if (!section.plainText) continue;
-          payloads.push({
-            ...base,
-            section_id: section.id,
-            section_type: section.sectionType,
-            section_text: section.plainText,
-          });
+          payloads.push(...sectionKeywordRows(base, section));
         }
       }
 

@@ -1,3 +1,4 @@
+import { chunkSection } from './section-chunks';
 import {
   MAX_EMBEDDING_TEXT_LENGTH,
   MIN_SECTION_TEXT_LENGTH,
@@ -95,7 +96,7 @@ describe('vector embedding inputs', () => {
       expect(inputs).toEqual([]);
     });
 
-    it('truncates both the document text and each section at the ceiling', () => {
+    it('truncates the document text at the ceiling; a long section is chunked, not truncated', () => {
       const long = 'Z'.repeat(MAX_EMBEDDING_TEXT_LENGTH + 5_000);
       const sections = [section('sec-1', long)];
       const inputs = buildVectorEmbeddingInputs(
@@ -104,7 +105,73 @@ describe('vector embedding inputs', () => {
       );
 
       expect(inputs[0]!.text).toHaveLength(MAX_EMBEDDING_TEXT_LENGTH);
-      expect(inputs[1]!.text).toHaveLength(MAX_EMBEDDING_TEXT_LENGTH);
+      const chunkInputs = inputs.slice(1);
+      expect(chunkInputs.length).toBeGreaterThan(1);
+      // Together the chunks reach the end of the section — nothing is cut off.
+      expect(chunkInputs[chunkInputs.length - 1]!.chunk!.charEnd).toBe(long.length);
+      for (const input of chunkInputs) {
+        expect(input.text.length).toBeLessThan(MAX_EMBEDDING_TEXT_LENGTH);
+      }
+    });
+
+    describe('long sections', () => {
+      const sentence = 'The Court finds the petition meritorious on this ground. ';
+      const longText = sentence.repeat(60).trim(); // ~3.4K chars
+
+      it('emits one input per chunk, embedding and storing the whole chunk text', () => {
+        const sections = [section('sec-long', longText), section('sec-short', 'S'.repeat(200))];
+        const inputs = buildVectorEmbeddingInputs(
+          { id: 'doc-1', title: 'T', sections },
+          joinSectionText(sections),
+        );
+        const chunks = chunkSection(longText);
+        expect(chunks.length).toBeGreaterThan(1);
+
+        const chunkInputs = inputs.filter((i) => i.sectionId === 'sec-long');
+        expect(chunkInputs).toHaveLength(chunks.length);
+        chunkInputs.forEach((input, n) => {
+          expect(input.chunk).toEqual({
+            index: n,
+            charStart: chunks[n]!.charStart,
+            charEnd: chunks[n]!.charEnd,
+          });
+          expect(input.text).toBe(chunks[n]!.text);
+          // The whole chunk, not SNIPPET_LENGTH chars of it.
+          expect(input.snippet).toBe(chunks[n]!.text);
+          expect(input.snippet.length).toBeGreaterThan(SNIPPET_LENGTH);
+          expect(vectorDocumentId(input)).toBe(`sec-long:c${n}`);
+        });
+
+        // Short sections and the document row are unchanged.
+        const short = inputs.find((i) => i.sectionId === 'sec-short')!;
+        expect(short.chunk).toBeUndefined();
+        expect(vectorDocumentId(short)).toBe('sec-short');
+        expect(inputs[0]!.chunk).toBeUndefined();
+      });
+
+      it('writes the chunk position and offsets onto the vector payload', () => {
+        const [, first] = buildVectorEmbeddingInputs(
+          { id: 'doc-1', title: 'T', sections: [section('sec-long', longText)] },
+          longText,
+        );
+        const payload = toVectorDocumentPayload(
+          first!,
+          {
+            document_type: 'decision',
+            title: 'T',
+            is_official: true,
+            is_published: true,
+          },
+          [0.1],
+        );
+        expect(payload).toMatchObject({
+          section_id: 'sec-long',
+          chunk_index: 0,
+          char_start: 0,
+          char_end: first!.chunk!.charEnd,
+          text_snippet: first!.text,
+        });
+      });
     });
 
     it('prefixes the document-level text with the title', () => {

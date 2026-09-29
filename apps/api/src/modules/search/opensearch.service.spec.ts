@@ -37,6 +37,7 @@ const mockClient = {
     delete: jest.fn(),
     refresh: jest.fn(),
     putSettings: jest.fn(),
+    putMapping: jest.fn(),
   },
 };
 
@@ -128,6 +129,40 @@ describe('OpenSearchService', () => {
       expect(result.existing).toHaveLength(5);
       expect(mockClient.indices.create).not.toHaveBeenCalled();
       expect(mockClient.indices.putAlias).not.toHaveBeenCalled();
+      expect(mockClient.indices.updateAliases).not.toHaveBeenCalled();
+    });
+
+    it('adds the chunk fields to the aliased keyword and vector indices, and only those', async () => {
+      // Both mappings are strict: an index built before the fields existed
+      // would reject every chunk-row write until it has them.
+      mockClient.indices.existsAlias.mockResolvedValue({ body: true });
+      mockClient.indices.putMapping.mockResolvedValue({});
+
+      await service.ensureIndexes();
+
+      expect(mockClient.indices.putMapping).toHaveBeenCalledTimes(2);
+      for (const index of [KEYWORD_INDEX, VECTOR_INDEX]) {
+        expect(mockClient.indices.putMapping).toHaveBeenCalledWith({
+          index,
+          body: {
+            properties: {
+              chunk_index: { type: 'integer' },
+              char_start: { type: 'integer' },
+              char_end: { type: 'integer' },
+            },
+          },
+        });
+      }
+    });
+
+    it('keeps ensuring the other aliases when adding the chunk fields fails', async () => {
+      mockClient.indices.existsAlias.mockResolvedValue({ body: true });
+      mockClient.indices.putMapping.mockRejectedValue(new Error('cluster_block_exception'));
+      jest.spyOn(service['logger'], 'error').mockImplementation(() => undefined);
+
+      const result = await service.ensureIndexes();
+
+      expect(result.existing).toHaveLength(5);
     });
 
     it('refuses to touch a concrete index squatting on an alias name', async () => {
@@ -199,6 +234,32 @@ describe('OpenSearchService', () => {
           index: KEYWORD_INDEX,
           id: 'sec-1',
           refresh: 'false',
+        }),
+      );
+    });
+
+    it('writes a chunk row under {sectionId}:c{n}', async () => {
+      mockClient.index.mockResolvedValue({});
+
+      await service.indexDocument({
+        document_id: 'doc-1',
+        section_id: 'sec-1',
+        section_text: 'chunk text',
+        chunk_index: 3,
+        char_start: 4050,
+        char_end: 5550,
+        title: 'People v. Santos',
+        document_type: 'case',
+        status: 'published',
+        is_official: true,
+        is_published: true,
+        created_at: '2024-01-01',
+      });
+
+      expect(mockClient.index).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'sec-1:c3',
+          body: expect.objectContaining({ chunk_index: 3, char_start: 4050, char_end: 5550 }),
         }),
       );
     });

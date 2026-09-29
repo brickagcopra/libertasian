@@ -15,6 +15,12 @@ interface BatchEmbedResponse {
 }
 
 /**
+ * Which embedding instance a batch goes to. `backfill` resolves to
+ * EMBEDDING_BACKFILL_URL when it is set, otherwise to the live instance.
+ */
+export type EmbeddingTarget = 'live' | 'backfill';
+
+/**
  * Client for the embedding service (Python FastAPI at EMBEDDING_SERVICE_URL).
  * The vector width is model-dependent (BAAI/bge-small-en-v1.5 emits 384) and is
  * configured once via EMBEDDING_DIM, which also sizes the knn_vector field.
@@ -24,6 +30,8 @@ interface BatchEmbedResponse {
 export class EmbeddingClientService implements OnModuleInit {
   private readonly logger = new Logger(EmbeddingClientService.name);
   private readonly baseUrl: string;
+  /** Where `embedBatch(texts, 'backfill')` goes. */
+  private readonly backfillUrl: string;
   private readonly internalApiKey: string;
 
   constructor(private readonly config: ConfigService) {
@@ -31,6 +39,8 @@ export class EmbeddingClientService implements OnModuleInit {
       'EMBEDDING_SERVICE_URL',
       'http://localhost:8001',
     );
+    this.backfillUrl =
+      this.config.get<string>('EMBEDDING_BACKFILL_URL') || this.baseUrl;
     this.internalApiKey = this.config.get<string>('INTERNAL_API_KEY', '');
   }
 
@@ -82,12 +92,20 @@ export class EmbeddingClientService implements OnModuleInit {
   /**
    * Embed multiple texts in a single batch call. Returns EMBEDDING_DIM-wide vectors.
    * Max 256 texts per batch per embedding service schema.
+   *
+   * `target: 'backfill'` is for `VectorBackfillService` alone: it routes to
+   * EMBEDDING_BACKFILL_URL when set, so the corpus re-embed runs on its own
+   * instance instead of queueing behind live traffic.
    */
-  async embedBatch(texts: string[]): Promise<number[][] | null> {
+  async embedBatch(
+    texts: string[],
+    target: EmbeddingTarget = 'live',
+  ): Promise<number[][] | null> {
     if (texts.length === 0) return [];
 
+    const url = target === 'backfill' ? this.backfillUrl : this.baseUrl;
     try {
-      const response = await fetch(`${this.baseUrl}/embed/batch`, {
+      const response = await fetch(`${url}/embed/batch`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
