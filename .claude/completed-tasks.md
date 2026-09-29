@@ -1,10 +1,17 @@
 # Completed Tasks
 
-## 2026-09-28 — Deep Research quote matching (PR opened, not merged)
+## 2026-09-29 — Deep Research train #523–#526 shipped (merged to main)
+- [x] #523 removal reasons recorded per run (`done.removalReasons`, evals `removal_reasons`)
+- [x] #524 tolerant quote matching; delivered quote is the passage's own words
+- [x] #525 writer defaults to `gpt-6-luna`; writer prompt `deep-research-v4` (one section per plan aspect, 2–5 claims each, shortest exact 8–50 word quote); verifier `verdicts` is an object with one REQUIRED boolean per claim id (fail-closed kept); evals `mean_citations_per_answer`
+- [x] #526 before the one rerank, each section passage becomes the best 1,900-char window of `legal_document_sections.plain_text` for the question + sub-queries (`deep_research/focus.py`, best effort; /answer unchanged)
+- Prod A/B 2026-09-29 (40 answerable golden questions): 2.2 → 8.3 (#525) → 9.3 (#525+#526) verified claims per answer, 40/40 answered, $0.0015/run unchanged
+
+## 2026-09-28 — Deep Research quote matching (#524, merged)
 - [x] `filter_citations` matches quotes via `match_quote`: casefold, collapsed whitespace, no space before `, . ; : )`, unified curly quotes/dashes, trailing punctuation stripped; "..."/"…" and "`: (a)`" list-item joins split into fragments (3+ words each, in order, same passage). Delivers the PASSAGE span joined by " … ", never the writer's text. Paraphrases stay `quote_not_found`.
 - [x] Over-long quotes truncated to `MAX_QUOTE_WORDS` (30 → 50) instead of dropped; <2 words still `quote_length`. Prompt version → `deep-research-v3`. Verifier/abstention unchanged.
 
-## 2026-09-28 — Deep Research removal reasons (PR opened, not merged)
+## 2026-09-28 — Deep Research removal reasons (#523, merged)
 - [x] `verify_draft` counts why things were removed (bad_label / quote_not_found / quote_length per citation; no_citations_left / verifier_unsupported / verifier_no_verdict per claim), logs `kept= removed= reasons=` once per run, and emits `done.removalReasons`. Counting only.
 - [x] `evals.run` records `removal_reasons` per result (null when absent)
 - [x] Web Deep Research abstained card: own titles for `out_of_scope` and `ranking_unavailable`
