@@ -14,7 +14,9 @@ Pipeline (each stage is announced on the SSE stream as a ``stage`` event):
    Section 5") is read from PostgreSQL (`pinpoint.py`).
 3. **ranking**   — the per-query results are merged and deduped by section,
    capped at 30 candidates and per document (2 for a decision, 6 for a
-   statute), the pinpointed sections are put in front, then reranked ONCE
+   statute), the pinpointed sections are put in front, each section passage's
+   text is replaced by the window of its full section that best matches the
+   queries (`focus.py`, best effort), then the pool is reranked ONCE
    against the original question — the only rerank call a question makes,
    with its own budget (`deep_research_rerank_timeout`). Abstention reads the
    RAW top rerank score, exactly as /answer does after #504. If the
@@ -59,6 +61,7 @@ from ..core.schemas import Passage
 from ..core.types import AbstentionReason
 from ..shared.database import acquire_connection
 from ..shared.exceptions import BudgetExceededError, RetrievalError, SchemaIntegrityError
+from .focus import focus_passages
 from .pinpoint import fetch_pinpoint_passages
 from .prompts import (
     MAX_QUOTE_WORDS,
@@ -862,6 +865,9 @@ async def run_deep_research(request: DeepResearchRequest) -> AsyncIterator[Event
         pool = add_pinpoints(
             pool, pinpoints, max_candidates=settings.deep_research_max_candidates
         )
+        # A long section's passage is its first slice; show the reranker and
+        # the writer the part of it that matches the question instead.
+        pool = await focus_passages(pool, queries)
         outcome = await rerank_passages(
             question,
             pool,
