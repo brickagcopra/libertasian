@@ -1,5 +1,10 @@
 # Pending Tasks
 
+## Deep Research after #523–#526 (2026-09-29)
+- [ ] Gate7: after rag-service is deployed with #525 + #526, re-run `python -m evals.run --endpoint deep` on prod and compare (watch `mean_citations_per_answer`, must-abstain 0/5 answered, authority_hit@8 > 0.525, citation_validity 1.0).
+- [ ] Epic: decision re-chunking. (#526 picks the best window of a long section at Deep Research time only; /answer is unchanged.)
+- [ ] Corpus gaps: Agabon, Tan-Andal, In re Almacen, RA 1405, NIL (Act 2031), 2004 Notarial Rules, CPR/CPRA. Cayetano v. Monsod is in the corpus as a draft.
+
 ## Statute corpus repair follow-ups (2026-09-27, PRs #516–#518, NOT merged)
 - [ ] Review/merge #516 (async `_reindex` copy with a deadline; backfill batch default 32). New env var `SEARCH_INDEX_COPY_TIMEOUT_MIN` (default 60).
 - [ ] Review/merge #517 (`reseed_statutory_document`). Then on prod, between 1 and 6 PM ET, run the dry-run command from the PR body for Evidence, Special Proceedings, Admin Code, NIRC and the 1987 Constitution. Review any `needs_decision` rows and `sections.csv`, then `--commit`.
@@ -14,8 +19,8 @@
 - [ ] Re-seed needed: RoC Evidence, RoC Special Proceedings, Administrative Code 1987, NIRC (skipped by realign, still off by one); 1987 Constitution has doubled paragraphs in 35 rows plus a repeated Art III Sec 3–12 block; 10 first rows empty after realign; Rule 135 Section 1 holds Section 2 text.
 - [ ] 5,630 reader audio clips voice pre-realign text (list: prod /home/brick/realign-2026-09-27/commit/audio_renditions.csv); regeneration is a cost decision.
 
-## Deep Research quote matching (2026-09-28, fix/deep-research-quote-matching, PR open)
-- [ ] After merge + deploy: re-run the gate5 eval and compare against 16/40 `validation_failed` (quote_not_found 31, quote_length 12, verifier_unsupported 6).
+## Deep Research quote matching (2026-09-28, #524, merged)
+- Gate5 re-run superseded by gate7 above (gate5 baseline: 16/40 `validation_failed`; quote_not_found 31, quote_length 12, verifier_unsupported 6).
 - [ ] `test_routers.py` has 40 errors on main (sync tests request the async `client` fixture, so pytest raises PytestRemovedIn9Warning). This PR did not cause them.
 
 ## Deep Research client follow-ups (2026-09-27, after #508 / #509 merged)
@@ -40,7 +45,7 @@
 - [ ] **Acceptance gate before shipping:** run `python -m evals.run --endpoint deep` on prod (45-question golden set) and compare it against the /answer result file with `python -m evals.compare ... --k 8`. It ships only if authority_hit@8 > 0.525, citation_validity = 1.0, and no must-abstain question is answered.
   - **Gate run 2026-09-28 (prod, `--concurrency 1`): FAILED.** authority_hit@8 0.550 (vs /answer 0.475, passes), citation_validity 1.0 (passes), answer_rate 0.650, p50 25 s. Must-abstain answered **3/5** (fails): abs-01 (US Heller case) and abs-02 (German BGB) hit the 20 s reranker timeout and were answered from RRF order; abs-04 (PH tax rates for 2040) was answered. /answer abstained on all three. The 40-passage rerank overran 20 s on 11 of 45 questions.
   - [ ] Review/merge the `fix/deep-research-abstention` PR (fail closed on a degraded rerank → `ranking_unavailable`; planner scope check → `out_of_scope`; `deep_research_max_candidates` 40 → 30; `deep_research_rerank_timeout` 30 s). Then deploy rag-service and re-run the gate. Watch: must-abstain 0/5 answered, authority_hit@8 still > 0.525 at 30 candidates, and the in-scope questions the planner now refuses (should be none).
-  - [ ] Review/merge the `fix/deep-research-removal-reasons` PR, then on the gate re-run read `removal_reasons` per question to see which verification step drops claims.
+  - [ ] `fix/deep-research-removal-reasons` merged as #523. On the gate7 run, read `removal_reasons` per question to see which verification step drops claims.
   - [ ] Mobile Deep Research `AbstainedCard` still has one fixed title ("No verified answer") for every reason; the web card's tips list (name the law, use PH terms) also still shows for `ranking_unavailable` and `out_of_scope`.
   - [ ] A deployment without a reranker (`RAG_RERANKER_URL` unset) now abstains on EVERY Deep Research question. Prod has one; check staging/dev before demoing there.
 - [ ] Deploy the `20260926120000_add_deep_research_runs` migration. Set `DEEP_RESEARCH_*` env on rag-service if the defaults change, and set `DEEP_RESEARCH_MODEL_ALLOWLIST` to allow `gpt-6-luna`.
