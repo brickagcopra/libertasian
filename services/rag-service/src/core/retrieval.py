@@ -448,6 +448,7 @@ async def hybrid_retrieve(
     # score never reached the final order. It is applied after reranking — see
     # `core/authority.py` and `core/reranking.py`.
     fused.sort(key=lambda x: x.get("score", 0.0), reverse=True)
+    fused = _collapse_sections(fused)
     fused = fused[:top_k]
 
     passages = [_to_passage(p) for p in fused]
@@ -632,6 +633,32 @@ def _rrf_fuse(
         merged[hit_id]["knn_score"] = hit.get("knn_score", 0.0)
 
     return list(merged.values())
+
+
+def _collapse_sections(fused: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep only the best-ranked hit per ``(document_id, section_id)``.
+
+    A long section is indexed as several overlapping chunk rows that share its
+    ``section_id``; without this, one section could fill several of the top_k
+    slots with near-duplicate text and crowd out other sections. Input must
+    already be sorted best-first. A hit with no ``section_id`` (a document row)
+    is keyed by its own id, so it is never merged with anything. The kept hit's
+    ``id`` stays its OpenSearch ``_id``, which is unique for the reranker.
+    """
+    seen: set[tuple[str, str]] = set()
+    kept: list[dict[str, Any]] = []
+    for hit in fused:
+        section_id = hit.get("section_id")
+        key = (
+            (str(hit.get("document_id") or ""), str(section_id))
+            if section_id
+            else ("", f"id:{hit.get('id', '')}")
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        kept.append(hit)
+    return kept
 
 
 def _get_boosted_fields(intent: QueryIntent) -> list[str]:
