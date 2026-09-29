@@ -470,6 +470,94 @@ class TestHybridRetrieve:
         assert result.query_intent == "case_lookup"
 
 
+class TestSectionCollapse:
+    """Chunk rows of one section collapse to the best-ranked one before top_k."""
+
+    @staticmethod
+    def _src(doc: str, section: str | None) -> dict[str, Any]:
+        source: dict[str, Any] = {
+            "document_id": doc,
+            "title": f"Title {doc}",
+            "plain_text": f"Text for {doc}/{section}",
+            "document_type": "case",
+            "source_trust_level": "official",
+        }
+        if section is not None:
+            source["section_id"] = section
+            source["section_text"] = f"Section text {section}"
+        return source
+
+    @pytest.mark.asyncio
+    async def test_two_chunks_of_one_section_collapse_to_the_better(self) -> None:
+        os_response = {
+            "hits": {
+                "hits": [
+                    _make_os_hit("sec-1:c2", 9.0, self._src("doc-1", "sec-1")),
+                    _make_os_hit("sec-2", 8.0, self._src("doc-1", "sec-2")),
+                    _make_os_hit("sec-1:c0", 7.0, self._src("doc-1", "sec-1")),
+                ],
+            },
+        }
+        with patch("src.core.retrieval.opensearch_search", new_callable=AsyncMock) as mock_search:
+            mock_search.return_value = os_response
+            result = await hybrid_retrieve("test", QueryIntent.GENERAL, top_k=10)
+
+        assert [p.id for p in result.passages] == ["sec-1:c2", "sec-2"]
+
+    @pytest.mark.asyncio
+    async def test_collapse_runs_before_the_top_k_cut(self) -> None:
+        """A duplicate chunk must not consume a top_k slot another section needed."""
+        os_response = {
+            "hits": {
+                "hits": [
+                    _make_os_hit("sec-1:c0", 9.0, self._src("doc-1", "sec-1")),
+                    _make_os_hit("sec-1:c1", 8.0, self._src("doc-1", "sec-1")),
+                    _make_os_hit("sec-2", 7.0, self._src("doc-1", "sec-2")),
+                ],
+            },
+        }
+        with patch("src.core.retrieval.opensearch_search", new_callable=AsyncMock) as mock_search:
+            mock_search.return_value = os_response
+            result = await hybrid_retrieve("test", QueryIntent.GENERAL, top_k=2)
+
+        assert [p.id for p in result.passages] == ["sec-1:c0", "sec-2"]
+
+    @pytest.mark.asyncio
+    async def test_distinct_sections_are_untouched(self) -> None:
+        os_response = {
+            "hits": {
+                "hits": [
+                    _make_os_hit("sec-1", 9.0, self._src("doc-1", "sec-1")),
+                    _make_os_hit("sec-2", 8.0, self._src("doc-1", "sec-2")),
+                    _make_os_hit("sec-3", 7.0, self._src("doc-2", "sec-3")),
+                ],
+            },
+        }
+        with patch("src.core.retrieval.opensearch_search", new_callable=AsyncMock) as mock_search:
+            mock_search.return_value = os_response
+            result = await hybrid_retrieve("test", QueryIntent.GENERAL, top_k=10)
+
+        assert [p.id for p in result.passages] == ["sec-1", "sec-2", "sec-3"]
+
+    @pytest.mark.asyncio
+    async def test_document_rows_are_untouched(self) -> None:
+        """Rows with no section_id are keyed by their own id, never merged."""
+        os_response = {
+            "hits": {
+                "hits": [
+                    _make_os_hit("doc-1", 9.0, self._src("doc-1", None)),
+                    _make_os_hit("doc-2", 8.0, self._src("doc-2", None)),
+                    _make_os_hit("sec-1", 7.0, self._src("doc-1", "sec-1")),
+                ],
+            },
+        }
+        with patch("src.core.retrieval.opensearch_search", new_callable=AsyncMock) as mock_search:
+            mock_search.return_value = os_response
+            result = await hybrid_retrieve("test", QueryIntent.GENERAL, top_k=10)
+
+        assert [p.id for p in result.passages] == ["doc-1", "doc-2", "sec-1"]
+
+
 class TestHybridRetrieveFailureModes:
     """Which arm is allowed to fail quietly, and which is not.
 
