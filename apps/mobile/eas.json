@@ -129,6 +129,16 @@
         "ascAppId": "6788971669",
         "appleTeamId": "V2W2BY5P8D"
       }
+    },
+    // Device-test builds for the team: `eas submit --profile internal`.
+    // Android goes to Play's INTERNAL testing track instead of alpha; this
+    // does not advance the closed-testing clock, and that is intended here.
+    // iOS is unchanged — every submit lands in TestFlight, never App Review.
+    "internal": {
+      "extends": "production",
+      "android": {
+        "track": "internal"
+      }
     }
   }
 }
