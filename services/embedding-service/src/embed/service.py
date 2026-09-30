@@ -14,12 +14,22 @@ logger = logging.getLogger(__name__)
 _model: Any = None
 
 
+def _pin_torch_threads() -> None:
+    """Pin torch's intra-op pool to ``settings.torch_threads`` when it is > 0."""
+    if settings.torch_threads > 0:
+        import torch
+
+        torch.set_num_threads(settings.torch_threads)
+        logger.info("torch intra-op threads pinned to %d", settings.torch_threads)
+
+
 def _get_model() -> Any:
     """Load the sentence-transformers model on first use."""
     global _model
     if _model is None:
         from sentence_transformers import SentenceTransformer
 
+        _pin_torch_threads()
         logger.info("Loading embedding model: %s (device: %s)", settings.model_name, settings.device)
         _model = SentenceTransformer(settings.model_name, device=settings.device)
         logger.info("Embedding model loaded successfully (dim=%d)", settings.embedding_dim)

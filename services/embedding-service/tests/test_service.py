@@ -8,6 +8,34 @@ import numpy as np
 import src.embed.service as svc
 
 
+class TestTorchThreadPinning:
+    """torch_threads > 0 pins torch before the model loads; 0 leaves it alone."""
+
+    def _load(self, threads: int) -> MagicMock:
+        fake_torch = MagicMock()
+        fake_st = MagicMock()
+        calls: list[str] = []
+        fake_torch.set_num_threads.side_effect = lambda n: calls.append("threads")
+        fake_st.SentenceTransformer.side_effect = lambda *a, **k: calls.append("model")
+        svc._model = None
+        with patch.dict("sys.modules", {"torch": fake_torch, "sentence_transformers": fake_st}):
+            with patch.object(svc.settings, "torch_threads", threads):
+                svc._get_model()
+        svc._model = None
+        self.calls = calls
+        return fake_torch
+
+    def test_positive_setting_calls_set_num_threads_before_loading(self):
+        fake_torch = self._load(4)
+        fake_torch.set_num_threads.assert_called_once_with(4)
+        assert self.calls == ["threads", "model"]
+
+    def test_zero_does_not_call_set_num_threads(self):
+        fake_torch = self._load(0)
+        fake_torch.set_num_threads.assert_not_called()
+        assert self.calls == ["model"]
+
+
 class TestGetModel:
     """Tests for lazy model loading."""
 
