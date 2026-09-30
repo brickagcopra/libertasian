@@ -1,12 +1,11 @@
 # Pending Tasks
 
-## Section chunks for search (2026-09-29, PR1 #528 + PR2, NOT merged)
-- [ ] Review/merge PR1 (`fix/rag-collapse-chunks`) BEFORE PR2 deploys: without it, chunk hits of one section fill several top_k slots.
-- [ ] Review/merge PR2 (`feat/api-section-chunks`). Migration `20260929120000_vector_backfill_prune_stale` adds `vector_backfill_runs.prune_stale`.
-- [ ] After PR2 deploys: confirm the api boot log shows no "Could not add chunk fields" error (ensureIndexes adds `chunk_index`/`char_start`/`char_end` to the live aliased indices; both mappings are strict).
-- [ ] Recreate opensearch with the new limits (memory 6G, heap 2g) before the backfill; vectors grow ~159K -> ~680K.
-- [ ] Rebuild (`POST /search/index/rebuild`): keyword rebuilt chunked from Postgres, vector copied. Old physical indices are kept; delete them only after the new ones are verified in use.
-- [ ] Backfill: `docker compose -f docker-compose.prod.yml --profile backfill up -d embedding-backfill`, then a `pruneStale: true` run (dry run first for the chunk count; ~602K expected). Stop embedding-backfill when done.
+## Section chunks for search (2026-09-29, #528 + #529 + #530 merged)
+- [ ] Real index rebuild + alias swap on prod (`POST /search/index/rebuild`: keyword rebuilt chunked from Postgres, vector copied). Before it: opensearch recreated with 6G / 2g heap; api boot log shows no "Could not add chunk fields" error.
+- [ ] Vector backfill with `pruneStale: true` via the `embedding-backfill` service (`docker compose -f docker-compose.prod.yml --profile backfill up -d embedding-backfill`; dry run first). ~602K chunks, ~30 h. Stop embedding-backfill when done.
+- [ ] Final gate after the backfill: authority_hit@8 >= 0.60 on BOTH /answer and deep.
+- [ ] Reranker 20 s budget times out on 3/45 /answer questions on live — capacity follow-up.
+- [ ] Stale unaliased OpenSearch indices: delete only with brick's approval.
 - [ ] Out of scope, found while scoping: dispositive sections are mis-segmented (section segmentation untouched by this epic).
 - [ ] Out of scope: `SearchService.bulkIndexDocuments` (`POST /search/index/bulk`) writes document rows with no `plain_text`, wiping their bodies in the keyword index.
 - [ ] Out of scope: unpublishing a document leaves `is_published: true` on its keyword/vector rows (the index is not updated).
