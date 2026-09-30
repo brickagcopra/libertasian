@@ -24,10 +24,13 @@ import pytest
 
 from src.core.retrieval import (
     _CODAL_TYPE_BOOSTS,
+    _dedupe_leg,
     _get_boosted_fields,
     _hit_to_passage,
     _rrf_fuse,
     _to_passage,
+    LEG_OVERFETCH,
+    MAX_ROWS_PER_DOCUMENT,
     RRF_K,
     hybrid_retrieve,
     retrieve_by_document_id,
@@ -556,6 +559,126 @@ class TestSectionCollapse:
             result = await hybrid_retrieve("test", QueryIntent.GENERAL, top_k=10)
 
         assert [p.id for p in result.passages] == ["doc-1", "doc-2", "sec-1"]
+
+
+class TestDedupeLeg:
+    """Each leg is freed of chunk floods before RRF reads its ranks."""
+
+    @staticmethod
+    def _hits(specs: list[tuple[str, str, str | None]]) -> list[dict[str, Any]]:
+        return [
+            _make_bm25_hit(hit_id, rank=i, document_id=doc, section_id=section)
+            for i, (hit_id, doc, section) in enumerate(specs)
+        ]
+
+    def test_chunk_rows_of_one_section_collapse_within_a_leg(self) -> None:
+        hits = self._hits(
+            [
+                ("s1:c0", "doc-1", "s1"),
+                ("s1:c1", "doc-1", "s1"),
+                ("s1:c2", "doc-1", "s1"),
+                ("s9", "doc-2", "s9"),
+            ]
+        )
+        kept = _dedupe_leg(hits, 10, "bm25_rank")
+        assert [h["id"] for h in kept] == ["s1:c0", "s9"]
+
+    def test_fourth_section_of_one_document_is_dropped(self) -> None:
+        hits = self._hits(
+            [
+                ("s1", "doc-1", "s1"),
+                ("s2", "doc-1", "s2"),
+                ("s3", "doc-1", "s3"),
+                ("s4", "doc-1", "s4"),
+                ("t1", "doc-2", "t1"),
+            ]
+        )
+        kept = _dedupe_leg(hits, 10, "bm25_rank")
+        assert MAX_ROWS_PER_DOCUMENT == 3
+        assert [h["id"] for h in kept] == ["s1", "s2", "s3", "t1"]
+
+    def test_document_rows_are_untouched(self) -> None:
+        """No section_id: keyed by own id, never merged, never capped."""
+        hits = self._hits(
+            [
+                ("doc-1", "doc-1", None),
+                ("s1", "doc-1", "s1"),
+                ("s2", "doc-1", "s2"),
+                ("s3", "doc-1", "s3"),
+                ("doc-1-dup", "doc-1", None),
+            ]
+        )
+        kept = _dedupe_leg(hits, 10, "bm25_rank")
+        assert [h["id"] for h in kept] == ["doc-1", "s1", "s2", "s3", "doc-1-dup"]
+
+    def test_ranks_are_renumbered_contiguously(self) -> None:
+        hits = self._hits(
+            [
+                ("s1:c0", "doc-1", "s1"),
+                ("s1:c1", "doc-1", "s1"),
+                ("s2", "doc-2", "s2"),
+                ("s2:c1", "doc-2", "s2"),
+                ("s3", "doc-3", "s3"),
+            ]
+        )
+        for hit in hits:
+            hit["knn_rank"] = hit.pop("bm25_rank")
+        kept = _dedupe_leg(hits, 10, "knn_rank")
+        assert [h["id"] for h in kept] == ["s1:c0", "s2", "s3"]
+        assert [h["knn_rank"] for h in kept] == [0, 1, 2]
+
+    def test_limit_is_respected(self) -> None:
+        hits = self._hits([(f"s{i}", f"doc-{i}", f"s{i}") for i in range(10)])
+        kept = _dedupe_leg(hits, 4, "bm25_rank")
+        assert [h["id"] for h in kept] == ["s0", "s1", "s2", "s3"]
+
+    def test_unchunked_leg_is_unchanged(self) -> None:
+        """No chunks and <= 3 sections per document: the leg passes through as is."""
+        hits = self._hits(
+            [
+                ("doc-1", "doc-1", None),
+                ("s1", "doc-1", "s1"),
+                ("s2", "doc-2", "s2"),
+                ("s3", "doc-1", "s3"),
+                ("s4", "doc-1", "s4"),
+                ("s5", "doc-3", "s5"),
+            ]
+        )
+        before = [(h["id"], h["bm25_rank"]) for h in hits]
+        kept = _dedupe_leg(hits, len(hits), "bm25_rank")
+        assert [(h["id"], h["bm25_rank"]) for h in kept] == before
+
+    @pytest.mark.asyncio
+    async def test_hybrid_retrieve_overfetches_and_dedupes_each_leg(self) -> None:
+        """The flooding case no longer pushes another case's rank down."""
+        def src(doc: str, section: str) -> dict[str, Any]:
+            return {
+                "document_id": doc,
+                "section_id": section,
+                "title": f"Title {doc}",
+                "section_text": f"Text {section}",
+                "text_snippet": f"Text {section}",
+                "document_type": "case",
+                "source_trust_level": "official",
+            }
+
+        flood = [_make_os_hit(f"s1:c{i}", 9.0, src("doc-1", "s1")) for i in range(4)]
+        other = _make_os_hit("t1", 5.0, src("doc-2", "t1"))
+        bodies: list[dict[str, Any]] = []
+
+        async def fake_search(index: str, body: dict[str, Any]) -> dict[str, Any]:
+            bodies.append(body)
+            return {"hits": {"hits": [*flood, other]}}
+
+        with patch("src.core.retrieval.opensearch_search", side_effect=fake_search):
+            result = await hybrid_retrieve(
+                "test", QueryIntent.GENERAL, top_k=5, embedding=[0.1] * 384
+            )
+
+        assert [b["size"] for b in bodies] == [5 * 2 * LEG_OVERFETCH] * 2
+        assert [p.id for p in result.passages] == ["s1:c0", "t1"]
+        # Deduped in-leg, t1 is rank 1 on both legs (not rank 4).
+        assert result.passages[1].score == pytest.approx(2.0 / (RRF_K + 1))
 
 
 class TestHybridRetrieveFailureModes:

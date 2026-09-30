@@ -25,6 +25,21 @@ logger = logging.getLogger(__name__)
 # RRF constant (standard value from the original paper)
 RRF_K = 60
 
+# Per-leg chunk dedupe (see `_dedupe_leg`). Every chunk row in the keyword index
+# carries its document's title and BM25 scores title^2 best_fields, so one
+# title-matching case fills the BM25 leg with its own chunks — measured on prod
+# 2026-09-29 against the chunked index built by #529: Bagumbayan c0..c3 at
+# identical scores, and Neypes fell from the 15th to the 31st distinct case.
+# RRF reads the rank stored on each hit, so flooding INSIDE a leg pushes every
+# other case down before `_collapse_sections` ever runs; the chunk-vector
+# backfill floods the kNN leg the same way. Each leg therefore over-fetches
+# LEG_OVERFETCH times its size, keeps the best hit per section and at most
+# MAX_ROWS_PER_DOCUMENT sections per document, and re-ranks what it kept.
+# Side-server test: /answer auth@8 0.450 -> 0.475, deep neutral, citation
+# validity 1.0.
+LEG_OVERFETCH = 3
+MAX_ROWS_PER_DOCUMENT = 3
+
 # document_type boosts applied to CODAL_REFERENCE queries in `_bm25_search`.
 #
 # These are the values that actually EXIST in `legal_documents_keyword`. The
@@ -358,7 +373,9 @@ async def hybrid_retrieve(
     # recorded as a failed leg on the way past, so the two legs report failure
     # through one mechanism and a log search for a dead leg finds both.
     try:
-        bm25_hits = await _bm25_search(query, intent, top_k=top_k * 2, filter_terms=filter_terms)
+        bm25_hits = await _bm25_search(
+            query, intent, top_k=top_k * 2 * LEG_OVERFETCH, filter_terms=filter_terms
+        )
     except httpx.HTTPError as exc:
         logger.error(
             "Retrieval leg %r failed on index %s: %s",
@@ -399,7 +416,9 @@ async def hybrid_retrieve(
         # request there would be a strictly worse answer than the hybrid
         # pipeline's own documented BM25-only fallback.
         try:
-            knn_hits = await _knn_search(embedding, top_k=top_k * 2, filter_terms=filter_terms)
+            knn_hits = await _knn_search(
+                embedding, top_k=top_k * 2 * LEG_OVERFETCH, filter_terms=filter_terms
+            )
         except httpx.HTTPError as exc:
             # The OpenSearch reason is logged explicitly. Without it the 400 for
             # a wrong field name reads identically to a cluster outage, and
@@ -423,6 +442,11 @@ async def hybrid_retrieve(
             ", ".join(failed_legs),
             intent.value,
         )
+
+    # Dedupe each leg BEFORE fusion: RRF scores by the rank stored on each hit,
+    # so a leg's ranks must already be free of chunk floods. See LEG_OVERFETCH.
+    bm25_hits = _dedupe_leg(bm25_hits, top_k * 2, "bm25_rank")
+    knn_hits = _dedupe_leg(knn_hits, top_k * 2, "knn_rank")
 
     # Fuse with RRF
     fused = _rrf_fuse(bm25_hits, knn_hits)
@@ -608,6 +632,50 @@ async def _knn_search(
     return results
 
 
+def _section_key(hit: dict[str, Any]) -> tuple[str, str]:
+    """``(document_id, section_id)``, or a key unique to a hit with no section."""
+    section_id = hit.get("section_id")
+    if section_id:
+        return (str(hit.get("document_id") or ""), str(section_id))
+    return ("", f"id:{hit.get('id', '')}")
+
+
+def _dedupe_leg(
+    hits: list[dict[str, Any]],
+    limit: int,
+    rank_key: str,
+) -> list[dict[str, Any]]:
+    """Trim one retrieval leg to ``limit`` hits free of chunk floods.
+
+    Walks ``hits`` in score order (the order OpenSearch returned them) and keeps
+    the best hit per ``(document_id, section_id)``. A hit with no
+    ``section_id`` (a document row) is keyed by its own id, so it is never
+    merged and never counts toward a document's cap. A sectioned hit is skipped
+    once its document already has ``MAX_ROWS_PER_DOCUMENT`` sectioned hits.
+    Kept hits are renumbered ``hit[rank_key] = 0..n-1`` so RRF sees contiguous
+    ranks.
+    """
+    seen: set[tuple[str, str]] = set()
+    per_document: dict[str, int] = {}
+    kept: list[dict[str, Any]] = []
+    for hit in hits:
+        if len(kept) >= limit:
+            break
+        key = _section_key(hit)
+        if key in seen:
+            continue
+        if hit.get("section_id"):
+            document_id = key[0]
+            if per_document.get(document_id, 0) >= MAX_ROWS_PER_DOCUMENT:
+                continue
+            per_document[document_id] = per_document.get(document_id, 0) + 1
+        seen.add(key)
+        kept.append(hit)
+    for rank, hit in enumerate(kept):
+        hit[rank_key] = rank
+    return kept
+
+
 def _rrf_fuse(
     bm25_hits: list[dict[str, Any]],
     knn_hits: list[dict[str, Any]],
@@ -651,12 +719,7 @@ def _collapse_sections(fused: list[dict[str, Any]]) -> list[dict[str, Any]]:
     seen: set[tuple[str, str]] = set()
     kept: list[dict[str, Any]] = []
     for hit in fused:
-        section_id = hit.get("section_id")
-        key = (
-            (str(hit.get("document_id") or ""), str(section_id))
-            if section_id
-            else ("", f"id:{hit.get('id', '')}")
-        )
+        key = _section_key(hit)
         if key in seen:
             continue
         seen.add(key)
