@@ -1,5 +1,10 @@
 # Pending Tasks
 
+## Deep Research device-test builds (2026-09-30, PRs #533 + #534, NOT merged)
+- [ ] Review/merge #533 (`submit.internal` profile: Android track internal; production stays alpha/completed).
+- [ ] Review/merge #534 (version 1.0.3). iOS build 34 was built from this branch, so main lags the shipped version until it merges.
+- [ ] Android 1.0.2 (vC15) is on internal only. The next alpha/production build must be versionCode >= 16 and should carry 1.0.3.
+
 ## Section chunks for search (2026-09-29, PR1 #528 + PR2, NOT merged)
 - [ ] Review/merge PR1 (`fix/rag-collapse-chunks`) BEFORE PR2 deploys: without it, chunk hits of one section fill several top_k slots.
 - [ ] Review/merge PR2 (`feat/api-section-chunks`). Migration `20260929120000_vector_backfill_prune_stale` adds `vector_backfill_runs.prune_stale`.

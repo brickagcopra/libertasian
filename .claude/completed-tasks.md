@@ -1,5 +1,10 @@
 # Completed Tasks
 
+## 2026-09-30 — Deep Research device-test builds
+- [x] Android 1.0.2 / vC15 (build 044d787d) → Play internal track; console reads "Available to internal testers" (Libertasian Testers, 27). Alpha/production untouched.
+- [x] iOS 1.0.2 / 33 rejected by ASC (1.0.2 train closed after App Store approval, 90062/90186) → bumped to 1.0.3 (#534) → iOS 1.0.3 / 34 (build d675b3f8) uploaded to TestFlight (submission 51890f68 FINISHED). Not submitted for review.
+- [x] ASC TestFlight verified: upload 1.0.3 (34) Complete; build 34 "Ready to Submit" in internal group Team (Expo).
+
 ## 2026-09-29 — Section chunks for search (2 PRs opened, not merged)
 - [x] PR1 #528 fix(rag): hybrid fusion keeps only the best-ranked hit per (document_id, section_id) before top_k; document rows keyed by their own id
 - [x] PR2 feat(api): `chunkSection` (>1,800 chars → ~1,500-char chunks, ~150 overlap, sentence-snapped ±200); chunk rows `{sectionId}:c{n}` in keyword (live + rebuild) and vector (full chunk as snippet); stale-row sweeps; backfill `pruneStale`; `EMBEDDING_BACKFILL_URL` + `embedding-backfill` compose service; opensearch 6G / 2g heap
