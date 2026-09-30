@@ -2,6 +2,7 @@ import * as crypto from 'crypto';
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { ForbiddenException, NotFoundException, ConflictException } from '@nestjs/common';
+import { MemberRoleSyncService } from '../rbac/member-role-sync.service';
 import { OrganizationsService } from './organizations.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -85,6 +86,17 @@ describe('OrganizationsService', () => {
         {
           provide: PermissionsService,
           useValue: mockPermissionsService,
+        },
+        {
+          // The legacy-role -> member_roles mirror. Extracted out of this
+          // service so the auth module could reach it too (registration wrote
+          // no member_roles row at all); these tests assert the org flows, not
+          // the mirror, which has its own spec.
+          provide: MemberRoleSyncService,
+          useValue: {
+            linkSystemRole: jest.fn().mockResolvedValue(undefined),
+            replaceSystemRole: jest.fn().mockResolvedValue(undefined),
+          },
         },
       ],
     }).compile();

@@ -1,5 +1,6 @@
 import { ForbiddenException } from '@nestjs/common';
 
+import { MemberRoleSyncService } from './member-role-sync.service';
 import { OrganizationsService } from '../organizations/organizations.service';
 import { PLATFORM_CAPABILITY_REFUSAL } from './platform-scope';
 
@@ -7,9 +8,9 @@ import { PLATFORM_CAPABILITY_REFUSAL } from './platform-scope';
  * The third escalation path, closed alongside the two in
  * no-platform-capability-via-workspace-role.spec.ts.
  *
- * organizations.service.ts writes member_roles directly through
- * dualWriteCreateMemberRole / dualWriteReplaceMemberRole, bypassing
- * RolesService entirely — so the gates added there do not see it. Both
+ * The legacy-role mirror writes member_roles directly — MemberRoleSyncService
+ * since the registration dual-write extracted it out of OrganizationsService —
+ * bypassing RolesService entirely, so the gates added there do not see it. Both
  * InviteMemberDto and UpdateMemberRoleDto accept 'admin', 'editor' and
  * 'reviewer', and these endpoints require only owner/admin of the org, which
  * every workspace owner is.
@@ -27,6 +28,19 @@ describe('legacy org membership can never confer platform capability', () => {
   /** What the seeded system `admin` role actually carries, in miniature. */
   const SYSTEM_ADMIN_CODES = ['documents:read', 'admin:dashboard', 'admin:users'];
   const MEMBER_CODES = ['documents:read', 'notes:read'];
+  /**
+   * What the system `owner` role carries post-strip: every workspace code and
+   * no platform code. This is what registration mirrors.
+   */
+  const OWNER_CODES = [
+    ...MEMBER_CODES,
+    'members:update-role',
+    'roles:create',
+    'roles:update',
+    'digests:read',
+    'digests:approve',
+    'billing:manage',
+  ];
 
   const orgId = 'org-1';
   const ownerUserId = 'owner-user-1';
@@ -36,7 +50,10 @@ describe('legacy org membership can never confer platform capability', () => {
   let prisma: any;
   let notifications: any;
   let permissions: any;
+  let memberRoleSync: any;
   let service: OrganizationsService;
+  /** The real mirror, for the chokepoint tests at the bottom. */
+  let realSync: MemberRoleSyncService;
   /** organization_members rows, keyed by userId. */
   let memberships: Record<string, unknown>;
 
@@ -96,9 +113,24 @@ describe('legacy org membership can never confer platform capability', () => {
     permissions = {
       resolvePermissionCodes: jest.fn().mockResolvedValue(conferred),
     };
+    // Stubbed for the OrganizationsService cases: those assert the UP-FRONT
+    // refusal, i.e. that the mirror is never even reached.
+    memberRoleSync = {
+      linkSystemRole: jest.fn().mockResolvedValue(undefined),
+      replaceSystemRole: jest.fn().mockResolvedValue(undefined),
+    };
     service = new OrganizationsService(
       prisma as never,
       notifications as never,
+      memberRoleSync as never,
+      permissions as never,
+    );
+    // The real thing, for the chokepoint cases: the backstop that catches a
+    // caller which skipped the up-front check — registration reaches it from
+    // the auth module, past OrganizationsService entirely.
+    realSync = new MemberRoleSyncService(
+      prisma as never,
+      { invalidateForMember: jest.fn().mockResolvedValue(undefined) } as never,
       permissions as never,
     );
   }
@@ -198,7 +230,7 @@ describe('legacy org membership can never confer platform capability', () => {
         // membership, no email.
         expect(prisma.pendingInvite.create).not.toHaveBeenCalled();
         expect(prisma.organizationMember.create).not.toHaveBeenCalled();
-        expect(prisma.memberRole.upsert).not.toHaveBeenCalled();
+        expect(memberRoleSync.linkSystemRole).not.toHaveBeenCalled();
         expect(notifications.sendMemberInviteEmail).not.toHaveBeenCalled();
       },
     );
@@ -243,8 +275,7 @@ describe('legacy org membership can never confer platform capability', () => {
       ).rejects.toThrow(PLATFORM_CAPABILITY_REFUSAL);
 
       expect(prisma.organizationMember.update).not.toHaveBeenCalled();
-      expect(prisma.memberRole.create).not.toHaveBeenCalled();
-      expect(prisma.memberRole.deleteMany).not.toHaveBeenCalled();
+      expect(memberRoleSync.replaceSystemRole).not.toHaveBeenCalled();
     });
 
     it('still allows demoting to member', async () => {
@@ -362,28 +393,26 @@ describe('legacy org membership can never confer platform capability', () => {
   });
 
   // -------------------------------------------------------------------------
-  // The chokepoint itself
+  // The chokepoint itself — MemberRoleSyncService
   // -------------------------------------------------------------------------
 
   describe('dual-write chokepoint', () => {
     /**
-     * dualWriteCreateMemberRole wraps its work in a try/catch that deliberately
-     * swallows failures, so an RBAC hiccup cannot break an invite. The refusal
-     * is raised OUTSIDE that try on purpose — if it were inside, the backstop
-     * would silently degrade into a log line and the write would be skipped
-     * while the caller reported success.
+     * The mirror wraps its work in a try/catch that deliberately swallows
+     * failures, so registration cannot fail over a mirrored row. The
+     * platform-capability refusal is raised OUTSIDE that try on purpose — if it
+     * were inside, the backstop would silently degrade into a log line while
+     * the caller reported success.
+     *
+     * This matters more after the extraction than before it: linkSystemRole is
+     * now reachable from the auth module, which never passes through
+     * OrganizationsService's up-front checks.
      */
-    it('escapes the catch that swallows dual-write failures', async () => {
+    it('escapes the catch that swallows mirror failures', async () => {
       build(SYSTEM_ADMIN_CODES);
 
       await expect(
-        (service as never as {
-          dualWriteCreateMemberRole: (
-            m: string,
-            r: string,
-            u: string,
-          ) => Promise<void>;
-        }).dualWriteCreateMemberRole('member-1', 'admin', ownerUserId),
+        realSync.linkSystemRole('member-1', 'admin', ownerUserId),
       ).rejects.toThrow(PLATFORM_CAPABILITY_REFUSAL);
 
       expect(prisma.memberRole.upsert).not.toHaveBeenCalled();
@@ -393,13 +422,7 @@ describe('legacy org membership can never confer platform capability', () => {
       build(SYSTEM_ADMIN_CODES);
 
       await expect(
-        (service as never as {
-          dualWriteReplaceMemberRole: (
-            m: string,
-            r: string,
-            u: string,
-          ) => Promise<void>;
-        }).dualWriteReplaceMemberRole('member-1', 'admin', ownerUserId),
+        realSync.replaceSystemRole('member-1', 'admin', ownerUserId),
       ).rejects.toThrow(PLATFORM_CAPABILITY_REFUSAL);
 
       expect(prisma.memberRole.deleteMany).not.toHaveBeenCalled();
@@ -409,31 +432,76 @@ describe('legacy org membership can never confer platform capability', () => {
     it('still writes for a role conferring only workspace codes', async () => {
       build(MEMBER_CODES);
 
-      await (service as never as {
-        dualWriteCreateMemberRole: (
-          m: string,
-          r: string,
-          u: string,
-        ) => Promise<void>;
-      }).dualWriteCreateMemberRole('member-1', 'member', ownerUserId);
+      await realSync.linkSystemRole('member-1', 'member', ownerUserId);
 
       expect(prisma.memberRole.upsert).toHaveBeenCalled();
     });
 
     it('passes when no system role exists for the slug', async () => {
-      // Nothing to confer, so nothing to refuse — the dual-write no-ops.
+      // Nothing to confer, so nothing to refuse — the mirror no-ops.
       build(SYSTEM_ADMIN_CODES, false);
 
-      await (service as never as {
-        dualWriteCreateMemberRole: (
-          m: string,
-          r: string,
-          u: string,
-        ) => Promise<void>;
-      }).dualWriteCreateMemberRole('member-1', 'admin', ownerUserId);
+      await realSync.linkSystemRole('member-1', 'admin', ownerUserId);
 
       expect(permissions.resolvePermissionCodes).not.toHaveBeenCalled();
       expect(prisma.memberRole.upsert).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Registration is unaffected
+  // -------------------------------------------------------------------------
+
+  describe('registration', () => {
+    /**
+     * Both registration paths (register and the social-signup path) call
+     * linkSystemRole with the LITERAL string 'owner'. The system owner role was
+     * stripped of platform codes in 20260702120000_strip_owner_platform_admin,
+     * so the guard added in #501 must be inert for it — a signup that 403s on
+     * its own workspace role would be a total outage of registration.
+     *
+     * Asserted against the real MemberRoleSyncService with the real owner code
+     * set, not a stub, so this fails if the predicate ever widens to catch a
+     * code that owner legitimately holds.
+     */
+    it('mirrors the owner role at signup without tripping the guard', async () => {
+      build(OWNER_CODES);
+
+      await expect(
+        realSync.linkSystemRole('owner-member-1', 'owner', ownerUserId),
+      ).resolves.toBeUndefined();
+
+      expect(permissions.resolvePermissionCodes).toHaveBeenCalled();
+      expect(prisma.memberRole.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({
+            organizationMemberId: 'owner-member-1',
+            roleDefinitionId: 'system-role-1',
+          }),
+        }),
+      );
+    });
+
+    it('mirrors owner even with no actor id (social signup)', async () => {
+      build(OWNER_CODES);
+
+      await expect(
+        realSync.linkSystemRole('owner-member-1', 'owner'),
+      ).resolves.toBeUndefined();
+      expect(prisma.memberRole.upsert).toHaveBeenCalled();
+    });
+
+    it('confirms no platform-scoped code is in the owner set', () => {
+      // The reason the two cases above pass. If owner ever regains one of
+      // these, registration breaks loudly here rather than in production.
+      expect(
+        OWNER_CODES.filter(
+          (c) =>
+            c.startsWith('admin:') ||
+            c.startsWith('platform-') ||
+            c === 'digests:review',
+        ),
+      ).toEqual([]);
     });
   });
 });

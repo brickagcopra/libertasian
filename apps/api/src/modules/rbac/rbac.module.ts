@@ -14,6 +14,7 @@ import { RbacCacheService } from './rbac-cache.service';
 import { RolesService } from './roles.service';
 import { PlatformGrantsService } from './platform-grants.service';
 import { PlatformRosterHealthService } from './platform-roster.health';
+import { MemberRoleSyncService } from './member-role-sync.service';
 
 /**
  * Global RBAC module — provides permission resolution, role management,
@@ -40,6 +41,7 @@ import { PlatformRosterHealthService } from './platform-roster.health';
     RolesService,
     PlatformGrantsService,
     PlatformRosterHealthService,
+    MemberRoleSyncService,
   ],
   exports: [
     RbacCacheService,
@@ -47,6 +49,7 @@ import { PlatformRosterHealthService } from './platform-roster.health';
     RolesService,
     PlatformGrantsService,
     PlatformRosterHealthService,
+    MemberRoleSyncService,
   ],
 })
 export class RbacModule {}

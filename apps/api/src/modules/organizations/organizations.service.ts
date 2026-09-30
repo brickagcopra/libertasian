@@ -10,6 +10,7 @@ import * as crypto from 'crypto';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { MemberRoleSyncService } from '../rbac/member-role-sync.service';
 import { PermissionsService } from '../rbac/permissions.service';
 import {
   PLATFORM_CAPABILITY_REFUSAL,
@@ -24,7 +25,9 @@ export class OrganizationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
-    // RbacModule is @Global(), so this needs no change to OrganizationsModule.
+    // Both come from RbacModule, which is @Global() — no change to
+    // OrganizationsModule is needed for either.
+    private readonly memberRoleSync: MemberRoleSyncService,
     private readonly permissions: PermissionsService,
   ) {}
 
@@ -98,7 +101,7 @@ export class OrganizationsService {
     });
 
     // RBAC dual-write: assign owner role in new RBAC system
-    await this.dualWriteCreateMemberRole(ownerMember.id, 'owner', ownerUserId);
+    await this.memberRoleSync.linkSystemRole(ownerMember.id, 'owner', ownerUserId);
 
     // Create free subscription for the new org
     await this.prisma.subscription.create({
@@ -300,7 +303,7 @@ export class OrganizationsService {
     });
 
     // RBAC dual-write: assign role in new RBAC system
-    await this.dualWriteCreateMemberRole(member.id, dto.role, inviterUserId);
+    await this.memberRoleSync.linkSystemRole(member.id, dto.role, inviterUserId);
 
     // Send notification email to invited user
     const [org, inviter] = await Promise.all([
@@ -382,7 +385,7 @@ export class OrganizationsService {
     });
 
     // RBAC dual-write: replace system role in new RBAC system
-    await this.dualWriteReplaceMemberRole(membership.id, newRole, actorUserId);
+    await this.memberRoleSync.replaceSystemRole(membership.id, newRole, actorUserId);
 
     return updated;
   }
@@ -535,7 +538,7 @@ export class OrganizationsService {
     ]);
 
     // RBAC dual-write: assign role in new RBAC system
-    await this.dualWriteCreateMemberRole(member.id, invite.role, invite.invitedBy);
+    await this.memberRoleSync.linkSystemRole(member.id, invite.role, invite.invitedBy);
 
     this.logger.log(
       `Pending invite accepted: user ${userId} joined org ${invite.organizationId}`,
@@ -588,7 +591,7 @@ export class OrganizationsService {
         ]);
 
         // RBAC dual-write: assign role in new RBAC system
-        await this.dualWriteCreateMemberRole(member.id, invite.role, invite.invitedBy);
+        await this.memberRoleSync.linkSystemRole(member.id, invite.role, invite.invitedBy);
 
         results.push({
           organizationId: invite.organizationId,
@@ -664,6 +667,22 @@ export class OrganizationsService {
   /**
    * Assert that the actor has one of the required roles in the organization.
    * Throws ForbiddenException if not.
+   *
+   * TODO(rbac): this reads the LEGACY `organization_members.role` string
+   * column against a hardcoded role list — a role-name string literal in an
+   * authorization decision, which is what the RBAC model exists to remove.
+   * It is also, today, the only reason the 43 memberships with no
+   * `member_roles` row can still manage their own workspace at all: every
+   * other path resolves permissions from `member_roles` and would see nothing.
+   *
+   * Migration 20260921120000_backfill_member_roles_for_legacy_owners plus the
+   * registration dual-write close that gap. Once both are deployed AND
+   * verified on prod (no active membership left without a `member_roles`
+   * row), this fallback should be replaced with a PermissionsService check on
+   * the permission each call site actually needs — `members:invite`,
+   * `members:update`, and so on. Deliberately NOT done in the same PR as the
+   * backfill: if the backfill under-reaches, this is what keeps people able to
+   * run their own workspace.
    */
   async assertRole(
     organizationId: string,
@@ -714,110 +733,11 @@ export class OrganizationsService {
 
   // ---- RBAC Dual-Write Helpers ----
 
-  /**
-   * Create a MemberRole entry matching the legacy role.
-   * Non-fatal: failures are logged but do not break the primary operation.
-   */
-  private async dualWriteCreateMemberRole(
-    memberId: string,
-    legacyRole: string,
-    assignedByUserId: string,
-  ): Promise<void> {
-    // OUTSIDE the try ON PURPOSE. The catch below deliberately swallows
-    // dual-write failures so an RBAC hiccup cannot break an invite; a refusal
-    // to grant platform capability must not be swallowed the same way, or the
-    // backstop silently becomes a log line. Callers validate up front too —
-    // this is the chokepoint all four write paths funnel through, so it is the
-    // one place a new caller cannot forget.
-    await this.assertLegacyRoleConfersNoPlatformCapability(legacyRole, {
-      actorUserId: assignedByUserId,
-    });
-
-    try {
-      const roleDef = await this.prisma.roleDefinition.findFirst({
-        where: { slug: legacyRole, isSystem: true, organizationId: null },
-        select: { id: true },
-      });
-
-      if (!roleDef) {
-        this.logger.warn(`RBAC dual-write: no system role found for slug "${legacyRole}"`);
-        return;
-      }
-
-      await this.prisma.memberRole.upsert({
-        where: {
-          organizationMemberId_roleDefinitionId: {
-            organizationMemberId: memberId,
-            roleDefinitionId: roleDef.id,
-          },
-        },
-        create: {
-          organizationMemberId: memberId,
-          roleDefinitionId: roleDef.id,
-          assignedByUserId,
-        },
-        update: {},
-      });
-    } catch (err) {
-      this.logger.error(
-        `RBAC dual-write failed for member ${memberId}, role "${legacyRole}": ${(err as Error).message}`,
-      );
-    }
-  }
-
-  /**
-   * Replace a member's system MemberRole when the legacy role changes.
-   * Removes all system MemberRoles and assigns the new one.
-   */
-  private async dualWriteReplaceMemberRole(
-    memberId: string,
-    newLegacyRole: string,
-    assignedByUserId: string,
-  ): Promise<void> {
-    // Outside the try, for the reason given in dualWriteCreateMemberRole.
-    await this.assertLegacyRoleConfersNoPlatformCapability(newLegacyRole, {
-      actorUserId: assignedByUserId,
-    });
-
-    try {
-      const newRoleDef = await this.prisma.roleDefinition.findFirst({
-        where: { slug: newLegacyRole, isSystem: true, organizationId: null },
-        select: { id: true },
-      });
-
-      if (!newRoleDef) {
-        this.logger.warn(`RBAC dual-write: no system role found for slug "${newLegacyRole}"`);
-        return;
-      }
-
-      // Remove all existing system role assignments for this member
-      const systemRoleIds = await this.prisma.roleDefinition.findMany({
-        where: { isSystem: true, organizationId: null },
-        select: { id: true },
-      });
-      const systemIds = systemRoleIds.map((r) => r.id);
-
-      await this.prisma.memberRole.deleteMany({
-        where: {
-          organizationMemberId: memberId,
-          roleDefinitionId: { in: systemIds },
-        },
-      });
-
-      // Assign the new system role
-      await this.prisma.memberRole.create({
-        data: {
-          organizationMemberId: memberId,
-          roleDefinitionId: newRoleDef.id,
-          assignedByUserId,
-        },
-      });
-    } catch (err) {
-      this.logger.error(
-        `RBAC dual-write replace failed for member ${memberId}, role "${newLegacyRole}": ${(err as Error).message}`,
-      );
-    }
-  }
+  // The two dual-write helpers that lived here now live in
+  // MemberRoleSyncService (modules/rbac). They were private, so the auth
+  // module could not reach them — which is why registration wrote the legacy
+  // `organization_members.role` column and no `member_roles` row, leaving
+  // every signup with zero effective permissions.
 
   // ---- Helpers ----
 

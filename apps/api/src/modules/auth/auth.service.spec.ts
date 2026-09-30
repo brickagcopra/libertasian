@@ -12,6 +12,7 @@ import { PermissionsService } from '../rbac/permissions.service';
 import { UsersService } from '../users/users.service';
 import { AuthService } from './auth.service';
 import { LoginEventService } from './login-event.service';
+import { MemberRoleSyncService } from '../rbac/member-role-sync.service';
 import { LoginThrottleService } from './login-throttle.service';
 import type { RegisterDto, LoginDto } from './dto';
 
@@ -103,6 +104,10 @@ describe('AuthService', () => {
     assertNotLocked: jest.Mock;
     recordFailure: jest.Mock;
     recordSuccess: jest.Mock;
+  };
+  let memberRoleSync: {
+    linkSystemRole: jest.Mock;
+    replaceSystemRole: jest.Mock;
   };
 
   const mockUser = {
@@ -255,6 +260,16 @@ describe('AuthService', () => {
             resolveMemberId: jest.fn().mockResolvedValue(null),
           },
         },
+        {
+          // Mirrors the legacy organization_members.role into member_roles at
+          // registration. Asserted in member-role-sync.service.spec.ts and in
+          // the registration test below; stubbed here.
+          provide: MemberRoleSyncService,
+          useValue: {
+            linkSystemRole: jest.fn().mockResolvedValue(undefined),
+            replaceSystemRole: jest.fn().mockResolvedValue(undefined),
+          },
+        },
       ],
     }).compile();
 
@@ -269,6 +284,10 @@ describe('AuthService', () => {
       assertNotLocked: jest.Mock;
       recordFailure: jest.Mock;
       recordSuccess: jest.Mock;
+    };
+    memberRoleSync = module.get(MemberRoleSyncService) as unknown as {
+      linkSystemRole: jest.Mock;
+      replaceSystemRole: jest.Mock;
     };
 
     // Default mock implementations
@@ -348,6 +367,16 @@ describe('AuthService', () => {
           status: 'active',
         },
       });
+
+      // Verify the member_roles mirror. Authorization reads member_roles
+      // ONLY — PermissionsService and the isPlatformAdmin derivation never
+      // look at organization_members.role — so without this the new owner
+      // resolves to ZERO permissions in their own workspace.
+      expect(memberRoleSync.linkSystemRole).toHaveBeenCalledWith(
+        mockMembership.id,
+        'owner',
+        mockUser.id,
+      );
 
       // Verify subscription creation — entitlementsJson must be empty so
       // future plan-default changes (e.g. free.aiAnswers) flow through
@@ -1425,6 +1454,11 @@ describe('AuthService — Layer-2 per-IP velocity on unknown-email failures', ()
       { record: jest.fn().mockResolvedValue(undefined) } as unknown as LoginEventService,
       {} as unknown as PermissionsService,
       throttle,
+      // Dual-writes member_roles at registration; this suite exercises login
+      // throttling only and never registers.
+      {
+        linkSystemRole: jest.fn().mockResolvedValue(undefined),
+      } as unknown as MemberRoleSyncService,
     );
   });
 
