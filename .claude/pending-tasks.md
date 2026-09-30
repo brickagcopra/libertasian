@@ -3,7 +3,6 @@
 ## Deep Research device-test builds (2026-09-30, PRs #533 + #534, NOT merged)
 - [ ] Review/merge #533 (`submit.internal` profile: Android track internal; production stays alpha/completed).
 - [ ] Review/merge #534 (version 1.0.3). iOS build 34 was built from this branch, so main lags the shipped version until it merges.
-- [ ] Confirm TestFlight processing for iOS 1.0.3 (34) in App Store Connect (sign-in needed; not verified by Claude), and add it to the internal testers group if it isn't auto-distributed.
 - [ ] Android 1.0.2 (vC15) is on internal only. The next alpha/production build must be versionCode >= 16 and should carry 1.0.3.
 
 ## Section chunks for search (2026-09-29, PR1 #528 + PR2, NOT merged)
