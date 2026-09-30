@@ -558,6 +558,14 @@ services:
       EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-cpu}
       EMBEDDING_MAX_BATCH_SIZE: "64"
       EMBEDDING_INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      # All three MUST equal the `cpus` limit below. Torch, OpenMP and MKL each
+      # size their pool from the HOST core count (12), not the cgroup quota, so
+      # unpinned they thrash under CFS throttling — the same fix as
+      # RERANKER_TORCH_THREADS. Measured on prod 2026-09-30: the backfill
+      # embedded ~2 chunks/s unpinned vs ~4/s with threads matched to cpus.
+      EMBEDDING_TORCH_THREADS: "2"
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 30s
@@ -593,6 +601,10 @@ services:
       EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-cpu}
       EMBEDDING_MAX_BATCH_SIZE: "32"
       EMBEDDING_INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      # All three MUST equal the `cpus` limit below (see embedding-service).
+      EMBEDDING_TORCH_THREADS: "4"
+      OMP_NUM_THREADS: "4"
+      MKL_NUM_THREADS: "4"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 30s

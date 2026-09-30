@@ -14,6 +14,12 @@ class Settings(BaseSettings):
     embedding_dim: int = 384
     max_batch_size: int = 64
     device: str = "cpu"
+    # torch intra-op threads. 0 leaves torch's default, which is one thread per
+    # HOST core: torch does not read the cgroup quota, so in a `cpus: "2"`
+    # container that is 12 threads contending for 2 cores and CFS throttles
+    # them. Set it equal to the container's cpus limit (docker-compose.prod.yml
+    # does), as the reranker already does.
+    torch_threads: int = 0
 
     # Operational limits
     max_input_length: int = 8192
