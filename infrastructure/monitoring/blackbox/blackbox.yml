@@ -1,0 +1,16 @@
+# ==========================================================================
+# LIBERTASIAN — Blackbox Exporter Configuration
+# Probes the public HTTPS endpoints so Prometheus sees the certificate that
+# nginx actually serves. Certificate verification is left ON (the default),
+# so an expired or untrusted cert makes the probe fail.
+# ==========================================================================
+
+modules:
+  https_2xx:
+    prober: http
+    timeout: 10s
+    http:
+      method: GET
+      valid_status_codes: [200]
+      preferred_ip_protocol: ip4
+      fail_if_not_ssl: true

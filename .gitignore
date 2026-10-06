@@ -84,3 +84,7 @@ logs/
 # stub breaks the next build rather than the command that created it.
 # Always run eas from apps/mobile.
 /app.json
+
+# Rendered/legacy Alertmanager config with SMTP credentials; the tracked
+# source is alertmanager.yml.tmpl, rendered at container start.
+infrastructure/monitoring/alertmanager/alertmanager.yml
