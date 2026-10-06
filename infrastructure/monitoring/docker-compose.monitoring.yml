@@ -3,7 +3,7 @@
 # Per PDD Section 15: Monitoring & Observability
 #
 # Usage:
-#   docker compose -f docker-compose.prod.yml -f infrastructure/monitoring/docker-compose.monitoring.yml up -d
+#   docker compose --project-directory /opt/libertasian -f infrastructure/monitoring/docker-compose.monitoring.yml --env-file /opt/libertasian/.env up -d
 # ==========================================================================
 
 name: libertasian-monitoring
@@ -74,16 +74,42 @@ services:
     ports:
       - "127.0.0.1:9093:9093"
     volumes:
-      - ./infrastructure/monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./infrastructure/monitoring/alertmanager/alertmanager.yml.tmpl:/etc/alertmanager/alertmanager.yml.tmpl:ro
       - alertmanager_data:/alertmanager
+    environment:
+      SMTP_USER: "${SMTP_USER}"
+      SMTP_PASS: "${SMTP_PASS}"
+    # Render the tracked template at start: the SMTP user is substituted in,
+    # the password goes to a 0600 file read via auth_password_file.
+    entrypoint: ["/bin/sh", "-c"]
     command:
-      - "--config.file=/etc/alertmanager/alertmanager.yml"
-      - "--storage.path=/alertmanager"
+      - >-
+        umask 077;
+        printf '%s' "$$SMTP_PASS" > /tmp/smtp_pass;
+        sed "s|__SMTP_USER__|$$SMTP_USER|" /etc/alertmanager/alertmanager.yml.tmpl > /tmp/alertmanager.yml;
+        exec /bin/alertmanager --config.file=/tmp/alertmanager.yml --storage.path=/alertmanager
     deploy:
       resources:
         limits:
           cpus: "0.5"
           memory: 256M
+
+  # ====================
+  # Blackbox Exporter (HTTPS / TLS cert probes)
+  # ====================
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.25.0
+    container_name: libertasian-blackbox-exporter
+    restart: always
+    ports:
+      - "127.0.0.1:9115:9115"
+    volumes:
+      - ./infrastructure/monitoring/blackbox/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 64M
 
   # ====================
   # Loki (Log Aggregation)
