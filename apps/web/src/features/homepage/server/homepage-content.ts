@@ -404,6 +404,7 @@ export const DEFAULT_HOMEPAGE_CONTENT: HomepageContent = {
       { label: 'Blog', href: '/blog' },
       { label: 'Pricing', href: '/pricing' },
       { label: 'About', href: '/about' },
+      { label: 'Facebook', href: 'https://www.facebook.com/libertasian' },
     ],
     tagline: 'A friendly Philippine legal research library. Not legal advice — but a great place to start.',
   },

@@ -69,6 +69,18 @@ describe('PublicFooter', () => {
     expect(textLink).toHaveAttribute('href', APP_STORE_URL);
   });
 
+  // KYC reviewers follow the footer to the company's Facebook page and compare
+  // the URL character by character.
+  it('links the Facebook page in the Company column as an external link', async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('boom')) as unknown as typeof fetch;
+    render(await PublicFooter());
+
+    const facebook = screen.getByRole('link', { name: 'Facebook' });
+    expect(facebook).toHaveAttribute('href', 'https://www.facebook.com/libertasian');
+    expect(facebook).toHaveAttribute('target', '_blank');
+    expect(facebook.getAttribute('rel')).toContain('noopener');
+  });
+
   // Absolute URLs leave the site; internal routes must not sprout a new tab.
   it('opens external footer links in a new tab and leaves internal links alone', async () => {
     globalThis.fetch = vi.fn().mockRejectedValue(new Error('boom')) as unknown as typeof fetch;

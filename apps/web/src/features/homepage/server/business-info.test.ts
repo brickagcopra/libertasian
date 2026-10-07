@@ -177,6 +177,15 @@ describe('footer links — KYC reachability', () => {
     expect(about?.href).toBe('/about');
   });
 
+  it('lists Facebook after About in the company column', () => {
+    expect(footer.companyLinks).toEqual([
+      { label: 'Blog', href: '/blog' },
+      { label: 'Pricing', href: '/pricing' },
+      { label: 'About', href: '/about' },
+      { label: 'Facebook', href: 'https://www.facebook.com/libertasian' },
+    ]);
+  });
+
   it('exposes Contact and Refund Policy in the legal column', () => {
     const hrefs = footer.legalLinks.map((l) => l.href);
     expect(hrefs).toContain('/contact');
