@@ -1354,7 +1354,8 @@ describe('StorePurchasesService', () => {
 
     it('reconciles a moved period end without changing state', async () => {
       withStoreSubscription(SubscriptionState.ACTIVE);
-      const moved = new Date('2026-10-01T00:00:00Z');
+      // Must still be in the future; see 'reports in_sync when nothing drifted'.
+      const moved = new Date(future.getTime() + 7 * 86400000);
       storeProvider.fetchSubscriberSnapshot.mockResolvedValue({
         appUserId: ORG_ID,
         entitlements: [
