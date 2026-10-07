@@ -24,7 +24,7 @@ const managementTeam: TeamMember[] = [
     photo: '/team/jecar-esling.jpg',
   },
   {
-    name: 'Brick Demanuel Agcopra',
+    name: 'Brick De Manuel Agcopra',
     title: 'Chief Technology Officer',
     photo: '/team/brick-agcopra.jpg',
   },
