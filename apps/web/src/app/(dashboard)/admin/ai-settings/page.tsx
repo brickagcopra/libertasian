@@ -19,7 +19,6 @@ const AVAILABLE_MODELS = [
   { model: 'gpt-4o-mini', label: 'GPT-4o Mini', price: '$0.15 / $0.60 per 1M tokens' },
   { model: 'gpt-4o', label: 'GPT-4o', price: '$2.50 / $10.00 per 1M tokens' },
   { model: 'gpt-4.1-mini', label: 'GPT-4.1 Mini', price: '$0.40 / $1.60 per 1M tokens' },
-  { model: 'gpt-4.1-nano', label: 'GPT-4.1 Nano', price: '$0.10 / $0.40 per 1M tokens' },
 ];
 
 const CRON_PRESETS = [
