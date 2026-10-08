@@ -225,13 +225,20 @@ class Settings(BaseSettings):
     # for the same reason as the OpenSearch credentials above: the bare names are
     # what the deployment documents.
     #
+    # Planner and verifier moved to gpt-4o-mini when 4.1 nano was retired on
+    # 2026-10-23, and must stay NON-reasoning models: _PLANNER_MAX_TOKENS=400 and
+    # _VERIFIER_MAX_TOKENS=1500 leave no room for hidden reasoning tokens
+    # (gpt-5*/gpt-6* use max_completion_tokens; see _is_reasoning_model in
+    # core/generation.py), and an empty verifier reply removes every claim
+    # because it fails closed.
+    #
     # Planner and verifier are small, cheap classification-shaped calls; the
     # writer is the one call whose quality the user reads, so it defaults to
     # gpt-6-luna. Another writer is selectable by setting DEEP_RESEARCH_MODEL
     # (or per request via model_override, when listed in
     # DEEP_RESEARCH_MODEL_ALLOWLIST).
     deep_research_planner_model: str = Field(
-        default="gpt-4.1-nano",
+        default="gpt-4o-mini",
         validation_alias=AliasChoices(
             "RAG_DEEP_RESEARCH_PLANNER_MODEL", "DEEP_RESEARCH_PLANNER_MODEL"
         ),
@@ -241,7 +248,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("RAG_DEEP_RESEARCH_MODEL", "DEEP_RESEARCH_MODEL"),
     )
     deep_research_verifier_model: str = Field(
-        default="gpt-4.1-nano",
+        default="gpt-4o-mini",
         validation_alias=AliasChoices(
             "RAG_DEEP_RESEARCH_VERIFIER_MODEL", "DEEP_RESEARCH_VERIFIER_MODEL"
         ),

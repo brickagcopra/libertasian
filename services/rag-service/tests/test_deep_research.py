@@ -1070,3 +1070,11 @@ def test_verifier_response_format_is_built_per_call() -> None:
 
 def test_prompt_template_version() -> None:
     assert PROMPT_TEMPLATE_VERSION == "deep-research-v4"
+
+
+def test_planner_and_verifier_defaults_are_non_reasoning_and_not_retired() -> None:
+    # The planner/verifier token caps leave no room for hidden reasoning tokens,
+    # and 4.1 nano was retired on 2026-10-23.
+    for model in (settings.deep_research_planner_model, settings.deep_research_verifier_model):
+        assert not generation._is_reasoning_model(model)
+        assert model != "gpt-4.1-nano"
