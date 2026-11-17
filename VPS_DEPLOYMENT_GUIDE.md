@@ -512,34 +512,37 @@ sudo certbot certonly --standalone \
 
 The `docker-compose.prod.yml` mounts `./infrastructure/nginx/ssl:/etc/nginx/ssl:ro`. The `nginx.conf` expects `fullchain.pem` and `privkey.pem` at `/etc/nginx/ssl/`.
 
+**Copy the files, do not symlink them.** `/etc/letsencrypt` is not mounted
+into the container, so a symlink to `/etc/letsencrypt/live/...` dangles inside
+it. Install the deploy hook, which copies the real files and reloads nginx, and
+run it once by hand to place the first cert:
+
 ```bash
-# Create the ssl directory
-mkdir -p /opt/libertasian/infrastructure/nginx/ssl
-
-# Symlink certificates
-sudo ln -sf /etc/letsencrypt/live/libertasian.com/fullchain.pem \
-  /opt/libertasian/infrastructure/nginx/ssl/fullchain.pem
-sudo ln -sf /etc/letsencrypt/live/libertasian.com/privkey.pem \
-  /opt/libertasian/infrastructure/nginx/ssl/privkey.pem
-
-# Ensure the deploy user can read the certs
-sudo chmod 755 /etc/letsencrypt/live/
-sudo chmod 755 /etc/letsencrypt/archive/
+sudo install -m 0755 /opt/libertasian/infrastructure/scripts/certbot-deploy-hook.sh   /etc/letsencrypt/renewal-hooks/deploy/libertasian-nginx.sh
+sudo RENEWED_LINEAGE=/etc/letsencrypt/live/libertasian.com   /etc/letsencrypt/renewal-hooks/deploy/libertasian-nginx.sh   # after nginx is up
 ```
 
-### 3.4 — Auto-Renewal Cron
+### 3.4 — Auto-Renewal
+
+Standalone renewal needs port 80, which nginx owns, so give the cert pre/post
+hooks that stop and start nginx around renewal (a few seconds of downtime
+every ~60 days):
 
 ```bash
-# Test renewal
+sudo certbot reconfigure --cert-name libertasian.com   --pre-hook "docker stop libertasian-nginx"   --post-hook "docker start libertasian-nginx"
 sudo certbot renew --dry-run
-
-# Add renewal cron with Nginx reload hook
-cat <<'EOF' | sudo tee /etc/cron.d/certbot-renew
-0 3 * * * root certbot renew --quiet --deploy-hook "docker restart libertasian-nginx"
-EOF
 ```
 
-The Prometheus alert `CertificateExpirySoon` (in `alert-rules.yml`) fires when the certificate expires in less than 14 days, as a safety net.
+The certbot package's systemd timer runs `certbot renew` twice a day. After a
+successful renewal certbot runs the deploy hook from 3.3, which is what moves
+the new cert into nginx. Renewal alone does not.
+
+Safety net: `CertificateExpirySoon` (< 21 days, warning) and
+`CertificateExpiryCritical` (< 5 days) in `alert-rules.yml`, fed by the
+blackbox `https-probe` job. Certbot renews at 30 days left, so a warning means
+either renewal failed for over a week or the deploy hook didn't copy the new
+cert. Compare `sudo ls -l /etc/letsencrypt/live/libertasian.com/` with
+`infrastructure/nginx/ssl/` before anything else.
 
 ### 3.5 — Nginx Configuration Review
 
@@ -763,7 +766,7 @@ Before starting, verify:
 - [ ] GHCR authenticated (Phase 2.3)
 - [ ] Repository cloned at `/opt/libertasian` (Phase 2.4)
 - [ ] DNS records pointing to VPS IP (Phase 3.1)
-- [ ] SSL certificates obtained and symlinked (Phase 3.2-3.3)
+- [ ] SSL certificates obtained and copied by the deploy hook (Phase 3.2-3.3)
 - [ ] `.env` file created and secured (Phase 4.3-4.4)
 - [ ] `vm.max_map_count=262144` verified (Phase 1.9)
 
@@ -1128,7 +1131,8 @@ Pre-configured in `infrastructure/monitoring/prometheus/alert-rules.yml`:
 | HighDiskUsage | >85% for 10 min | WARNING |
 | HighCpuUsage | >90% for 10 min | WARNING |
 | HighMemoryUsage | >90% for 10 min | WARNING |
-| CertificateExpirySoon | <14 days for 1 hour | WARNING |
+| CertificateExpirySoon | <21 days for 1 hour | WARNING |
+| CertificateExpiryCritical | <5 days for 10 min | CRITICAL |
 
 ---
 
@@ -1690,8 +1694,8 @@ Worker crawl failures do not affect the API:
 ### SSL & HTTPS
 
 - [ ] SSL certificate obtained and valid
-- [ ] Certificate symlinked to `infrastructure/nginx/ssl/`
-- [ ] Auto-renewal cron configured
+- [ ] Certbot deploy hook installed in `/etc/letsencrypt/renewal-hooks/deploy/`
+- [ ] Renewal pre/post hooks set (`certbot renew --dry-run` passes)
 - [ ] HTTP redirects to HTTPS (nginx.conf line 56)
 - [ ] HSTS header active (nginx.conf line 71)
 - [ ] TLS 1.2/1.3 only (nginx.conf line 66)
