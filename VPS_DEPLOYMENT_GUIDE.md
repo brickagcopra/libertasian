@@ -498,48 +498,56 @@ sudo apt install -y certbot
 # Stop any service on port 80 temporarily
 # (Nginx isn't running yet, so port 80 should be free)
 
-# Obtain certificate (standalone mode)
-sudo certbot certonly --standalone \
-  -d libertasian.com \
-  -d www.libertasian.com \
-  -d api.libertasian.com \
-  --email admin@libertasian.com \
-  --agree-tos \
-  --no-eff-email
+# Obtain the FIRST certificate (standalone mode — only valid before nginx
+# is running, because standalone binds port 80 itself)
+sudo certbot certonly --standalone   -d libertasian.com   -d www.libertasian.com   -d api.libertasian.com   --email admin@libertasian.com   --agree-tos   --no-eff-email
 ```
+
+> **Do not leave the cert on the standalone authenticator.** Once the
+> `libertasian-nginx` container is up it owns port 80, and `certbot renew` in
+> standalone mode fails daily with "Could not bind TCP port 80". This let the
+> Sep 2026 cert run to within 17 days of expiry with no renewal. Section 3.4
+> switches renewal to webroot mode through nginx.
 
 ### 3.3 — Certificate Placement
 
 The `docker-compose.prod.yml` mounts `./infrastructure/nginx/ssl:/etc/nginx/ssl:ro`. The `nginx.conf` expects `fullchain.pem` and `privkey.pem` at `/etc/nginx/ssl/`.
 
+**Copy the files, do not symlink them.** `/etc/letsencrypt` is not mounted
+into the container, so a symlink to `/etc/letsencrypt/live/...` dangles inside
+it. The deploy hook copies the real files and reloads nginx:
+
 ```bash
-# Create the ssl directory
-mkdir -p /opt/libertasian/infrastructure/nginx/ssl
-
-# Symlink certificates
-sudo ln -sf /etc/letsencrypt/live/libertasian.com/fullchain.pem \
-  /opt/libertasian/infrastructure/nginx/ssl/fullchain.pem
-sudo ln -sf /etc/letsencrypt/live/libertasian.com/privkey.pem \
-  /opt/libertasian/infrastructure/nginx/ssl/privkey.pem
-
-# Ensure the deploy user can read the certs
-sudo chmod 755 /etc/letsencrypt/live/
-sudo chmod 755 /etc/letsencrypt/archive/
+sudo install -m 0755 /opt/libertasian/infrastructure/scripts/certbot-deploy-hook.sh   /etc/letsencrypt/renewal-hooks/deploy/libertasian-nginx.sh
+sudo RENEWED_LINEAGE=/etc/letsencrypt/live/libertasian.com   /etc/letsencrypt/renewal-hooks/deploy/libertasian-nginx.sh   # after nginx is up
 ```
 
-### 3.4 — Auto-Renewal Cron
+### 3.4 — Auto-Renewal (webroot through nginx)
+
+nginx serves `/.well-known/acme-challenge/` on port 80 from `/var/www/certbot`
+(mounted read-only into the container). Point the existing cert at it — this
+rewrites `/etc/letsencrypt/renewal/libertasian.com.conf`:
 
 ```bash
-# Test renewal
+sudo mkdir -p /var/www/certbot
+cd /opt/libertasian && docker compose -f docker-compose.prod.yml up -d nginx  # picks up the new mount
+
+sudo certbot certonly --webroot -w /var/www/certbot --cert-name libertasian.com   -d libertasian.com -d www.libertasian.com -d api.libertasian.com   --keep-until-expiring --non-interactive
+
+sudo grep authenticator /etc/letsencrypt/renewal/libertasian.com.conf  # -> webroot
 sudo certbot renew --dry-run
-
-# Add renewal cron with Nginx reload hook
-cat <<'EOF' | sudo tee /etc/cron.d/certbot-renew
-0 3 * * * root certbot renew --quiet --deploy-hook "docker restart libertasian-nginx"
-EOF
 ```
 
-The Prometheus alert `CertificateExpirySoon` (in `alert-rules.yml`) fires when the certificate expires in less than 14 days, as a safety net.
+The certbot package's systemd timer (`systemctl list-timers | grep certbot`)
+runs `certbot renew` twice a day; deploy hooks in
+`/etc/letsencrypt/renewal-hooks/deploy/` run after every successful renewal.
+No custom cron is needed (remove any old `/etc/cron.d/certbot-renew`).
+
+Safety net: `CertificateExpirySoon` (< 21 days, warning) and
+`CertificateExpiryCritical` (< 5 days) in `alert-rules.yml`, fed by the
+blackbox `https-probe` job. Certbot renews at 30 days left, so a warning means
+renewal has been failing for over a week — check `sudo journalctl -u certbot`
+and `/var/log/letsencrypt/letsencrypt.log`.
 
 ### 3.5 — Nginx Configuration Review
 
@@ -763,7 +771,7 @@ Before starting, verify:
 - [ ] GHCR authenticated (Phase 2.3)
 - [ ] Repository cloned at `/opt/libertasian` (Phase 2.4)
 - [ ] DNS records pointing to VPS IP (Phase 3.1)
-- [ ] SSL certificates obtained and symlinked (Phase 3.2-3.3)
+- [ ] SSL certificates obtained and copied by the deploy hook (Phase 3.2-3.3)
 - [ ] `.env` file created and secured (Phase 4.3-4.4)
 - [ ] `vm.max_map_count=262144` verified (Phase 1.9)
 
@@ -1128,7 +1136,8 @@ Pre-configured in `infrastructure/monitoring/prometheus/alert-rules.yml`:
 | HighDiskUsage | >85% for 10 min | WARNING |
 | HighCpuUsage | >90% for 10 min | WARNING |
 | HighMemoryUsage | >90% for 10 min | WARNING |
-| CertificateExpirySoon | <14 days for 1 hour | WARNING |
+| CertificateExpirySoon | <21 days for 1 hour | WARNING |
+| CertificateExpiryCritical | <5 days for 10 min | CRITICAL |
 
 ---
 
@@ -1690,8 +1699,8 @@ Worker crawl failures do not affect the API:
 ### SSL & HTTPS
 
 - [ ] SSL certificate obtained and valid
-- [ ] Certificate symlinked to `infrastructure/nginx/ssl/`
-- [ ] Auto-renewal cron configured
+- [ ] Certificate copied to `infrastructure/nginx/ssl/` by the certbot deploy hook
+- [ ] Renewal switched to webroot (`certbot renew --dry-run` passes)
 - [ ] HTTP redirects to HTTPS (nginx.conf line 56)
 - [ ] HSTS header active (nginx.conf line 71)
 - [ ] TLS 1.2/1.3 only (nginx.conf line 66)
