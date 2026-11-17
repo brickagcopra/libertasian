@@ -10,6 +10,11 @@
 #     /etc/letsencrypt/renewal-hooks/deploy/libertasian-nginx.sh
 # Certbot runs every script in renewal-hooks/deploy/ after each successful
 # renewal, with RENEWED_LINEAGE set to /etc/letsencrypt/live/<cert-name>.
+#
+# Prod renews in standalone mode with pre/post hooks that stop and start
+# libertasian-nginx, so renewal itself works. Without this hook the renewed
+# cert never reached nginx: the 2026-10-04..06 outage, and the 2026-11-16
+# CertificateExpirySoon alert (cert4 issued 2026-11-04 sat unused).
 
 set -euo pipefail
 
@@ -20,14 +25,16 @@ CONTAINER="${LIBERTASIAN_NGINX_CONTAINER:-libertasian-nginx}"
 mkdir -p "$SSL_DIR"
 
 # Write to temp files and rename them, so nginx never reads a half-written file.
-# Remove any old symlinks first so the rename replaces the link, not its target.
+# Keep the files owned like the directory (the deploy user), so a non-root
+# operator can still inspect them. nginx's master process reads them as root.
+OWNER="$(stat -c '%u:%g' "$SSL_DIR")"
 install -m 0644 "$LINEAGE/fullchain.pem" "$SSL_DIR/.fullchain.pem.new"
-install -m 0600 "$LINEAGE/privkey.pem" "$SSL_DIR/.privkey.pem.new"
-rm -f "$SSL_DIR/fullchain.pem" "$SSL_DIR/privkey.pem"
+install -m 0640 "$LINEAGE/privkey.pem" "$SSL_DIR/.privkey.pem.new"
+chown "$OWNER" "$SSL_DIR/.fullchain.pem.new" "$SSL_DIR/.privkey.pem.new"
+# rename() replaces a symlink itself, never its target, so old links are safe.
 mv -f "$SSL_DIR/.fullchain.pem.new" "$SSL_DIR/fullchain.pem"
 mv -f "$SSL_DIR/.privkey.pem.new" "$SSL_DIR/privkey.pem"
 
-# nginx master runs as root in the container, so a 0600 root-owned key is readable.
 docker exec "$CONTAINER" nginx -t
 docker exec "$CONTAINER" nginx -s reload
 

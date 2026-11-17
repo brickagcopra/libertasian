@@ -498,16 +498,15 @@ sudo apt install -y certbot
 # Stop any service on port 80 temporarily
 # (Nginx isn't running yet, so port 80 should be free)
 
-# Obtain the FIRST certificate (standalone mode — only valid before nginx
-# is running, because standalone binds port 80 itself)
-sudo certbot certonly --standalone   -d libertasian.com   -d www.libertasian.com   -d api.libertasian.com   --email admin@libertasian.com   --agree-tos   --no-eff-email
+# Obtain certificate (standalone mode)
+sudo certbot certonly --standalone \
+  -d libertasian.com \
+  -d www.libertasian.com \
+  -d api.libertasian.com \
+  --email admin@libertasian.com \
+  --agree-tos \
+  --no-eff-email
 ```
-
-> **Do not leave the cert on the standalone authenticator.** Once the
-> `libertasian-nginx` container is up it owns port 80, and `certbot renew` in
-> standalone mode fails daily with "Could not bind TCP port 80". This let the
-> Sep 2026 cert run to within 17 days of expiry with no renewal. Section 3.4
-> switches renewal to webroot mode through nginx.
 
 ### 3.3 — Certificate Placement
 
@@ -515,39 +514,35 @@ The `docker-compose.prod.yml` mounts `./infrastructure/nginx/ssl:/etc/nginx/ssl:
 
 **Copy the files, do not symlink them.** `/etc/letsencrypt` is not mounted
 into the container, so a symlink to `/etc/letsencrypt/live/...` dangles inside
-it. The deploy hook copies the real files and reloads nginx:
+it. Install the deploy hook, which copies the real files and reloads nginx, and
+run it once by hand to place the first cert:
 
 ```bash
 sudo install -m 0755 /opt/libertasian/infrastructure/scripts/certbot-deploy-hook.sh   /etc/letsencrypt/renewal-hooks/deploy/libertasian-nginx.sh
 sudo RENEWED_LINEAGE=/etc/letsencrypt/live/libertasian.com   /etc/letsencrypt/renewal-hooks/deploy/libertasian-nginx.sh   # after nginx is up
 ```
 
-### 3.4 — Auto-Renewal (webroot through nginx)
+### 3.4 — Auto-Renewal
 
-nginx serves `/.well-known/acme-challenge/` on port 80 from `/var/www/certbot`
-(mounted read-only into the container). Point the existing cert at it — this
-rewrites `/etc/letsencrypt/renewal/libertasian.com.conf`:
+Standalone renewal needs port 80, which nginx owns, so give the cert pre/post
+hooks that stop and start nginx around renewal (a few seconds of downtime
+every ~60 days):
 
 ```bash
-sudo mkdir -p /var/www/certbot
-cd /opt/libertasian && docker compose -f docker-compose.prod.yml up -d nginx  # picks up the new mount
-
-sudo certbot certonly --webroot -w /var/www/certbot --cert-name libertasian.com   -d libertasian.com -d www.libertasian.com -d api.libertasian.com   --keep-until-expiring --non-interactive
-
-sudo grep authenticator /etc/letsencrypt/renewal/libertasian.com.conf  # -> webroot
+sudo certbot reconfigure --cert-name libertasian.com   --pre-hook "docker stop libertasian-nginx"   --post-hook "docker start libertasian-nginx"
 sudo certbot renew --dry-run
 ```
 
-The certbot package's systemd timer (`systemctl list-timers | grep certbot`)
-runs `certbot renew` twice a day; deploy hooks in
-`/etc/letsencrypt/renewal-hooks/deploy/` run after every successful renewal.
-No custom cron is needed (remove any old `/etc/cron.d/certbot-renew`).
+The certbot package's systemd timer runs `certbot renew` twice a day. After a
+successful renewal certbot runs the deploy hook from 3.3, which is what moves
+the new cert into nginx. Renewal alone does not.
 
 Safety net: `CertificateExpirySoon` (< 21 days, warning) and
 `CertificateExpiryCritical` (< 5 days) in `alert-rules.yml`, fed by the
 blackbox `https-probe` job. Certbot renews at 30 days left, so a warning means
-renewal has been failing for over a week — check `sudo journalctl -u certbot`
-and `/var/log/letsencrypt/letsencrypt.log`.
+either renewal failed for over a week or the deploy hook didn't copy the new
+cert. Compare `sudo ls -l /etc/letsencrypt/live/libertasian.com/` with
+`infrastructure/nginx/ssl/` before anything else.
 
 ### 3.5 — Nginx Configuration Review
 
@@ -1699,8 +1694,8 @@ Worker crawl failures do not affect the API:
 ### SSL & HTTPS
 
 - [ ] SSL certificate obtained and valid
-- [ ] Certificate copied to `infrastructure/nginx/ssl/` by the certbot deploy hook
-- [ ] Renewal switched to webroot (`certbot renew --dry-run` passes)
+- [ ] Certbot deploy hook installed in `/etc/letsencrypt/renewal-hooks/deploy/`
+- [ ] Renewal pre/post hooks set (`certbot renew --dry-run` passes)
 - [ ] HTTP redirects to HTTPS (nginx.conf line 56)
 - [ ] HSTS header active (nginx.conf line 71)
 - [ ] TLS 1.2/1.3 only (nginx.conf line 66)

@@ -1,5 +1,10 @@
 # Completed Tasks
 
+## TLS cert expiry alert (2026-11-16, PR #539)
+- [x] Root cause: certbot renewed fine on 2026-11-04 (standalone + pre/post hooks stop/start nginx), but nginx serves COPIES in infrastructure/nginx/ssl/ and nothing copied the new cert (same cause as the 2026-10-04..06 outage).
+- [x] Prod: copied cert4 into the ssl dir and reloaded nginx. All three hostnames now serve notAfter 2027-02-02; health 200.
+- [x] PR #539: `infrastructure/scripts/certbot-deploy-hook.sh` (copy + nginx reload), guide §3.3–3.4 corrected; installed into /etc/letsencrypt/renewal-hooks/deploy/ on prod.
+
 ## 2026-09-30 — Deep Research device-test builds
 - [x] Android 1.0.2 / vC15 (build 044d787d) → Play internal track; console reads "Available to internal testers" (Libertasian Testers, 27). Alpha/production untouched.
 - [x] iOS 1.0.2 / 33 rejected by ASC (1.0.2 train closed after App Store approval, 90062/90186) → bumped to 1.0.3 (#534) → iOS 1.0.3 / 34 (build d675b3f8) uploaded to TestFlight (submission 51890f68 FINISHED). Not submitted for review.
