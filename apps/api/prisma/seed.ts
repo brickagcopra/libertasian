@@ -350,7 +350,7 @@ async function main() {
     },
     {
       key: 'llm_model',
-      value: { model: 'gpt-4o-mini', provider: 'openai' },
+      value: { model: 'gpt-6-luna', provider: 'openai' },
       description: 'The LLM model used for all AI generation tasks.',
     },
     {
