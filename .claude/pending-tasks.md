@@ -1,5 +1,19 @@
 # Pending Tasks
 
+## OpenAI gpt-4o-mini retirement — DEADLINE 2027-01-14 (evaluated 2026-11-19)
+- [x] Evaluated gpt-6-luna on prod 2026-11-19 (temp container, golden set + dry-run replay of 6 worker job types; results in prod `services/rag-service/evals/results/20261119-*.json`).
+- [x] Prompt fixes both models need (PR fix/llm-output-schemas-for-gpt-6-luna): classification prompt now names the `assignments` schema (luna failed 4/4 → 12/12); answer prompt v1.5 makes a whole-answer "passages don't address it" refusal emit INSUFFICIENT_SOURCES (luna must-abstain recall 1/5 → 3/5; remaining 2 are honest partial answers).
+- Findings: /answer on luna is faster (p50 12.3s vs 13.7s), hit@k +0.025, citation validity 100%, fewer citations per answer (2.8 vs 3.5). Classification: luna primary differed on 4/12 docs and luna was right on all 4 (procedural cases → remedial_law, search-warrant case → political_law); mini almost never assigns secondaries. Essay: luna abstained on 2/4 (passages lacked the court's reasoning). MCQ/flashcard/doctrine/digest: 4/4 pass on both.
+- Cost: luna output tokens 1.3–1.5x for most jobs, 2.4x for ingestion digests. Projected over the 90-day job mix ≈ $127 vs $133 on mini (digests +23%, others cheaper). Latency on bulk jobs +10–60%.
+- [ ] Switch: rag-service `config.py` openai_model + deep-research planner/verifier defaults, `.env.example`, `apps/api/prisma/seed.ts`, tests asserting gpt-4o-mini, prod `.env` RAG_OPENAI_MODEL, `ai_settings.llm_model` row (display only — no code reads it). Then watch model_runs + essay abstain rate for a week.
+- [ ] Optional: Batch/Flex (50% off) for backfill-scale jobs; consider luna only for digests if cost matters.
+
+## Corpus crawler health (checked 2026-11-19)
+- [ ] Official Gazette crawler gets 403 (bot-blocked) on every run; Congress gets a Cloudflare managed challenge (403). Neither has EVER returned a candidate, yet jobs report `completed, errors=0`. Decide: headless browser / official API / alternate source (e.g. senate.gov.ph, elibrary statutes), or disable the endpoints.
+- [ ] Make a 403/Cloudflare block count as a job error (errors_json), and alert when a source finds 0 records for N days, so silent failures surface.
+- [ ] Lawphil runs HOURLY and re-reads the same 87 candidates (found=87 created=0); once or twice a day is enough and is politer to lawphil.
+- [ ] RAG /answer end-to-end took 32s on prod (gpt-4o-mini, 8 passages). Profile where the time goes (retrieval vs rerank vs LLM).
+
 ## Deep Research device-test builds (2026-09-30, PRs #533 + #534, NOT merged)
 - [ ] Review/merge #533 (`submit.internal` profile: Android track internal; production stays alpha/completed).
 - [ ] Review/merge #534 (version 1.0.3). iOS build 34 was built from this branch, so main lags the shipped version until it merges.

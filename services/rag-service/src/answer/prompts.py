@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-PROMPT_VERSION = "answer-v1.4"
+PROMPT_VERSION = "answer-v1.5"
 
 # The machine-detectable non-answer marker.
 #
@@ -52,6 +52,9 @@ not merely incomplete, partial or tangential coverage -- your entire response \
 MUST be exactly this single line and nothing else:
 INSUFFICIENT_SOURCES
 Emitting that line when the passages support even a partial answer is an error.
+Likewise, if your whole answer would only say that the passages do not address \
+the question (for example, because they discuss other laws, another country or \
+another topic), output INSUFFICIENT_SOURCES instead of explaining that.
 A query may be a bare topic, keyword or phrase rather than a question (for \
 example "constitution", "separation of powers", "estafa"). Treat such a query \
 as a request to explain what the SOURCE PASSAGES say about that topic, and \
