@@ -90,6 +90,17 @@ class TestPartialAnswerInstruction:
         [SYSTEM_PROMPT, STREAMING_SYSTEM_PROMPT],
         ids=["system", "streaming"],
     )
+    def test_prose_refusal_must_be_the_sentinel(self, prompt: str) -> None:
+        """gpt-6-luna answered 4 of 5 must-abstain eval questions with prose such
+        as "The passages do not address ..." plus a citation, which the
+        sentinel check cannot see. A whole-answer refusal must be the line."""
+        assert "only say that the passages do not address" in prompt
+
+    @pytest.mark.parametrize(
+        "prompt",
+        [SYSTEM_PROMPT, STREAMING_SYSTEM_PROMPT],
+        ids=["system", "streaming"],
+    )
     def test_binary_enough_framing_is_gone(self, prompt: str) -> None:
         assert "do not contain enough information" not in prompt
 
@@ -152,6 +163,7 @@ class TestPromptVersion:
         A changed instruction under an unchanged version makes `model_runs`
         unauditable — two different prompts recorded as the same template. v1.3
         was the partial-answer rewrite of instruction 3; v1.4 adds the
-        bare-topic clause to the same instruction.
+        bare-topic clause to the same instruction; v1.5 adds the "only says the
+        passages do not address it" clause (gpt-6-luna refused in prose).
         """
-        assert PROMPT_VERSION == "answer-v1.4"
+        assert PROMPT_VERSION == "answer-v1.5"

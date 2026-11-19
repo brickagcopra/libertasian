@@ -1074,3 +1074,23 @@ class TestClassifyAttemptCap:
         assert result["status"] == "completed"
         assert result["dispatched"] == 3
         assert mock_classify_task.delay.call_count == 3
+
+
+class TestClassificationPromptSchema:
+    """The prompt must name the output keys the validator reads.
+
+    v1 said only "Return a single JSON object", so each model guessed: gpt-4o-mini
+    returned a flat shape (rescued by ``_adapt_flat_shape``) and gpt-6-luna
+    returned ``subjects`` / ``classifications`` lists, failing 4 of 4 replays.
+    """
+
+    def test_prompt_names_assignments_schema(self) -> None:
+        from src.tasks.classification_generation_tasks import (
+            PROMPT_TEMPLATE_VERSION,
+            SUBJECT_CLASSIFICATION_SYSTEM_PROMPT,
+        )
+
+        prompt = SUBJECT_CLASSIFICATION_SYSTEM_PROMPT.format(subject_registry="X")
+        for key in ('"assignments"', '"subjectCode"', '"subjectTopicCode"', '"isPrimary"', '"confidence"', '"abstain"', '"abstainReason"'):
+            assert key in prompt
+        assert PROMPT_TEMPLATE_VERSION == "subject_classification.v2"
