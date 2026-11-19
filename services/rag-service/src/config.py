@@ -15,7 +15,7 @@ class Settings(BaseSettings):
 
     # OpenAI API (primary — used when openai_api_key is set)
     openai_api_key: str = ""
-    openai_model: str = "gpt-4o-mini"
+    openai_model: str = "gpt-6-luna"
     openai_request_timeout: int = 120
 
     # vLLM fallback (used when openai_api_key is empty)

@@ -2,10 +2,12 @@
 
 ## OpenAI gpt-4o-mini retirement — DEADLINE 2027-01-14 (evaluated 2026-11-19)
 - [x] Evaluated gpt-6-luna on prod 2026-11-19 (temp container, golden set + dry-run replay of 6 worker job types; results in prod `services/rag-service/evals/results/20261119-*.json`).
-- [x] Prompt fixes both models need (PR fix/llm-output-schemas-for-gpt-6-luna): classification prompt now names the `assignments` schema (luna failed 4/4 → 12/12); answer prompt v1.5 makes a whole-answer "passages don't address it" refusal emit INSUFFICIENT_SOURCES (luna must-abstain recall 1/5 → 3/5; remaining 2 are honest partial answers).
+- [x] Prompt fixes both models need (#540, merged + deployed 2026-11-19): classification prompt now names the `assignments` schema (luna failed 4/4 → 12/12); answer prompt v1.5 makes a whole-answer "passages don't address it" refusal emit INSUFFICIENT_SOURCES (luna must-abstain recall 1/5 → 3/5; remaining 2 are honest partial answers).
 - Findings: /answer on luna is faster (p50 12.3s vs 13.7s), hit@k +0.025, citation validity 100%, fewer citations per answer (2.8 vs 3.5). Classification: luna primary differed on 4/12 docs and luna was right on all 4 (procedural cases → remedial_law, search-warrant case → political_law); mini almost never assigns secondaries. Essay: luna abstained on 2/4 (passages lacked the court's reasoning). MCQ/flashcard/doctrine/digest: 4/4 pass on both.
 - Cost: luna output tokens 1.3–1.5x for most jobs, 2.4x for ingestion digests. Projected over the 90-day job mix ≈ $127 vs $133 on mini (digests +23%, others cheaper). Latency on bulk jobs +10–60%.
-- [ ] Switch: rag-service `config.py` openai_model + deep-research planner/verifier defaults, `.env.example`, `apps/api/prisma/seed.ts`, tests asserting gpt-4o-mini, prod `.env` RAG_OPENAI_MODEL, `ai_settings.llm_model` row (display only — no code reads it). Then watch model_runs + essay abstain rate for a week.
+- [x] Switched 2026-11-19: prod `.env` RAG_OPENAI_MODEL=gpt-6-luna (backup `.env.bak-20261119-pre-luna`), rag-service recreated, smoke completion returned model_name gpt-6-luna. Repo defaults (`config.py`, `.env.example`, `seed.ts`) aligned. No test asserted the default. Rollback: restore that line + `docker compose -f docker-compose.prod.yml up -d --no-deps rag-service`.
+- [ ] Watch model_runs + essay abstain rate + budget for a week (from 2026-11-19).
+- [ ] Deep-research planner/verifier are STILL gpt-4o-mini and retire 2027-01-14. They cannot move to luna (reasoning model; 400/1500 max-token caps leave no room for reasoning, and an empty verifier reply fails closed and drops every claim). Pick a non-reasoning successor, or raise the caps and eval luna.
 - [ ] Optional: Batch/Flex (50% off) for backfill-scale jobs; consider luna only for digests if cost matters.
 
 ## Corpus crawler health (checked 2026-11-19)
