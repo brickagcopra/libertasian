@@ -37,6 +37,8 @@ export const STORAGE_KEYS = {
    * does not flash the pre-resolution default at an entitled account.
    */
   ENTITLED_SURFACES: 'entitled_surfaces',
+  /** `true` once the user allowed sending content to the AI provider. */
+  AI_DATA_CONSENT: 'ai_data_consent',
 } as const;
 
 /**
@@ -65,6 +67,8 @@ const ACCOUNT_SCOPED_KEYS: readonly string[] = [
   STORAGE_KEYS.ONBOARDING_COMPLETED,
   STORAGE_KEYS.AD_DISMISSED_IDS,
   STORAGE_KEYS.AD_IMPRESSED_IDS,
+  // A consent belongs to the person who gave it (Apple 5.1.2(i)).
+  STORAGE_KEYS.AI_DATA_CONSENT,
 ];
 
 /**

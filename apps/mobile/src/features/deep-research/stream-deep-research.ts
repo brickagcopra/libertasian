@@ -2,6 +2,7 @@ import { fetch as expoFetch } from 'expo/fetch';
 
 import { apiClient } from '../../lib/api-client';
 import { authStorage } from '../../storage/auth-storage';
+import { AI_CONSENT_DECLINED_MESSAGE, requestAiConsent } from '../ai-consent/ai-consent';
 import { resolveApiBaseUrl } from '../ai-answers/stream-ai-answer';
 import { parseDeepResearchEvent, type DeepResearchEvent } from './types';
 
@@ -149,6 +150,12 @@ export async function streamDeepResearch(
       if (event) emit(event);
     }
   };
+
+  // Apple 5.1.2(i): the question goes to the third-party AI only with consent.
+  if (!(await requestAiConsent())) {
+    emit({ type: 'error', data: { code: 'internal', message: AI_CONSENT_DECLINED_MESSAGE } });
+    return;
+  }
 
   try {
     const body = JSON.stringify({ question: request.question });

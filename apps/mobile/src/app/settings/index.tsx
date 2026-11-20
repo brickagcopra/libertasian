@@ -144,6 +144,13 @@ export default function SettingsRoute() {
       onPress: () => router.push('/notifications'),
     },
     {
+      id: 'ai-data',
+      icon: 'sparkles-outline',
+      label: 'AI data sharing',
+      sub: 'What AI features send to our AI provider',
+      onPress: () => router.push('/settings/ai-data'),
+    },
+    {
       id: 'blocked-users',
       icon: 'person-remove-outline',
       label: 'Blocked users',

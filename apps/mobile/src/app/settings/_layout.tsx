@@ -9,6 +9,7 @@ export default function SettingsLayout() {
       <Stack.Screen name="security" options={{ title: 'Security' }} />
       <Stack.Screen name="usage" options={{ title: 'Usage' }} />
       <Stack.Screen name="blocked-users" options={{ title: 'Blocked users' }} />
+      <Stack.Screen name="ai-data" options={{ title: 'AI data sharing' }} />
       <Stack.Screen name="delete-account" options={{ title: 'Delete account' }} />
     </Stack>
   );
