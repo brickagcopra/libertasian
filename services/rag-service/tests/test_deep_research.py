@@ -998,7 +998,9 @@ class TestRouter:
 
 
 class TestGenerationModelParams:
-    async def _call(self, model: str, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    async def _call(
+        self, model: str, monkeypatch: pytest.MonkeyPatch, **extra: Any
+    ) -> dict[str, Any]:
         monkeypatch.setattr(settings, "openai_api_key", "sk-test")
         captured: dict[str, Any] = {}
 
@@ -1028,7 +1030,7 @@ class TestGenerationModelParams:
         result = await generation.generate_completion_with_usage(
             "sys", "user", max_tokens=321, temperature=0.3,
             response_format={"type": "json_schema", "json_schema": {"name": "x"}},
-            scope="ai_research", model=model,
+            scope="ai_research", model=model, **extra,
         )
         captured["_result"] = result
         return captured
@@ -1042,6 +1044,21 @@ class TestGenerationModelParams:
         assert "max_tokens" not in sent and "temperature" not in sent
         assert sent["response_format"] == {"type": "json_schema", "json_schema": {"name": "x"}}
         assert sent["_result"]["model_version"] == "gpt-6-luna-2026-05-01"
+
+    @pytest.mark.asyncio
+    async def test_reasoning_effort_override_is_sent(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sent = await self._call("gpt-6-luna", monkeypatch, reasoning_effort="none")
+        assert sent["reasoning_effort"] == "none"
+        assert sent["max_completion_tokens"] == 321
+
+    @pytest.mark.asyncio
+    async def test_reasoning_effort_never_sent_to_classic_models(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sent = await self._call("gpt-4o-mini", monkeypatch, reasoning_effort="none")
+        assert "reasoning_effort" not in sent and sent["max_tokens"] == 321
 
     @pytest.mark.asyncio
     async def test_gpt5_uses_reasoning_params(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1072,9 +1089,19 @@ def test_prompt_template_version() -> None:
     assert PROMPT_TEMPLATE_VERSION == "deep-research-v4"
 
 
-def test_planner_and_verifier_defaults_are_non_reasoning_and_not_retired() -> None:
-    # The planner/verifier token caps leave no room for hidden reasoning tokens,
-    # and 4.1 nano was retired on 2026-10-23.
+def test_planner_and_verifier_defaults_are_not_retiring() -> None:
+    # 4.1 nano shut down 2026-10-23; gpt-4o-mini, gpt-4o and gpt-4.1(-mini)
+    # shut down 2027-01-14. A reasoning model is allowed only because the
+    # planner/verifier calls send reasoning_effort="none".
+    retired = {"gpt-4.1-nano", "gpt-4o-mini", "gpt-4o", "gpt-4.1", "gpt-4.1-mini"}
     for model in (settings.deep_research_planner_model, settings.deep_research_verifier_model):
-        assert not generation._is_reasoning_model(model)
-        assert model != "gpt-4.1-nano"
+        assert model not in retired
+    assert service._CLASSIFIER_REASONING_EFFORT == "none"
+
+
+@pytest.mark.asyncio
+async def test_planner_and_verifier_turn_reasoning_off_writer_does_not() -> None:
+    llm = _llm()
+    await _collect(llm)
+    efforts = [c.kwargs.get("reasoning_effort", "low") for c in llm.await_args_list]
+    assert efforts == ["none", "low", "none"]

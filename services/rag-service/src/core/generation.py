@@ -16,7 +16,7 @@ import logging
 import random
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -40,6 +40,9 @@ MODEL_PRICING: dict[str, tuple[float, float]] = {
 # ``response_format`` object passed through verbatim, e.g.
 # ``{"type": "json_schema", "json_schema": {...}}``.
 ResponseFormat = str | dict[str, Any] | None
+# Values gpt-5.1+ / gpt-6* accept. "minimal" is gpt-5-era only: gpt-6-luna
+# rejects it ("Supported values are: 'none', 'low', ...", prod 2026-11-19).
+ReasoningEffort = Literal["none", "low", "medium", "high"]
 
 
 def compute_cost_usd(model: str, tokens_in: int, tokens_out: int) -> float:
@@ -54,7 +57,10 @@ def _is_reasoning_model(model: str) -> bool:
 
 
 def _openai_sampling_params(
-    model: str, max_tokens: int, temperature: float
+    model: str,
+    max_tokens: int,
+    temperature: float,
+    reasoning_effort: ReasoningEffort = "low",
 ) -> dict[str, Any]:
     """Token-limit and sampling kwargs appropriate to ``model``.
 
@@ -62,9 +68,11 @@ def _openai_sampling_params(
     ``max_completion_tokens``, accept only the default temperature, and take a
     ``reasoning_effort``. "low" keeps latency and hidden reasoning spend down;
     every caller here is grounded extraction, not open-ended problem solving.
+    A caller with a tight token cap passes "none": no hidden reasoning tokens,
+    so the whole cap is left for the visible reply. Ignored for classic models.
     """
     if _is_reasoning_model(model):
-        return {"max_completion_tokens": max_tokens, "reasoning_effort": "low"}
+        return {"max_completion_tokens": max_tokens, "reasoning_effort": reasoning_effort}
     return {"max_tokens": max_tokens, "temperature": temperature}
 
 
@@ -684,6 +692,7 @@ async def generate_completion_with_usage(
     response_format: ResponseFormat = None,
     scope: str | None = None,
     model: str | None = None,
+    reasoning_effort: ReasoningEffort = "low",
 ) -> dict[str, Any]:
     """Like generate_completion but also returns token usage and model name.
 
@@ -693,6 +702,7 @@ async def generate_completion_with_usage(
             ``settings.openai_model``. Ignored on the vLLM backend, which
             serves exactly one model (``settings.vllm_model``); the returned
             ``model_name`` always names the model that actually ran.
+        reasoning_effort: Sent only to reasoning models (gpt-5*, gpt-6*).
 
     Returns:
         Dict with keys: content (str), model_name (str),
@@ -713,7 +723,9 @@ async def generate_completion_with_usage(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            **_openai_sampling_params(model, effective_max_tokens, temperature),
+            **_openai_sampling_params(
+                model, effective_max_tokens, temperature, reasoning_effort
+            ),
         }
         wire_format = _response_format_param(response_format)
         if wire_format is not None:
