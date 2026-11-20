@@ -1,5 +1,10 @@
 # Completed Tasks
 
+## gpt-4o-mini retirement: deep research planner/verifier (2026-11-19, PR #542)
+- [x] Successor picked: gpt-6-luna with reasoning_effort="none" (all non-reasoning OpenAI chat models shut down 2027-01-14). Shadow eval on prod over 45 golden questions: 0 reasoning tokens, JSON 84/84, planner agrees 44/45, verifier stricter but 4/5 disputed rejections correct, ~20% cheaper.
+- [x] Merged + deployed rag-service 2026-11-20 (0fa3d7a); live config confirmed (planner/verifier/writer gpt-6-luna, effort none); PDAF smoke answered with 0 removals.
+- [x] Watch set up: prod cron writes ~/luna-watch/<date>.txt daily through 2026-11-27 (spend per scope, model_runs, derivative jobs + essay abstains, deep research runs).
+
 ## TLS cert expiry alert (2026-11-16, PR #539)
 - [x] Root cause: certbot renewed fine on 2026-11-04 (standalone + pre/post hooks stop/start nginx), but nginx serves COPIES in infrastructure/nginx/ssl/ and nothing copied the new cert (same cause as the 2026-10-04..06 outage).
 - [x] Prod: copied cert4 into the ssl dir and reloaded nginx. All three hostnames now serve notAfter 2027-02-02; health 200.
