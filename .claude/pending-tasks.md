@@ -1,5 +1,19 @@
 # Pending Tasks
 
+## App stores (checked 2026-11-20)
+- [ ] BEFORE cutting the new iOS build, the App Review audit (2026-11-20) found UGC (Guideline 1.2) gaps, now that the age rating says UGC=Yes:
+  1. HIGH: no Terms/EULA acceptance before posting, and no zero-tolerance clause for objectionable content in the Terms (`app/(auth)/register.tsx`, `app/purchase/terms.tsx`, web `(public)/terms/page.tsx`). Fix: a one-time agreement gate before the first post or comment, plus the clause in both Terms.
+  2. HIGH: no objectionable-content filter. Posts publish immediately (`apps/api/src/modules/feed/feed.service.ts:171,194,211`). Fix: a server-side filter on post and comment create (API deploy needed).
+  3. MED-HIGH: comments can't be reported or blocked (`features/feed/components/comment-list.tsx`), and community items have no report (`FlagModal` is unused). Fix: an API route plus UI.
+  4. ~~MED: Settings Privacy/Terms rows + web privacy policy naming OpenAI~~ DONE on feat/mobile-ai-data-consent (2026-11-20). The web policy change must be DEPLOYED before submitting, because App Review reads the privacy URL.
+  - Re-verified 2026-11-20: items 1-3 are still open in code (no objectionable clause in either Terms, no agreement step in register, no content filter in feed.service, no report/block on comments). DO NOT cut the iOS build until they're fixed.
+  5. LOW: no static Contact support row; the search AI summary has no disclaimer; `NSPhotoLibraryAddUsageDescription` is unused (app.json:28).
+- [ ] Play: production access RE-APPLIED 2026-11-20 2:59 PM (Alpha 1.0.3/vC16, 28 testers). Wait for Google's email (~7 days). On approval: create production release and flip `submit.production.android.releaseStatus` back to `completed` in apps/mobile/eas.json.
+- [ ] Apple: Account Holder must accept the updated Apple Developer Program License Agreement (blocks app updates/new submissions).
+- [ ] Apple App Compliance: China mainland REMOVED from availability 2026-11-20 (96 → 95 regions; Apple said it takes effect within 24h). Re-check the App Compliance page after 2026-11-21: the Security Assessment + AIGC "Missing Info" rows should clear. If they persist, they only apply to China mainland distribution, so they are not blocking.
+- [x] Apple age rating answered 2026-11-20 (Shared Location No, Dating No; UGC + Social Media corrected to Yes because the Feed has posts/comments). 18+ override kept.
+- [ ] iOS 1.0.3 draft (Prepare for Submission, build 34, What's New + App Review notes updated 2026-11-20) is NOT submitted. Submit only if shipping Deep Research on iOS; build 34 expires ~2026-12-29. AI consent (5.1.2(i)) DONE on branch feat/mobile-ai-data-consent @ c3b12971 (local only, not pushed; 2133/2133 tests pass).
+
 ## OpenAI gpt-4o-mini retirement — DEADLINE 2027-01-14 (evaluated 2026-11-19)
 - [x] Evaluated gpt-6-luna on prod 2026-11-19 (temp container, golden set + dry-run replay of 6 worker job types; results in prod `services/rag-service/evals/results/20261119-*.json`).
 - [x] Prompt fixes both models need (#540, merged + deployed 2026-11-19): classification prompt now names the `assignments` schema (luna failed 4/4 → 12/12); answer prompt v1.5 makes a whole-answer "passages don't address it" refusal emit INSUFFICIENT_SOURCES (luna must-abstain recall 1/5 → 3/5; remaining 2 are honest partial answers).

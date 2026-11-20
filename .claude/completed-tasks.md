@@ -1,5 +1,15 @@
 # Completed Tasks
 
+## 2026-11-20 — AI-data disclosure fixes (branch feat/mobile-ai-data-consent)
+- [x] Traced every OpenAI path: only rag-service `core/generation.py` calls OpenAI; embeddings (sentence-transformers), TTS (Kokoro), OCR and Help chat (local KB) don't. The mobile gate covers every NestJS route that reaches it; research-workspaces is not used on mobile. No name/email in any RAG request body.
+- [x] Web privacy policy: new 2.4 Third-Party AI Processing (OpenAI) + OpenAI in 7. Data Sharing; Last updated -> 2026-11-20.
+- [x] Consent sheet lists case comparisons (gated but unlisted). Settings gains Privacy Policy + Terms of Use rows.
+
+## 2026-11-20 — Store status check + Play re-application
+- [x] Play: the dashboard showed all 3 closed-test criteria met; re-applied for production with refreshed answers (removed the unverified "90,000+ decisions" claim; added the new page-4 "what did you do differently" answer). Console now reads "We have your application for production access".
+- [x] Apple: LIBERTASIAN iOS 1.0.2 "Ready for Distribution". The App Compliance "New" badge = China-mainland items only (see pending).
+- [x] Apple: removed China mainland from App Availability (now 95 regions; status "Processing to Not Available").
+
 ## TLS cert expiry alert (2026-11-16, PR #539)
 - [x] Root cause: certbot renewed fine on 2026-11-04 (standalone + pre/post hooks stop/start nginx), but nginx serves COPIES in infrastructure/nginx/ssl/ and nothing copied the new cert (same cause as the 2026-10-04..06 outage).
 - [x] Prod: copied cert4 into the ssl dir and reloaded nginx. All three hostnames now serve notAfter 2027-02-02; health 200.

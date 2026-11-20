@@ -20,7 +20,7 @@ export const AI_DISCLOSURE_POINTS: readonly { heading: string; body: string }[] 
   },
   {
     heading: 'Which features',
-    body: 'AI answers and document chat, Deep Research, and AI-generated digests, memos, pleadings, hearing prep, timelines and study materials. Search, reading and the rest of the app work without it.',
+    body: 'AI answers and document chat, Deep Research, and AI-generated digests, memos, pleadings, hearing prep, timelines, case comparisons and study materials. Search, reading and the rest of the app work without it.',
   },
   {
     heading: 'How it is used',

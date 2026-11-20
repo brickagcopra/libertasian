@@ -165,6 +165,18 @@ export default function SettingsRoute() {
       onPress: () => router.push('/help'),
     },
     {
+      id: 'privacy',
+      icon: 'document-lock-outline',
+      label: 'Privacy Policy',
+      onPress: () => router.push('/purchase/privacy'),
+    },
+    {
+      id: 'terms',
+      icon: 'document-text-outline',
+      label: 'Terms of Use',
+      onPress: () => router.push('/purchase/terms'),
+    },
+    {
       id: 'sign-out',
       icon: 'log-out-outline',
       label: 'Sign out',
