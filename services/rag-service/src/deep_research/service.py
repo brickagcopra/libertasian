@@ -53,7 +53,11 @@ from pydantic import ValidationError
 from ..config import settings
 from ..core.abstention import check_abstention, generate_abstention_response
 from ..core.context import estimate_tokens
-from ..core.generation import compute_cost_usd, generate_completion_with_usage
+from ..core.generation import (
+    ReasoningEffort,
+    compute_cost_usd,
+    generate_completion_with_usage,
+)
 from ..core.ranked import RankedPassages, retrieve_ranked
 from ..core.reranking import rerank_passages
 from ..core.retrieval import STATUTORY_DOCUMENT_TYPES
@@ -99,6 +103,11 @@ Event = tuple[str, dict[str, Any]]
 _SUB_QUERY_MAX_CHARS = 300
 _PLANNER_MAX_TOKENS = 400
 _VERIFIER_MAX_TOKENS = 1500
+# Planner and verifier run on a reasoning model (gpt-6-luna) with reasoning
+# OFF. Their caps above have no room for hidden reasoning tokens, and an empty
+# verifier reply fails closed (every claim removed). With "none" luna spent 0
+# reasoning tokens on both calls over the golden set (prod 2026-11-19).
+_CLASSIFIER_REASONING_EFFORT: ReasoningEffort = "none"
 # A one-word "quote" is a substring of almost any passage and proves nothing.
 _MIN_QUOTE_WORDS = 2
 _LABEL_RE = re.compile(r"^S(\d{1,3})$")
@@ -452,6 +461,7 @@ async def _call_llm(
     temperature: float,
     response_format: dict[str, Any],
     usage: LlmUsage,
+    reasoning_effort: ReasoningEffort = "low",
 ) -> dict[str, Any]:
     result = await generate_completion_with_usage(
         system_prompt=system_prompt,
@@ -461,6 +471,7 @@ async def _call_llm(
         response_format=response_format,
         scope=BUDGET_SCOPE,
         model=model,
+        reasoning_effort=reasoning_effort,
     )
     tokens_in = int(result.get("tokens_in") or 0)
     tokens_out = int(result.get("tokens_out") or 0)
@@ -487,6 +498,7 @@ async def plan_research(question: str, usage: LlmUsage) -> Plan:
         temperature=0.2,
         response_format=PLANNER_RESPONSE_FORMAT,
         usage=usage,
+        reasoning_effort=_CLASSIFIER_REASONING_EFFORT,
     )
     try:
         output = PlannerOutput.model_validate(_load_json_object(str(result.get("content") or "")))
@@ -547,6 +559,7 @@ async def verify_draft(
             temperature=0.0,
             response_format=verifier_response_format([cid for cid, _ in candidates]),
             usage=usage,
+            reasoning_effort=_CLASSIFIER_REASONING_EFFORT,
         )
         verdict_data = _load_json_object(str(result.get("content") or ""))
         verdicts = verdict_data.get("verdicts")

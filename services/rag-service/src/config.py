@@ -225,12 +225,15 @@ class Settings(BaseSettings):
     # for the same reason as the OpenSearch credentials above: the bare names are
     # what the deployment documents.
     #
-    # Planner and verifier moved to gpt-4o-mini when 4.1 nano was retired on
-    # 2026-10-23, and must stay NON-reasoning models: _PLANNER_MAX_TOKENS=400 and
-    # _VERIFIER_MAX_TOKENS=1500 leave no room for hidden reasoning tokens
-    # (gpt-5*/gpt-6* use max_completion_tokens; see _is_reasoning_model in
-    # core/generation.py), and an empty verifier reply removes every claim
-    # because it fails closed.
+    # Planner and verifier run on gpt-6-luna with reasoning_effort="none"
+    # (deep_research/service.py _CLASSIFIER_REASONING_EFFORT). Every
+    # non-reasoning OpenAI chat model (gpt-4o, gpt-4o-mini, gpt-4.1, 4.1-mini)
+    # shuts down on 2027-01-14, and _PLANNER_MAX_TOKENS=400 /
+    # _VERIFIER_MAX_TOKENS=1500 leave no room for hidden reasoning tokens: an
+    # empty verifier reply removes every claim because it fails closed. Any
+    # replacement must either be non-reasoning or accept effort "none".
+    # Rollback until 2027-01-14: DEEP_RESEARCH_{PLANNER,VERIFIER}_MODEL=gpt-4o-mini
+    # (effort is not sent to classic models).
     #
     # Planner and verifier are small, cheap classification-shaped calls; the
     # writer is the one call whose quality the user reads, so it defaults to
@@ -238,7 +241,7 @@ class Settings(BaseSettings):
     # (or per request via model_override, when listed in
     # DEEP_RESEARCH_MODEL_ALLOWLIST).
     deep_research_planner_model: str = Field(
-        default="gpt-4o-mini",
+        default="gpt-6-luna",
         validation_alias=AliasChoices(
             "RAG_DEEP_RESEARCH_PLANNER_MODEL", "DEEP_RESEARCH_PLANNER_MODEL"
         ),
@@ -248,7 +251,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("RAG_DEEP_RESEARCH_MODEL", "DEEP_RESEARCH_MODEL"),
     )
     deep_research_verifier_model: str = Field(
-        default="gpt-4o-mini",
+        default="gpt-6-luna",
         validation_alias=AliasChoices(
             "RAG_DEEP_RESEARCH_VERIFIER_MODEL", "DEEP_RESEARCH_VERIFIER_MODEL"
         ),
