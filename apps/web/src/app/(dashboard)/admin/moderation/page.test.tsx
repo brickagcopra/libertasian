@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 
 import type { ModerationCaseSummary, ModerationStats } from '@/features/moderation/types';
 
@@ -14,6 +14,7 @@ const STATS: ModerationStats = {
   resolvedLast7d: 12,
   medianResolutionHours7d: 6.5,
   activeSanctions: 1,
+  openAppeals: 2,
 };
 
 const CASES: ModerationCaseSummary[] = [
@@ -50,6 +51,7 @@ const CASES: ModerationCaseSummary[] = [
 ];
 
 const useModerationCases = vi.fn();
+const bulkMutate = vi.fn();
 
 vi.mock('@/features/moderation/hooks/use-moderation', () => ({
   useModerationStats: () => ({ data: STATS, isLoading: false, error: null }),
@@ -57,6 +59,9 @@ vi.mock('@/features/moderation/hooks/use-moderation', () => ({
   useModerationSanctions: () => ({ data: undefined, isLoading: false, error: null }),
   useModerationLog: () => ({ data: undefined, isLoading: false, error: null }),
   useRevokeSanction: () => ({ mutate: vi.fn(), isPending: false, error: null, reset: vi.fn() }),
+  useModerationAppeals: () => ({ data: undefined, isLoading: false, error: null }),
+  useDecideAppeal: () => ({ mutate: vi.fn(), isPending: false, error: null, reset: vi.fn() }),
+  useBulkResolve: () => ({ mutate: bulkMutate, isPending: false, error: null, reset: vi.fn() }),
 }));
 
 import ModerationQueuePage from './page';
@@ -113,5 +118,59 @@ describe('Moderation queue page', () => {
     });
     render(<ModerationQueuePage />);
     expect(screen.getByText('No open cases. The queue is clear.')).toBeInTheDocument();
+  });
+
+  it('shows the open appeal count on the Appeals tab', () => {
+    useModerationCases.mockReturnValue({
+      data: { data: [], meta: { total: 0, hasNext: false } },
+      isLoading: false,
+      isFetching: false,
+      error: null,
+    });
+    render(<ModerationQueuePage />);
+    expect(screen.getByRole('tab', { name: 'Appeals (2)' })).toBeInTheDocument();
+  });
+
+  it('bulk-dismisses the selected cases', () => {
+    bulkMutate.mockReset();
+    useModerationCases.mockReturnValue({
+      data: { data: CASES, meta: { total: 2, hasNext: false } },
+      isLoading: false,
+      isFetching: false,
+      error: null,
+    });
+    render(<ModerationQueuePage />);
+
+    expect(screen.queryByRole('toolbar', { name: 'Bulk actions' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all cases on this page' }));
+    const toolbar = screen.getByRole('toolbar', { name: 'Bulk actions' });
+    expect(within(toolbar).getByText('2 selected')).toBeInTheDocument();
+
+    fireEvent.click(within(toolbar).getByRole('button', { name: 'Dismiss reports' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss 2' }));
+
+    expect(bulkMutate).toHaveBeenCalledWith(
+      {
+        decision: 'dismiss',
+        cases: [
+          { targetType: 'post', targetId: 'p1' },
+          { targetType: 'comment', targetId: 'c1' },
+        ],
+      },
+      expect.anything(),
+    );
+  });
+
+  it('a bulk removal needs a reason before it can be confirmed', () => {
+    useModerationCases.mockReturnValue({
+      data: { data: CASES, meta: { total: 2, hasNext: false } },
+      isLoading: false,
+      isFetching: false,
+      error: null,
+    });
+    render(<ModerationQueuePage />);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select post case' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove content' }));
+    expect(screen.getByRole('button', { name: 'Remove 1' })).toBeDisabled();
   });
 });

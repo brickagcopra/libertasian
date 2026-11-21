@@ -158,6 +158,13 @@ export default function SettingsRoute() {
       onPress: () => router.push('/settings/blocked-users'),
     },
     {
+      id: 'community-standing',
+      icon: 'shield-checkmark-outline',
+      label: 'Community standing',
+      sub: 'Moderator decisions and appeals',
+      onPress: () => router.push('/settings/community-standing'),
+    },
+    {
       id: 'help',
       icon: 'chatbubble-ellipses-outline',
       label: 'Help & FAQ',

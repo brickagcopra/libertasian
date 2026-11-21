@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, HttpException } from '@nestjs/common';
 
 import { CommunitySanctionsService } from './community-sanctions.service';
 
@@ -6,6 +6,9 @@ describe('CommunitySanctionsService', () => {
   const prisma = {
     communitySanction: { findFirst: jest.fn() },
     moderationAction: { findFirst: jest.fn() },
+    feedPostReport: { aggregate: jest.fn() },
+    feedCommentReport: { aggregate: jest.fn() },
+    communityFlag: { aggregate: jest.fn() },
   };
   const service = new CommunitySanctionsService(prisma as never);
 
@@ -76,6 +79,32 @@ describe('CommunitySanctionsService', () => {
     });
     it('treats an open-ended ban as active', () => {
       expect(CommunitySanctionsService.isActive({ ...base, type: 'ban' }, now)).toBe(true);
+    });
+  });
+
+  describe('assertCanReport', () => {
+    const agg = (n: number, oldest: Date | null = null) => ({ _count: { _all: n }, _min: { createdAt: oldest } });
+    const now = new Date('2026-11-21T12:00:00Z');
+
+    it('allows a user under the 24h cap and counts all three report tables', async () => {
+      prisma.feedPostReport.aggregate.mockResolvedValue(agg(10));
+      prisma.feedCommentReport.aggregate.mockResolvedValue(agg(5));
+      prisma.communityFlag.aggregate.mockResolvedValue(agg(4));
+      await expect(service.assertCanReport('u1', now)).resolves.toBeUndefined();
+      const where = prisma.feedPostReport.aggregate.mock.calls[0][0].where;
+      expect(where).toEqual({ reporterUserId: 'u1', createdAt: { gte: new Date('2026-11-20T12:00:00Z') } });
+    });
+
+    it('refuses the 21st report with 429 quota_exceeded and a retry time from the oldest report', async () => {
+      prisma.feedPostReport.aggregate.mockResolvedValue(agg(12, new Date('2026-11-20T18:00:00Z')));
+      prisma.feedCommentReport.aggregate.mockResolvedValue(agg(8, new Date('2026-11-20T15:00:00Z')));
+      prisma.communityFlag.aggregate.mockResolvedValue(agg(0));
+      const err = await service.assertCanReport('u1', now).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(HttpException);
+      const http = err as HttpException;
+      expect(http.getStatus()).toBe(429);
+      // Oldest counted report is 15:00 yesterday, so a slot frees at 15:00 today: 3h.
+      expect(http.getResponse()).toMatchObject({ code: 'quota_exceeded', retryAfterSeconds: 3 * 3600 });
     });
   });
 });

@@ -127,6 +127,8 @@ model User {
   communitySanctions         CommunitySanction[]       @relation("CommunitySanctionUser")
   communitySanctionsIssued   CommunitySanction[]       @relation("CommunitySanctionIssuer")
   communitySanctionsRevoked  CommunitySanction[]       @relation("CommunitySanctionRevoker")
+  moderationAppeals          ModerationAppeal[]        @relation("ModerationAppealAppellant")
+  moderationAppealsDecided   ModerationAppeal[]        @relation("ModerationAppealDecider")
   exportJobs                 ExportJob[]
   // Accounting relations
   accountingPeriodsClosedBy  AccountingPeriod[]        @relation("PeriodClosedBy")
@@ -2023,6 +2025,7 @@ model CommunityFlag {
 
   @@index([entityType, entityId], map: "idx_community_flags_entity")
   @@index([status], map: "idx_community_flags_status")
+  @@index([reporterUserId, createdAt], map: "idx_community_flags_reporter_created")
   @@map("community_flags")
 }
 
@@ -2997,6 +3000,7 @@ model FeedPostReport {
 
   @@unique([postId, reporterUserId], map: "uq_feed_post_report_post_reporter")
   @@index([status], map: "idx_feed_post_report_status")
+  @@index([reporterUserId, createdAt], map: "idx_feed_post_report_reporter_created")
   @@map("feed_post_reports")
 }
 
@@ -3025,7 +3029,7 @@ model FeedCommentReport {
 
   @@unique([commentId, reporterUserId], map: "uq_feed_comment_report_comment_reporter")
   @@index([status, createdAt(sort: Desc)], map: "idx_feed_comment_report_status_created")
-  @@index([reporterUserId], map: "idx_feed_comment_report_reporter")
+  @@index([reporterUserId, createdAt], map: "idx_feed_comment_report_reporter_created")
   @@map("feed_comment_reports")
 }
 
@@ -3080,11 +3084,36 @@ model ModerationAction {
   // Relations
   moderator   User? @relation("ModerationActionModerator", fields: [moderatorUserId], references: [id], onDelete: SetNull)
   subjectUser User? @relation("ModerationActionSubject", fields: [subjectUserId], references: [id], onDelete: SetNull)
+  appeal      ModerationAppeal?
 
   @@index([targetType, targetId, createdAt(sort: Desc)], map: "idx_moderation_actions_target")
   @@index([subjectUserId, createdAt(sort: Desc)], map: "idx_moderation_actions_subject")
   @@index([createdAt(sort: Desc)], map: "idx_moderation_actions_created")
   @@map("moderation_actions")
+}
+
+/// An author's appeal of one moderation decision against them (a removal,
+/// suspension or ban). One appeal per decision; granting it restores the
+/// content or lifts the sanction.
+model ModerationAppeal {
+  id                 String    @id @default(uuid()) @db.Uuid
+  moderationActionId String    @unique @map("moderation_action_id") @db.Uuid
+  appellantUserId    String    @map("appellant_user_id") @db.Uuid
+  statement          String
+  status             String    @default("open") @db.VarChar(20)
+  decidedByUserId    String?   @map("decided_by_user_id") @db.Uuid
+  decisionNote       String?   @map("decision_note")
+  decidedAt          DateTime? @map("decided_at") @db.Timestamptz
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  moderationAction ModerationAction @relation(fields: [moderationActionId], references: [id], onDelete: Cascade)
+  appellant        User             @relation("ModerationAppealAppellant", fields: [appellantUserId], references: [id], onDelete: Cascade)
+  decidedBy        User?            @relation("ModerationAppealDecider", fields: [decidedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt], map: "idx_moderation_appeals_status_created")
+  @@index([appellantUserId, createdAt(sort: Desc)], map: "idx_moderation_appeals_appellant")
+  @@map("moderation_appeals")
 }
 
 /// A moderator-imposed restriction on a user's community participation.

@@ -1,6 +1,8 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
+  HttpException,
   Injectable,
   Logger,
   NotFoundException,
@@ -15,6 +17,9 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { PlatformGrantsService } from '../rbac/platform-grants.service';
 import { CommunitySanctionsService } from './community-sanctions.service';
 import {
+  APPEAL_WINDOW_DAYS,
+  APPEALABLE_ACTIONS,
+  type AppealStatus,
   AUTO_HIDE_THRESHOLD,
   COMMUNITY_TARGET_TYPES,
   type CommunityTargetType,
@@ -32,7 +37,14 @@ import {
   type SanctionType,
   TARGET_LABELS,
 } from './moderation.constants';
-import type { CreateSanctionDto, ListCasesQueryDto, ResolveCaseDto } from './dto/moderation.dto';
+import type {
+  BulkResolveDto,
+  CreateSanctionDto,
+  DecideAppealDto,
+  ListAppealsQueryDto,
+  ListCasesQueryDto,
+  ResolveCaseDto,
+} from './dto/moderation.dto';
 
 type ContentStatus = 'visible' | 'hidden' | 'removed' | 'deleted' | 'unknown';
 type UserRef = { id: string; fullName: string };
@@ -71,6 +83,8 @@ interface CaseGroup {
 }
 
 const USER_REF = { select: { id: true, fullName: true } } as const;
+const DAY_MS = 24 * 3_600_000;
+const APPEAL_HINT = `If you think this was a mistake, you can appeal within ${APPEAL_WINDOW_DAYS} days from Settings › Community standing.`;
 const HOUR_MS = 3_600_000;
 const PREVIEW_CHARS = 280;
 
@@ -185,9 +199,10 @@ export class ModerationService {
       null,
     );
 
-    const activeSanctions = await this.prisma.communitySanction.count({
-      where: CommunitySanctionsService.activeWhere(new Date(now)),
-    });
+    const [activeSanctions, openAppeals] = await Promise.all([
+      this.prisma.communitySanction.count({ where: CommunitySanctionsService.activeWhere(new Date(now)) }),
+      this.prisma.moderationAppeal.count({ where: { status: 'open' } }),
+    ]);
 
     return {
       openCases: open.length,
@@ -198,6 +213,7 @@ export class ModerationService {
       resolvedLast7d: resolved.length,
       medianResolutionHours7d: median === null ? null : Math.round(median * 10) / 10,
       activeSanctions,
+      openAppeals,
     };
   }
 
@@ -287,6 +303,52 @@ export class ModerationService {
     dto: ResolveCaseDto,
     moderatorId: string,
   ) {
+    await this.decideCase(targetType, targetId, dto, moderatorId);
+    return this.getCase(targetType, targetId, moderatorId);
+  }
+
+  /**
+   * Applies one decision to many cases. Each case is decided in its own
+   * transaction, so one failure (own content, already resolved, deleted)
+   * never rolls back the others; failures are reported per case.
+   */
+  async bulkResolve(dto: BulkResolveDto, moderatorId: string) {
+    const seen = new Set<string>();
+    const succeeded: Array<{ targetType: ModerationTargetType; targetId: string; reportsResolved: number }> = [];
+    const failed: Array<{ targetType: ModerationTargetType; targetId: string; error: string }> = [];
+    for (const c of dto.cases) {
+      const key = `${c.targetType}:${c.targetId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      try {
+        const reportsResolved = await this.decideCase(
+          c.targetType,
+          c.targetId,
+          { decision: dto.decision, reason: dto.reason, note: dto.note, notifyAuthor: dto.notifyAuthor },
+          moderatorId,
+        );
+        succeeded.push({ targetType: c.targetType, targetId: c.targetId, reportsResolved });
+      } catch (err) {
+        failed.push({
+          targetType: c.targetType,
+          targetId: c.targetId,
+          error: err instanceof HttpException ? err.message : 'Unexpected error',
+        });
+        if (!(err instanceof HttpException)) {
+          this.logger.warn(`Bulk ${dto.decision} failed for ${key}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    }
+    return { succeeded, failed };
+  }
+
+  /** Dismiss or remove one case; returns how many open reports it resolved. */
+  private async decideCase(
+    targetType: ModerationTargetType,
+    targetId: string,
+    dto: ResolveCaseDto,
+    moderatorId: string,
+  ): Promise<number> {
     const target = await this.loadTarget(targetType, targetId);
     if (target?.authorId === moderatorId) {
       throw new ForbiddenException("You can't moderate your own content");
@@ -352,11 +414,10 @@ export class ModerationService {
       await this.notifyUser(
         target.authorId,
         `Your ${TARGET_LABELS[targetType]} was removed`,
-        `A moderator removed it for breaking our Community Guidelines (${REASON_LABELS[dto.reason ?? 'other']}). Repeated violations can lead to suspension.`,
+        `A moderator removed it for breaking our Community Guidelines (${REASON_LABELS[dto.reason ?? 'other']}). Repeated violations can lead to suspension. ${APPEAL_HINT}`,
       );
     }
-
-    return this.getCase(targetType, targetId, moderatorId);
+    return reportsResolved;
   }
 
   async restoreContent(
@@ -544,13 +605,13 @@ export class ModerationService {
         await this.notifyUser(
           userId,
           `Your community access is suspended for ${dto.durationDays} day${dto.durationDays === 1 ? '' : 's'}`,
-          `You can't post, comment or review until ${endsAt!.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' })} (${reason}). The rest of the app works as usual.`,
+          `You can't post, comment or review until ${endsAt!.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' })} (${reason}). The rest of the app works as usual. ${APPEAL_HINT}`,
         );
       } else {
         await this.notifyUser(
           userId,
           "You've been banned from the LIBERTASIAN community",
-          `You can no longer post, comment or review (${reason}). The rest of the app works as usual.`,
+          `You can no longer post, comment or review (${reason}). The rest of the app works as usual. ${APPEAL_HINT}`,
         );
       }
     }
@@ -642,6 +703,272 @@ export class ModerationService {
   }
 
   // ===========================================================================
+  // Appeals
+  // ===========================================================================
+
+  /**
+   * Decisions taken against this user that they can see and appeal: content
+   * removals, suspensions and bans from the last APPEAL_WINDOW_DAYS * 3 days.
+   */
+  async listMyDecisions(userId: string) {
+    const now = new Date();
+    const actions = await this.prisma.moderationAction.findMany({
+      where: {
+        subjectUserId: userId,
+        action: { in: [...APPEALABLE_ACTIONS] },
+        createdAt: { gte: new Date(now.getTime() - APPEAL_WINDOW_DAYS * 3 * DAY_MS) },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      include: { appeal: true },
+    });
+
+    const contentGroups = actions
+      .filter((a) => a.targetType !== 'user')
+      .map((a) => ({ targetType: a.targetType as ModerationTargetType, targetId: a.targetId }));
+    const loaded = await this.loadTargetsFor(contentGroups);
+    const sanctionIds = actions.map((a) => this.sanctionIdOf(a)).filter((id): id is string => id !== null);
+    const sanctions = new Map(
+      (await this.prisma.communitySanction.findMany({ where: { id: { in: sanctionIds } } })).map((x) => [x.id, x]),
+    );
+
+    return actions.map((a) => {
+      const target = a.targetType === 'user' ? null : (loaded.get(`${a.targetType}:${a.targetId}`) ?? null);
+      const sanctionId = this.sanctionIdOf(a);
+      const sanction = sanctionId ? (sanctions.get(sanctionId) ?? null) : null;
+      const inEffect =
+        a.targetType === 'user'
+          ? sanction !== null && CommunitySanctionsService.isActive(sanction, now)
+          : target?.contentStatus === 'removed';
+      const deadline = new Date(a.createdAt.getTime() + APPEAL_WINDOW_DAYS * DAY_MS);
+      return {
+        id: a.id,
+        action: a.action as ModerationActionType,
+        targetType: a.targetType as ModerationTargetType | 'user',
+        targetId: a.targetId,
+        reason: a.reason as ModerationReason | null,
+        preview: preview(target?.title ?? target?.body ?? null, 140),
+        endsAt: sanction?.endsAt?.toISOString() ?? null,
+        inEffect,
+        createdAt: a.createdAt.toISOString(),
+        appealDeadline: deadline.toISOString(),
+        canAppeal: !a.appeal && inEffect && deadline > now,
+        appeal: a.appeal
+          ? {
+              id: a.appeal.id,
+              status: a.appeal.status as AppealStatus,
+              statement: a.appeal.statement,
+              decisionNote: a.appeal.decisionNote,
+              createdAt: a.appeal.createdAt.toISOString(),
+              decidedAt: a.appeal.decidedAt?.toISOString() ?? null,
+            }
+          : null,
+      };
+    });
+  }
+
+  async fileAppeal(userId: string, actionId: string, statement: string) {
+    const decision = (await this.listMyDecisions(userId)).find((d) => d.id === actionId);
+    if (!decision) throw new NotFoundException('Decision not found');
+    if (decision.appeal) throw new ConflictException('You have already appealed this decision');
+    if (!decision.inEffect) throw new BadRequestException('This decision is no longer in effect');
+    if (!decision.canAppeal) {
+      throw new BadRequestException(`Appeals must be filed within ${APPEAL_WINDOW_DAYS} days of the decision`);
+    }
+
+    let appealId: string;
+    try {
+      appealId = (
+        await this.prisma.moderationAppeal.create({
+          data: { moderationActionId: actionId, appellantUserId: userId, statement: statement.trim() },
+          select: { id: true },
+        })
+      ).id;
+    } catch (err) {
+      if ((err as { code?: string }).code === 'P2002') {
+        throw new ConflictException('You have already appealed this decision');
+      }
+      throw err;
+    }
+
+    await this.audit.log({
+      actorUserId: userId,
+      actorType: 'user',
+      action: 'moderation.appeal_filed',
+      entityType: 'moderation_appeal',
+      entityId: appealId,
+      metadata: { moderationActionId: actionId, decision: decision.action },
+    });
+    await this.alertModerators(
+      `New appeal of a ${decision.action === 'remove' ? 'removal' : decision.action}`,
+      [`Statement: ${preview(statement, 200) ?? ''}`],
+      false,
+    );
+    return { ...decision, canAppeal: false, appeal: { id: appealId, status: 'open' as AppealStatus, statement: statement.trim(), decisionNote: null, createdAt: new Date().toISOString(), decidedAt: null } };
+  }
+
+  async listAppeals(query: ListAppealsQueryDto) {
+    const limit = query.limit ?? 25;
+    const status = query.status ?? 'open';
+    const rows = await this.prisma.moderationAppeal.findMany({
+      where: { status, ...(query.id ? { id: query.id } : {}) },
+      take: limit + 1,
+      ...(query.cursor && { skip: 1, cursor: { id: query.cursor } }),
+      // Open appeals oldest first (a queue); decided ones newest first.
+      orderBy: status === 'open' ? [{ createdAt: 'asc' }, { id: 'asc' }] : [{ decidedAt: 'desc' }, { id: 'desc' }],
+      include: {
+        appellant: USER_REF,
+        decidedBy: USER_REF,
+        moderationAction: { include: { moderator: USER_REF, subjectUser: USER_REF } },
+      },
+    });
+    const hasNext = rows.length > limit;
+    const page = hasNext ? rows.slice(0, limit) : rows;
+    const targets = await this.loadTargetsFor(
+      page
+        .filter((r) => r.moderationAction.targetType !== 'user')
+        .map((r) => ({
+          targetType: r.moderationAction.targetType as ModerationTargetType,
+          targetId: r.moderationAction.targetId,
+        })),
+    );
+    return {
+      items: page.map((r) => {
+        const a = r.moderationAction;
+        const target = targets.get(`${a.targetType}:${a.targetId}`) ?? null;
+        return {
+          id: r.id,
+          status: r.status as AppealStatus,
+          statement: r.statement,
+          appellant: r.appellant,
+          createdAt: r.createdAt.toISOString(),
+          decidedAt: r.decidedAt?.toISOString() ?? null,
+          decidedBy: r.decidedBy,
+          decisionNote: r.decisionNote,
+          decision: this.toActionEntry(a),
+          preview: preview(target?.title ?? target?.body ?? null),
+          contentStatus: target?.contentStatus ?? null,
+        };
+      }),
+      hasNext,
+      nextCursor: hasNext ? page[page.length - 1]!.id : null,
+    };
+  }
+
+  /**
+   * Grant (undo the decision: restore the content or lift the sanction) or
+   * deny an appeal. Moderators can't decide their own appeals. A moderator may
+   * review an appeal of their own decision: with a small team there is often
+   * nobody else, and the log shows who decided both.
+   */
+  async decideAppeal(appealId: string, dto: DecideAppealDto, moderatorId: string) {
+    const appeal = await this.prisma.moderationAppeal.findUnique({
+      where: { id: appealId },
+      include: { moderationAction: true },
+    });
+    if (!appeal) throw new NotFoundException('Appeal not found');
+    if (appeal.appellantUserId === moderatorId) throw new ForbiddenException("You can't decide your own appeal");
+    if (appeal.status !== 'open') throw new BadRequestException('This appeal has already been decided');
+
+    const original = appeal.moderationAction;
+    const granted = dto.decision === 'grant';
+    const now = new Date();
+    const metadata: Record<string, unknown> = { appealId, originalActionId: original.id, originalAction: original.action };
+
+    await this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.moderationAppeal.updateMany({
+        where: { id: appealId, status: 'open' },
+        data: {
+          status: granted ? 'granted' : 'denied',
+          decidedByUserId: moderatorId,
+          decisionNote: dto.note ?? null,
+          decidedAt: now,
+        },
+      });
+      if (claimed.count === 0) throw new BadRequestException('This appeal has already been decided');
+
+      if (granted && original.targetType === 'user') {
+        const sanctionId = this.sanctionIdOf(original);
+        if (sanctionId) {
+          const lifted = await tx.communitySanction.updateMany({
+            where: { id: sanctionId, revokedAt: null },
+            data: { revokedAt: now, revokedByUserId: moderatorId },
+          });
+          metadata['sanctionLifted'] = lifted.count > 0;
+        }
+      } else if (granted) {
+        const targetType = original.targetType as ModerationTargetType;
+        const target = await this.loadTarget(targetType, original.targetId);
+        if (target?.contentStatus === 'removed' || target?.contentStatus === 'hidden') {
+          await this.applyRestore(
+            tx,
+            targetType,
+            original.targetId,
+            (original.metadataJson ?? {}) as Record<string, unknown>,
+          );
+          // Community items read "removed" from the latest remove/restore row.
+          await tx.moderationAction.create({
+            data: {
+              moderatorUserId: moderatorId,
+              subjectUserId: appeal.appellantUserId,
+              targetType,
+              targetId: original.targetId,
+              action: 'restore',
+              note: 'Restored on appeal',
+              metadataJson: { appealId },
+            },
+          });
+          metadata['restored'] = true;
+        }
+      }
+
+      await tx.moderationAction.create({
+        data: {
+          moderatorUserId: moderatorId,
+          subjectUserId: appeal.appellantUserId,
+          targetType: original.targetType,
+          targetId: original.targetId,
+          action: granted ? 'appeal_granted' : 'appeal_denied',
+          note: dto.note ?? null,
+          metadataJson: metadata as Prisma.InputJsonValue,
+        },
+      });
+    });
+
+    await this.audit.log({
+      actorUserId: moderatorId,
+      actorType: 'admin',
+      action: granted ? 'moderation.appeal_granted' : 'moderation.appeal_denied',
+      entityType: 'moderation_appeal',
+      entityId: appealId,
+      metadata,
+    });
+
+    const what =
+      original.action === 'remove'
+        ? `the removal of your ${TARGET_LABELS[original.targetType as ModerationTargetType] ?? 'content'}`
+        : `your ${original.action === 'ban' ? 'ban' : 'suspension'}`;
+    const noteSuffix = dto.note ? ` Note: ${dto.note}` : '';
+    await this.notifyUser(
+      appeal.appellantUserId,
+      granted ? 'Your appeal was granted' : 'Your appeal was reviewed',
+      granted
+        ? `A moderator reversed ${what}.${noteSuffix}`
+        : `A moderator reviewed your appeal of ${what} and upheld the decision.${noteSuffix}`,
+    );
+
+    const result = await this.listAppeals({ status: granted ? 'granted' : 'denied', id: appealId, limit: 1 });
+    return result.items[0] ?? null;
+  }
+
+  private sanctionIdOf(a: { targetType: string; metadataJson: Prisma.JsonValue | null }): string | null {
+    if (a.targetType !== 'user') return null;
+    const meta = a.metadataJson as Record<string, unknown> | null;
+    const id = meta?.['sanctionId'];
+    return typeof id === 'string' ? id : null;
+  }
+
+  // ===========================================================================
   // Report intake hook (called by feed and community after a report is filed)
   // ===========================================================================
 
@@ -698,13 +1025,17 @@ export class ModerationService {
   async sendDailySummary(): Promise<void> {
     try {
       const stats = await this.getStats();
-      if (stats.openCases === 0) return;
+      if (stats.openCases === 0 && stats.openAppeals === 0) return;
+      const appeals = stats.openAppeals
+        ? `, ${stats.openAppeals} open appeal${stats.openAppeals === 1 ? '' : 's'}`
+        : '';
       await this.alertModerators(
-        `${stats.openCases} open report case${stats.openCases === 1 ? '' : 's'}`,
+        `${stats.openCases} open report case${stats.openCases === 1 ? '' : 's'}${appeals}`,
         [
           `Over 24 hours old: ${stats.overdueCases}`,
           `12–24 hours old: ${stats.dueSoonCases}`,
           `Open reports: ${stats.openReports}`,
+          `Open appeals: ${stats.openAppeals}`,
         ],
         stats.overdueCases > 0,
       );
@@ -865,7 +1196,9 @@ export class ModerationService {
     return (await this.loadTargets(targetType, [targetId])).get(targetId) ?? null;
   }
 
-  private async loadTargetsFor(groups: CaseGroup[]): Promise<Map<string, LoadedTarget>> {
+  private async loadTargetsFor(
+    groups: Array<{ targetType: ModerationTargetType; targetId: string }>,
+  ): Promise<Map<string, LoadedTarget>> {
     const byType = new Map<ModerationTargetType, string[]>();
     for (const g of groups) byType.set(g.targetType, [...(byType.get(g.targetType) ?? []), g.targetId]);
     const out = new Map<string, LoadedTarget>();
@@ -1162,9 +1495,17 @@ export class ModerationService {
 
   private async notifyUser(userId: string, title: string, body: string): Promise<void> {
     try {
-      // entityType 'moderation' has no mobile route, so tapping it opens
-      // nothing instead of a removed post's 404.
-      await this.notificationCenter.createNotification({ userId, type: 'moderation', title, body, entityType: 'moderation' });
+      // Never deep-link to the content itself (a removed post would 404):
+      // the app routes 'community_standing' to Settings › Community standing,
+      // where the decision is listed and can be appealed.
+      await this.notificationCenter.createNotification({
+        userId,
+        type: 'moderation',
+        title,
+        body,
+        entityType: 'community_standing',
+        entityId: userId,
+      });
     } catch (err) {
       this.logger.warn(`Moderation notice to ${userId} failed: ${err instanceof Error ? err.message : String(err)}`);
     }

@@ -59,7 +59,9 @@ export type ModerationActionType =
   | 'warn'
   | 'suspend'
   | 'ban'
-  | 'revoke_sanction';
+  | 'revoke_sanction'
+  | 'appeal_granted'
+  | 'appeal_denied';
 
 export interface ModerationUserRef {
   id: string;
@@ -114,6 +116,8 @@ export interface ModerationStats {
   /** Median first-report → resolution time over cases resolved in the last 7 days. */
   medianResolutionHours7d: number | null;
   activeSanctions: number;
+  /** Author appeals awaiting a decision. */
+  openAppeals: number;
 }
 
 export interface ModerationReport {
@@ -272,3 +276,40 @@ export const TARGET_TYPE_LABELS: Record<ModerationTargetType, string> = {
   digest: 'Digest',
   community_rating: 'Review',
 };
+
+/** POST /admin/moderation/cases/bulk-resolve (≤ 50 cases) */
+export interface BulkResolveInput extends ResolveCaseInput {
+  cases: Array<{ targetType: ModerationTargetType; targetId: string }>;
+}
+
+export interface BulkResolveResult {
+  succeeded: Array<{ targetType: ModerationTargetType; targetId: string; reportsResolved: number }>;
+  failed: Array<{ targetType: ModerationTargetType; targetId: string; error: string }>;
+}
+
+export const BULK_MAX_CASES = 50;
+
+export type AppealStatus = 'open' | 'granted' | 'denied';
+
+/** GET /admin/moderation/appeals?status&limit&cursor → data: ModerationAppeal[], meta: CursorMeta */
+export interface ModerationAppeal {
+  id: string;
+  status: AppealStatus;
+  statement: string;
+  appellant: ModerationUserRef;
+  createdAt: string;
+  decidedAt: string | null;
+  decidedBy: ModerationUserRef | null;
+  decisionNote: string | null;
+  /** The decision being appealed (remove / suspend / ban). */
+  decision: ModerationActionEntry;
+  /** Content preview when the decision was a removal. */
+  preview: string | null;
+  contentStatus: ModerationContentStatus | null;
+}
+
+/** POST /admin/moderation/appeals/:id/decide → data: ModerationAppeal */
+export interface DecideAppealInput {
+  decision: 'grant' | 'deny';
+  note?: string;
+}

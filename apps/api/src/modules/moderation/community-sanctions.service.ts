@@ -1,8 +1,8 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { ForbiddenException, HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import type { CommunitySanction, Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
-import { RESTRICTIVE_SANCTIONS } from './moderation.constants';
+import { REPORT_DAILY_CAP, RESTRICTIVE_SANCTIONS } from './moderation.constants';
 
 /**
  * Enforces community sanctions on every write into the shared community:
@@ -10,6 +10,8 @@ import { RESTRICTIVE_SANCTIONS } from './moderation.constants';
  * blocks stay available to sanctioned users on purpose: a suspended user who
  * is being harassed must still be able to report it.
  */
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 @Injectable()
 export class CommunitySanctionsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -86,6 +88,42 @@ export class CommunitySanctionsService {
     });
     throw new ForbiddenException(
       `Your community access is suspended until ${until} for breaking our Community Guidelines.`,
+    );
+  }
+
+  /**
+   * Per-user cap on reports filed in a rolling 24 hours, across posts,
+   * comments and community items. A real reporter never comes close; the cap
+   * stops one account from mass-flagging (and, past AUTO_HIDE_THRESHOLD,
+   * mass-hiding) content. Throws 429 quota_exceeded with retryAfterSeconds.
+   */
+  async assertCanReport(userId: string, now: Date = new Date()): Promise<void> {
+    const since = new Date(now.getTime() - DAY_MS);
+    const where = { reporterUserId: userId, createdAt: { gte: since } };
+    const args = { where, _count: { _all: true }, _min: { createdAt: true } } as const;
+    const [posts, comments, flags] = await Promise.all([
+      this.prisma.feedPostReport.aggregate(args),
+      this.prisma.feedCommentReport.aggregate(args),
+      this.prisma.communityFlag.aggregate(args),
+    ]);
+    const parts = [posts, comments, flags];
+    const count = parts.reduce((n, p) => n + p._count._all, 0);
+    if (count < REPORT_DAILY_CAP) return;
+
+    const oldest = parts
+      .map((p) => p._min.createdAt)
+      .filter((d): d is Date => d !== null)
+      .reduce((m, d) => (d < m ? d : m), now);
+    const retryAfterSeconds = Math.max(60, Math.ceil((oldest.getTime() + DAY_MS - now.getTime()) / 1000));
+    throw new HttpException(
+      {
+        statusCode: HttpStatus.TOO_MANY_REQUESTS,
+        error: 'quota_exceeded',
+        code: 'quota_exceeded',
+        message: `You've reached the limit of ${REPORT_DAILY_CAP} reports in 24 hours. Our moderators review every report; please try again later.`,
+        retryAfterSeconds,
+      },
+      HttpStatus.TOO_MANY_REQUESTS,
     );
   }
 }

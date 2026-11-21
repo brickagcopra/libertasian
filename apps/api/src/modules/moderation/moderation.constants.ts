@@ -57,7 +57,9 @@ export type ModerationActionType =
   | 'warn'
   | 'suspend'
   | 'ban'
-  | 'revoke_sanction';
+  | 'revoke_sanction'
+  | 'appeal_granted'
+  | 'appeal_denied';
 
 /**
  * Distinct open reporters at which a post or comment is hidden pending review.
@@ -83,3 +85,15 @@ export const TARGET_LABELS: Record<ModerationTargetType, string> = {
 export const QUEUE_SCAN_LIMIT = 5000;
 /** Resolved cases are listed from this many days back. */
 export const RESOLVED_LOOKBACK_DAYS = 90;
+
+/** Reports one user may file in a rolling 24 hours (all report types). */
+export const REPORT_DAILY_CAP = 20;
+
+/** Decisions an author can appeal, and for how long after the decision. */
+export const APPEALABLE_ACTIONS: readonly ModerationActionType[] = ['remove', 'suspend', 'ban'];
+export const APPEAL_WINDOW_DAYS = 30;
+export const APPEAL_STATUSES = ['open', 'granted', 'denied'] as const;
+export type AppealStatus = (typeof APPEAL_STATUSES)[number];
+
+/** Upper bound on cases in one bulk decision. */
+export const BULK_MAX_CASES = 50;

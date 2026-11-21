@@ -32,6 +32,7 @@ function makePrisma() {
     moderationAction: model(),
     communitySanction: model(),
     user: model(),
+    moderationAppeal: model(),
     $transaction: jest.fn(),
   };
   prisma.$transaction.mockImplementation((fn: (tx: unknown) => unknown) => fn(prisma));
@@ -154,7 +155,7 @@ describe('ModerationService', () => {
       });
       expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'moderation.remove', entityId: POST }));
       expect(notificationCenter.createNotification).toHaveBeenCalledWith(
-        expect.objectContaining({ userId: AUTHOR, title: 'Your post was removed', entityType: 'moderation' }),
+        expect.objectContaining({ userId: AUTHOR, title: 'Your post was removed', entityType: 'community_standing', entityId: AUTHOR }),
       );
     });
 
@@ -334,6 +335,157 @@ describe('ModerationService', () => {
     it('refuses to revoke twice', async () => {
       prisma.communitySanction.findUnique.mockResolvedValue({ id: 's1', userId: AUTHOR, revokedAt: new Date() });
       await expect(service.revokeSanction('s1', undefined, MOD)).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe('bulkResolve', () => {
+    it('decides each case independently and reports failures without stopping', async () => {
+      prisma.feedPost.findMany.mockImplementation(({ where }: { where: { id: { in: string[] } } }) =>
+        Promise.resolve(where.id.in[0] === 'own' ? [{ ...livePost(), id: 'own', authorId: MOD }] : [{ ...livePost(), id: where.id.in[0] }]),
+      );
+      prisma.feedPostReport.count.mockResolvedValue(2);
+      prisma.feedPostReport.updateMany.mockResolvedValue({ count: 2 });
+
+      const result = await service.bulkResolve(
+        {
+          decision: 'dismiss',
+          cases: [
+            { targetType: 'post', targetId: 'a' },
+            { targetType: 'post', targetId: 'own' },
+            { targetType: 'post', targetId: 'a' },
+            { targetType: 'post', targetId: 'b' },
+          ],
+        },
+        MOD,
+      );
+
+      expect(result.succeeded.map((c) => c.targetId)).toEqual(['a', 'b']);
+      expect(result.failed).toEqual([
+        { targetType: 'post', targetId: 'own', error: "You can't moderate your own content" },
+      ]);
+      expect(prisma.moderationAction.create).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('appeals', () => {
+    const ACTION = '00000000-0000-0000-0000-0000000000c1';
+    const SANCTION = '00000000-0000-0000-0000-0000000000s1';
+    const removal = (over: Record<string, unknown> = {}) => ({
+      id: ACTION,
+      action: 'remove',
+      targetType: 'post',
+      targetId: POST,
+      subjectUserId: AUTHOR,
+      reason: 'spam',
+      metadataJson: {},
+      createdAt: hoursAgo(48),
+      appeal: null,
+      ...over,
+    });
+
+    it('lists a live removal as appealable and a restored one as not', async () => {
+      prisma.moderationAction.findMany.mockResolvedValue([removal()]);
+      prisma.feedPost.findMany.mockResolvedValue([livePost('removed_by_admin')]);
+      const [d] = await service.listMyDecisions(AUTHOR);
+      expect(d).toMatchObject({ id: ACTION, inEffect: true, canAppeal: true, appeal: null });
+
+      prisma.feedPost.findMany.mockResolvedValue([livePost('published')]);
+      const [restored] = await service.listMyDecisions(AUTHOR);
+      expect(restored).toMatchObject({ inEffect: false, canAppeal: false });
+    });
+
+    it('closes the appeal window after 30 days', async () => {
+      prisma.moderationAction.findMany.mockResolvedValue([removal({ createdAt: hoursAgo(31 * 24) })]);
+      prisma.feedPost.findMany.mockResolvedValue([livePost('removed_by_admin')]);
+      await expect(service.fileAppeal(AUTHOR, ACTION, 'This was a legitimate legal discussion.')).rejects.toThrow(
+        /within 30 days/,
+      );
+    });
+
+    it('files an appeal, audits it and alerts moderators', async () => {
+      prisma.moderationAction.findMany.mockResolvedValue([removal()]);
+      prisma.feedPost.findMany.mockResolvedValue([livePost('removed_by_admin')]);
+      const out = await service.fileAppeal(AUTHOR, ACTION, '  This was a legitimate legal discussion.  ');
+      expect(prisma.moderationAppeal.create).toHaveBeenCalledWith({
+        data: { moderationActionId: ACTION, appellantUserId: AUTHOR, statement: 'This was a legitimate legal discussion.' },
+        select: { id: true },
+      });
+      expect(out).toMatchObject({ canAppeal: false, appeal: { status: 'open' } });
+      expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'moderation.appeal_filed' }));
+      expect(notifications.sendModerationAlert).toHaveBeenCalled();
+    });
+
+    it("refuses a second appeal and someone else's decision", async () => {
+      prisma.moderationAction.findMany.mockResolvedValue([
+        removal({ appeal: { id: 'ap', status: 'open', statement: 'x', decisionNote: null, createdAt: new Date(), decidedAt: null } }),
+      ]);
+      prisma.feedPost.findMany.mockResolvedValue([livePost('removed_by_admin')]);
+      await expect(service.fileAppeal(AUTHOR, ACTION, 'Please look again at this.')).rejects.toThrow(/already appealed/);
+      await expect(service.fileAppeal(AUTHOR, 'other-action', 'Please look again at this.')).rejects.toThrow(/not found/);
+    });
+
+    it('granting an appeal of a removal restores the post and logs restore + appeal_granted', async () => {
+      prisma.moderationAppeal.findUnique.mockResolvedValue({
+        id: 'ap1', appellantUserId: AUTHOR, status: 'open', moderationAction: removal(),
+      });
+      prisma.moderationAppeal.updateMany.mockResolvedValue({ count: 1 });
+      prisma.feedPost.findMany.mockResolvedValue([livePost('removed_by_admin')]);
+      prisma.feedPost.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.decideAppeal('ap1', { decision: 'grant', note: 'Fair point' }, MOD);
+
+      expect(prisma.feedPost.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { status: 'published' } }),
+      );
+      const actions = prisma.moderationAction.create.mock.calls.map((c) => c[0].data.action);
+      expect(actions).toEqual(['restore', 'appeal_granted']);
+      expect(notificationCenter.createNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: AUTHOR, title: 'Your appeal was granted' }),
+      );
+    });
+
+    it('granting an appeal of a suspension lifts the sanction', async () => {
+      prisma.moderationAppeal.findUnique.mockResolvedValue({
+        id: 'ap2',
+        appellantUserId: AUTHOR,
+        status: 'open',
+        moderationAction: removal({ action: 'suspend', targetType: 'user', targetId: AUTHOR, metadataJson: { sanctionId: SANCTION } }),
+      });
+      prisma.moderationAppeal.updateMany.mockResolvedValue({ count: 1 });
+      prisma.communitySanction.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.decideAppeal('ap2', { decision: 'grant' }, MOD);
+
+      expect(prisma.communitySanction.updateMany).toHaveBeenCalledWith({
+        where: { id: SANCTION, revokedAt: null },
+        data: { revokedAt: expect.any(Date), revokedByUserId: MOD },
+      });
+      expect(prisma.moderationAction.create.mock.calls[0][0].data).toMatchObject({
+        action: 'appeal_granted',
+        metadataJson: expect.objectContaining({ sanctionLifted: true }),
+      });
+    });
+
+    it('denying changes nothing but the appeal, and an appeal is decided once', async () => {
+      prisma.moderationAppeal.findUnique.mockResolvedValue({
+        id: 'ap3', appellantUserId: AUTHOR, status: 'open', moderationAction: removal(),
+      });
+      prisma.moderationAppeal.updateMany.mockResolvedValue({ count: 1 });
+      await service.decideAppeal('ap3', { decision: 'deny' }, MOD);
+      expect(prisma.feedPost.updateMany).not.toHaveBeenCalled();
+      expect(prisma.moderationAction.create.mock.calls.map((c) => c[0].data.action)).toEqual(['appeal_denied']);
+
+      prisma.moderationAppeal.findUnique.mockResolvedValue({
+        id: 'ap3', appellantUserId: AUTHOR, status: 'denied', moderationAction: removal(),
+      });
+      await expect(service.decideAppeal('ap3', { decision: 'grant' }, MOD)).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it("refuses a moderator deciding their own appeal", async () => {
+      prisma.moderationAppeal.findUnique.mockResolvedValue({
+        id: 'ap4', appellantUserId: MOD, status: 'open', moderationAction: removal({ subjectUserId: MOD }),
+      });
+      await expect(service.decideAppeal('ap4', { decision: 'grant' }, MOD)).rejects.toBeInstanceOf(ForbiddenException);
     });
   });
 });

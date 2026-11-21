@@ -9,9 +9,12 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { MfaGuard } from '../../common/guards/mfa.guard';
 import { PlatformPermissionsGuard } from '../../common/guards/platform-permissions.guard';
 import {
+  BulkResolveDto,
   CaseParamsDto,
   CreateSanctionDto,
   CursorQueryDto,
+  DecideAppealDto,
+  ListAppealsQueryDto,
   ListCasesQueryDto,
   ListSanctionsQueryDto,
   NoteDto,
@@ -59,6 +62,31 @@ export class ModerationController {
       success: true,
       data: await this.moderation.resolveCase(params.targetType, params.targetId, dto, user.sub),
     };
+  }
+
+  @Post('cases/bulk-resolve')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Dismiss or remove up to 50 cases at once; reports per-case failures' })
+  async bulkResolve(@CurrentUser() user: JwtPayload, @Body() dto: BulkResolveDto) {
+    return { success: true, data: await this.moderation.bulkResolve(dto, user.sub) };
+  }
+
+  @Get('appeals')
+  @ApiOperation({ summary: 'Author appeals; open (oldest first) unless status is given' })
+  async listAppeals(@Query() query: ListAppealsQueryDto) {
+    const result = await this.moderation.listAppeals({ status: query.status, limit: query.limit, cursor: query.cursor });
+    return { success: true, data: result.items, meta: { hasNext: result.hasNext, nextCursor: result.nextCursor } };
+  }
+
+  @Post('appeals/:id/decide')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Grant (restore content / lift sanction) or deny an appeal' })
+  async decideAppeal(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: DecideAppealDto,
+  ) {
+    return { success: true, data: await this.moderation.decideAppeal(id, dto, user.sub) };
   }
 
   @Post('content/:targetType/:targetId/restore')

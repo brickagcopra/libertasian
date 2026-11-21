@@ -14,6 +14,7 @@ import { ModerationService } from '../moderation/moderation.service';
 const mockSanctions = {
   assertCanParticipate: jest.fn(),
   assertCanPublish: jest.fn(),
+  assertCanReport: jest.fn(),
 };
 const mockModeration = { onReportFiled: jest.fn() };
 

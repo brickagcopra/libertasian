@@ -10,7 +10,12 @@ import {
 
 import { apiClient } from '@/lib/api-client';
 import type {
+  AppealStatus,
+  BulkResolveInput,
+  BulkResolveResult,
   CreateSanctionInput,
+  DecideAppealInput,
+  ModerationAppeal,
   CursorMeta,
   ModerationActionEntry,
   ModerationAuthorProfile,
@@ -49,6 +54,7 @@ export const moderationKeys = {
   user: (userId: string) => [...moderationKeys.all, 'user', userId] as const,
   sanctions: (active: boolean) => [...moderationKeys.all, 'sanctions', active] as const,
   log: () => [...moderationKeys.all, 'log'] as const,
+  appeals: (status: AppealStatus) => [...moderationKeys.all, 'appeals', status] as const,
 };
 
 export interface CasesPage {
@@ -131,7 +137,24 @@ export function fetchModerationLog(cursor?: string): Promise<CursorPage<Moderati
   return fetchCursorPage<ModerationActionEntry>(`${BASE}/log`, {}, cursor);
 }
 
+export function fetchModerationAppeals(
+  status: AppealStatus,
+  cursor?: string,
+): Promise<CursorPage<ModerationAppeal>> {
+  return fetchCursorPage<ModerationAppeal>(`${BASE}/appeals`, { status }, cursor);
+}
+
 // ---- Queries ----
+
+export function useModerationAppeals(status: AppealStatus) {
+  return useInfiniteQuery({
+    queryKey: moderationKeys.appeals(status),
+    queryFn: ({ pageParam }) => fetchModerationAppeals(status, pageParam),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) =>
+      last.meta.hasNext && last.meta.nextCursor ? last.meta.nextCursor : undefined,
+  });
+}
 
 export function useModerationStats() {
   return useQuery({
@@ -251,6 +274,31 @@ export function useRevokeSanction() {
     mutationFn: async ({ sanctionId, input }: { sanctionId: string; input: RevokeSanctionInput }) => {
       const res = await apiClient.post<Envelope<ModerationSanction>>(
         `${BASE}/sanctions/${encodeURIComponent(sanctionId)}/revoke`,
+        input,
+      );
+      return res.data;
+    },
+    onSuccess: () => invalidate(),
+  });
+}
+
+export function useBulkResolve() {
+  const invalidate = useInvalidateModeration();
+  return useMutation({
+    mutationFn: async (input: BulkResolveInput) => {
+      const res = await apiClient.post<Envelope<BulkResolveResult>>(`${BASE}/cases/bulk-resolve`, input);
+      return res.data;
+    },
+    onSuccess: () => invalidate(),
+  });
+}
+
+export function useDecideAppeal() {
+  const invalidate = useInvalidateModeration();
+  return useMutation({
+    mutationFn: async ({ appealId, input }: { appealId: string; input: DecideAppealInput }) => {
+      const res = await apiClient.post<Envelope<ModerationAppeal>>(
+        `${BASE}/appeals/${encodeURIComponent(appealId)}/decide`,
         input,
       );
       return res.data;

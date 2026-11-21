@@ -747,6 +747,7 @@ export class CommunityService {
   // =========================================================================
 
   async createFlag(userId: string, dto: CreateCommunityFlagDto) {
+    await this.sanctions.assertCanReport(userId);
     const flag = await this.prisma.communityFlag.create({
       data: {
         reporterUserId: userId,
