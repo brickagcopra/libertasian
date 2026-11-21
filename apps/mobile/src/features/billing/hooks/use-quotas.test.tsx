@@ -59,7 +59,7 @@ function wrapper() {
 describe('useQuotaUsage — envelope unwrapping', () => {
   beforeEach(() => {
     jest.restoreAllMocks();
-    storage.delete(STORAGE_KEYS.ENTITLED_SURFACES);
+    storage.remove(STORAGE_KEYS.ENTITLED_SURFACES);
   });
 
   it('returns the payload apiClient already unwrapped, not undefined', async () => {
@@ -107,7 +107,7 @@ describe('useQuotaUsage — envelope unwrapping', () => {
 describe('useFreemiumSurfacesSync — writes MMKV for a real response', () => {
   beforeEach(() => {
     jest.restoreAllMocks();
-    storage.delete(STORAGE_KEYS.ENTITLED_SURFACES);
+    storage.remove(STORAGE_KEYS.ENTITLED_SURFACES);
   });
 
   it('persists the surface blob end to end, from apiClient to MMKV', async () => {

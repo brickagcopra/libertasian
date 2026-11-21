@@ -223,7 +223,7 @@ export default function CodalListScreen() {
                   color="#1a56db"
                   style={styles.footerLoader}
                 />
-              ) : null
+              ) : undefined
             }
           />
         )}

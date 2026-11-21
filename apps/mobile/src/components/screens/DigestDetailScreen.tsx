@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import type { ReactNode, Ref } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, View, type ScrollViewInstance } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Photo } from '@/components/ui/Photo';
 import { StickyCTA } from '@/components/ui/StickyCTA';
@@ -71,7 +71,7 @@ export interface DigestDetailScreenProps {
    */
   customSections?: ReactNode;
   /** Ref to the content ScrollView (e.g. for read-along auto-follow). */
-  scrollRef?: Ref<ScrollView>;
+  scrollRef?: Ref<ScrollViewInstance>;
   /** Fires when the user starts dragging the content (not on programmatic scrolls). */
   onScrollBeginDrag?: () => void;
   /** Slot rendered after the body (e.g. timestamps). */

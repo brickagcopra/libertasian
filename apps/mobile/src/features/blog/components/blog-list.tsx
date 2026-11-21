@@ -69,7 +69,7 @@ export function BlogList({
       ListFooterComponent={
         isFetchingNextPage ? (
           <ActivityIndicator size="small" color="#1a56db" style={styles.footer} />
-        ) : null
+        ) : undefined
       }
       ListEmptyComponent={
         <View style={styles.emptyContainer}>

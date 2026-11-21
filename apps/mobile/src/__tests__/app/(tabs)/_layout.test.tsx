@@ -57,8 +57,8 @@ jest.mock('@expo/vector-icons', () => ({
 import TabsLayout from '@/app/(tabs)/_layout';
 import { setEntitled, setFreeTier } from '@/features/entitlements/test-helpers';
 
-const hiddenOf = (el: { props: { children: string } }): boolean =>
-  JSON.parse(el.props.children).hidden;
+const hiddenOf = (el: { props: { children?: unknown } }): boolean =>
+  (JSON.parse(String(el.props.children)) as { hidden: boolean }).hidden;
 
 describe('TabsLayout', () => {
   beforeEach(() => {

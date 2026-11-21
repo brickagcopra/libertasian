@@ -35,7 +35,7 @@ export function setEntitled(): void {
 
 /** Nothing paid visible — a free account. Also the default with no key set. */
 export function setFreeTier(): void {
-  storage.delete(STORAGE_KEYS.ENTITLED_SURFACES);
+  storage.remove(STORAGE_KEYS.ENTITLED_SURFACES);
 }
 
 /**

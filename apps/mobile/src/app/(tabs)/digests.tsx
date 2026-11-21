@@ -569,13 +569,13 @@ export default function DigestsTab() {
         ListFooterComponent={
           isFetchingNextPage ? (
             <ActivityIndicator style={styles.footerSpinner} color="#1a56db" />
-          ) : null
+          ) : undefined
         }
         refreshControl={
           isSearching ? undefined : (
             <RefreshControl
               refreshing={isFetching && !isLoading && !isFetchingNextPage}
-              onRefresh={() => refetch()}
+              onRefresh={() => void refetch()}
               colors={['#1a56db']}
             />
           )

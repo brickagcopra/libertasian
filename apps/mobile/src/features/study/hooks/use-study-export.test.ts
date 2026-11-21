@@ -9,7 +9,7 @@ jest.mock('../../../lib/api-client', () => ({
   apiClient: { getDownloadUrl: jest.fn() },
 }));
 
-jest.mock('expo-file-system', () => ({
+jest.mock('expo-file-system/legacy', () => ({
   cacheDirectory: '/cache/',
   downloadAsync: jest.fn().mockResolvedValue({ status: 200, uri: '/cache/test.pdf' }),
 }), { virtual: true });

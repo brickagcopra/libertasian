@@ -1,3 +1,4 @@
+import type { ComponentRef } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Animated,
@@ -7,8 +8,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  View,
-} from 'react-native';
+  View, type ScrollViewInstance } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Chip } from '@/components/ui/Chip';
 import { Input } from '@/components/ui/Input';
@@ -63,7 +63,7 @@ export function ChatScreen() {
     { id: 'greeting', role: 'bot', text: GREETING },
   ]);
 
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ScrollViewInstance>(null);
   const messageCount = useRef(0);
   const mountedRef = useRef(true);
 

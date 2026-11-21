@@ -136,7 +136,12 @@ describe('streamAiAnswer — 401 refresh and retry', () => {
     await streamAiAnswer({ query: 'q' }, handlers, new AbortController().signal);
 
     expect(attemptRefresh).toHaveBeenCalledTimes(1);
-    expect(globalFetch).not.toHaveBeenCalled();
+    // SDK 55+ installs expo/fetch AS the global fetch, so the global sees the
+    // stream's own requests; what must never appear is a refresh call.
+    const globalRefreshCalls = globalFetch.mock.calls.filter(([url]) =>
+      String(url).includes('/auth/refresh'),
+    );
+    expect(globalRefreshCalls).toHaveLength(0);
     const refreshCalls = mockExpoFetch.mock.calls.filter(([url]) =>
       String(url).includes('/auth/refresh'),
     );

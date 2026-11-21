@@ -246,7 +246,7 @@ export default function ClassificationScreen() {
                 color="#1a56db"
               />
             </View>
-          ) : null
+          ) : undefined
         }
         ListEmptyComponent={
           <View style={styles.emptyState}>

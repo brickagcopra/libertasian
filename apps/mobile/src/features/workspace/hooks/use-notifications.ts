@@ -15,7 +15,7 @@ import type {
 
 export function useNotificationSocket(isAuthenticated: boolean) {
   const queryClient = useQueryClient();
-  const appStateRef = useRef(AppState.currentState);
+  const appStateRef = useRef<string>(AppState.currentState ?? 'active');
 
   useEffect(() => {
     if (!isAuthenticated) {

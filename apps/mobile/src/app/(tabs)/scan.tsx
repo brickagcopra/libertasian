@@ -147,7 +147,7 @@ function ScanTabScreen() {
           renderItem={renderItem}
           contentContainerStyle={styles.listContent}
           refreshControl={
-            <RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor="#1a56db" />
+            <RefreshControl refreshing={isRefetching} onRefresh={() => void refetch()} tintColor="#1a56db" />
           }
           ListEmptyComponent={
             <View style={styles.emptyState}>

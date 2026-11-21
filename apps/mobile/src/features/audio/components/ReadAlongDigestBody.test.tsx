@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from '@testing-library/react-native';
 import React from 'react';
-import type { ScrollView } from 'react-native';
+import type { ScrollViewInstance } from 'react-native';
 
 import type { DigestSection } from '@/components/screens/DigestDetailScreen';
 import { ReadAlongDigestBody } from './ReadAlongDigestBody';
@@ -26,7 +26,7 @@ const CONTENT_KEY = 'digest:d1';
 const URL = 'https://s3.example.com/readalong.json?sig=abc';
 
 const mockFetch = jest.fn();
-const scrollRef = { current: null as ScrollView | null };
+const scrollRef = { current: null as ScrollViewInstance | null };
 
 function renderBody() {
   return render(

@@ -1,3 +1,4 @@
+import type { ComponentRef } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -8,8 +9,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  View,
-} from 'react-native';
+  View, type ScrollViewInstance } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 import { Input } from '@/components/ui/Input';
@@ -43,7 +43,7 @@ export function DocumentChatSheet({
 }: DocumentChatSheetProps) {
   const { theme } = useTheme();
   const [input, setInput] = useState('');
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ScrollViewInstance>(null);
 
   const { turns, isStreaming, atLimit, quota, send } = useDocumentChat(documentId);
 

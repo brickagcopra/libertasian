@@ -39,7 +39,7 @@ const FREE_TIER: FreemiumSurfaces = {
 };
 
 beforeEach(() => {
-  storage.delete(STORAGE_KEYS.ENTITLED_SURFACES);
+  storage.remove(STORAGE_KEYS.ENTITLED_SURFACES);
   mockUseQuotaUsage.mockReturnValue({ data: undefined });
 });
 

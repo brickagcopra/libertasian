@@ -48,7 +48,7 @@ const ALL_VISIBLE = {
 };
 
 beforeEach(() => {
-  storage.delete(STORAGE_KEYS.ENTITLED_SURFACES);
+  storage.remove(STORAGE_KEYS.ENTITLED_SURFACES);
 });
 
 /**

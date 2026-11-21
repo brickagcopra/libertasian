@@ -4,11 +4,11 @@ jest.mock('react-native-mmkv', () => {
     getBoolean: jest.fn(),
     getNumber: jest.fn(),
     set: jest.fn(),
-    delete: jest.fn(),
+    remove: jest.fn(),
     contains: jest.fn(),
     clearAll: jest.fn(),
   };
-  return { MMKV: jest.fn(() => inst), __mockInstance: inst };
+  return { createMMKV: jest.fn(() => inst), __mockInstance: inst };
 });
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -18,7 +18,7 @@ const { __mockInstance: m } = require('react-native-mmkv') as {
     getBoolean: jest.Mock;
     getNumber: jest.Mock;
     set: jest.Mock;
-    delete: jest.Mock;
+    remove: jest.Mock;
     contains: jest.Mock;
     clearAll: jest.Mock;
   };
@@ -31,7 +31,7 @@ beforeEach(() => {
   m.getBoolean.mockReset();
   m.getNumber.mockReset();
   m.set.mockReset();
-  m.delete.mockReset();
+  m.remove.mockReset();
   m.contains.mockReset();
   m.clearAll.mockReset();
 });
@@ -146,7 +146,7 @@ describe('mmkvStorage.setNumber', () => {
 describe('mmkvStorage.delete', () => {
   it('deletes a key', () => {
     mmkvStorage.delete('old-key');
-    expect(m.delete).toHaveBeenCalledWith('old-key');
+    expect(m.remove).toHaveBeenCalledWith('old-key');
   });
 });
 

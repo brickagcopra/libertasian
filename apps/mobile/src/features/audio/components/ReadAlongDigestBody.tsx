@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, type RefObject } from 'react';
-import { Text, View, type ScrollView } from 'react-native';
+import { useEffect, useMemo, useRef, type ComponentRef, type RefObject } from 'react';
+import { Text, View, ScrollView, type ScrollViewInstance } from 'react-native';
 
 import {
   DigestPlainSections,
@@ -65,7 +65,7 @@ interface ReadAlongSectionsProps {
   contentKey: string;
   sections: DigestSection[];
   segments: ReadAlongSegment[];
-  scrollRef: RefObject<ScrollView | null>;
+  scrollRef: RefObject<ScrollViewInstance | null>;
 }
 
 /**
@@ -102,7 +102,7 @@ function ReadAlongSections({
 
   // Scrollable block per section (`sectionKey`) and paragraph run
   // (`sectionKey:paragraphIndex`); headings map to their section block.
-  const blockRefs = useRef(new Map<string, View | null>());
+  const blockRefs = useRef(new Map<string, ComponentRef<typeof View> | null>());
   const blockKeyBySegId = useMemo(() => {
     const map = new Map<string, string>();
     for (const [sectionKey, group] of groups) {
@@ -217,7 +217,7 @@ interface ReadAlongDigestBodyProps {
   /** The screen's sections, keyed to match the server manifest sectionKeys. */
   sections: DigestSection[];
   /** Ref to the DigestDetailScreen ScrollView, for auto-follow. */
-  scrollRef: RefObject<ScrollView | null>;
+  scrollRef: RefObject<ScrollViewInstance | null>;
 }
 
 /**

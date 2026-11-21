@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Audio, type AVPlaybackStatus } from 'expo-av';
+import { createAudioPlayer, type AudioPlayer, type AudioStatus } from 'expo-audio';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -79,7 +79,7 @@ interface SeekBarProps {
 
 /**
  * Dependency-free seek slider: a pan-responder track (tap or drag to seek).
- * Avoids pulling in another native module alongside expo-av.
+ * Avoids pulling in another native module alongside expo-audio.
  */
 function SeekBar({ positionMs, durationMs, onSeek, trackColor, fillColor }: SeekBarProps) {
   const widthRef = useRef(0);
@@ -127,6 +127,18 @@ function SeekBar({ positionMs, durationMs, onSeek, trackColor, fillColor }: Seek
   );
 }
 
+
+/** Detach listeners and free the native player (expo-audio has no unload). */
+function releasePlayer(player: AudioPlayer): void {
+  try {
+    player.removeAllListeners('playbackStatusUpdate');
+    player.pause();
+    player.remove();
+  } catch {
+    /* already released */
+  }
+}
+
 /**
  * Mobile "Listen" player for a digest, bar answer, or one section of a
  * statutory document. Ports the web player at
@@ -141,7 +153,7 @@ function SeekBar({ positionMs, durationMs, onSeek, trackColor, fillColor }: Seek
  * Strictly defers the audio fetch until the user taps Listen: the first
  * not-ready GET enqueues paid TTS synthesis server-side, so fetching on mount
  * would silently spend money. While synthesis is pending it shows a spinner
- * and polls; when ready it streams the presigned S3 URL with expo-av (no auth
+ * and polls; when ready it streams the presigned S3 URL with expo-audio (no auth
  * header — the URL itself is the credential, TTL 300s).
  *
  * Signed-URL expiry recovery: if playback errors mid-stream we remember the
@@ -167,7 +179,7 @@ export function AudioPlayerBar({
   const [rate, setRate] = useState<number>(1);
   const [playbackError, setPlaybackError] = useState(false);
 
-  const soundRef = useRef<Audio.Sound | null>(null);
+  const soundRef = useRef<AudioPlayer | null>(null);
   const rateRef = useRef(1);
   const positionRef = useRef(0);
   const isPlayingRef = useRef(false);
@@ -209,7 +221,7 @@ export function AudioPlayerBar({
   if (focusHandleRef.current == null) {
     focusHandleRef.current = {
       pause: () => {
-        void soundRef.current?.pauseAsync().catch(() => undefined);
+        soundRef.current?.pause();
       },
     };
   }
@@ -237,17 +249,20 @@ export function AudioPlayerBar({
   }, [contentType, contentId, queryClient]);
 
   const handleStatus = useCallback(
-    (status: AVPlaybackStatus) => {
-      if (!status.isLoaded) {
-        if (status.error) recoverFromPlaybackError();
+    (status: AudioStatus) => {
+      if (status.error) {
+        recoverFromPlaybackError();
         return;
       }
-      isPlayingRef.current = status.isPlaying;
-      positionRef.current = status.positionMillis;
-      setIsPlaying(status.isPlaying);
-      setPositionMs(status.positionMillis);
-      if (typeof status.durationMillis === 'number') {
-        setSoundDurationMs(status.durationMillis);
+      if (!status.isLoaded) return;
+      // expo-audio reports seconds; everything downstream works in ms.
+      const positionMillis = Math.round(status.currentTime * 1000);
+      isPlayingRef.current = status.playing;
+      positionRef.current = positionMillis;
+      setIsPlaying(status.playing);
+      setPositionMs(positionMillis);
+      if (Number.isFinite(status.duration) && status.duration > 0) {
+        setSoundDurationMs(Math.round(status.duration * 1000));
       }
       if (status.didJustFinish) {
         isPlayingRef.current = false;
@@ -257,11 +272,11 @@ export function AudioPlayerBar({
       if (readAlongKey) {
         readAlongStore.setState({
           contentKey: readAlongKey,
-          positionMillis: status.positionMillis,
+          positionMillis,
           isPlaying: isPlayingRef.current,
           // Latches true on first play; the body only upgrades to the
           // read-along rendering after playback has actually started.
-          ...(status.isPlaying ? { hasStarted: true } : {}),
+          ...(status.playing ? { hasStarted: true } : {}),
         });
       }
     },
@@ -278,10 +293,7 @@ export function AudioPlayerBar({
 
       const previous = soundRef.current;
       soundRef.current = null;
-      if (previous) {
-        previous.setOnPlaybackStatusUpdate(null);
-        await previous.unloadAsync().catch(() => undefined);
-      }
+      if (previous) releasePlayer(previous);
 
       const resume = resumeRef.current;
       resumeRef.current = null;
@@ -294,22 +306,19 @@ export function AudioPlayerBar({
       if (shouldAutoStart) autoStartedRef.current = true;
 
       try {
-        const { sound } = await Audio.Sound.createAsync(
-          { uri: audioUrl },
-          {
-            shouldPlay,
-            positionMillis: resume?.atMs ?? 0,
-            rate: rateRef.current,
-            shouldCorrectPitch: true,
-            progressUpdateIntervalMillis: 250,
-          },
-          handleStatus,
-        );
+        const sound = createAudioPlayer({ uri: audioUrl }, { updateInterval: 250 });
+        sound.addListener('playbackStatusUpdate', handleStatus);
         if (cancelled) {
-          sound.setOnPlaybackStatusUpdate(null);
-          await sound.unloadAsync().catch(() => undefined);
+          releasePlayer(sound);
           return;
         }
+        sound.setPlaybackRate(rateRef.current, 'high');
+        if (resume?.atMs) await sound.seekTo(resume.atMs / 1000);
+        if (cancelled) {
+          releasePlayer(sound);
+          return;
+        }
+        if (shouldPlay) sound.play();
         soundRef.current = sound;
         setPlaybackError(false);
         if (resume) {
@@ -343,10 +352,7 @@ export function AudioPlayerBar({
       releaseAudioFocus(focusHandle);
       const sound = soundRef.current;
       soundRef.current = null;
-      if (sound) {
-        sound.setOnPlaybackStatusUpdate(null);
-        void sound.unloadAsync().catch(() => undefined);
-      }
+      if (sound) releasePlayer(sound);
       if (readAlongKey) readAlongStore.reset(readAlongKey);
     },
     [focusHandle, readAlongKey],
@@ -356,17 +362,21 @@ export function AudioPlayerBar({
     const sound = soundRef.current;
     if (!sound) return;
     if (isPlayingRef.current) {
-      void sound.pauseAsync().catch(() => undefined);
+      sound.pause();
     } else {
       claimAudioFocus(focusHandle);
-      void sound.playAsync().catch(() => recoverFromPlaybackError());
+      try {
+        sound.play();
+      } catch {
+        recoverFromPlaybackError();
+      }
     }
   }, [focusHandle, recoverFromPlaybackError]);
 
   const handleSeek = useCallback((ms: number) => {
     positionRef.current = ms;
     setPositionMs(ms);
-    void soundRef.current?.setPositionAsync(ms).catch(() => undefined);
+    void soundRef.current?.seekTo(ms / 1000).catch(() => undefined);
   }, []);
 
   const cycleRate = useCallback(() => {
@@ -374,7 +384,7 @@ export function AudioPlayerBar({
     const next = PLAYBACK_RATES[(idx + 1) % PLAYBACK_RATES.length] ?? 1;
     rateRef.current = next;
     setRate(next);
-    void soundRef.current?.setRateAsync(next, true).catch(() => undefined);
+    soundRef.current?.setPlaybackRate(next, 'high');
   }, []);
 
   const handleManualRetry = useCallback(() => {

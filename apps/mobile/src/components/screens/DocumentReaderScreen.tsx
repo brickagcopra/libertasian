@@ -1,7 +1,8 @@
+import type { ComponentRef } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useCallback, useMemo, useRef, type ReactNode } from 'react';
-import { Pressable, ScrollView, Text, View, type LayoutChangeEvent } from 'react-native';
+import { Pressable, ScrollView, Text, View, type LayoutChangeEvent, type ScrollViewInstance } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { HeaderAmbient } from '@/components/ui/HeaderAmbient';
 import { topInsetPadding, bottomInsetPaddingStacked } from '@/lib/safe-area';
@@ -178,7 +179,7 @@ export function DocumentReaderScreen({
   // Focus scroll: the section's y (relative to the scroll content) plus, when
   // the section holds a pinpoint, that paragraph's y within the section. The
   // two onLayout events can arrive in either order, so each one retries.
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ScrollViewInstance>(null);
   const focus = useRef<{ key: string | null; sectionY?: number; paraY?: number; done: boolean }>({
     key: null,
     done: false,

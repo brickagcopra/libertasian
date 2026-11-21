@@ -1,5 +1,6 @@
+import type { ComponentRef } from 'react';
 import { useMemo, useRef } from 'react';
-import { ActivityIndicator, Alert, Pressable, Share, Text, View, type ScrollView } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, Share, Text, View, type ScrollViewInstance } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import {
@@ -143,7 +144,7 @@ export default function DigestDetailRoute() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const digestId = id ?? '';
 
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ScrollViewInstance>(null);
   const { data: digest, isLoading, error } = useDigest(digestId);
 
   const sections = useMemo(

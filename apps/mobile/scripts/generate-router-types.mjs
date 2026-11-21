@@ -33,7 +33,12 @@ process.env['EXPO_ROUTER_APP_ROOT'] = appRoot;
 
 const { EXPO_ROUTER_CTX_IGNORE } = require('expo-router/_ctx-shared');
 const requireContext = require('expo-router/build/testing-library/require-context-ponyfill').default;
-const { getTypedRoutesDeclarationFile } = require('expo-router/build/typed-routes/generate');
+// SDK 55+ moved the generator out of expo-router into @expo/router-server,
+// which is not a direct dependency: resolve it from expo-router's own tree.
+const routerRequire = createRequire(require.resolve('expo-router/package.json'));
+const { getTypedRoutesDeclarationFile } = routerRequire(
+  '@expo/router-server/build/typed-routes/generate',
+);
 
 const ctx = requireContext(appRoot, true, EXPO_ROUTER_CTX_IGNORE);
 const routeCount = ctx.keys().length;

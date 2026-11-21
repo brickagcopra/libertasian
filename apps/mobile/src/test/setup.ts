@@ -1,3 +1,29 @@
+// Expo's winter runtime installs lazy globals whose getters `require()` a module
+// on first read. Jest reads some of them (`__ExpoImportMetaRegistry`,
+// `structuredClone`) outside a test's module scope, which fails every suite
+// with "You are trying to `import` a file outside of the scope of the test
+// code". Resolve both eagerly here so the lazy getters never fire under jest.
+jest.mock('expo/src/winter/ImportMetaRegistry', () => ({
+  ImportMetaRegistry: {
+    get url() {
+      return null;
+    },
+  },
+}));
+// react-native-mmkv v4 imports Nitro at module load, and the Nitro TurboModule
+// does not exist under jest. MMKV itself swaps in an in-memory store when it
+// sees JEST_WORKER_ID, so only the import needs to resolve.
+jest.mock('react-native-nitro-modules', () => ({
+  NitroModules: {
+    createHybridObject: jest.fn(() => {
+      throw new Error('NitroModules are unavailable under jest');
+    }),
+  },
+}));
+if (typeof globalThis.structuredClone !== 'function') {
+  globalThis.structuredClone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+}
+
 /* eslint-disable @typescript-eslint/no-empty-function */
 
 // Mock expo-secure-store
@@ -39,34 +65,20 @@ jest.mock('expo-sharing', () => ({
   shareAsync: jest.fn().mockResolvedValue(undefined),
 }));
 
-// Mock expo-av — the audio player streams via Audio.Sound; the native module
-// (ExponentAV) is undefined under jest, so provide a loadable sound stub.
-jest.mock('expo-av', () => {
-  const createSoundStub = () => ({
-    playAsync: jest.fn().mockResolvedValue({ isLoaded: true }),
-    pauseAsync: jest.fn().mockResolvedValue({ isLoaded: true }),
-    unloadAsync: jest.fn().mockResolvedValue({ isLoaded: false }),
-    setPositionAsync: jest.fn().mockResolvedValue({ isLoaded: true }),
-    setRateAsync: jest.fn().mockResolvedValue({ isLoaded: true }),
-    getStatusAsync: jest.fn().mockResolvedValue({ isLoaded: true, isPlaying: false }),
-    setOnPlaybackStatusUpdate: jest.fn(),
-  });
-  return {
-    Audio: {
-      setAudioModeAsync: jest.fn().mockResolvedValue(undefined),
-      Sound: {
-        createAsync: jest.fn().mockImplementation(() =>
-          Promise.resolve({ sound: createSoundStub(), status: { isLoaded: true } }),
-        ),
-      },
-    },
-    // audio-session passes the interruption modes explicitly; without these
-    // enums on the mock the import resolves to undefined and every suite that
-    // reaches a player fails to load.
-    InterruptionModeIOS: { MixWithOthers: 0, DoNotMix: 1, DuckOthers: 2 },
-    InterruptionModeAndroid: { DoNotMix: 1, DuckOthers: 2 },
-  };
-});
+// Mock expo-audio — the audio player streams via createAudioPlayer; the
+// native module is undefined under jest, so provide a player stub.
+jest.mock('expo-audio', () => ({
+  createAudioPlayer: jest.fn().mockImplementation(() => ({
+    play: jest.fn(),
+    pause: jest.fn(),
+    remove: jest.fn(),
+    seekTo: jest.fn().mockResolvedValue(undefined),
+    setPlaybackRate: jest.fn(),
+    addListener: jest.fn(() => ({ remove: jest.fn() })),
+    removeAllListeners: jest.fn(),
+  })),
+  setAudioModeAsync: jest.fn().mockResolvedValue(undefined),
+}));
 
 // Mock expo/fetch — the transport behind the AI-answer stream client. Importing
 // it binds to the native ExpoFetchModule, which is undefined under jest, so any
@@ -112,9 +124,23 @@ jest.mock('expo-constants', () => ({
   },
 }));
 
-// Mock react-native Alert
+// Mock react-native Alert. RN 0.80+ reads the module's `default` export.
 jest.mock('react-native/Libraries/Alert/Alert', () => ({
-  alert: jest.fn(),
+  __esModule: true,
+  default: { alert: jest.fn(), prompt: jest.fn() },
+}));
+
+// RN 0.88's jest preset leaves AppState.addEventListener returning undefined,
+// so every `subscription.remove()` cleanup throws on unmount.
+jest.mock('react-native/Libraries/AppState/AppState', () => ({
+  __esModule: true,
+  default: {
+    currentState: 'active',
+    isAvailable: true,
+    // A plain function, not jest.fn: tests spyOn + mockRestore it, and a
+    // restored jest.fn loses its implementation for the next test.
+    addEventListener: () => ({ remove: () => undefined }),
+  },
 }));
 
 // Mock expo-apple-authentication — native Sign in with Apple module is
