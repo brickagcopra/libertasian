@@ -18,6 +18,7 @@ import { ChatMessage } from '../../chat/components/ChatMessage';
 import { useDocumentChat, type ChatTurn } from '../hooks/use-document-chat';
 import { dedupeSources, formatAnswerText } from '../format-answer-text';
 import { SourceCard } from './source-card';
+import { AI_CONSENT_DECLINED_MESSAGE } from '../../ai-consent/ai-consent';
 
 interface DocumentChatSheetProps {
   visible: boolean;
@@ -197,7 +198,9 @@ function TurnView({ turn, isStreaming }: { turn: ChatTurn; isStreaming: boolean 
           : turn.errorKind === 'quota'
             ? // Neutral: see the at-limit note above.
               'You’ve reached your AI answer limit for now. Try again later.'
-            : 'That answer could not be completed. Try again.'}
+            : turn.errorKind === 'consent'
+              ? AI_CONSENT_DECLINED_MESSAGE
+              : 'That answer could not be completed. Try again.'}
       </Text>
     );
   }

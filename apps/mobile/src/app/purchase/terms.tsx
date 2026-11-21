@@ -41,6 +41,10 @@ const SECTIONS: { heading: string; body: string }[] = [
     body: 'LIBERTASIAN provides legal research assistance. It is not legal advice and does not create a lawyer-client relationship. Verify every authority against its official source before relying on it. Accounts are for one person; sharing credentials or redistributing generated content in bulk is not permitted.',
   },
   {
+    heading: 'Community content: zero tolerance',
+    body: 'Posts, comments, reviews and other content you share with the community must follow these terms. There is zero tolerance for objectionable content or abusive users: harassment, threats, hate speech, sexually explicit material, spam, and unlawful content are not allowed. We filter objectionable language, remove content that violates these terms, and suspend or permanently ban the accounts responsible. You can report any post, comment or community item and block any user; we review reports within 24 hours.',
+  },
+  {
     heading: 'Changes',
     body: 'We may update these terms. Material changes take effect at the start of your next period, and you can cancel before then if you do not agree.',
   },

@@ -120,6 +120,8 @@ model User {
   feedPostReportsResolved    FeedPostReport[]          @relation("FeedPostReportResolver")
   feedUserBlocksInitiated    FeedUserBlock[]           @relation("FeedUserBlockBlocker")
   feedUserBlocksReceived     FeedUserBlock[]           @relation("FeedUserBlockBlocked")
+  feedCommentReports         FeedCommentReport[]       @relation("FeedCommentReportReporter")
+  feedCommentReportsResolved FeedCommentReport[]       @relation("FeedCommentReportResolver")
   exportJobs                 ExportJob[]
   // Accounting relations
   accountingPeriodsClosedBy  AccountingPeriod[]        @relation("PeriodClosedBy")
@@ -2918,6 +2920,7 @@ model FeedComment {
   parent       FeedComment?      @relation("FeedCommentThread", fields: [parentId], references: [id], onDelete: Cascade)
   replies      FeedComment[]     @relation("FeedCommentThread")
   likes        FeedCommentLike[]
+  reports      FeedCommentReport[]
 
   @@index([postId, createdAt(sort: Desc)], map: "idx_feed_comment_post_created")
   @@index([authorId], map: "idx_feed_comment_author")
@@ -2990,6 +2993,35 @@ model FeedPostReport {
   @@unique([postId, reporterUserId], map: "uq_feed_post_report_post_reporter")
   @@index([status], map: "idx_feed_post_report_status")
   @@map("feed_post_reports")
+}
+
+/// A user's report of a feed comment (App Store Guideline 1.2: UGC must be
+/// reportable). Mirrors FeedPostReport, including the absence of
+/// organizationId: the public feed is cross-org, so reports are reviewed
+/// platform-wide by `community:moderate` holders.
+model FeedCommentReport {
+  id               String    @id @default(uuid()) @db.Uuid
+  commentId        String    @map("comment_id") @db.Uuid
+  reporterUserId   String    @map("reporter_user_id") @db.Uuid
+  reason           String    @db.VarChar(30)
+  // reason: spam, inappropriate, harassment, misinformation, copyright, other
+  details          String?
+  status           String    @default("open") @db.VarChar(20)
+  // status: open, dismissed, actioned
+  resolvedByUserId String?   @map("resolved_by_user_id") @db.Uuid
+  resolutionNote   String?   @map("resolution_note")
+  resolvedAt       DateTime? @map("resolved_at") @db.Timestamptz
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  comment    FeedComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  reporter   User        @relation("FeedCommentReportReporter", fields: [reporterUserId], references: [id], onDelete: Cascade)
+  resolvedBy User?       @relation("FeedCommentReportResolver", fields: [resolvedByUserId], references: [id])
+
+  @@unique([commentId, reporterUserId], map: "uq_feed_comment_report_comment_reporter")
+  @@index([status, createdAt(sort: Desc)], map: "idx_feed_comment_report_status_created")
+  @@index([reporterUserId], map: "idx_feed_comment_report_reporter")
+  @@map("feed_comment_reports")
 }
 
 /// User-level blocking for the community feed (App Store Guideline 1.2:

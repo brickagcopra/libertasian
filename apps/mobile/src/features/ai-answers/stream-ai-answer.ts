@@ -3,6 +3,7 @@ import { fetch as expoFetch } from 'expo/fetch';
 
 import { apiClient } from '../../lib/api-client';
 import { authStorage } from '../../storage/auth-storage';
+import { AI_CONSENT_DECLINED_MESSAGE, requestAiConsent } from '../ai-consent/ai-consent';
 import type { AiAnswerChunk, AiAnswerSource } from '../search/types';
 import { splitCompleteText } from './format-answer-text';
 
@@ -102,7 +103,7 @@ export interface StreamMetadata {
  * server message is written for the web app and may name a plan — the same
  * reasoning as `reader/[id].tsx:445` and `gated-notice.tsx`.
  */
-export type StreamErrorKind = 'auth' | 'quota' | 'stream';
+export type StreamErrorKind = 'auth' | 'quota' | 'stream' | 'consent';
 
 export interface StreamError {
   kind: StreamErrorKind;
@@ -226,6 +227,12 @@ export async function streamAiAnswer(
   attempt = 0,
 ): Promise<void> {
   handlers.onAttempt?.(attempt);
+
+  // Apple 5.1.2(i): the question goes to the third-party AI only with consent.
+  if (!(await requestAiConsent())) {
+    handlers.onError?.({ kind: 'consent', message: AI_CONSENT_DECLINED_MESSAGE });
+    return;
+  }
 
   try {
     const body = JSON.stringify({

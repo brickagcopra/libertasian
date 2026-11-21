@@ -128,7 +128,7 @@ export function PostCard({ post, currentUserId }: PostCardProps) {
       />
       <ReportSheet
         visible={showReport}
-        postId={post.id}
+        target={{ type: 'post', id: post.id }}
         onClose={() => setShowReport(false)}
       />
     </View>

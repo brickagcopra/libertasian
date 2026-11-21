@@ -191,3 +191,23 @@ jest.mock('react-native-safe-area-context', () => {
     initialWindowMetrics: { frame: { x: 0, y: 0, width: 390, height: 844 }, insets },
   };
 });
+
+// AI data consent (Apple 5.1.2(i)) defaults to GRANTED in tests so suites that
+// exercise AI transports are not parked behind the consent sheet. The gate's
+// own behaviour is covered in `features/ai-consent/ai-consent.test.ts`, which
+// unmocks this module.
+jest.mock('../features/ai-consent/ai-consent', () => ({
+  ...jest.requireActual('../features/ai-consent/ai-consent'),
+  requestAiConsent: jest.fn(() => Promise.resolve(true)),
+  hasAiConsent: jest.fn(() => true),
+}));
+
+// The Community Guidelines agreement (Apple 1.2) defaults to ACCEPTED in tests
+// for the same reason, so post/comment suites are not parked behind the sheet.
+// The gate's own behaviour is covered in
+// `features/community-guidelines/community-agreement.test.ts`, which unmocks it.
+jest.mock('../features/community-guidelines/community-agreement', () => ({
+  ...jest.requireActual('../features/community-guidelines/community-agreement'),
+  requestCommunityAgreement: jest.fn(() => Promise.resolve(true)),
+  hasCommunityAgreement: jest.fn(() => true),
+}));

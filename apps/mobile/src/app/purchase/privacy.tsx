@@ -24,6 +24,10 @@ const SECTIONS: { heading: string; body: string }[] = [
     body: 'Your documents, scans, notes and questions are never used to train models, and are never sold or shared with advertisers.',
   },
   {
+    heading: 'AI processing',
+    body: 'When you use an AI feature and allow AI processing, your question or instructions, the text of any document or scan you ask the AI to work on, and the legal sources used are sent to OpenAI, a third-party AI provider, solely to generate your result. Your name and email are not sent. You can withdraw permission in Settings > AI data sharing.',
+  },
+  {
     heading: 'Purchases',
     body: 'When you subscribe, the store tells us that a purchase happened and which option it was. We identify your account to the store using an opaque account identifier — never your email address — so the purchase record we receive carries no personal information. Your payment details go to the store and never reach us.',
   },

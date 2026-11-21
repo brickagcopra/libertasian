@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 
+import { assertAcceptableUserContent } from '../../common/utils/content-filter';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FeedBlocksService } from './feed-blocks.service';
 import { CreatePostDto, UpdatePostDto, FeedQueryDto } from './dto';
@@ -61,6 +62,7 @@ export class FeedService {
     if (!hasText && !hasMedia) {
       throw new BadRequestException('Post must have text or an image');
     }
+    assertAcceptableUserContent('post', dto.textContent);
 
     // Validate media if provided
     if (dto.mediaId) {
@@ -108,6 +110,8 @@ export class FeedService {
     userId: string,
     organizationId: string,
   ) {
+    assertAcceptableUserContent('post', dto.textContent);
+
     // Authorship scoping enforced at the DB layer via updateMany with a
     // compound where clause: { id, authorId, deletedAt: null }. A zero
     // affected-rows result collapses to a single NotFoundException,

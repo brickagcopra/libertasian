@@ -73,11 +73,6 @@ const ALLOWED: readonly { file: string; text: string }[] = [
     file: 'app/(onboarding)/index.tsx',
     text: 'Part of a law firm or legal team',
   },
-  // Our moderators, not the Team plan.
-  {
-    file: 'features/feed/components/report-sheet.tsx',
-    text: 'Thank you for your report. Our team will review it.',
-  },
   // The label for the `team_members_allowed` quota row — a capability the
   // account has, named the way the API names it. It names no purchasable tier.
   { file: 'features/billing/types.ts', text: 'Team Members' },

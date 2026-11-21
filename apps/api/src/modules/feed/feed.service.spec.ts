@@ -120,6 +120,13 @@ describe('FeedService', () => {
   // ─── Create Post ──────────────────────────────────────────────────────────
 
   describe('createPost', () => {
+    it('rejects objectionable language before writing', async () => {
+      await expect(
+        service.createPost({ textContent: 'what the fuck' }, USER_ID, ORG_ID),
+      ).rejects.toThrow("Your post contains language that isn't allowed");
+      expect(mockPrisma.feedPost.create).not.toHaveBeenCalled();
+    });
+
     it('should create a text-only post', async () => {
       mockPrisma.feedPost.create.mockResolvedValue(mockPost);
 

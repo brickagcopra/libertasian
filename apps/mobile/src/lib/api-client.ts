@@ -1,6 +1,11 @@
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { authStorage } from '../storage/auth-storage';
+import {
+  AI_CONSENT_DECLINED_MESSAGE,
+  requestAiConsent,
+  requiresAiConsent,
+} from '../features/ai-consent/ai-consent';
 
 function resolveApiBaseUrl(): string {
   // Explicit override (e.g. EXPO_PUBLIC_API_URL=https://libertasian.com/api/v1
@@ -301,6 +306,10 @@ class ApiClient {
     options: RequestOptions = {},
   ): Promise<T> {
     const { params, skipAuth, skipSignOutOn401, ...init } = options;
+    // Apple 5.1.2(i): nothing goes to the third-party AI before the user allows it.
+    if (requiresAiConsent(init.method, endpoint) && !(await requestAiConsent())) {
+      throw new ApiClientError(0, AI_CONSENT_DECLINED_MESSAGE);
+    }
     const url = this.buildUrl(endpoint, params);
     const authHeaders = skipAuth ? {} : await this.getAuthHeaders();
 

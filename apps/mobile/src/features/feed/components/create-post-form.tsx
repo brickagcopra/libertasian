@@ -15,7 +15,9 @@ import { router } from 'expo-router';
 import { useHeaderHeight } from '@react-navigation/elements';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { FeedPostVisibility } from '@libertasian/types';
+import { requestCommunityAgreement } from '../../community-guidelines';
 import { useCreatePost, useUpdatePost } from '../hooks/use-create-post';
+import { feedErrorMessage } from '../lib/feed-error-message';
 import { useUploadFeedMedia, useFeedMediaStatus, useDeleteFeedMedia } from '../hooks/use-feed-media';
 import { useImagePicker } from '../hooks/use-image-picker';
 import { ImagePickerButton } from './image-picker-button';
@@ -122,8 +124,12 @@ export function CreatePostForm({ editPostId, initialText = '', initialVisibility
     setUploadProgress(0);
   }, [mediaId, deleteMedia, clearImage]);
 
-  const handleSubmit = useCallback(() => {
+  const handleSubmit = useCallback(async () => {
     if (!canSubmit) return;
+
+    // Apple 1.2: the first post waits for the Community Guidelines agreement;
+    // "Cancel" leaves the draft in place and sends nothing.
+    if (!(await requestCommunityAgreement())) return;
 
     if (isEditing && editPostId) {
       updatePost.mutate(
@@ -132,8 +138,9 @@ export function CreatePostForm({ editPostId, initialText = '', initialVisibility
           onSuccess: () => {
             router.back();
           },
-          onError: () => {
-            Alert.alert('Error', 'Failed to update post. Please try again.');
+          // Surfaces the API's Community Guidelines refusal, not a generic failure.
+          onError: (error) => {
+            Alert.alert('Error', feedErrorMessage(error, 'Failed to update post. Please try again.'));
           },
         },
       );
@@ -144,8 +151,8 @@ export function CreatePostForm({ editPostId, initialText = '', initialVisibility
           onSuccess: () => {
             router.back();
           },
-          onError: () => {
-            Alert.alert('Error', 'Failed to create post. Please try again.');
+          onError: (error) => {
+            Alert.alert('Error', feedErrorMessage(error, 'Failed to create post. Please try again.'));
           },
         },
       );

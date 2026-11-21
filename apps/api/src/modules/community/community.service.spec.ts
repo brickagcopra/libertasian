@@ -668,6 +668,18 @@ describe('CommunityService', () => {
   // ===========================================================================
 
   describe('upsertRating', () => {
+    it('rejects a review with objectionable language before writing', async () => {
+      await expect(
+        service.upsertRating('user-1', {
+          entityType: 'flashcard_set',
+          entityId: '00000000-0000-0000-0000-000000000001',
+          score: 1,
+          reviewBody: 'this set is bullshit',
+        }),
+      ).rejects.toThrow("Your review contains language that isn't allowed");
+      expect(prisma.communityRating.upsert).not.toHaveBeenCalled();
+    });
+
     beforeEach(() => {
       // Default: entity exists and is public
       prisma.flashcardSet.findUnique.mockResolvedValue({

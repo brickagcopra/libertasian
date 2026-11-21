@@ -108,7 +108,7 @@ export default function PostDetailScreen() {
         <Text style={styles.commentsTitle}>
           Comments {post.commentCount > 0 ? `(${post.commentCount})` : ''}
         </Text>
-        <CommentList postId={post.id} />
+        <CommentList postId={post.id} currentUserId={user?.id} />
       </View>
 
       {/* Sheets */}
@@ -127,7 +127,7 @@ export default function PostDetailScreen() {
       />
       <ReportSheet
         visible={showReport}
-        postId={post.id}
+        target={{ type: 'post', id: post.id }}
         onClose={() => setShowReport(false)}
       />
     </View>

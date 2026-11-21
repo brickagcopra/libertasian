@@ -1,7 +1,9 @@
 import React, { useState, useCallback } from 'react';
-import { View, TextInput, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, TextInput, TouchableOpacity, ActivityIndicator, Alert, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { requestCommunityAgreement } from '../../community-guidelines';
 import { useCreateComment } from '../hooks/use-feed-comments';
+import { feedErrorMessage } from '../lib/feed-error-message';
 
 interface CommentInputProps {
   postId: string;
@@ -14,9 +16,13 @@ export function CommentInput({ postId, parentId, placeholder, onSubmitted }: Com
   const [text, setText] = useState('');
   const createComment = useCreateComment();
 
-  const handleSubmit = useCallback(() => {
+  const handleSubmit = useCallback(async () => {
     const trimmed = text.trim();
     if (!trimmed) return;
+
+    // Apple 1.2: the first comment waits for the Community Guidelines
+    // agreement; "Cancel" leaves the draft in place and sends nothing.
+    if (!(await requestCommunityAgreement())) return;
 
     createComment.mutate(
       { postId, textContent: trimmed, parentId },
@@ -24,6 +30,10 @@ export function CommentInput({ postId, parentId, placeholder, onSubmitted }: Com
         onSuccess: () => {
           setText('');
           onSubmitted?.();
+        },
+        // Surfaces the API's Community Guidelines refusal, not a generic failure.
+        onError: (error) => {
+          Alert.alert('Error', feedErrorMessage(error, 'Failed to post comment. Please try again.'));
         },
       },
     );

@@ -144,6 +144,13 @@ export default function SettingsRoute() {
       onPress: () => router.push('/notifications'),
     },
     {
+      id: 'ai-data',
+      icon: 'sparkles-outline',
+      label: 'AI data sharing',
+      sub: 'What AI features send to our AI provider',
+      onPress: () => router.push('/settings/ai-data'),
+    },
+    {
       id: 'blocked-users',
       icon: 'person-remove-outline',
       label: 'Blocked users',
@@ -156,6 +163,18 @@ export default function SettingsRoute() {
       label: 'Help & FAQ',
       sub: 'Chat with the LIBERTASIAN assistant',
       onPress: () => router.push('/help'),
+    },
+    {
+      id: 'privacy',
+      icon: 'document-lock-outline',
+      label: 'Privacy Policy',
+      onPress: () => router.push('/purchase/privacy'),
+    },
+    {
+      id: 'terms',
+      icon: 'document-text-outline',
+      label: 'Terms of Use',
+      onPress: () => router.push('/purchase/terms'),
     },
     {
       id: 'sign-out',
