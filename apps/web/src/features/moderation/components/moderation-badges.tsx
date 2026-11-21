@@ -113,4 +113,6 @@ export const ACTION_LABELS: Record<ModerationActionType, string> = {
   suspend: 'Suspended',
   ban: 'Banned',
   revoke_sanction: 'Revoked sanction',
+  appeal_granted: 'Granted appeal',
+  appeal_denied: 'Denied appeal',
 };

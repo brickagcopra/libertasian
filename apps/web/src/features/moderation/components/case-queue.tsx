@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
@@ -8,6 +8,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Select,
   SelectContent,
@@ -29,6 +30,7 @@ import { ROUTES } from '@/lib/constants';
 import { useModerationCases } from '../hooks/use-moderation';
 import { formatDateTime } from '../sla';
 import {
+  BULK_MAX_CASES,
   TARGET_TYPE_LABELS,
   type ModerationCaseStatus,
   type ModerationSort,
@@ -42,6 +44,7 @@ import {
   reasonLabel,
   topReasons,
 } from './moderation-badges';
+import { BulkActionDialog, type BulkDecision } from './bulk-action-dialog';
 
 export const QUEUE_PAGE_SIZE = 25;
 
@@ -61,6 +64,8 @@ const SORT_OPTIONS: Array<{ value: ModerationSort; label: string }> = [
   { value: 'most_reported', label: 'Most reported' },
 ];
 
+const caseKey = (c: { targetType: string; targetId: string }) => `${c.targetType}:${c.targetId}`;
+
 function truncate(s: string, max: number): string {
   return s.length <= max ? s : `${s.slice(0, Math.max(0, max - 1))}…`;
 }
@@ -71,6 +76,8 @@ export function CaseQueue() {
   const [type, setType] = useState<ModerationTypeFilter>('all');
   const [sort, setSort] = useState<ModerationSort>('oldest');
   const [offset, setOffset] = useState(0);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkDecision, setBulkDecision] = useState<BulkDecision | null>(null);
 
   const { data, isLoading, error, isFetching } = useModerationCases({
     status,
@@ -84,6 +91,27 @@ export function CaseQueue() {
   const total = data?.meta.total ?? 0;
   const hasNext = data?.meta.hasNext ?? false;
 
+  // Selection only applies to open cases on the current page; anything that
+  // dropped off the page (resolved, paged away) silently leaves it.
+  const selectable = status === 'open';
+  const pageKeys = useMemo(() => cases.map(caseKey), [cases]);
+  const selectedCases = cases.filter((c) => selected.has(caseKey(c)));
+  const allSelected = pageKeys.length > 0 && pageKeys.every((k) => selected.has(k));
+  const someSelected = selectedCases.length > 0;
+
+  const toggle = (key: string, on: boolean) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  const toggleAll = (on: boolean) => setSelected(on ? new Set(pageKeys.slice(0, BULK_MAX_CASES)) : new Set());
+  const resetView = () => {
+    setOffset(0);
+    setSelected(new Set());
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -95,7 +123,7 @@ export function CaseQueue() {
               variant={status === s ? 'default' : 'outline'}
               onClick={() => {
                 setStatus(s);
-                setOffset(0);
+                resetView();
               }}
             >
               {s === 'open' ? 'Open' : 'Resolved'}
@@ -107,7 +135,7 @@ export function CaseQueue() {
           value={type}
           onValueChange={(v) => {
             setType(v as ModerationTypeFilter);
-            setOffset(0);
+            resetView();
           }}
         >
           <SelectTrigger className="w-[220px]" aria-label="Content type">
@@ -126,7 +154,7 @@ export function CaseQueue() {
           value={sort}
           onValueChange={(v) => {
             setSort(v as ModerationSort);
-            setOffset(0);
+            resetView();
           }}
         >
           <SelectTrigger className="w-[170px]" aria-label="Sort">
@@ -146,6 +174,25 @@ export function CaseQueue() {
         </span>
       </div>
 
+      {selectable && someSelected && (
+        <div
+          className="flex flex-wrap items-center gap-3 rounded-md border bg-muted/40 px-3 py-2"
+          role="toolbar"
+          aria-label="Bulk actions"
+        >
+          <span className="text-sm font-medium">{selectedCases.length} selected</span>
+          <Button size="sm" variant="outline" onClick={() => setBulkDecision('dismiss')}>
+            Dismiss reports
+          </Button>
+          <Button size="sm" variant="destructive" onClick={() => setBulkDecision('remove')}>
+            Remove content
+          </Button>
+          <Button size="sm" variant="ghost" className="ml-auto" onClick={() => setSelected(new Set())}>
+            Clear selection
+          </Button>
+        </div>
+      )}
+
       {error && (
         <Alert variant="destructive">
           <AlertDescription>
@@ -162,6 +209,16 @@ export function CaseQueue() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  {selectable && (
+                    <TableHead className="w-10">
+                      <Checkbox
+                        aria-label="Select all cases on this page"
+                        checked={allSelected ? true : someSelected ? 'indeterminate' : false}
+                        onCheckedChange={(v) => toggleAll(v === true)}
+                        disabled={cases.length === 0}
+                      />
+                    </TableHead>
+                  )}
                   <TableHead>{status === 'open' ? 'Age' : 'Resolved'}</TableHead>
                   <TableHead>Type</TableHead>
                   <TableHead>Content</TableHead>
@@ -174,20 +231,32 @@ export function CaseQueue() {
               <TableBody>
                 {cases.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
+                    <TableCell colSpan={selectable ? 8 : 7} className="py-8 text-center text-muted-foreground">
                       {status === 'open' ? 'No open cases. The queue is clear.' : 'No resolved cases.'}
                     </TableCell>
                   </TableRow>
                 ) : (
                   cases.map((c) => {
                     const href = ROUTES.ADMIN_MODERATION_CASE(c.targetType, c.targetId);
+                    const key = caseKey(c);
                     return (
                       <TableRow
                         key={`${c.targetType}:${c.targetId}`}
                         className="cursor-pointer"
                         data-testid="moderation-case-row"
+                        data-state={selected.has(key) ? 'selected' : undefined}
                         onClick={() => router.push(href)}
                       >
+                        {selectable && (
+                          <TableCell onClick={(e) => e.stopPropagation()}>
+                            <Checkbox
+                              aria-label={`Select ${TARGET_TYPE_LABELS[c.targetType].toLowerCase()} case`}
+                              checked={selected.has(key)}
+                              disabled={!selected.has(key) && selected.size >= BULK_MAX_CASES}
+                              onCheckedChange={(v) => toggle(key, v === true)}
+                            />
+                          </TableCell>
+                        )}
                         <TableCell>
                           {c.status === 'open' ? (
                             <SlaBadge firstReportedAt={c.firstReportedAt} />
@@ -251,7 +320,10 @@ export function CaseQueue() {
               variant="outline"
               size="sm"
               disabled={offset === 0 || isFetching}
-              onClick={() => setOffset((o) => Math.max(0, o - QUEUE_PAGE_SIZE))}
+              onClick={() => {
+                setSelected(new Set());
+                setOffset((o) => Math.max(0, o - QUEUE_PAGE_SIZE));
+              }}
             >
               Prev
             </Button>
@@ -259,13 +331,29 @@ export function CaseQueue() {
               variant="outline"
               size="sm"
               disabled={!hasNext || isFetching}
-              onClick={() => setOffset((o) => o + QUEUE_PAGE_SIZE)}
+              onClick={() => {
+                setSelected(new Set());
+                setOffset((o) => o + QUEUE_PAGE_SIZE);
+              }}
             >
               Next
             </Button>
           </div>
         </div>
       )}
+
+      <BulkActionDialog
+        decision={bulkDecision}
+        cases={selectedCases.map((c) => ({ targetType: c.targetType, targetId: c.targetId }))}
+        onClose={() => setBulkDecision(null)}
+        onDone={(result) =>
+          setSelected((prev) => {
+            const next = new Set(prev);
+            for (const c of result.succeeded) next.delete(caseKey(c));
+            return next;
+          })
+        }
+      />
     </div>
   );
 }

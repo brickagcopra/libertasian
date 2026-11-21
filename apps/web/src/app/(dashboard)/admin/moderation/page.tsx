@@ -2,11 +2,14 @@
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ActionLog } from '@/features/moderation/components/action-log';
+import { AppealsList } from '@/features/moderation/components/appeals-list';
 import { CaseQueue } from '@/features/moderation/components/case-queue';
 import { ModerationStatCards } from '@/features/moderation/components/moderation-stat-cards';
 import { SanctionsList } from '@/features/moderation/components/sanctions-list';
+import { useModerationStats } from '@/features/moderation/hooks/use-moderation';
 
 export default function ModerationQueuePage() {
+  const openAppeals = useModerationStats().data?.openAppeals ?? 0;
   return (
     <div className="space-y-6">
       <div>
@@ -22,11 +25,17 @@ export default function ModerationQueuePage() {
       <Tabs defaultValue="queue">
         <TabsList>
           <TabsTrigger value="queue">Queue</TabsTrigger>
+          <TabsTrigger value="appeals">
+            Appeals{openAppeals > 0 ? ` (${openAppeals})` : ''}
+          </TabsTrigger>
           <TabsTrigger value="sanctions">Sanctions</TabsTrigger>
           <TabsTrigger value="log">Log</TabsTrigger>
         </TabsList>
         <TabsContent value="queue" className="mt-4">
           <CaseQueue />
+        </TabsContent>
+        <TabsContent value="appeals" className="mt-4">
+          <AppealsList />
         </TabsContent>
         <TabsContent value="sanctions" className="mt-4">
           <SanctionsList />

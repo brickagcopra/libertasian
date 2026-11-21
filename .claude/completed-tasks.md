@@ -1,5 +1,13 @@
 # Completed Tasks
 
+## 2026-11-21 — Moderation: old reports worked + appeals, report cap, bulk actions
+- [x] Prod queue cleared: the 4 Aug-15/16 `misinformation` reports (2 posts, both accurate RA 9165 / People v. Doria commentary, filed by QA accounts, 3 since deleted) DISMISSED via ModerationService in the api container as the platform moderator; `moderation_actions` + `audit_logs` rows written. 0 open reports/flags.
+- [x] Author appeals: `moderation_appeals` (one per decision, 30-day window, only while in effect). User API `GET /community/standing/decisions`, `POST /community/standing/decisions/:id/appeal`; admin `GET /admin/moderation/appeals`, `POST /admin/moderation/appeals/:id/decide` (grant restores content / lifts sanction). Stats + daily email include open appeals. Notices say how to appeal and deep-link (`entityType: community_standing`).
+- [x] Daily report cap: 20 reports per user per rolling 24h across posts, comments and community flags → 429 `quota_exceeded` + retryAfterSeconds. New (reporter_user_id, created_at) indexes.
+- [x] Bulk actions: `POST /admin/moderation/cases/bulk-resolve` (≤50, per-case results); web queue checkboxes + bulk toolbar + dialog; Appeals tab with open count.
+- [x] Mobile: Settings › Community standing (decisions, appeal form, outcomes).
+- [x] Tests: API 5560/5560; web moderation+admin 160/160; mobile settings/notifications pass. Migration verified on a throwaway DB.
+
 ## 2026-11-20 — Moderation queue (branch feature/moderation-queue)
 - [x] Researched Discourse / Reddit / Mastodon / Discord / YouTube moderation + Apple 1.2: cases grouped per target, oldest-first with 24h SLA, content + author actions, auto-hide, append-only log.
 - [x] API `modules/moderation`: cases/stats/detail, resolve (dismiss|remove, resolves all open reports in one tx), restore, sanctions (warning/suspension/ban, ban can remove all content), revoke, log. Tables `moderation_actions`, `community_sanctions`. Moderators can't act on their own content.

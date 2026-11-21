@@ -378,6 +378,8 @@ export class FeedInteractionsService {
       enforceBlocks: false,
     });
 
+    await this.sanctions.assertCanReport(userId);
+
     try {
       const report = await this.prisma.feedPostReport.create({
         data: {
@@ -426,6 +428,8 @@ export class FeedInteractionsService {
     await this.validatePostReadable(comment.postId, userId, viewerOrgId, {
       enforceBlocks: false,
     });
+
+    await this.sanctions.assertCanReport(userId);
 
     try {
       const report = await this.prisma.feedCommentReport.create({

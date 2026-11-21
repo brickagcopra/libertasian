@@ -39,11 +39,11 @@ import {
 const REASONS = Object.keys(REASON_LABELS) as ModerationReason[];
 const NOTE_MAX = 1000;
 
-function errorMessage(err: unknown, fallback: string): string {
+export function errorMessage(err: unknown, fallback: string): string {
   return err instanceof Error && err.message ? err.message : fallback;
 }
 
-function ReasonSelect({
+export function ReasonSelect({
   id,
   value,
   onChange,
@@ -68,7 +68,7 @@ function ReasonSelect({
   );
 }
 
-function NoteField({
+export function NoteField({
   id,
   label,
   value,
