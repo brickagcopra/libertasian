@@ -13,12 +13,20 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import type { FeedReportReason } from '@libertasian/types';
 import { useReportPost } from '../hooks/use-feed-interactions';
+import { useReportComment } from '../hooks/use-feed-comments';
+import { feedErrorMessage } from '../lib/feed-error-message';
+
+/** What is being reported. Posts and comments share one reason set. */
+export type ReportTarget = { type: 'post'; id: string } | { type: 'comment'; id: string };
 
 interface ReportSheetProps {
   visible: boolean;
-  postId: string;
+  target: ReportTarget;
   onClose: () => void;
 }
+
+export const REPORT_RECEIVED_MESSAGE =
+  'Thank you for your report. Our moderators review reports within 24 hours and remove content that breaks our Community Guidelines.';
 
 const REASONS: { value: FeedReportReason; label: string; icon: string }[] = [
   { value: 'spam', label: 'Spam', icon: 'mail-unread-outline' },
@@ -29,26 +37,35 @@ const REASONS: { value: FeedReportReason; label: string; icon: string }[] = [
   { value: 'other', label: 'Other', icon: 'ellipsis-horizontal-circle-outline' },
 ];
 
-export function ReportSheet({ visible, postId, onClose }: ReportSheetProps) {
+export function ReportSheet({ visible, target, onClose }: ReportSheetProps) {
   const [selectedReason, setSelectedReason] = useState<FeedReportReason | null>(null);
   const [details, setDetails] = useState('');
   const reportPost = useReportPost();
+  const reportComment = useReportComment();
+  const isPending = reportPost.isPending || reportComment.isPending;
+  const noun = target.type === 'post' ? 'post' : 'comment';
 
   const handleSubmit = () => {
     if (!selectedReason) return;
 
-    reportPost.mutate(
-      { postId, reason: selectedReason, details: details.trim() || undefined },
-      {
-        onSuccess: () => {
-          Alert.alert('Report Submitted', 'Thank you for your report. Our team will review it.');
-          resetAndClose();
-        },
-        onError: () => {
-          Alert.alert('Error', 'Failed to submit report. Please try again.');
-        },
+    const callbacks = {
+      onSuccess: () => {
+        Alert.alert('Report Submitted', REPORT_RECEIVED_MESSAGE);
+        resetAndClose();
       },
-    );
+      onError: (error: unknown) => {
+        // A duplicate report answers 400 "You have already reported this …".
+        Alert.alert('Error', feedErrorMessage(error, 'Failed to submit report. Please try again.'));
+      },
+    };
+    const reason = selectedReason;
+    const trimmed = details.trim() || undefined;
+
+    if (target.type === 'post') {
+      reportPost.mutate({ postId: target.id, reason, details: trimmed }, callbacks);
+    } else {
+      reportComment.mutate({ commentId: target.id, reason, details: trimmed }, callbacks);
+    }
   };
 
   const resetAndClose = () => {
@@ -62,8 +79,8 @@ export function ReportSheet({ visible, postId, onClose }: ReportSheetProps) {
       <Pressable style={styles.overlay} onPress={resetAndClose}>
         <Pressable style={styles.sheet} onPress={() => {}}>
           <View style={styles.handle} />
-          <Text style={styles.title}>Report Post</Text>
-          <Text style={styles.subtitle}>Why are you reporting this post?</Text>
+          <Text style={styles.title}>{target.type === 'post' ? 'Report Post' : 'Report Comment'}</Text>
+          <Text style={styles.subtitle}>Why are you reporting this {noun}?</Text>
 
           {REASONS.map((reason) => (
             <TouchableOpacity
@@ -101,9 +118,9 @@ export function ReportSheet({ visible, postId, onClose }: ReportSheetProps) {
           <TouchableOpacity
             style={[styles.submitButton, !selectedReason && styles.submitDisabled]}
             onPress={handleSubmit}
-            disabled={!selectedReason || reportPost.isPending}
+            disabled={!selectedReason || isPending}
           >
-            {reportPost.isPending ? (
+            {isPending ? (
               <ActivityIndicator size="small" color="#fff" />
             ) : (
               <Text style={styles.submitText}>Submit Report</Text>

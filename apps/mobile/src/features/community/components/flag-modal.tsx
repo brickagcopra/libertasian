@@ -50,7 +50,10 @@ export function FlagModal({
       },
       {
         onSuccess: () => {
-          Alert.alert('Report Submitted', 'Thank you for helping keep the community safe.');
+          Alert.alert(
+            'Report Submitted',
+            'Thank you for helping keep the community safe. Our moderators review reports within 24 hours.',
+          );
           setReason(null);
           setDetails('');
           onClose();

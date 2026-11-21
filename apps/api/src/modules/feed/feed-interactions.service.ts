@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 
+import { assertAcceptableUserContent } from '../../common/utils/content-filter';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FeedBlocksService } from './feed-blocks.service';
 import { CreateCommentDto, UpdateCommentDto, ReportPostDto, FeedQueryDto } from './dto';
@@ -105,6 +106,7 @@ export class FeedInteractionsService {
     userId: string,
     viewerOrgId: string,
   ) {
+    assertAcceptableUserContent('comment', dto.textContent);
     await this.validatePostReadable(postId, userId, viewerOrgId);
 
     // Validate parent if provided (must belong to same post, max 1 level deep)
@@ -151,6 +153,7 @@ export class FeedInteractionsService {
     userId: string,
     viewerOrgId: string,
   ) {
+    assertAcceptableUserContent('comment', dto.textContent);
     const comment = await this.prisma.forTenant(viewerOrgId).feedComment.findUnique({
       where: { id: commentId },
     });
@@ -393,6 +396,47 @@ export class FeedInteractionsService {
     }
   }
 
+  async reportComment(
+    commentId: string,
+    dto: ReportPostDto,
+    userId: string,
+    viewerOrgId: string,
+  ) {
+    // CARVE-OUT: cross-org read. Comments on a public post belong to the
+    // commenter's org, so forTenant() would hide them from other readers.
+    // Readability is decided by the parent post below, exactly as for reads.
+    const comment = await this.prisma.feedComment.findFirst({
+      where: { id: commentId, status: 'published', deletedAt: null },
+      select: { id: true, postId: true, authorId: true },
+    });
+    if (!comment) {
+      throw new NotFoundException('Comment not found');
+    }
+    if (comment.authorId === userId) {
+      throw new BadRequestException('You cannot report your own comment');
+    }
+    // Blocks deliberately not enforced: see reportPost.
+    await this.validatePostReadable(comment.postId, userId, viewerOrgId, {
+      enforceBlocks: false,
+    });
+
+    try {
+      return await this.prisma.feedCommentReport.create({
+        data: {
+          commentId,
+          reporterUserId: userId,
+          reason: dto.reason,
+          details: dto.details,
+        },
+      });
+    } catch (err: unknown) {
+      if (this.isPrismaUniqueError(err)) {
+        throw new BadRequestException('You have already reported this comment');
+      }
+      throw err;
+    }
+  }
+
   // =========================================================================
   // Admin Moderation
   // =========================================================================
@@ -452,6 +496,74 @@ export class FeedInteractionsService {
     }
 
     return this.prisma.feedPostReport.update({
+      where: { id: reportId },
+      data: {
+        status: dto.status,
+        resolvedByUserId: resolverUserId,
+        resolutionNote: dto.resolutionNote,
+        resolvedAt: new Date(),
+      },
+    });
+  }
+
+  async listCommentReports(query: FeedQueryDto & { status?: string }) {
+    const limit = query.limit ?? 20;
+
+    const reports = await this.prisma.feedCommentReport.findMany({
+      take: limit + 1,
+      ...(query.cursor && { skip: 1, cursor: { id: query.cursor } }),
+      where: { status: query.status ?? 'open' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      include: {
+        reporter: { select: { id: true, fullName: true } },
+        comment: {
+          select: {
+            id: true,
+            postId: true,
+            textContent: true,
+            status: true,
+            author: { select: { id: true, fullName: true } },
+          },
+        },
+      },
+    });
+
+    const hasNext = reports.length > limit;
+    const results = hasNext ? reports.slice(0, limit) : reports;
+
+    return {
+      items: results.map((r) => ({
+        id: r.id,
+        commentId: r.commentId,
+        reason: r.reason,
+        details: r.details,
+        status: r.status,
+        createdAt: r.createdAt.toISOString(),
+        reporter: r.reporter,
+        comment: r.comment,
+      })),
+      hasNext,
+      nextCursor: results.length > 0 ? results[results.length - 1]!.id : null,
+    };
+  }
+
+  async resolveCommentReport(
+    reportId: string,
+    resolverUserId: string,
+    dto: { status: string; resolutionNote?: string },
+  ) {
+    const report = await this.prisma.feedCommentReport.findUnique({
+      where: { id: reportId },
+    });
+
+    if (!report) {
+      throw new NotFoundException('Report not found');
+    }
+    if (report.status !== 'open') {
+      throw new BadRequestException('Report is already resolved');
+    }
+
+    return this.prisma.feedCommentReport.update({
       where: { id: reportId },
       data: {
         status: dto.status,

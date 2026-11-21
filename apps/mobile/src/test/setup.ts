@@ -201,3 +201,13 @@ jest.mock('../features/ai-consent/ai-consent', () => ({
   requestAiConsent: jest.fn(() => Promise.resolve(true)),
   hasAiConsent: jest.fn(() => true),
 }));
+
+// The Community Guidelines agreement (Apple 1.2) defaults to ACCEPTED in tests
+// for the same reason, so post/comment suites are not parked behind the sheet.
+// The gate's own behaviour is covered in
+// `features/community-guidelines/community-agreement.test.ts`, which unmocks it.
+jest.mock('../features/community-guidelines/community-agreement', () => ({
+  ...jest.requireActual('../features/community-guidelines/community-agreement'),
+  requestCommunityAgreement: jest.fn(() => Promise.resolve(true)),
+  hasCommunityAgreement: jest.fn(() => true),
+}));

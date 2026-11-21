@@ -554,6 +554,33 @@ export class FeedController {
     });
   }
 
+  @Post('comments/:commentId/report')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Report a comment' })
+  async reportComment(
+    @CurrentUser() user: JwtPayload,
+    @Param('commentId', ParseUUIDPipe) commentId: string,
+    @Body() dto: ReportPostDto,
+  ) {
+    const data = await this.interactionsService.reportComment(
+      commentId,
+      dto,
+      user.sub,
+      user.organizationId,
+    );
+    await this.auditService.log({
+      actorUserId: user.sub,
+      actorType: 'user',
+      organizationId: user.organizationId,
+      action: 'feed_comment.report',
+      entityType: 'feed_comment_report',
+      entityId: data.id,
+      metadata: { commentId, reason: dto.reason },
+    });
+    return { success: true, data: { id: data.id } };
+  }
+
   @Post('comments/:commentId/like')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

@@ -18,22 +18,28 @@ import {
   useLikeComment,
   useUnlikeComment,
 } from '../hooks/use-feed-comments';
+import { requestCommunityAgreement } from '../../community-guidelines';
 import { CommentInput } from './comment-input';
+import { CommentOptionsSheet } from './comment-options-sheet';
+import { ReportSheet } from './report-sheet';
+import { feedErrorMessage } from '../lib/feed-error-message';
 
 interface CommentListProps {
   postId: string;
+  /** The signed-in user; decides edit/delete (own) vs report/block (others). */
+  currentUserId?: string;
 }
 
-export function CommentList({ postId }: CommentListProps) {
+export function CommentList({ postId, currentUserId }: CommentListProps) {
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } = useComments(postId);
 
   const comments = data?.pages.flatMap((p) => p.data) ?? [];
 
   const renderComment = useCallback(
     ({ item }: { item: FeedCommentItem }) => (
-      <CommentRow comment={item} postId={postId} />
+      <CommentRow comment={item} postId={postId} currentUserId={currentUserId} />
     ),
-    [postId],
+    [postId, currentUserId],
   );
 
   if (isLoading) {
@@ -67,23 +73,38 @@ export function CommentList({ postId }: CommentListProps) {
   );
 }
 
-function CommentRow({ comment, postId }: { comment: FeedCommentItem; postId: string }) {
+interface CommentRowProps {
+  comment: FeedCommentItem;
+  postId: string;
+  currentUserId?: string;
+}
+
+function CommentRow({ comment, postId, currentUserId }: CommentRowProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState(comment.textContent);
   const [showReplies, setShowReplies] = useState(false);
   const [replyingTo, setReplyingTo] = useState(false);
+  const [showOptions, setShowOptions] = useState(false);
+  const [showReport, setShowReport] = useState(false);
+  const isOwner = !!currentUserId && currentUserId === comment.author.id;
 
   const updateComment = useUpdateComment();
   const deleteComment = useDeleteComment();
   const likeComment = useLikeComment();
   const unlikeComment = useUnlikeComment();
 
-  const handleSaveEdit = useCallback(() => {
+  const handleSaveEdit = useCallback(async () => {
     const trimmed = editText.trim();
     if (!trimmed) return;
+    if (!(await requestCommunityAgreement())) return;
     updateComment.mutate(
       { commentId: comment.id, textContent: trimmed },
-      { onSuccess: () => setIsEditing(false) },
+      {
+        onSuccess: () => setIsEditing(false),
+        // Surfaces the API's Community Guidelines refusal, not a generic failure.
+        onError: (error) =>
+          Alert.alert('Error', feedErrorMessage(error, 'Failed to update comment. Please try again.')),
+      },
     );
   }, [editText, comment.id, updateComment]);
 
@@ -152,20 +173,65 @@ function CommentRow({ comment, postId }: { comment: FeedCommentItem; postId: str
             <Text style={styles.metaText}>Reply</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity onPress={() => setIsEditing(true)} style={styles.metaAction}>
-            <Ionicons name="create-outline" size={12} color="#9ca3af" />
-          </TouchableOpacity>
+          {isOwner ? (
+            <>
+              <TouchableOpacity
+                onPress={() => setIsEditing(true)}
+                style={styles.metaAction}
+                accessibilityRole="button"
+                accessibilityLabel="Edit comment"
+              >
+                <Ionicons name="create-outline" size={12} color="#9ca3af" />
+              </TouchableOpacity>
 
-          <TouchableOpacity onPress={handleDelete} style={styles.metaAction}>
-            <Ionicons name="trash-outline" size={12} color="#9ca3af" />
-          </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleDelete}
+                style={styles.metaAction}
+                accessibilityRole="button"
+                accessibilityLabel="Delete comment"
+              >
+                <Ionicons name="trash-outline" size={12} color="#9ca3af" />
+              </TouchableOpacity>
+            </>
+          ) : (
+            <TouchableOpacity
+              onPress={() => setShowOptions(true)}
+              style={styles.metaAction}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityRole="button"
+              accessibilityLabel="Comment options"
+            >
+              <Ionicons name="ellipsis-horizontal" size={14} color="#9ca3af" />
+            </TouchableOpacity>
+          )}
         </View>
+
+        {!isOwner && (
+          <>
+            <CommentOptionsSheet
+              visible={showOptions}
+              comment={comment}
+              onClose={() => setShowOptions(false)}
+              onReport={() => setShowReport(true)}
+            />
+            <ReportSheet
+              visible={showReport}
+              target={{ type: 'comment', id: comment.id }}
+              onClose={() => setShowReport(false)}
+            />
+          </>
+        )}
 
         {comment.replies && comment.replies.length > 0 && (
           <View style={styles.repliesSection}>
             {showReplies ? (
               comment.replies.map((reply) => (
-                <CommentRow key={reply.id} comment={reply} postId={postId} />
+                <CommentRow
+                  key={reply.id}
+                  comment={reply}
+                  postId={postId}
+                  currentUserId={currentUserId}
+                />
               ))
             ) : (
               <TouchableOpacity onPress={() => setShowReplies(true)}>

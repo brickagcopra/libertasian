@@ -31,6 +31,7 @@ import { useNotificationSocket } from '../features/workspace/hooks/use-notificat
 import { usePushNotifications } from '../features/workspace/hooks/use-push-notifications';
 import { ensureAudioMode } from '../features/audio/lib/audio-session';
 import { AiConsentHost } from '../features/ai-consent';
+import { CommunityAgreementHost } from '../features/community-guidelines';
 import '../../global.css';
 
 function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
@@ -149,6 +150,7 @@ export default function RootLayout() {
               <Slot />
             </AuthNavigationGuard>
             <AiConsentHost />
+            <CommunityAgreementHost />
           </AuthProvider>
         </ThemeProvider>
       </QueryClientProvider>

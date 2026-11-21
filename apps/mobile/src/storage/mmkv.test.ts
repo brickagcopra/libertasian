@@ -49,8 +49,12 @@ describe('STORAGE_KEYS', () => {
     expect(STORAGE_KEYS.ONBOARDING_COMPLETED).toBe('onboarding_completed');
   });
 
-  it('has 15 storage keys', () => {
-    expect(Object.keys(STORAGE_KEYS)).toHaveLength(15);
+  it('has 16 storage keys', () => {
+    expect(Object.keys(STORAGE_KEYS)).toHaveLength(16);
+  });
+
+  it('defines the community guidelines agreement key', () => {
+    expect(STORAGE_KEYS.COMMUNITY_GUIDELINES_ACCEPTED).toBe('community_guidelines_accepted');
   });
 
   it('defines blog and ad storage keys', () => {

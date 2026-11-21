@@ -1,9 +1,11 @@
+import { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { router, type Href } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
 import type { MarketplaceItem } from '../types';
 import { ExpertBadge } from './expert-badge';
+import { FlagButton, FlagModal } from './flag-modal';
 import { StarRatingDisplay } from './star-rating';
 import { VoteButtons } from './vote-buttons';
 
@@ -48,101 +50,117 @@ export function MarketplaceItemCard({
 }: MarketplaceItemCardProps) {
   const iconName = CONTENT_TYPE_ICONS[item.contentType] ?? 'document-outline';
   const typeLabel = CONTENT_TYPE_LABELS[item.contentType] ?? item.contentType;
+  // Apple 1.2: every user-contributed item can be reported, from the visible
+  // Report control or by long-pressing the card.
+  const [showFlag, setShowFlag] = useState(false);
 
   return (
-    <TouchableOpacity
-      style={styles.card}
-      onPress={() => router.push(getContentRoute(item.contentType, item.id))}
-      activeOpacity={0.7}
-    >
-      <View style={styles.row}>
-        {/* Icon */}
-        <View style={styles.iconBox}>
-          <Ionicons name={iconName} size={18} color="#6b7280" />
-        </View>
-
-        {/* Content */}
-        <View style={styles.content}>
-          {/* Title */}
-          <Text style={styles.title} numberOfLines={1}>
-            {item.title}
-          </Text>
-
-          {/* Badges */}
-          <View style={styles.badgeRow}>
-            {showContentType && (
-              <View style={styles.typeBadge}>
-                <Text style={styles.typeBadgeText}>{typeLabel}</Text>
-              </View>
-            )}
-            {item.barSubject && (
-              <View style={styles.subjectBadge}>
-                <Text style={styles.subjectBadgeText}>
-                  {item.barSubject.replace(/_/g, ' ')}
-                </Text>
-              </View>
-            )}
-            {item.topic && (
-              <Text style={styles.topicText} numberOfLines={1}>
-                {item.topic}
-              </Text>
-            )}
+    <>
+      <TouchableOpacity
+        style={styles.card}
+        onPress={() => router.push(getContentRoute(item.contentType, item.id))}
+        onLongPress={() => setShowFlag(true)}
+        activeOpacity={0.7}
+      >
+        <View style={styles.row}>
+          {/* Icon */}
+          <View style={styles.iconBox}>
+            <Ionicons name={iconName} size={18} color="#6b7280" />
           </View>
 
-          {/* Description */}
-          {item.description ? (
-            <Text style={styles.description} numberOfLines={2}>
-              {item.description}
+          {/* Content */}
+          <View style={styles.content}>
+            {/* Title */}
+            <Text style={styles.title} numberOfLines={1}>
+              {item.title}
             </Text>
-          ) : null}
 
-          {/* Footer: creator + stats */}
-          <View style={styles.footer}>
-            {/* Creator */}
-            <TouchableOpacity
-              style={styles.creatorRow}
-              onPress={() =>
-                router.push(`/community/contributors/${item.creator.id}`)
-              }
-              hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
-            >
-              <Ionicons name="person-outline" size={12} color="#6b7280" />
-              <Text style={styles.creatorName} numberOfLines={1}>
-                {item.creator.fullName}
+            {/* Badges */}
+            <View style={styles.badgeRow}>
+              {showContentType && (
+                <View style={styles.typeBadge}>
+                  <Text style={styles.typeBadgeText}>{typeLabel}</Text>
+                </View>
+              )}
+              {item.barSubject && (
+                <View style={styles.subjectBadge}>
+                  <Text style={styles.subjectBadgeText}>
+                    {item.barSubject.replace(/_/g, ' ')}
+                  </Text>
+                </View>
+              )}
+              {item.topic && (
+                <Text style={styles.topicText} numberOfLines={1}>
+                  {item.topic}
+                </Text>
+              )}
+            </View>
+
+            {/* Description */}
+            {item.description ? (
+              <Text style={styles.description} numberOfLines={2}>
+                {item.description}
               </Text>
-              {item.creator.expertVerification && (
-                <ExpertBadge
-                  expertiseType={item.creator.expertVerification.expertiseType}
-                  status={item.creator.expertVerification.status}
-                  size="sm"
+            ) : null}
+
+            {/* Footer: creator + stats */}
+            <View style={styles.footer}>
+              {/* Creator */}
+              <TouchableOpacity
+                style={styles.creatorRow}
+                onPress={() =>
+                  router.push(`/community/contributors/${item.creator.id}`)
+                }
+                hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+              >
+                <Ionicons name="person-outline" size={12} color="#6b7280" />
+                <Text style={styles.creatorName} numberOfLines={1}>
+                  {item.creator.fullName}
+                </Text>
+                {item.creator.expertVerification && (
+                  <ExpertBadge
+                    expertiseType={item.creator.expertVerification.expertiseType}
+                    status={item.creator.expertVerification.status}
+                    size="sm"
+                  />
+                )}
+              </TouchableOpacity>
+
+              {/* Rating */}
+              <StarRatingDisplay
+                value={item.avgRating}
+                count={item.ratingCount}
+                size="sm"
+              />
+
+              {/* Item count */}
+              <Text style={styles.itemCount}>
+                {formatCount(item.itemCount)} items
+              </Text>
+
+              {/* Vote buttons for digests */}
+              {item.contentType === 'digest' && (
+                <VoteButtons
+                  entityType="digest"
+                  entityId={item.id}
+                  voteScore={item.voteScore}
                 />
               )}
-            </TouchableOpacity>
 
-            {/* Rating */}
-            <StarRatingDisplay
-              value={item.avgRating}
-              count={item.ratingCount}
-              size="sm"
-            />
-
-            {/* Item count */}
-            <Text style={styles.itemCount}>
-              {formatCount(item.itemCount)} items
-            </Text>
-
-            {/* Vote buttons for digests */}
-            {item.contentType === 'digest' && (
-              <VoteButtons
-                entityType="digest"
-                entityId={item.id}
-                voteScore={item.voteScore}
-              />
-            )}
+              <View style={styles.flagSlot}>
+                <FlagButton onPress={() => setShowFlag(true)} />
+              </View>
+            </View>
           </View>
         </View>
-      </View>
-    </TouchableOpacity>
+      </TouchableOpacity>
+      <FlagModal
+        entityType={item.contentType}
+        entityId={item.id}
+        visible={showFlag}
+        onClose={() => setShowFlag(false)}
+      />
+    </>
   );
 }
 
@@ -239,5 +257,8 @@ const styles = StyleSheet.create({
   itemCount: {
     fontSize: 11,
     color: '#6b7280',
+  },
+  flagSlot: {
+    marginLeft: 'auto',
   },
 });

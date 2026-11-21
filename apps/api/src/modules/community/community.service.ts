@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 
+import { assertAcceptableUserContent } from '../../common/utils/content-filter';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   MarketplaceQueryDto,
@@ -514,6 +515,7 @@ export class CommunityService {
   // =========================================================================
 
   async upsertRating(userId: string, dto: CreateCommunityRatingDto) {
+    assertAcceptableUserContent('review', dto.reviewTitle, dto.reviewBody);
     await this.validatePublicEntity(dto.entityType, dto.entityId);
 
     const rating = await this.prisma.communityRating.upsert({

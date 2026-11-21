@@ -48,7 +48,8 @@ const mockPrisma: {
   feedPost: { findUnique: jest.Mock; findFirst: jest.Mock; update: jest.Mock };
   feedPostLike: { create: jest.Mock; findUnique: jest.Mock; delete: jest.Mock };
   feedPostBookmark: { create: jest.Mock; findUnique: jest.Mock; delete: jest.Mock };
-  feedComment: { create: jest.Mock; findUnique: jest.Mock; findMany: jest.Mock; update: jest.Mock };
+  feedComment: { create: jest.Mock; findUnique: jest.Mock; findFirst: jest.Mock; findMany: jest.Mock; update: jest.Mock };
+  feedCommentReport: { create: jest.Mock };
   feedCommentLike: { create: jest.Mock; findUnique: jest.Mock; delete: jest.Mock };
   feedPostReport: { create: jest.Mock; findUnique: jest.Mock; findMany: jest.Mock; update: jest.Mock };
   feedUserBlock: {
@@ -77,7 +78,11 @@ const mockPrisma: {
     findUnique: jest.fn(),
     delete: jest.fn(),
   },
+  feedCommentReport: {
+    create: jest.fn(),
+  },
   feedComment: {
+    findFirst: jest.fn(),
     create: jest.fn(),
     findUnique: jest.fn(),
     findMany: jest.fn(),
@@ -387,6 +392,86 @@ describe('FeedInteractionsService', () => {
       await expect(
         service.reportPost(POST_ID, { reason: 'spam' }, USER_ID, ORG_ID),
       ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('reportComment', () => {
+    const othersComment = { id: COMMENT_ID, postId: POST_ID, authorId: OTHER_USER_ID };
+
+    it('creates a report for a readable comment by someone else', async () => {
+      mockPrisma.feedComment.findFirst.mockResolvedValue(othersComment);
+      mockPrisma.feedPost.findFirst.mockResolvedValue(mockPublishedPost);
+      mockPrisma.feedCommentReport.create.mockResolvedValue({ id: 'creport-1' });
+
+      const result = await service.reportComment(
+        COMMENT_ID,
+        { reason: 'harassment', details: 'abusive' },
+        USER_ID,
+        ORG_ID,
+      );
+
+      expect(result.id).toBe('creport-1');
+      expect(mockPrisma.feedCommentReport.create).toHaveBeenCalledWith({
+        data: {
+          commentId: COMMENT_ID,
+          reporterUserId: USER_ID,
+          reason: 'harassment',
+          details: 'abusive',
+        },
+      });
+    });
+
+    it('404s when the comment is missing or not published', async () => {
+      mockPrisma.feedComment.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.reportComment(COMMENT_ID, { reason: 'spam' }, USER_ID, ORG_ID),
+      ).rejects.toThrow(NotFoundException);
+      expect(mockPrisma.feedCommentReport.create).not.toHaveBeenCalled();
+    });
+
+    it('404s when the parent post is not readable by the reporter', async () => {
+      mockPrisma.feedComment.findFirst.mockResolvedValue(othersComment);
+      mockPrisma.feedPost.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.reportComment(COMMENT_ID, { reason: 'spam' }, USER_ID, ORG_ID),
+      ).rejects.toThrow(NotFoundException);
+      expect(mockPrisma.feedCommentReport.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects reporting your own comment', async () => {
+      mockPrisma.feedComment.findFirst.mockResolvedValue({ ...othersComment, authorId: USER_ID });
+
+      await expect(
+        service.reportComment(COMMENT_ID, { reason: 'spam' }, USER_ID, ORG_ID),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects a duplicate report with 400', async () => {
+      mockPrisma.feedComment.findFirst.mockResolvedValue(othersComment);
+      mockPrisma.feedPost.findFirst.mockResolvedValue(mockPublishedPost);
+      mockPrisma.feedCommentReport.create.mockRejectedValue({ code: 'P2002' });
+
+      await expect(
+        service.reportComment(COMMENT_ID, { reason: 'spam' }, USER_ID, ORG_ID),
+      ).rejects.toThrow('You have already reported this comment');
+    });
+  });
+
+  describe('objectionable-content filter', () => {
+    it('rejects a comment with objectionable language before touching the database', async () => {
+      await expect(
+        service.createComment(POST_ID, { textContent: 'you are a bitch' }, USER_ID, ORG_ID),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockPrisma.feedComment.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects an edit that introduces objectionable language', async () => {
+      await expect(
+        service.updateComment(COMMENT_ID, { textContent: 'bullshit' }, USER_ID, ORG_ID),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockPrisma.feedComment.update).not.toHaveBeenCalled();
     });
   });
 

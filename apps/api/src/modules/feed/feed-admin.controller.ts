@@ -58,6 +58,33 @@ export class FeedAdminController {
     return { success: true, data: report };
   }
 
+  @Get('comment-reports')
+  @ApiOperation({ summary: 'List open feed comment reports' })
+  async listCommentReports(@Query() query: FeedQueryDto) {
+    const result = await this.interactionsService.listCommentReports(query);
+    return { success: true, data: result.items, meta: { hasNext: result.hasNext, nextCursor: result.nextCursor } };
+  }
+
+  @Patch('comment-reports/:reportId')
+  @ApiOperation({ summary: 'Resolve a feed comment report' })
+  async resolveCommentReport(
+    @CurrentUser() user: JwtPayload,
+    @Param('reportId', ParseUUIDPipe) reportId: string,
+    @Body() dto: ModerateReportDto,
+  ) {
+    const report = await this.interactionsService.resolveCommentReport(reportId, user.sub, dto);
+    await this.auditService.log({
+      actorUserId: user.sub,
+      actorType: 'admin',
+      organizationId: user.organizationId,
+      action: 'feed_comment_report.resolve',
+      entityType: 'feed_comment_report',
+      entityId: reportId,
+      metadata: { status: dto.status },
+    });
+    return { success: true, data: report };
+  }
+
   @Patch('posts/:postId')
   @ApiOperation({ summary: 'Moderate a feed post (hide/remove/restore)' })
   async moderatePost(

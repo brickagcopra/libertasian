@@ -11,7 +11,7 @@ export default function TermsPage() {
   return (
     <article className="prose prose-headings:font-serif prose-headings:tracking-tight prose-h1:text-4xl prose-h2:text-2xl mx-auto max-w-3xl px-6 py-16">
       <h1 className="text-3xl font-bold text-gray-900">Terms of Service</h1>
-      <p className="mt-2 text-sm text-gray-500">Last updated: March 21, 2026</p>
+      <p className="mt-2 text-sm text-gray-500">Last updated: November 20, 2026</p>
 
       <div className="prose prose-gray mt-10 max-w-none text-sm leading-relaxed text-gray-700">
         <Section title="1. Acceptance of Terms">
@@ -163,6 +163,30 @@ export default function TermsPage() {
             <li>Use the Service to provide legal advice to third parties without being a member
               of the Philippine Bar</li>
           </ul>
+
+          <h4>7.1 Community Content: Zero Tolerance</h4>
+          <p>
+            Posts, comments, reviews and other content you share with the community (&quot;User
+            Content&quot;) must comply with these Terms. We have <strong>zero tolerance</strong>{' '}
+            for objectionable content or abusive users. You agree not to post User Content that
+            is harassing, threatening, hateful or discriminatory, sexually explicit, spam, or
+            otherwise unlawful, and not to abuse other users.
+          </p>
+          <ul>
+            <li>We filter objectionable language automatically and may refuse to publish it</li>
+            <li>
+              Any user can report a post, comment or community item and block another user; we
+              review reports within 24 hours
+            </li>
+            <li>
+              We remove User Content that violates these Terms and may suspend or permanently ban
+              the account responsible, without notice
+            </li>
+          </ul>
+          <p>
+            Before you first post or comment in the app, you are asked to agree to these Terms
+            and this policy.
+          </p>
         </Section>
 
         <Section title="8. Intellectual Property">

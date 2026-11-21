@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../../../lib/api-client';
-import type { FeedCommentItem, FeedPaginationMeta } from '@libertasian/types';
+import type { FeedCommentItem, FeedPaginationMeta, FeedReportReason } from '@libertasian/types';
 
 interface CommentsResponse {
   success: boolean;
@@ -92,5 +92,19 @@ export function useUnlikeComment() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['feed-comments'] });
     },
+  });
+}
+
+/**
+ * Report another user's comment (Apple 1.2). The API answers 400 "You have
+ * already reported this comment" on a duplicate; callers show that message.
+ */
+export function useReportComment() {
+  return useMutation({
+    mutationFn: (params: { commentId: string; reason: FeedReportReason; details?: string }) =>
+      apiClient.post<{ id: string }>(`/feed/comments/${params.commentId}/report`, {
+        reason: params.reason,
+        details: params.details,
+      }),
   });
 }
