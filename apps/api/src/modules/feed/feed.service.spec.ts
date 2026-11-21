@@ -8,6 +8,15 @@ import {
 import { FeedService } from './feed.service';
 import { FeedBlocksService } from './feed-blocks.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CommunitySanctionsService } from '../moderation/community-sanctions.service';
+import { ModerationService } from '../moderation/moderation.service';
+
+const mockSanctions = {
+  assertCanParticipate: jest.fn(),
+  assertCanPublish: jest.fn(),
+};
+const mockModeration = { onReportFiled: jest.fn() };
+
 
 // ─── Mock Data ────────────────────────────────────────────────────────────────
 
@@ -97,6 +106,7 @@ describe('FeedService', () => {
         FeedService,
         { provide: PrismaService, useValue: mockPrisma },
         FeedBlocksService,
+        { provide: CommunitySanctionsService, useValue: mockSanctions },
       ],
     }).compile();
 

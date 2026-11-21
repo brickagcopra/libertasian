@@ -3,12 +3,16 @@
 import Link from 'next/link';
 
 import { useCorpusHealth } from '@/features/admin/hooks/use-admin';
+import { useModerationStats } from '@/features/moderation/hooks/use-moderation';
 import { AdminCardSkeleton } from '@/components/ui/skeleton';
 import { AnimatedCounter } from '@/components/ui/animated-counter';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 export default function AdminDashboardPage() {
   const { data: health, isLoading, error } = useCorpusHealth();
+  // Independent of corpus health: if this query fails, the moderation tile
+  // simply does not render and the rest of the dashboard is unaffected.
+  const { data: moderation } = useModerationStats();
 
   return (
     <div className="space-y-6">
@@ -16,6 +20,31 @@ export default function AdminDashboardPage() {
         <h1 className="text-2xl font-bold">Admin Dashboard</h1>
         <p className="mt-1 text-sm text-gray-500">Corpus health, source status, and editorial overview</p>
       </div>
+
+      {moderation && (
+        <div>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-gray-700">Community Safety</h2>
+            <Link href="/admin/moderation" className="text-xs text-blue-600 hover:text-blue-800">
+              Moderation →
+            </Link>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <Link href="/admin/moderation" className="block" aria-label="Open moderation queue">
+              <StatCard
+                label="Open Moderation Cases"
+                value={moderation.openCases}
+                accent={moderation.overdueCases > 0 ? 'red' : undefined}
+              />
+            </Link>
+            <StatCard
+              label="Cases Over 24h"
+              value={moderation.overdueCases}
+              accent={moderation.overdueCases > 0 ? 'red' : undefined}
+            />
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
@@ -154,6 +183,7 @@ export default function AdminDashboardPage() {
           <div>
             <h2 className="mb-3 text-sm font-semibold text-gray-700">Quick Links</h2>
             <div className="flex flex-wrap gap-3">
+              <QuickLink href="/admin/moderation" label="Moderation" count={moderation?.openCases} />
               <QuickLink href="/admin/sources" label="Manage Sources" />
               <QuickLink href="/admin/review" label="Review Queue" count={health.reviewQueue.pendingDigests} />
               <QuickLink href="/admin/flags" label="Editorial Flags" count={health.reviewQueue.openFlags} />

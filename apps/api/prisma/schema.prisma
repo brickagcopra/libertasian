@@ -122,6 +122,11 @@ model User {
   feedUserBlocksReceived     FeedUserBlock[]           @relation("FeedUserBlockBlocked")
   feedCommentReports         FeedCommentReport[]       @relation("FeedCommentReportReporter")
   feedCommentReportsResolved FeedCommentReport[]       @relation("FeedCommentReportResolver")
+  moderationActionsTaken     ModerationAction[]        @relation("ModerationActionModerator")
+  moderationActionsReceived  ModerationAction[]        @relation("ModerationActionSubject")
+  communitySanctions         CommunitySanction[]       @relation("CommunitySanctionUser")
+  communitySanctionsIssued   CommunitySanction[]       @relation("CommunitySanctionIssuer")
+  communitySanctionsRevoked  CommunitySanction[]       @relation("CommunitySanctionRevoker")
   exportJobs                 ExportJob[]
   // Accounting relations
   accountingPeriodsClosedBy  AccountingPeriod[]        @relation("PeriodClosedBy")
@@ -3048,6 +3053,67 @@ model FeedUserBlock {
   @@index([blockedUserId], map: "idx_feed_user_block_blocked")
   @@index([blockerUserId, createdAt(sort: Desc)], map: "idx_feed_user_block_blocker_created")
   @@map("feed_user_blocks")
+}
+
+/// One row per moderation decision on a reported target or a user (App Store
+/// Guideline 1.2: reports need timely action, abusive users must be ejectable).
+/// Append-only by convention: corrections are new rows (restore after remove,
+/// revoke_sanction after suspend), never edits. Platform-wide, so no
+/// organizationId; mirrors the report tables.
+///
+/// action: dismiss, remove, restore, auto_hide, warn, suspend, ban, revoke_sanction
+/// targetType: post, comment, flashcard_set, reviewer_pack, digest, community_rating, user
+/// moderatorUserId is null for automatic actions (auto_hide).
+model ModerationAction {
+  id              String   @id @default(uuid()) @db.Uuid
+  moderatorUserId String?  @map("moderator_user_id") @db.Uuid
+  subjectUserId   String?  @map("subject_user_id") @db.Uuid
+  targetType      String   @map("target_type") @db.VarChar(30)
+  targetId        String   @map("target_id") @db.Uuid
+  action          String   @db.VarChar(30)
+  reason          String?  @db.VarChar(40)
+  note            String?
+  reportsResolved Int      @default(0) @map("reports_resolved")
+  metadataJson    Json?    @map("metadata_json")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  moderator   User? @relation("ModerationActionModerator", fields: [moderatorUserId], references: [id], onDelete: SetNull)
+  subjectUser User? @relation("ModerationActionSubject", fields: [subjectUserId], references: [id], onDelete: SetNull)
+
+  @@index([targetType, targetId, createdAt(sort: Desc)], map: "idx_moderation_actions_target")
+  @@index([subjectUserId, createdAt(sort: Desc)], map: "idx_moderation_actions_subject")
+  @@index([createdAt(sort: Desc)], map: "idx_moderation_actions_created")
+  @@map("moderation_actions")
+}
+
+/// A moderator-imposed restriction on a user's community participation.
+/// warning: recorded and notified, restricts nothing.
+/// suspension: no posting, commenting, rating or publishing until endsAt.
+/// ban: the same, permanently (endsAt null) until revoked.
+/// A sanction is active while revokedAt is null and (endsAt is null or in the
+/// future); warnings are never active.
+model CommunitySanction {
+  id              String    @id @default(uuid()) @db.Uuid
+  userId          String    @map("user_id") @db.Uuid
+  type            String    @db.VarChar(20)
+  reason          String    @db.VarChar(40)
+  note            String?
+  startsAt        DateTime  @default(now()) @map("starts_at") @db.Timestamptz
+  endsAt          DateTime? @map("ends_at") @db.Timestamptz
+  revokedAt       DateTime? @map("revoked_at") @db.Timestamptz
+  issuedByUserId  String?   @map("issued_by_user_id") @db.Uuid
+  revokedByUserId String?   @map("revoked_by_user_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  user      User  @relation("CommunitySanctionUser", fields: [userId], references: [id], onDelete: Cascade)
+  issuedBy  User? @relation("CommunitySanctionIssuer", fields: [issuedByUserId], references: [id], onDelete: SetNull)
+  revokedBy User? @relation("CommunitySanctionRevoker", fields: [revokedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt(sort: Desc)], map: "idx_community_sanctions_user")
+  @@index([revokedAt, endsAt], map: "idx_community_sanctions_active")
+  @@map("community_sanctions")
 }
 
 // ==========================================================================

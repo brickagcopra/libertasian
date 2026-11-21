@@ -8,6 +8,15 @@ import {
 
 import { CommunityService } from './community.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CommunitySanctionsService } from '../moderation/community-sanctions.service';
+import { ModerationService } from '../moderation/moderation.service';
+
+const mockSanctions = {
+  assertCanParticipate: jest.fn(),
+  assertCanPublish: jest.fn(),
+};
+const mockModeration = { onReportFiled: jest.fn() };
+
 
 // ─── Mock Data ────────────────────────────────────────────────────────────────
 
@@ -178,6 +187,8 @@ describe('CommunityService', () => {
       providers: [
         CommunityService,
         { provide: PrismaService, useValue: mockPrismaService },
+        { provide: CommunitySanctionsService, useValue: mockSanctions },
+        { provide: ModerationService, useValue: mockModeration },
       ],
     }).compile();
 

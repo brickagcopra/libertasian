@@ -31,8 +31,13 @@ export const PLATFORM_SCOPE_PREFIXES = ['admin:', 'platform-'] as const;
  * mode 'any'. Without this entry, an owner with `roles:create` could mint a
  * custom role carrying it and walk straight back in — the prefix rules alone
  * do not close that door.
+ *
+ * `community:moderate` is here for the same reason: the community feed is
+ * cross-org, so moderating it is platform work. While `owner` held it, every
+ * signup could list all feed reports and remove anyone's post (verified on
+ * prod 2026-11-20; closed by migration 20261121130000).
  */
-export const PLATFORM_SCOPE_EXACT_CODES = ['digests:review'] as const;
+export const PLATFORM_SCOPE_EXACT_CODES = ['digests:review', 'community:moderate'] as const;
 
 /** The refusal shown whenever a workspace role would confer platform capability. */
 export const PLATFORM_CAPABILITY_REFUSAL =

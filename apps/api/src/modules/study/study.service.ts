@@ -9,6 +9,7 @@ import { ConfigService } from '@nestjs/config';
 import type { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { CommunitySanctionsService } from '../moderation/community-sanctions.service';
 import {
   CreateFlashcardSetDto,
   UpdateFlashcardSetDto,
@@ -77,6 +78,7 @@ export class StudyService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly sanctions: CommunitySanctionsService,
   ) {
     this.ragServiceUrl = this.config.get<string>('RAG_SERVICE_URL', 'http://localhost:8000');
   }
@@ -173,6 +175,7 @@ export class StudyService {
   // =========================================================================
 
   async createFlashcardSet(dto: CreateFlashcardSetDto, userId: string, organizationId: string) {
+    if (dto.visibility === 'public_editorial') await this.sanctions.assertCanPublish(userId);
     return this.prisma.flashcardSet.create({
       data: {
         organizationId,
@@ -273,6 +276,9 @@ export class StudyService {
     if (dto.barSubject !== undefined) data.barSubject = dto.barSubject;
     if (dto.topic !== undefined) data.topic = dto.topic.trim();
     if (dto.visibility !== undefined) data.visibility = dto.visibility;
+    if (dto.visibility === 'public_editorial' && set.visibility !== 'public_editorial') {
+      await this.sanctions.assertCanPublish(userId, { targetType: 'flashcard_set', targetId: id });
+    }
 
     return this.prisma.flashcardSet.update({
       where: { id },
@@ -511,6 +517,7 @@ export class StudyService {
   // =========================================================================
 
   async createReviewerPack(dto: CreateReviewerPackDto, userId: string, organizationId: string) {
+    if (dto.visibility === 'public_editorial') await this.sanctions.assertCanPublish(userId);
     return this.prisma.reviewerPack.create({
       data: {
         organizationId,
@@ -641,6 +648,9 @@ export class StudyService {
     if (dto.barSubject !== undefined) data.barSubject = dto.barSubject;
     if (dto.topic !== undefined) data.topic = dto.topic.trim();
     if (dto.visibility !== undefined) data.visibility = dto.visibility;
+    if (dto.visibility === 'public_editorial' && pack.visibility !== 'public_editorial') {
+      await this.sanctions.assertCanPublish(userId, { targetType: 'reviewer_pack', targetId: id });
+    }
 
     return this.prisma.reviewerPack.update({ where: { id }, data });
   }

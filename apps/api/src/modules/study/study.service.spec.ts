@@ -8,6 +8,10 @@ import { ConfigService } from '@nestjs/config';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { StudyService } from './study.service';
+import { CommunitySanctionsService } from '../moderation/community-sanctions.service';
+
+const mockSanctions = { assertCanParticipate: jest.fn(), assertCanPublish: jest.fn() };
+
 
 describe('StudyService', () => {
   let service: StudyService;
@@ -166,6 +170,7 @@ describe('StudyService', () => {
             $transaction: jest.fn((fns: unknown[]) => Promise.all(fns)),
           },
         },
+        { provide: CommunitySanctionsService, useValue: mockSanctions },
         {
           provide: ConfigService,
           useValue: {

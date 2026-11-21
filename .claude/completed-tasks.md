@@ -1,5 +1,19 @@
 # Completed Tasks
 
+## 2026-11-20 — Moderation queue (branch feature/moderation-queue)
+- [x] Researched Discourse / Reddit / Mastodon / Discord / YouTube moderation + Apple 1.2: cases grouped per target, oldest-first with 24h SLA, content + author actions, auto-hide, append-only log.
+- [x] API `modules/moderation`: cases/stats/detail, resolve (dismiss|remove, resolves all open reports in one tx), restore, sanctions (warning/suspension/ban, ban can remove all content), revoke, log. Tables `moderation_actions`, `community_sanctions`. Moderators can't act on their own content.
+- [x] Enforcement: suspended/banned users can't post, comment, review or publish study items; a moderator-removed study item can't be re-published by its author.
+- [x] SECURITY: `community:moderate` was on the system owner role (73 prod owners) → any signup could list all reports and remove any post. Now platform-scoped; feed/community admin controllers use PlatformPermissionsGuard.
+- [x] Web: `/admin/moderation` queue + case detail, sidebar entry, dashboard tile. API 5549/5549, web moderation/admin 270/270.
+
+## 2026-11-20 — App Review compliance shipped (PR #544, 8a8d042b)
+- [x] Terms (mobile + web §7.1): zero-tolerance clause. App: one-time Community Guidelines agreement before the first post/comment (`features/community-guidelines`).
+- [x] API `common/utils/content-filter.ts`: blocks slurs, profanity and sexual vulgarity (EN+FIL) on post/comment create+update and community reviews; legal vocabulary allowed (spec).
+- [x] Comment reports: `feed_comment_reports` + `POST /feed/comments/:id/report` + admin list/resolve; app comment options sheet (report + block); community items reportable via FlagModal.
+- [x] Deployed: prod migration applied, api+web rebuilt, /privacy and /terms show the new sections, health 200.
+- [x] iOS 1.0.3 build 35 started on EAS.
+
 ## 2026-11-20 — AI-data disclosure fixes (branch feat/mobile-ai-data-consent)
 - [x] Traced every OpenAI path: only rag-service `core/generation.py` calls OpenAI; embeddings (sentence-transformers), TTS (Kokoro), OCR and Help chat (local KB) don't. The mobile gate covers every NestJS route that reaches it; research-workspaces is not used on mobile. No name/email in any RAG request body.
 - [x] Web privacy policy: new 2.4 Third-Party AI Processing (OpenAI) + OpenAI in 7. Data Sharing; Last updated -> 2026-11-20.

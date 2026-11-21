@@ -8,6 +8,8 @@ import {
 
 import { assertAcceptableUserContent } from '../../common/utils/content-filter';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CommunitySanctionsService } from '../moderation/community-sanctions.service';
+import { ModerationService } from '../moderation/moderation.service';
 import { FeedBlocksService } from './feed-blocks.service';
 import { CreateCommentDto, UpdateCommentDto, ReportPostDto, FeedQueryDto } from './dto';
 
@@ -18,6 +20,8 @@ export class FeedInteractionsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly blocks: FeedBlocksService,
+    private readonly sanctions: CommunitySanctionsService,
+    private readonly moderation: ModerationService,
   ) {}
 
   // =========================================================================
@@ -107,6 +111,7 @@ export class FeedInteractionsService {
     viewerOrgId: string,
   ) {
     assertAcceptableUserContent('comment', dto.textContent);
+    await this.sanctions.assertCanParticipate(userId);
     await this.validatePostReadable(postId, userId, viewerOrgId);
 
     // Validate parent if provided (must belong to same post, max 1 level deep)
@@ -154,6 +159,7 @@ export class FeedInteractionsService {
     viewerOrgId: string,
   ) {
     assertAcceptableUserContent('comment', dto.textContent);
+    await this.sanctions.assertCanParticipate(userId);
     const comment = await this.prisma.forTenant(viewerOrgId).feedComment.findUnique({
       where: { id: commentId },
     });
@@ -387,6 +393,7 @@ export class FeedInteractionsService {
         data: { reportCount: { increment: 1 } },
       });
 
+      await this.moderation.onReportFiled('post', postId);
       return report;
     } catch (err: unknown) {
       if (this.isPrismaUniqueError(err)) {
@@ -421,7 +428,7 @@ export class FeedInteractionsService {
     });
 
     try {
-      return await this.prisma.feedCommentReport.create({
+      const report = await this.prisma.feedCommentReport.create({
         data: {
           commentId,
           reporterUserId: userId,
@@ -429,6 +436,8 @@ export class FeedInteractionsService {
           details: dto.details,
         },
       });
+      await this.moderation.onReportFiled('comment', commentId);
+      return report;
     } catch (err: unknown) {
       if (this.isPrismaUniqueError(err)) {
         throw new BadRequestException('You have already reported this comment');

@@ -12,10 +12,10 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { JwtPayload } from '@libertasian/types';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { RequiredPermissions } from '../../common/decorators/permissions.decorator';
+import { RequiredPlatformPermissions } from '../../common/decorators/platform-permissions.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { TenantGuard } from '../../common/guards/tenant.guard';
-import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { MfaGuard } from '../../common/guards/mfa.guard';
+import { PlatformPermissionsGuard } from '../../common/guards/platform-permissions.guard';
 import { AuditService } from '../audit/audit.service';
 import { CommunityService } from './community.service';
 import {
@@ -27,8 +27,11 @@ import {
 
 @ApiTags('Community Admin')
 @Controller('community/admin')
-@UseGuards(JwtAuthGuard, TenantGuard, PermissionsGuard)
-@RequiredPermissions('community:moderate')
+// PLATFORM guard, not the tenant PermissionsGuard: the community is cross-org,
+// and the tenant check let every workspace owner moderate it (migration
+// 20261121130000_platform_scope_community_moderate).
+@UseGuards(JwtAuthGuard, MfaGuard, PlatformPermissionsGuard)
+@RequiredPlatformPermissions('community:moderate')
 @ApiBearerAuth()
 export class CommunityAdminController {
   constructor(

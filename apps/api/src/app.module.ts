@@ -57,6 +57,7 @@ import { ExternalApiModule } from './modules/external-api/external-api.module';
 import { AdsModule } from './modules/ads/ads.module';
 import { BlogModule } from './modules/blog/blog.module';
 import { FeedModule } from './modules/feed/feed.module';
+import { ModerationModule } from './modules/moderation/moderation.module';
 import { HomeModule } from './modules/home/home.module';
 import { SimulatorModule } from './modules/simulator/simulator.module';
 import { SiteContentModule } from './modules/site-content/site-content.module';
@@ -185,6 +186,7 @@ import { RequestPlatformMiddleware } from './common/middleware/request-platform.
     AdsModule,
     BlogModule,
     FeedModule,
+    ModerationModule,
     HomeModule,
     SimulatorModule,
     SiteContentModule,

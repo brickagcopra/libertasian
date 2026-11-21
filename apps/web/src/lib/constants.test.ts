@@ -173,6 +173,11 @@ describe('ROUTES', () => {
     it('has admin duplicates route', () => {
       expect(ROUTES.ADMIN_DUPLICATES).toBe('/admin/duplicates');
     });
+
+    it('has admin moderation routes', () => {
+      expect(ROUTES.ADMIN_MODERATION).toBe('/admin/moderation');
+      expect(ROUTES.ADMIN_MODERATION_CASE('comment', 'c-1')).toBe('/admin/moderation/comment/c-1');
+    });
   });
 
   describe('workspace routes', () => {

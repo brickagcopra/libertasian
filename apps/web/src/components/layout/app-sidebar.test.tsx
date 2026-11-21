@@ -248,6 +248,7 @@ describe('SidebarContent — platform reviewer', () => {
     expect(screen.getByText('Review Queue')).toBeInTheDocument();
     // Everything else under /admin would 403 at the API, so it is not offered.
     expect(screen.queryByText('Platform Staff')).not.toBeInTheDocument();
+    expect(screen.queryByText('Moderation')).not.toBeInTheDocument();
     expect(screen.queryByText('Plans')).not.toBeInTheDocument();
     expect(screen.queryByText('Sources')).not.toBeInTheDocument();
     // Org-settings links stay admin-only too.
@@ -282,6 +283,7 @@ describe('SidebarContent — platform reviewer', () => {
     render(<SidebarContent />);
 
     expect(screen.getByText('Review Queue')).toBeInTheDocument();
+    expect(screen.getByText('Moderation')).toBeInTheDocument();
     expect(screen.getByText('Platform Staff')).toBeInTheDocument();
     expect(screen.getByText('Plans')).toBeInTheDocument();
     expect(screen.getByText('Roles & Permissions')).toBeInTheDocument();
