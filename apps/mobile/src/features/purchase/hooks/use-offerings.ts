@@ -7,7 +7,7 @@ import {
 } from '../lib/purchases-sdk';
 import {
   STORE_PRODUCT_IDS,
-  isStoreProductId,
+  toStoreProductId,
   type PurchasePlanOption,
   type StoreProductId,
 } from '../products';
@@ -92,10 +92,10 @@ interface StoreProductLike {
  * defaulted or formatted here — see `durationFor` for the one field that
  * needed a decision.
  */
-function toPlanOption(product: StoreProductLike): PurchasePlanOption | null {
-  const productId = product.identifier;
-  if (!isStoreProductId(productId)) return null;
-
+function toPlanOption(
+  productId: StoreProductId,
+  product: StoreProductLike,
+): PurchasePlanOption | null {
   const duration = durationFor(productId, product.subscriptionPeriod);
   // A blank price is a 3.1.2(c) violation — the price must be in front of the
   // customer BEFORE they subscribe — so a product with no price string is
@@ -156,10 +156,10 @@ function durationFor(
 function plansFor(
   productsByProductId: Record<string, StoreProductLike>,
 ): PurchasePlanOption[] {
-  return STORE_PRODUCT_IDS.map((id) => productsByProductId[id])
-    .filter((product): product is StoreProductLike => product !== undefined)
-    .map(toPlanOption)
-    .filter((plan): plan is PurchasePlanOption => plan !== null);
+  return STORE_PRODUCT_IDS.map((id) => {
+    const product = productsByProductId[id];
+    return product ? toPlanOption(id, product) : null;
+  }).filter((plan): plan is PurchasePlanOption => plan !== null);
 }
 
 /**
@@ -229,9 +229,9 @@ export async function fetchStoreOfferings(): Promise<OfferingsResult> {
 
   for (const pkg of current?.availablePackages ?? []) {
     offeringProductIds.push(pkg.product.identifier);
-    if (isStoreProductId(pkg.product.identifier)) {
-      packagesByProductId[pkg.product.identifier] = pkg;
-    }
+    // Keyed by the CANONICAL id: Play reports `<subscriptionId>:<basePlanId>`.
+    const productId = toStoreProductId(pkg.product.identifier);
+    if (productId) packagesByProductId[productId] = pkg;
   }
 
   const offeringProducts: Record<string, StoreProductLike> = {};
@@ -254,9 +254,9 @@ export async function fetchStoreOfferings(): Promise<OfferingsResult> {
 
   const productsByProductId: Record<string, PurchasesStoreProduct> = {};
   for (const product of products) {
-    if (isStoreProductId(product.identifier)) {
-      productsByProductId[product.identifier] = product;
-    }
+    // Play returns one product per base plan; only the matching one is kept.
+    const productId = toStoreProductId(product.identifier);
+    if (productId) productsByProductId[productId] = product;
   }
 
   const productPlans = plansFor(productsByProductId);

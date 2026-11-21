@@ -12,6 +12,7 @@ export { PURCHASE_ROUTE, PURCHASE_PRIVACY_ROUTE, PURCHASE_TERMS_ROUTE } from './
 export {
   STORE_PRODUCT_IDS,
   isStoreProductId,
+  toStoreProductId,
   type PurchasePlanOption,
   type SellablePlanCode,
   type StoreBillingPeriod,

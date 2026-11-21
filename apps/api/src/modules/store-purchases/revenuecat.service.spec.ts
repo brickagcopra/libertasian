@@ -209,6 +209,39 @@ describe('RevenueCatService', () => {
       jest.restoreAllMocks();
     });
 
+    it('rejoins a Play base plan into `<subscriptionId>:<basePlanId>`', async () => {
+      jest.spyOn(global, 'fetch').mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          subscriber: {
+            entitlements: {
+              pro: {
+                product_identifier: 'com.libertasian.pro.annual',
+                product_plan_identifier: 'annual',
+                expires_date: '2027-09-01T00:00:00Z',
+              },
+            },
+            subscriptions: {
+              'com.libertasian.pro.annual': {
+                store: 'PLAY_STORE',
+                period_type: 'normal',
+                is_sandbox: true,
+              },
+            },
+          },
+        }),
+      } as unknown as Response);
+
+      const snapshot = await service.fetchSubscriberSnapshot(ORG_ID);
+
+      expect(snapshot.entitlements[0]).toMatchObject({
+        productId: 'com.libertasian.pro.annual:annual',
+        store: 'play_store',
+        environment: 'sandbox',
+      });
+    });
+
     it('pulls the subscriber and normalises its entitlements', async () => {
       jest.spyOn(global, 'fetch').mockResolvedValue({
         ok: true,

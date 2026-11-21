@@ -250,8 +250,16 @@ export class RevenueCatService implements StorePurchaseProvider {
     return {
       appUserId,
       entitlements: Object.entries(entitlements).map(([id, entitlement]) => {
-        const productId = String(entitlement['product_identifier'] ?? '');
-        const subscription = subscriptions[productId] ?? {};
+        const subscriptionId = String(entitlement['product_identifier'] ?? '');
+        const subscription = subscriptions[subscriptionId] ?? {};
+        // Play only: the base plan arrives in a separate field. Rejoin it into
+        // the `<subscriptionId>:<basePlanId>` form the webhook uses, so
+        // `resolveStoreProduct` checks the base plan on this path too.
+        const basePlanId = entitlement['product_plan_identifier'];
+        const productId =
+          typeof basePlanId === 'string' && basePlanId !== ''
+            ? `${subscriptionId}:${basePlanId}`
+            : subscriptionId;
         const isSandbox = subscription['is_sandbox'] === true;
 
         return {

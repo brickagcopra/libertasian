@@ -83,6 +83,31 @@ describe('STORE_PRODUCT_MAP (D7)', () => {
     expect(resolveStoreProduct('libertasian.pro.monthly')).toBeNull();
   });
 
+  it('resolves a Play `<subscriptionId>:<basePlanId>` id when the base plan is the billing period', () => {
+    expect(resolveStoreProduct('com.libertasian.pro.monthly:monthly')).toEqual({
+      planCode: 'pro',
+      billingPeriod: 'monthly',
+    });
+    expect(resolveStoreProduct('com.libertasian.edu.annual:annual')).toEqual({
+      planCode: 'edu',
+      billingPeriod: 'annual',
+    });
+  });
+
+  it('refuses a Play base plan that is not the billing period', () => {
+    for (const productId of [
+      'com.libertasian.pro.monthly:annual',
+      'com.libertasian.pro.monthly:promo',
+      'com.libertasian.pro.monthly:',
+      'com.libertasian.pro.monthly:monthly:x',
+      'com.libertasian.team.monthly:monthly',
+      'constructor:monthly',
+      ':monthly',
+    ]) {
+      expect(resolveStoreProduct(productId)).toBeNull();
+    }
+  });
+
   it('cannot be tricked by a prototype-chain key', () => {
     // A bare object lookup would return Object.prototype members for keys like
     // `constructor` or `toString`, which would then be used as a plan.

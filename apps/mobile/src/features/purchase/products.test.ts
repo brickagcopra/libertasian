@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
-import { STORE_PRODUCT_IDS, isStoreProductId } from './products';
+import { STORE_PRODUCT_IDS, isStoreProductId, toStoreProductId } from './products';
 
 /**
  * The API's map is the enforcement point; this list is a convenience copy.
@@ -60,5 +60,34 @@ describe('store product ids', () => {
     expect(isStoreProductId('com.libertasian.enterprise.annual')).toBe(false);
     expect(isStoreProductId('com.libertasian.pro.weekly')).toBe(false);
     expect(isStoreProductId('')).toBe(false);
+  });
+
+  describe('toStoreProductId', () => {
+    it('passes the bare (App Store) ids through', () => {
+      for (const id of STORE_PRODUCT_IDS) expect(toStoreProductId(id)).toBe(id);
+    });
+
+    it('maps Play `<subscriptionId>:<basePlanId>` ids to the canonical id', () => {
+      expect(toStoreProductId('com.libertasian.pro.monthly:monthly')).toBe(
+        'com.libertasian.pro.monthly',
+      );
+      expect(toStoreProductId('com.libertasian.edu.annual:annual')).toBe(
+        'com.libertasian.edu.annual',
+      );
+    });
+
+    it('refuses a base plan that does not match the billing period', () => {
+      expect(toStoreProductId('com.libertasian.pro.monthly:annual')).toBeNull();
+      expect(toStoreProductId('com.libertasian.pro.monthly:promo')).toBeNull();
+      expect(toStoreProductId('com.libertasian.pro.monthly:')).toBeNull();
+      expect(toStoreProductId('com.libertasian.pro.monthly:monthly:x')).toBeNull();
+    });
+
+    it('refuses ids that are not ours, with or without a base plan', () => {
+      expect(toStoreProductId('com.libertasian.team.monthly:monthly')).toBeNull();
+      expect(toStoreProductId('rc_lifetime')).toBeNull();
+      expect(toStoreProductId(':monthly')).toBeNull();
+      expect(toStoreProductId('')).toBeNull();
+    });
   });
 });

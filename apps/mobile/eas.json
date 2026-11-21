@@ -104,12 +104,13 @@
         // NOTE: distinct from google-services.json, which is Firebase CLIENT config
         // (public identifiers, safe to commit) referenced by app.json for FCM push.
         "serviceAccountKeyPath": "./play-service-account.json",
-        // "alpha" is Play's default CLOSED testing track. It must not be
-        // "internal": internal-track releases do NOT count toward the
-        // 12-testers/14-continuous-days requirement that gates production
-        // access for personal developer accounts, so an internal submit
-        // silently burns days without advancing the clock.
-        "track": "alpha",
+        // "production" since 2026-11-21, when Google granted production
+        // access. Before that this was "alpha" (the closed testing track),
+        // because only closed-track releases counted toward the
+        // 12-testers/14-days requirement for personal developer accounts.
+        // With "completed" below, a submit here goes to Google's review and
+        // then to the PUBLIC; use `--profile internal` for device testing.
+        "track": "production",
         // "draft" USED to be required here. Play rejects a COMPLETED release
         // with "the app is missing the required metadata" until the app has
         // been through its FIRST review, because the store listing and App
@@ -131,8 +132,8 @@
       }
     },
     // Device-test builds for the team: `eas submit --profile internal`.
-    // Android goes to Play's INTERNAL testing track instead of alpha; this
-    // does not advance the closed-testing clock, and that is intended here.
+    // Android goes to Play's INTERNAL testing track instead of production,
+    // so a build can be checked on devices before it reaches the public.
     // iOS is unchanged — every submit lands in TestFlight, never App Review.
     "internal": {
       "extends": "production",
