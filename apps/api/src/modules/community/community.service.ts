@@ -10,6 +10,9 @@ import type { Prisma } from '@prisma/client';
 
 import { assertAcceptableUserContent } from '../../common/utils/content-filter';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CommunitySanctionsService } from '../moderation/community-sanctions.service';
+import type { ModerationTargetType } from '../moderation/moderation.constants';
+import { ModerationService } from '../moderation/moderation.service';
 import {
   MarketplaceQueryDto,
   CreateCommunityRatingDto,
@@ -31,7 +34,11 @@ const VOTABLE_ENTITY_TYPES = ['digest'] as const;
 export class CommunityService {
   private readonly logger = new Logger(CommunityService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly sanctions: CommunitySanctionsService,
+    private readonly moderation: ModerationService,
+  ) {}
 
   // =========================================================================
   // Entity Validation
@@ -516,6 +523,7 @@ export class CommunityService {
 
   async upsertRating(userId: string, dto: CreateCommunityRatingDto) {
     assertAcceptableUserContent('review', dto.reviewTitle, dto.reviewBody);
+    await this.sanctions.assertCanParticipate(userId);
     await this.validatePublicEntity(dto.entityType, dto.entityId);
 
     const rating = await this.prisma.communityRating.upsert({
@@ -739,7 +747,7 @@ export class CommunityService {
   // =========================================================================
 
   async createFlag(userId: string, dto: CreateCommunityFlagDto) {
-    return this.prisma.communityFlag.create({
+    const flag = await this.prisma.communityFlag.create({
       data: {
         reporterUserId: userId,
         entityType: dto.entityType,
@@ -748,6 +756,8 @@ export class CommunityService {
         details: dto.details,
       },
     });
+    await this.moderation.onReportFiled(dto.entityType as ModerationTargetType, dto.entityId);
+    return flag;
   }
 
   async listFlags(query: ListFlagsQueryDto) {

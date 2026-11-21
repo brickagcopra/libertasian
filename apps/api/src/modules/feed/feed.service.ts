@@ -8,6 +8,7 @@ import {
 
 import { assertAcceptableUserContent } from '../../common/utils/content-filter';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CommunitySanctionsService } from '../moderation/community-sanctions.service';
 import { FeedBlocksService } from './feed-blocks.service';
 import { CreatePostDto, UpdatePostDto, FeedQueryDto } from './dto';
 
@@ -54,6 +55,7 @@ export class FeedService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly blocks: FeedBlocksService,
+    private readonly sanctions: CommunitySanctionsService,
   ) {}
 
   async createPost(dto: CreatePostDto, userId: string, organizationId: string) {
@@ -63,6 +65,7 @@ export class FeedService {
       throw new BadRequestException('Post must have text or an image');
     }
     assertAcceptableUserContent('post', dto.textContent);
+    await this.sanctions.assertCanParticipate(userId);
 
     // Validate media if provided
     if (dto.mediaId) {
@@ -111,6 +114,7 @@ export class FeedService {
     organizationId: string,
   ) {
     assertAcceptableUserContent('post', dto.textContent);
+    await this.sanctions.assertCanParticipate(userId);
 
     // Authorship scoping enforced at the DB layer via updateMany with a
     // compound where clause: { id, authorId, deletedAt: null }. A zero

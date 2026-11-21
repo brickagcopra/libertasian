@@ -16,6 +16,7 @@ import { renewalReminderTemplate } from './templates/renewal-reminder';
 import { subscriptionCancelledTemplate } from './templates/subscription-cancelled';
 import { announcementTemplate } from './templates/announcement';
 import { blogNotificationTemplate } from './templates/blog-notification';
+import { moderationAlertTemplate } from './templates/moderation-alert';
 
 @Injectable()
 export class NotificationsService {
@@ -359,6 +360,25 @@ export class NotificationsService {
   }
 
   // ---- Queue helpers ----
+
+  /** Moderation-queue alert to one moderator (new case, auto-hide, daily summary). */
+  async sendModerationAlert(params: {
+    email: string;
+    fullName: string;
+    heading: string;
+    lines: string[];
+    urgent: boolean;
+  }): Promise<void> {
+    const { subject, html } = moderationAlertTemplate({
+      fullName: params.fullName,
+      heading: params.heading,
+      lines: params.lines,
+      queueUrl: `${this.appUrl}/admin/moderation`,
+      urgent: params.urgent,
+    });
+    await this.enqueue({ to: params.email, subject, html });
+    this.logger.log(`Moderation alert enqueued for ${this.redactEmail(params.email)}`);
+  }
 
   private async enqueue(data: {
     to: string;

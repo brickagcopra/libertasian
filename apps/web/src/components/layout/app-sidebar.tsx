@@ -68,6 +68,7 @@ import {
   LibraryBigIcon,
   FileStackIcon,
   ShieldIcon,
+  ShieldAlertIcon,
   TelescopeIcon,
 } from 'lucide-react';
 
@@ -111,6 +112,9 @@ const WORKSPACE_ITEMS: NavItem[] = [
 
 const ADMIN_NAV_ITEMS: NavItem[] = [
   { href: '/admin', label: 'Dashboard', icon: LayoutDashboardIcon, exact: true },
+
+  // 0 — Community safety
+  { href: '/admin/moderation', label: 'Moderation', icon: ShieldAlertIcon },
 
   // 1 — Source setup
   { href: '/admin/sources', label: 'Sources', icon: DatabaseIcon },

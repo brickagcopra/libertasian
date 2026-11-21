@@ -51,6 +51,9 @@ export const ROUTES = {
   ADMIN_KNOWLEDGE_GRAPH: '/admin/knowledge-graph',
   ADMIN_HEALTH: '/admin/health',
   ADMIN_DUPLICATES: '/admin/duplicates',
+  ADMIN_MODERATION: '/admin/moderation',
+  ADMIN_MODERATION_CASE: (targetType: string, targetId: string) =>
+    `/admin/moderation/${encodeURIComponent(targetType)}/${encodeURIComponent(targetId)}`,
   // Community & Marketplace
   COMMUNITY: '/community',
   COMMUNITY_FLASHCARD_SETS: '/community/flashcard-sets',

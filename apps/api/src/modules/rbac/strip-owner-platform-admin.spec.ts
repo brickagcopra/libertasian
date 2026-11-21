@@ -84,7 +84,9 @@ describe('strip_owner_platform_admin — seed-level invariants', () => {
         !c.startsWith('admin:') &&
         !c.startsWith('platform-staff:') &&
         !c.startsWith('platform-roles:') &&
-        c !== 'digests:review',
+        c !== 'digests:review' &&
+        // 20261121130000: moderating the cross-org community is platform work.
+        c !== 'community:moderate',
     );
     expect([...(ROLE_PERMISSIONS['owner'] ?? [])].sort()).toEqual(
       [...new Set(expected)].sort(),
