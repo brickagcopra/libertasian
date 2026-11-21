@@ -7,6 +7,15 @@
 - [x] Bulk actions: `POST /admin/moderation/cases/bulk-resolve` (≤50, per-case results); web queue checkboxes + bulk toolbar + dialog; Appeals tab with open count.
 - [x] Mobile: Settings › Community standing (decisions, appeal form, outcomes).
 - [x] Tests: API 5560/5560; web moderation+admin 160/160; mobile settings/notifications pass. Migration verified on a throwaway DB.
+- [x] Merged PR #546 (f4ff5588) and DEPLOYED: prod migration `20261122120000_add_moderation_appeals_and_report_indexes` applied, api+web rebuilt and healthy, new routes live (401 without auth).
+- [x] iOS 1.0.3 build 36 started on EAS (9c2c1d0e) from f4ff5588, 2026-11-21.
+- [x] Build 36 submitted to TestFlight (EAS submission 225935c2-5e44-42eb-a53c-9e7c3dd19fb8, FINISHED).
+- [x] Expo SDK 58 upgrade coded + tested (PR #547): RN 0.88, React 19.3, expo-av -> expo-audio, MMKV 4, google-signin 17, splash plugin, Xcode 27.2 image.
+- [x] PR #547 squash-merged (d29999fb). iOS 1.0.3 (38) uploaded to TestFlight and SUBMITTED FOR REVIEW in ASC (draft swapped from build 34 to 38), 2026-11-21.
+- [x] Android 1.0.3 vC18 (SDK 58) submitted to Play alpha track (EAS submission 202c9c8d-2316-46ac-97fb-15d567e0d3f9, FINISHED).
+- [x] Google Play production access GRANTED for com.libertasian.app (2026-11-21).
+- [x] eas.json Android submit track alpha -> production.
+- [x] Play base-plan product id support (mobile + API + RevenueCat pull), tests added; uncommitted.
 
 ## 2026-11-20 — Moderation queue (branch feature/moderation-queue)
 - [x] Researched Discourse / Reddit / Mastodon / Discord / YouTube moderation + Apple 1.2: cases grouped per target, oldest-first with 24h SLA, content + author actions, auto-hide, append-only log.

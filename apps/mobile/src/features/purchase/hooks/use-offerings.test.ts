@@ -102,6 +102,35 @@ describe('useOfferings', () => {
     expect(mockGetProducts).not.toHaveBeenCalled();
   });
 
+  it('maps Play `<subscriptionId>:<basePlanId>` packages to the canonical ids', async () => {
+    // Play Billing 5+ reports subscriptions this way and RevenueCat passes it
+    // through; an exact match dropped every Android product.
+    const data = await offerings(
+      STORE_PRODUCT_IDS.map((id) => {
+        const period = id.endsWith('annual') ? 'annual' : 'monthly';
+        return pkg(`${id}:${period}`, {
+          subscriptionPeriod: period === 'annual' ? 'P1Y' : 'P1M',
+        });
+      }),
+    );
+
+    expect(data.plans.map((p) => p.productId)).toEqual([...STORE_PRODUCT_IDS]);
+    expect(packageFor(data, 'com.libertasian.pro.annual')?.product.identifier).toBe(
+      'com.libertasian.pro.annual:annual',
+    );
+  });
+
+  it('drops a Play base plan that does not match the billing period', async () => {
+    const data = await offerings([
+      pkg('com.libertasian.pro.monthly:monthly'),
+      pkg('com.libertasian.pro.annual:monthly'),
+    ]);
+
+    expect(data.plans.map((p) => p.productId)).toEqual([
+      'com.libertasian.pro.monthly',
+    ]);
+  });
+
   it('NEVER surfaces a product id the server would refuse', async () => {
     // A RevenueCat offering is dashboard-configured and can contain anything
     // someone added there. The server refuses every id outside

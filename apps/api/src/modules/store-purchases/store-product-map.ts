@@ -56,6 +56,26 @@ export function resolveStoreProduct(
   productId: string | null | undefined,
 ): StoreProductDefinition | null {
   if (!productId) return null;
+
+  const direct = lookup(productId);
+  if (direct) return direct;
+
+  // Google Play Billing 5+ names a subscription `<subscriptionId>:<basePlanId>`
+  // and RevenueCat's webhook `product_id` carries it verbatim, so a Play
+  // purchase of `com.libertasian.pro.monthly` arrives as
+  // `com.libertasian.pro.monthly:monthly`. The base plan id must equal the
+  // product's own billing period: any other base plan (a promo plan, or an
+  // annual plan added under a monthly subscription by mistake) is refused
+  // rather than granted under the wrong period. The mobile client's
+  // `toStoreProductId` applies the same rule.
+  const separator = productId.indexOf(':');
+  if (separator === -1) return null;
+  const definition = lookup(productId.slice(0, separator));
+  if (!definition) return null;
+  return productId.slice(separator + 1) === definition.billingPeriod ? definition : null;
+}
+
+function lookup(productId: string): StoreProductDefinition | null {
   // `Object.hasOwn`, not a bare index. A plain object lookup walks the
   // prototype chain, so a hostile `product_id` of `constructor`, `toString` or
   // `__proto__` would return a truthy non-definition — and the caller would

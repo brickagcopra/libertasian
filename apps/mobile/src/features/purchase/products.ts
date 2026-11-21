@@ -33,6 +33,35 @@ export function isStoreProductId(value: string): value is StoreProductId {
 }
 
 /**
+ * The canonical product id for an identifier the STORE reported, or `null`.
+ *
+ * Apple reports the bare id (`com.libertasian.pro.monthly`). Google Play
+ * Billing 5+ reports a subscription as `<subscriptionId>:<basePlanId>`, and
+ * RevenueCat passes that through verbatim, so the same product arrives on
+ * Android as `com.libertasian.pro.monthly:monthly`. An exact match against
+ * `STORE_PRODUCT_IDS` drops every Play product, and the purchase surface
+ * renders as unavailable.
+ *
+ * The base plan id must equal the product's own billing period (`monthly` or
+ * `annual`). Anything else — a promotional base plan, an annual plan added
+ * under a monthly subscription by mistake — is refused rather than sold under
+ * the wrong period. The server's `resolveStoreProduct` applies the same rule.
+ */
+export function toStoreProductId(identifier: string): StoreProductId | null {
+  if (isStoreProductId(identifier)) return identifier;
+
+  const separator = identifier.indexOf(':');
+  if (separator === -1) return null;
+
+  const subscriptionId = identifier.slice(0, separator);
+  const basePlanId = identifier.slice(separator + 1);
+  if (!isStoreProductId(subscriptionId)) return null;
+
+  const billingPeriod = subscriptionId.slice(subscriptionId.lastIndexOf('.') + 1);
+  return basePlanId === billingPeriod ? subscriptionId : null;
+}
+
+/**
  * One purchasable option, as the STORE describes it.
  *
  * Every display field is a string the store handed us, rendered verbatim. That
