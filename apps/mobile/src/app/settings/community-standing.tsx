@@ -214,7 +214,7 @@ export default function CommunityStandingScreen() {
               Moderator decisions about your community activity. If you think one was a mistake,
               you can appeal it within 30 days.
             </Text>
-          ) : null
+          ) : undefined
         }
         ListEmptyComponent={
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, paddingHorizontal: 24 }}>

@@ -17,7 +17,7 @@ interface SectionListenButtonProps {
  *
  * The Civil Code has 2,533 sections. This renders once per section, so it must
  * not call `useAudioRendition` and must not mount an `AudioPlayerBar` — 2,533
- * `expo-av` sounds is a memory problem even though none of them would fetch.
+ * `expo-audio` players is a memory problem even though none of them would fetch.
  * Tapping hands the id to the ONE screen-level player, which is the only
  * component that ever touches the audio endpoint.
  *

@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Audio } from 'expo-av';
+import { createAudioPlayer } from 'expo-audio';
 import { router } from 'expo-router';
 
 import { ApiClientError } from '../../../lib/api-client';
@@ -15,8 +15,18 @@ jest.mock('../hooks/use-audio-rendition', () => ({
   audioRenditionQueryKey: (t: string, i: string) => ['audio-rendition', t, i],
 }));
 
-/** The expo-av stub from src/test/setup.ts; its 3rd arg is the status callback. */
-const createAsync = Audio.Sound.createAsync as jest.Mock;
+/** The expo-audio stub from src/test/setup.ts. */
+const createPlayer = createAudioPlayer as jest.Mock;
+
+interface PlayerStub {
+  play: jest.Mock;
+  addListener: jest.Mock;
+}
+
+/** The player created by the Nth `createAudioPlayer` call. */
+function playerAt(index = 0): PlayerStub {
+  return createPlayer.mock.results[index]?.value as PlayerStub;
+}
 
 const READY: AudioRenditionReadModel = {
   status: 'ready',
@@ -218,10 +228,8 @@ describe('AudioPlayerBar', () => {
       mockUseAudioRendition.mockReturnValue(baseHookResult({ data: READY }));
       renderPlayer({ autoStart: true });
 
-      await waitFor(() => expect(createAsync).toHaveBeenCalled());
-      expect(createAsync.mock.calls[0][1]).toEqual(
-        expect.objectContaining({ shouldPlay: true }),
-      );
+      await waitFor(() => expect(createPlayer).toHaveBeenCalled());
+      await waitFor(() => expect(playerAt().play).toHaveBeenCalled());
     });
 
     it('does not auto-start when the caller did not ask for it', async () => {
@@ -229,10 +237,8 @@ describe('AudioPlayerBar', () => {
       renderPlayer();
       fireEvent.press(screen.getByTestId('listen-button'));
 
-      await waitFor(() => expect(createAsync).toHaveBeenCalled());
-      expect(createAsync.mock.calls[0][1]).toEqual(
-        expect.objectContaining({ shouldPlay: false }),
-      );
+      await waitFor(() => expect(createPlayer).toHaveBeenCalled());
+      expect(playerAt().play).not.toHaveBeenCalled();
     });
   });
 
@@ -241,16 +247,21 @@ describe('AudioPlayerBar', () => {
     mockUseAudioRendition.mockReturnValue(baseHookResult({ data: READY }));
     renderPlayer({ autoStart: true, onEnded });
 
-    await waitFor(() => expect(createAsync).toHaveBeenCalled());
-    const onStatus = createAsync.mock.calls[0][2] as (s: unknown) => void;
+    await waitFor(() => expect(createPlayer).toHaveBeenCalled());
+    const [event, onStatus] = playerAt().addListener.mock.calls[0] as [
+      string,
+      (s: unknown) => void,
+    ];
+    expect(event).toBe('playbackStatusUpdate');
 
     act(() => {
       onStatus({
         isLoaded: true,
-        isPlaying: false,
-        positionMillis: 90_000,
-        durationMillis: 90_000,
+        playing: false,
+        currentTime: 90,
+        duration: 90,
         didJustFinish: true,
+        error: null,
       });
     });
 

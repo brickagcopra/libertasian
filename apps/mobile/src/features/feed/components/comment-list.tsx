@@ -62,7 +62,7 @@ export function CommentList({ postId, currentUserId }: CommentListProps) {
         ListFooterComponent={
           isFetchingNextPage ? (
             <ActivityIndicator size="small" color="#1a56db" style={styles.footer} />
-          ) : null
+          ) : undefined
         }
         ListEmptyComponent={
           <Text style={styles.emptyText}>No comments yet. Be the first to comment!</Text>

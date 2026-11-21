@@ -127,7 +127,7 @@ export default function MarketplaceReviewerPacksScreen() {
           ListFooterComponent={
             isFetchingNextPage ? (
               <ActivityIndicator style={styles.footerSpinner} color="#1a56db" />
-            ) : null
+            ) : undefined
           }
           ListEmptyComponent={
             isLoading ? (

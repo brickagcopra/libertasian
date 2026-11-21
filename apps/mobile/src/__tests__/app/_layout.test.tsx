@@ -87,12 +87,12 @@ jest.mock('@expo-google-fonts/instrument-serif', () => ({
 jest.mock('react-native-mmkv', () => {
   const store = new Map<string, string | number | boolean>();
   return {
-    MMKV: jest.fn().mockImplementation(() => ({
+    createMMKV: jest.fn().mockImplementation(() => ({
       getString: (k: string) => store.get(k) as string | undefined,
       set: (k: string, v: string | number | boolean) => store.set(k, v),
       getBoolean: (k: string) => store.get(k) as boolean | undefined,
       getNumber: (k: string) => store.get(k) as number | undefined,
-      delete: (k: string) => store.delete(k),
+      remove: (k: string) => store.delete(k),
       contains: (k: string) => store.has(k),
       clearAll: () => store.clear(),
     })),

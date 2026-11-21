@@ -103,7 +103,7 @@ export default function BarExamSittingScreen() {
         refreshControl={
           <RefreshControl
             refreshing={isFetching && !isLoading}
-            onRefresh={refetch}
+            onRefresh={() => void refetch()}
             colors={['#1a56db']}
           />
         }

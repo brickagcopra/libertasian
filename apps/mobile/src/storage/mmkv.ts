@@ -1,6 +1,8 @@
-import { MMKV } from 'react-native-mmkv';
+import { createMMKV } from 'react-native-mmkv';
 
-export const storage = new MMKV({
+// v4 (Nitro): `createMMKV` replaces `new MMKV`, `remove` replaces `delete`.
+// Same id, so the on-device file written by v3 is read as-is.
+export const storage = createMMKV({
   id: 'libertasian-storage',
 });
 
@@ -12,7 +14,9 @@ export const mmkvStorage = {
   setBoolean: (key: string, value: boolean): void => storage.set(key, value),
   getNumber: (key: string): number | undefined => storage.getNumber(key),
   setNumber: (key: string, value: number): void => storage.set(key, value),
-  delete: (key: string): void => storage.delete(key),
+  delete: (key: string): void => {
+    storage.remove(key);
+  },
   contains: (key: string): boolean => storage.contains(key),
   clearAll: (): void => storage.clearAll(),
 };
@@ -90,6 +94,6 @@ const ACCOUNT_SCOPED_KEYS: readonly string[] = [
  */
 export function clearAccountScopedStorage(): void {
   for (const key of ACCOUNT_SCOPED_KEYS) {
-    storage.delete(key);
+    storage.remove(key);
   }
 }

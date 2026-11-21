@@ -475,7 +475,7 @@ export default function MatterDetailScreen() {
         refreshControl={
           <RefreshControl
             refreshing={false}
-            onRefresh={() => refetch()}
+            onRefresh={() => void refetch()}
             colors={['#1a56db']}
           />
         }

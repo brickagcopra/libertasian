@@ -111,7 +111,7 @@ describe('AuthProvider', () => {
     mockGetItemAsync.mockResolvedValue(null);
     // MMKV is module-level and `clearAllMocks` does not touch it.
     mockSetItemAsync.mockResolvedValue(undefined);
-    storage.delete(STORAGE_KEYS.ENTITLED_SURFACES);
+    storage.remove(STORAGE_KEYS.ENTITLED_SURFACES);
   });
 
   it('provides initial unauthenticated state when no tokens', async () => {

@@ -169,7 +169,7 @@ export default function ReviewerPacksScreen() {
             keyExtractor={(item) => item.id}
             contentContainerStyle={styles.listContent}
             refreshing={isFetching && !isLoading}
-            onRefresh={() => refetch()}
+            onRefresh={() => void refetch()}
           />
         )}
 

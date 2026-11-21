@@ -7,12 +7,6 @@
     "icon": "./assets/icon.png",
     "scheme": "libertasian",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#f6f1e8"
-    },
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.libertasian.app",
@@ -70,13 +64,29 @@
         "expo-build-properties",
         {
           "android": {
-            "compileSdkVersion": 36,
-            "targetSdkVersion": 36,
-            "buildToolsVersion": "36.0.0"
+            "compileSdkVersion": 37,
+            "targetSdkVersion": 36
           }
         }
       ],
       "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#f6f1e8",
+          "imageWidth": 200
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": false,
+          "recordAudioAndroid": false,
+          "enableBackgroundPlayback": true
+        }
+      ],
       "expo-apple-authentication",
       "expo-secure-store",
       "expo-notifications",

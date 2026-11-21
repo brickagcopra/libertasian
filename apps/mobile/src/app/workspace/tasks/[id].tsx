@@ -1,3 +1,4 @@
+import type { ComponentRef } from 'react';
 import { useCallback, useRef, useState } from 'react';
 import {
   View,
@@ -54,7 +55,7 @@ function InlineEditableText({
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<ComponentRef<typeof TextInput>>(null);
 
   const handleStartEdit = () => {
     setDraft(value);

@@ -116,7 +116,7 @@ function ResearchHome() {
       ItemSeparatorComponent={Separator}
       ListHeaderComponent={header}
       ListEmptyComponent={
-        runs.isLoading || runs.isError ? null : (
+        runs.isLoading || runs.isError ? undefined : (
           <Text style={styles.empty}>Your research runs will appear here.</Text>
         )
       }
@@ -125,7 +125,7 @@ function ResearchHome() {
           <View style={styles.footer}>
             <ActivityIndicator color={theme.accent} />
           </View>
-        ) : null
+        ) : undefined
       }
       onEndReached={onEndReached}
       onEndReachedThreshold={0.4}

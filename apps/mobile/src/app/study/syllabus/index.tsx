@@ -142,7 +142,7 @@ export default function SyllabusListScreen() {
                     </Text>
                   </View>
                 </View>
-              ) : null
+              ) : undefined
             }
           />
         )}

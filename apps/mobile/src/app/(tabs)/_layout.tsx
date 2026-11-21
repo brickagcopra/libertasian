@@ -55,7 +55,7 @@ export default function TabsLayout() {
           headerShown: false,
           tabBarStyle: { display: 'none' },
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="home-outline" size={size} color={color} />
+            <Ionicons name="home-outline" size={size} color={color as string} />
           ),
         }}
       />
@@ -66,7 +66,7 @@ export default function TabsLayout() {
           headerShown: false,
           tabBarStyle: { display: 'none' },
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="search-outline" size={size} color={color} />
+            <Ionicons name="search-outline" size={size} color={color as string} />
           ),
         }}
       />
@@ -76,7 +76,7 @@ export default function TabsLayout() {
           title: 'Digests',
           tabBarStyle: { display: 'none' },
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="document-text-outline" size={size} color={color} />
+            <Ionicons name="document-text-outline" size={size} color={color as string} />
           ),
         }}
       />
@@ -87,7 +87,7 @@ export default function TabsLayout() {
           headerShown: false,
           tabBarStyle: { display: 'none' },
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="library-outline" size={size} color={color} />
+            <Ionicons name="library-outline" size={size} color={color as string} />
           ),
         }}
       />
@@ -97,7 +97,7 @@ export default function TabsLayout() {
           title: 'Study',
           tabBarStyle: { display: 'none' },
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="school-outline" size={size} color={color} />
+            <Ionicons name="school-outline" size={size} color={color as string} />
           ),
           ...(surfaces.study ? {} : hidden),
         }}
@@ -108,7 +108,7 @@ export default function TabsLayout() {
           title: 'Scan',
           tabBarStyle: { display: 'none' },
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="camera-outline" size={size} color={color} />
+            <Ionicons name="camera-outline" size={size} color={color as string} />
           ),
           ...(surfaces.scan ? {} : hidden),
         }}
@@ -120,7 +120,7 @@ export default function TabsLayout() {
           headerShown: false,
           tabBarStyle: { display: 'none' },
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="newspaper-outline" size={size} color={color} />
+            <Ionicons name="newspaper-outline" size={size} color={color as string} />
           ),
         }}
       />
@@ -130,7 +130,7 @@ export default function TabsLayout() {
           title: 'Workspace',
           tabBarStyle: { display: 'none' },
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="briefcase-outline" size={size} color={color} />
+            <Ionicons name="briefcase-outline" size={size} color={color as string} />
           ),
           ...(surfaces.workspace ? {} : hidden),
         }}

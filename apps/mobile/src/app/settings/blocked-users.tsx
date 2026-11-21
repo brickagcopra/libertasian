@@ -87,7 +87,7 @@ export default function BlockedUsersScreen() {
               You will not see posts or comments from these people, and they
               will not see yours.
             </Text>
-          ) : null
+          ) : undefined
         }
         ListEmptyComponent={
           <View
@@ -174,7 +174,7 @@ export default function BlockedUsersScreen() {
         ListFooterComponent={
           isFetchingNextPage ? (
             <ActivityIndicator style={{ marginTop: 16 }} color={theme.ink} />
-          ) : null
+          ) : undefined
         }
       />
     </View>
