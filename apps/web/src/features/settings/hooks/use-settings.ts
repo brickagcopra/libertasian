@@ -41,11 +41,24 @@ interface OrganizationMember {
   };
 }
 
-interface Session {
+export interface Session {
   familyId: string;
-  deviceFingerprint: string;
+  deviceFingerprint: string | null;
+  /** "Chrome on Windows", "iPhone 15 (iOS 26.1)"; null for older sign-ins. */
+  deviceName: string | null;
   createdAt: string;
   lastUsedAt: string;
+  /** The session this browser is using. */
+  isCurrent: boolean;
+  /** Holds an in-use slot right now; null when unknown (cap off). */
+  inUse: boolean | null;
+}
+
+export interface SessionLimits {
+  /** Devices that may stay signed in; null = no cap. */
+  maxSignedIn: number | null;
+  /** Devices that may be in use at once; null = no cap. */
+  maxInUse: number | null;
 }
 
 interface MfaEnrollResult {
@@ -208,6 +221,32 @@ export function useRevokeSession() {
   return useMutation({
     mutationFn: async (familyId: string) => {
       return apiClient.delete(`/auth/sessions/${familyId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sessions'] });
+    },
+  });
+}
+
+export function useSessionLimits() {
+  return useQuery({
+    queryKey: ['sessions', 'limits'],
+    queryFn: async () => {
+      const res = await apiClient.get<{ success: boolean; data: SessionLimits }>(
+        '/auth/sessions/limits',
+      );
+      return res.data;
+    },
+  });
+}
+
+export function useRevokeOtherSessions() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      return apiClient.post<{ success: boolean; data: { revoked: number } }>(
+        '/auth/sessions/revoke-others',
+      );
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sessions'] });

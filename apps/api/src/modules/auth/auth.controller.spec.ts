@@ -21,6 +21,8 @@ jest.mock('google-auth-library', () => ({ OAuth2Client: jest.fn(() => ({})) }));
 jest.mock('jose', () => ({ createRemoteJWKSet: jest.fn(), jwtVerify: jest.fn() }));
 
 import { SessionConcurrencyService } from './session-concurrency/session-concurrency.service';
+import { DeviceLimitService } from './device-limit.service';
+import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { SocialTokenService } from './social-token.service';
 
 interface MockResponseShape {
@@ -58,7 +60,16 @@ describe('AuthController — mobile transport branch', () => {
   let auditService: { log: jest.Mock };
   let configService: { get: jest.Mock };
   let organizationsService: { acceptInvite: jest.Mock };
-  let sessionConcurrency: { claim: jest.Mock; release: jest.Mock; releaseAll: jest.Mock };
+  let sessionConcurrency: {
+    claim: jest.Mock;
+    release: jest.Mock;
+    releaseAll: jest.Mock;
+    inUseSessionIds: jest.Mock;
+    isEnabled: jest.Mock;
+    limitForTier: jest.Mock;
+  };
+  let deviceLimits: { isEnabled: jest.Mock; limitForTier: jest.Mock };
+  let subscriptions: { getPlanCode: jest.Mock };
   let socialTokens: {
     googleConfigured: boolean;
     verifyGoogleIdToken: jest.Mock;
@@ -82,7 +93,15 @@ describe('AuthController — mobile transport branch', () => {
       claim: jest.fn().mockResolvedValue(0),
       release: jest.fn().mockResolvedValue(undefined),
       releaseAll: jest.fn().mockResolvedValue(undefined),
+      inUseSessionIds: jest.fn().mockResolvedValue(null),
+      isEnabled: jest.fn().mockReturnValue(true),
+      limitForTier: jest.fn((t: string) => ({ pro: 2, edu: 1 } as Record<string, number>)[t] ?? null),
     };
+    deviceLimits = {
+      isEnabled: jest.fn().mockReturnValue(true),
+      limitForTier: jest.fn((t: string) => ({ pro: 3, edu: 2 } as Record<string, number>)[t] ?? null),
+    };
+    subscriptions = { getPlanCode: jest.fn().mockResolvedValue('pro') };
     auditService = { log: jest.fn().mockResolvedValue(undefined) };
     configService = {
       get: jest.fn((key: string, def?: unknown) => {
@@ -106,6 +125,8 @@ describe('AuthController — mobile transport branch', () => {
         { provide: OrganizationsService, useValue: organizationsService },
         { provide: SocialTokenService, useValue: socialTokens },
         { provide: SessionConcurrencyService, useValue: sessionConcurrency },
+        { provide: DeviceLimitService, useValue: deviceLimits },
+        { provide: SubscriptionsService, useValue: subscriptions },
       ],
     }).compile();
 
@@ -388,6 +409,59 @@ describe('AuthController — mobile transport branch', () => {
       const req = buildRequest({ cookies: { 'libertasian-refresh': 'RT' } });
       await controller.logout(req, { sub: 'user-1', sid: 'fam-1' } as never, '1.2.3.4', buildResponse());
       expect(sessionConcurrency.release).toHaveBeenCalledWith('user-1', 'fam-1');
+    });
+  });
+
+  describe('devices', () => {
+    const user = { sub: 'user-1', sid: 'fam-1', organizationId: 'org-1' } as never;
+    const svc = () => authService as unknown as Record<string, jest.Mock>;
+
+    it('listSessions marks which sessions are in use, or null when unknown', async () => {
+      svc()['listSessions'] = jest.fn().mockResolvedValue([
+        { familyId: 'fam-1' },
+        { familyId: 'fam-2' },
+      ]);
+      sessionConcurrency.inUseSessionIds.mockResolvedValue(new Set(['fam-1']));
+      const known = await controller.listSessions(user);
+      expect(known.data.map((s) => s.inUse)).toEqual([true, false]);
+
+      sessionConcurrency.inUseSessionIds.mockResolvedValue(null);
+      const unknown = await controller.listSessions(user);
+      expect(unknown.data.map((s) => s.inUse)).toEqual([null, null]);
+    });
+
+    it('sessionLimits reports the caps for the plan, null when off or uncapped', async () => {
+      await expect(controller.sessionLimits(user)).resolves.toEqual({
+        success: true,
+        data: { maxSignedIn: 3, maxInUse: 2 },
+      });
+      sessionConcurrency.isEnabled.mockReturnValue(false);
+      subscriptions.getPlanCode.mockResolvedValue('edu');
+      await expect(controller.sessionLimits(user)).resolves.toMatchObject({
+        data: { maxSignedIn: 2, maxInUse: null },
+      });
+      subscriptions.getPlanCode.mockRejectedValue(new Error('db'));
+      await expect(controller.sessionLimits(user)).resolves.toMatchObject({
+        data: { maxSignedIn: null, maxInUse: null },
+      });
+    });
+
+    it('revokeOtherSessions keeps the current session, frees slots, audits', async () => {
+      svc()['revokeOtherSessions'] = jest.fn().mockResolvedValue(['fam-2', 'fam-3']);
+      const result = await controller.revokeOtherSessions(user, '1.2.3.4');
+      expect(svc()['revokeOtherSessions']).toHaveBeenCalledWith('user-1', 'fam-1');
+      expect(sessionConcurrency.release).toHaveBeenCalledWith('user-1', 'fam-2');
+      expect(sessionConcurrency.release).toHaveBeenCalledWith('user-1', 'fam-3');
+      expect(result).toEqual({ success: true, data: { revoked: 2 } });
+      expect(auditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'auth.other_sessions_revoked' }),
+      );
+    });
+
+    it('revokeOtherSessions refuses a token without sid', async () => {
+      await expect(
+        controller.revokeOtherSessions({ sub: 'user-1' } as never, '1.2.3.4'),
+      ).rejects.toMatchObject({ status: 400 });
     });
   });
 

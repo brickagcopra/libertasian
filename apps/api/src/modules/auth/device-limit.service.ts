@@ -62,6 +62,10 @@ export class DeviceLimitService {
     };
   }
 
+  isEnabled(): boolean {
+    return this.enabled;
+  }
+
   /** Device cap for a plan code, or null when the plan is uncapped. */
   limitForTier(tier: string): number | null {
     const limit = this.limits[tier];

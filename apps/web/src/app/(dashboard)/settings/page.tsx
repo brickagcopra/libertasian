@@ -14,7 +14,6 @@ import {
   UserPlusIcon,
   ShieldCheckIcon,
   ShieldOffIcon,
-  LogOutIcon,
   UsersIcon,
   LockIcon,
   ScrollTextIcon,
@@ -33,11 +32,9 @@ import {
   useConfirmMfa,
   useDisableMfa,
   useChangePassword,
-  useSessions,
-  useRevokeSession,
-  useRevokeAllSessions,
   useDeleteAccount,
 } from '@/features/settings/hooks/use-settings';
+import { DevicesSection } from '@/features/settings/components/devices-section';
 import { useHasPermission } from '@/features/settings/hooks/use-rbac';
 import {
   useEmailPreferences,
@@ -512,7 +509,7 @@ function SecurityTab() {
     <div className="max-w-lg space-y-8">
       <PasswordSection />
       <MfaSection />
-      <SessionsSection />
+      <DevicesSection />
       <DangerZoneSection />
     </div>
   );
@@ -996,60 +993,6 @@ function MfaSection() {
   );
 }
 
-function SessionsSection() {
-  const { data: sessions, isLoading } = useSessions();
-  const revokeSession = useRevokeSession();
-  const revokeAll = useRevokeAllSessions();
-
-  if (isLoading) return <SessionsSkeleton />;
-
-  return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <CardTitle>Active Sessions</CardTitle>
-          {sessions && sessions.length > 1 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-destructive hover:text-destructive"
-              onClick={() => revokeAll.mutate()}
-            >
-              <LogOutIcon className="mr-1.5 h-3.5 w-3.5" />
-              Revoke all
-            </Button>
-          )}
-        </div>
-      </CardHeader>
-      <CardContent className="p-0">
-        <div className="divide-y">
-          {sessions?.map((session) => (
-            <div key={session.familyId} className="flex items-center justify-between px-4 py-3">
-              <div>
-                <p className="text-sm">{parseDeviceInfo(session.deviceFingerprint)}</p>
-                <p className="text-xs text-muted-foreground">
-                  Last active: {new Date(session.lastUsedAt).toLocaleString()}
-                </p>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-destructive hover:text-destructive"
-                onClick={() => revokeSession.mutate(session.familyId)}
-              >
-                Revoke
-              </Button>
-            </div>
-          ))}
-          {(!sessions || sessions.length === 0) && (
-            <p className="px-4 py-6 text-center text-sm text-muted-foreground">No active sessions</p>
-          )}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
 // ---- Notifications Tab ----
 
 function NotificationsTab() {
@@ -1165,16 +1108,6 @@ function NotificationsTab() {
 
 // ---- Helpers ----
 
-function parseDeviceInfo(fingerprint: string): string {
-  const parts = fingerprint.split('|');
-  const ua = parts[1] || 'Unknown device';
-  if (ua.includes('Chrome')) return 'Chrome browser';
-  if (ua.includes('Firefox')) return 'Firefox browser';
-  if (ua.includes('Safari')) return 'Safari browser';
-  if (ua.includes('Edge')) return 'Edge browser';
-  return ua.substring(0, 60);
-}
-
 function AccountSkeleton() {
   return (
     <Card className="max-w-lg">
@@ -1245,28 +1178,3 @@ function MfaSkeleton() {
   );
 }
 
-function SessionsSkeleton() {
-  return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <Skeleton className="h-6 w-32" />
-          <Skeleton className="h-4 w-20" />
-        </div>
-      </CardHeader>
-      <CardContent className="p-0">
-        <div className="divide-y">
-          {[1, 2].map((i) => (
-            <div key={i} className="flex items-center justify-between px-4 py-3">
-              <div className="space-y-1">
-                <Skeleton className="h-4 w-28" />
-                <Skeleton className="h-3 w-44" />
-              </div>
-              <Skeleton className="h-4 w-14" />
-            </div>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}

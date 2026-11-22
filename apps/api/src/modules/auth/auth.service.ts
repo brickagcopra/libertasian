@@ -1018,6 +1018,24 @@ export class AuthService {
     });
   }
 
+  /**
+   * Revoke every live family of the user except `keepFamilyId` (the caller's
+   * own session). Returns the family ids that were revoked.
+   */
+  async revokeOtherSessions(userId: string, keepFamilyId: string): Promise<string[]> {
+    const rows = await this.prisma.refreshToken.findMany({
+      where: { userId, isRevoked: false, familyId: { not: keepFamilyId } },
+      select: { familyId: true },
+      distinct: ['familyId'],
+    });
+    if (rows.length === 0) return [];
+    await this.prisma.refreshToken.updateMany({
+      where: { userId, familyId: { not: keepFamilyId }, isRevoked: false },
+      data: { isRevoked: true },
+    });
+    return rows.map((r) => r.familyId);
+  }
+
   async revokeAllSessions(userId: string): Promise<void> {
     await this.prisma.refreshToken.updateMany({
       where: { userId },
