@@ -11,6 +11,7 @@ import { UsersService } from '../users/users.service';
 import { AuthService, type AuthUser } from './auth.service';
 import type { LoginEventService } from './login-event.service';
 import type { LoginThrottleService } from './login-throttle.service';
+import type { DeviceLimitService } from './device-limit.service';
 
 /**
  * Contract test: the user object a SIGN-IN returns must be a superset of the
@@ -67,6 +68,7 @@ describe('auth user shape contract (sign-in vs GET /users/me)', () => {
       {} as LoginEventService,
       {} as PermissionsService,
       {} as LoginThrottleService,
+      {} as DeviceLimitService,
     );
     return (
       authService as unknown as {
@@ -144,6 +146,7 @@ describe('auth user shape contract (sign-in vs GET /users/me)', () => {
       {} as LoginEventService,
       {} as PermissionsService,
       {} as LoginThrottleService,
+      {} as DeviceLimitService,
     );
     const built = (
       authService as unknown as {

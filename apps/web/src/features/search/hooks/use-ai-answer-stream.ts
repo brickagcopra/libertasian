@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { deviceHeaders } from '@/lib/device-identity';
 import { useAuthStore } from '@/stores/auth-store';
 import { splitCompleteText } from '../lib/format-answer-text';
 import type { AiAnswerChunk, AiAnswerSource } from '../types';
@@ -137,6 +138,7 @@ export function useAiAnswerStream(query: string | null, enabled: boolean) {
         const token = useAuthStore.getState().accessToken;
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
+          ...deviceHeaders(),
         };
         if (token) {
           headers['Authorization'] = `Bearer ${token}`;

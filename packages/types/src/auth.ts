@@ -53,6 +53,11 @@ export interface JwtPayload {
   isPlatformAdmin?: boolean;
   /** Org member id resolved per-request by JwtStrategy/PermissionsGuard. */
   memberId?: string;
+  /**
+   * Session id: the refresh-token familyId this access token was issued for.
+   * Optional because tokens minted before the claim existed do not carry it.
+   */
+  sid?: string;
 }
 
 export interface TokenPair {

@@ -1,3 +1,5 @@
+import { deviceHeaders } from './device-identity';
+
 const API_BASE_URL = process.env['NEXT_PUBLIC_API_URL'] || 'http://localhost:3001/api/v1';
 
 interface RequestOptions extends RequestInit {
@@ -60,6 +62,8 @@ class ApiClient {
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
+      // X-Device-Id / X-Device-Name: see device-identity.ts.
+      ...deviceHeaders(),
       ...(init.headers as Record<string, string>),
     };
 
@@ -250,6 +254,7 @@ class ApiClient {
     }
 
     const headers: Record<string, string> = {
+      ...deviceHeaders(),
       ...(init.headers as Record<string, string>),
     };
 

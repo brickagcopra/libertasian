@@ -1,6 +1,7 @@
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { authStorage } from '../storage/auth-storage';
+import { deviceHeaders } from './device-identity';
 import {
   AI_CONSENT_DECLINED_MESSAGE,
   requestAiConsent,
@@ -76,6 +77,10 @@ function resolveAppVersion(): string | undefined {
  * `X-App-Version` lets the API tell an old build from a current one. Store
  * rollouts are gradual and builds live on devices for months, so a server-side
  * behaviour change has to know which client it is talking to.
+ *
+ * `X-Device-Id` / `X-Device-Name` identify this install (a random UUID kept
+ * in MMKV, plus a label like "iPhone 15 (iOS 26.1)") so the API can count the
+ * account's signed-in devices. See `device-identity.ts`.
  */
 const DEFAULT_HEADERS: Record<string, string> = {
   'Content-Type': 'application/json',
@@ -87,6 +92,7 @@ const DEFAULT_HEADERS: Record<string, string> = {
   // every older build and every web client gets.
   'X-Platform': Platform.OS,
   ...(resolveAppVersion() ? { 'X-App-Version': resolveAppVersion()! } : {}),
+  ...deviceHeaders(),
 };
 
 /**
@@ -430,7 +436,7 @@ class ApiClient {
   async getDownloadUrl(endpoint: string, params?: Record<string, string>): Promise<{ url: string; headers: Record<string, string> }> {
     const url = this.buildUrl(endpoint, params);
     const authHeaders = await this.getAuthHeaders();
-    return { url, headers: authHeaders };
+    return { url, headers: { ...deviceHeaders(), ...authHeaders } };
   }
 
   async uploadMultipart<T>(
@@ -447,6 +453,9 @@ class ApiClient {
 
       // Note: do not set Content-Type — XHR/FormData manages multipart boundary.
       xhr.setRequestHeader('X-Client', 'mobile');
+      for (const [key, value] of Object.entries(deviceHeaders())) {
+        xhr.setRequestHeader(key, value);
+      }
 
       for (const [key, value] of Object.entries(authHeaders)) {
         xhr.setRequestHeader(key, value);

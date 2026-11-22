@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 
 import { loginHref } from '@/features/auth/safe-redirect';
 import { apiClient } from '@/lib/api-client';
+import { deviceHeaders } from '@/lib/device-identity';
 import { isPublicRoute } from '@/lib/public-routes';
 import { useAuthStore, type User } from '@/stores/auth-store';
 
@@ -55,7 +56,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             {
               method: 'POST',
               credentials: 'include',
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 'Content-Type': 'application/json', ...deviceHeaders() },
             },
           );
           if (!res.ok) return null;

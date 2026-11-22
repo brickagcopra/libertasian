@@ -18,7 +18,7 @@ import { useTheme } from '@/providers/theme-provider';
 const SECTIONS: { heading: string; body: string }[] = [
   {
     heading: 'What a subscription includes',
-    body: 'A subscription unlocks the full research library, unlimited search, AI-assisted answers, case digests, document scanning and the matter workspace, on every device signed in to your account.',
+    body: 'A subscription unlocks the full research library, unlimited search, AI-assisted answers, case digests, document scanning and the matter workspace, on each device signed in to your account (see Devices below).',
   },
   {
     heading: 'Automatic renewal',
@@ -39,6 +39,10 @@ const SECTIONS: { heading: string; body: string }[] = [
   {
     heading: 'Acceptable use',
     body: 'LIBERTASIAN provides legal research assistance. It is not legal advice and does not create a lawyer-client relationship. Verify every authority against its official source before relying on it. Accounts are for one person; sharing credentials or redistributing generated content in bulk is not permitted.',
+  },
+  {
+    heading: 'Devices',
+    body: 'An account is for one person, and sharing sign-in details is not allowed. A Pro subscription can be signed in on up to 3 devices and an Edu subscription on up to 2. Signing in on another device beyond that signs out the device used least recently.',
   },
   {
     heading: 'Community content: zero tolerance',

@@ -49,8 +49,8 @@ describe('STORAGE_KEYS', () => {
     expect(STORAGE_KEYS.ONBOARDING_COMPLETED).toBe('onboarding_completed');
   });
 
-  it('has 16 storage keys', () => {
-    expect(Object.keys(STORAGE_KEYS)).toHaveLength(16);
+  it('has 17 storage keys', () => {
+    expect(Object.keys(STORAGE_KEYS)).toHaveLength(17);
   });
 
   it('defines the community guidelines agreement key', () => {

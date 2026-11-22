@@ -8,6 +8,7 @@ import { OrganizationsModule } from '../organizations/organizations.module';
 import { UsersModule } from '../users/users.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { DeviceLimitService } from './device-limit.service';
 import { LoginEventService } from './login-event.service';
 import { LoginThrottleService } from './login-throttle.service';
 import { SocialTokenService } from './social-token.service';
@@ -71,6 +72,7 @@ const googleStrategyProvider = {
   controllers: [AuthController],
   providers: [
     AuthService,
+    DeviceLimitService,
     LoginEventService,
     LoginThrottleService,
     SocialTokenService,
