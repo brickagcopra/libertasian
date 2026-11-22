@@ -214,7 +214,7 @@ export class AdminUserLoginEventDto {
   @ApiProperty()
   id!: string;
 
-  @ApiProperty({ description: 'login_success | login_failed | google_login | token_refresh | logout | password_reset_used | mfa_challenge_passed | mfa_challenge_failed' })
+  @ApiProperty({ description: 'login_success | login_failed | google_login | token_refresh | logout | password_reset_used | mfa_challenge_passed | mfa_challenge_failed | session_evicted' })
   eventType!: string;
 
   @ApiPropertyOptional()

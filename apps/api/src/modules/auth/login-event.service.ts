@@ -22,7 +22,9 @@ export type LoginEventType =
   | 'password_reset_used'
   | 'password_changed'
   | 'mfa_challenge_passed'
-  | 'mfa_challenge_failed';
+  | 'mfa_challenge_failed'
+  /** A family revoked because a new sign-in exceeded the plan's device cap. */
+  | 'session_evicted';
 
 export interface LoginEventExtra {
   failureReason?: string;

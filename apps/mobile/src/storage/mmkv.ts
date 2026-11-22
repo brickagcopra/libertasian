@@ -48,6 +48,12 @@ export const STORAGE_KEYS = {
    * asked before their first feed post or comment.
    */
   COMMUNITY_GUIDELINES_ACCEPTED: 'community_guidelines_accepted',
+  /**
+   * Random per-install UUID sent as `X-Device-Id` (lib/device-identity.ts).
+   * Device-level, NOT account-scoped: it must survive an account switch so a
+   * re-login on this phone is recognised as the same device.
+   */
+  DEVICE_ID: 'device_id',
 } as const;
 
 /**

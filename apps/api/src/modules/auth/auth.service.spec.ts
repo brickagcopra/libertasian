@@ -11,6 +11,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { PermissionsService } from '../rbac/permissions.service';
 import { UsersService } from '../users/users.service';
 import { AuthService } from './auth.service';
+import { DeviceLimitService } from './device-limit.service';
 import { LoginEventService } from './login-event.service';
 import { LoginThrottleService } from './login-throttle.service';
 import type { RegisterDto, LoginDto } from './dto';
@@ -99,6 +100,7 @@ describe('AuthService', () => {
   let configService: jest.Mocked<ConfigService>;
   let notificationsService: jest.Mocked<NotificationsService>;
   let loginEventService: { record: jest.Mock };
+  let deviceLimits: { enforceOnNewSession: jest.Mock };
   let loginThrottle: {
     assertNotLocked: jest.Mock;
     recordFailure: jest.Mock;
@@ -238,6 +240,12 @@ describe('AuthService', () => {
           },
         },
         {
+          provide: DeviceLimitService,
+          useValue: {
+            enforceOnNewSession: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
           provide: LoginThrottleService,
           useValue: {
             assertNotLocked: jest.fn().mockResolvedValue(undefined),
@@ -265,6 +273,7 @@ describe('AuthService', () => {
     configService = module.get(ConfigService) as jest.Mocked<ConfigService>;
     notificationsService = module.get(NotificationsService) as jest.Mocked<NotificationsService>;
     loginEventService = module.get(LoginEventService) as unknown as { record: jest.Mock };
+    deviceLimits = module.get(DeviceLimitService) as unknown as { enforceOnNewSession: jest.Mock };
     loginThrottle = module.get(LoginThrottleService) as unknown as {
       assertNotLocked: jest.Mock;
       recordFailure: jest.Mock;
@@ -774,6 +783,140 @@ describe('AuthService', () => {
         where: { tokenHash, isRevoked: false },
         data: { isRevoked: true },
       });
+    });
+  });
+
+  describe('device identity and limits', () => {
+    const DEVICE_ID = '3f2a9c1e-4b7d-4e8a-9c0f-1a2b3c4d5e6f';
+    const reqWith = (headers: Record<string, string>) =>
+      ({ headers, ip: '203.0.113.7' }) as unknown as import('express').Request;
+
+    const signIn = async (headers: Record<string, string>) => {
+      usersService.findByEmail.mockResolvedValue(
+        mockUser as unknown as ReturnType<UsersService['findByEmail']>,
+      );
+      prismaService.organizationMember.findFirst.mockResolvedValue(mockMembership);
+      prismaService.refreshToken.create.mockResolvedValue({});
+      jwtService.sign.mockReturnValue('access-token');
+      return service.login(
+        { email: mockUser.email, password: 'correctpassword' } as LoginDto,
+        'fp',
+        reqWith(headers),
+      );
+    };
+
+    it('stores the validated device id and name on the new family and runs enforcement', async () => {
+      await signIn({ 'x-device-id': DEVICE_ID.toUpperCase(), 'x-device-name': '  Chrome on Windows  ' });
+
+      expect(prismaService.refreshToken.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          familyId: 'mock-uuid-v4',
+          deviceId: DEVICE_ID,
+          deviceName: 'Chrome on Windows',
+        }),
+      });
+      expect(deviceLimits.enforceOnNewSession).toHaveBeenCalledWith({
+        userId: mockUser.id,
+        organizationId: mockMembership.organizationId,
+        familyId: 'mock-uuid-v4',
+        deviceId: DEVICE_ID,
+      });
+    });
+
+    it('treats invalid device headers as absent rather than rejecting the sign-in', async () => {
+      const result = await signIn({ 'x-device-id': 'not-a-uuid', 'x-device-name': 'x'.repeat(121) });
+
+      expect(result.tokens.accessToken).toBe('access-token');
+      expect(prismaService.refreshToken.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ deviceId: null, deviceName: null }),
+      });
+      expect(deviceLimits.enforceOnNewSession).toHaveBeenCalledWith(
+        expect.objectContaining({ deviceId: null }),
+      );
+    });
+
+    it('puts the family id in the access token as the sid claim', async () => {
+      await signIn({});
+      expect(jwtService.sign).toHaveBeenCalledWith(
+        expect.objectContaining({ sid: 'mock-uuid-v4', sub: mockUser.id }),
+        expect.anything(),
+      );
+    });
+
+    it('still signs in when enforcement throws (fail open)', async () => {
+      deviceLimits.enforceOnNewSession.mockRejectedValueOnce(new Error('boom'));
+      const result = await signIn({ 'x-device-id': DEVICE_ID });
+      expect(result.tokens.accessToken).toBe('access-token');
+      expect(result.mfaRequired).toBe(false);
+    });
+
+    it('refresh rotation never runs enforcement and keeps the family device id', async () => {
+      const rawRefreshToken = 'raw-refresh-token-hex';
+      prismaService.refreshToken.updateMany.mockResolvedValueOnce({ count: 1 });
+      prismaService.refreshToken.findFirst
+        .mockResolvedValueOnce({
+          id: 'token-1',
+          userId: mockUser.id,
+          familyId: 'family-abc',
+          deviceFingerprint: 'fp',
+          deviceId: DEVICE_ID,
+          deviceName: 'Old name',
+          isRevoked: false,
+          expiresAt: new Date(Date.now() + 86400_000),
+          createdAt: new Date(),
+          user: mockUser,
+        })
+        .mockResolvedValueOnce(null);
+      prismaService.organizationMember.findFirst.mockResolvedValue(mockMembership);
+      prismaService.refreshToken.create.mockResolvedValue({});
+      jwtService.sign.mockReturnValue('fresh-access-token');
+
+      await service.refreshTokens(
+        rawRefreshToken,
+        'fp',
+        reqWith({
+          'x-device-id': '00000000-0000-4000-8000-000000000000',
+          'x-device-name': 'iPhone (iOS 26)',
+        }),
+      );
+
+      expect(deviceLimits.enforceOnNewSession).not.toHaveBeenCalled();
+      expect(prismaService.refreshToken.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          familyId: 'family-abc',
+          deviceId: DEVICE_ID,
+          deviceName: 'iPhone (iOS 26)',
+        }),
+      });
+      expect(jwtService.sign).toHaveBeenCalledWith(
+        expect.objectContaining({ sid: 'family-abc' }),
+        expect.anything(),
+      );
+    });
+
+    it('listSessions marks the caller\'s family current and returns deviceName and lastUsedAt', async () => {
+      const t1 = new Date('2026-11-20T10:00:00Z');
+      const t0 = new Date('2026-11-19T10:00:00Z');
+      (prismaService.refreshToken as unknown as { findMany: jest.Mock }).findMany = jest
+        .fn()
+        .mockResolvedValue([
+          { id: 'a2', familyId: 'fam-a', deviceFingerprint: 'fp', deviceName: 'Chrome on Windows', createdAt: t1, expiresAt: t1 },
+          { id: 'b1', familyId: 'fam-b', deviceFingerprint: 'fp', deviceName: null, createdAt: t0, expiresAt: t0 },
+          { id: 'a1', familyId: 'fam-a', deviceFingerprint: 'fp', deviceName: 'Chrome on Windows', createdAt: t0, expiresAt: t0 },
+        ]);
+
+      const sessions = await service.listSessions(mockUser.id, 'fam-b');
+
+      expect(sessions).toHaveLength(2);
+      expect(sessions[0]).toMatchObject({
+        id: 'a2',
+        familyId: 'fam-a',
+        deviceName: 'Chrome on Windows',
+        createdAt: t1,
+        lastUsedAt: t1,
+        isCurrent: false,
+      });
+      expect(sessions[1]).toMatchObject({ familyId: 'fam-b', isCurrent: true });
     });
   });
 
@@ -1425,6 +1568,7 @@ describe('AuthService — Layer-2 per-IP velocity on unknown-email failures', ()
       { record: jest.fn().mockResolvedValue(undefined) } as unknown as LoginEventService,
       {} as unknown as PermissionsService,
       throttle,
+      { enforceOnNewSession: jest.fn() } as unknown as DeviceLimitService,
     );
   });
 

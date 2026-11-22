@@ -2,6 +2,7 @@ import Constants from 'expo-constants';
 import { fetch as expoFetch } from 'expo/fetch';
 
 import { apiClient } from '../../lib/api-client';
+import { deviceHeaders } from '../../lib/device-identity';
 import { authStorage } from '../../storage/auth-storage';
 import { AI_CONSENT_DECLINED_MESSAGE, requestAiConsent } from '../ai-consent/ai-consent';
 import type { AiAnswerChunk, AiAnswerSource } from '../search/types';
@@ -246,7 +247,10 @@ export async function streamAiAnswer(
     // for the first attempt.
     const send = async () => {
       const token = await authStorage.getAccessToken();
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...deviceHeaders(),
+      };
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;
       }

@@ -82,6 +82,11 @@ export default function TermsPage() {
             <li>Notify us immediately of any unauthorized use of your account</li>
           </ul>
           <p>
+            An account is for one person; sharing your sign-in details is not allowed. A paid
+            plan can be signed in on a limited number of devices at once (Pro: 3, Edu: 2). Signing
+            in on another device beyond that limit signs out the device used least recently.
+          </p>
+          <p>
             We reserve the right to suspend or terminate accounts that violate these Terms or
             that we reasonably believe are being used fraudulently.
           </p>

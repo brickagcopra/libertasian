@@ -19,6 +19,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PermissionsService } from '../rbac/permissions.service';
 import { UsersService } from '../users/users.service';
+import { DeviceLimitService } from './device-limit.service';
+import { NO_DEVICE, readDeviceIdentity, type DeviceIdentity } from './device-identity';
 import { RegisterDto, LoginDto } from './dto';
 import { LoginEventService, type LoginEventType } from './login-event.service';
 import { LoginThrottleService } from './login-throttle.service';
@@ -39,6 +41,18 @@ export type AuthUser = ReturnType<UsersService['sanitize']> & {
   isPlatformAdmin: boolean;
 };
 
+/** One live session (refresh-token family) as returned by GET /auth/sessions. */
+export interface SessionSummary {
+  id: string;
+  familyId: string;
+  deviceFingerprint: string | null;
+  deviceName: string | null;
+  createdAt: Date;
+  lastUsedAt: Date;
+  expiresAt: Date;
+  isCurrent: boolean;
+}
+
 const BCRYPT_COST = 12;
 
 @Injectable()
@@ -58,6 +72,7 @@ export class AuthService {
     private readonly loginEvents: LoginEventService,
     private readonly permissions: PermissionsService,
     private readonly loginThrottle: LoginThrottleService,
+    private readonly deviceLimits: DeviceLimitService,
   ) {
     this.accessTtl = this.config.get<number>('JWT_ACCESS_TTL', 900);
     this.refreshTtl = this.config.get<number>('JWT_REFRESH_TTL', 604800);
@@ -303,13 +318,14 @@ export class AuthService {
     }
 
     const mfaVerified = !user.mfaEnabled || !!dto.mfaCode;
-    const tokens = await this.issueTokenPair(
+    const tokens = await this.startSession(
       user.id,
       user.email,
       membership.role as UserRole,
       membership.organizationId,
       mfaVerified,
       deviceFingerprint,
+      req,
     );
 
     this.emitLoginEvent('login_success', user.id, req, { deviceFingerprint });
@@ -378,13 +394,14 @@ export class AuthService {
       throw new UnauthorizedException('No active organization membership');
     }
 
-    const tokens = await this.issueTokenPair(
+    const tokens = await this.startSession(
       user.id,
       user.email,
       membership.role as UserRole,
       membership.organizationId,
       true, // Google OAuth does not use MFA challenge
       deviceFingerprint,
+      req,
     );
 
     this.emitLoginEvent('google_login', user.id, req, { deviceFingerprint });
@@ -463,13 +480,14 @@ export class AuthService {
       throw new UnauthorizedException('No active organization membership');
     }
 
-    const tokens = await this.issueTokenPair(
+    const tokens = await this.startSession(
       user.id,
       user.email,
       membership.role as UserRole,
       membership.organizationId,
       true, // provider login is the second-factor equivalent (matches Google)
       deviceFingerprint,
+      req,
     );
 
     this.emitLoginEvent('apple_login', user.id, req, { deviceFingerprint });
@@ -604,7 +622,12 @@ export class AuthService {
       throw new UnauthorizedException('No active organization membership');
     }
 
-    // Issue new pair in the same family
+    // Issue new pair in the same family. The family keeps the device id it
+    // was created with (it identifies the install, not the request); a family
+    // created before clients sent one adopts the header's. The label follows
+    // the latest header so an OS upgrade shows up. Rotation never runs the
+    // device-limit check: it extends a session, it does not start one.
+    const headerDevice = readDeviceIdentity(req);
     const tokens = await this.issueTokenPair(
       storedToken.userId,
       storedToken.user.email,
@@ -613,6 +636,10 @@ export class AuthService {
       true,
       deviceFingerprint,
       storedToken.familyId,
+      {
+        deviceId: storedToken.deviceId ?? headerDevice.deviceId,
+        deviceName: headerDevice.deviceName ?? storedToken.deviceName,
+      },
     );
 
     // Link old token to the new one
@@ -926,14 +953,14 @@ export class AuthService {
 
   // ---- Session Management ----
 
-  async listSessions(userId: string): Promise<Array<{
-    id: string;
-    familyId: string;
-    deviceFingerprint: string | null;
-    createdAt: Date;
-    expiresAt: Date;
-    isCurrent: boolean;
-  }>> {
+  /**
+   * One entry per live family. `currentSessionId` is the caller's `sid`
+   * claim (absent on access tokens minted before the claim existed, in which
+   * case nothing is marked current). `createdAt` stays the newest token's
+   * createdAt for older clients; `lastUsedAt` is the same instant under a
+   * name that says what it means.
+   */
+  async listSessions(userId: string, currentSessionId?: string): Promise<SessionSummary[]> {
     // Get the most recent active (non-revoked, non-expired) token per family
     const tokens = await this.prisma.refreshToken.findMany({
       where: {
@@ -946,6 +973,7 @@ export class AuthService {
         id: true,
         familyId: true,
         deviceFingerprint: true,
+        deviceName: true,
         createdAt: true,
         expiresAt: true,
       },
@@ -953,14 +981,7 @@ export class AuthService {
 
     // Deduplicate by familyId (keep most recent per family)
     const familySeen = new Set<string>();
-    const sessions: Array<{
-      id: string;
-      familyId: string;
-      deviceFingerprint: string | null;
-      createdAt: Date;
-      expiresAt: Date;
-      isCurrent: boolean;
-    }> = [];
+    const sessions: SessionSummary[] = [];
 
     for (const token of tokens) {
       if (!familySeen.has(token.familyId)) {
@@ -969,9 +990,11 @@ export class AuthService {
           id: token.id,
           familyId: token.familyId,
           deviceFingerprint: token.deviceFingerprint,
+          deviceName: token.deviceName,
           createdAt: token.createdAt,
+          lastUsedAt: token.createdAt,
           expiresAt: token.expiresAt,
-          isCurrent: false, // Will be set by controller if needed
+          isCurrent: !!currentSessionId && token.familyId === currentSessionId,
         });
       }
     }
@@ -1004,6 +1027,48 @@ export class AuthService {
 
   // ---- Token Issuance ----
 
+  /**
+   * Start a NEW session (refresh-token family) for a sign-in, then apply
+   * same-device dedupe and the plan's device cap. Enforcement fails open:
+   * DeviceLimitService never throws, and the guard here keeps it that way
+   * even if a future change makes it throw. The sign-in must still succeed.
+   */
+  private async startSession(
+    userId: string,
+    email: string,
+    role: UserRole,
+    organizationId: string,
+    mfaVerified: boolean,
+    deviceFingerprint: string,
+    req: Request | null,
+  ): Promise<TokenPair> {
+    const device = readDeviceIdentity(req);
+    const familyId = uuidv4();
+    const tokens = await this.issueTokenPair(
+      userId,
+      email,
+      role,
+      organizationId,
+      mfaVerified,
+      deviceFingerprint,
+      familyId,
+      device,
+    );
+    try {
+      await this.deviceLimits.enforceOnNewSession({
+        userId,
+        organizationId,
+        familyId,
+        deviceId: device.deviceId,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `device limit enforcement failed open for user ${userId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    return tokens;
+  }
+
   private async issueTokenPair(
     userId: string,
     email: string,
@@ -1012,13 +1077,16 @@ export class AuthService {
     mfaVerified: boolean,
     deviceFingerprint: string,
     familyId?: string,
+    device: DeviceIdentity = NO_DEVICE,
   ): Promise<TokenPair> {
+    const tokenFamilyId = familyId ?? uuidv4();
     const payload: Omit<JwtPayload, 'iat' | 'exp'> = {
       sub: userId,
       email,
       role,
       organizationId,
       mfaVerified,
+      sid: tokenFamilyId,
     };
 
     const signOptions = this.useRs256
@@ -1029,7 +1097,6 @@ export class AuthService {
 
     const rawRefreshToken = crypto.randomBytes(48).toString('hex');
     const tokenHash = this.hashToken(rawRefreshToken);
-    const tokenFamilyId = familyId ?? uuidv4();
 
     await this.prisma.refreshToken.create({
       data: {
@@ -1037,6 +1104,8 @@ export class AuthService {
         tokenHash,
         familyId: tokenFamilyId,
         deviceFingerprint,
+        deviceId: device.deviceId,
+        deviceName: device.deviceName,
         expiresAt: new Date(Date.now() + this.refreshTtl * 1000),
       },
     });

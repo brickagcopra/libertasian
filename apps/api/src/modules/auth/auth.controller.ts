@@ -608,7 +608,7 @@ export class AuthController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'List active sessions for current user' })
   async listSessions(@CurrentUser() user: JwtPayload) {
-    const sessions = await this.authService.listSessions(user.sub);
+    const sessions = await this.authService.listSessions(user.sub, user.sid);
     return { success: true, data: sessions };
   }
 

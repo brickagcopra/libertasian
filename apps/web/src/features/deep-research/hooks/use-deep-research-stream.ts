@@ -5,6 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 
 import { quotaKeys } from '@/features/billing/hooks/use-quotas';
 import { apiClient } from '@/lib/api-client';
+import { deviceHeaders } from '@/lib/device-identity';
 import { useAuthStore } from '@/stores/auth-store';
 
 import { resolveHttpError } from '../lib/api';
@@ -18,6 +19,7 @@ function post(question: string, token: string | null, signal: AbortSignal) {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     Accept: 'text/event-stream',
+    ...deviceHeaders(),
   };
   if (token) headers['Authorization'] = `Bearer ${token}`;
   return fetch(`${API_BASE_URL}/deep-research/stream`, {

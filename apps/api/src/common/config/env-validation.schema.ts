@@ -34,6 +34,12 @@ export const ENV_VALIDATION_SCHEMA = Joi.object({
   AUTH_LOCK_IP_THRESHOLD: Joi.number().default(100),
   AUTH_LOCK_WINDOW_SEC: Joi.number().default(900),
   AUTH_LOCK_MAX_MIN: Joi.number().default(30),
+  // Per-account device limits (DeviceLimitService). When enabled, a new
+  // sign-in beyond the plan's cap signs out the least recently used other
+  // device. Plans other than pro / edu are uncapped.
+  DEVICE_LIMITS_ENABLED: Joi.boolean().default(false),
+  DEVICE_LIMIT_PRO: Joi.number().integer().min(1).default(3),
+  DEVICE_LIMIT_EDU: Joi.number().integer().min(1).default(2),
   // Google OAuth (optional — enable by setting client ID and secret)
   GOOGLE_CLIENT_ID: Joi.string().optional().allow(''),
   GOOGLE_CLIENT_SECRET: Joi.string().optional().allow(''),

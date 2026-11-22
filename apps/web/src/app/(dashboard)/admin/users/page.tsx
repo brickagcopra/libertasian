@@ -123,6 +123,7 @@ const loginEventTypeColors: Record<string, string> = {
   token_refresh: 'bg-gray-100 text-gray-700',
   logout: 'bg-gray-100 text-gray-700',
   password_reset_used: 'bg-amber-100 text-amber-700',
+  session_evicted: 'bg-amber-100 text-amber-700',
 };
 
 export default function AdminUsersPage() {
