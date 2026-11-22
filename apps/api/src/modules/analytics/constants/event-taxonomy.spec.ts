@@ -43,6 +43,37 @@ describe('event taxonomy — surface events', () => {
   });
 });
 
+describe('store purchase telemetry', () => {
+  /**
+   * Sent by apps/mobile/src/features/purchase/lib/purchase-telemetry.ts. They
+   * were absent from the taxonomy until 2026-11-21, so every one was a 400 —
+   * and because the mobile client buffers a failed event and replays it in
+   * /events/batch, one unknown name also failed every later batch.
+   */
+  const PURCHASE_EVENTS = [
+    'purchase_surface_unavailable',
+    'purchase_surface_ready',
+    'purchase_result',
+    'restore_result',
+  ] as const;
+
+  it.each(PURCHASE_EVENTS)('accepts %s as a billing event', (name) => {
+    expect(VALID_EVENT_NAMES_SET.has(name)).toBe(true);
+    expect(getEventCategory(name)).toBe('billing');
+  });
+
+  it('accepts the payload the mobile client sends for an unavailable store', () => {
+    expect(
+      validateEventProperties('purchase_surface_unavailable', {
+        platform: 'android',
+        reason: 'products_empty',
+        source: 'none',
+        rawProductIds: [],
+      }),
+    ).toEqual([]);
+  });
+});
+
 describe('page_viewed contract', () => {
   it('requires path and surface — the two fields the aggregate reads', () => {
     expect(EVENT_TAXONOMY['page_viewed']!.requiredProperties).toEqual(['path', 'surface']);
