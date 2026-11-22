@@ -24,6 +24,7 @@ export default function PurchaseRoute() {
     notice,
     completed,
     hasSubscription,
+    subscriptionOrigin,
     manageSubscription,
     purchase,
     restore,
@@ -41,6 +42,7 @@ export default function PurchaseRoute() {
       onRetry={retry}
       completed={completed}
       hasSubscription={hasSubscription}
+      subscriptionOrigin={subscriptionOrigin}
       onManageSubscription={manageSubscription}
       onDone={() => (router.canGoBack() ? router.back() : router.replace('/'))}
       onOpenTerms={() => router.push(PURCHASE_TERMS_ROUTE)}

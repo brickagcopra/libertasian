@@ -245,4 +245,27 @@ describe('PurchaseSurface', () => {
       expect(screen.getByText('Manage or cancel subscription')).toBeTruthy();
     });
   });
+
+  describe('subscription bought elsewhere', () => {
+    it('hides plans, Continue, Restore and the manage button', () => {
+      renderSurface({
+        hasSubscription: true,
+        subscriptionOrigin: 'elsewhere',
+        onManageSubscription: jest.fn(),
+        onDone: jest.fn(),
+      });
+
+      expect(screen.getByText('Your plan is active')).toBeTruthy();
+      expect(screen.getByText(/not bought through this device's app store/)).toBeTruthy();
+      expect(screen.queryByText('Continue')).toBeNull();
+      expect(screen.queryByText('Restore Purchases')).toBeNull();
+      expect(screen.queryByText('Manage or cancel subscription')).toBeNull();
+      expect(screen.getByText('Done')).toBeTruthy();
+    });
+
+    it('names no other store or website', () => {
+      renderSurface({ hasSubscription: true, subscriptionOrigin: 'elsewhere' });
+      expect(screen.queryByText(/google|play|android|apple|website|http/i)).toBeNull();
+    });
+  });
 });

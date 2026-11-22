@@ -56,6 +56,8 @@ jest.mock('../lib/purchases-sdk', () => ({
   // `hasActiveEntitlement` pass every case below.
   hasActiveEntitlement: (info: unknown) =>
     jest.requireActual('../lib/purchases-sdk').hasActiveEntitlement(info),
+  subscriptionOrigin: (info: unknown, platform: string) =>
+    jest.requireActual('../lib/purchases-sdk').subscriptionOrigin(info, platform),
 }));
 
 jest.mock('@/lib/store-account-page', () => ({
@@ -135,8 +137,13 @@ const trackedPayloads = (name: string) =>
     .filter((call) => call[0] === name)
     .map((call) => call[1] as Record<string, unknown>);
 
+/** `/quotas/usage` for an account on the free corpus, and for an entitled one. */
+const FREE_QUOTAS = { quotas: {}, activeBonuses: [], previewOnly: true };
+const ENTITLED_QUOTAS = { ...FREE_QUOTAS, previewOnly: false };
+
 describe('usePurchaseOptions', () => {
   let post: jest.SpyInstance;
+  let get: jest.SpyInstance;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -159,9 +166,13 @@ describe('usePurchaseOptions', () => {
     // to be wrapped, which is precisely what let the double-unwrap in
     // `store-sync.ts` pass its tests while every real restore silently failed.
     post = jest.spyOn(apiClient, 'post');
+    get = jest.spyOn(apiClient, 'get').mockResolvedValue(FREE_QUOTAS);
   });
 
-  afterEach(() => post.mockRestore());
+  afterEach(() => {
+    post.mockRestore();
+    get.mockRestore();
+  });
 
   // ---- D11: the App User ID is the organization id ----
 
@@ -924,6 +935,53 @@ describe('usePurchaseOptions', () => {
       await waitFor(() => expect(result.current.hasSubscription).toBe(true));
       // Not a fresh purchase: the confirmation copy is not shown for this.
       expect(result.current.completed).toBe(false);
+    });
+
+    describe('subscriptionOrigin', () => {
+      const PLAY = { entitlements: { active: { edu: { isActive: true, store: 'PLAY_STORE' } } } };
+      const APPLE = { entitlements: { active: { pro: { isActive: true, store: 'APP_STORE' } } } };
+
+      it('is this_store for an App Store subscription on iOS', async () => {
+        Object.defineProperty(Platform, 'OS', { value: 'ios' });
+        mockGetCustomerInfo.mockResolvedValue(APPLE);
+        const { result } = await renderReady();
+        await waitFor(() => expect(result.current.subscriptionOrigin).toBe('this_store'));
+        expect(result.current.hasSubscription).toBe(true);
+      });
+
+      it('is elsewhere for a Google Play subscription seen on iOS', async () => {
+        // The reported bug: bought on Android, opened Plans on an iPhone, saw
+        // a live buy button.
+        Object.defineProperty(Platform, 'OS', { value: 'ios' });
+        mockGetCustomerInfo.mockResolvedValue(PLAY);
+        const { result } = await renderReady();
+        await waitFor(() => expect(result.current.subscriptionOrigin).toBe('elsewhere'));
+        expect(result.current.hasSubscription).toBe(true);
+      });
+
+      it('is elsewhere when only the server says the account is entitled', async () => {
+        // A website purchase: RevenueCat knows nothing, /quotas/usage does.
+        get.mockResolvedValue(ENTITLED_QUOTAS);
+        const { result } = renderHook(() => usePurchaseOptions(), { wrapper });
+        await waitFor(() => expect(result.current.subscriptionOrigin).toBe('elsewhere'));
+        expect(result.current.hasSubscription).toBe(true);
+      });
+
+      it('is null for a free account the store also says owns nothing', async () => {
+        const { result } = await renderReady();
+        await waitFor(() => expect(mockGetCustomerInfo).toHaveBeenCalled());
+        expect(result.current.subscriptionOrigin).toBeNull();
+        expect(result.current.hasSubscription).toBe(false);
+      });
+
+      it('is this_store after a purchase on this device', async () => {
+        post.mockResolvedValue({ status: 'processed' });
+        const { result } = await renderReady();
+        await act(async () => result.current.purchase(MONTHLY));
+        // Bought here, so managed here, whatever the customerInfo carried.
+        await waitFor(() => expect(result.current.subscriptionOrigin).toBe('this_store'));
+        expect(result.current.hasSubscription).toBe(true);
+      });
     });
 
     it('is true after a confirmed purchase', async () => {
