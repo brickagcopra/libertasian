@@ -17,7 +17,7 @@ import {
  * price change.
  */
 export default function PurchaseRoute() {
-  const { status, plans, busy, notice, purchase, restore, retry } =
+  const { status, plans, busy, notice, completed, purchase, restore, retry } =
     usePurchaseOptions();
 
   return (
@@ -29,6 +29,8 @@ export default function PurchaseRoute() {
       onPurchase={purchase}
       onRestore={restore}
       onRetry={retry}
+      completed={completed}
+      onDone={() => (router.canGoBack() ? router.back() : router.replace('/'))}
       onOpenTerms={() => router.push(PURCHASE_TERMS_ROUTE)}
       onOpenPrivacy={() => router.push(PURCHASE_PRIVACY_ROUTE)}
     />

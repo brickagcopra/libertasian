@@ -835,4 +835,46 @@ describe('usePurchaseOptions', () => {
       expect(mockGetOfferings).not.toHaveBeenCalled();
     });
   });
+
+  // ---- after the sale: no live buy button for something already owned ----
+
+  describe('completed', () => {
+    it('starts false', async () => {
+      const { result } = await renderReady();
+      expect(result.current.completed).toBe(false);
+    });
+
+    it('turns true on a confirmed purchase', async () => {
+      post.mockResolvedValue({ status: 'processed' });
+      const { result } = await renderReady();
+
+      await act(async () => result.current.purchase(MONTHLY));
+
+      await waitFor(() => expect(result.current.completed).toBe(true));
+    });
+
+    it('stays false when the purchase could not be confirmed', async () => {
+      mockPurchasePackage.mockResolvedValue({ customerInfo: NOT_ENTITLED });
+      post.mockResolvedValue({ status: 'noop', detail: 'in_sync' });
+      const { result } = await renderReady();
+
+      await act(async () => result.current.purchase(MONTHLY));
+
+      await waitFor(() => expect(result.current.notice).toBe(PURCHASE_FAILED_NOTICE));
+      expect(result.current.completed).toBe(false);
+    });
+
+    it('turns true on a restore that found an entitlement, not on an empty one', async () => {
+      post.mockResolvedValue({ status: 'noop', detail: 'in_sync' });
+      const { result } = await renderReady();
+
+      mockRestorePurchases.mockResolvedValueOnce(NOT_ENTITLED);
+      await act(async () => result.current.restore());
+      await waitFor(() => expect(result.current.notice).toBe(RESTORE_NOTHING_NOTICE));
+      expect(result.current.completed).toBe(false);
+
+      await act(async () => result.current.restore());
+      await waitFor(() => expect(result.current.completed).toBe(true));
+    });
+  });
 });

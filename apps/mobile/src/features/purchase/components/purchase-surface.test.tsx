@@ -185,4 +185,34 @@ describe('PurchaseSurface', () => {
     expect(source).not.toMatch(/libertasian\.com/);
     expect(source).not.toMatch(/openURL|WebBrowser/);
   });
+
+  describe('after a confirmed purchase (completed)', () => {
+    it('replaces the plans, Continue and Restore with a confirmation', () => {
+      renderSurface({
+        completed: true,
+        notice: 'Your subscription is active. Thank you.',
+        onDone: jest.fn(),
+      });
+
+      expect(screen.getByText("You're all set")).toBeTruthy();
+      expect(screen.getByText('Your subscription is active. Thank you.')).toBeTruthy();
+      expect(screen.queryByText('Continue')).toBeNull();
+      expect(screen.queryByText('Restore Purchases')).toBeNull();
+      expect(screen.queryByText('₱1,699.00')).toBeNull();
+    });
+
+    it('Done leaves the surface', () => {
+      const onDone = jest.fn();
+      renderSurface({ completed: true, onDone });
+
+      fireEvent.press(screen.getByText('Done'));
+
+      expect(onDone).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the Terms and Privacy links', () => {
+      renderSurface({ completed: true, onDone: jest.fn() });
+      expect(screen.getByText('Terms of Use')).toBeTruthy();
+    });
+  });
 });

@@ -98,6 +98,13 @@ export interface PurchaseOptions {
   plans: PurchasePlanOption[];
   busy: boolean;
   notice: string | null;
+  /**
+   * A purchase or restore in THIS visit ended with an active entitlement. The
+   * surface swaps the plan list and its buy button for a confirmation, so the
+   * user is not left looking at a live "Continue" for something they already
+   * own — tapping it again only re-enters the store's "already purchased" path.
+   */
+  completed: boolean;
   purchase: (productId: StoreProductId) => void;
   restore: () => void;
   /**
@@ -136,6 +143,7 @@ export function usePurchaseOptions(): PurchaseOptions {
   const [configureNonce, setConfigureNonce] = useState(0);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [completed, setCompleted] = useState(false);
 
   // One reporter per mount: the dedupe window IS the mount, so a user who
   // leaves and comes back is a fresh observation.
@@ -261,6 +269,7 @@ export function usePurchaseOptions(): PurchaseOptions {
           const serverOk = await reconcile();
           const confirmed = storeOk || serverOk;
           setNotice(confirmed ? PURCHASE_CONFIRMED_NOTICE : PURCHASE_FAILED_NOTICE);
+          setCompleted(confirmed);
           telemetry.purchaseResult(confirmed ? 'confirmed' : 'failed');
         } catch (error) {
           // Dismissing the store sheet is not a failure and gets no message.
@@ -285,6 +294,7 @@ export function usePurchaseOptions(): PurchaseOptions {
           if (entitled) {
             await reconcile();
             setNotice(PURCHASE_CONFIRMED_NOTICE);
+            setCompleted(true);
             telemetry.purchaseResult('confirmed');
           } else {
             setNotice(PURCHASE_FAILED_NOTICE);
@@ -311,6 +321,7 @@ export function usePurchaseOptions(): PurchaseOptions {
         const serverOk = await reconcile();
         const restored = storeOk || serverOk;
         setNotice(restored ? RESTORE_CONFIRMED_NOTICE : RESTORE_NOTHING_NOTICE);
+        setCompleted(restored);
         telemetry.restoreResult(restored ? 'confirmed' : 'nothing');
       } catch (error) {
         // Dismissing the store sheet is not a failure and gets no message —
@@ -327,5 +338,5 @@ export function usePurchaseOptions(): PurchaseOptions {
     })();
   }, [busy, reconcile, telemetry]);
 
-  return { status, plans, busy, notice, purchase, restore, retry };
+  return { status, plans, busy, notice, completed, purchase, restore, retry };
 }
