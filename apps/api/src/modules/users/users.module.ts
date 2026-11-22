@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 
+import { AccountSharingService } from './account-sharing/account-sharing.service';
 import { UsersAdminController } from './users-admin.controller';
 import { UsersAdminService } from './users-admin.service';
 import { UsersController } from './users.controller';
@@ -7,7 +8,7 @@ import { UsersService } from './users.service';
 
 @Module({
   controllers: [UsersController, UsersAdminController],
-  providers: [UsersService, UsersAdminService],
+  providers: [UsersService, UsersAdminService, AccountSharingService],
   exports: [UsersService],
 })
 export class UsersModule {}

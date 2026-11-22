@@ -162,6 +162,7 @@ const ADMIN_NAV_ITEMS: NavItem[] = [
   { href: '/admin/plans', label: 'Plans', icon: CreditCardIcon },
   { href: '/admin/subscriptions', label: 'Subscriptions', icon: CreditCardIcon },
   { href: '/admin/users', label: 'Users', icon: UsersIcon },
+  { href: '/admin/account-sharing', label: 'Account Sharing', icon: ShieldIcon },
   { href: '/admin/coupons', label: 'Coupons', icon: TicketIcon },
   { href: '/admin/promotions', label: 'Promotions', icon: MegaphoneIcon },
   { href: '/admin/homepage', label: 'Homepage', icon: HomeIcon },

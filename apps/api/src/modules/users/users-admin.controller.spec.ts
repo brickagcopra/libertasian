@@ -5,11 +5,13 @@ import { MfaGuard } from '../../common/guards/mfa.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { TenantGuard } from '../../common/guards/tenant.guard';
 import { UsersAdminController } from './users-admin.controller';
+import { AccountSharingService } from './account-sharing/account-sharing.service';
 import { UsersAdminService } from './users-admin.service';
 
 describe('UsersAdminController', () => {
   let controller: UsersAdminController;
   let adminService: jest.Mocked<UsersAdminService>;
+  const accountSharing = { report: jest.fn() };
 
   const mockGuard = { canActivate: jest.fn().mockReturnValue(true) };
 
@@ -24,6 +26,7 @@ describe('UsersAdminController', () => {
             getUserDetail: jest.fn(),
           },
         },
+        { provide: AccountSharingService, useValue: accountSharing },
       ],
     })
       .overrideGuard(JwtAuthGuard).useValue(mockGuard)
@@ -136,6 +139,25 @@ describe('UsersAdminController', () => {
 
       expect(adminService.getUserDetail).toHaveBeenCalledWith('user-1');
       expect(result).toEqual({ success: true, data: mockDetail });
+    });
+  });
+  describe('sharingSignals', () => {
+    it('defaults to a 24-hour window', async () => {
+      accountSharing.report.mockResolvedValue({ signals: [] });
+      await expect(controller.sharingSignals()).resolves.toEqual({
+        success: true,
+        data: { signals: [] },
+      });
+      expect(accountSharing.report).toHaveBeenCalledWith(24);
+    });
+
+    it('accepts 1-168 hours and rejects anything else', async () => {
+      accountSharing.report.mockResolvedValue({ signals: [] });
+      await controller.sharingSignals('72');
+      expect(accountSharing.report).toHaveBeenCalledWith(72);
+      for (const bad of ['0', '169', '1.5', 'abc']) {
+        await expect(controller.sharingSignals(bad)).rejects.toMatchObject({ status: 400 });
+      }
     });
   });
 });

@@ -17,6 +17,7 @@ import { subscriptionCancelledTemplate } from './templates/subscription-cancelle
 import { announcementTemplate } from './templates/announcement';
 import { blogNotificationTemplate } from './templates/blog-notification';
 import { moderationAlertTemplate } from './templates/moderation-alert';
+import { securityAlertTemplate } from './templates/security-alert';
 
 @Injectable()
 export class NotificationsService {
@@ -378,6 +379,22 @@ export class NotificationsService {
     });
     await this.enqueue({ to: params.email, subject, html });
     this.logger.log(`Moderation alert enqueued for ${this.redactEmail(params.email)}`);
+  }
+
+  async sendSecurityAlert(params: {
+    email: string;
+    fullName: string;
+    heading: string;
+    lines: string[];
+  }): Promise<void> {
+    const { subject, html } = securityAlertTemplate({
+      fullName: params.fullName,
+      heading: params.heading,
+      lines: params.lines,
+      reviewUrl: `${this.appUrl}/admin/account-sharing`,
+    });
+    await this.enqueue({ to: params.email, subject, html });
+    this.logger.log(`Security alert enqueued for ${this.redactEmail(params.email)}`);
   }
 
   private async enqueue(data: {
