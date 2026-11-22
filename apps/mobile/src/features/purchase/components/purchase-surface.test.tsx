@@ -215,4 +215,34 @@ describe('PurchaseSurface', () => {
       expect(screen.getByText('Terms of Use')).toBeTruthy();
     });
   });
+
+  describe('returning subscriber (hasSubscription)', () => {
+    it('shows the manage panel instead of plans and Continue', () => {
+      renderSurface({ hasSubscription: true, onManageSubscription: jest.fn() });
+
+      expect(screen.getByText('Your subscription is active')).toBeTruthy();
+      expect(screen.queryByText('Continue')).toBeNull();
+      expect(screen.queryByText('₱1,699.00')).toBeNull();
+    });
+
+    it('Manage or cancel subscription calls the handler', () => {
+      const onManageSubscription = jest.fn();
+      renderSurface({ hasSubscription: true, onManageSubscription });
+
+      fireEvent.press(screen.getByText('Manage or cancel subscription'));
+
+      expect(onManageSubscription).toHaveBeenCalledTimes(1);
+    });
+
+    it('also offers it right after a purchase', () => {
+      renderSurface({
+        completed: true,
+        hasSubscription: true,
+        onManageSubscription: jest.fn(),
+        onDone: jest.fn(),
+      });
+      expect(screen.getByText("You're all set")).toBeTruthy();
+      expect(screen.getByText('Manage or cancel subscription')).toBeTruthy();
+    });
+  });
 });
