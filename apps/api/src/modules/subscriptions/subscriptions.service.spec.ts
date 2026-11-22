@@ -103,6 +103,7 @@ describe('SubscriptionsService', () => {
         where: {
           organizationId: 'org-1',
           status: { in: ACCESSIBLE_STATE_VALUES },
+          NOT: { status: 'past_due', currentPeriodEnd: { lt: expect.any(Date) } },
         },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       });

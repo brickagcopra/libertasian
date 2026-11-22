@@ -88,18 +88,44 @@ function clean(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+export interface DeviceNameInput {
+  os: string;
+  modelName: unknown;
+  osName: unknown;
+  osVersion: unknown;
+  platformVersion: unknown;
+}
+
+/** Pure formatter behind {@link getDeviceName}; exported for tests. */
+export function formatDeviceName(input: DeviceNameInput): string {
+  const { os } = input;
+  const fallbackModel =
+    os === 'ios' ? 'iPhone' : os === 'android' ? 'Android device' : 'Device';
+  const model = clean(input.modelName) ?? fallbackModel;
+  // Android is always "Android". expo-device's `osName` there is
+  // `Build.VERSION.BASE_OS` when non-empty, and Samsung fills that with the
+  // full build fingerprint ("samsung/a17xue/a17x:16/BP4A…:user/release-keys"),
+  // which then showed up verbatim in "Your devices". iOS keeps the reported
+  // name so iPads read "iPadOS".
+  const osName =
+    os === 'android'
+      ? 'Android'
+      : (clean(input.osName) ?? (os === 'ios' ? 'iOS' : os));
+  const osVersion = clean(input.osVersion) ?? clean(String(input.platformVersion));
+  const label = osVersion ? `${model} (${osName} ${osVersion})` : `${model} (${osName})`;
+  return label.slice(0, MAX_NAME_LENGTH);
+}
+
 /** Short label such as "iPhone 15 (iOS 26.1)" or "Pixel 8 (Android 15)". */
 export function getDeviceName(): string {
   if (cachedName) return cachedName;
-  const os = Platform.OS;
-  const fallbackModel =
-    os === 'ios' ? 'iPhone' : os === 'android' ? 'Android device' : 'Device';
-  const model = clean(Device.modelName) ?? fallbackModel;
-  const osName =
-    clean(Device.osName) ?? (os === 'ios' ? 'iOS' : os === 'android' ? 'Android' : os);
-  const osVersion = clean(Device.osVersion) ?? clean(String(Platform.Version));
-  const label = osVersion ? `${model} (${osName} ${osVersion})` : `${model} (${osName})`;
-  cachedName = label.slice(0, MAX_NAME_LENGTH);
+  cachedName = formatDeviceName({
+    os: Platform.OS,
+    modelName: Device.modelName,
+    osName: Device.osName,
+    osVersion: Device.osVersion,
+    platformVersion: Platform.Version,
+  });
   return cachedName;
 }
 
