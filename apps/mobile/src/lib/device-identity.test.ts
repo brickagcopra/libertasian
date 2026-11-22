@@ -1,6 +1,7 @@
 import { mmkvStorage, STORAGE_KEYS } from '../storage/mmkv';
 import {
   deviceHeaders,
+  formatDeviceName,
   generateUuidV4,
   getDeviceId,
   getDeviceName,
@@ -42,6 +43,32 @@ describe('device identity', () => {
     expect(name.length).toBeGreaterThan(0);
     expect(name.length).toBeLessThanOrEqual(120);
     expect(name).toMatch(/\(.+\)$/);
+  });
+
+  it('names Android "Android" even when the OS name is a build fingerprint', () => {
+    // Samsung reports Build.VERSION.BASE_OS (a build fingerprint) as osName.
+    expect(
+      formatDeviceName({
+        os: 'android',
+        modelName: 'SM-A176U1',
+        osName:
+          'samsung/a17xue/a17x:16/BP4A.251205.006/A176U1UEU5BZEB_OYM5BZEB:user/release-keys',
+        osVersion: '16',
+        platformVersion: 36,
+      }),
+    ).toBe('SM-A176U1 (Android 16)');
+  });
+
+  it('keeps the reported OS name on iOS', () => {
+    expect(
+      formatDeviceName({
+        os: 'ios',
+        modelName: 'iPad Pro',
+        osName: 'iPadOS',
+        osVersion: '27.2',
+        platformVersion: '27.2',
+      }),
+    ).toBe('iPad Pro (iPadOS 27.2)');
   });
 
   it('exposes both headers', () => {

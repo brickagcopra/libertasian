@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { Prisma } from '@prisma/client';
 
 import { isPaywallEnforcedForRequest } from '../../common/config/paywall';
 import type {
@@ -54,6 +55,33 @@ export interface SubscriptionEntitlements {
   previewOnly?: boolean;
 }
 
+/**
+ * How long a PAST_DUE subscription keeps granting its tier after its paid
+ * period ended, if the gateway never sends the terminal event.
+ *
+ * PAST_DUE is accessible so a payment retry does not cut a subscriber off, and
+ * the gateway (Xendit, App Store, Play) is what ends it. Nothing on our side
+ * did, so a row whose final event never arrived granted its tier forever: a
+ * July test Team subscription was still resolving as Team in November. Store
+ * grace periods top out at 16 days (Apple) and ours are 7/14 (Play), so 30
+ * days leaves every legitimate retry window intact.
+ */
+export const STALE_PAST_DUE_DAYS = 30;
+
+/** Rows that grant an organization its tier right now. */
+export function accessibleSubscriptionWhere(
+  organizationId: string,
+  now: Date = new Date(),
+): Prisma.SubscriptionWhereInput {
+  const cutoff = new Date(now.getTime() - STALE_PAST_DUE_DAYS * 24 * 60 * 60 * 1000);
+  return {
+    organizationId,
+    status: { in: ACCESSIBLE_STATE_VALUES },
+    // A null currentPeriodEnd fails `lt`, so the NOT keeps it accessible.
+    NOT: { status: 'past_due', currentPeriodEnd: { lt: cutoff } },
+  };
+}
+
 @Injectable()
 export class SubscriptionsService {
   private readonly logger = new Logger(SubscriptionsService.name);
@@ -81,7 +109,7 @@ export class SubscriptionsService {
    */
   async getActiveSubscription(organizationId: string) {
     return this.prisma.subscription.findFirst({
-      where: { organizationId, status: { in: ACCESSIBLE_STATE_VALUES } },
+      where: accessibleSubscriptionWhere(organizationId),
       // `id` is a deterministic tiebreaker: two rows created in the same
       // transaction can share a createdAt, and tier resolution must not be
       // nondeterministic.
@@ -99,7 +127,7 @@ export class SubscriptionsService {
    */
   async hasAccessibleSubscription(organizationId: string): Promise<boolean> {
     const existing = await this.prisma.subscription.findFirst({
-      where: { organizationId, status: { in: ACCESSIBLE_STATE_VALUES } },
+      where: accessibleSubscriptionWhere(organizationId),
       select: { id: true },
     });
     return existing !== null;
