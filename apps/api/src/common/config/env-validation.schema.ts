@@ -46,6 +46,14 @@ export const ENV_VALIDATION_SCHEMA = Joi.object({
   DEVICE_CONCURRENCY_PRO: Joi.number().integer().min(1).default(2),
   DEVICE_CONCURRENCY_EDU: Joi.number().integer().min(1).default(1),
   DEVICE_CONCURRENCY_WINDOW_SEC: Joi.number().integer().min(60).default(600),
+  // Device limits phase 2c: daily advisory alert to admin:users staff when an
+  // account is seen in many places or travels impossibly fast. Never acts on
+  // the account.
+  SHARING_ALERT_ENABLED: Joi.boolean().default(true),
+  SHARING_WINDOW_HOURS: Joi.number().integer().min(1).max(168).default(24),
+  SHARING_MIN_PLACES: Joi.number().integer().min(2).default(4),
+  SHARING_MIN_JUMP_KM: Joi.number().min(50).default(500),
+  SHARING_MAX_SPEED_KMH: Joi.number().min(100).default(900),
   // Google OAuth (optional — enable by setting client ID and secret)
   GOOGLE_CLIENT_ID: Joi.string().optional().allow(''),
   GOOGLE_CLIENT_SECRET: Joi.string().optional().allow(''),

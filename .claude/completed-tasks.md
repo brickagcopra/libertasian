@@ -1,5 +1,11 @@
 # Completed Tasks
 
+## 2026-11-22 — Device limits phase 2c: account-sharing signal (branch feature/device-limits-phase-2-sharing-signal)
+- [x] Measured prod first (read-only, last 30d): 146 token_refresh + 41 sign-ins, 100% carry geo but unknown cities are '' not NULL; 18 user-days, all at 1 place; 0 impossible-travel jumps. Thresholds therefore uncalibrated -> advisory only.
+- [x] API `modules/users/account-sharing/`: pure `assessSharing` (places = city -> region -> country, blanks ignored; impossible travel = consecutive events >500 km apart at >900 km/h; no IP counting), `AccountSharingService.report(hours)` over login_events (success types + token_refresh, 100k row cap), `GET /admin/users/sharing-signals?hours=1..168` (admin:users, MFA), daily cron 00:00 UTC (08:00 Manila): audit `security.account_sharing_suspected` per account + `sendSecurityAlert` email to admin:users staff (user id prefix only, no emails in the email). Env: SHARING_ALERT_ENABLED (default true), SHARING_WINDOW_HOURS=24, SHARING_MIN_PLACES=4, SHARING_MIN_JUMP_KM=500, SHARING_MAX_SPEED_KMH=900.
+- [x] Web: /admin/account-sharing page (24h / 72h / 7 days), sidebar link "Account Sharing".
+- [x] Tests: detector 9, service 6, controller +2; API users+notifications+auth 326 pass, tsc clean. Web 68 pass incl. 3 new, eslint clean.
+
 ## 2026-11-22 — Device limits phase 2b: "Your devices" screen (branch feature/device-limits-phase-2-devices-screen @ 48dfe16a)
 - [x] API: `GET /auth/sessions` adds `inUse` (null = unknown when the cap is off), `GET /auth/sessions/limits` -> { maxSignedIn, maxInUse } (null = no cap), `POST /auth/sessions/revoke-others` (keeps caller, frees in-use slots, audit `auth.other_sessions_revoked`; 400 for tokens without sid). Auth specs 176 pass, tsc clean.
 - [x] Web: `features/settings/components/devices-section.tsx` replaces the old "Active Sessions" card (device name, This device / In use now badges, last active, sign out one, sign out all other devices, limits line). 46 settings tests pass, eslint clean, no new tsc errors.
