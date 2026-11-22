@@ -101,6 +101,39 @@ export function hasActiveEntitlement(
   return Object.keys(info?.entitlements?.active ?? {}).length > 0;
 }
 
+/**
+ * Where an active subscription can be managed from THIS device.
+ *
+ * - `this_store`: bought through this platform's own store (App Store on iOS,
+ *   Google Play on Android), so the store's management screen will show it.
+ * - `elsewhere`: the account is entitled, but by a purchase this device's store
+ *   knows nothing about: the other platform's store, or a promotional grant.
+ *   Apple's sheet would open empty, so the app must not offer it.
+ *
+ * The app user id is the organization id on every platform (D11), so RevenueCat
+ * reports a Google Play subscription on an iPhone too. That is what made the
+ * buy button wrong for a cross-platform subscriber, and it is also why the
+ * store has to be read rather than assumed.
+ */
+export type SubscriptionOrigin = 'this_store' | 'elsewhere';
+
+const PLATFORM_STORES: Partial<Record<string, ReadonlySet<string>>> = {
+  ios: new Set(['APP_STORE', 'MAC_APP_STORE']),
+  android: new Set(['PLAY_STORE']),
+};
+
+export function subscriptionOrigin(
+  info: CustomerInfo | null | undefined,
+  platform: string,
+): SubscriptionOrigin | null {
+  const active = Object.values(info?.entitlements?.active ?? {});
+  if (active.length === 0) return null;
+  const ours = PLATFORM_STORES[platform];
+  return active.some((entitlement) => ours?.has(String(entitlement?.store)))
+    ? 'this_store'
+    : 'elsewhere';
+}
+
 /** Thrown by the SDK when the user dismisses the store sheet. Not a failure. */
 export interface PurchaseCancelledError {
   userCancelled?: boolean;

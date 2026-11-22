@@ -3,6 +3,7 @@ import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-nati
 
 import { useTheme } from '@/providers/theme-provider';
 
+import type { SubscriptionOrigin } from '../lib/purchases-sdk';
 import type { PurchasePlanOption, StoreProductId } from '../products';
 import { PlanCard } from './plan-card';
 
@@ -51,6 +52,12 @@ export interface PurchaseSurfaceProps {
    * bought). Same panel as `completed`, worded for a returning subscriber.
    */
   hasSubscription?: boolean;
+  /**
+   * `elsewhere`: bought through the other platform's store or on the website.
+   * The panel then explains where it is managed and offers no manage button,
+   * because this device's store cannot show it.
+   */
+  subscriptionOrigin?: SubscriptionOrigin | null;
   /** Open the store's own page to manage or cancel. Required for the button. */
   onManageSubscription?: () => void;
   /** Leave the surface after `completed`. Without it no Done button renders. */
@@ -86,6 +93,7 @@ export function PurchaseSurface({
   onRetry,
   completed = false,
   hasSubscription = false,
+  subscriptionOrigin = null,
   onManageSubscription,
   onDone,
   onOpenTerms,
@@ -126,6 +134,7 @@ export function PurchaseSurface({
       {completed || hasSubscription ? (
         <SubscribedPanel
           justBought={completed}
+          elsewhere={subscriptionOrigin === 'elsewhere' && !completed}
           notice={notice ?? null}
           busy={busy}
           onManage={onManageSubscription}
@@ -312,12 +321,14 @@ export function PurchaseSurface({
  */
 function SubscribedPanel({
   justBought,
+  elsewhere,
   notice,
   busy,
   onManage,
   onDone,
 }: {
   justBought: boolean;
+  elsewhere: boolean;
   notice: string | null;
   busy: boolean;
   onManage?: () => void;
@@ -342,12 +353,18 @@ function SubscribedPanel({
           marginBottom: 8,
         }}
       >
-        {justBought ? "You're all set" : 'Your subscription is active'}
+        {justBought
+          ? "You're all set"
+          : elsewhere
+            ? 'Your plan is active'
+            : 'Your subscription is active'}
       </Text>
       <Text style={{ fontFamily: theme.sans, fontSize: 15, color: theme.inkSoft }}>
         {justBought
           ? (notice ?? 'Your subscription is active.')
-          : 'You can change or cancel it at any time from your store account. If you cancel, you keep access until the end of the current period.'}
+          : elsewhere
+            ? "Your account already has an active plan, so there is nothing to buy here. It was not bought through this device's app store, so it cannot be changed or cancelled here. Manage it from the account or device you used to subscribe."
+            : 'You can change or cancel it at any time from your store account. If you cancel, you keep access until the end of the current period.'}
       </Text>
       {!justBought && notice ? (
         <Text
@@ -380,7 +397,7 @@ function SubscribedPanel({
           </Text>
         </Pressable>
       ) : null}
-      {onManage ? (
+      {onManage && !elsewhere ? (
         <Pressable
           accessibilityRole="button"
           accessibilityState={{ disabled: busy }}

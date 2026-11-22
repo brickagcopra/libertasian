@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 
 import { useAuth } from '@/providers/auth-provider';
 import { openStoreAccountPage } from '@/lib/store-account-page';
-import { quotaKeys } from '@/features/billing/hooks/use-quotas';
+import { quotaKeys, useQuotaUsage } from '@/features/billing/hooks/use-quotas';
 
 import type { PurchaseSurfaceStatus } from '../components/purchase-surface';
 import {
@@ -18,6 +18,8 @@ import {
   getPurchases,
   hasActiveEntitlement,
   isUserCancelled,
+  subscriptionOrigin,
+  type SubscriptionOrigin,
 } from '../lib/purchases-sdk';
 import {
   createPurchaseTelemetry,
@@ -118,6 +120,14 @@ export interface PurchaseOptions {
    * SECOND, separately billed subscription, so the buy button must not be there.
    */
   hasSubscription: boolean;
+  /**
+   * Where the active subscription can be managed from, or null when there is
+   * none. `elsewhere` covers a purchase on the OTHER platform's store and one
+   * made on the website: both unlock the account here, neither can be managed
+   * through this device's store, so the surface offers no manage button and,
+   * above all, no buy button that would start a second subscription.
+   */
+  subscriptionOrigin: SubscriptionOrigin | null;
   /** Open the store's own page for managing or cancelling the subscription. */
   manageSubscription: () => void;
   purchase: (productId: StoreProductId) => void;
@@ -160,15 +170,28 @@ export function usePurchaseOptions(): PurchaseOptions {
   const [notice, setNotice] = useState<string | null>(null);
   const [completed, setCompleted] = useState(false);
   const [hasSubscription, setHasSubscription] = useState(false);
+  const [origin, setOrigin] = useState<SubscriptionOrigin | null>(null);
+  const [storeChecked, setStoreChecked] = useState(false);
   const managementUrl = useRef<string | null>(null);
+
+  // The SERVER's answer, which is the only one that knows about a purchase made
+  // on the website. `previewOnly === false` is the same value every gated
+  // surface uses. The App Review demo org starts on free, so it still sees the
+  // plans.
+  const quotas = useQuotaUsage(organizationId !== null);
+  const serverEntitled = quotas.data?.previewOnly === false;
 
   /** Record what the store says this account owns. Never downgrades on its own. */
   const noteCustomerInfo = useCallback((info: unknown) => {
     const typed = info as Parameters<typeof hasActiveEntitlement>[0] & {
       managementURL?: string | null;
     };
-    if (!hasActiveEntitlement(typed)) return;
+    const found = subscriptionOrigin(typed, Platform.OS);
+    if (!found) return;
     setHasSubscription(true);
+    // `this_store` wins: an account entitled both here and elsewhere can still
+    // manage the part this store sold.
+    setOrigin((previous) => (previous === 'this_store' ? previous : found));
     managementUrl.current = typed?.managementURL ?? managementUrl.current;
   }, []);
 
@@ -221,6 +244,9 @@ export function usePurchaseOptions(): PurchaseOptions {
       })
       .catch(() => {
         // Unknown is not "none": the plans render as before.
+      })
+      .finally(() => {
+        if (!cancelled) setStoreChecked(true);
       });
     return () => {
       cancelled = true;
@@ -229,8 +255,18 @@ export function usePurchaseOptions(): PurchaseOptions {
   const plans = offerings.data?.plans ?? [];
   const source = offerings.data?.source ?? null;
 
+  // The store has had its say (or never will). Until then a server-entitled
+  // account waits on the spinner rather than flashing the plans, or flashing
+  // "elsewhere" for a subscription this store is about to report as its own.
+  const storeKnown = storeChecked || sdkState === 'failed';
+  const effectiveOrigin: SubscriptionOrigin | null =
+    origin ?? (serverEntitled && storeKnown ? 'elsewhere' : null);
+  const subscribed = hasSubscription || effectiveOrigin !== null;
+
   const status: PurchaseSurfaceStatus =
-    sdkState === 'configuring'
+    serverEntitled && !storeKnown && !subscribed
+      ? 'loading'
+      : sdkState === 'configuring'
       ? // NOT `unavailable`. See {@link SdkState}.
         'loading'
       : sdkState === 'failed'
@@ -319,7 +355,10 @@ export function usePurchaseOptions(): PurchaseOptions {
           const confirmed = storeOk || serverOk;
           setNotice(confirmed ? PURCHASE_CONFIRMED_NOTICE : PURCHASE_FAILED_NOTICE);
           setCompleted(confirmed);
-          if (confirmed) setHasSubscription(true);
+          if (confirmed) {
+            setHasSubscription(true);
+            setOrigin('this_store'); // bought here, so managed here
+          }
           telemetry.purchaseResult(confirmed ? 'confirmed' : 'failed');
         } catch (error) {
           // Dismissing the store sheet is not a failure and gets no message.
@@ -346,6 +385,7 @@ export function usePurchaseOptions(): PurchaseOptions {
             setNotice(PURCHASE_CONFIRMED_NOTICE);
             setCompleted(true);
             setHasSubscription(true);
+            setOrigin('this_store'); // bought here, so managed here
             telemetry.purchaseResult('confirmed');
           } else {
             setNotice(PURCHASE_FAILED_NOTICE);
@@ -374,7 +414,11 @@ export function usePurchaseOptions(): PurchaseOptions {
         const restored = storeOk || serverOk;
         setNotice(restored ? RESTORE_CONFIRMED_NOTICE : RESTORE_NOTHING_NOTICE);
         setCompleted(restored);
-        if (restored) setHasSubscription(true);
+        if (restored) {
+          setHasSubscription(true);
+          // The store found nothing but the server did: bought elsewhere.
+          setOrigin((previous) => previous ?? 'elsewhere');
+        }
         telemetry.restoreResult(restored ? 'confirmed' : 'nothing');
       } catch (error) {
         // Dismissing the store sheet is not a failure and gets no message —
@@ -416,7 +460,8 @@ export function usePurchaseOptions(): PurchaseOptions {
     busy,
     notice,
     completed,
-    hasSubscription,
+    hasSubscription: subscribed,
+    subscriptionOrigin: effectiveOrigin,
     manageSubscription,
     purchase,
     restore,
