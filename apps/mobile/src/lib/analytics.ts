@@ -26,6 +26,24 @@ const ANALYTICS_HEARTBEAT_INTERVAL_MS = 30_000; // Heartbeat every 30s
 const ANALYTICS_BATCH_SIZE = 50; // Max events per batch flush
 const ANALYTICS_MAX_BUFFER_SIZE = 1000; // Max offline events before eviction
 
+/**
+ * Statuses that mean the server read the request and refused its CONTENT, so
+ * sending the same bytes again can never succeed. 401 (refresh and retry),
+ * 408 and 429 (retry later) are deliberately absent.
+ */
+const PERMANENT_REJECTION_STATUSES = new Set([400, 413, 422]);
+
+/**
+ * Whether a failed analytics POST was refused for good. Duck-typed on
+ * `statusCode` rather than `instanceof ApiClientError` so it holds for any
+ * error the client throws, including under test doubles of the client.
+ */
+export function isPermanentRejection(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null || !('statusCode' in error)) return false;
+  const { statusCode } = error as { statusCode: unknown };
+  return typeof statusCode === 'number' && PERMANENT_REJECTION_STATUSES.has(statusCode);
+}
+
 // ---------------------------------------------------------------------------
 // SQLite offline buffer
 // ---------------------------------------------------------------------------
@@ -270,8 +288,10 @@ class MobileAnalyticsClient {
     };
 
     if (this.isOnline) {
-      apiClient.post('/analytics/events/auth', payload).catch(() => {
-        // Failed to send — buffer for later
+      apiClient.post('/analytics/events/auth', payload).catch((error: unknown) => {
+        // Failed to send — buffer for later, unless the server refused the
+        // event itself: replaying a refused event only poisons the batch.
+        if (isPermanentRejection(error)) return;
         void this.bufferEvent(payload);
       });
     } else {
@@ -389,9 +409,18 @@ class MobileAnalyticsClient {
 
       const batchPayload: TrackBatchPayload = { events };
 
-      await apiClient.post('/analytics/events/batch', batchPayload);
+      try {
+        await apiClient.post('/analytics/events/batch', batchPayload);
+      } catch (error) {
+        // A batch the server REFUSED (as opposed to one it never received) will
+        // be refused again on every retry, and because the flush always takes
+        // the oldest rows, it would block every event buffered after it. One
+        // event name missing from the server taxonomy once did exactly that.
+        // Drop it and move on; transient failures still fall through to retry.
+        if (!isPermanentRejection(error)) throw error;
+      }
 
-      // Delete flushed events
+      // Delete flushed (or permanently refused) events
       const ids = rows.map((r) => r.id);
       await db.runAsync(
         `DELETE FROM buffered_events WHERE id IN (${ids.map(() => '?').join(',')})`,

@@ -273,6 +273,30 @@ export const EVENT_TAXONOMY: Record<string, EventDefinition> = {
     category: 'billing',
     requiredProperties: ['plan_code', 'last_active_days_ago', 'lifetime_value'],
   },
+  /**
+   * Store purchase surface telemetry, sent by the mobile app from
+   * `features/purchase/lib/purchase-telemetry.ts`. These are the ONLY signal a
+   * release build gives when the in-app store screen has nothing to sell, so a
+   * name missing here is a 400 that silently erases exactly the evidence needed
+   * to diagnose a broken store. `reason` is a machine code (`sdk_failed`,
+   * `offering_null`, `no_matching_packages`, `products_empty`, `no_sdk`).
+   */
+  purchase_surface_unavailable: {
+    category: 'billing',
+    requiredProperties: ['platform', 'reason'],
+  },
+  purchase_surface_ready: {
+    category: 'billing',
+    requiredProperties: ['platform', 'planCount', 'source'],
+  },
+  purchase_result: {
+    category: 'billing',
+    requiredProperties: ['platform', 'outcome'],
+  },
+  restore_result: {
+    category: 'billing',
+    requiredProperties: ['platform', 'outcome'],
+  },
 
   // =======================================================================
   // Navigation & Engagement

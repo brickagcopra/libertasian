@@ -34,9 +34,10 @@ jest.mock('react-native-mmkv', () => {
 });
 
 import { Platform } from 'react-native';
+import * as SQLite from 'expo-sqlite';
 
 import { apiClient } from '@/lib/api-client';
-import { mobileAnalytics } from '@/lib/analytics';
+import { isPermanentRejection, mobileAnalytics } from '@/lib/analytics';
 
 const mockPost = apiClient.post as jest.Mock;
 
@@ -185,5 +186,85 @@ describe('MobileAnalyticsClient.ensureSession', () => {
     await mobileAnalytics.ensureSession('/(tabs)/digests');
 
     expect(mobileAnalytics.getSessionId()).toMatch(/^local_/);
+  });
+});
+
+describe('refused events never poison the offline buffer', () => {
+  /** The stubbed database object `openDatabaseAsync` resolves to (one shared instance). */
+  async function stubDb(): Promise<{ getAllAsync: jest.Mock; runAsync: jest.Mock }> {
+    return (await (SQLite.openDatabaseAsync as jest.Mock)()) as {
+      getAllAsync: jest.Mock;
+      runAsync: jest.Mock;
+    };
+  }
+
+  const flush = (): Promise<void> =>
+    (mobileAnalytics as unknown as { flushBuffer(): Promise<void> }).flushBuffer();
+
+  const bufferedRow = {
+    id: 7,
+    event_name: 'purchase_surface_unavailable',
+    session_id: null,
+    device_type: 'android',
+    properties: '{"platform":"android","reason":"products_empty"}',
+    duration_ms: null,
+    created_at: 1,
+  };
+
+  beforeEach(async () => {
+    await resetSession();
+    const db = await stubDb();
+    db.getAllAsync.mockReset().mockResolvedValue([]);
+    db.runAsync.mockReset().mockResolvedValue(undefined);
+  });
+
+  it('classifies 400/413/422 as permanent and 401/429/5xx/network as transient', () => {
+    for (const statusCode of [400, 413, 422]) {
+      expect(isPermanentRejection({ statusCode })).toBe(true);
+    }
+    for (const statusCode of [401, 408, 429, 500, 503]) {
+      expect(isPermanentRejection({ statusCode })).toBe(false);
+    }
+    expect(isPermanentRejection(new Error('offline'))).toBe(false);
+    expect(isPermanentRejection(null)).toBe(false);
+  });
+
+  it('deletes a batch the server refused instead of replaying it forever', async () => {
+    const db = await stubDb();
+    db.getAllAsync.mockResolvedValueOnce([bufferedRow]);
+    mockPost.mockRejectedValueOnce({ statusCode: 400, message: 'Bad Request' });
+
+    await flush();
+
+    expect(db.runAsync).toHaveBeenCalledWith(
+      expect.stringContaining('DELETE FROM buffered_events'),
+      7,
+    );
+  });
+
+  it('keeps a batch that failed transiently, for the next flush', async () => {
+    const db = await stubDb();
+    db.getAllAsync.mockResolvedValueOnce([bufferedRow]);
+    mockPost.mockRejectedValueOnce({ statusCode: 503, message: 'Unavailable' });
+
+    await flush();
+
+    expect(db.runAsync).not.toHaveBeenCalledWith(
+      expect.stringContaining('DELETE FROM buffered_events'),
+      expect.anything(),
+    );
+  });
+
+  it('does not buffer a live event the server refused', async () => {
+    const db = await stubDb();
+    mockPost.mockRejectedValueOnce({ statusCode: 400, message: 'Bad Request' });
+
+    mobileAnalytics.track('purchase_result', { platform: 'android', outcome: 'failed' });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const inserted = db.runAsync.mock.calls.some((call: unknown[]) =>
+      String(call[0]).includes('INSERT INTO buffered_events'),
+    );
+    expect(inserted).toBe(false);
   });
 });
