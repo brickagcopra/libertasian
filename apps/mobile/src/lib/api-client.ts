@@ -7,6 +7,7 @@ import {
   requestAiConsent,
   requiresAiConsent,
 } from '../features/ai-consent/ai-consent';
+import { noteIfSessionDisplaced } from '../features/session-displaced/session-displaced';
 
 function resolveApiBaseUrl(): string {
   // Explicit override (e.g. EXPO_PUBLIC_API_URL=https://libertasian.com/api/v1
@@ -385,6 +386,7 @@ class ApiClient {
     const error = await response
       .json()
       .catch(() => ({ message: `Request failed with status ${response.status}` }));
+    noteIfSessionDisplaced(response.status, error);
     throw new ApiClientError(
       response.status,
       (error as ApiError).message || `HTTP ${response.status}`,
@@ -490,6 +492,7 @@ class ApiClient {
             resolve(unwrapEnvelope<T>(data));
           } else {
             const err = data as ApiError;
+            noteIfSessionDisplaced(xhr.status, data);
             reject(new ApiClientError(xhr.status, err.message || `HTTP ${xhr.status}`));
           }
         } catch {

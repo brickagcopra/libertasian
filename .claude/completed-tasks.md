@@ -1,5 +1,25 @@
 # Completed Tasks
 
+## 2026-11-22 — Device limits phase 2a: concurrent-use cap (branch feature/device-limits-phase-2-concurrency, NOT committed/pushed)
+- [x] API `SessionConcurrencyService` (modules/auth/session-concurrency, @Global module): per-user Redis zset `nest:session:active:{userId}` (sid -> last request ms) + `nest:session:displaced:{userId}` set, one atomic Lua script per request. Newest K by last request keep the slot; the one pushed out is marked displaced (sticky, no silent ping-pong); sessions idle > window just drop out unmarked. Pro 2 / Edu 1 / others uncapped; platform admins and tokens without `sid` exempt. Plan code cached `nest:session:tier:{orgId}` 300s. Fails open. Env: DEVICE_CONCURRENCY_ENABLED (default false), DEVICE_CONCURRENCY_PRO=2, DEVICE_CONCURRENCY_EDU=1, DEVICE_CONCURRENCY_WINDOW_SEC=600.
+- [x] `JwtAuthGuard.canActivate` runs the check after passport auth (optional deps, so bare `new JwtAuthGuard()` still works) -> 409 `{ code: 'session_displaced' }`. `@AllowDisplacedSession()` on logout, GET/DELETE sessions, new `POST /auth/sessions/claim` (audit `auth.session_claimed`). Logout / revoke one / revoke all release the Redis slots.
+- [x] Web: `lib/session-displaced.ts` store, api-client (fetch + upload) and AI-answer / deep-research streams raise it; `SessionDisplacedDialog` (root layout): "Use it here" -> claim + invalidate queries, "Sign out"; queries no longer retry 409.
+- [x] Mobile: `features/session-displaced` (external store + `SessionDisplacedHost` modal in root layout), api-client + AI-answer stream raise it, queries no longer retry 409.
+- [x] Tests: API session-concurrency (8 mocked + 6 real-Lua against a throwaway redis:7, opt-in via SESSION_CONCURRENCY_REDIS_URL), guard 6, controller +2; auth+common 525 pass, tsc clean. Web 385 pass (incl. 6 new), no new tsc errors (376 pre-existing), eslint clean. Mobile full suite 2221 pass after fixing 2 regressions (copy said "plan", which the App Review no-purchase-copy test forbids outside the purchase surface — now "Your account can be used on a limited number of devices"; _layout.test mocks the host), tsc clean.
+
+## 2026-11-21 — Android purchases: RevenueCat, build, prod flag, analytics 400s
+- [x] RevenueCat: imported the 4 Play subs (`<id>:<basePlan>`), attached pro.* to entitlement `pro` and edu.* to `edu`, mapped all 4 into the default (current) offering packages. Verified: the public API with the goog_ key returns all 4 packages with plan ids.
+- [x] eas.json production env: `EXPO_PUBLIC_REVENUECAT_ANDROID_KEY` added (branch `chore/android-revenuecat-key` @ 6e0d2fd4, pushed: NO, PR: NO).
+- [x] Android 1.0.3 vC19 built (EAS 4534bd63) and live on the Play INTERNAL track (submission 31a9b8d8). AAB verified: key in bundle, billing client + BILLING permission present.
+- [x] Prod `.env`: `STORE_PURCHASE_AVAILABLE_ANDROID=true` (was unset, so false and Android had no Plans entry). Backup `.env.bak-20261121-android-store`.
+- [x] Android purchase VERIFIED on device (vC19, user bought a plan). Earlier `sdk_failed` was the phone still on alpha vC18 (no key).
+- [x] Post-purchase screen: confirmed purchase/restore now shows "You're all set" + Done instead of plans + Continue (PR #550, 94e1ecaf). Android key PR #551 (628a0d7c) merged.
+- [x] Android 1.0.3 vC20 (EAS 984eefee, from main @ 94e1ecaf) live on the INTERNAL track (Nov 21 9:35 PM).
+- [x] iOS 1.0.3 approved and auto-released: live on the App Store (PH + US) since 2026-11-21 22:52 UTC.
+- [x] In-app "Manage or cancel subscription" (PR #552, a4998217): subscribers see "Your subscription is active" instead of plans/Continue (also prevents a 2nd Play subscription); iOS uses Apple's sheet, Android opens the Play page via lib/store-account-page.ts (https store hosts only). Android vC21 (EAS c1d4eaf6) ACTIVE on internal track.
+- [x] Repeated Google Play receipts explained: license-tester renewals (annual = every 30 min, max 6), all "Test:" orders, no money moved.
+- [x] Analytics 400s: the 4 purchase telemetry events were missing from the API taxonomy; the mobile client also replayed refused events in /events/batch forever. PR #549 merged (69e9b815), API DEPLOYED and healthy. Mobile half (drop permanently refused events) ships with the next build.
+
 ## 2026-11-21 — Moderation: old reports worked + appeals, report cap, bulk actions
 - [x] Prod queue cleared: the 4 Aug-15/16 `misinformation` reports (2 posts, both accurate RA 9165 / People v. Doria commentary, filed by QA accounts, 3 since deleted) DISMISSED via ModerationService in the api container as the platform moderator; `moderation_actions` + `audit_logs` rows written. 0 open reports/flags.
 - [x] Author appeals: `moderation_appeals` (one per decision, 30-day window, only while in effect). User API `GET /community/standing/decisions`, `POST /community/standing/decisions/:id/appeal`; admin `GET /admin/moderation/appeals`, `POST /admin/moderation/appeals/:id/decide` (grant restores content / lifts sanction). Stats + daily email include open appeals. Notices say how to appeal and deep-link (`entityType: community_standing`).
@@ -15,7 +35,7 @@
 - [x] Android 1.0.3 vC18 (SDK 58) submitted to Play alpha track (EAS submission 202c9c8d-2316-46ac-97fb-15d567e0d3f9, FINISHED).
 - [x] Google Play production access GRANTED for com.libertasian.app (2026-11-21).
 - [x] eas.json Android submit track alpha -> production.
-- [x] Play base-plan product id support (mobile + API + RevenueCat pull), tests added; uncommitted.
+- [x] Play base-plan product id support (mobile + API + RevenueCat pull): PR #548 merged (3c5be6f0), API DEPLOYED to prod 2026-11-21 (healthy, verified in container). Mobile half ships with the next build.
 
 ## 2026-11-20 — Moderation queue (branch feature/moderation-queue)
 - [x] Researched Discourse / Reddit / Mastodon / Discord / YouTube moderation + Apple 1.2: cases grouped per target, oldest-first with 24h SLA, content + author actions, auto-hide, append-only log.
@@ -166,3 +186,9 @@
 ### Part 4: Internal Model Runs Endpoint
 - [x] Created `POST /api/v1/internal/model-runs` (InternalApiGuard, no JWT)
 - [x] Records model run in `model_runs` table
+
+- 2026-11-22: Android vC21 (1.0.3) verified by user on internal track; promoted to production (PH + US) and sent for Google review.
+
+- 2026-11-22: Android vC21 (1.0.3) verified by user on internal track; promoted to production (PH + US) and sent for Google review.
+- 2026-11-22: iOS 1.0.4 (build 39) built with post-purchase confirmation + manage/cancel subscription; version created in ASC, What's New set, submitted for App Review (auto-release on approval).
+- 2026-11-22: PR #554 (subscription bought on other platform/web shows 'Your plan is active', no buy/manage) and PR #555 (device limits phase 1: Pro 3 / Edu 2, LRU eviction, X-Device-Id headers, ToS clause) merged; API+web deployed to prod with DEVICE_LIMITS_ENABLED=true. Competitor research: Jur.ph 3 devices; Digest PH/Anycase/CD Asia no published cap.

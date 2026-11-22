@@ -4,6 +4,7 @@ import { Toaster } from 'sonner';
 
 import '@/app/globals.css';
 import { AnalyticsProvider } from '@/providers/analytics-provider';
+import { SessionDisplacedDialog } from '@/features/auth/components/session-displaced-dialog';
 import { AuthProvider } from '@/providers/auth-provider';
 import { QueryProvider } from '@/providers/query-provider';
 import { ThemeProvider } from '@/providers/theme-provider';
@@ -82,6 +83,7 @@ export default function RootLayout({
                   {children}
                   <AdRenderer />
                   <ChatWidget />
+                  <SessionDisplacedDialog />
                   <Toaster richColors position="top-right" closeButton />
                 </AdProvider>
               </AnalyticsProvider>

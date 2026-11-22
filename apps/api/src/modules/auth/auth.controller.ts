@@ -4,6 +4,8 @@ import {
   Delete,
   Get,
   Headers,
+  HttpCode,
+  HttpStatus,
   Ip,
   Param,
   ParseUUIDPipe,
@@ -21,12 +23,14 @@ import { SkipThrottle, Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import type { JwtPayload } from '@libertasian/types';
 
+import { AllowDisplacedSession } from '../../common/decorators/allow-displaced-session.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { TrackEvent } from '../analytics';
 import { AuditService } from '../audit/audit.service';
 import { OrganizationsService } from '../organizations/organizations.service';
 import { AuthService } from './auth.service';
+import { SessionConcurrencyService } from './session-concurrency/session-concurrency.service';
 import { SocialTokenService } from './social-token.service';
 import type { GoogleProfile } from './strategies/google.strategy';
 import {
@@ -81,6 +85,7 @@ export class AuthController {
     private readonly configService: ConfigService,
     private readonly organizationsService: OrganizationsService,
     private readonly socialTokens: SocialTokenService,
+    private readonly sessionConcurrency: SessionConcurrencyService,
   ) {
     this.googleEnabled = !!(
       this.configService.get<string>('GOOGLE_CLIENT_ID') &&
@@ -415,6 +420,7 @@ export class AuthController {
 
   @Post('logout')
   @UseGuards(JwtAuthGuard)
+  @AllowDisplacedSession()
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Logout and revoke refresh token family' })
   async logout(
@@ -434,6 +440,7 @@ export class AuthController {
     if (refreshToken) {
       await this.authService.logout(refreshToken, req);
     }
+    await this.sessionConcurrency.release(user.sub, user.sid);
 
     // Web: clear the httpOnly refresh cookie. Mobile has no cookie to clear.
     if (!isMobile) {
@@ -605,6 +612,7 @@ export class AuthController {
 
   @Get('sessions')
   @UseGuards(JwtAuthGuard)
+  @AllowDisplacedSession()
   @ApiBearerAuth()
   @ApiOperation({ summary: 'List active sessions for current user' })
   async listSessions(@CurrentUser() user: JwtPayload) {
@@ -612,8 +620,34 @@ export class AuthController {
     return { success: true, data: sessions };
   }
 
+  /**
+   * "Use it here": a device whose session lost its concurrent-use slot
+   * (409 session_displaced) takes it back, displacing the least recently
+   * used other device when the plan's cap is full.
+   */
+  @Post('sessions/claim')
+  @UseGuards(JwtAuthGuard)
+  @AllowDisplacedSession()
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Use this device: reclaim a displaced session slot' })
+  async claimSession(@CurrentUser() user: JwtPayload, @Ip() ip: string) {
+    const displaced = await this.sessionConcurrency.claim(user);
+    await this.auditService.log({
+      organizationId: user.organizationId,
+      actorUserId: user.sub,
+      actorType: 'user',
+      action: 'auth.session_claimed',
+      entityType: 'session',
+      entityId: user.sid ?? user.sub,
+      metadata: { ip, displaced },
+    });
+    return { success: true, data: { displaced } };
+  }
+
   @Delete('sessions/:familyId')
   @UseGuards(JwtAuthGuard)
+  @AllowDisplacedSession()
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Revoke a specific session by family ID' })
   async revokeSession(
@@ -622,6 +656,7 @@ export class AuthController {
     @Ip() ip: string,
   ) {
     await this.authService.revokeSession(user.sub, familyId);
+    await this.sessionConcurrency.release(user.sub, familyId);
     await this.auditService.log({
       actorUserId: user.sub,
       actorType: 'user',
@@ -635,6 +670,7 @@ export class AuthController {
 
   @Delete('sessions')
   @UseGuards(JwtAuthGuard)
+  @AllowDisplacedSession()
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Revoke all sessions (logout everywhere)' })
   async revokeAllSessions(
@@ -642,6 +678,7 @@ export class AuthController {
     @Ip() ip: string,
   ) {
     await this.authService.revokeAllSessions(user.sub);
+    await this.sessionConcurrency.releaseAll(user.sub);
     await this.auditService.log({
       actorUserId: user.sub,
       actorType: 'user',

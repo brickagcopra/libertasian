@@ -32,6 +32,8 @@ import { usePushNotifications } from '../features/workspace/hooks/use-push-notif
 import { ensureAudioMode } from '../features/audio/lib/audio-session';
 import { AiConsentHost } from '../features/ai-consent';
 import { CommunityAgreementHost } from '../features/community-guidelines';
+import { SessionDisplacedHost } from '../features/session-displaced';
+import { ApiClientError } from '../lib/api-client';
 import '../../global.css';
 
 function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
@@ -105,7 +107,10 @@ export default function RootLayout() {
         defaultOptions: {
           queries: {
             staleTime: 60 * 1000,
-            retry: 1,
+            // One retry, except for 409s: a session_displaced answer will not
+            // change until the user picks "Use it here".
+            retry: (failureCount, error) =>
+              !(error instanceof ApiClientError && error.statusCode === 409) && failureCount < 1,
           },
         },
       }),
@@ -151,6 +156,7 @@ export default function RootLayout() {
             </AuthNavigationGuard>
             <AiConsentHost />
             <CommunityAgreementHost />
+            <SessionDisplacedHost />
           </AuthProvider>
         </ThemeProvider>
       </QueryClientProvider>

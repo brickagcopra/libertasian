@@ -20,6 +20,7 @@ jest.mock('uuid', () => ({
 jest.mock('google-auth-library', () => ({ OAuth2Client: jest.fn(() => ({})) }));
 jest.mock('jose', () => ({ createRemoteJWKSet: jest.fn(), jwtVerify: jest.fn() }));
 
+import { SessionConcurrencyService } from './session-concurrency/session-concurrency.service';
 import { SocialTokenService } from './social-token.service';
 
 interface MockResponseShape {
@@ -57,6 +58,7 @@ describe('AuthController — mobile transport branch', () => {
   let auditService: { log: jest.Mock };
   let configService: { get: jest.Mock };
   let organizationsService: { acceptInvite: jest.Mock };
+  let sessionConcurrency: { claim: jest.Mock; release: jest.Mock; releaseAll: jest.Mock };
   let socialTokens: {
     googleConfigured: boolean;
     verifyGoogleIdToken: jest.Mock;
@@ -75,6 +77,11 @@ describe('AuthController — mobile transport branch', () => {
       googleConfigured: true,
       verifyGoogleIdToken: jest.fn(),
       verifyAppleIdentityToken: jest.fn(),
+    };
+    sessionConcurrency = {
+      claim: jest.fn().mockResolvedValue(0),
+      release: jest.fn().mockResolvedValue(undefined),
+      releaseAll: jest.fn().mockResolvedValue(undefined),
     };
     auditService = { log: jest.fn().mockResolvedValue(undefined) };
     configService = {
@@ -98,6 +105,7 @@ describe('AuthController — mobile transport branch', () => {
         { provide: ConfigService, useValue: configService },
         { provide: OrganizationsService, useValue: organizationsService },
         { provide: SocialTokenService, useValue: socialTokens },
+        { provide: SessionConcurrencyService, useValue: sessionConcurrency },
       ],
     }).compile();
 
@@ -374,6 +382,32 @@ describe('AuthController — mobile transport branch', () => {
 
       expect(authService.logout).not.toHaveBeenCalled();
       expect(res.cookie).not.toHaveBeenCalled();
+    });
+
+    it('frees the concurrent-use slot of the caller', async () => {
+      const req = buildRequest({ cookies: { 'libertasian-refresh': 'RT' } });
+      await controller.logout(req, { sub: 'user-1', sid: 'fam-1' } as never, '1.2.3.4', buildResponse());
+      expect(sessionConcurrency.release).toHaveBeenCalledWith('user-1', 'fam-1');
+    });
+  });
+
+  describe('claimSession', () => {
+    it('reclaims the slot, audits it, and reports how many devices were displaced', async () => {
+      sessionConcurrency.claim.mockResolvedValue(1);
+      const user = { sub: 'user-1', sid: 'fam-1', organizationId: 'org-1' } as never;
+
+      const result = await controller.claimSession(user, '1.2.3.4');
+
+      expect(sessionConcurrency.claim).toHaveBeenCalledWith(user);
+      expect(result).toEqual({ success: true, data: { displaced: 1 } });
+      expect(auditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'auth.session_claimed',
+          entityType: 'session',
+          entityId: 'fam-1',
+          metadata: { ip: '1.2.3.4', displaced: 1 },
+        }),
+      );
     });
   });
 

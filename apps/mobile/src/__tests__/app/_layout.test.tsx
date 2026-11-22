@@ -20,6 +20,11 @@ jest.mock('@tanstack/react-query', () => ({
   QueryClientProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
+// Its own suite covers it; here it would need a real QueryClient.
+jest.mock('@/features/session-displaced', () => ({
+  SessionDisplacedHost: () => null,
+}));
+
 const mockUseAuth = jest.fn();
 jest.mock('@/providers/auth-provider', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
