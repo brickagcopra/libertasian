@@ -75,6 +75,11 @@ interface PurchasesModule {
    * without pattern-matching error codes or message text.
    */
   getCustomerInfo(): Promise<CustomerInfo>;
+  /**
+   * iOS only: presents Apple's own manage-subscriptions sheet in the app. Throws
+   * on Android, where `customerInfo.managementURL` is used instead.
+   */
+  showManageSubscriptions(): Promise<void>;
 }
 
 /**

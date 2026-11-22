@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Platform } from 'react-native';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { useAuth } from '@/providers/auth-provider';
+import { openStoreAccountPage } from '@/lib/store-account-page';
 import { quotaKeys } from '@/features/billing/hooks/use-quotas';
 
 import type { PurchaseSurfaceStatus } from '../components/purchase-surface';
@@ -67,6 +69,10 @@ export const RESTORE_NOTHING_NOTICE =
  * `/store/sync` unconditionally, yet a full day of nginx logs contains no
  * `/store/sync` request, so every restore was throwing before it got there.
  */
+/** The store's manage page could not be opened. Names no other way to cancel. */
+export const MANAGE_FAILED_NOTICE =
+  'We could not open the store. Please try again.';
+
 export const RESTORE_FAILED_NOTICE =
   'We could not reach the store. Please try again.';
 
@@ -105,6 +111,15 @@ export interface PurchaseOptions {
    * own — tapping it again only re-enters the store's "already purchased" path.
    */
   completed: boolean;
+  /**
+   * The store reports an active entitlement for this account — found when the
+   * screen opens, or by a purchase or restore here. The surface then shows the
+   * manage panel instead of plans: buying a second plan on Google Play starts a
+   * SECOND, separately billed subscription, so the buy button must not be there.
+   */
+  hasSubscription: boolean;
+  /** Open the store's own page for managing or cancelling the subscription. */
+  manageSubscription: () => void;
   purchase: (productId: StoreProductId) => void;
   restore: () => void;
   /**
@@ -144,6 +159,18 @@ export function usePurchaseOptions(): PurchaseOptions {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [completed, setCompleted] = useState(false);
+  const [hasSubscription, setHasSubscription] = useState(false);
+  const managementUrl = useRef<string | null>(null);
+
+  /** Record what the store says this account owns. Never downgrades on its own. */
+  const noteCustomerInfo = useCallback((info: unknown) => {
+    const typed = info as Parameters<typeof hasActiveEntitlement>[0] & {
+      managementURL?: string | null;
+    };
+    if (!hasActiveEntitlement(typed)) return;
+    setHasSubscription(true);
+    managementUrl.current = typed?.managementURL ?? managementUrl.current;
+  }, []);
 
   // One reporter per mount: the dedupe window IS the mount, so a user who
   // leaves and comes back is a fresh observation.
@@ -178,6 +205,27 @@ export function usePurchaseOptions(): PurchaseOptions {
   }, [organizationId, configureNonce]);
 
   const offerings = useOfferings(sdkState === 'ready');
+
+  // Does this account already own something? Asked once the SDK is ready, so a
+  // subscriber who comes back to this screen sees how to manage or cancel it
+  // rather than a buy button.
+  useEffect(() => {
+    if (sdkState !== 'ready') return;
+    const purchases = getPurchases();
+    if (!purchases) return;
+    let cancelled = false;
+    purchases
+      .getCustomerInfo()
+      .then((info) => {
+        if (!cancelled) noteCustomerInfo(info);
+      })
+      .catch(() => {
+        // Unknown is not "none": the plans render as before.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sdkState, noteCustomerInfo]);
   const plans = offerings.data?.plans ?? [];
   const source = offerings.data?.source ?? null;
 
@@ -265,11 +313,13 @@ export function usePurchaseOptions(): PurchaseOptions {
       void (async () => {
         try {
           const { customerInfo } = await buy();
+          noteCustomerInfo(customerInfo);
           const storeOk = hasActiveEntitlement(customerInfo);
           const serverOk = await reconcile();
           const confirmed = storeOk || serverOk;
           setNotice(confirmed ? PURCHASE_CONFIRMED_NOTICE : PURCHASE_FAILED_NOTICE);
           setCompleted(confirmed);
+          if (confirmed) setHasSubscription(true);
           telemetry.purchaseResult(confirmed ? 'confirmed' : 'failed');
         } catch (error) {
           // Dismissing the store sheet is not a failure and gets no message.
@@ -295,6 +345,7 @@ export function usePurchaseOptions(): PurchaseOptions {
             await reconcile();
             setNotice(PURCHASE_CONFIRMED_NOTICE);
             setCompleted(true);
+            setHasSubscription(true);
             telemetry.purchaseResult('confirmed');
           } else {
             setNotice(PURCHASE_FAILED_NOTICE);
@@ -305,7 +356,7 @@ export function usePurchaseOptions(): PurchaseOptions {
         }
       })();
     },
-    [busy, offerings.data, reconcile, telemetry],
+    [busy, offerings.data, reconcile, telemetry, noteCustomerInfo],
   );
 
   const restore = useCallback(() => {
@@ -317,11 +368,13 @@ export function usePurchaseOptions(): PurchaseOptions {
     void (async () => {
       try {
         const info = await purchases.restorePurchases();
+        noteCustomerInfo(info);
         const storeOk = hasActiveEntitlement(info);
         const serverOk = await reconcile();
         const restored = storeOk || serverOk;
         setNotice(restored ? RESTORE_CONFIRMED_NOTICE : RESTORE_NOTHING_NOTICE);
         setCompleted(restored);
+        if (restored) setHasSubscription(true);
         telemetry.restoreResult(restored ? 'confirmed' : 'nothing');
       } catch (error) {
         // Dismissing the store sheet is not a failure and gets no message —
@@ -336,7 +389,37 @@ export function usePurchaseOptions(): PurchaseOptions {
         setBusy(false);
       }
     })();
-  }, [busy, reconcile, telemetry]);
+  }, [busy, reconcile, telemetry, noteCustomerInfo]);
 
-  return { status, plans, busy, notice, completed, purchase, restore, retry };
+  const manageSubscription = useCallback(() => {
+    if (busy) return;
+    setNotice(null);
+    void (async () => {
+      // iOS: Apple's own sheet, inside the app. If it is unavailable (or this is
+      // Android, where the SDK throws), fall back to the store's account page.
+      if (Platform.OS === 'ios') {
+        try {
+          await getPurchases()?.showManageSubscriptions();
+          return;
+        } catch {
+          // Fall through to the page.
+        }
+      }
+      const opened = await openStoreAccountPage(managementUrl.current);
+      if (!opened) setNotice(MANAGE_FAILED_NOTICE);
+    })();
+  }, [busy]);
+
+  return {
+    status,
+    plans,
+    busy,
+    notice,
+    completed,
+    hasSubscription,
+    manageSubscription,
+    purchase,
+    restore,
+    retry,
+  };
 }

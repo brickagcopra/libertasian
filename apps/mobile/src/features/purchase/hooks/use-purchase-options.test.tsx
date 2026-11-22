@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { createElement, type ReactNode } from 'react';
@@ -11,6 +12,7 @@ import { offeringKeys, offeringsQueryOptions } from './use-offerings';
 import {
   PURCHASE_CONFIRMED_NOTICE,
   PURCHASE_FAILED_NOTICE,
+  MANAGE_FAILED_NOTICE,
   RESTORE_CONFIRMED_NOTICE,
   RESTORE_FAILED_NOTICE,
   RESTORE_NOTHING_NOTICE,
@@ -27,6 +29,8 @@ const mockGetOfferings = jest.fn();
 const mockGetProducts = jest.fn();
 const mockPurchaseStoreProduct = jest.fn();
 const mockGetCustomerInfo = jest.fn();
+const mockShowManageSubscriptions = jest.fn();
+const mockOpenStoreAccountPage = jest.fn();
 
 /** A `CustomerInfo` the store considers entitled. */
 const ENTITLED = { entitlements: { active: { pro: { isActive: true } } } };
@@ -43,6 +47,7 @@ jest.mock('../lib/purchases-sdk', () => ({
     purchaseStoreProduct: mockPurchaseStoreProduct,
     restorePurchases: mockRestorePurchases,
     getCustomerInfo: mockGetCustomerInfo,
+    showManageSubscriptions: mockShowManageSubscriptions,
   }),
   isUserCancelled: (error: unknown) =>
     typeof error === 'object' && error !== null && 'userCancelled' in error,
@@ -51,6 +56,10 @@ jest.mock('../lib/purchases-sdk', () => ({
   // `hasActiveEntitlement` pass every case below.
   hasActiveEntitlement: (info: unknown) =>
     jest.requireActual('../lib/purchases-sdk').hasActiveEntitlement(info),
+}));
+
+jest.mock('@/lib/store-account-page', () => ({
+  openStoreAccountPage: (...args: unknown[]) => mockOpenStoreAccountPage(...args),
 }));
 
 jest.mock('@/providers/auth-provider', () => ({
@@ -320,6 +329,9 @@ describe('usePurchaseOptions', () => {
     mockGetCustomerInfo.mockResolvedValue(ENTITLED);
     post.mockResolvedValue({ status: 'noop', detail: 'in_sync' });
     const { result } = await renderReady();
+    // The on-open ownership check is not the call under test.
+    await waitFor(() => expect(mockGetCustomerInfo).toHaveBeenCalled());
+    mockGetCustomerInfo.mockClear();
 
     await act(async () => result.current.purchase(MONTHLY));
 
@@ -363,6 +375,9 @@ describe('usePurchaseOptions', () => {
     // not go asking the store about an entitlement nobody tried to buy.
     mockPurchasePackage.mockRejectedValue({ userCancelled: true });
     const { result } = await renderReady();
+    // The on-open ownership check is not the call under test.
+    await waitFor(() => expect(mockGetCustomerInfo).toHaveBeenCalled());
+    mockGetCustomerInfo.mockClear();
 
     await act(async () => result.current.purchase(MONTHLY));
 
@@ -663,6 +678,9 @@ describe('usePurchaseOptions', () => {
   it('reports a cancelled sheet as cancelled, not as a failure', async () => {
     mockPurchasePackage.mockRejectedValue({ userCancelled: true });
     const { result } = await renderReady();
+    // The on-open ownership check is not the call under test.
+    await waitFor(() => expect(mockGetCustomerInfo).toHaveBeenCalled());
+    mockGetCustomerInfo.mockClear();
 
     await act(async () => result.current.purchase(MONTHLY));
 
@@ -875,6 +893,88 @@ describe('usePurchaseOptions', () => {
 
       await act(async () => result.current.restore());
       await waitFor(() => expect(result.current.completed).toBe(true));
+    });
+  });
+
+  // ---- returning subscribers: manage or cancel, never buy a second plan ----
+
+  describe('hasSubscription and manageSubscription', () => {
+    const originalOS = Platform.OS;
+    afterEach(() => {
+      Object.defineProperty(Platform, 'OS', { value: originalOS });
+    });
+
+    beforeEach(() => {
+      mockOpenStoreAccountPage.mockReset().mockResolvedValue(true);
+      mockShowManageSubscriptions.mockReset().mockResolvedValue(undefined);
+    });
+
+    it('is false for an account the store says owns nothing', async () => {
+      const { result } = await renderReady();
+      await waitFor(() => expect(mockGetCustomerInfo).toHaveBeenCalled());
+      expect(result.current.hasSubscription).toBe(false);
+    });
+
+    it('is true on open when the store reports an active entitlement', async () => {
+      mockGetCustomerInfo.mockResolvedValue({
+        ...ENTITLED,
+        managementURL: 'https://play.google.com/store/account/subscriptions',
+      });
+      const { result } = await renderReady();
+      await waitFor(() => expect(result.current.hasSubscription).toBe(true));
+      // Not a fresh purchase: the confirmation copy is not shown for this.
+      expect(result.current.completed).toBe(false);
+    });
+
+    it('is true after a confirmed purchase', async () => {
+      post.mockResolvedValue({ status: 'processed' });
+      const { result } = await renderReady();
+      await act(async () => result.current.purchase(MONTHLY));
+      await waitFor(() => expect(result.current.hasSubscription).toBe(true));
+    });
+
+    it("uses Apple's own sheet on iOS", async () => {
+      Object.defineProperty(Platform, 'OS', { value: 'ios' });
+      const { result } = await renderReady();
+
+      await act(async () => result.current.manageSubscription());
+
+      await waitFor(() => expect(mockShowManageSubscriptions).toHaveBeenCalled());
+      expect(mockOpenStoreAccountPage).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the store page if the iOS sheet fails', async () => {
+      Object.defineProperty(Platform, 'OS', { value: 'ios' });
+      mockShowManageSubscriptions.mockRejectedValue(new Error('unsupported'));
+      const { result } = await renderReady();
+
+      await act(async () => result.current.manageSubscription());
+
+      await waitFor(() => expect(mockOpenStoreAccountPage).toHaveBeenCalled());
+    });
+
+    it('opens the management URL the store gave on Android', async () => {
+      Object.defineProperty(Platform, 'OS', { value: 'android' });
+      const url =
+        'https://play.google.com/store/account/subscriptions?sku=com.libertasian.pro.monthly&package=com.libertasian.app';
+      mockGetCustomerInfo.mockResolvedValue({ ...ENTITLED, managementURL: url });
+      const { result } = await renderReady();
+      await waitFor(() => expect(result.current.hasSubscription).toBe(true));
+
+      await act(async () => result.current.manageSubscription());
+
+      await waitFor(() => expect(mockOpenStoreAccountPage).toHaveBeenCalledWith(url));
+    });
+
+    it('says so, without naming another way to cancel, when nothing could be opened', async () => {
+      Object.defineProperty(Platform, 'OS', { value: 'android' });
+      mockOpenStoreAccountPage.mockResolvedValue(false);
+      const { result } = await renderReady();
+
+      await act(async () => result.current.manageSubscription());
+
+      await waitFor(() => expect(result.current.notice).toBe(MANAGE_FAILED_NOTICE));
+      expect(MANAGE_FAILED_NOTICE).not.toMatch(/web|site|email|http/i);
     });
   });
 });

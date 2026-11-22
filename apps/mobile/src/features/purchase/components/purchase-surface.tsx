@@ -46,6 +46,13 @@ export interface PurchaseSurfaceProps {
    * plan list, the buy button and Restore with a confirmation and `onDone`.
    */
   completed?: boolean;
+  /**
+   * The account already holds an active subscription (found on open, or just
+   * bought). Same panel as `completed`, worded for a returning subscriber.
+   */
+  hasSubscription?: boolean;
+  /** Open the store's own page to manage or cancel. Required for the button. */
+  onManageSubscription?: () => void;
   /** Leave the surface after `completed`. Without it no Done button renders. */
   onDone?: () => void;
   onOpenTerms: () => void;
@@ -78,6 +85,8 @@ export function PurchaseSurface({
   onRestore,
   onRetry,
   completed = false,
+  hasSubscription = false,
+  onManageSubscription,
   onDone,
   onOpenTerms,
   onOpenPrivacy,
@@ -114,8 +123,14 @@ export function PurchaseSurface({
         Full access to research, digests, scanning and your workspace.
       </Text>
 
-      {completed ? (
-        <CompletedPanel notice={notice ?? null} onDone={onDone} />
+      {completed || hasSubscription ? (
+        <SubscribedPanel
+          justBought={completed}
+          notice={notice ?? null}
+          busy={busy}
+          onManage={onManageSubscription}
+          onDone={onDone}
+        />
       ) : (
         <>
           {status === 'loading' ? (
@@ -289,15 +304,23 @@ export function PurchaseSurface({
 }
 
 /**
- * Shown in place of the plans once the store and/or server confirmed an active
- * entitlement in this visit. No buy button and no Restore: both would only
- * send the user back into the store for something they now own.
+ * Shown in place of the plans whenever the account holds an active
+ * subscription: right after buying or restoring one, and on any later visit.
+ * No buy button and no Restore — on Google Play a second plan is a second,
+ * separately billed subscription. Instead, the way to manage or cancel it,
+ * which both stores require to happen on their own page.
  */
-function CompletedPanel({
+function SubscribedPanel({
+  justBought,
   notice,
+  busy,
+  onManage,
   onDone,
 }: {
+  justBought: boolean;
   notice: string | null;
+  busy: boolean;
+  onManage?: () => void;
   onDone?: () => void;
 }) {
   const { theme } = useTheme();
@@ -319,11 +342,20 @@ function CompletedPanel({
           marginBottom: 8,
         }}
       >
-        You&apos;re all set
+        {justBought ? "You're all set" : 'Your subscription is active'}
       </Text>
       <Text style={{ fontFamily: theme.sans, fontSize: 15, color: theme.inkSoft }}>
-        {notice ?? 'Your subscription is active.'}
+        {justBought
+          ? (notice ?? 'Your subscription is active.')
+          : 'You can change or cancel it at any time from your store account. If you cancel, you keep access until the end of the current period.'}
       </Text>
+      {!justBought && notice ? (
+        <Text
+          style={{ fontFamily: theme.sans, fontSize: 14, color: theme.inkSoft, marginTop: 8 }}
+        >
+          {notice}
+        </Text>
+      ) : null}
       {onDone ? (
         <Pressable
           accessibilityRole="button"
@@ -345,6 +377,27 @@ function CompletedPanel({
             }}
           >
             Done
+          </Text>
+        </Pressable>
+      ) : null}
+      {onManage ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ disabled: busy }}
+          disabled={busy}
+          onPress={onManage}
+          style={{ paddingVertical: 14, alignItems: 'center', marginTop: 4 }}
+        >
+          <Text
+            style={{
+              fontFamily: theme.sans,
+              fontSize: 15,
+              color: theme.ink,
+              textDecorationLine: 'underline',
+              opacity: busy ? 0.5 : 1,
+            }}
+          >
+            Manage or cancel subscription
           </Text>
         </Pressable>
       ) : null}
