@@ -7,6 +7,7 @@ export default function SettingsLayout() {
       {/* ProfileScreen renders its own large serif title, so the native header stays blank. */}
       <Stack.Screen name="index" options={{ title: 'Settings', headerTitle: '' }} />
       <Stack.Screen name="security" options={{ title: 'Security' }} />
+      <Stack.Screen name="devices" options={{ title: 'Your devices' }} />
       <Stack.Screen name="usage" options={{ title: 'Usage' }} />
       <Stack.Screen name="blocked-users" options={{ title: 'Blocked users' }} />
       <Stack.Screen name="community-standing" options={{ title: 'Community standing' }} />

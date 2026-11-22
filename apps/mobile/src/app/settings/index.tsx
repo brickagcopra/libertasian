@@ -138,6 +138,13 @@ export default function SettingsRoute() {
       onPress: () => router.push('/settings/security'),
     },
     {
+      id: 'devices',
+      icon: 'phone-portrait-outline',
+      label: 'Your devices',
+      sub: 'Where you are signed in',
+      onPress: () => router.push('/settings/devices'),
+    },
+    {
       id: 'notifications',
       icon: 'notifications-outline',
       label: 'Notifications',

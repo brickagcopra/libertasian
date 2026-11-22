@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -28,8 +29,10 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { TrackEvent } from '../analytics';
 import { AuditService } from '../audit/audit.service';
+import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { OrganizationsService } from '../organizations/organizations.service';
 import { AuthService } from './auth.service';
+import { DeviceLimitService } from './device-limit.service';
 import { SessionConcurrencyService } from './session-concurrency/session-concurrency.service';
 import { SocialTokenService } from './social-token.service';
 import type { GoogleProfile } from './strategies/google.strategy';
@@ -86,6 +89,8 @@ export class AuthController {
     private readonly organizationsService: OrganizationsService,
     private readonly socialTokens: SocialTokenService,
     private readonly sessionConcurrency: SessionConcurrencyService,
+    private readonly deviceLimits: DeviceLimitService,
+    private readonly subscriptions: SubscriptionsService,
   ) {
     this.googleEnabled = !!(
       this.configService.get<string>('GOOGLE_CLIENT_ID') &&
@@ -616,8 +621,73 @@ export class AuthController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'List active sessions for current user' })
   async listSessions(@CurrentUser() user: JwtPayload) {
-    const sessions = await this.authService.listSessions(user.sub, user.sid);
-    return { success: true, data: sessions };
+    const [sessions, inUse] = await Promise.all([
+      this.authService.listSessions(user.sub, user.sid),
+      this.sessionConcurrency.inUseSessionIds(user.sub),
+    ]);
+    // inUse is null when the concurrent-use cap is off or Redis is down:
+    // "unknown", which clients must not render as "not in use".
+    const data = sessions.map((s) => ({
+      ...s,
+      inUse: inUse ? inUse.has(s.familyId) : null,
+    }));
+    return { success: true, data };
+  }
+
+  /**
+   * The caps that apply to the caller's account right now: how many devices
+   * may stay signed in and how many may be in use at once. null = no cap
+   * (uncapped plan, or that limit is switched off).
+   */
+  @Get('sessions/limits')
+  @UseGuards(JwtAuthGuard)
+  @AllowDisplacedSession()
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Device limits that apply to the current account' })
+  async sessionLimits(@CurrentUser() user: JwtPayload) {
+    let tier = 'free';
+    try {
+      tier = await this.subscriptions.getPlanCode(user.organizationId);
+    } catch {
+      // Unknown plan: report no caps rather than fail the settings screen.
+    }
+    return {
+      success: true,
+      data: {
+        maxSignedIn: this.deviceLimits.isEnabled() ? this.deviceLimits.limitForTier(tier) : null,
+        maxInUse: this.sessionConcurrency.isEnabled()
+          ? this.sessionConcurrency.limitForTier(tier)
+          : null,
+      },
+    };
+  }
+
+  /** "Sign out of all other devices": keeps the caller's own session. */
+  @Post('sessions/revoke-others')
+  @UseGuards(JwtAuthGuard)
+  @AllowDisplacedSession()
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Revoke every session except the current one' })
+  async revokeOtherSessions(@CurrentUser() user: JwtPayload, @Ip() ip: string) {
+    if (!user.sid) {
+      // Tokens minted before the sid claim cannot tell which session is theirs.
+      throw new BadRequestException('Sign in again to manage your devices.');
+    }
+    const revoked = await this.authService.revokeOtherSessions(user.sub, user.sid);
+    await Promise.all(
+      revoked.map((familyId) => this.sessionConcurrency.release(user.sub, familyId)),
+    );
+    await this.auditService.log({
+      organizationId: user.organizationId,
+      actorUserId: user.sub,
+      actorType: 'user',
+      action: 'auth.other_sessions_revoked',
+      entityType: 'user',
+      entityId: user.sub,
+      metadata: { ip, count: revoked.length },
+    });
+    return { success: true, data: { revoked: revoked.length } };
   }
 
   /**

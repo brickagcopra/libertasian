@@ -142,6 +142,24 @@ export class SessionConcurrencyService {
     return result ? result.displacedSids.length : 0;
   }
 
+  /**
+   * Sessions of this user currently holding an in-use slot (requested inside
+   * the window and not displaced), or null when the cap is off or Redis is
+   * unreachable — "unknown", not "none".
+   */
+  async inUseSessionIds(userId: string): Promise<Set<string> | null> {
+    if (!this.enabled) return null;
+    try {
+      const sids = await this.redis
+        .getClient()
+        .zrangebyscore(this.activeKey(userId), Date.now() - this.windowMs, '+inf');
+      return new Set(sids);
+    } catch (err) {
+      this.warn('in_use', userId, err);
+      return null;
+    }
+  }
+
   /** Forget a session (logout / revoke). Best effort. */
   async release(userId: string, sid: string | undefined): Promise<void> {
     if (!this.enabled || !sid) return;
