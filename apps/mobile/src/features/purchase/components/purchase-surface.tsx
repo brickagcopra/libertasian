@@ -41,6 +41,13 @@ export interface PurchaseSurfaceProps {
    * caller re-create the dead end by omitting it.
    */
   onRetry: () => void;
+  /**
+   * A purchase or restore just ended with an active entitlement. Replaces the
+   * plan list, the buy button and Restore with a confirmation and `onDone`.
+   */
+  completed?: boolean;
+  /** Leave the surface after `completed`. Without it no Done button renders. */
+  onDone?: () => void;
   onOpenTerms: () => void;
   onOpenPrivacy: () => void;
 }
@@ -70,6 +77,8 @@ export function PurchaseSurface({
   onPurchase,
   onRestore,
   onRetry,
+  completed = false,
+  onDone,
   onOpenTerms,
   onOpenPrivacy,
 }: PurchaseSurfaceProps) {
@@ -105,139 +114,146 @@ export function PurchaseSurface({
         Full access to research, digests, scanning and your workspace.
       </Text>
 
-      {status === 'loading' ? (
-        <View style={{ paddingVertical: 32, alignItems: 'center' }}>
-          <ActivityIndicator color={theme.accent} />
-        </View>
-      ) : null}
+      {completed ? (
+        <CompletedPanel notice={notice ?? null} onDone={onDone} />
+      ) : (
+        <>
+          {status === 'loading' ? (
+            <View style={{ paddingVertical: 32, alignItems: 'center' }}>
+              <ActivityIndicator color={theme.accent} />
+            </View>
+          ) : null}
 
-      {status === 'unavailable' ? (
-        <View
-          style={{
-            borderRadius: theme.radius,
-            backgroundColor: theme.surfaceMuted,
-            padding: 16,
-            marginBottom: 20,
-          }}
-        >
-          <Text
-            style={{ fontFamily: theme.sans, fontSize: 15, color: theme.inkSoft }}
+          {status === 'unavailable' ? (
+            <View
+              style={{
+                borderRadius: theme.radius,
+                backgroundColor: theme.surfaceMuted,
+                padding: 16,
+                marginBottom: 20,
+              }}
+            >
+              <Text
+                style={{ fontFamily: theme.sans, fontSize: 15, color: theme.inkSoft }}
+              >
+                Plans are not available right now. Please try again later.
+              </Text>
+              {/*
+                The way out. Nothing here leaves the app: no URL, no Linking call,
+                no mention of another place to subscribe — guideline 3.1.1, which
+                is what got build 23 rejected. It asks the STORE again, on this
+                screen, and that is the whole of it.
+              */}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ disabled: busy }}
+                disabled={busy}
+                onPress={onRetry}
+                style={{ paddingTop: 14, alignSelf: 'flex-start' }}
+              >
+                <Text
+                  style={{
+                    fontFamily: theme.sans,
+                    fontSize: 15,
+                    fontWeight: '600',
+                    color: theme.ink,
+                    textDecorationLine: 'underline',
+                    opacity: busy ? 0.5 : 1,
+                  }}
+                >
+                  Try again
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          {status === 'ready'
+            ? plans.map((plan) => (
+                <PlanCard
+                  key={plan.productId}
+                  plan={plan}
+                  selected={plan.productId === activeId}
+                  disabled={busy}
+                  onSelect={setSelected}
+                />
+              ))
+            : null}
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ disabled: !canPurchase }}
+            disabled={!canPurchase}
+            onPress={() => {
+              if (activeId) onPurchase(activeId);
+            }}
+            style={{
+              borderRadius: theme.radius,
+              backgroundColor: theme.accent,
+              paddingVertical: 16,
+              alignItems: 'center',
+              marginTop: 8,
+              opacity: canPurchase ? 1 : 0.5,
+            }}
           >
-            Plans are not available right now. Please try again later.
-          </Text>
+            {busy ? (
+              <ActivityIndicator color={theme.accentInk} />
+            ) : (
+              <Text
+                style={{
+                  fontFamily: theme.sans,
+                  fontSize: 16,
+                  fontWeight: '600',
+                  color: theme.accentInk,
+                }}
+              >
+                Continue
+              </Text>
+            )}
+          </Pressable>
+
           {/*
-            The way out. Nothing here leaves the app: no URL, no Linking call,
-            no mention of another place to subscribe — guideline 3.1.1, which
-            is what got build 23 rejected. It asks the STORE again, on this
-            screen, and that is the whole of it.
+            Guideline 3.1.1 requires a restore mechanism for any restorable in-app
+            purchase, and it must be reachable from an account that currently holds
+            nothing — which is exactly the state a restoring user is in, and the
+            state App Review tests it from. So it is always visible here, never
+            conditional on having something to restore.
           */}
           <Pressable
             accessibilityRole="button"
             accessibilityState={{ disabled: busy }}
             disabled={busy}
-            onPress={onRetry}
-            style={{ paddingTop: 14, alignSelf: 'flex-start' }}
+            onPress={onRestore}
+            style={{ paddingVertical: 14, alignItems: 'center', marginTop: 4 }}
           >
             <Text
               style={{
                 fontFamily: theme.sans,
                 fontSize: 15,
-                fontWeight: '600',
                 color: theme.ink,
                 textDecorationLine: 'underline',
                 opacity: busy ? 0.5 : 1,
               }}
             >
-              Try again
+              Restore Purchases
             </Text>
           </Pressable>
-        </View>
-      ) : null}
 
-      {status === 'ready'
-        ? plans.map((plan) => (
-            <PlanCard
-              key={plan.productId}
-              plan={plan}
-              selected={plan.productId === activeId}
-              disabled={busy}
-              onSelect={setSelected}
-            />
-          ))
-        : null}
+          {notice ? (
+            <Text
+              style={{
+                fontFamily: theme.sans,
+                fontSize: 14,
+                color: theme.inkSoft,
+                textAlign: 'center',
+                marginTop: 8,
+              }}
+            >
+              {notice}
+            </Text>
+          ) : null}
 
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ disabled: !canPurchase }}
-        disabled={!canPurchase}
-        onPress={() => {
-          if (activeId) onPurchase(activeId);
-        }}
-        style={{
-          borderRadius: theme.radius,
-          backgroundColor: theme.accent,
-          paddingVertical: 16,
-          alignItems: 'center',
-          marginTop: 8,
-          opacity: canPurchase ? 1 : 0.5,
-        }}
-      >
-        {busy ? (
-          <ActivityIndicator color={theme.accentInk} />
-        ) : (
-          <Text
-            style={{
-              fontFamily: theme.sans,
-              fontSize: 16,
-              fontWeight: '600',
-              color: theme.accentInk,
-            }}
-          >
-            Continue
-          </Text>
-        )}
-      </Pressable>
-
-      {/*
-        Guideline 3.1.1 requires a restore mechanism for any restorable in-app
-        purchase, and it must be reachable from an account that currently holds
-        nothing — which is exactly the state a restoring user is in, and the
-        state App Review tests it from. So it is always visible here, never
-        conditional on having something to restore.
-      */}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ disabled: busy }}
-        disabled={busy}
-        onPress={onRestore}
-        style={{ paddingVertical: 14, alignItems: 'center', marginTop: 4 }}
-      >
-        <Text
-          style={{
-            fontFamily: theme.sans,
-            fontSize: 15,
-            color: theme.ink,
-            textDecorationLine: 'underline',
-            opacity: busy ? 0.5 : 1,
-          }}
-        >
-          Restore Purchases
-        </Text>
-      </Pressable>
-
-      {notice ? (
-        <Text
-          style={{
-            fontFamily: theme.sans,
-            fontSize: 14,
-            color: theme.inkSoft,
-            textAlign: 'center',
-            marginTop: 8,
-          }}
-        >
-          {notice}
-        </Text>
-      ) : null}
+        </>
+      )}
 
       {/*
         In-app screens, not URLs. Guideline 3.1.2 requires functional links to
@@ -269,5 +285,69 @@ export function PurchaseSurface({
         </Pressable>
       </View>
     </ScrollView>
+  );
+}
+
+/**
+ * Shown in place of the plans once the store and/or server confirmed an active
+ * entitlement in this visit. No buy button and no Restore: both would only
+ * send the user back into the store for something they now own.
+ */
+function CompletedPanel({
+  notice,
+  onDone,
+}: {
+  notice: string | null;
+  onDone?: () => void;
+}) {
+  const { theme } = useTheme();
+  return (
+    <View
+      accessibilityLiveRegion="polite"
+      style={{
+        borderRadius: theme.radius,
+        backgroundColor: theme.surfaceMuted,
+        padding: 20,
+        marginBottom: 8,
+      }}
+    >
+      <Text
+        style={{
+          fontFamily: theme.serif,
+          fontSize: 22,
+          color: theme.ink,
+          marginBottom: 8,
+        }}
+      >
+        You&apos;re all set
+      </Text>
+      <Text style={{ fontFamily: theme.sans, fontSize: 15, color: theme.inkSoft }}>
+        {notice ?? 'Your subscription is active.'}
+      </Text>
+      {onDone ? (
+        <Pressable
+          accessibilityRole="button"
+          onPress={onDone}
+          style={{
+            borderRadius: theme.radius,
+            backgroundColor: theme.accent,
+            paddingVertical: 16,
+            alignItems: 'center',
+            marginTop: 20,
+          }}
+        >
+          <Text
+            style={{
+              fontFamily: theme.sans,
+              fontSize: 16,
+              fontWeight: '600',
+              color: theme.accentInk,
+            }}
+          >
+            Done
+          </Text>
+        </Pressable>
+      ) : null}
+    </View>
   );
 }
