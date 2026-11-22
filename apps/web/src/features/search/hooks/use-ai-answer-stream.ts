@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { deviceHeaders } from '@/lib/device-identity';
+import { noteIfSessionDisplaced } from '@/lib/session-displaced';
 import { useAuthStore } from '@/stores/auth-store';
 import { splitCompleteText } from '../lib/format-answer-text';
 import type { AiAnswerChunk, AiAnswerSource } from '../types';
@@ -13,7 +14,7 @@ const MAX_RETRIES = 3;
 const BASE_RETRY_DELAY_MS = 1000;
 
 /** HTTP status codes that should NOT be retried (client errors, auth failures). */
-const NON_RETRYABLE_STATUSES = new Set([400, 401, 403, 404, 422]);
+const NON_RETRYABLE_STATUSES = new Set([400, 401, 403, 404, 409, 422]);
 
 function isTransientError(err: unknown): boolean {
   if (err instanceof TypeError) return true; // fetch network failures
@@ -158,6 +159,18 @@ export function useAiAnswerStream(query: string | null, enabled: boolean) {
             error: 'Session expired. Please log in again.',
           }));
           return;
+        }
+
+        if (response.status === 409) {
+          const errorBody: unknown = await response.json().catch(() => null);
+          if (noteIfSessionDisplaced(response.status, errorBody)) {
+            setState((prev) => ({
+              ...prev,
+              isStreaming: false,
+              error: 'Your account is in use on another device.',
+            }));
+            return;
+          }
         }
 
         if (response.status === 403) {

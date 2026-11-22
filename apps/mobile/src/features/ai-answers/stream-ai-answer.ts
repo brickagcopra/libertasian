@@ -5,6 +5,7 @@ import { apiClient } from '../../lib/api-client';
 import { deviceHeaders } from '../../lib/device-identity';
 import { authStorage } from '../../storage/auth-storage';
 import { AI_CONSENT_DECLINED_MESSAGE, requestAiConsent } from '../ai-consent/ai-consent';
+import { noteIfSessionDisplaced } from '../session-displaced/session-displaced';
 import type { AiAnswerChunk, AiAnswerSource } from '../search/types';
 import { splitCompleteText } from './format-answer-text';
 
@@ -309,6 +310,16 @@ export async function streamAiAnswer(
     // could not give us an incremental reader. Collapsing them is what made a
     // successful 201 read as "Request failed with status 201".
     if (!response.ok) {
+      if (response.status === 409) {
+        const body: unknown = await response.json().catch(() => null);
+        if (noteIfSessionDisplaced(response.status, body)) {
+          handlers.onError?.({
+            kind: 'stream',
+            message: 'Your account is in use on another device.',
+          });
+          return;
+        }
+      }
       if (RETRYABLE_STATUSES.has(response.status) && attempt < MAX_RETRIES) {
         await new Promise((resolve) => setTimeout(resolve, retryDelay(attempt)));
         if (signal.aborted) return;

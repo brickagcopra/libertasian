@@ -1,4 +1,5 @@
 import { deviceHeaders } from './device-identity';
+import { noteIfSessionDisplaced } from './session-displaced';
 
 const API_BASE_URL = process.env['NEXT_PUBLIC_API_URL'] || 'http://localhost:3001/api/v1';
 
@@ -108,6 +109,7 @@ class ApiClient {
 
     if (!response.ok) {
       const errorBody = await response.json().catch(() => ({ message: 'Request failed' })) as ApiError;
+      noteIfSessionDisplaced(response.status, errorBody);
       throw new ApiClientError(
         errorBody.message || `HTTP ${response.status}`,
         response.status,
@@ -228,6 +230,7 @@ class ApiClient {
         } else {
           try {
             const errorBody = JSON.parse(xhr.responseText) as ApiError;
+            noteIfSessionDisplaced(xhr.status, errorBody);
             reject(new ApiClientError(errorBody.message || `HTTP ${xhr.status}`, xhr.status));
           } catch {
             reject(new ApiClientError(`HTTP ${xhr.status}`, xhr.status));

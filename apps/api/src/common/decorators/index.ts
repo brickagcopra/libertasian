@@ -10,3 +10,7 @@ export {
   PLATFORM_PERMISSIONS_KEY,
 } from './platform-permissions.decorator';
 export type { PlatformPermissionsMetadata } from './platform-permissions.decorator';
+export {
+  AllowDisplacedSession,
+  ALLOW_DISPLACED_SESSION_KEY,
+} from './allow-displaced-session.decorator';

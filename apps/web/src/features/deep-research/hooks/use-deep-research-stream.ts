@@ -6,6 +6,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { quotaKeys } from '@/features/billing/hooks/use-quotas';
 import { apiClient } from '@/lib/api-client';
 import { deviceHeaders } from '@/lib/device-identity';
+import { noteIfSessionDisplaced } from '@/lib/session-displaced';
 import { useAuthStore } from '@/stores/auth-store';
 
 import { resolveHttpError } from '../lib/api';
@@ -70,6 +71,7 @@ export function useDeepResearchStream() {
         if (!response.ok || !response.body) {
           const body: unknown = await response.json().catch(() => null);
           if (!live()) return;
+          noteIfSessionDisplaced(response.status, body);
           dispatch({ type: 'fail', error: resolveHttpError(response.status, body) });
           if (response.status === 429) refreshAfterRun();
           return;

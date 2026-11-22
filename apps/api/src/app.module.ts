@@ -20,6 +20,7 @@ import { AiAnswersModule } from './modules/ai-answers/ai-answers.module';
 import { DeepResearchModule } from './modules/deep-research/deep-research.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { SessionConcurrencyModule } from './modules/auth/session-concurrency';
 import { BookmarksModule } from './modules/bookmarks/bookmarks.module';
 import { CaseComparisonsModule } from './modules/case-comparisons/case-comparisons.module';
 import { CommunityModule } from './modules/community/community.module';
@@ -152,6 +153,7 @@ import { RequestPlatformMiddleware } from './common/middleware/request-platform.
     // passes the public key explicitly per call.
     JwtModule.register({}),
     AuthModule,
+    SessionConcurrencyModule,
     UsersModule,
     AccountDeletionModule,
     OrganizationsModule,

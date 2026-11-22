@@ -40,6 +40,12 @@ export const ENV_VALIDATION_SCHEMA = Joi.object({
   DEVICE_LIMITS_ENABLED: Joi.boolean().default(false),
   DEVICE_LIMIT_PRO: Joi.number().integer().min(1).default(3),
   DEVICE_LIMIT_EDU: Joi.number().integer().min(1).default(2),
+  // Device limits phase 2: how many devices may be IN USE at once (a device
+  // counts while it made a request inside the window). Pro 2, edu 1.
+  DEVICE_CONCURRENCY_ENABLED: Joi.boolean().default(false),
+  DEVICE_CONCURRENCY_PRO: Joi.number().integer().min(1).default(2),
+  DEVICE_CONCURRENCY_EDU: Joi.number().integer().min(1).default(1),
+  DEVICE_CONCURRENCY_WINDOW_SEC: Joi.number().integer().min(60).default(600),
   // Google OAuth (optional — enable by setting client ID and secret)
   GOOGLE_CLIENT_ID: Joi.string().optional().allow(''),
   GOOGLE_CLIENT_SECRET: Joi.string().optional().allow(''),
