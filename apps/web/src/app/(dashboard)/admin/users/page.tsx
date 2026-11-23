@@ -14,6 +14,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
@@ -278,6 +279,22 @@ export default function AdminUsersPage() {
             <SelectItem value="unverified">Email unverified</SelectItem>
           </SelectContent>
         </Select>
+
+        <label
+          className="flex items-center gap-2 text-sm text-muted-foreground"
+          title="Google Play pre-launch test accounts (@cloudtestlabaccounts.com). Not counted anywhere in admin."
+        >
+          <Checkbox
+            checked={filters.includeTestAccounts === true}
+            onCheckedChange={(checked) =>
+              setFilters((prev) => ({
+                ...prev,
+                includeTestAccounts: checked === true ? true : undefined,
+              }))
+            }
+          />
+          Show test accounts
+        </label>
       </div>
 
       <Card>

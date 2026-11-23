@@ -60,6 +60,13 @@ export class ListAdminUsersQueryDto {
   @IsBooleanString()
   emailVerified?: string;
 
+  @ApiPropertyOptional({
+    description: 'Include automated test accounts (e.g. Google Play pre-launch); hidden by default',
+  })
+  @IsOptional()
+  @IsBooleanString()
+  includeTestAccounts?: string;
+
   @ApiPropertyOptional({ description: 'Sort field', default: 'createdAt' })
   @IsOptional()
   @IsString()
