@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 
+import { realUserWhere } from '../../common/utils/test-accounts';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { AdminUserDetailDto } from './dto/admin-user-detail.dto';
 import type { AdminUserListItemDto } from './dto/admin-user-list-item.dto';
@@ -14,6 +15,7 @@ export interface ListAdminUsersParams {
   planTier?: string;
   hasActiveSubscription?: boolean;
   emailVerified?: boolean;
+  includeTestAccounts?: boolean;
   sortBy?: 'createdAt' | 'email';
   sortDir?: 'asc' | 'desc';
 }
@@ -47,6 +49,8 @@ export class UsersAdminService {
     if (params.status) where.status = params.status;
     if (params.role) where.userRole = params.role;
     if (params.emailVerified !== undefined) where.emailVerified = params.emailVerified;
+    // Automated test accounts (Google Play pre-launch) are not customers.
+    if (!params.includeTestAccounts) where.AND = [realUserWhere()];
 
     if (params.planTier || params.hasActiveSubscription === true) {
       const subFilter: Prisma.SubscriptionWhereInput = {};

@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 
+import { testAccountUserWhere } from '../../common/utils/test-accounts';
 import { PrismaService } from '../../prisma/prisma.service';
 
 /** The platform buckets the active-user metrics are split by. */
@@ -311,6 +312,16 @@ export class AnalyticsAggregationService implements OnModuleInit {
     dayEnd.setUTCHours(0, 0, 0, 0);
     dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
 
+    // Automated test accounts (Google Play pre-launch) are not users to count.
+    const testUserIds = new Set(
+      (
+        await this.prisma.user.findMany({
+          where: testAccountUserWhere(),
+          select: { id: true },
+        })
+      ).map((u) => u.id),
+    );
+
     for (const { metric, days } of ACTIVE_USER_WINDOWS) {
       const windowStart = new Date(dayEnd);
       windowStart.setUTCDate(windowStart.getUTCDate() - days);
@@ -338,11 +349,12 @@ export class AnalyticsAggregationService implements OnModuleInit {
       );
 
       for (const login of logins) {
+        if (testUserIds.has(login.userId)) continue;
         activeUsers.add(login.userId);
         usersByPlatform.get(classifyPlatformFromUserAgent(login.userAgent))!.add(login.userId);
       }
       for (const row of events) {
-        if (row.userId) activeUsers.add(row.userId);
+        if (row.userId && !testUserIds.has(row.userId)) activeUsers.add(row.userId);
       }
 
       const total = activeUsers.size;

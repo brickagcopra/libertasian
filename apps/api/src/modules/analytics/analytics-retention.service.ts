@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 
+import { testAccountLikePatterns } from '../../common/utils/test-accounts';
 import { PrismaService } from '../../prisma/prisma.service';
 
 /**
@@ -79,6 +80,8 @@ export class AnalyticsRetentionService {
           AND e.created_at >= date_trunc('week', u."created_at") + (w.retention_week * interval '7 days')
           AND e.created_at < date_trunc('week', u."created_at") + ((w.retention_week + 1) * interval '7 days')
         WHERE u."created_at" >= NOW() - interval '13 weeks'
+          -- Automated test accounts (Google Play pre-launch) are not a cohort.
+          AND NOT (lower(u."email") LIKE ANY(${testAccountLikePatterns()}::text[]))
           AND (${planSegment} IS NULL OR EXISTS (
             SELECT 1 FROM organization_members om
             JOIN subscriptions s ON s.organization_id = om.organization_id

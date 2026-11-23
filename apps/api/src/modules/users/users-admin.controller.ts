@@ -51,6 +51,7 @@ export class UsersAdminController {
       planTier: query.planTier,
       hasActiveSubscription,
       emailVerified,
+      includeTestAccounts: query.includeTestAccounts === 'true',
       sortBy: query.sortBy,
       sortDir: query.sortDir,
     });

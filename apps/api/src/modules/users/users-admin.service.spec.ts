@@ -87,6 +87,19 @@ describe('UsersAdminService', () => {
       expect(prisma.payment.groupBy).not.toHaveBeenCalled();
     });
 
+    it('hides automated test accounts unless asked to include them', async () => {
+      prisma.user.findMany.mockResolvedValue([]);
+
+      await service.listUsers({});
+      const hidden = prisma.user.findMany.mock.calls[0][0].where;
+      expect(hidden.AND).toEqual([
+        { NOT: { OR: [{ email: { endsWith: '@cloudtestlabaccounts.com', mode: 'insensitive' } }] } },
+      ]);
+
+      await service.listUsers({ includeTestAccounts: true });
+      expect(prisma.user.findMany.mock.calls[1][0].where.AND).toBeUndefined();
+    });
+
     it('paginates with default limit and sets hasNext + nextCursor', async () => {
       const users = Array.from({ length: 21 }, (_, i) =>
         baseUserSelect({ id: `user-${i}`, email: `u${i}@example.com` }),

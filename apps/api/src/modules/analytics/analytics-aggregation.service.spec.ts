@@ -15,6 +15,7 @@ describe('AnalyticsAggregationService', () => {
     analyticsSession: { count: jest.Mock; aggregate: jest.Mock; groupBy: jest.Mock };
     analyticsDailyAggregate: { findMany: jest.Mock };
     loginEvent: { findMany: jest.Mock };
+    user: { findMany: jest.Mock };
     analyticsFunnelStep: { create: jest.Mock; deleteMany: jest.Mock; createMany: jest.Mock };
     digest: { count: jest.Mock };
     $executeRaw: jest.Mock;
@@ -55,6 +56,9 @@ describe('AnalyticsAggregationService', () => {
               findMany: jest.fn().mockResolvedValue([]),
             },
             loginEvent: {
+              findMany: jest.fn().mockResolvedValue([]),
+            },
+            user: {
               findMany: jest.fn().mockResolvedValue([]),
             },
             analyticsFunnelStep: {
@@ -219,6 +223,24 @@ describe('AnalyticsAggregationService', () => {
       expect(dau).toBeDefined();
       expect(dau![2]).toBe(3);
       expect(dau![3]).toBe(3);
+    });
+
+    it('leaves automated test accounts (Google Play pre-launch) out of the count', async () => {
+      prisma.user.findMany.mockResolvedValue([{ id: 'robot-1' }]);
+      prisma.loginEvent.findMany.mockResolvedValue([
+        { userId: 'user-1', userAgent: 'Mozilla/5.0' },
+        { userId: 'robot-1', userAgent: 'okhttp/4.12.0' },
+      ]);
+      prisma.analyticsEvent.groupBy.mockResolvedValue([{ userId: 'robot-1' }]);
+
+      const spy = spyOnUpsert();
+      await service.computeActiveUserMetrics(yesterday);
+
+      expect(totalFor(spy, 'dau')![2]).toBe(1);
+      expect(prisma.user.findMany).toHaveBeenCalledWith({
+        where: { OR: [{ email: { endsWith: '@cloudtestlabaccounts.com', mode: 'insensitive' } }] },
+        select: { id: true },
+      });
     });
 
     it('counts a user once even when they logged in many times that day', async () => {

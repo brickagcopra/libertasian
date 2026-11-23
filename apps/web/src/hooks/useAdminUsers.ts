@@ -39,6 +39,8 @@ export interface ListAdminUsersQuery {
   planTier?: string;
   hasActiveSubscription?: boolean;
   emailVerified?: boolean;
+  /** Automated test accounts (Google Play pre-launch) are hidden unless true. */
+  includeTestAccounts?: boolean;
   sortBy?: 'createdAt' | 'email';
   sortDir?: 'asc' | 'desc';
   limit?: number;
@@ -66,6 +68,7 @@ function buildSearchParams(
     sp.set('hasActiveSubscription', String(params.hasActiveSubscription));
   if (params.emailVerified !== undefined)
     sp.set('emailVerified', String(params.emailVerified));
+  if (params.includeTestAccounts) sp.set('includeTestAccounts', 'true');
   if (params.sortBy) sp.set('sortBy', params.sortBy);
   if (params.sortDir) sp.set('sortDir', params.sortDir);
   const qs = sp.toString();

@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../common/services/redis.service';
+import { realUserWhere } from '../../common/utils/test-accounts';
 import type { DateRangeQueryDto, TrendQueryDto, TopItemsQueryDto } from './dto';
 import type {
   RevenueSummary,
@@ -740,18 +741,25 @@ export class ReportingService {
 
     const { startDate, endDate } = resolveDateRange(dto);
 
+    // Organizations owned by automated test accounts (Google Play pre-launch)
+    // are not customers. Orgs with no billing owner are kept.
+    const realOrg: Prisma.OrganizationWhereInput = {
+      OR: [{ billingOwnerUserId: null }, { billingOwner: realUserWhere() }],
+    };
+
     const [totalOrganizations, byTypeRaw, newSignupsInPeriod, seatAgg, usedSeats] =
       await Promise.all([
-        this.prisma.organization.count(),
+        this.prisma.organization.count({ where: realOrg }),
 
         this.prisma.organization.groupBy({
           by: ['type'],
+          where: realOrg,
           _count: true,
           orderBy: { _count: { type: 'desc' } },
         }),
 
         this.prisma.organization.count({
-          where: { createdAt: { gte: startDate, lte: endDate } },
+          where: { ...realOrg, createdAt: { gte: startDate, lte: endDate } },
         }),
 
         // Total seats across active subs
@@ -762,7 +770,7 @@ export class ReportingService {
 
         // Active org members
         this.prisma.organizationMember.count({
-          where: { status: 'active' },
+          where: { status: 'active', user: realUserWhere() },
         }),
       ]);
 

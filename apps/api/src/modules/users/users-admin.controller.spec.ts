@@ -62,6 +62,7 @@ describe('UsersAdminController', () => {
         role: undefined,
         planTier: undefined,
         hasActiveSubscription: undefined,
+        includeTestAccounts: false,
         sortBy: undefined,
         sortDir: undefined,
       });
@@ -100,6 +101,7 @@ describe('UsersAdminController', () => {
         role: 'lawyer',
         planTier: 'pro',
         hasActiveSubscription: true,
+        includeTestAccounts: false,
         sortBy: 'email',
         sortDir: 'asc',
       });
