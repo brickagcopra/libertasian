@@ -66,6 +66,21 @@ export default function LoginPage() {
         );
       }
     } catch (error) {
+      if (
+        error instanceof ApiClientError &&
+        (error.body as { code?: unknown } | undefined)?.code === 'EMAIL_NOT_VERIFIED'
+      ) {
+        // The API just emailed a fresh code; take the user straight to it,
+        // keeping any ?from= deep link for the sign-in that follows.
+        const params = new URLSearchParams({ email: data.email.trim().toLowerCase() });
+        const from =
+          typeof window !== 'undefined'
+            ? new URLSearchParams(window.location.search).get('from')
+            : null;
+        if (from) params.set('from', from);
+        router.push(`${ROUTES.VERIFY_EMAIL}?${params.toString()}`);
+        return;
+      }
       if (error instanceof ApiClientError) {
         setError('root', { message: error.message });
       } else {

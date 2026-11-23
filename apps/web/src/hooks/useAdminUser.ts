@@ -1,6 +1,6 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { apiClient } from '@/lib/api-client';
 import { adminUsersKeys } from './useAdminUsers';
@@ -152,5 +152,25 @@ export function useAdminUser(id: string | null) {
     },
     enabled: !!id,
     staleTime: 60 * 1000,
+  });
+}
+
+/** Email the user a fresh verification code (admin → Users → detail). */
+export function useAdminResendVerification() {
+  return useMutation({
+    mutationFn: (userId: string) =>
+      apiClient.post(`/admin/users/${userId}/resend-verification`),
+  });
+}
+
+/** Manually mark the user's email verified; refreshes list and detail. */
+export function useAdminMarkEmailVerified() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) =>
+      apiClient.post(`/admin/users/${userId}/mark-email-verified`),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: adminUsersKeys.all });
+    },
   });
 }

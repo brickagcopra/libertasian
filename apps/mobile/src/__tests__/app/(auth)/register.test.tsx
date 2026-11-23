@@ -179,11 +179,10 @@ describe('RegisterScreen', () => {
     });
   });
 
-  it('shows verification alert and navigates to login on successful registration', async () => {
-    const alertSpy = jest.spyOn(Alert, 'alert');
+  it('goes to the verify-email screen on successful registration', async () => {
+    const { router } = jest.requireMock('expo-router') as { router: { replace: jest.Mock } };
     mockMutateAsync.mockResolvedValueOnce({
       user: { id: '1', email: 'juan@test.com', fullName: 'Juan Cruz' },
-      verifyEmail: 'juan@test.com',
     });
 
     const { getByText, getByPlaceholderText } = render(<RegisterScreen />, {
@@ -191,7 +190,7 @@ describe('RegisterScreen', () => {
     });
 
     fireEvent.changeText(getByPlaceholderText('Juan Dela Cruz'), 'Juan Cruz');
-    fireEvent.changeText(getByPlaceholderText('you@example.com'), 'juan@test.com');
+    fireEvent.changeText(getByPlaceholderText('you@example.com'), 'Juan@Test.com');
     fireEvent.changeText(getByPlaceholderText('Minimum 10 characters'), 'Password1234');
     fireEvent.changeText(getByPlaceholderText('Re-enter your password'), 'Password1234');
 
@@ -200,11 +199,10 @@ describe('RegisterScreen', () => {
     });
 
     await waitFor(() => {
-      expect(alertSpy).toHaveBeenCalledWith(
-        'Account created',
-        expect.stringContaining('verification code'),
-        expect.any(Array),
-      );
+      expect(router.replace).toHaveBeenCalledWith({
+        pathname: '/(auth)/verify-email',
+        params: { email: 'juan@test.com' },
+      });
     });
   });
 

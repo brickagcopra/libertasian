@@ -55,6 +55,11 @@ export class ListAdminUsersQueryDto {
   @IsBooleanString()
   hasActiveSubscription?: string;
 
+  @ApiPropertyOptional({ description: 'Filter by email verification (true = verified)' })
+  @IsOptional()
+  @IsBooleanString()
+  emailVerified?: string;
+
   @ApiPropertyOptional({ description: 'Sort field', default: 'createdAt' })
   @IsOptional()
   @IsString()

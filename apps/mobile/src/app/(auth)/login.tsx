@@ -151,6 +151,14 @@ export default function LoginRoute() {
       await signIn(result.tokens.accessToken, result.tokens.refreshToken, result.user);
       router.replace(result.user.onboardingCompletedAt ? '/(tabs)' : '/(onboarding)');
     } catch (e) {
+      if (e instanceof ApiClientError && e.code === 'EMAIL_NOT_VERIFIED') {
+        // The API just emailed a fresh code.
+        router.push({
+          pathname: '/(auth)/verify-email',
+          params: { email: email.trim().toLowerCase() },
+        });
+        return;
+      }
       if (e instanceof ApiClientError) {
         if (e.statusCode === 401) {
           if (mfa) setMfaError('Invalid MFA code.');

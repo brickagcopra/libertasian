@@ -13,6 +13,7 @@ export interface ListAdminUsersParams {
   role?: string;
   planTier?: string;
   hasActiveSubscription?: boolean;
+  emailVerified?: boolean;
   sortBy?: 'createdAt' | 'email';
   sortDir?: 'asc' | 'desc';
 }
@@ -45,6 +46,7 @@ export class UsersAdminService {
     }
     if (params.status) where.status = params.status;
     if (params.role) where.userRole = params.role;
+    if (params.emailVerified !== undefined) where.emailVerified = params.emailVerified;
 
     if (params.planTier || params.hasActiveSubscription === true) {
       const subFilter: Prisma.SubscriptionWhereInput = {};

@@ -13,7 +13,9 @@ type VerifyState = 'input' | 'verifying' | 'success' | 'error' | 'no-email';
 
 function VerifyEmailContent() {
   const searchParams = useSearchParams();
-  const email = searchParams.get('email');
+  // From ?email= (the register / sign-in hand-off) or, for the emailed
+  // one-tap link, from the URL fragment read in the effect below.
+  const [email, setEmail] = useState<string | null>(searchParams.get('email'));
   const verifyEmail = useVerifyEmail();
   const resendVerification = useResendVerification();
 
@@ -43,6 +45,26 @@ function VerifyEmailContent() {
   const [resendCountdown, setResendCountdown] = useState(0);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
+  // One-tap link from the verification email: /verify-email#email=…&code=…
+  // The fragment never reaches the server (no access-log or Referer copy);
+  // it is dropped from the address bar as soon as it is read.
+  useEffect(() => {
+    const hash = window.location.hash.slice(1);
+    if (!hash) return;
+    const fragment = new URLSearchParams(hash);
+    const linkEmail = fragment.get('email');
+    const linkCode = fragment.get('code');
+    window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    if (!linkEmail) return;
+    setEmail(linkEmail);
+    setState('input');
+    if (linkCode && /^\d{6}$/.test(linkCode)) {
+      setDigits(linkCode.split(''));
+      void handleSubmit(linkCode, linkEmail);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Countdown timer for resend
   useEffect(() => {
     if (resendCountdown <= 0) return;
@@ -50,13 +72,13 @@ function VerifyEmailContent() {
     return () => clearTimeout(timer);
   }, [resendCountdown]);
 
-  const handleSubmit = useCallback(async (code: string) => {
-    if (!email || code.length !== 6) return;
+  const handleSubmit = useCallback(async (code: string, target: string | null = email) => {
+    if (!target || code.length !== 6) return;
     setState('verifying');
     setErrorMessage('');
 
     try {
-      await verifyEmail.mutateAsync({ email, code });
+      await verifyEmail.mutateAsync({ email: target, code });
       setState('success');
     } catch (error: unknown) {
       setState('error');
@@ -149,7 +171,7 @@ function VerifyEmailContent() {
     return (
       <div className="space-y-4">
         <div className="rounded-md border border-green-200 bg-green-50 p-4 text-sm text-green-800">
-          Your email has been verified successfully. You can now sign in.
+          Your email has been verified. You can now sign in — if you signed up in the LIBERTASIAN app, go back to the app and sign in there.
         </div>
         <p className="text-center">
           <Link

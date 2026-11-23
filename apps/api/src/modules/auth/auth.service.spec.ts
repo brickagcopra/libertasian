@@ -786,6 +786,106 @@ describe('AuthService', () => {
     });
   });
 
+  describe('email verification gate (EMAIL_VERIFICATION_REQUIRED)', () => {
+    const deviceFingerprint = 'device-fp-verify';
+    const loginDto: LoginDto = { email: 'test@example.com', password: 'correctpassword' };
+
+    function enableGate(enabled: boolean | string = true) {
+      const base = configService.get.getMockImplementation() as unknown as (k: string, d?: unknown) => unknown;
+      configService.get.mockImplementation(((key: string, def?: unknown) =>
+        key === 'EMAIL_VERIFICATION_REQUIRED' ? enabled : base(key, def)) as never);
+    }
+
+    it('refuses an unverified password sign-in with 400 EMAIL_NOT_VERIFIED and emails a code', async () => {
+      enableGate();
+      usersService.findByEmail.mockResolvedValue({
+        ...mockUser,
+        emailVerifyTokenExpiresAt: null,
+      } as unknown as ReturnType<UsersService['findByEmail']>);
+
+      const thrown = await service.login(loginDto, deviceFingerprint).catch((e: unknown) => e);
+
+      expect(thrown).toBeInstanceOf(BadRequestException);
+      const body = (thrown as BadRequestException).getResponse() as { code: string };
+      expect(body.code).toBe('EMAIL_NOT_VERIFIED');
+      expect(notificationsService.sendVerificationEmail).toHaveBeenCalledWith(
+        mockUser.email,
+        mockUser.fullName,
+        expect.stringMatching(/^\d{6}$/),
+      );
+      // Correct password: not a credential failure, and no session issued.
+      expect(loginThrottle.recordFailure).not.toHaveBeenCalled();
+      expect(prismaService.refreshToken.create).not.toHaveBeenCalled();
+    });
+
+    it('accepts the string "true" from the environment', async () => {
+      enableGate('true');
+      usersService.findByEmail.mockResolvedValue({
+        ...mockUser,
+        emailVerifyTokenExpiresAt: null,
+      } as unknown as ReturnType<UsersService['findByEmail']>);
+      await expect(service.login(loginDto, deviceFingerprint)).rejects.toThrow(BadRequestException);
+    });
+
+    it('does not re-send while the current code is under a minute old', async () => {
+      enableGate();
+      usersService.findByEmail.mockResolvedValue({
+        ...mockUser,
+        // issued 10 s ago
+        emailVerifyTokenExpiresAt: new Date(Date.now() + 15 * 60 * 1000 - 10_000),
+      } as unknown as ReturnType<UsersService['findByEmail']>);
+
+      await expect(service.login(loginDto, deviceFingerprint)).rejects.toThrow(BadRequestException);
+      expect(notificationsService.sendVerificationEmail).not.toHaveBeenCalled();
+    });
+
+    it('lets a verified user through', async () => {
+      enableGate();
+      usersService.findByEmail.mockResolvedValue({
+        ...mockUser,
+        emailVerified: true,
+      } as unknown as ReturnType<UsersService['findByEmail']>);
+      prismaService.organizationMember.findFirst.mockResolvedValue(mockMembership);
+      prismaService.refreshToken.create.mockResolvedValue({});
+      jwtService.sign.mockReturnValue('access');
+
+      const result = await service.login(loginDto, deviceFingerprint);
+      expect(result.tokens.accessToken).toBe('access');
+    });
+
+    it('leaves unverified sign-in alone while the flag is off', async () => {
+      usersService.findByEmail.mockResolvedValue(mockUser as unknown as ReturnType<UsersService['findByEmail']>);
+      prismaService.organizationMember.findFirst.mockResolvedValue(mockMembership);
+      prismaService.refreshToken.create.mockResolvedValue({});
+      jwtService.sign.mockReturnValue('access');
+
+      await expect(service.login(loginDto, deviceFingerprint)).resolves.toBeDefined();
+      expect(notificationsService.sendVerificationEmail).not.toHaveBeenCalled();
+    });
+
+    it('ends an unverified session at refresh and revokes its family', async () => {
+      enableGate();
+      prismaService.refreshToken.updateMany.mockResolvedValue({ count: 1 });
+      prismaService.refreshToken.findFirst.mockResolvedValueOnce({
+        id: 'token-1',
+        userId: mockUser.id,
+        familyId: 'family-unverified',
+        deviceFingerprint,
+        isRevoked: true,
+        expiresAt: new Date(Date.now() + 86400_000),
+        user: mockUser,
+      });
+
+      await expect(service.refreshTokens('raw-token', deviceFingerprint)).rejects.toThrow(
+        'Please verify your email, then sign in again.',
+      );
+      expect(prismaService.refreshToken.updateMany).toHaveBeenLastCalledWith({
+        where: { familyId: 'family-unverified' },
+        data: { isRevoked: true },
+      });
+    });
+  });
+
   describe('device identity and limits', () => {
     const DEVICE_ID = '3f2a9c1e-4b7d-4e8a-9c0f-1a2b3c4d5e6f';
     const reqWith = (headers: Record<string, string>) =>

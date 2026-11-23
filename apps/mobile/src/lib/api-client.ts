@@ -139,8 +139,14 @@ function safeRefusalMessage(statusCode: number): string | null {
 export class ApiClientError extends Error {
   statusCode: number;
   serverMessage: string;
+  /**
+   * Machine-readable refusal code from the body (e.g. EMAIL_NOT_VERIFIED).
+   * A fixed identifier, never user text, so it is kept even when the
+   * message itself is replaced below.
+   */
+  code: string | undefined;
 
-  constructor(statusCode: number, message: string) {
+  constructor(statusCode: number, message: string, code?: string) {
     // Substituted HERE, at the single point every throw path in this client
     // funnels through, rather than per screen: a dozen screens render
     // `error.message` raw, and any new one would inherit the leak. The server
@@ -151,6 +157,7 @@ export class ApiClientError extends Error {
     this.name = 'ApiClientError';
     this.statusCode = statusCode;
     this.serverMessage = safeMessage;
+    this.code = code;
   }
 }
 
@@ -387,9 +394,11 @@ class ApiClient {
       .json()
       .catch(() => ({ message: `Request failed with status ${response.status}` }));
     noteIfSessionDisplaced(response.status, error);
+    const code = (error as { code?: unknown }).code;
     throw new ApiClientError(
       response.status,
       (error as ApiError).message || `HTTP ${response.status}`,
+      typeof code === 'string' ? code : undefined,
     );
   }
 

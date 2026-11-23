@@ -49,11 +49,11 @@ export default function RegisterRoute() {
         email: email.trim().toLowerCase(),
         password,
       });
-      Alert.alert(
-        'Account created',
-        'Check your email for a 6-digit verification code, then sign in.',
-        [{ text: 'Sign in', onPress: () => router.replace('/(auth)/login') }],
-      );
+      // Password accounts must verify before they can sign in.
+      router.replace({
+        pathname: '/(auth)/verify-email',
+        params: { email: email.trim().toLowerCase() },
+      });
     } catch (error) {
       if (error instanceof ApiClientError) {
         if (error.statusCode === 409) {

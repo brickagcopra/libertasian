@@ -22,6 +22,20 @@ export function useRegister() {
   });
 }
 
+export function useVerifyEmail() {
+  return useMutation({
+    mutationFn: (data: { email: string; code: string }) =>
+      apiClient.post('/auth/verify-email', data, { skipAuth: true }),
+  });
+}
+
+export function useResendVerification() {
+  return useMutation({
+    mutationFn: (data: { email: string }) =>
+      apiClient.post('/auth/resend-verification', data, { skipAuth: true }),
+  });
+}
+
 export function useProfile(enabled = true) {
   return useQuery({
     queryKey: ['profile'],

@@ -42,6 +42,9 @@ export const ENV_VALIDATION_SCHEMA = Joi.object({
   DEVICE_LIMIT_EDU: Joi.number().integer().min(1).default(2),
   // Device limits phase 2: how many devices may be IN USE at once (a device
   // counts while it made a request inside the window). Pro 2, edu 1.
+  // Refuse password sign-in (and session refresh) until the account's email
+  // is verified. Google / Apple sign-ins are verified by the provider.
+  EMAIL_VERIFICATION_REQUIRED: Joi.boolean().default(false),
   DEVICE_CONCURRENCY_ENABLED: Joi.boolean().default(false),
   DEVICE_CONCURRENCY_PRO: Joi.number().integer().min(1).default(2),
   DEVICE_CONCURRENCY_EDU: Joi.number().integer().min(1).default(1),
