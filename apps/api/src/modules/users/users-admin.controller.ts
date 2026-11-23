@@ -39,6 +39,9 @@ export class UsersAdminController {
         ? undefined
         : query.hasActiveSubscription === 'true';
 
+    const emailVerified =
+      query.emailVerified === undefined ? undefined : query.emailVerified === 'true';
+
     const result = await this.adminService.listUsers({
       cursor: query.cursor,
       limit: query.limit,
@@ -47,6 +50,7 @@ export class UsersAdminController {
       role: query.role,
       planTier: query.planTier,
       hasActiveSubscription,
+      emailVerified,
       sortBy: query.sortBy,
       sortDir: query.sortDir,
     });

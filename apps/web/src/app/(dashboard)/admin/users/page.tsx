@@ -4,7 +4,11 @@ import { useMemo, useState } from 'react';
 import { Search, ShieldCheckIcon, MailIcon, MailWarningIcon } from 'lucide-react';
 
 import { useAdminUsers, type ListAdminUsersQuery } from '@/hooks/useAdminUsers';
-import { useAdminUser } from '@/hooks/useAdminUser';
+import {
+  useAdminMarkEmailVerified,
+  useAdminResendVerification,
+  useAdminUser,
+} from '@/hooks/useAdminUser';
 
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -249,6 +253,31 @@ export default function AdminUsersPage() {
             ))}
           </SelectContent>
         </Select>
+
+        <Select
+          value={
+            filters.emailVerified === undefined
+              ? 'all'
+              : filters.emailVerified
+                ? 'verified'
+                : 'unverified'
+          }
+          onValueChange={(v) =>
+            setFilters((prev) => ({
+              ...prev,
+              emailVerified: v === 'all' ? undefined : v === 'verified',
+            }))
+          }
+        >
+          <SelectTrigger className="w-[170px]">
+            <SelectValue placeholder="Email" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Any email status</SelectItem>
+            <SelectItem value="verified">Email verified</SelectItem>
+            <SelectItem value="unverified">Email unverified</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       <Card>
@@ -446,6 +475,7 @@ function UserDetailSheet({
                     label="Email verified"
                     value={user.emailVerified ? 'Yes' : 'No'}
                   />
+                  {!user.emailVerified && <EmailVerificationActions userId={user.id} />}
                   <FactRow label="MFA enabled" value={user.mfaEnabled ? 'Yes' : 'No'} />
                   <FactRow label="Role (onboarding)" value={user.userRole ?? '—'} />
                   <FactRow label="Phone" value={user.phone ?? '—'} />
@@ -779,6 +809,50 @@ function UserDetailSheet({
         </ScrollArea>
       </SheetContent>
     </Sheet>
+  );
+}
+
+/**
+ * Unverified password accounts cannot sign in while EMAIL_VERIFICATION_REQUIRED
+ * is on. Resend emails a fresh code; Mark verified is a manual override for a
+ * user who proved ownership another way (audited server-side).
+ */
+function EmailVerificationActions({ userId }: { userId: string }) {
+  const resend = useAdminResendVerification();
+  const markVerified = useAdminMarkEmailVerified();
+  const busy = resend.isPending || markVerified.isPending;
+
+  return (
+    <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+      <p>
+        This user can&apos;t sign in with a password until their email is verified.
+        Google and Apple sign-ins are verified by the provider.
+      </p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          onClick={() => resend.mutate(userId)}
+        >
+          {resend.isPending ? 'Sending…' : 'Resend code'}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          onClick={() => markVerified.mutate(userId)}
+        >
+          {markVerified.isPending ? 'Saving…' : 'Mark verified'}
+        </Button>
+      </div>
+      {resend.isSuccess && <p className="mt-2">Code sent.</p>}
+      {(resend.error || markVerified.error) && (
+        <p className="mt-2 text-red-700">
+          {(resend.error ?? markVerified.error)?.message ?? 'Request failed'}
+        </p>
+      )}
+    </div>
   );
 }
 

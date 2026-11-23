@@ -55,6 +55,18 @@ export interface SessionSummary {
 
 const BCRYPT_COST = 12;
 
+/** How long an emailed verification code stays valid. */
+export const VERIFY_CODE_TTL_MS = 15 * 60 * 1000;
+/**
+ * A refused sign-in re-sends the code, but not more often than this: a user
+ * retrying sign-in a few times must not invalidate the code they are about to
+ * type, and the account's inbox must not be flooded.
+ */
+export const VERIFY_CODE_RESEND_COOLDOWN_MS = 60 * 1000;
+
+/** Machine-readable refusal code clients route on (web and mobile). */
+export const EMAIL_NOT_VERIFIED = 'EMAIL_NOT_VERIFIED';
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -192,20 +204,10 @@ export class AuthService {
       },
     });
 
-    // Generate 6-digit email verification code
-    const verifyCode = this.generateVerifyCode();
-    await this.prisma.user.update({
-      where: { id: user.id },
-      data: {
-        emailVerifyToken: this.hashToken(verifyCode),
-        emailVerifyTokenExpiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes
-      },
-    });
-
-    await this.notificationsService.sendVerificationEmail(
-      dto.email,
-      dto.fullName,
-      verifyCode,
+    // Generate and email the 6-digit verification code
+    await this.issueVerificationCode(
+      { id: user.id, email: dto.email, fullName: dto.fullName, emailVerifyTokenExpiresAt: null },
+      { respectCooldown: false },
     );
 
     // Capture signup IP/UA/geo as a login_success event so the admin "Last
@@ -275,6 +277,25 @@ export class AuthService {
         deviceFingerprint,
       });
       throw new UnauthorizedException('Invalid email or password');
+    }
+
+    // Email verification gate (Supabase/Auth0 "block at sign-in" model). Runs
+    // only after the password checked out, so it is no enumeration oracle, and
+    // it does not count as a credential failure. A fresh code is emailed so
+    // the user can verify straight away. 400 (not 401/403) on purpose: mobile
+    // builds before the in-app verify screen render a 400's message verbatim,
+    // whereas they mask 403 and treat 401 as a wrong password.
+    if (this.verificationRequired() && !user.emailVerified) {
+      await this.issueVerificationCode(user, { respectCooldown: true });
+      this.emitLoginEvent('login_failed', user.id, req, {
+        failureReason: 'email_unverified',
+        deviceFingerprint,
+      });
+      throw new BadRequestException({
+        code: EMAIL_NOT_VERIFIED,
+        message:
+          'Please verify your email before signing in. We sent a 6-digit code to your inbox — enter it, or tap the link in that email, then sign in again.',
+      });
     }
 
     // Get user's primary organization membership.
@@ -613,6 +634,17 @@ export class AuthService {
       throw new UnauthorizedException('Device mismatch. All sessions revoked.');
     }
 
+    // A session opened before verification was enforced (or by an account an
+    // admin has since marked unverified) ends here; signing in again explains
+    // why and sends a code. The token was already claimed (revoked) above.
+    if (this.verificationRequired() && !storedToken.user.emailVerified) {
+      await this.prisma.refreshToken.updateMany({
+        where: { familyId: storedToken.familyId },
+        data: { isRevoked: true },
+      });
+      throw new UnauthorizedException('Please verify your email, then sign in again.');
+    }
+
     const membership = await this.prisma.organizationMember.findFirst({
       where: { userId: storedToken.userId, status: 'active' },
       orderBy: { createdAt: 'asc' },
@@ -858,12 +890,41 @@ export class AuthService {
       throw new BadRequestException('Email is already verified');
     }
 
+    await this.issueVerificationCode(user, { respectCooldown: false });
+  }
+
+  /** Whether unverified password accounts are refused sign-in. */
+  verificationRequired(): boolean {
+    const raw = this.config.get<boolean | string>('EMAIL_VERIFICATION_REQUIRED', false);
+    return raw === true || raw === 'true';
+  }
+
+  /**
+   * Store a fresh code (hashed) and email it. With `respectCooldown`, does
+   * nothing when the current code was issued under a minute ago.
+   * Returns whether a code was sent.
+   */
+  async issueVerificationCode(
+    user: {
+      id: string;
+      email: string;
+      fullName: string | null;
+      emailVerifyTokenExpiresAt: Date | null;
+    },
+    opts: { respectCooldown: boolean },
+  ): Promise<boolean> {
+    const now = Date.now();
+    if (opts.respectCooldown && user.emailVerifyTokenExpiresAt) {
+      const issuedAt = user.emailVerifyTokenExpiresAt.getTime() - VERIFY_CODE_TTL_MS;
+      if (now - issuedAt < VERIFY_CODE_RESEND_COOLDOWN_MS) return false;
+    }
+
     const verifyCode = this.generateVerifyCode();
     await this.prisma.user.update({
       where: { id: user.id },
       data: {
         emailVerifyToken: this.hashToken(verifyCode),
-        emailVerifyTokenExpiresAt: new Date(Date.now() + 15 * 60 * 1000),
+        emailVerifyTokenExpiresAt: new Date(now + VERIFY_CODE_TTL_MS),
       },
     });
 
@@ -872,6 +933,7 @@ export class AuthService {
       user.fullName ?? 'User',
       verifyCode,
     );
+    return true;
   }
 
   // ---- MFA Enrollment & Management ----

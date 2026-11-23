@@ -39,7 +39,11 @@ export class NotificationsService {
     fullName: string,
     code: string,
   ): Promise<void> {
-    const { subject, html } = verifyEmailTemplate({ fullName, code });
+    // Email and code ride in the URL FRAGMENT, which browsers never send to
+    // the server: they stay out of nginx/access logs and Referer headers.
+    const fragment = new URLSearchParams({ email, code }).toString();
+    const verifyUrl = `${this.appUrl}/verify-email#${fragment}`;
+    const { subject, html } = verifyEmailTemplate({ fullName, code, verifyUrl });
 
     await this.enqueue({ to: email, subject, html });
     this.logger.log(`Verification email enqueued for ${this.redactEmail(email)}`);

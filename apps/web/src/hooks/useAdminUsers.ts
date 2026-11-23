@@ -38,6 +38,7 @@ export interface ListAdminUsersQuery {
   role?: string;
   planTier?: string;
   hasActiveSubscription?: boolean;
+  emailVerified?: boolean;
   sortBy?: 'createdAt' | 'email';
   sortDir?: 'asc' | 'desc';
   limit?: number;
@@ -63,6 +64,8 @@ function buildSearchParams(
   if (params.planTier) sp.set('planTier', params.planTier);
   if (params.hasActiveSubscription !== undefined)
     sp.set('hasActiveSubscription', String(params.hasActiveSubscription));
+  if (params.emailVerified !== undefined)
+    sp.set('emailVerified', String(params.emailVerified));
   if (params.sortBy) sp.set('sortBy', params.sortBy);
   if (params.sortDir) sp.set('sortDir', params.sortDir);
   const qs = sp.toString();

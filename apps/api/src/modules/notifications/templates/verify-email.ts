@@ -1,6 +1,8 @@
 export function verifyEmailTemplate(data: {
   fullName: string;
   code: string;
+  /** One-tap link to the web verify page; optional so old callers still render. */
+  verifyUrl?: string;
 }): { subject: string; html: string } {
   const digits = data.code.split('');
 
@@ -20,8 +22,16 @@ export function verifyEmailTemplate(data: {
     </div>
   </div>
   <p style="color: #666; font-size: 14px; text-align: center;">
-    Enter this code on the verification page to complete your registration.
-  </p>
+    Enter this code in the app or on the verification page to finish setting up your account.
+  </p>${
+    data.verifyUrl
+      ? `
+  <div style="text-align: center; margin: 24px 0;">
+    <a href="${escapeHtml(data.verifyUrl)}" style="display: inline-block; background-color: #1a1a1a; color: #ffffff; text-decoration: none; font-weight: 600; padding: 12px 24px; border-radius: 6px;">Verify my email</a>
+  </div>
+  <p style="color: #666; font-size: 13px; text-align: center;">After verifying, return to the app and sign in.</p>`
+      : ''
+  }
   <p style="color: #666; font-size: 14px;">This code expires in 15 minutes. If you did not create an account, you can safely ignore this email.</p>
   <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
   <p style="color: #999; font-size: 12px;">LIBERTASIAN — Philippine Legal AI Platform</p>

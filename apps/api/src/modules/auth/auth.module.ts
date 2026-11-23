@@ -6,6 +6,7 @@ import * as fs from 'fs';
 
 import { OrganizationsModule } from '../organizations/organizations.module';
 import { UsersModule } from '../users/users.module';
+import { AdminEmailVerificationController } from './admin-email-verification.controller';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { DeviceLimitService } from './device-limit.service';
@@ -69,7 +70,7 @@ const googleStrategyProvider = {
     OrganizationsModule,
     UsersModule,
   ],
-  controllers: [AuthController],
+  controllers: [AuthController, AdminEmailVerificationController],
   providers: [
     AuthService,
     DeviceLimitService,
